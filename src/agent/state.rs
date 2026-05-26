@@ -6,14 +6,15 @@ use crate::{
     skill::{self, SkillMeta},
 };
 
-/// Conversation transcript paired with the policy that bounds it.
+/// Agent runtime state: conversation transcript, truncation policy, and the
+/// shared [`RunEnv`] used for tool execution.
 ///
 /// The [`messages`](Self::messages) vector grows turn-by-turn during an agent
 /// run.  When the previous model call's [`last_input_tokens`](Self::last_input_tokens)
 /// exceeds [`max_input_tokens`](Self::max_input_tokens), tool results outside
 /// the [`preserve_recent_turns`](Self::preserve_recent_turns) window are
 /// reduced to `"[context truncated]"` placeholders.
-pub struct AgentHistory {
+pub struct AgentState {
     pub messages: Vec<Message>,
 
     /// Triggers truncation when input_tokens from the previous API call exceeds this value.
@@ -24,22 +25,35 @@ pub struct AgentHistory {
 
     /// Token count from the most recent model API call; used to decide when to truncate history.
     pub last_input_tokens: Option<u64>,
+
+    pub runenv: Arc<RunEnv>,
 }
 
-impl Default for AgentHistory {
+impl Default for AgentState {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl AgentHistory {
+impl AgentState {
     pub fn new() -> Self {
         Self {
             messages: Vec::new(),
             max_input_tokens: 30_000,
             preserve_recent_turns: 3,
             last_input_tokens: None,
+            runenv: Arc::new(RunEnv::local()),
         }
+    }
+
+    pub fn messages(mut self, messages: impl IntoIterator<Item = Message>) -> Self {
+        self.messages = messages.into_iter().collect();
+        self
+    }
+
+    pub fn runenv(mut self, runenv: impl Into<Arc<RunEnv>>) -> Self {
+        self.runenv = runenv.into();
+        self
     }
 
     /// Apply the configured truncation policy when the most recent input-token
@@ -73,7 +87,7 @@ impl AgentHistory {
     /// reliable post-truncation token estimate that is not yet available here.
     /// For now, placeholder replacement alone is sufficient to keep the context
     /// window manageable for most workloads.
-    pub(crate) fn truncate(&mut self) {
+    pub fn truncate(&mut self) {
         if self.messages.is_empty() {
             return;
         }
@@ -145,42 +159,6 @@ impl AgentHistory {
         // Fewer turns than requested — preserve everything.
         0
     }
-}
-
-pub struct AgentState {
-    pub history: AgentHistory,
-
-    pub runenv: Arc<RunEnv>,
-}
-
-impl Default for AgentState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl AgentState {
-    pub fn new() -> Self {
-        Self {
-            history: AgentHistory::new(),
-            runenv: Arc::new(RunEnv::local()),
-        }
-    }
-
-    pub fn messages(mut self, messages: impl IntoIterator<Item = Message>) -> Self {
-        self.history.messages = messages.into_iter().collect();
-        self
-    }
-
-    pub fn runenv(mut self, runenv: impl Into<Arc<RunEnv>>) -> Self {
-        self.runenv = runenv.into();
-        self
-    }
-
-    /// Truncate the conversation history to reduce context size.
-    pub fn truncate_messages(&mut self) {
-        self.history.truncate();
-    }
 
     /// List skills available under `path` inside the agent's [`RunEnv`].
     ///
@@ -234,12 +212,13 @@ mod tests {
         )])
     }
 
-    fn history_of(messages: Vec<Message>, preserve_recent_turns: usize) -> AgentHistory {
-        AgentHistory {
+    fn state_of(messages: Vec<Message>, preserve_recent_turns: usize) -> AgentState {
+        AgentState {
             messages,
             max_input_tokens: 30_000,
             preserve_recent_turns,
             last_input_tokens: None,
+            runenv: Arc::new(RunEnv::local()),
         }
     }
 
@@ -247,7 +226,7 @@ mod tests {
     fn test_preserve_recent_turns_boundary() {
         // history: sys, u1, a1, u2, a2, u3, a3
         // preserve_recent_turns = 2 → preserve from u2 (index 3) onwards
-        let history = history_of(
+        let state = state_of(
             vec![
                 sys(),
                 user("u1"),
@@ -260,7 +239,7 @@ mod tests {
             2,
         );
         assert_eq!(
-            history.find_preserve_boundary(),
+            state.find_preserve_boundary(),
             3,
             "preserve boundary should be at u2 (index 3)"
         );
@@ -268,17 +247,13 @@ mod tests {
 
     #[test]
     fn test_no_change_when_all_within_preserve_window() {
-        let mut history = history_of(
+        let mut state = state_of(
             vec![sys(), user("u1"), asst("a1"), user("u2"), asst("a2")],
             10,
         );
-        let original_len = history.messages.len();
-        history.truncate();
-        assert_eq!(
-            history.messages.len(),
-            original_len,
-            "nothing should change"
-        );
+        let original_len = state.messages.len();
+        state.truncate();
+        assert_eq!(state.messages.len(), original_len, "nothing should change");
     }
 
     #[test]
@@ -286,7 +261,7 @@ mod tests {
         // history: sys, u1, tool_call_asst(call_1), tool_result(call_1), u2, a2
         // preserve_recent_turns = 1 → preserve (u2, a2) from index 4 onwards.
         // tool_result at index 3 is outside the preserve window → becomes placeholder.
-        let mut history = history_of(
+        let mut state = state_of(
             vec![
                 sys(),
                 user("u1"),
@@ -297,10 +272,10 @@ mod tests {
             ],
             1,
         );
-        history.truncate();
+        state.truncate();
 
         // The Tool message must still be present (as a placeholder, not removed).
-        let tool_msg = history.messages.iter().find(|m| m.role == Role::Tool);
+        let tool_msg = state.messages.iter().find(|m| m.role == Role::Tool);
         assert!(
             tool_msg.is_some(),
             "Tool message must still exist as placeholder"
@@ -326,7 +301,7 @@ mod tests {
 
     #[test]
     fn test_system_message_never_dropped() {
-        let mut history = history_of(
+        let mut state = state_of(
             vec![
                 sys(),
                 user("u1"),
@@ -338,13 +313,13 @@ mod tests {
             ],
             1,
         );
-        history.truncate();
+        state.truncate();
         assert_eq!(
-            history.messages[0].role,
+            state.messages[0].role,
             Role::System,
             "System message must always remain at index 0"
         );
-        assert_eq!(history.messages.len(), 7, "no messages should be dropped");
+        assert_eq!(state.messages.len(), 7, "no messages should be dropped");
     }
 
     #[test]
@@ -356,7 +331,7 @@ mod tests {
         //
         // history: sys(0), u1(1), asst("a1")(2), u2(3), asst(tool_call)(4), tool(5), asst("a2")(6)
         // Expected boundary: u1 at index 1  (2 user turns preserved)
-        let history = history_of(
+        let state = state_of(
             vec![
                 sys(),
                 user("u1"),
@@ -369,7 +344,7 @@ mod tests {
             2,
         );
         assert_eq!(
-            history.find_preserve_boundary(),
+            state.find_preserve_boundary(),
             1,
             "preserve_recent_turns=2 must keep 2 user turns, landing at u1 (index 1)"
         );
@@ -379,7 +354,7 @@ mod tests {
     fn test_preserved_messages_untouched() {
         // Only messages outside the preserve window should be replaced.
         // The tool result inside the preserve window must keep its original content.
-        let mut history = history_of(
+        let mut state = state_of(
             vec![
                 sys(),
                 user("u1"),
@@ -393,8 +368,8 @@ mod tests {
         );
         // preserve_recent_turns = 1 → boundary is at u2 (index 3).
         // tool_result("call_2") is at index 5 which is >= 3 → preserved.
-        history.truncate();
-        let tool_msg = history
+        state.truncate();
+        let tool_msg = state
             .messages
             .iter()
             .find(|m| m.role == Role::Tool)

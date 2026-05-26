@@ -369,7 +369,7 @@ impl Agent {
 
     /// Return the full message history accumulated so far.
     pub fn get_history(&self) -> &[Message] {
-        &self.state.history.messages
+        &self.state.messages
     }
 
     /// Stream all events for a single agent turn.
@@ -383,24 +383,24 @@ impl Agent {
             // runtime modifications across subsequent runs.
             self.ensure_files_materialised().await?;
 
-            self.state.history.messages.push(query);
+            self.state.messages.push(query);
 
             loop {
                 // Truncation check based on previous call's token usage.
-                self.state.history.truncate_if_needed();
+                self.state.truncate_if_needed();
 
                 let mut output = self
                     .model
-                    .run(&self.state.history.messages, &self.tool_descs, &self.model_options)
+                    .run(&self.state.messages, &self.tool_descs, &self.model_options)
                     .await?;
 
                 // Capture token usage for next iteration's truncation check.
                 if let Some(u) = &output.usage {
-                    self.state.history.last_input_tokens = Some(u.input_tokens);
+                    self.state.last_input_tokens = Some(u.input_tokens);
                 }
 
                 output.depth = Some(0);
-                self.state.history.messages.push(output.message.clone());
+                self.state.messages.push(output.message.clone());
                 self.stamp_source_agent(&mut output);
 
                 let tool_calls = match &output.finish_reason {
@@ -422,7 +422,7 @@ impl Agent {
                         Ok(mut output) => {
                             if output.message.role == Role::Tool && output.depth == Some(0) {
                                 output.message = Self::cap_tool_result(output.message);
-                                self.state.history.messages.push(output.message.clone());
+                                self.state.messages.push(output.message.clone());
                             }
                             self.stamp_source_agent(&mut output);
                             yield output;
@@ -901,7 +901,7 @@ mod tests {
         );
     }
 
-    /// Verifies that AgentHistory replaces old tool results with "[context truncated]"
+    /// Verifies that AgentState replaces old tool results with "[context truncated]"
     /// when last_input_tokens exceeds max_input_tokens at the start of a run.
     ///
     /// History layout when truncation fires (after run() pushes the new query):
@@ -934,28 +934,27 @@ mod tests {
         for (user_text, call_id) in [("q1", old_id), ("q2", recent_id)] {
             agent
                 .state
-                .history
                 .messages
                 .push(Message::new(Role::User).with_contents([Part::text(user_text)]));
-            agent.state.history.messages.push(
+            agent.state.messages.push(
                 Message::new(Role::Assistant).with_tool_calls([Part::function(
                     call_id,
                     "dummy_tool",
                     to_value!({}),
                 )]),
             );
-            agent.state.history.messages.push(
+            agent.state.messages.push(
                 Message::new(Role::Tool)
                     .with_id(call_id)
                     .with_contents([Part::value(Value::string(format!("{call_id}_value")))]),
             );
         }
 
-        agent.state.history.max_input_tokens = 1; // always exceeded
+        agent.state.max_input_tokens = 1; // always exceeded
         // Two recent turns: the just-pushed `u3` plus the previous `u2`, so the
         // boundary lands on `u2` and only `tr_old` (from the `u1` turn) is truncated.
-        agent.state.history.preserve_recent_turns = 2;
-        agent.state.history.last_input_tokens = Some(9999);
+        agent.state.preserve_recent_turns = 2;
+        agent.state.last_input_tokens = Some(9999);
 
         {
             let mut strm = agent.run(Message::new(Role::User).with_contents([Part::text("q3")]));
@@ -994,7 +993,7 @@ mod tests {
         );
     }
 
-    /// Verifies that AgentHistory does NOT truncate tool results when
+    /// Verifies that AgentState does NOT truncate tool results when
     /// last_input_tokens is below max_input_tokens.
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
@@ -1020,17 +1019,16 @@ mod tests {
         for (user_text, call_id) in [("q1", old_id), ("q2", recent_id)] {
             agent
                 .state
-                .history
                 .messages
                 .push(Message::new(Role::User).with_contents([Part::text(user_text)]));
-            agent.state.history.messages.push(
+            agent.state.messages.push(
                 Message::new(Role::Assistant).with_tool_calls([Part::function(
                     call_id,
                     "dummy_tool",
                     to_value!({}),
                 )]),
             );
-            agent.state.history.messages.push(
+            agent.state.messages.push(
                 Message::new(Role::Tool)
                     .with_id(call_id)
                     .with_contents([Part::value(Value::string(format!("{call_id}_value")))]),
@@ -1038,9 +1036,9 @@ mod tests {
         }
 
         // High threshold — will never be exceeded by the preset last_input_tokens.
-        agent.state.history.max_input_tokens = 1_000_000;
-        agent.state.history.preserve_recent_turns = 1;
-        agent.state.history.last_input_tokens = Some(100);
+        agent.state.max_input_tokens = 1_000_000;
+        agent.state.preserve_recent_turns = 1;
+        agent.state.last_input_tokens = Some(100);
 
         {
             let mut strm = agent.run(Message::new(Role::User).with_contents([Part::text("q3")]));

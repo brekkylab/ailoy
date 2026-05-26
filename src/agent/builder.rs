@@ -120,34 +120,34 @@ impl AgentBuilder {
         self
     }
 
-    /// Seed the agent's [`AgentState::history`] (e.g. for resuming a prior session).
+    /// Seed the agent's [`AgentState::messages`] (e.g. for resuming a prior session).
     /// When non-empty, this overrides the system message that the spec's instruction
     /// would otherwise produce.
-    pub fn history(mut self, history: impl IntoIterator<Item = Message>) -> Self {
-        self.state.history.messages = history.into_iter().collect();
+    pub fn messages(mut self, messages: impl IntoIterator<Item = Message>) -> Self {
+        self.state = self.state.messages(messages);
         self
     }
 
     /// Use this [`RunEnv`] for tool execution instead of the default local runenv.
     pub fn runenv(mut self, runenv: impl Into<Arc<RunEnv>>) -> Self {
-        self.state.runenv = runenv.into();
+        self.state = self.state.runenv(runenv);
         self
     }
 
-    /// Override [`AgentHistory::max_input_tokens`](crate::agent::AgentHistory::max_input_tokens).
+    /// Override [`AgentState::max_input_tokens`](crate::agent::AgentState::max_input_tokens).
     ///
     /// When the input-token count of the previous model call exceeds this value,
     /// tool results outside the preserve window are reduced to placeholders.
     pub fn max_input_tokens(mut self, n: u64) -> Self {
-        self.state.history.max_input_tokens = n;
+        self.state.max_input_tokens = n;
         self
     }
 
-    /// Override [`AgentHistory::preserve_recent_turns`](crate::agent::AgentHistory::preserve_recent_turns).
+    /// Override [`AgentState::preserve_recent_turns`](crate::agent::AgentState::preserve_recent_turns).
     ///
     /// Number of recent user turns kept intact when truncation fires.
     pub fn preserve_recent_turns(mut self, n: usize) -> Self {
-        self.state.history.preserve_recent_turns = n;
+        self.state.preserve_recent_turns = n;
         self
     }
 
@@ -222,11 +222,11 @@ impl AgentBuilder {
         };
         // Only override the spec-derived history (which seeds the system instruction)
         // when the caller explicitly supplied one — e.g. for session resumption.
-        if !state.history.messages.is_empty() {
-            agent.state.history.messages = state.history.messages;
+        if !state.messages.is_empty() {
+            agent.state.messages = state.messages;
         }
-        agent.state.history.max_input_tokens = state.history.max_input_tokens;
-        agent.state.history.preserve_recent_turns = state.history.preserve_recent_turns;
+        agent.state.max_input_tokens = state.max_input_tokens;
+        agent.state.preserve_recent_turns = state.preserve_recent_turns;
         Ok(agent)
     }
 }
@@ -562,7 +562,7 @@ mod tests {
             .preserve_recent_turns(2)
             .build()
             .unwrap();
-        assert_eq!(agent.state.history.max_input_tokens, 10_000);
-        assert_eq!(agent.state.history.preserve_recent_turns, 2);
+        assert_eq!(agent.state.max_input_tokens, 10_000);
+        assert_eq!(agent.state.preserve_recent_turns, 2);
     }
 }
