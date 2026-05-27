@@ -357,23 +357,6 @@ impl Sandbox {
         match MsbSandbox::get(name).await {
             Err(e) => log::warn!("sandbox stop: get '{name}' failed: {e}"),
             Ok(handle) => {
-                // TODO: remove once superradcompany/microsandbox#746 is merged and
-                // agentd is updated past v0.4.6. The prebuilt agentd v0.4.6 does not
-                // call sync() before poweroff; that call was added in the unreleased
-                // PR #746 branch. Without an explicit syncfs the overlayfs ext4
-                // journal is committed but never checkpointed at VM exit, leaving the
-                // on-disk block bitmap stale — subsequent starts reallocate "free"
-                // blocks that still hold data, corrupting files. Running sync -f /
-                // here, while the VM is fully live, forces the checkpoint via
-                // ovl_sync_fs → ext4_sync_fs → jbd2_journal_flush before the
-                // shutdown sequence begins.
-                if matches!(
-                    handle.status(),
-                    SandboxStatus::Running | SandboxStatus::Draining
-                ) && let Ok(connected) = handle.connect().await
-                {
-                    let _ = connected.shell("sync -f / 2>/dev/null || sync").await;
-                }
                 let _ = handle.stop().await;
             }
         }
