@@ -287,7 +287,7 @@ mod tests {
             .build()
             .unwrap();
         // Smoke check: runenv is plugged in and usable.
-        let handle = agent.state.runenv.get().await.expect("runenv boot failed");
+        let handle = agent.state.runenv.get().await.expect("runenv start failed");
         let result = handle
             .exec("sh".into(), vec!["-c".into(), "echo ok".into()], None)
             .await
@@ -499,7 +499,7 @@ mod tests {
             .unwrap();
 
         // Write through the underlying VM, read back through parent's runenv.
-        let handle = runenv.get().await.expect("runenv boot failed");
+        let handle = runenv.get().await.expect("runenv start failed");
         handle
             .write(
                 std::path::Path::new("/workspace/shared_test.txt"),
@@ -513,7 +513,7 @@ mod tests {
             .runenv
             .get()
             .await
-            .expect("runenv boot failed")
+            .expect("runenv start failed")
             .read(std::path::Path::new("/workspace/shared_test.txt"))
             .await
             .expect("read failed");
@@ -529,7 +529,7 @@ mod tests {
             .runenv
             .get()
             .await
-            .expect("runenv boot failed")
+            .expect("runenv start failed")
             .write(std::path::Path::new("/workspace/shared.txt"), b"shared_ok")
             .await
             .expect("write failed");
@@ -539,7 +539,7 @@ mod tests {
             .runenv
             .get()
             .await
-            .expect("runenv boot failed")
+            .expect("runenv start failed")
             .read(std::path::Path::new("/workspace/shared.txt"))
             .await
             .expect("subagent runenv should see file written by parent");
