@@ -145,11 +145,19 @@ impl SearchEngine for Google {
         }
 
         let document = Html::parse_document(&html_text);
-        let mut results = Vec::new();
 
+        // No data-ved anchors means we didn't get the SSR result page (JS
+        // shell, region-specific layout, soft block, …). Treat as Blocked
+        // so the aggregator can skip Google instead of silently dropping it.
+        let ssr_anchor_count = document.select(&self.sel_results).count();
+        if ssr_anchor_count == 0 {
+            log::warn!("Google blocked: no data-ved anchors in response (likely JS shell)");
+            return Err(SearchError::Blocked);
+        }
+
+        let mut results = Vec::new();
         for a_el in document.select(&self.sel_results) {
-            // XPath equivalent: //a[@data-ved and not(@class)]
-            // Anchors that carry a class attribute are navigation links, image tiles, etc.
+            // Skip nav/image/chrome anchors that carry a class attribute.
             if a_el.value().attr("class").is_some() {
                 continue;
             }
@@ -163,7 +171,6 @@ impl SearchEngine for Google {
                 None => continue,
             };
 
-            // Title: first div[style] descendant of the anchor.
             let title: String = match a_el.select(&self.sel_title).next() {
                 Some(el) => el.text().collect::<String>().trim().to_string(),
                 None => continue,
@@ -172,8 +179,7 @@ impl SearchEngine for Google {
                 continue;
             }
 
-            // Description: XPath `../..//div[contains(@class, "ilUpNd H66NU aSRlid")]`
-            // Walk up 2 DOM levels from the anchor, then search descendants.
+            // Description sits two DOM levels above the anchor.
             let description = a_el
                 .parent()
                 .and_then(|p| p.parent())
@@ -195,6 +201,17 @@ impl SearchEngine for Google {
             if results.len() >= max_results {
                 break;
             }
+        }
+
+        // Got SSR anchors but parsed nothing usable — selectors out of date
+        // for this layout variant. Distinct from "real zero results" because
+        // a true zero-result page has 0 data-ved (caught above).
+        if results.is_empty() {
+            log::warn!(
+                "Google blocked: {} data-ved anchors but 0 parseable results",
+                ssr_anchor_count
+            );
+            return Err(SearchError::Blocked);
         }
 
         Ok(results)
@@ -296,6 +313,39 @@ mod tests {
             .trim()
             .to_string();
         assert_eq!(title, "Rust Programming Language");
+    }
+
+    #[test]
+    fn test_zero_data_ved_anchors_is_blocked_signal() {
+        let engine = Google::new().expect("Failed to create Google engine");
+        // JS shell / wrong-layout response has no data-ved anchors at all.
+        let html = r#"<html><body><div>Google Search</div></body></html>"#;
+        let document = Html::parse_document(html);
+        assert_eq!(document.select(&engine.sel_results).count(), 0);
+    }
+
+    #[test]
+    fn test_data_ved_with_only_classed_anchors_is_blocked_signal() {
+        let engine = Google::new().expect("Failed to create Google engine");
+        // data-ved present but every anchor carries class → 0 parseable
+        // results from a non-empty SSR. Treated as Blocked.
+        let html = r#"
+            <html><body>
+              <a data-ved="1" class="nav">
+                <div style="">Nav 1</div>
+              </a>
+              <a data-ved="2" class="img-tile">
+                <div style="">Image</div>
+              </a>
+            </body></html>
+        "#;
+        let document = Html::parse_document(html);
+        assert!(document.select(&engine.sel_results).count() > 0);
+        let parseable = document
+            .select(&engine.sel_results)
+            .filter(|a| a.value().attr("class").is_none())
+            .count();
+        assert_eq!(parseable, 0);
     }
 
     #[test]
