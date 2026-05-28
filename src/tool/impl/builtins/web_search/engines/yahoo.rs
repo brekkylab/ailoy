@@ -6,9 +6,6 @@ use crate::tool::r#impl::builtins::web_search::engine::{
     SearchEngine, SearchError, SearchResult, SearchResultParser, USER_AGENT,
 };
 
-/// Without a non-empty sB, Yahoo serves the JS-only consent wall and no
-/// `.algo` blocks are emitted. Exact pair values are not critical; what
-/// matters is that the cookie is present and well-formed.
 fn build_sb_cookie() -> String {
     "v=1&vm=p&fl=1&vl=lang_en&pn=10&rw=new&userset=1".to_string()
 }
@@ -19,8 +16,8 @@ pub struct Yahoo {
 
 impl Yahoo {
     pub fn new() -> Result<Self, SearchError> {
-        // Yahoo wraps <h3 class="title"> inside <a>, so "h3 a" finds nothing.
-        // The anchor (.compTitle a) is the parent of <h3>, not a child.
+        // `<a>` wraps `<h3>` (not the reverse), so the link selector targets
+        // `.compTitle a`.
         let parser = SearchResultParser::new(
             ".no-results",
             ".algo",
@@ -31,8 +28,7 @@ impl Yahoo {
         Ok(Self { parser })
     }
 
-    /// Extract the actual destination URL from Yahoo's redirect wrapper.
-    /// Yahoo wraps URLs as: /RU=<encoded_url>/RK=...
+    /// Decode `/RU=<encoded>/RK=…` redirect wrappers; pass through otherwise.
     pub fn extract_redirect_url(href: &str) -> String {
         if let Some(ru_start) = href.find("/RU=") {
             let after_ru = &href[ru_start + 4..];
@@ -58,8 +54,6 @@ impl SearchEngine for Yahoo {
         query: &str,
         max_results: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
-        // iscqry= flags a fresh search; bct/xargs are tracking knobs Yahoo
-        // still expects on the SSR path; pz=7 is the page-size hint.
         let url = format!(
             "https://search.yahoo.com/search?p={}&ei=UTF-8&iscqry=&bct=0&xargs=0&pz=7",
             urlencoding::encode(query)
@@ -143,7 +137,6 @@ mod tests {
     #[test]
     fn test_yahoo_parser_extracts_results() {
         let engine = Yahoo::new().expect("Failed to create Yahoo engine");
-        // Structure matches current Yahoo HTML: <a> wraps <h3>, not the other way around
         let html = r#"
             <html><body>
               <div class="algo">

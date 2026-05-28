@@ -6,11 +6,6 @@ use crate::tool::r#impl::builtins::web_search::engine::{
     SearchEngine, SearchError, SearchResult, USER_AGENT,
 };
 
-/// Naver web search (where=webkr).
-///
-/// Result anchors carry `nocr="1"` (no-click-tracking). Sibling `fender-ui_*`
-/// hash classes change per build, so only `fds-web-doc-root` and
-/// `sds-comps-text-type-*` are safe to depend on.
 pub struct Naver {
     sel_results: Selector,
     sel_link: Selector,
@@ -38,7 +33,6 @@ impl Naver {
             if !href.starts_with("http") {
                 continue;
             }
-            // help.naver.com appears inside the AI-summary disclaimer card.
             if href.contains("help.naver.com") || href.contains("policy.naver.com") {
                 continue;
             }
@@ -65,10 +59,6 @@ impl SearchEngine for Naver {
             urlencoding::encode(query)
         );
 
-        // ko first; a non-ko Accept-Language collapses Naver to the
-        // disambiguation page with no result blocks. Do not set
-        // Accept-Encoding — the shared reqwest build has no gzip feature
-        // and would receive an undecodable response.
         let response = client
             .get(&url)
             .header("User-Agent", USER_AGENT)
@@ -193,7 +183,6 @@ mod tests {
 
     #[test]
     fn test_naver_parser_skips_help_chrome_links() {
-        // First nocr=1 anchor points at help.naver.com (AI summary disclaimer).
         let engine = Naver::new().expect("Failed to create Naver engine");
         let html = r##"
             <html><body>
@@ -214,7 +203,6 @@ mod tests {
 
     #[test]
     fn test_naver_parser_falls_back_to_anchor_text_when_headline_missing() {
-        // PyPI's verbose card omits headline1; fall through to anchor text.
         let engine = Naver::new().expect("Failed to create Naver engine");
         let html = r##"
             <html><body>

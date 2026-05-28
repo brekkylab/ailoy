@@ -25,7 +25,7 @@ static MOBILE_UAS: &[&str] = &[
     "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.9357.1059 Mobile Safari/537.36",
 ];
 
-/// Body-marker captcha detection (status 200 + challenge HTML).
+/// Detect captcha page returned with status 200.
 fn is_captcha_page(html: &str) -> bool {
     const BLOCK_MARKERS: &[&str] = &[
         "Our systems have detected unusual traffic",
@@ -36,7 +36,7 @@ fn is_captcha_page(html: &str) -> bool {
     BLOCK_MARKERS.iter().any(|m| html.contains(m))
 }
 
-/// URL-based block detection (302 to sorry.google.com or /sorry/* path).
+/// Detect block redirect — either host swap or `/sorry/` path rewrite.
 fn is_sorry_url(host: Option<&str>, path: &str) -> bool {
     host == Some("sorry.google.com") || path.starts_with("/sorry/")
 }

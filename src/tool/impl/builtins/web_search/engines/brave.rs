@@ -7,22 +7,15 @@ use crate::tool::r#impl::builtins::web_search::engine::{
     SearchEngine, SearchError, SearchResult, USER_AGENT,
 };
 
-/// Without these, Brave serves the JS-only shell instead of SSR results,
-/// and the AI summary card gets injected into the snippet column.
 fn brave_default_cookies() -> &'static str {
     "safesearch=off; useLocation=0; summarizer=0; country=us; ui_lang=en-US"
 }
 
 pub struct Brave {
-    /// Selector for a "no results" indicator element.
     no_result: Selector,
-    /// Selector for individual result snippet containers.
     results: Selector,
-    /// Selector for the title element inside a snippet.
     result_title: Selector,
-    /// Selector for any anchor tag with an `href` inside a snippet.
     result_link: Selector,
-    /// Selector for the description/content element inside a snippet.
     result_desc: Selector,
 }
 
@@ -34,17 +27,11 @@ impl Brave {
         };
         Ok(Self {
             no_result: parse(".no-results")?,
-            // Brave renders each web result in a <div class="snippet ..."> container.
-            // The leading-space variant (`div[class*=' snippet']`) avoids false-positives
-            // on sibling classes like "snippet-url" or "snippet-title".
+            // Leading-space variant excludes sibling classes (snippet-url, snippet-title).
             results: parse("div[class^='snippet'], div[class*=' snippet']")?,
             result_title: parse("div[class*='title']")?,
-            // The actual destination URL lives in the first <a href> of the snippet.
             result_link: parse("a[href]")?,
-            // Brave wraps descriptions in a div whose class contains both
-            // "content" and "t-primary".  We match on "t-primary" to avoid
-            // accidentally selecting the breadcrumb (site-name-content) or
-            // other "content"-bearing divs.
+            // t-primary disambiguates from breadcrumb's site-name-content.
             result_desc: parse("div[class*='t-primary']")?,
         })
     }
@@ -62,9 +49,8 @@ impl SearchEngine for Brave {
         query: &str,
         max_results: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
-        // Pre-fetch the search homepage to acquire session cookies (__cf_bm, etc.)
-        // and make the subsequent search request look like an organic browser
-        // navigation (same-origin Sec-Fetch headers).
+        // Pre-fetch seeds session cookies (__cf_bm etc.) for the same-origin
+        // navigation that follows.
         let init_resp = client
             .get("https://search.brave.com/")
             .header("User-Agent", USER_AGENT)
@@ -85,8 +71,6 @@ impl SearchEngine for Brave {
             .filter(|s| !s.is_empty())
             .collect();
 
-        // Server-issued session cookies (__cf_bm etc) first, preference
-        // cookies after.
         let cookie_header = if server_cookies.is_empty() {
             brave_default_cookies().to_string()
         } else {
@@ -97,8 +81,7 @@ impl SearchEngine for Brave {
             )
         };
 
-        // Disable spell-check so Brave doesn't silently rewrite the query
-        // (e.g. "ailoy" → "alloy").
+        // spellcheck=0 prevents silent query rewrites (e.g. "ailoy" → "alloy").
         let url = format!(
             "https://search.brave.com/search?q={}&source=web&spellcheck=0",
             urlencoding::encode(query)
@@ -135,24 +118,20 @@ impl SearchEngine for Brave {
         let mut results: Vec<SearchResult> = document
             .select(&self.results)
             .filter_map(|snippet| {
-                // Get URL from the first anchor's `href` attribute (not text content).
                 let href = snippet
                     .select(&self.result_link)
                     .find_map(|a| a.value().attr("href").map(str::to_owned))?;
 
-                // Only keep results with a proper absolute URL (filters out ads
-                // that have partial/relative paths).
+                // Require absolute URL — filters out ad anchors with relative paths.
                 let parsed = Url::parse(&href).ok()?;
                 parsed.host()?;
 
-                // Title: text of the first element whose class contains "title".
                 let title = snippet
                     .select(&self.result_title)
                     .next()
                     .map(|el| el.text().collect::<String>().trim().to_string())
                     .filter(|s| !s.is_empty())?;
 
-                // Description: try a few common content selectors.
                 let description = snippet
                     .select(&self.result_desc)
                     .next()
@@ -182,12 +161,6 @@ mod tests {
     #[test]
     fn test_brave_parser_extracts_results() {
         let engine = Brave::new().expect("Failed to create Brave engine");
-        // Simulate the actual Brave HTML structure (Svelte-based, 2025+).
-        // Key observations from live page inspection:
-        //   - Snippet container:  class="snippet  svelte-jmfu5f"
-        //   - Title:              class="title search-snippet-title line-clamp-1 svelte-14r20fy"
-        //   - Description/content: class="content desktop-default-regular t-primary line-clamp-dynamic svelte-1cwdgg3"
-        //   - URL: from <a href="..."> attribute (not text of <cite class="snippet-url">)
         let html = r#"
             <html><body>
               <div id="results">

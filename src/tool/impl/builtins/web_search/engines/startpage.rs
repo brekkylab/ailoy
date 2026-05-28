@@ -11,9 +11,8 @@ use crate::tool::r#impl::builtins::web_search::engine::{
 
 const SC_TOKEN_TTL: Duration = Duration::from_secs(3600);
 
-/// Startpage requires a per-session `sc` token, scraped from the homepage's
-/// search form and POSTed on every search. GET requests without the token
-/// hit Startpage's bot wall.
+/// Search requires an `sc` token from the homepage form, then a POST to
+/// `/sp/search`, then a follow-up POST through the interstitial JS gate.
 pub struct Startpage {
     sc_cache: Mutex<Option<(String, Instant)>>,
 }
@@ -37,8 +36,7 @@ impl Startpage {
         *self.sc_cache.lock() = Some((token, Instant::now()));
     }
 
-    /// Extract the sc value from a Startpage homepage HTML: the search form
-    /// renders a hidden `<input name="sc" value="...">`.
+    /// Pull the hidden `<input name="sc" value="…">` from the homepage form.
     fn extract_sc_from_homepage(html: &str) -> Option<String> {
         let document = Html::parse_document(html);
         let sel = Selector::parse(r#"input[name="sc"]"#).ok()?;
@@ -78,15 +76,12 @@ impl Startpage {
         Ok(tok)
     }
 
-    /// Parse the JS object literal Startpage embeds in its interstitial page
-    /// to bootstrap a second POST. The literal looks like:
-    ///   var data = {"abd":"1","sgt":"1779...","query":"...", ...};
-    /// Returns the form fields (key, value) pairs ready to POST.
+    /// Parse the JS literal `var data = {…}` from the interstitial page
+    /// into form fields for the follow-up POST (carries `sgt`, etc.).
     fn extract_interstitial_form_data(html: &str) -> Option<Vec<(String, String)>> {
         let start_marker = "var data = {";
         let start = html.find(start_marker)?;
         let after = &html[start + start_marker.len() - 1..]; // include the `{`
-        // Bracket-count to find the matching `}`.
         let bytes = after.as_bytes();
         let mut depth: usize = 0;
         let mut end = 0;
@@ -111,7 +106,6 @@ impl Startpage {
         let map = v.as_object()?;
         let mut out = Vec::with_capacity(map.len());
         for (k, val) in map {
-            // All values are JS strings in the interstitial; coerce defensively.
             if let Some(s) = val.as_str() {
                 out.push((k.clone(), s.to_string()));
             }
@@ -119,13 +113,10 @@ impl Startpage {
         if out.is_empty() { None } else { Some(out) }
     }
 
-    /// True when the response HTML is Startpage's interstitial gate (status
-    /// 200 but the page is a tiny shell that auto-submits a second form).
     fn is_interstitial(html: &str) -> bool {
         html.contains("js-interstitial-spinner") || html.contains("var data = {")
     }
 
-    /// Strip HTML tags from a string, returning plain text.
     fn strip_html(s: &str) -> String {
         let mut out = String::with_capacity(s.len());
         let mut in_tag = false;
@@ -140,20 +131,14 @@ impl Startpage {
         out
     }
 
-    /// Extract the React props JSON string from the raw HTML.
-    ///
-    /// Looks for `React.createElement(UIStartpage.AppSerpWeb, {` and finds the
-    /// matching closing `}` by bracket-counting.
+    /// Carve out the `{…}` after `React.createElement(UIStartpage.AppSerpWeb,`.
     fn extract_props_json(html: &str) -> Option<&str> {
         let marker = "React.createElement(UIStartpage.AppSerpWeb,";
         let marker_pos = html.find(marker)?;
         let after_marker = &html[marker_pos + marker.len()..];
-
-        // Skip optional whitespace to reach the opening '{'
         let brace_offset = after_marker.find('{')?;
         let json_start = marker_pos + marker.len() + brace_offset;
 
-        // Find the matching closing '}'
         let mut depth: usize = 0;
         let bytes = html.as_bytes();
         for i in json_start..html.len() {
@@ -211,7 +196,7 @@ impl SearchEngine for Startpage {
             return Err(SearchError::Blocked);
         }
 
-        // 403 after a stale sc → drop the cache and let the next call refetch.
+        // Stale sc → invalidate cache so the next call refetches.
         if response.status() == 403 {
             *self.sc_cache.lock() = None;
             return Err(SearchError::Blocked);
@@ -219,9 +204,6 @@ impl SearchEngine for Startpage {
 
         let mut html_text = response.error_for_status()?.text().await?;
 
-        // Startpage gates the SSR result page behind an interstitial JS form
-        // submit. When we hit the gate, re-POST with the fields it carries
-        // (notably `sgt`, the one-shot anti-bot signature).
         if Self::is_interstitial(&html_text) {
             let follow_fields = Self::extract_interstitial_form_data(&html_text)
                 .ok_or_else(|| SearchError::Parse("interstitial form data not found".to_string()))?;
@@ -387,8 +369,6 @@ mod tests {
 
     #[test]
     fn test_extract_interstitial_form_data_collects_all_string_fields() {
-        // Faithful to the live shape: a JS literal in the spinner script,
-        // surrounded by other code that must not confuse the bracket counter.
         let html = r##"
             <html><body>
               <form action="/sp/search" method="POST"></form>
@@ -418,8 +398,6 @@ mod tests {
 
     #[test]
     fn test_extract_interstitial_form_data_handles_nested_braces() {
-        // Defensive: even though the live payload is flat, the bracket counter
-        // must survive a nested object literal without truncating early.
         let html = r##"<script>var data = {"a":"1","nested":"{x}","b":"2"};</script>"##;
         let fields = Startpage::extract_interstitial_form_data(html).unwrap();
         let map: std::collections::HashMap<_, _> = fields.into_iter().collect();
