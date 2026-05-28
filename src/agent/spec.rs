@@ -145,6 +145,12 @@ impl AgentSpec {
         self
     }
 
+    /// Append only the `shell` tool, without the other `system_tools` entries.
+    pub fn shell_tool(mut self) -> Self {
+        self.tools.push(get_shell_tool_desc());
+        self
+    }
+
     /// Add the `web_search` tool to the spec.
     ///
     /// Pass a non-empty `engines` vec to restrict which engines are used;
