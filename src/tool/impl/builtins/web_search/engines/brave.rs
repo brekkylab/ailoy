@@ -4,7 +4,7 @@ use scraper::{Html, Selector};
 use url::Url;
 
 use crate::tool::r#impl::builtins::web_search::engine::{
-    SearchEngine, SearchError, SearchResult, USER_AGENT,
+    SearchEngine, SearchError, SearchResult, gen_useragent,
 };
 
 fn brave_default_cookies() -> &'static str {
@@ -53,7 +53,7 @@ impl SearchEngine for Brave {
         // navigation that follows.
         let init_resp = client
             .get("https://search.brave.com/")
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", gen_useragent())
             .header(
                 "Accept",
                 "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -89,7 +89,7 @@ impl SearchEngine for Brave {
 
         let response = client
             .get(&url)
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", gen_useragent())
             .header(
                 "Accept",
                 "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",

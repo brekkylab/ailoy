@@ -110,9 +110,20 @@ pub trait SearchEngine: Send + Sync {
     ) -> Result<Vec<SearchResult>, SearchError>;
 }
 
-/// Shared browser-like User-Agent used by all engines.
-pub const USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0";
+const UA_OS: &[&str] = &["Windows NT 10.0; Win64; x64", "X11; Linux x86_64"];
+const UA_FIREFOX_VERSIONS: &[&str] = &["150.0", "149.0"];
+
+pub fn gen_useragent() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos() as usize;
+    let os = UA_OS[nanos % UA_OS.len()];
+    let version = UA_FIREFOX_VERSIONS[(nanos / UA_OS.len()) % UA_FIREFOX_VERSIONS.len()];
+    format!("Mozilla/5.0 ({os}; rv:{version}) Gecko/20100101 Firefox/{version}")
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -172,6 +183,31 @@ mod tests {
 
         assert!(parser.has_no_results(&Html::parse_document(html_with_no_results)));
         assert!(!parser.has_no_results(&Html::parse_document(html_with_results)));
+    }
+
+    #[test]
+    fn test_gen_useragent_matches_firefox_template() {
+        let ua = gen_useragent();
+        assert!(ua.starts_with("Mozilla/5.0 ("), "got: {ua}");
+        assert!(ua.contains("Gecko/20100101 Firefox/"), "got: {ua}");
+        let os_ok = UA_OS.iter().any(|os| ua.contains(os));
+        assert!(os_ok, "OS not in UA_OS list: {ua}");
+        let ver_ok = UA_FIREFOX_VERSIONS
+            .iter()
+            .any(|v| ua.contains(&format!("Firefox/{v}")));
+        assert!(ver_ok, "Firefox version not in UA_FIREFOX_VERSIONS: {ua}");
+    }
+
+    #[test]
+    fn test_gen_useragent_rv_matches_firefox_version() {
+        let ua = gen_useragent();
+        for v in UA_FIREFOX_VERSIONS {
+            if ua.contains(&format!("Firefox/{v}")) {
+                assert!(ua.contains(&format!("rv:{v}")), "rv mismatch: {ua}");
+                return;
+            }
+        }
+        panic!("no known Firefox version matched: {ua}");
     }
 
     #[test]

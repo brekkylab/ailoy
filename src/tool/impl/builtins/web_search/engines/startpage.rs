@@ -6,7 +6,7 @@ use reqwest::Client;
 use scraper::{Html, Selector};
 
 use crate::tool::r#impl::builtins::web_search::engine::{
-    SearchEngine, SearchError, SearchResult, USER_AGENT,
+    SearchEngine, SearchError, SearchResult, gen_useragent,
 };
 
 const SC_TOKEN_TTL: Duration = Duration::from_secs(3600);
@@ -52,7 +52,7 @@ impl Startpage {
     async fn fetch_sc_token(client: &Client) -> Result<String, SearchError> {
         let response = client
             .get("https://www.startpage.com/")
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", gen_useragent())
             .header("Accept", "text/html,application/xhtml+xml")
             .header("Accept-Language", "en-US,en;q=0.9")
             .send()
@@ -184,7 +184,7 @@ impl SearchEngine for Startpage {
         let response = client
             .post("https://www.startpage.com/sp/search")
             .form(&initial_form)
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", gen_useragent())
             .header("Accept", "text/html,application/xhtml+xml")
             .header("Accept-Language", "en-US,en;q=0.9")
             .header("Origin", "https://www.startpage.com")
@@ -216,7 +216,7 @@ impl SearchEngine for Startpage {
             let follow_response = client
                 .post("https://www.startpage.com/sp/search")
                 .form(&follow_pairs)
-                .header("User-Agent", USER_AGENT)
+                .header("User-Agent", gen_useragent())
                 .header("Accept", "text/html,application/xhtml+xml")
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .header("Origin", "https://www.startpage.com")

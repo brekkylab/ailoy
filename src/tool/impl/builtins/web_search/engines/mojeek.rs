@@ -3,7 +3,7 @@ use reqwest::Client;
 use scraper::Html;
 
 use crate::tool::r#impl::builtins::web_search::engine::{
-    SearchEngine, SearchError, SearchResult, SearchResultParser, USER_AGENT,
+    SearchEngine, SearchError, SearchResult, SearchResultParser, gen_useragent,
 };
 
 pub struct Mojeek {
@@ -42,7 +42,7 @@ impl SearchEngine for Mojeek {
 
         let response = client
             .get(&url)
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", gen_useragent())
             .header("Accept", "text/html,application/xhtml+xml")
             .header("Accept-Language", "en-US,en;q=0.9")
             .send()

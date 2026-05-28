@@ -4,25 +4,15 @@ use scraper::{ElementRef, Html, Selector};
 
 use crate::tool::r#impl::builtins::web_search::engine::{SearchEngine, SearchError, SearchResult};
 
-/// Android Chrome Mobile UAs.
-///
-/// Google routes requests to a server-rendered HTML code path (rather than the
-/// JS-only SPA) when the UA identifies as the "Google Go" native Android app
-/// (`com.google.android.apps.searchlite`).  The `NSTNWV` suffix — appended by
-/// `random_ua()` — is the token that triggers this path on Google's backend.
+/// Android Chrome UAs that trigger Google's SSR path. The trailing `NSTNWV`
+/// suffix (added by `random_ua`) identifies the "Google Go" native app.
 static MOBILE_UAS: &[&str] = &[
-    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.8459.1387 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/43.0.4665.1706 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; arm_64; Android 16; Pixel 10 Pro XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.7559.43 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 11; KFTUWI) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.165 Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 9; KFMAWI) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.244 Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 12; SM-S901U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.88 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3280.1347 Mobile Safari/537.36",
     "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.8434.1860 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/57.0.6976.1608 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.5155.1496 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3280.1347 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.3126.1891 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.3462.1505 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.3958.1590 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/49.0.2978.1556 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.5114.1832 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.9357.1059 Mobile Safari/537.36",
 ];
 
 /// Detect captcha page returned with status 200.
@@ -41,15 +31,6 @@ fn is_sorry_url(host: Option<&str>, path: &str) -> bool {
     host == Some("sorry.google.com") || path.starts_with("/sorry/")
 }
 
-/// Pick a random base UA and append the `NSTNWV` suffix.
-///
-/// `NSTNWV` is the token that identifies the "Google Go" native Android app
-/// (com.google.android.apps.searchlite) to Google's backend.  Without it,
-/// Google serves a JS-only SPA shell; with it, Google serves server-rendered
-/// HTML with parseable `data-ved` anchors and `div[style]` title elements.
-///
-/// Uses subsecond nanosecond timestamp as a lightweight entropy source —
-/// sufficient for UA rotation; no cryptographic quality needed.
 fn random_ua() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
@@ -226,6 +207,32 @@ mod tests {
     use scraper::Html;
 
     use super::*;
+
+    #[test]
+    fn test_random_ua_appends_nstnwv_suffix() {
+        let ua = random_ua();
+        assert!(ua.ends_with(" NSTNWV"), "got: {ua}");
+    }
+
+    #[test]
+    fn test_random_ua_base_is_from_mobile_uas_list() {
+        let ua = random_ua();
+        let base = ua.trim_end_matches(" NSTNWV");
+        assert!(
+            MOBILE_UAS.contains(&base),
+            "base UA not in MOBILE_UAS: {base}"
+        );
+    }
+
+    #[test]
+    fn test_mobile_uas_includes_modern_chrome() {
+        let any_modern = MOBILE_UAS.iter().any(|ua| {
+            ua.contains("Chrome/144.")
+                || ua.contains("Chrome/146.")
+                || ua.contains("Chrome/138.")
+        });
+        assert!(any_modern, "expected at least one Chrome 138+ entry");
+    }
 
     #[test]
     fn test_clean_url_strips_google_redirect() {
