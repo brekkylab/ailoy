@@ -6,6 +6,13 @@ use crate::tool::r#impl::builtins::web_search::engine::{
     SearchEngine, SearchError, SearchResult, SearchResultParser, USER_AGENT,
 };
 
+/// Without a non-empty sB, Yahoo serves the JS-only consent wall and no
+/// `.algo` blocks are emitted. Exact pair values are not critical; what
+/// matters is that the cookie is present and well-formed.
+fn build_sb_cookie() -> String {
+    "v=1&vm=p&fl=1&vl=lang_en&pn=10&rw=new&userset=1".to_string()
+}
+
 pub struct Yahoo {
     parser: SearchResultParser,
 }
@@ -51,8 +58,10 @@ impl SearchEngine for Yahoo {
         query: &str,
         max_results: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
+        // iscqry= flags a fresh search; bct/xargs are tracking knobs Yahoo
+        // still expects on the SSR path; pz=7 is the page-size hint.
         let url = format!(
-            "https://search.yahoo.com/search?p={}&ei=UTF-8",
+            "https://search.yahoo.com/search?p={}&ei=UTF-8&iscqry=&bct=0&xargs=0&pz=7",
             urlencoding::encode(query)
         );
 
@@ -61,6 +70,7 @@ impl SearchEngine for Yahoo {
             .header("User-Agent", USER_AGENT)
             .header("Accept", "text/html,application/xhtml+xml")
             .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Cookie", format!("sB={}", build_sb_cookie()))
             .send()
             .await?;
 
@@ -93,6 +103,26 @@ mod tests {
     use scraper::Html;
 
     use super::*;
+
+    #[test]
+    fn test_build_sb_cookie_includes_all_pairs() {
+        let c = build_sb_cookie();
+        for required in [
+            "v=1", "vm=p", "fl=1", "vl=lang_en", "pn=10", "rw=new", "userset=1",
+        ] {
+            assert!(
+                c.contains(required),
+                "sB cookie missing `{required}`: got `{c}`"
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_sb_cookie_uses_ampersand_separator() {
+        let c = build_sb_cookie();
+        let pairs: Vec<&str> = c.split('&').collect();
+        assert_eq!(pairs.len(), 7);
+    }
 
     #[test]
     fn test_yahoo_extract_redirect_url() {

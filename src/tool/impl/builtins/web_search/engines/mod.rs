@@ -2,8 +2,8 @@ mod bing;
 mod brave;
 mod duckduckgo;
 mod google;
-mod librex;
 mod mojeek;
+mod naver;
 mod startpage;
 mod yahoo;
 mod yandex;
@@ -12,8 +12,8 @@ pub use bing::Bing;
 pub use brave::Brave;
 pub use duckduckgo::DuckDuckGo;
 pub use google::Google;
-pub use librex::LibreX;
 pub use mojeek::Mojeek;
+pub use naver::Naver;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use startpage::Startpage;
@@ -32,8 +32,8 @@ pub enum WebSearchEngineKind {
     Brave,
     DuckDuckGo,
     Google,
-    LibreX,
     Mojeek,
+    Naver,
     Startpage,
     Yahoo,
     Yandex,
@@ -45,8 +45,8 @@ impl WebSearchEngineKind {
         WebSearchEngineKind::Brave,
         WebSearchEngineKind::DuckDuckGo,
         WebSearchEngineKind::Google,
-        WebSearchEngineKind::LibreX,
         WebSearchEngineKind::Mojeek,
+        WebSearchEngineKind::Naver,
         WebSearchEngineKind::Startpage,
         WebSearchEngineKind::Yahoo,
         WebSearchEngineKind::Yandex,
@@ -59,8 +59,8 @@ impl WebSearchEngineKind {
             WebSearchEngineKind::Brave => "Brave",
             WebSearchEngineKind::DuckDuckGo => "DuckDuckGo",
             WebSearchEngineKind::Google => "Google",
-            WebSearchEngineKind::LibreX => "LibreX",
             WebSearchEngineKind::Mojeek => "Mojeek",
+            WebSearchEngineKind::Naver => "Naver",
             WebSearchEngineKind::Startpage => "Startpage",
             WebSearchEngineKind::Yahoo => "Yahoo",
             WebSearchEngineKind::Yandex => "Yandex",
@@ -76,8 +76,8 @@ impl WebSearchEngineKind {
                 Box::new(DuckDuckGo::new().expect("DuckDuckGo init failed"))
             }
             WebSearchEngineKind::Google => Box::new(Google::new().expect("Google init failed")),
-            WebSearchEngineKind::LibreX => Box::new(LibreX::new().expect("LibreX init failed")),
             WebSearchEngineKind::Mojeek => Box::new(Mojeek::new().expect("Mojeek init failed")),
+            WebSearchEngineKind::Naver => Box::new(Naver::new().expect("Naver init failed")),
             WebSearchEngineKind::Startpage => {
                 Box::new(Startpage::new().expect("Startpage init failed"))
             }

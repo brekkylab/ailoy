@@ -25,11 +25,7 @@ static MOBILE_UAS: &[&str] = &[
     "Mozilla/5.0 (Linux; Android 8.0; Pixel 2 Build/OPD3.170816.012) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.9357.1059 Mobile Safari/537.36",
 ];
 
-/// Detects Google's CAPTCHA / "unusual traffic" challenge page by body markers.
-///
-/// Used for the soft-block case where the HTTP status is 200 but the body is the
-/// challenge page. Markers cover the visible English copy plus two DOM-level
-/// anchors that survive minor wording changes.
+/// Body-marker captcha detection (status 200 + challenge HTML).
 fn is_captcha_page(html: &str) -> bool {
     const BLOCK_MARKERS: &[&str] = &[
         "Our systems have detected unusual traffic",
@@ -38,6 +34,11 @@ fn is_captcha_page(html: &str) -> bool {
         "CaptchaRedirect",
     ];
     BLOCK_MARKERS.iter().any(|m| html.contains(m))
+}
+
+/// URL-based block detection (302 to sorry.google.com or /sorry/* path).
+fn is_sorry_url(host: Option<&str>, path: &str) -> bool {
+    host == Some("sorry.google.com") || path.starts_with("/sorry/")
 }
 
 /// Pick a random base UA and append the `NSTNWV` suffix.
@@ -144,11 +145,9 @@ impl SearchEngine for Google {
             return Err(SearchError::Blocked);
         }
 
-        // Modern block flow redirects to https://www.google.com/sorry/index (CAPTCHA).
-        // Checking the final URL path is more precise than searching body text for
-        // "/sorry/" (which can false-positive on search snippets).
-        if response.url().path().starts_with("/sorry/") {
-            log::warn!("Google blocked: redirected to {}", response.url());
+        let final_url = response.url().clone();
+        if is_sorry_url(final_url.host_str(), final_url.path()) {
+            log::warn!("Google blocked: redirected to {}", final_url);
             return Err(SearchError::Blocked);
         }
 
@@ -347,6 +346,27 @@ mod tests {
                     .map(|el| el.text().collect::<String>().trim().to_string())
             });
         assert_eq!(desc, Some("Description text here".to_string()));
+    }
+
+    #[test]
+    fn test_is_sorry_url_matches_host() {
+        assert!(is_sorry_url(Some("sorry.google.com"), "/index"));
+    }
+
+    #[test]
+    fn test_is_sorry_url_matches_path() {
+        assert!(is_sorry_url(Some("www.google.com"), "/sorry/index"));
+    }
+
+    #[test]
+    fn test_is_sorry_url_rejects_normal_path() {
+        assert!(!is_sorry_url(Some("www.google.com"), "/search"));
+    }
+
+    #[test]
+    fn test_is_sorry_url_handles_missing_host() {
+        assert!(!is_sorry_url(None, "/search"));
+        assert!(is_sorry_url(None, "/sorry/index"));
     }
 
     #[test]

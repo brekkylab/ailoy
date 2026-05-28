@@ -7,6 +7,12 @@ use crate::tool::r#impl::builtins::web_search::engine::{
     SearchEngine, SearchError, SearchResult, USER_AGENT,
 };
 
+/// Without these, Brave serves the JS-only shell instead of SSR results,
+/// and the AI summary card gets injected into the snippet column.
+fn brave_default_cookies() -> &'static str {
+    "safesearch=off; useLocation=0; summarizer=0; country=us; ui_lang=en-US"
+}
+
 pub struct Brave {
     /// Selector for a "no results" indicator element.
     no_result: Selector,
@@ -70,7 +76,7 @@ impl SearchEngine for Brave {
             .send()
             .await?;
 
-        let cookies: Vec<String> = init_resp
+        let server_cookies: Vec<String> = init_resp
             .headers()
             .get_all(SET_COOKIE)
             .iter()
@@ -79,7 +85,17 @@ impl SearchEngine for Brave {
             .filter(|s| !s.is_empty())
             .collect();
 
-        let cookie_header = cookies.join("; ");
+        // Server-issued session cookies (__cf_bm etc) first, preference
+        // cookies after.
+        let cookie_header = if server_cookies.is_empty() {
+            brave_default_cookies().to_string()
+        } else {
+            format!(
+                "{}; {}",
+                server_cookies.join("; "),
+                brave_default_cookies()
+            )
+        };
 
         // Disable spell-check so Brave doesn't silently rewrite the query
         // (e.g. "ailoy" → "alloy").
@@ -223,6 +239,30 @@ mod tests {
         assert_eq!(results[0].url, "https://example.com/page");
         assert_eq!(results[0].description, "A description of the result.");
         assert_eq!(results[0].engine, "Brave");
+    }
+
+    #[test]
+    fn test_brave_default_cookies_contain_all_required_keys() {
+        let c = brave_default_cookies();
+        for required in [
+            "safesearch=off",
+            "useLocation=0",
+            "summarizer=0",
+            "country=us",
+            "ui_lang=en-US",
+        ] {
+            assert!(
+                c.contains(required),
+                "default cookie header missing `{required}`: got `{c}`"
+            );
+        }
+    }
+
+    #[test]
+    fn test_brave_default_cookies_use_semicolon_separator() {
+        let c = brave_default_cookies();
+        let pairs: Vec<&str> = c.split("; ").collect();
+        assert_eq!(pairs.len(), 5, "expected 5 cookie pairs, got: {c:?}");
     }
 
     #[test]
