@@ -1,29 +1,122 @@
+use std::time::{Duration, Instant};
+
 use async_trait::async_trait;
+use parking_lot::Mutex;
 use reqwest::Client;
+use scraper::{Html, Selector};
 
 use crate::tool::r#impl::builtins::web_search::engine::{
-    SearchEngine, SearchError, SearchResult, USER_AGENT,
+    SearchEngine, SearchError, SearchResult, gen_useragent,
 };
 
-/// Startpage search engine.
-///
-/// Startpage serves results via a React SPA. Results are embedded in the HTML as
-/// JSON props passed to `React.createElement(UIStartpage.AppSerpWeb, {...})`.
-/// The relevant path is: props["render"]["presenter"]["regions"]["mainline"]
-/// → find the item with `display_type == "web-google"` → `results[]`.
-///
-/// Each result has:
-/// - `clickUrl`: the actual destination URL
-/// - `title`: HTML string (bold tags around matched terms)
-/// - `description`: HTML string (bold tags around matched terms)
-pub struct Startpage;
+const SC_TOKEN_TTL: Duration = Duration::from_secs(3600);
+
+/// Search requires an `sc` token from the homepage form, then a POST to
+/// `/sp/search`, then a follow-up POST through the interstitial JS gate.
+pub struct Startpage {
+    sc_cache: Mutex<Option<(String, Instant)>>,
+}
 
 impl Startpage {
     pub fn new() -> Result<Self, SearchError> {
-        Ok(Self)
+        Ok(Self {
+            sc_cache: Mutex::new(None),
+        })
     }
 
-    /// Strip HTML tags from a string, returning plain text.
+    fn cached_sc(&self) -> Option<String> {
+        let guard = self.sc_cache.lock();
+        match &*guard {
+            Some((tok, ts)) if ts.elapsed() < SC_TOKEN_TTL => Some(tok.clone()),
+            _ => None,
+        }
+    }
+
+    fn store_sc(&self, token: String) {
+        *self.sc_cache.lock() = Some((token, Instant::now()));
+    }
+
+    /// Pull the hidden `<input name="sc" value="…">` from the homepage form.
+    fn extract_sc_from_homepage(html: &str) -> Option<String> {
+        let document = Html::parse_document(html);
+        let sel = Selector::parse(r#"input[name="sc"]"#).ok()?;
+        document
+            .select(&sel)
+            .next()?
+            .value()
+            .attr("value")
+            .map(str::to_owned)
+            .filter(|s| !s.is_empty())
+    }
+
+    async fn fetch_sc_token(client: &Client) -> Result<String, SearchError> {
+        let response = client
+            .get("https://www.startpage.com/")
+            .header("User-Agent", gen_useragent())
+            .header("Accept", "text/html,application/xhtml+xml")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .send()
+            .await?;
+
+        if response.status() == 429 {
+            return Err(SearchError::Blocked);
+        }
+
+        let html = response.error_for_status()?.text().await?;
+        Self::extract_sc_from_homepage(&html)
+            .ok_or_else(|| SearchError::Parse("sc token not found on homepage".to_string()))
+    }
+
+    async fn ensure_sc_token(&self, client: &Client) -> Result<String, SearchError> {
+        if let Some(tok) = self.cached_sc() {
+            return Ok(tok);
+        }
+        let tok = Self::fetch_sc_token(client).await?;
+        self.store_sc(tok.clone());
+        Ok(tok)
+    }
+
+    /// Parse the JS literal `var data = {…}` from the interstitial page
+    /// into form fields for the follow-up POST (carries `sgt`, etc.).
+    fn extract_interstitial_form_data(html: &str) -> Option<Vec<(String, String)>> {
+        let start_marker = "var data = {";
+        let start = html.find(start_marker)?;
+        let after = &html[start + start_marker.len() - 1..]; // include the `{`
+        let bytes = after.as_bytes();
+        let mut depth: usize = 0;
+        let mut end = 0;
+        for (i, &b) in bytes.iter().enumerate() {
+            match b {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = i + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if end == 0 {
+            return None;
+        }
+        let obj = &after[..end];
+        let v: serde_json::Value = serde_json::from_str(obj).ok()?;
+        let map = v.as_object()?;
+        let mut out = Vec::with_capacity(map.len());
+        for (k, val) in map {
+            if let Some(s) = val.as_str() {
+                out.push((k.clone(), s.to_string()));
+            }
+        }
+        if out.is_empty() { None } else { Some(out) }
+    }
+
+    fn is_interstitial(html: &str) -> bool {
+        html.contains("js-interstitial-spinner") || html.contains("var data = {")
+    }
+
     fn strip_html(s: &str) -> String {
         let mut out = String::with_capacity(s.len());
         let mut in_tag = false;
@@ -38,20 +131,14 @@ impl Startpage {
         out
     }
 
-    /// Extract the React props JSON string from the raw HTML.
-    ///
-    /// Looks for `React.createElement(UIStartpage.AppSerpWeb, {` and finds the
-    /// matching closing `}` by bracket-counting.
+    /// Carve out the `{…}` after `React.createElement(UIStartpage.AppSerpWeb,`.
     fn extract_props_json(html: &str) -> Option<&str> {
         let marker = "React.createElement(UIStartpage.AppSerpWeb,";
         let marker_pos = html.find(marker)?;
         let after_marker = &html[marker_pos + marker.len()..];
-
-        // Skip optional whitespace to reach the opening '{'
         let brace_offset = after_marker.find('{')?;
         let json_start = marker_pos + marker.len() + brace_offset;
 
-        // Find the matching closing '}'
         let mut depth: usize = 0;
         let bytes = html.as_bytes();
         for i in json_start..html.len() {
@@ -82,16 +169,26 @@ impl SearchEngine for Startpage {
         query: &str,
         max_results: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
-        let url = format!(
-            "https://www.startpage.com/sp/search?q={}",
-            urlencoding::encode(query)
-        );
+        let sc = self.ensure_sc_token(client).await?;
+
+        let initial_form = [
+            ("query", query),
+            ("cat", "web"),
+            ("t", "device"),
+            ("sc", sc.as_str()),
+            ("abd", "1"),
+            ("abe", "1"),
+            ("qsr", "all"),
+        ];
 
         let response = client
-            .get(&url)
-            .header("User-Agent", USER_AGENT)
+            .post("https://www.startpage.com/sp/search")
+            .form(&initial_form)
+            .header("User-Agent", gen_useragent())
             .header("Accept", "text/html,application/xhtml+xml")
             .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Origin", "https://www.startpage.com")
+            .header("Referer", "https://www.startpage.com/")
             .send()
             .await?;
 
@@ -99,7 +196,44 @@ impl SearchEngine for Startpage {
             return Err(SearchError::Blocked);
         }
 
-        let html_text = response.error_for_status()?.text().await?;
+        // Stale sc → invalidate cache so the next call refetches.
+        if response.status() == 403 {
+            *self.sc_cache.lock() = None;
+            return Err(SearchError::Blocked);
+        }
+
+        let mut html_text = response.error_for_status()?.text().await?;
+
+        if Self::is_interstitial(&html_text) {
+            let follow_fields = Self::extract_interstitial_form_data(&html_text)
+                .ok_or_else(|| SearchError::Parse("interstitial form data not found".to_string()))?;
+
+            let follow_pairs: Vec<(&str, &str)> = follow_fields
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+
+            let follow_response = client
+                .post("https://www.startpage.com/sp/search")
+                .form(&follow_pairs)
+                .header("User-Agent", gen_useragent())
+                .header("Accept", "text/html,application/xhtml+xml")
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .header("Origin", "https://www.startpage.com")
+                .header("Referer", "https://www.startpage.com/sp/search")
+                .send()
+                .await?;
+
+            if follow_response.status() == 429 {
+                return Err(SearchError::Blocked);
+            }
+            if follow_response.status() == 403 {
+                *self.sc_cache.lock() = None;
+                return Err(SearchError::Blocked);
+            }
+
+            html_text = follow_response.error_for_status()?.text().await?;
+        }
 
         let props_json = Self::extract_props_json(&html_text)
             .ok_or_else(|| SearchError::Parse("React props JSON not found".to_string()))?;
@@ -172,6 +306,104 @@ mod tests {
             Startpage::strip_html("<b>Rust</b> is <b>fast</b>"),
             "Rust is fast"
         );
+    }
+
+    #[test]
+    fn test_extract_sc_from_homepage_parses_form_input() {
+        let html = r#"
+            <html><body>
+              <form id="search">
+                <input name="query" value="" />
+                <input name="sc" value="abc123token" />
+              </form>
+            </body></html>
+        "#;
+        assert_eq!(
+            Startpage::extract_sc_from_homepage(html),
+            Some("abc123token".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_sc_from_homepage_returns_none_when_missing() {
+        let html = r#"<html><body><form id="search"></form></body></html>"#;
+        assert_eq!(Startpage::extract_sc_from_homepage(html), None);
+    }
+
+    #[test]
+    fn test_extract_sc_from_homepage_rejects_empty_value() {
+        let html = r#"<input name="sc" value="" />"#;
+        assert_eq!(Startpage::extract_sc_from_homepage(html), None);
+    }
+
+    #[test]
+    fn test_cached_sc_returns_none_when_empty() {
+        let engine = Startpage::new().unwrap();
+        assert!(engine.cached_sc().is_none());
+    }
+
+    #[test]
+    fn test_store_and_read_sc_round_trip() {
+        let engine = Startpage::new().unwrap();
+        engine.store_sc("fresh-token".to_string());
+        assert_eq!(engine.cached_sc(), Some("fresh-token".to_string()));
+    }
+
+    #[test]
+    fn test_is_interstitial_detects_spinner_class() {
+        let html = r#"<div class="js-interstitial-spinner"></div>"#;
+        assert!(Startpage::is_interstitial(html));
+    }
+
+    #[test]
+    fn test_is_interstitial_detects_var_data_block() {
+        let html = r#"<script>var data = {"foo":"bar"};</script>"#;
+        assert!(Startpage::is_interstitial(html));
+    }
+
+    #[test]
+    fn test_is_interstitial_rejects_normal_serp_html() {
+        let html = r#"<script>React.createElement(UIStartpage.AppSerpWeb,{})</script>"#;
+        assert!(!Startpage::is_interstitial(html));
+    }
+
+    #[test]
+    fn test_extract_interstitial_form_data_collects_all_string_fields() {
+        let html = r##"
+            <html><body>
+              <form action="/sp/search" method="POST"></form>
+              <script>
+                window.addEventListener('DOMContentLoaded', function() {});
+                (function () {
+                  var data = {"abd":"1","abe":"1","cat":"web","language":"english","lui":"english","qsr":"all","query":"rust","sc":"sctok","segment":"organic","sgt":"sgtok","t":"device"};
+                  // submit code here
+                })();
+              </script>
+            </body></html>
+        "##;
+        let fields = Startpage::extract_interstitial_form_data(html).unwrap();
+        let map: std::collections::HashMap<_, _> = fields.into_iter().collect();
+        assert_eq!(map.get("sgt"), Some(&"sgtok".to_string()));
+        assert_eq!(map.get("sc"), Some(&"sctok".to_string()));
+        assert_eq!(map.get("query"), Some(&"rust".to_string()));
+        assert_eq!(map.get("segment"), Some(&"organic".to_string()));
+        assert_eq!(map.len(), 11);
+    }
+
+    #[test]
+    fn test_extract_interstitial_form_data_returns_none_when_absent() {
+        let html = r#"<html><body>no spinner here</body></html>"#;
+        assert!(Startpage::extract_interstitial_form_data(html).is_none());
+    }
+
+    #[test]
+    fn test_extract_interstitial_form_data_handles_nested_braces() {
+        let html = r##"<script>var data = {"a":"1","nested":"{x}","b":"2"};</script>"##;
+        let fields = Startpage::extract_interstitial_form_data(html).unwrap();
+        let map: std::collections::HashMap<_, _> = fields.into_iter().collect();
+        assert_eq!(map.get("a"), Some(&"1".to_string()));
+        assert_eq!(map.get("b"), Some(&"2".to_string()));
+        assert_eq!(map.get("nested"), Some(&"{x}".to_string()));
     }
 
     #[test]

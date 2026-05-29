@@ -108,7 +108,7 @@ impl MetaSearcher {
     pub fn new(engines: Vec<WebSearchEngineKind>) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(10))
-            .user_agent(super::engine::USER_AGENT)
+            .user_agent(super::engine::gen_useragent())
             .build()
             .expect("Failed to build HTTP client");
 
