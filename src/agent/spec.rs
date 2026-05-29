@@ -218,6 +218,13 @@ impl AgentSpec {
         self
     }
 
+    pub fn thinking(mut self, mode: crate::lang_model::ThinkingMode) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .thinking = Some(mode);
+        self
+    }
+
     pub fn file(mut self, file: FileEntry) -> Self {
         self.files.push(file);
         self

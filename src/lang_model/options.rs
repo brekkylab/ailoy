@@ -1,6 +1,15 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// Toggle a provider's reasoning step where the API exposes one.
+/// Honoured by Moonshot kimi-k2.5/k2.6; other providers ignore it.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingMode {
+    Enabled,
+    Disabled,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct LangModelOptions {
     /// Maximum number of tokens the model may generate in a single response.
@@ -38,6 +47,10 @@ pub struct LangModelOptions {
     /// Constrains the model's output to a JSON schema validated at construction time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<super::ResponseFormat>,
+
+    /// Per-provider reasoning toggle. See [`ThinkingMode`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<ThinkingMode>,
 }
 
 impl LangModelOptions {

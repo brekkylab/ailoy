@@ -4,7 +4,7 @@ use url::Url;
 use super::{LangModelAPISchema, LangModelProviderElem};
 use crate::{
     datatype::Value,
-    lang_model::{LangModelOptions, r#impl::api},
+    lang_model::{LangModelOptions, ThinkingMode, r#impl::api},
     message::{Delta as _, Marshaled, Message, MessageOutput, Unmarshal as _},
     tool::ToolDesc,
 };
@@ -70,6 +70,7 @@ pub(crate) struct LangModelRequest<'a> {
     pub top_p: Option<f64>,
     pub top_k: Option<u64>,
     pub response_format: Option<&'a ResponseFormat>,
+    pub thinking: Option<ThinkingMode>,
 }
 
 impl LangModel {
@@ -105,6 +106,7 @@ impl LangModel {
                     top_p: options.top_p,
                     top_k: options.top_k,
                     response_format: options.response_format.as_ref(),
+                    thinking: options.thinking,
                 };
 
                 let req = match schema {

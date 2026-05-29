@@ -174,6 +174,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn thinking(mut self, mode: crate::lang_model::ThinkingMode) -> Self {
+        self.spec = self.spec.thinking(mode);
+        self
+    }
+
     /// Append a single pre-fill [`FileEntry`] to `spec.files`.  The file is
     /// written into the runenv on the agent's first `run`.
     pub fn file(mut self, entry: FileEntry) -> Self {

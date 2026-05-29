@@ -52,6 +52,12 @@ impl LangModelProvider {
     }
 }
 
+/// Moonshot kimi-k2.5 / kimi-k2.6 accept a `thinking` toggle in the request
+/// body. Other ChatCompletion-schema vendors (OpenAI, x.ai, DeepSeek) ignore it.
+fn is_moonshot_thinking_model(model: &str) -> bool {
+    model.starts_with("kimi-k2.5") || model.starts_with("kimi-k2.6")
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ChatCompletionMarshal;
 
@@ -233,6 +239,18 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
                 .insert("top_p".to_owned(), top_p.into());
         }
         // top_k is not part of the OpenAI ChatCompletion spec; intentionally ignored.
+        if let Some(mode) = req.thinking
+            && is_moonshot_thinking_model(req.model)
+        {
+            let s = match mode {
+                crate::lang_model::ThinkingMode::Enabled => "enabled",
+                crate::lang_model::ThinkingMode::Disabled => "disabled",
+            };
+            body.as_object_mut().unwrap().insert(
+                "thinking".into(),
+                to_value!({ "type": s }),
+            );
+        }
         if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
             let wire_schema = self.marshal_response_schema(schema);
             body.as_object_mut().unwrap().insert(
@@ -444,6 +462,7 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: None,
+            thinking: None,
         };
         f(&req)
     }
@@ -485,6 +504,90 @@ mod tests {
         });
     }
 
+    fn with_req_thinking<F, R>(
+        model: &str,
+        thinking: Option<crate::lang_model::ThinkingMode>,
+        f: F,
+    ) -> R
+    where
+        F: FnOnce(&LangModelRequest<'_>) -> R,
+    {
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let url = Url::parse("https://api.moonshot.ai/v1/chat/completions").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
+            model,
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: None,
+            thinking,
+        };
+        f(&req)
+    }
+
+    #[test]
+    fn test_marshal_thinking_kimi_disabled() {
+        with_req_thinking(
+            "kimi-k2.6",
+            Some(crate::lang_model::ThinkingMode::Disabled),
+            |req| {
+                let val = ChatCompletionMarshal::default().marshal(req);
+                let body = val.as_object().unwrap().get("body").unwrap();
+                let thinking = body.as_object().unwrap().get("thinking").unwrap();
+                assert_eq!(
+                    thinking.as_object().unwrap().get("type").unwrap().as_str().unwrap(),
+                    "disabled"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn test_marshal_thinking_kimi_enabled() {
+        with_req_thinking(
+            "kimi-k2.5",
+            Some(crate::lang_model::ThinkingMode::Enabled),
+            |req| {
+                let val = ChatCompletionMarshal::default().marshal(req);
+                let body = val.as_object().unwrap().get("body").unwrap();
+                let thinking = body.as_object().unwrap().get("thinking").unwrap();
+                assert_eq!(
+                    thinking.as_object().unwrap().get("type").unwrap().as_str().unwrap(),
+                    "enabled"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn test_marshal_thinking_ignored_on_other_models() {
+        with_req_thinking(
+            "gpt-4.1-mini",
+            Some(crate::lang_model::ThinkingMode::Disabled),
+            |req| {
+                let val = ChatCompletionMarshal::default().marshal(req);
+                let body = val.as_object().unwrap().get("body").unwrap();
+                assert!(body.as_object().unwrap().get("thinking").is_none());
+            },
+        );
+    }
+
+    #[test]
+    fn test_marshal_thinking_absent_when_none() {
+        with_req_thinking("kimi-k2.6", None, |req| {
+            let val = ChatCompletionMarshal::default().marshal(req);
+            let body = val.as_object().unwrap().get("body").unwrap();
+            assert!(body.as_object().unwrap().get("thinking").is_none());
+        });
+    }
+
     #[test]
     fn test_marshal_response_format_json_schema() {
         let schema = to_value!({"type": "object", "properties": {"score": {"type": "integer"}}});
@@ -504,6 +607,7 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: Some(&fmt),
+            thinking: None,
         };
         let val = ChatCompletionMarshal::default().marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();

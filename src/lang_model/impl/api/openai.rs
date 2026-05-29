@@ -443,6 +443,7 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: None,
+            thinking: None,
         };
         f(&req)
     }
@@ -484,6 +485,7 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: Some(&fmt),
+            thinking: None,
         };
 
         let val = OpenAIMarshal::default().marshal(&req);
