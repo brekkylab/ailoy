@@ -222,9 +222,14 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
                 .insert("system".into(), system);
         }
         if !tools.is_null() {
+            let choice = match req.tool_choice {
+                Some(crate::lang_model::ToolChoice::None) => to_value!({"type": "none"}),
+                Some(crate::lang_model::ToolChoice::Required) => to_value!({"type": "any"}),
+                _ => to_value!({"type": "auto"}),
+            };
             body.as_object_mut()
                 .unwrap()
-                .insert("tool_choice".to_owned(), to_value!({"type": "auto"}));
+                .insert("tool_choice".to_owned(), choice);
             body.as_object_mut()
                 .unwrap()
                 .insert("tools".to_owned(), tools);
@@ -434,6 +439,7 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: None,
+            tool_choice: None,
         };
         f(&req)
     }
@@ -627,6 +633,50 @@ mod tests {
         );
     }
 
+    fn tool_choice_body(choice: Option<crate::lang_model::ToolChoice>) -> Value {
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![
+            ToolDescBuilder::new("noop").description("nope").parameters(to_value!({})).build(),
+        ];
+        let url = Url::parse("https://api.anthropic.com/v1/messages").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
+            model: "claude-haiku-4-5",
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: None,
+            tool_choice: choice,
+        };
+        AnthropicMarshal::default().marshal(&req)
+    }
+
+    #[test]
+    fn test_tool_choice_default_is_auto() {
+        let val = tool_choice_body(None);
+        let tc = val.pointer("/body/tool_choice/type").and_then(|v| v.as_str());
+        assert_eq!(tc, Some("auto"));
+    }
+
+    #[test]
+    fn test_tool_choice_none_forbids_tool_call() {
+        let val = tool_choice_body(Some(crate::lang_model::ToolChoice::None));
+        let tc = val.pointer("/body/tool_choice/type").and_then(|v| v.as_str());
+        assert_eq!(tc, Some("none"));
+    }
+
+    #[test]
+    fn test_tool_choice_required_maps_to_any() {
+        let val = tool_choice_body(Some(crate::lang_model::ToolChoice::Required));
+        let tc = val.pointer("/body/tool_choice/type").and_then(|v| v.as_str());
+        assert_eq!(tc, Some("any"));
+    }
+
     #[test]
     fn test_marshal_response_format_absent() {
         with_req("claude-haiku-4-5", None, |req| {
@@ -655,6 +705,7 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: Some(&fmt),
+            tool_choice: None,
         };
         let val = AnthropicMarshal::default().marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();

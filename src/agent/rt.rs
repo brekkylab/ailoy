@@ -1,10 +1,15 @@
-use std::{collections::HashMap, path::PathBuf, pin::Pin};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    pin::Pin,
+    sync::{Arc, Mutex as StdMutex},
+};
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
 use crate::{
     agent::{AgentProvider, AgentSpec, ContextManager, default_provider},
-    lang_model::{LangModel, LangModelOptions},
+    lang_model::{LangModel, LangModelOptions, ToolChoice},
     message::{FinishReason, Message, MessageOutput, Part, Role},
     runenv::{Console, RunEnv},
     skill::{render_skills_table, scan_declared_skills},
@@ -13,6 +18,9 @@ use crate::{
         r#impl::{get_subagent_tool_desc, get_subagent_tool_func, get_web_search_tool_factory},
     },
 };
+
+/// Shared handle for one-shot `tool_choice` override of the next model call.
+pub type ToolChoiceHandle = Arc<StdMutex<Option<ToolChoice>>>;
 
 /// Walk the spec tree and write every declared file (this agent's plus the
 /// subtree's) to the runenv with **write-once** semantics: if a file already
@@ -90,6 +98,8 @@ pub struct Agent {
     model: LangModel,
 
     model_options: LangModelOptions,
+
+    tool_choice_override: ToolChoiceHandle,
 
     tool_descs: Vec<ToolDesc>,
 
@@ -203,6 +213,7 @@ impl Agent {
         Ok(Self {
             model,
             model_options,
+            tool_choice_override: Arc::new(StdMutex::new(None)),
             tools,
             tool_descs,
             state,
@@ -210,6 +221,17 @@ impl Agent {
             spec,
             files_materialised: false,
         })
+    }
+
+    /// Clone of the per-turn `tool_choice` override handle.
+    pub fn tool_choice_handle(&self) -> ToolChoiceHandle {
+        self.tool_choice_override.clone()
+    }
+
+    /// Replace the handle with an externally-owned one so a tool callback built
+    /// before the agent can write to it.
+    pub fn set_tool_choice_handle(&mut self, handle: ToolChoiceHandle) {
+        self.tool_choice_override = handle;
     }
 
     /// Maximum number of characters kept in a single tool-result message before
@@ -434,9 +456,20 @@ impl Agent {
                         cm.truncate_history(&mut self.state.history);
                     }
 
+                let effective_options = {
+                    let override_val = self.tool_choice_override.lock().unwrap().take();
+                    if override_val.is_some() {
+                        let mut o = self.model_options.clone();
+                        o.tool_choice = override_val;
+                        o
+                    } else {
+                        self.model_options.clone()
+                    }
+                };
+
                 let mut output = self
                     .model
-                    .run(&self.state.history, &self.tool_descs, &self.model_options)
+                    .run(&self.state.history, &self.tool_descs, &effective_options)
                     .await?;
 
                 // Capture token usage for next iteration's truncation check.

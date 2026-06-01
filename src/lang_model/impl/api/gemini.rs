@@ -279,6 +279,17 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
         }
         if !tools.is_null() {
             body.as_object_mut().unwrap().insert("tools".into(), tools);
+            if let Some(choice) = req.tool_choice {
+                let mode = match choice {
+                    crate::lang_model::ToolChoice::Auto => "AUTO",
+                    crate::lang_model::ToolChoice::None => "NONE",
+                    crate::lang_model::ToolChoice::Required => "ANY",
+                };
+                body.as_object_mut().unwrap().insert(
+                    "tool_config".into(),
+                    to_value!({"function_calling_config": {"mode": mode}}),
+                );
+            }
         }
         let mut generation_config = to_value!({});
         if let Some(max_tokens) = req.max_tokens {
@@ -509,8 +520,56 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: None,
+            tool_choice: None,
         };
         f(&req)
+    }
+
+    fn tool_choice_body(choice: Option<crate::lang_model::ToolChoice>) -> Value {
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![
+            ToolDescBuilder::new("noop").description("nope").parameters(to_value!({})).build(),
+        ];
+        let url = Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
+            model: "gemini-2.0-flash",
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: None,
+            tool_choice: choice,
+        };
+        GeminiMarshal::default().marshal(&req)
+    }
+
+    #[test]
+    fn test_tool_choice_default_omits_tool_config() {
+        let v = tool_choice_body(None);
+        assert!(v.pointer("/body/tool_config").is_none());
+    }
+
+    #[test]
+    fn test_tool_choice_none_sets_mode_none() {
+        let v = tool_choice_body(Some(crate::lang_model::ToolChoice::None));
+        let mode = v
+            .pointer("/body/tool_config/function_calling_config/mode")
+            .and_then(|x| x.as_str());
+        assert_eq!(mode, Some("NONE"));
+    }
+
+    #[test]
+    fn test_tool_choice_required_sets_mode_any() {
+        let v = tool_choice_body(Some(crate::lang_model::ToolChoice::Required));
+        let mode = v
+            .pointer("/body/tool_config/function_calling_config/mode")
+            .and_then(|x| x.as_str());
+        assert_eq!(mode, Some("ANY"));
     }
 
     #[test]
@@ -718,6 +777,7 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: Some(&fmt),
+            tool_choice: None,
         };
         let val = GeminiMarshal::default().marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();

@@ -207,9 +207,14 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
                 .insert("instructions".into(), instructions);
         }
         if !tools.is_null() {
+            let choice = match req.tool_choice {
+                Some(crate::lang_model::ToolChoice::None) => to_value!("none"),
+                Some(crate::lang_model::ToolChoice::Required) => to_value!("required"),
+                _ => to_value!("auto"),
+            };
             body.as_object_mut()
                 .unwrap()
-                .insert("tool_choice".into(), to_value!("auto"));
+                .insert("tool_choice".into(), choice);
             body.as_object_mut().unwrap().insert("tools".into(), tools);
         }
         if let Some(max_tokens) = req.max_tokens {
@@ -443,8 +448,50 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: None,
+            tool_choice: None,
         };
         f(&req)
+    }
+
+    fn tool_choice_body(choice: Option<crate::lang_model::ToolChoice>) -> Value {
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![
+            ToolDescBuilder::new("noop").description("nope").parameters(to_value!({})).build(),
+        ];
+        let url = Url::parse("https://api.openai.com/v1/responses").unwrap();
+        let api_key: Option<String> = None;
+        let req = LangModelRequest {
+            model: "gpt-4o",
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: None,
+            tool_choice: choice,
+        };
+        OpenAIMarshal::default().marshal(&req)
+    }
+
+    #[test]
+    fn test_tool_choice_default_is_auto() {
+        let v = tool_choice_body(None);
+        assert_eq!(v.pointer("/body/tool_choice").and_then(|x| x.as_str()), Some("auto"));
+    }
+
+    #[test]
+    fn test_tool_choice_none_forbids_tool_call() {
+        let v = tool_choice_body(Some(crate::lang_model::ToolChoice::None));
+        assert_eq!(v.pointer("/body/tool_choice").and_then(|x| x.as_str()), Some("none"));
+    }
+
+    #[test]
+    fn test_tool_choice_required() {
+        let v = tool_choice_body(Some(crate::lang_model::ToolChoice::Required));
+        assert_eq!(v.pointer("/body/tool_choice").and_then(|x| x.as_str()), Some("required"));
     }
 
     #[test]
@@ -484,6 +531,7 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: Some(&fmt),
+            tool_choice: None,
         };
 
         let val = OpenAIMarshal::default().marshal(&req);
