@@ -215,19 +215,10 @@ impl AgentBuilder {
             state,
         } = self;
 
-        let runenv = state.runenv.clone();
-        let mut agent = match provider {
-            None => Agent::try_with_provider_and_runenv(spec, &default_provider(), runenv)?,
-            Some(provider) => Agent::try_with_provider_and_runenv(spec, &provider, runenv)?,
-        };
-        // Only override the spec-derived history (which seeds the system instruction)
-        // when the caller explicitly supplied one — e.g. for session resumption.
-        if !state.messages.is_empty() {
-            agent.state.messages = state.messages;
+        match provider {
+            None => Agent::try_with_provider_and_state(spec, &default_provider(), state),
+            Some(provider) => Agent::try_with_provider_and_state(spec, &provider, state),
         }
-        agent.state.max_input_tokens = state.max_input_tokens;
-        agent.state.preserve_recent_turns = state.preserve_recent_turns;
-        Ok(agent)
     }
 }
 

@@ -50,7 +50,7 @@ fn materialise_files_recursive<'a>(
 /// filesystem state.
 ///
 /// For construction options, see [`Agent::try_new`], [`Agent::try_with_provider`],
-/// [`Agent::try_with_runenv`], and [`Agent::try_with_provider_and_runenv`].
+/// [`Agent::try_with_state`], and [`Agent::try_with_provider_and_state`].
 pub struct Agent {
     model: LangModel,
 
@@ -81,13 +81,10 @@ impl Agent {
         Self::try_with_provider(spec, &provider)
     }
 
-    /// Create an agent using the process-wide [`default_provider`] and an explicit [`RunEnv`].
-    pub fn try_with_runenv(
-        spec: AgentSpec,
-        runenv: impl Into<Arc<RunEnv>>,
-    ) -> anyhow::Result<Self> {
+    /// Create an agent using the process-wide [`default_provider`] and an explicit [`AgentState`].
+    pub fn try_with_state(spec: AgentSpec, state: AgentState) -> anyhow::Result<Self> {
         let provider = default_provider();
-        Self::try_with_provider_and_runenv(spec, &provider, runenv)
+        Self::try_with_provider_and_state(spec, &provider, state)
     }
 
     /// Create an agent with an explicit [`AgentProvider`] and a local runenv.
@@ -96,26 +93,32 @@ impl Agent {
     /// touching global state.  The provider is not stored in the agent and can be
     /// reused across multiple agents.
     pub fn try_with_provider(spec: AgentSpec, provider: &AgentProvider) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_runenv(spec, provider, Arc::new(RunEnv::local()))
+        Self::try_with_provider_and_state(spec, provider, AgentState::new())
     }
 
-    /// Create an agent with an explicit [`AgentProvider`] and [`RunEnv`].
+    /// Create an agent with an explicit [`AgentProvider`] and [`AgentState`].
     ///
-    /// The full constructor.  The supplied `runenv` is stored in [`AgentState::runenv`]
-    /// and is also cloned into every sub-agent declared in [`AgentSpec::subagents`], so
-    /// the parent and its sub-agents observe the same filesystem and process state.
+    /// The full constructor.  The supplied `state` is stored on the agent and its
+    /// [`AgentState::runenv`] is cloned into every sub-agent declared in
+    /// [`AgentSpec::subagents`], so the parent and its sub-agents observe the same
+    /// filesystem and process state.
+    ///
+    /// When the supplied [`AgentState::messages`] is empty, a system message is
+    /// derived from [`AgentSpec::instruction`] and the declared skills table and
+    /// prepended to history.  Otherwise the caller-supplied messages are used as-is
+    /// (useful for session resumption).
     ///
     /// Files declared in [`AgentSpec::files`] are materialised lazily on the
     /// first [`Self::run`].  Each path in [`AgentSpec::skills`] is an absolute
     /// directory containing a `SKILL.md`; the spec is taken as-is — sub-spec
     /// skill paths are **not** rewritten, so sub-agent skills are portable
     /// across parents.
-    pub fn try_with_provider_and_runenv(
+    pub fn try_with_provider_and_state(
         spec: AgentSpec,
         provider: &AgentProvider,
-        runenv: impl Into<Arc<RunEnv>>,
+        mut state: AgentState,
     ) -> anyhow::Result<Self> {
-        let runenv: Arc<RunEnv> = runenv.into();
+        let runenv: Arc<RunEnv> = state.runenv.clone();
         // Resolve LangModel from the registry (handles glob lookup + prefix stripping)
         let model = provider.models.provide(&spec.model)?;
 
@@ -153,19 +156,24 @@ impl Agent {
         // Build the system message: instruction + (optionally) the skills table.
         // The table is rendered from declared `spec.skills` by matching
         // each entry against an in-memory `SKILL.md` FileEntry.
-        let declared_skills = scan_declared_skills(&spec.files, &spec.skills)?;
-        let skills_block = render_skills_table(&declared_skills);
-        let system_text = match (spec.instruction.as_deref(), skills_block) {
-            (Some(inst), Some(block)) => Some(format!("{inst}\n\n{block}")),
-            (Some(inst), None) => Some(inst.to_string()),
-            (None, Some(block)) => Some(block),
-            (None, None) => None,
-        };
-        let history = system_text
-            .map(|t| vec![Message::new(Role::System).with_contents([Part::text(t)])])
-            .unwrap_or_default();
-
-        let state = AgentState::new().messages(history).runenv(runenv);
+        // Only seed when the caller hasn't supplied their own messages — a
+        // non-empty `state.messages` is taken as a deliberate resume and
+        // overrides the spec-derived system message.
+        if state.messages.is_empty() {
+            let declared_skills = scan_declared_skills(&spec.files, &spec.skills)?;
+            let skills_block = render_skills_table(&declared_skills);
+            let system_text = match (spec.instruction.as_deref(), skills_block) {
+                (Some(inst), Some(block)) => Some(format!("{inst}\n\n{block}")),
+                (Some(inst), None) => Some(inst.to_string()),
+                (None, Some(block)) => Some(block),
+                (None, None) => None,
+            };
+            if let Some(t) = system_text {
+                state
+                    .messages
+                    .push(Message::new(Role::System).with_contents([Part::text(t)]));
+            }
+        }
 
         Ok(Self {
             model,
@@ -1090,7 +1098,8 @@ mod tests {
         let runenv = RunEnv::sandbox(SandboxConfig::default())
             .await
             .expect("sandbox creation failed");
-        let mut agent = Agent::try_with_provider_and_runenv(spec, &provider, runenv).unwrap();
+        let state = AgentState::new().runenv(runenv);
+        let mut agent = Agent::try_with_provider_and_state(spec, &provider, state).unwrap();
 
         let log = "/tmp/agent_serial_test.txt";
         let query = Message::new(Role::User).with_contents([Part::text(format!(
@@ -1261,7 +1270,8 @@ To activate a skill, read its SKILL.md using the shell tool \
         let runenv = RunEnv::sandbox(SandboxConfig::default())
             .await
             .expect("sandbox creation failed");
-        let mut agent = Agent::try_with_provider_and_runenv(spec, &provider, runenv).unwrap();
+        let state = AgentState::new().runenv(runenv);
+        let mut agent = Agent::try_with_provider_and_state(spec, &provider, state).unwrap();
 
         // Seed the sandbox with the skill file and the test PDF before running the agent.
         let pdf_bytes = minimal_pdf_bytes();
@@ -1357,7 +1367,7 @@ To activate a skill, read its SKILL.md using the shell tool \
     /// End-to-end: parent agent delegates to subagent via tool call, subagent writes
     /// a sentinel file in the shared sandbox, parent reads it back with its own shell tool
     /// and returns the content.  Proves the runenv passed to
-    /// [`Agent::try_with_provider_and_runenv`] is propagated to spec subagents so they
+    /// [`Agent::try_with_provider_and_state`] is propagated to spec subagents so they
     /// share the same VM.
     #[cfg(feature = "sandbox")]
     #[test_with::env(ANTHROPIC_API_KEY)]
@@ -1401,7 +1411,8 @@ To activate a skill, read its SKILL.md using the shell tool \
             )
             .subagent(sub_spec);
 
-        let mut parent = Agent::try_with_provider_and_runenv(main_spec, &provider, runenv.clone())
+        let state = AgentState::new().runenv(runenv.clone());
+        let mut parent = Agent::try_with_provider_and_state(main_spec, &provider, state)
             .expect("parent build failed");
 
         let query =

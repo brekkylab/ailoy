@@ -3,7 +3,7 @@ use std::sync::Arc;
 use futures::StreamExt as _;
 
 use crate::{
-    agent::{Agent, AgentCard, AgentProvider, AgentSpec},
+    agent::{Agent, AgentCard, AgentProvider, AgentSpec, AgentState},
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role},
     runenv::{RunEnv, RunEnvHandle},
@@ -101,7 +101,8 @@ pub fn get_subagent_tool_func(
                 }
             };
 
-            let mut agent = match Agent::try_with_provider_and_runenv(spec, &provider, runenv) {
+            let state = AgentState::new().runenv(runenv);
+            let mut agent = match Agent::try_with_provider_and_state(spec, &provider, state) {
                 Ok(a) => a,
                 Err(e) => {
                     yield MessageOutput {
