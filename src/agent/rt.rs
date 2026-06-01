@@ -294,7 +294,7 @@ impl Agent {
                 let outcome: Result<anyhow::Result<bool>, _> =
                     std::panic::AssertUnwindSafe(async move {
                         // Boot the runenv lazily: only when a tool actually runs.
-                        // RunEnv caches the booted handle so concurrent tool calls
+                        // RunEnv caches the started handle so concurrent tool calls
                         // share the same VM.
                         let handle = runenv.get().await?;
                         let mut stream = tool.call(call_args, call_id_for_call, handle);
@@ -1121,7 +1121,7 @@ mod tests {
             .runenv
             .get()
             .await
-            .expect("runenv boot failed")
+            .expect("runenv start failed")
             .read(std::path::Path::new(log))
             .await
             .expect("failed to read log");
@@ -1275,7 +1275,7 @@ To activate a skill, read its SKILL.md using the shell tool \
 
         // Seed the sandbox with the skill file and the test PDF before running the agent.
         let pdf_bytes = minimal_pdf_bytes();
-        let handle = agent.state.runenv.get().await.expect("runenv boot failed");
+        let handle = agent.state.runenv.get().await.expect("runenv start failed");
         let _ = handle
             .exec(
                 "sh".to_string(),
@@ -1316,7 +1316,7 @@ To activate a skill, read its SKILL.md using the shell tool \
             .runenv
             .get()
             .await
-            .expect("runenv boot failed")
+            .expect("runenv start failed")
             .read(std::path::Path::new("/workspace/test.md"))
             .await
             .expect("agent should have written /workspace/test.md");
@@ -1428,7 +1428,7 @@ To activate a skill, read its SKILL.md using the shell tool \
         let result = runenv
             .get()
             .await
-            .expect("runenv boot failed")
+            .expect("runenv start failed")
             .exec(
                 "sh".to_string(),
                 vec!["-c".to_string(), "cat /workspace/sentinel.txt".to_string()],

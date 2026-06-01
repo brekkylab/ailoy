@@ -3,7 +3,7 @@ use reqwest::Client;
 use scraper::{Html, Selector};
 
 use crate::tool::r#impl::builtins::web_search::engine::{
-    SearchEngine, SearchError, SearchResult, SearchResultParser, USER_AGENT,
+    SearchEngine, SearchError, SearchResult, SearchResultParser, gen_useragent,
 };
 
 pub struct DuckDuckGo {
@@ -149,7 +149,7 @@ impl SearchEngine for DuckDuckGo {
         let response = client
             .post("https://html.duckduckgo.com/html/")
             .form(&[("q", query), ("b", ""), ("kl", "wt-wt")])
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", gen_useragent())
             .header(
                 "Accept",
                 "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",

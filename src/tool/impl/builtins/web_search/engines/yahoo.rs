@@ -3,8 +3,12 @@ use reqwest::Client;
 use scraper::Html;
 
 use crate::tool::r#impl::builtins::web_search::engine::{
-    SearchEngine, SearchError, SearchResult, SearchResultParser, USER_AGENT,
+    SearchEngine, SearchError, SearchResult, SearchResultParser, gen_useragent,
 };
+
+fn build_sb_cookie() -> String {
+    "v=1&vm=p&fl=1&vl=lang_en&pn=10&rw=new&userset=1".to_string()
+}
 
 pub struct Yahoo {
     parser: SearchResultParser,
@@ -12,8 +16,8 @@ pub struct Yahoo {
 
 impl Yahoo {
     pub fn new() -> Result<Self, SearchError> {
-        // Yahoo wraps <h3 class="title"> inside <a>, so "h3 a" finds nothing.
-        // The anchor (.compTitle a) is the parent of <h3>, not a child.
+        // `<a>` wraps `<h3>` (not the reverse), so the link selector targets
+        // `.compTitle a`.
         let parser = SearchResultParser::new(
             ".no-results",
             ".algo",
@@ -24,8 +28,7 @@ impl Yahoo {
         Ok(Self { parser })
     }
 
-    /// Extract the actual destination URL from Yahoo's redirect wrapper.
-    /// Yahoo wraps URLs as: /RU=<encoded_url>/RK=...
+    /// Decode `/RU=<encoded>/RK=…` redirect wrappers; pass through otherwise.
     pub fn extract_redirect_url(href: &str) -> String {
         if let Some(ru_start) = href.find("/RU=") {
             let after_ru = &href[ru_start + 4..];
@@ -52,15 +55,16 @@ impl SearchEngine for Yahoo {
         max_results: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
         let url = format!(
-            "https://search.yahoo.com/search?p={}&ei=UTF-8",
+            "https://search.yahoo.com/search?p={}&ei=UTF-8&iscqry=&bct=0&xargs=0&pz=7",
             urlencoding::encode(query)
         );
 
         let response = client
             .get(&url)
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", gen_useragent())
             .header("Accept", "text/html,application/xhtml+xml")
             .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Cookie", format!("sB={}", build_sb_cookie()))
             .send()
             .await?;
 
@@ -95,6 +99,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_build_sb_cookie_includes_all_pairs() {
+        let c = build_sb_cookie();
+        for required in [
+            "v=1", "vm=p", "fl=1", "vl=lang_en", "pn=10", "rw=new", "userset=1",
+        ] {
+            assert!(
+                c.contains(required),
+                "sB cookie missing `{required}`: got `{c}`"
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_sb_cookie_uses_ampersand_separator() {
+        let c = build_sb_cookie();
+        let pairs: Vec<&str> = c.split('&').collect();
+        assert_eq!(pairs.len(), 7);
+    }
+
+    #[test]
     fn test_yahoo_extract_redirect_url() {
         assert_eq!(
             Yahoo::extract_redirect_url("/RU=https%3A%2F%2Fexample.com/RK=2"),
@@ -113,7 +137,6 @@ mod tests {
     #[test]
     fn test_yahoo_parser_extracts_results() {
         let engine = Yahoo::new().expect("Failed to create Yahoo engine");
-        // Structure matches current Yahoo HTML: <a> wraps <h3>, not the other way around
         let html = r#"
             <html><body>
               <div class="algo">

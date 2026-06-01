@@ -38,11 +38,12 @@ fancy-regex = "0.16"
 futures = "0.3"
 getrandom = "0.3"
 hex = "0.4"
+html-to-markdown-rs = { version = "3.4", features = ["metadata"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 indexmap = { version = "2", features = ["serde"] }
 infer = "0.16"
 log = "0.4"
-microsandbox = { git = "https://github.com/superradcompany/microsandbox", rev = "1294b4d7f850741e4d7fa91624226fcb45aa848a", optional = true }
+microsandbox = { version = "0.5.2", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 parking_lot = "0.12.4"
 png = "0.18"

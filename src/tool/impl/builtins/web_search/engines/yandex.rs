@@ -3,7 +3,7 @@ use reqwest::Client;
 use scraper::{Html, Selector};
 
 use crate::tool::r#impl::builtins::web_search::engine::{
-    SearchEngine, SearchError, SearchResult, USER_AGENT,
+    SearchEngine, SearchError, SearchResult, gen_useragent,
 };
 
 /// Yandex web search via the Yandex Site Search widget endpoint.
@@ -70,7 +70,7 @@ impl SearchEngine for Yandex {
 
         let response = client
             .get(&url)
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", gen_useragent())
             .header(
                 "Accept",
                 "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",

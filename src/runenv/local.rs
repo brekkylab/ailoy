@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use super::{Console, ExecResult, Machine};
 
-/// `Machine` that runs commands directly on the host. Boot/shutdown are
+/// `Machine` that runs commands directly on the host. Start/stop are
 /// no-ops because there is no underlying VM to spin up.
 #[derive(Debug, Clone, Default)]
 pub struct Local {}
@@ -19,11 +19,11 @@ impl Local {
 impl Machine for Local {
     type Handle = LocalConsole;
 
-    async fn boot(&mut self) -> anyhow::Result<LocalConsole> {
+    async fn start(&mut self) -> anyhow::Result<LocalConsole> {
         Ok(LocalConsole {})
     }
 
-    async fn shutdown(&mut self) {}
+    async fn stop(&mut self) {}
 }
 
 pub struct LocalConsole {}
