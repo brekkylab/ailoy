@@ -4,8 +4,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use super::LangModel;
-
 /// Wire protocol used when calling a language model API.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -27,7 +25,7 @@ pub enum LangModelAPISchema {
 /// Describes the runtime endpoint used to invoke a language model.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum LangModelProviderElem {
+pub(crate) enum LangModelProviderElem {
     /// Calls a remote HTTP API. Requires the wire `schema`, the `url` of the endpoint, and an optional `api_key` for authentication.
     API {
         schema: LangModelAPISchema,
@@ -42,19 +40,16 @@ pub enum LangModelProviderElem {
 ///
 /// Keys may be exact model names (e.g. `"openai/gpt-4o"`) or globs supporting
 /// `*` (any sequence) and `?` (any single character) — e.g. `"openai/*"`,
-/// `"anthropic/claude-*"`. [`get`](Self::get) prefers an exact hit, then falls
-/// back to the most specific glob match (longest run of literal characters).
+/// `"anthropic/claude-*"`. Lookups prefer an exact hit, then fall back to the
+/// most specific glob match (longest run of literal characters).
 ///
-/// Populate via the convenience constructors ([`openai`](Self::openai),
-/// [`anthropic`](Self::anthropic), [`gemini`](Self::gemini),
-/// [`chat_completion`](Self::chat_completion), …) which return
-/// [`LangModelProviderElem`] values, then [`insert`](Self::insert) them under
-/// the chosen pattern. At agent construction the registry is consulted via
-/// [`make_runtime`](Self::make_runtime) to build a [`LangModel`].
+/// Populate via [`insert_api`](Self::insert_api). At agent construction the
+/// registry is consulted by
+/// [`LangModel::try_with_provider`](crate::lang_model::LangModel::try_with_provider).
 ///
 /// [`Default::default`] (and therefore [`AgentProvider::new`]) returns a
-/// registry pre-populated from the environment:  registers `openai/*`,
-/// `anthropic/*`, `google/*`, `x-ai/*`, `deepseek/*`, and/or `moonshotai/kimi-*` for every
+/// registry pre-populated from the environment: registers `openai/*`,
+/// `anthropic/*`, `google/*`, `x-ai/*`, `deepseek/*`, and/or `moonshotai/*` for every
 /// `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `XAI_API_KEY` / `DEEPSEEK_API_KEY`
 /// / `KIMI_API_KEY` that is set.
 /// Use [`new`](Self::new) for an empty registry.
@@ -69,22 +64,58 @@ impl Default for LangModelProvider {
     fn default() -> Self {
         let mut p = Self::new();
         if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-            p.insert("openai/*".into(), Self::openai(key));
+            p.insert_api(
+                "openai/*".into(),
+                LangModelAPISchema::OpenAI,
+                "https://api.openai.com/v1/responses",
+                Some(key),
+            )
+            .unwrap();
         }
         if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-            p.insert("anthropic/*".into(), Self::anthropic(key));
+            p.insert_api(
+                "anthropic/*".into(),
+                LangModelAPISchema::Anthropic,
+                "https://api.anthropic.com/v1/messages",
+                Some(key),
+            )
+            .unwrap();
         }
         if let Ok(key) = std::env::var("GEMINI_API_KEY") {
-            p.insert("google/*".into(), Self::gemini(key));
+            p.insert_api(
+                "google/*".into(),
+                LangModelAPISchema::Gemini,
+                "https://generativelanguage.googleapis.com/v1beta/models/",
+                Some(key),
+            )
+            .unwrap();
         }
         if let Ok(key) = std::env::var("XAI_API_KEY") {
-            p.insert("x-ai/*".into(), Self::grok(key));
+            p.insert_api(
+                "x-ai/*".into(),
+                LangModelAPISchema::ChatCompletion,
+                "https://api.x.ai/v1/chat/completions",
+                Some(key),
+            )
+            .unwrap();
         }
         if let Ok(key) = std::env::var("DEEPSEEK_API_KEY") {
-            p.insert("deepseek/*".into(), Self::deepseek(key));
+            p.insert_api(
+                "deepseek/*".into(),
+                LangModelAPISchema::ChatCompletion,
+                "https://api.deepseek.com/chat/completions",
+                Some(key),
+            )
+            .unwrap();
         }
         if let Ok(key) = std::env::var("KIMI_API_KEY") {
-            p.insert("moonshotai/*".into(), Self::kimi(key));
+            p.insert_api(
+                "moonshotai/*".into(),
+                LangModelAPISchema::ChatCompletion,
+                "https://api.moonshot.ai/v1/chat/completions",
+                Some(key),
+            )
+            .unwrap();
         }
         p
     }
@@ -98,21 +129,17 @@ impl LangModelProvider {
         }
     }
 
-    /// Register an endpoint under a name or glob pattern (`*`, `?`).
-    /// Overwrites any existing entry with the same key.
-    pub fn insert(&mut self, pattern: String, elem: LangModelProviderElem) {
-        self.inner.insert(pattern, elem);
-    }
-
-    /// Convenience over [`insert`](Self::insert) that constructs an
-    /// [`LangModelProviderElem::API`] inline.
+    /// Register an arbitrary API endpoint under a name or glob pattern (`*`, `?`).
+    /// Overwrites any existing entry with the same key. Returns an error if
+    /// `url` is not a valid URL.
     pub fn insert_api(
         &mut self,
         pattern: String,
         schema: LangModelAPISchema,
-        url: Url,
+        url: impl AsRef<str>,
         api_key: Option<String>,
-    ) {
+    ) -> anyhow::Result<()> {
+        let url = Url::parse(url.as_ref())?;
         self.inner.insert(
             pattern,
             LangModelProviderElem::API {
@@ -121,6 +148,7 @@ impl LangModelProvider {
                 api_key,
             },
         );
+        Ok(())
     }
 
     pub fn remove(&mut self, pattern: &str) {
@@ -129,7 +157,7 @@ impl LangModelProvider {
 
     /// Resolve a model name. Exact match wins; otherwise the registered glob
     /// pattern with the longest literal run is selected.
-    pub fn get(&self, name: impl AsRef<str>) -> Option<&LangModelProviderElem> {
+    pub(crate) fn get(&self, name: impl AsRef<str>) -> Option<&LangModelProviderElem> {
         let name = name.as_ref();
         if let Some(elem) = self.inner.get(name) {
             return Some(elem);
@@ -141,23 +169,6 @@ impl LangModelProvider {
             .map(|(_, elem)| elem)
     }
 
-    /// Build a runtime [`LangModel`] for `spec_model`.
-    ///
-    /// Looks up `spec_model` (with glob fallback), strips any `provider/` prefix
-    /// to recover the API-side model id (e.g. `"openai/gpt-4o"` → `"gpt-4o"`),
-    /// and hands the resolved endpoint to [`LangModel::new`].
-    pub fn provide(&self, spec_model: impl AsRef<str>) -> anyhow::Result<LangModel> {
-        let spec_model = spec_model.as_ref();
-        let elem = self
-            .get(spec_model)
-            .ok_or_else(|| anyhow::anyhow!("No provider found for model '{}'", spec_model))?
-            .clone();
-        let model_id = spec_model
-            .split_once('/')
-            .map(|(_, id)| id.to_string())
-            .unwrap_or_else(|| spec_model.to_string());
-        Ok(LangModel::new(model_id, elem))
-    }
 }
 
 fn glob_match(pattern: &str, text: &str) -> bool {
@@ -185,20 +196,23 @@ fn glob_match_chars(p: &[char], t: &[char]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lang_model::LangModel;
 
-    fn dummy() -> LangModelProviderElem {
-        LangModelProviderElem::API {
-            schema: LangModelAPISchema::OpenAI,
-            url: Url::parse("https://example.com").unwrap(),
-            api_key: None,
-        }
+    fn insert_dummy(p: &mut LangModelProvider, pattern: &str) {
+        p.insert_api(
+            pattern.into(),
+            LangModelAPISchema::OpenAI,
+            "https://example.com",
+            None,
+        )
+        .unwrap();
     }
 
     #[test]
     fn exact_match_takes_precedence() {
         let mut p = LangModelProvider::new();
-        p.insert("openai/*".into(), dummy());
-        p.insert("openai/gpt-4o".into(), dummy());
+        insert_dummy(&mut p, "openai/*");
+        insert_dummy(&mut p, "openai/gpt-4o");
         // both match; exact wins (verified indirectly: removing exact still leaves a hit).
         assert!(p.get("openai/gpt-4o").is_some());
         p.remove("openai/gpt-4o");
@@ -208,9 +222,9 @@ mod tests {
     #[test]
     fn glob_picks_most_specific() {
         let mut p = LangModelProvider::new();
-        p.insert("*".into(), dummy());
-        p.insert("openai/*".into(), dummy());
-        p.insert("anthropic/*".into(), dummy());
+        insert_dummy(&mut p, "*");
+        insert_dummy(&mut p, "openai/*");
+        insert_dummy(&mut p, "anthropic/*");
         // longest literal run is "openai/" — ensures it would be picked over "*".
         assert!(p.get("openai/gpt-4o").is_some());
         assert!(p.get("anthropic/claude-x").is_some());
@@ -220,15 +234,15 @@ mod tests {
     #[test]
     fn no_match_returns_none() {
         let mut p = LangModelProvider::new();
-        p.insert("openai/*".into(), dummy());
+        insert_dummy(&mut p, "openai/*");
         assert!(p.get("anthropic/claude").is_none());
     }
 
     #[test]
     fn make_runtime_strips_prefix() {
         let mut p = LangModelProvider::new();
-        p.insert("openai/*".into(), dummy());
-        let m = p.provide("openai/gpt-4o").unwrap();
+        insert_dummy(&mut p, "openai/*");
+        let m = LangModel::try_with_provider("openai/gpt-4o".to_string(), &p).unwrap();
         assert_eq!(m.model_id(), "gpt-4o");
     }
 }

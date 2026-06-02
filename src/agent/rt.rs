@@ -60,7 +60,7 @@ pub struct Agent {
 
     tools: HashMap<String, ToolFunc>,
 
-    pub state: AgentState,
+    state: AgentState,
 
     /// The spec this agent was built from.  Carries the agent's identity:
     /// model, instruction, tools, sub-agents, card, declared files, and
@@ -120,7 +120,7 @@ impl Agent {
     ) -> anyhow::Result<Self> {
         let runenv: Arc<RunEnv> = state.runenv.clone();
         // Resolve LangModel from the registry (handles glob lookup + prefix stripping)
-        let model = provider.models.provide(&spec.model)?;
+        let model = LangModel::try_with_provider(spec.model.clone(), &provider.models)?;
 
         let model_options = spec.model_options.clone().unwrap_or_default();
 
@@ -450,7 +450,7 @@ mod tests {
     use crate::{
         agent::{AgentCard, AgentProvider, AgentSpec},
         datatype::Value,
-        lang_model::LangModelProvider,
+        lang_model::LangModelAPISchema,
         message::{Message, Part, Role},
         suppress_panics, to_value,
         tool::{ToolDescBuilder, ToolProvider},
@@ -464,13 +464,24 @@ mod tests {
         if let Ok(key) = std::env::var("OPENAI_API_KEY") {
             provider
                 .models
-                .insert("openai/*".into(), LangModelProvider::openai(key.clone()));
+                .insert_api(
+                    "openai/*".into(),
+                    LangModelAPISchema::OpenAI,
+                    "https://api.openai.com/v1/responses",
+                    Some(key),
+                )
+                .unwrap();
         }
         if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-            provider.models.insert(
-                "anthropic/*".into(),
-                LangModelProvider::anthropic(key.clone()),
-            );
+            provider
+                .models
+                .insert_api(
+                    "anthropic/*".into(),
+                    LangModelAPISchema::Anthropic,
+                    "https://api.anthropic.com/v1/messages",
+                    Some(key),
+                )
+                .unwrap();
         }
         provider
     }
@@ -958,10 +969,10 @@ mod tests {
             );
         }
 
-        agent.state.max_input_tokens = 1; // always exceeded
+        agent.state.context_manager.max_input_tokens = 1; // always exceeded
         // Two recent turns: the just-pushed `u3` plus the previous `u2`, so the
         // boundary lands on `u2` and only `tr_old` (from the `u1` turn) is truncated.
-        agent.state.preserve_recent_turns = 2;
+        agent.state.context_manager.preserve_recent_turns = 2;
         agent.state.last_input_tokens = Some(9999);
 
         {
@@ -1044,8 +1055,8 @@ mod tests {
         }
 
         // High threshold — will never be exceeded by the preset last_input_tokens.
-        agent.state.max_input_tokens = 1_000_000;
-        agent.state.preserve_recent_turns = 1;
+        agent.state.context_manager.max_input_tokens = 1_000_000;
+        agent.state.context_manager.preserve_recent_turns = 1;
         agent.state.last_input_tokens = Some(100);
 
         {

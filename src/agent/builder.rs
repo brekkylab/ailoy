@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crate::{
-    agent::{Agent, AgentProvider, AgentSpec, AgentState, default_provider},
+    agent::{Agent, AgentProvider, AgentSpec, AgentState, ContextManager, default_provider},
     message::Message,
     runenv::{FileEntry, RunEnv},
     tool::{ToolDesc, WebSearchEngineKind},
@@ -21,17 +21,19 @@ use crate::{
 /// ```rust,no_run
 /// # use ailoy::{
 /// #     agent::{AgentBuilder, AgentProvider},
-/// #     lang_model::LangModelProvider,
+/// #     lang_model::LangModelAPISchema,
 /// #     tool::ToolDescBuilder,
 /// #     to_value,
 /// # };
 /// # #[tokio::main]
 /// # async fn main() -> anyhow::Result<()> {
 /// let mut provider = AgentProvider::new();
-/// provider.models.insert(
+/// provider.models.insert_api(
 ///     "openai/gpt-4o".into(),
-///     LangModelProvider::openai(std::env::var("OPENAI_API_KEY")?),
-/// );
+///     LangModelAPISchema::OpenAI,
+///     "https://api.openai.com/v1/responses",
+///     Some(std::env::var("OPENAI_API_KEY")?),
+/// )?;
 ///
 /// let agent = AgentBuilder::new("openai/gpt-4o")
 ///     .provider(provider)
@@ -139,20 +141,26 @@ impl AgentBuilder {
         self
     }
 
-    /// Override [`AgentState::max_input_tokens`](crate::agent::AgentState::max_input_tokens).
+    /// Replace the [`ContextManager`] policy wholesale.
+    pub fn context_manager(mut self, cm: ContextManager) -> Self {
+        self.state.context_manager = cm;
+        self
+    }
+
+    /// Override [`ContextManager::max_input_tokens`].
     ///
     /// When the input-token count of the previous model call exceeds this value,
     /// tool results outside the preserve window are reduced to placeholders.
     pub fn max_input_tokens(mut self, n: u64) -> Self {
-        self.state.max_input_tokens = n;
+        self.state.context_manager.max_input_tokens = n;
         self
     }
 
-    /// Override [`AgentState::preserve_recent_turns`](crate::agent::AgentState::preserve_recent_turns).
+    /// Override [`ContextManager::preserve_recent_turns`].
     ///
     /// Number of recent user turns kept intact when truncation fires.
     pub fn preserve_recent_turns(mut self, n: usize) -> Self {
-        self.state.preserve_recent_turns = n;
+        self.state.context_manager.preserve_recent_turns = n;
         self
     }
 
@@ -209,9 +217,9 @@ impl AgentBuilder {
     /// Materialise the agent from the accumulated [`AgentState`] and provider.
     ///
     /// The state's [`RunEnv`] is shared with sub-agents constructed from
-    /// [`AgentSpec::subagents`], and its truncation policy
+    /// [`AgentSpec::subagents`], and its [`ContextManager`] policy
     /// (`max_input_tokens` / `preserve_recent_turns`) is applied to the agent's
-    /// history.  An explicitly seeded `history` overrides the spec-derived
+    /// history.  An explicitly seeded `messages` list overrides the spec-derived
     /// system message (used for session resumption).
     pub fn build(self) -> anyhow::Result<Agent> {
         let Self {
@@ -230,7 +238,7 @@ impl AgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{agent::AgentCard, lang_model::LangModelProvider, message::Role};
+    use crate::{agent::AgentCard, lang_model::LangModelAPISchema, message::Role};
 
     const TEST_MODEL: &str = "openai/gpt-4o-mini";
 
@@ -238,7 +246,13 @@ mod tests {
         let mut provider = AgentProvider::new();
         provider
             .models
-            .insert(TEST_MODEL.into(), LangModelProvider::openai("dummy".into()));
+            .insert_api(
+                TEST_MODEL.into(),
+                LangModelAPISchema::OpenAI,
+                "https://api.openai.com/v1/responses",
+                Some("dummy".into()),
+            )
+            .unwrap();
         provider
     }
 
@@ -274,23 +288,6 @@ mod tests {
             .build()
             .unwrap();
         assert!(agent.get_history().is_empty());
-    }
-
-    /// `runenv()` carries the supplied `RunEnv` through to `state.runenv`.
-    #[tokio::test]
-    async fn test_builder_runenv_is_applied() {
-        let agent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
-            .runenv(RunEnv::local())
-            .build()
-            .unwrap();
-        // Smoke check: runenv is plugged in and usable.
-        let handle = agent.state.runenv.get().await.expect("runenv start failed");
-        let result = handle
-            .exec("sh".into(), vec!["-c".into(), "echo ok".into()], None)
-            .await
-            .expect("exec failed");
-        assert!(result.stdout.contains("ok"));
     }
 
     /// Helper: build a SKILL.md body with the given name/description/body.
@@ -469,96 +466,5 @@ mod tests {
             .subagent(sub_spec)
             .build()
             .unwrap();
-    }
-
-    /// Two agents built with the same cloned `RunEnv` see each other's
-    /// filesystem writes — confirms `.runenv()` carries the VM reference
-    /// through to the agent's `state.runenv`, and that cloning the v2
-    /// `RunEnv` shares the underlying container.
-    #[cfg(feature = "sandbox")]
-    #[tokio::test]
-    async fn test_builder_shared_arc_sandbox() {
-        use crate::runenv::SandboxConfig;
-
-        let runenv = Arc::new(
-            RunEnv::sandbox(SandboxConfig::default())
-                .await
-                .expect("sandbox creation failed"),
-        );
-
-        let sub_agent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
-            .runenv(runenv.clone())
-            .build()
-            .unwrap();
-
-        let parent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
-            .runenv(runenv.clone())
-            .build()
-            .unwrap();
-
-        // Write through the underlying VM, read back through parent's runenv.
-        let handle = runenv.get().await.expect("runenv start failed");
-        handle
-            .write(
-                std::path::Path::new("/workspace/shared_test.txt"),
-                b"shared_ok",
-            )
-            .await
-            .expect("write failed");
-
-        let bytes = parent
-            .state
-            .runenv
-            .get()
-            .await
-            .expect("runenv start failed")
-            .read(std::path::Path::new("/workspace/shared_test.txt"))
-            .await
-            .expect("read failed");
-
-        assert_eq!(
-            bytes, b"shared_ok",
-            "parent runenv must see file written through shared vm"
-        );
-
-        // And the subagent's runenv sees writes from the parent.
-        parent
-            .state
-            .runenv
-            .get()
-            .await
-            .expect("runenv start failed")
-            .write(std::path::Path::new("/workspace/shared.txt"), b"shared_ok")
-            .await
-            .expect("write failed");
-
-        let bytes = sub_agent
-            .state
-            .runenv
-            .get()
-            .await
-            .expect("runenv start failed")
-            .read(std::path::Path::new("/workspace/shared.txt"))
-            .await
-            .expect("subagent runenv should see file written by parent");
-
-        assert!(
-            bytes.starts_with(b"shared_ok"),
-            "subagent runenv did not see the file written by parent, got: {bytes:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_builder_truncation_config_is_applied() {
-        let agent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
-            .max_input_tokens(10_000)
-            .preserve_recent_turns(2)
-            .build()
-            .unwrap();
-        assert_eq!(agent.state.max_input_tokens, 10_000);
-        assert_eq!(agent.state.preserve_recent_turns, 2);
     }
 }

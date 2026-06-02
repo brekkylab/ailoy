@@ -1,4 +1,6 @@
-use std::sync::Arc;
+use std::{fmt::Write as _, path::PathBuf, sync::Arc};
+
+use serde::{Deserialize, Serialize};
 
 use crate::{
     message::{Message, Part, Role},
@@ -6,22 +8,141 @@ use crate::{
     skill::{self, SkillMeta},
 };
 
+/// Context-window management policy for an [`AgentState`].
+///
+/// When the input-token count of the previous model call exceeds
+/// [`max_input_tokens`](Self::max_input_tokens), tool results outside the
+/// [`preserve_recent_turns`](Self::preserve_recent_turns) window are reduced
+/// to `"[context truncated]"` placeholders by
+/// [`truncate_history`](Self::truncate_history).
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ContextManager {
+    /// Triggers truncation when input_tokens from the previous API call exceeds this value.
+    pub max_input_tokens: u64,
+    /// Number of recent user turns to preserve after truncation (system message is always preserved separately).
+    pub preserve_recent_turns: usize,
+}
+
+impl Default for ContextManager {
+    fn default() -> Self {
+        Self {
+            max_input_tokens: 30_000,
+            preserve_recent_turns: 3,
+        }
+    }
+}
+
+impl ContextManager {
+    /// Truncate the conversation history to reduce context size.
+    ///
+    /// ## Algorithm
+    ///
+    /// 1. If `history[0]` is `Role::System`, always preserve it (never dropped).
+    /// 2. Walk backwards from the end of history, skipping `System` messages, and
+    ///    count `User` messages.  Once
+    ///    [`preserve_recent_turns`](Self::preserve_recent_turns) `User` messages
+    ///    have been counted, the oldest of them becomes the **preserve boundary**
+    ///    — everything at or after that index is left untouched.  Counting `User`
+    ///    messages (not `Assistant` messages) correctly handles tool-use sessions
+    ///    where a single user input may expand into multiple assistant messages.
+    /// 3. For each `Role::Tool` message *before* the preserve boundary, replace
+    ///    its contents with a `"[context truncated]"` placeholder **while keeping
+    ///    the message's `id` intact**.  Anthropic's API returns HTTP 400 if a
+    ///    tool-use `id` that appears in an assistant message has no matching
+    ///    tool-result, so the id must never be discarded.
+    ///
+    /// Note: Full group-level dropping (removing the oldest user + assistant +
+    /// tool triplet entirely) is left for a future iteration; it requires a
+    /// reliable post-truncation token estimate that is not yet available here.
+    /// For now, placeholder replacement alone is sufficient to keep the context
+    /// window manageable for most workloads.
+    pub fn truncate_history(&self, history: &mut [Message]) {
+        if history.is_empty() {
+            return;
+        }
+
+        let preserve_from = find_preserve_boundary(history, self.preserve_recent_turns);
+
+        let start_idx = if history[0].role == Role::System {
+            1
+        } else {
+            0
+        };
+
+        // `preserve_from = 0` means "fewer turns than requested — preserve everything":
+        // `.take(0).skip(start_idx)` is always empty, so nothing is truncated.
+        // When `preserve_from > 0` the System message always lands at index 0 and
+        // the oldest preserved User turn is at index >= 1, so start_idx <= preserve_from.
+        debug_assert!(
+            preserve_from == 0 || start_idx <= preserve_from,
+            "start_idx ({start_idx}) > preserve_from ({preserve_from}): \
+             truncation window would overlap the system message"
+        );
+
+        for msg in history.iter_mut().take(preserve_from).skip(start_idx) {
+            if msg.role == Role::Tool {
+                let original_id = msg.id.clone();
+                let placeholder =
+                    Message::new(Role::Tool).with_contents([Part::text("[context truncated]")]);
+                *msg = if let Some(id) = original_id {
+                    placeholder.with_id(id)
+                } else {
+                    placeholder
+                };
+            }
+        }
+    }
+}
+
+/// Find the index from which messages should be preserved.
+///
+/// Scans backwards through `history`, skipping `System` messages, and counts
+/// `User` messages.  Returns the index of the `User` message that is the
+/// `preserve_recent_turns`-th from the end, or `0` when there are fewer turns
+/// than requested (meaning: preserve everything).
+///
+/// Counting `User` messages (rather than `Assistant` messages) correctly handles
+/// tool-use sessions where one user input may produce multiple assistant messages
+/// (`asst(tool_call) → tool → asst(text)`).
+fn find_preserve_boundary(history: &[Message], preserve_recent_turns: usize) -> usize {
+    if preserve_recent_turns == 0 {
+        return history.len();
+    }
+
+    let mut turns_found = 0usize;
+    let mut i = history.len();
+
+    while i > 0 {
+        i -= 1;
+        if history[i].role == Role::System {
+            continue;
+        }
+        if history[i].role == Role::User {
+            turns_found += 1;
+            if turns_found >= preserve_recent_turns {
+                return i;
+            }
+        }
+    }
+
+    // Fewer turns than requested — preserve everything.
+    0
+}
+
 /// Agent runtime state: conversation transcript, truncation policy, and the
 /// shared [`RunEnv`] used for tool execution.
 ///
 /// The [`messages`](Self::messages) vector grows turn-by-turn during an agent
 /// run.  When the previous model call's [`last_input_tokens`](Self::last_input_tokens)
-/// exceeds [`max_input_tokens`](Self::max_input_tokens), tool results outside
-/// the [`preserve_recent_turns`](Self::preserve_recent_turns) window are
-/// reduced to `"[context truncated]"` placeholders.
+/// exceeds [`context_manager.max_input_tokens`](ContextManager::max_input_tokens),
+/// tool results outside the
+/// [`context_manager.preserve_recent_turns`](ContextManager::preserve_recent_turns)
+/// window are reduced to `"[context truncated]"` placeholders.
 pub struct AgentState {
     pub messages: Vec<Message>,
 
-    /// Triggers truncation when input_tokens from the previous API call exceeds this value.
-    pub max_input_tokens: u64,
-
-    /// Number of recent user turns to preserve after truncation (system message is always preserved separately).
-    pub preserve_recent_turns: usize,
+    /// Context-window management policy (truncation thresholds + preserve window).
+    pub context_manager: ContextManager,
 
     /// Token count from the most recent model API call; used to decide when to truncate history.
     pub last_input_tokens: Option<u64>,
@@ -39,8 +160,7 @@ impl AgentState {
     pub fn new() -> Self {
         Self {
             messages: Vec::new(),
-            max_input_tokens: 30_000,
-            preserve_recent_turns: 3,
+            context_manager: ContextManager::default(),
             last_input_tokens: None,
             runenv: Arc::new(RunEnv::local()),
         }
@@ -56,118 +176,18 @@ impl AgentState {
         self
     }
 
+    pub fn context_manager(mut self, cm: ContextManager) -> Self {
+        self.context_manager = cm;
+        self
+    }
+
     /// Apply the configured truncation policy when the most recent input-token
-    /// count exceeded [`max_input_tokens`](Self::max_input_tokens).
+    /// count exceeded
+    /// [`context_manager.max_input_tokens`](ContextManager::max_input_tokens).
     pub fn truncate_if_needed(&mut self) {
-        if self.last_input_tokens.unwrap_or(0) > self.max_input_tokens {
-            self.truncate();
+        if self.last_input_tokens.unwrap_or(0) > self.context_manager.max_input_tokens {
+            self.context_manager.truncate_history(&mut self.messages);
         }
-    }
-
-    /// Truncate the conversation history to reduce context size.
-    ///
-    /// ## Algorithm
-    ///
-    /// 1. If `messages[0]` is `Role::System`, always preserve it (never dropped).
-    /// 2. Walk backwards from the end, skipping `System` messages, and count
-    ///    `User` messages.  Once [`preserve_recent_turns`](Self::preserve_recent_turns)
-    ///    `User` messages have been counted, the oldest of them becomes the
-    ///    **preserve boundary** — everything at or after that index is left
-    ///    untouched.  Counting `User` messages (not `Assistant` messages)
-    ///    correctly handles tool-use sessions where a single user input may
-    ///    expand into multiple assistant messages.
-    /// 3. For each `Role::Tool` message *before* the preserve boundary, replace
-    ///    its contents with a `"[context truncated]"` placeholder **while
-    ///    keeping the message's `id` intact**.  Anthropic's API returns HTTP
-    ///    400 if a tool-use `id` that appears in an assistant message has no
-    ///    matching tool-result, so the id must never be discarded.
-    ///
-    /// Note: Full group-level dropping (removing the oldest user + assistant +
-    /// tool triplet entirely) is left for a future iteration; it requires a
-    /// reliable post-truncation token estimate that is not yet available here.
-    /// For now, placeholder replacement alone is sufficient to keep the context
-    /// window manageable for most workloads.
-    pub fn truncate(&mut self) {
-        if self.messages.is_empty() {
-            return;
-        }
-
-        let preserve_from = self.find_preserve_boundary();
-
-        let start_idx = if self.messages[0].role == Role::System {
-            1
-        } else {
-            0
-        };
-
-        // `preserve_from = 0` means "fewer turns than requested — preserve everything":
-        // `.take(0).skip(start_idx)` is always empty, so nothing is truncated.
-        // When `preserve_from > 0` the System message always lands at index 0 and
-        // the oldest preserved User turn is at index >= 1, so start_idx <= preserve_from.
-        debug_assert!(
-            preserve_from == 0 || start_idx <= preserve_from,
-            "start_idx ({start_idx}) > preserve_from ({preserve_from}): \
-             truncation window would overlap the system message"
-        );
-
-        for msg in self.messages.iter_mut().take(preserve_from).skip(start_idx) {
-            if msg.role == Role::Tool {
-                let original_id = msg.id.clone();
-                let placeholder =
-                    Message::new(Role::Tool).with_contents([Part::text("[context truncated]")]);
-                *msg = if let Some(id) = original_id {
-                    placeholder.with_id(id)
-                } else {
-                    placeholder
-                };
-            }
-        }
-    }
-
-    /// Find the index from which messages should be preserved.
-    ///
-    /// Scans backwards through `messages`, skipping `System` messages, and
-    /// counts `User` messages.  Returns the index of the `User` message that
-    /// is [`preserve_recent_turns`](Self::preserve_recent_turns)-th from the
-    /// end, or `0` when there are fewer turns than requested (meaning:
-    /// preserve everything).
-    ///
-    /// Counting `User` messages (rather than `Assistant` messages) correctly
-    /// handles tool-use sessions where one user input may produce multiple
-    /// assistant messages (`asst(tool_call) → tool → asst(text)`).
-    fn find_preserve_boundary(&self) -> usize {
-        if self.preserve_recent_turns == 0 {
-            return self.messages.len();
-        }
-
-        let mut turns_found = 0usize;
-        let mut i = self.messages.len();
-
-        while i > 0 {
-            i -= 1;
-            if self.messages[i].role == Role::System {
-                continue;
-            }
-            if self.messages[i].role == Role::User {
-                turns_found += 1;
-                if turns_found >= self.preserve_recent_turns {
-                    return i;
-                }
-            }
-        }
-
-        // Fewer turns than requested — preserve everything.
-        0
-    }
-
-    /// List skills available under `path` inside the agent's [`RunEnv`].
-    ///
-    /// Recursively scans for `SKILL.md` files and parses their `name` /
-    /// `description` frontmatter.  Works against any backend (local FS or
-    /// sandbox) since the walk is performed through the runenv's shell.
-    pub async fn list_skills(&self, path: &std::path::Path) -> anyhow::Result<Vec<SkillMeta>> {
-        let handle = self.runenv.get().await?;
-        skill::list_skills(handle, path).await
     }
 
     /// Load a single skill from the directory `path` inside the agent's
@@ -175,6 +195,53 @@ impl AgentState {
     pub async fn get_skill(&self, path: &std::path::Path) -> anyhow::Result<Option<SkillMeta>> {
         let handle = self.runenv.get().await?;
         skill::get_skill(handle, path).await
+    }
+
+    /// Render a block describing the skills at `skills` (each entry is the
+    /// directory containing a `SKILL.md`) for inclusion in a system prompt.
+    ///
+    /// `format` accepts `"md"` (default) or `"xml"`. Missing skill directories
+    /// — i.e. those without a `SKILL.md` — are silently skipped.
+    pub async fn render_skills(
+        &self,
+        skills: &[PathBuf],
+        format: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let mut metas = Vec::with_capacity(skills.len());
+        for dir in skills {
+            if let Some(meta) = self.get_skill(dir).await? {
+                metas.push(meta);
+            }
+        }
+
+        let mut out = String::new();
+        match format.unwrap_or("md") {
+            "md" | "markdown" => {
+                out.push_str("## Available skills\n\n");
+                for s in &metas {
+                    let _ = writeln!(out, "- `{}`: {}", s.name, s.description);
+                }
+            }
+            "xml" => {
+                out.push_str("<available_skills>\n");
+                for s in &metas {
+                    let escape = |s: &str| {
+                        s.replace('&', "&amp;")
+                            .replace('<', "&lt;")
+                            .replace('>', "&gt;")
+                    };
+                    let _ = write!(
+                        out,
+                        "<skill>\n<name>{}</name>\n<description>{}</description>\n</skill>\n",
+                        escape(&s.name),
+                        escape(&s.description),
+                    );
+                }
+                out.push_str("</available_skills>\n");
+            }
+            other => anyhow::bail!("unknown skill render format: {other}"),
+        }
+        Ok(out)
     }
 }
 
@@ -212,48 +279,33 @@ mod tests {
         )])
     }
 
-    fn state_of(messages: Vec<Message>, preserve_recent_turns: usize) -> AgentState {
-        AgentState {
-            messages,
-            max_input_tokens: 30_000,
-            preserve_recent_turns,
-            last_input_tokens: None,
-            runenv: Arc::new(RunEnv::local()),
-        }
-    }
-
     #[test]
     fn test_preserve_recent_turns_boundary() {
         // history: sys, u1, a1, u2, a2, u3, a3
         // preserve_recent_turns = 2 → preserve from u2 (index 3) onwards
-        let state = state_of(
-            vec![
-                sys(),
-                user("u1"),
-                asst("a1"),
-                user("u2"),
-                asst("a2"),
-                user("u3"),
-                asst("a3"),
-            ],
-            2,
-        );
-        assert_eq!(
-            state.find_preserve_boundary(),
-            3,
-            "preserve boundary should be at u2 (index 3)"
-        );
+        let history = vec![
+            sys(),
+            user("u1"),
+            asst("a1"),
+            user("u2"),
+            asst("a2"),
+            user("u3"),
+            asst("a3"),
+        ];
+        let boundary = find_preserve_boundary(&history, 2);
+        assert_eq!(boundary, 3, "preserve boundary should be at u2 (index 3)");
     }
 
     #[test]
     fn test_no_change_when_all_within_preserve_window() {
-        let mut state = state_of(
-            vec![sys(), user("u1"), asst("a1"), user("u2"), asst("a2")],
-            10,
-        );
-        let original_len = state.messages.len();
-        state.truncate();
-        assert_eq!(state.messages.len(), original_len, "nothing should change");
+        let mut history = vec![sys(), user("u1"), asst("a1"), user("u2"), asst("a2")];
+        let cm = ContextManager {
+            max_input_tokens: 30_000,
+            preserve_recent_turns: 10,
+        };
+        let original_len = history.len();
+        cm.truncate_history(&mut history);
+        assert_eq!(history.len(), original_len, "nothing should change");
     }
 
     #[test]
@@ -261,21 +313,22 @@ mod tests {
         // history: sys, u1, tool_call_asst(call_1), tool_result(call_1), u2, a2
         // preserve_recent_turns = 1 → preserve (u2, a2) from index 4 onwards.
         // tool_result at index 3 is outside the preserve window → becomes placeholder.
-        let mut state = state_of(
-            vec![
-                sys(),
-                user("u1"),
-                tool_call_asst("call_1", "my_tool"),
-                tool_result("call_1"),
-                user("u2"),
-                asst("a2"),
-            ],
-            1,
-        );
-        state.truncate();
+        let mut history = vec![
+            sys(),
+            user("u1"),
+            tool_call_asst("call_1", "my_tool"),
+            tool_result("call_1"),
+            user("u2"),
+            asst("a2"),
+        ];
+        let cm = ContextManager {
+            max_input_tokens: 30_000,
+            preserve_recent_turns: 1,
+        };
+        cm.truncate_history(&mut history);
 
         // The Tool message must still be present (as a placeholder, not removed).
-        let tool_msg = state.messages.iter().find(|m| m.role == Role::Tool);
+        let tool_msg = history.iter().find(|m| m.role == Role::Tool);
         assert!(
             tool_msg.is_some(),
             "Tool message must still exist as placeholder"
@@ -301,25 +354,26 @@ mod tests {
 
     #[test]
     fn test_system_message_never_dropped() {
-        let mut state = state_of(
-            vec![
-                sys(),
-                user("u1"),
-                asst("a1"),
-                user("u2"),
-                asst("a2"),
-                user("u3"),
-                asst("a3"),
-            ],
-            1,
-        );
-        state.truncate();
+        let mut history = vec![
+            sys(),
+            user("u1"),
+            asst("a1"),
+            user("u2"),
+            asst("a2"),
+            user("u3"),
+            asst("a3"),
+        ];
+        let cm = ContextManager {
+            max_input_tokens: 30_000,
+            preserve_recent_turns: 1,
+        };
+        cm.truncate_history(&mut history);
         assert_eq!(
-            state.messages[0].role,
+            history[0].role,
             Role::System,
             "System message must always remain at index 0"
         );
-        assert_eq!(state.messages.len(), 7, "no messages should be dropped");
+        assert_eq!(history.len(), 7, "no messages should be dropped");
     }
 
     #[test]
@@ -331,21 +385,18 @@ mod tests {
         //
         // history: sys(0), u1(1), asst("a1")(2), u2(3), asst(tool_call)(4), tool(5), asst("a2")(6)
         // Expected boundary: u1 at index 1  (2 user turns preserved)
-        let state = state_of(
-            vec![
-                sys(),
-                user("u1"),
-                asst("a1"),
-                user("u2"),
-                tool_call_asst("call_1", "my_tool"),
-                tool_result("call_1"),
-                asst("a2"),
-            ],
-            2,
-        );
+        let history = vec![
+            sys(),
+            user("u1"),
+            asst("a1"),
+            user("u2"),
+            tool_call_asst("call_1", "my_tool"),
+            tool_result("call_1"),
+            asst("a2"),
+        ];
+        let boundary = find_preserve_boundary(&history, 2);
         assert_eq!(
-            state.find_preserve_boundary(),
-            1,
+            boundary, 1,
             "preserve_recent_turns=2 must keep 2 user turns, landing at u1 (index 1)"
         );
     }
@@ -354,23 +405,23 @@ mod tests {
     fn test_preserved_messages_untouched() {
         // Only messages outside the preserve window should be replaced.
         // The tool result inside the preserve window must keep its original content.
-        let mut state = state_of(
-            vec![
-                sys(),
-                user("u1"),
-                asst("a1"),
-                user("u2"),
-                tool_call_asst("call_2", "tool_b"),
-                tool_result("call_2"),
-                asst("a2"),
-            ],
-            1,
-        );
+        let mut history = vec![
+            sys(),
+            user("u1"),
+            asst("a1"),
+            user("u2"),
+            tool_call_asst("call_2", "tool_b"),
+            tool_result("call_2"),
+            asst("a2"),
+        ];
         // preserve_recent_turns = 1 → boundary is at u2 (index 3).
         // tool_result("call_2") is at index 5 which is >= 3 → preserved.
-        state.truncate();
-        let tool_msg = state
-            .messages
+        let cm = ContextManager {
+            max_input_tokens: 30_000,
+            preserve_recent_turns: 1,
+        };
+        cm.truncate_history(&mut history);
+        let tool_msg = history
             .iter()
             .find(|m| m.role == Role::Tool)
             .expect("tool result must still be present");

@@ -345,7 +345,7 @@ mod tests {
 
         use crate::{
             agent::{AgentBuilder, AgentProvider},
-            lang_model::LangModelProvider,
+            lang_model::LangModelAPISchema,
             message::{FinishReason, Message, Part, Role},
             runenv::SandboxConfig,
             tool::ToolProvider,
@@ -488,10 +488,15 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
              (`cat <path>`), then follow the instructions inside.";
 
         let mut provider = AgentProvider::new();
-        provider.models.insert(
-            "anthropic/*".into(),
-            LangModelProvider::anthropic(std::env::var("ANTHROPIC_API_KEY").unwrap()),
-        );
+        provider
+            .models
+            .insert_api(
+                "anthropic/*".into(),
+                LangModelAPISchema::Anthropic,
+                "https://api.anthropic.com/v1/messages",
+                Some(std::env::var("ANTHROPIC_API_KEY").unwrap()),
+            )
+            .unwrap();
         provider.tools = ToolProvider::new();
 
         let sandbox = crate::runenv::RunEnv::sandbox(SandboxConfig {
