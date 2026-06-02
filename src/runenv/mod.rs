@@ -151,7 +151,7 @@ trait MachineDyn: Send + Sync + 'static {
 }
 
 #[async_trait]
-impl<B: Machine> MachineDyn for B {
+impl<M: Machine> MachineDyn for M {
     async fn start(&mut self) -> anyhow::Result<Arc<dyn Console>> {
         // UFCS so this doesn't recurse into the MachineDyn impl we're in.
         Ok(Arc::new(Machine::start(self).await?))
@@ -340,7 +340,6 @@ enum RunEnvState {
 /// first `get` and shut down when the last handle is dropped.
 ///
 /// See the [module-level documentation](self) for the overall design.
-#[derive(Clone)]
 pub struct RunEnv {
     machine: Arc<Mutex<dyn MachineDyn>>,
     state: Arc<Mutex<RunEnvState>>,

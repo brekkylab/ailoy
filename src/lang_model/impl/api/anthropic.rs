@@ -1,13 +1,9 @@
 use anyhow::bail;
-use url::Url;
 
 use super::super::response_format::ResponseSchemaMarshal;
 use crate::{
     datatype::Value,
-    lang_model::{
-        LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest,
-        ResponseFormat,
-    },
+    lang_model::{LangModelRequest, ResponseFormat},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, Unmarshal,
@@ -15,16 +11,6 @@ use crate::{
     to_value,
     tool::ToolDesc,
 };
-
-impl LangModelProvider {
-    pub fn anthropic(api_key: String) -> LangModelProviderElem {
-        LangModelProviderElem::API {
-            schema: LangModelAPISchema::Anthropic,
-            url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
-            api_key: Some(api_key),
-        }
-    }
-}
 
 #[derive(Clone, Debug, Default)]
 pub struct AnthropicMarshal;
@@ -410,10 +396,17 @@ mod tests {
     use super::*;
     use crate::{
         datatype::Bytes,
-        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
+        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProvider},
         message::{FinishReason, Message, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    fn make_model(model: &str, url: &str, api_key: Option<String>) -> LangModel {
+        let mut p = LangModelProvider::new();
+        p.insert_api(model.into(), LangModelAPISchema::Anthropic, url, api_key)
+            .unwrap();
+        LangModel::try_with_provider(model.to_string(), &p).unwrap()
+    }
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
     where
@@ -687,13 +680,10 @@ mod tests {
             "required": ["country", "capital"]
         });
 
-        let model = LangModel::new(
-            "claude-haiku-4-5".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::Anthropic,
-                url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
-                api_key: Some(api_key),
-            },
+        let model = make_model(
+            "claude-haiku-4-5",
+            "https://api.anthropic.com/v1/messages",
+            Some(api_key),
         );
         let messages = vec![Message::new(Role::User).with_contents([Part::text(
             "Return France's country name and capital city in the requested format.",
@@ -731,13 +721,10 @@ mod tests {
         let api_key =
             std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set in .env");
 
-        let model = LangModel::new(
-            "claude-haiku-4-5".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::Anthropic,
-                url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
-                api_key: Some(api_key),
-            },
+        let model = make_model(
+            "claude-haiku-4-5",
+            "https://api.anthropic.com/v1/messages",
+            Some(api_key),
         );
         let messages = vec![
             Message::new(Role::User)
@@ -778,13 +765,10 @@ mod tests {
         .unwrap()
         .to_vec();
 
-        let model = LangModel::new(
-            "claude-haiku-4-5".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::Anthropic,
-                url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
-                api_key: Some(api_key),
-            },
+        let model = make_model(
+            "claude-haiku-4-5",
+            "https://api.anthropic.com/v1/messages",
+            Some(api_key),
         );
 
         let messages = vec![

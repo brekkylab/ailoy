@@ -26,7 +26,7 @@ use crate::{lang_model::LangModelProvider, tool::ToolProvider};
 /// or instruction does.
 ///
 /// Both fields are public — populate them directly, e.g.
-/// `provider.models.insert("openai/gpt-4o".into(), LangModelProvider::openai(key))`.
+/// `provider.models.insert_api("openai/gpt-4o".into(), LangModelAPISchema::OpenAI, "https://api.openai.com/v1/responses", Some(key))?`.
 /// [`tools`](AgentProvider::tools) starts pre-loaded with every built-in tool;
 /// use [`ToolProvider::empty`](crate::tool::ToolProvider::empty) to opt out.
 #[derive(Clone)]

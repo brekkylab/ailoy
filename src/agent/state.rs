@@ -1,7 +1,20 @@
+use std::{fmt::Write as _, path::PathBuf, sync::Arc};
+
 use serde::{Deserialize, Serialize};
 
-use crate::message::{Message, Part, Role};
+use crate::{
+    message::{Message, Part, Role},
+    runenv::RunEnv,
+    skill::{self, SkillMeta},
+};
 
+/// Context-window management policy for an [`AgentState`].
+///
+/// When the input-token count of the previous model call exceeds
+/// [`max_input_tokens`](Self::max_input_tokens), tool results outside the
+/// [`preserve_recent_turns`](Self::preserve_recent_turns) window are reduced
+/// to `"[context truncated]"` placeholders by
+/// [`truncate_history`](Self::truncate_history).
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ContextManager {
     /// Triggers truncation when input_tokens from the previous API call exceeds this value.
@@ -26,28 +39,28 @@ impl ContextManager {
     ///
     /// 1. If `history[0]` is `Role::System`, always preserve it (never dropped).
     /// 2. Walk backwards from the end of history, skipping `System` messages, and
-    ///    count `User` messages.  Once `preserve_recent_turns` `User` messages have
-    ///    been counted, the oldest of them becomes the **preserve boundary** —
-    ///    everything at or after that index is left untouched.  Counting `User`
+    ///    count `User` messages.  Once
+    ///    [`preserve_recent_turns`](Self::preserve_recent_turns) `User` messages
+    ///    have been counted, the oldest of them becomes the **preserve boundary**
+    ///    — everything at or after that index is left untouched.  Counting `User`
     ///    messages (not `Assistant` messages) correctly handles tool-use sessions
     ///    where a single user input may expand into multiple assistant messages.
-    /// 3. For each `Role::Tool` message *before* the preserve boundary, replace its
-    ///    contents with a `"[context truncated]"` placeholder **while keeping the
-    ///    message's `id` intact**.  Anthropic's API returns HTTP 400 if a tool-use
-    ///    `id` that appears in an assistant message has no matching tool-result, so
-    ///    the id must never be discarded.
+    /// 3. For each `Role::Tool` message *before* the preserve boundary, replace
+    ///    its contents with a `"[context truncated]"` placeholder **while keeping
+    ///    the message's `id` intact**.  Anthropic's API returns HTTP 400 if a
+    ///    tool-use `id` that appears in an assistant message has no matching
+    ///    tool-result, so the id must never be discarded.
     ///
-    /// Note: Full group-level dropping (removing the oldest user + assistant + tool
-    /// triplet entirely) is left for a future iteration; it requires a reliable
-    /// post-truncation token estimate that is not yet available here.  For now,
-    /// placeholder replacement alone is sufficient to keep the context window
-    /// manageable for most workloads.
-    pub(crate) fn truncate_history(&self, history: &mut [Message]) {
+    /// Note: Full group-level dropping (removing the oldest user + assistant +
+    /// tool triplet entirely) is left for a future iteration; it requires a
+    /// reliable post-truncation token estimate that is not yet available here.
+    /// For now, placeholder replacement alone is sufficient to keep the context
+    /// window manageable for most workloads.
+    pub fn truncate_history(&self, history: &mut [Message]) {
         if history.is_empty() {
             return;
         }
 
-        // ── Locate preserve boundary ───────────────────────────────────────────────
         let preserve_from = find_preserve_boundary(history, self.preserve_recent_turns);
 
         let start_idx = if history[0].role == Role::System {
@@ -66,7 +79,6 @@ impl ContextManager {
              truncation window would overlap the system message"
         );
 
-        // ── Replace Tool messages outside the preserve window with placeholders ────
         for msg in history.iter_mut().take(preserve_from).skip(start_idx) {
             if msg.role == Role::Tool {
                 let original_id = msg.id.clone();
@@ -115,6 +127,142 @@ fn find_preserve_boundary(history: &[Message], preserve_recent_turns: usize) -> 
 
     // Fewer turns than requested — preserve everything.
     0
+}
+
+/// Agent runtime state: conversation transcript, truncation policy, and the
+/// shared [`RunEnv`] used for tool execution.
+///
+/// The [`messages`](Self::messages) vector grows turn-by-turn during an agent
+/// run.  When the previous model call's [`last_input_tokens`](Self::last_input_tokens)
+/// exceeds [`context_manager.max_input_tokens`](ContextManager::max_input_tokens),
+/// tool results outside the
+/// [`context_manager.preserve_recent_turns`](ContextManager::preserve_recent_turns)
+/// window are reduced to `"[context truncated]"` placeholders.
+pub struct AgentState {
+    pub messages: Vec<Message>,
+
+    /// Context-window management policy (truncation thresholds + preserve window).
+    pub context_manager: ContextManager,
+
+    /// Token count from the most recent model API call; used to decide when to truncate history.
+    pub last_input_tokens: Option<u64>,
+
+    pub runenv: Arc<RunEnv>,
+}
+
+impl Default for AgentState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AgentState {
+    pub fn new() -> Self {
+        Self {
+            messages: Vec::new(),
+            context_manager: ContextManager::default(),
+            last_input_tokens: None,
+            runenv: Arc::new(RunEnv::local()),
+        }
+    }
+
+    pub fn messages(mut self, messages: impl IntoIterator<Item = Message>) -> Self {
+        self.messages = messages.into_iter().collect();
+        self
+    }
+
+    pub fn runenv(mut self, runenv: impl Into<Arc<RunEnv>>) -> Self {
+        self.runenv = runenv.into();
+        self
+    }
+
+    pub fn context_manager(mut self, cm: ContextManager) -> Self {
+        self.context_manager = cm;
+        self
+    }
+
+    /// Apply the configured truncation policy when the most recent input-token
+    /// count exceeded
+    /// [`context_manager.max_input_tokens`](ContextManager::max_input_tokens).
+    pub fn truncate_if_needed(&mut self) {
+        if self.last_input_tokens.unwrap_or(0) > self.context_manager.max_input_tokens {
+            self.context_manager.truncate_history(&mut self.messages);
+        }
+    }
+
+    /// Load a single skill from the directory `path` inside the agent's
+    /// [`RunEnv`].  Returns `Ok(None)` when `path/SKILL.md` does not exist.
+    pub async fn get_skill(&self, path: &std::path::Path) -> anyhow::Result<Option<SkillMeta>> {
+        let handle = self.runenv.get().await?;
+        skill::get_skill(handle, path).await
+    }
+
+    /// Render a block describing the skills at `skills` (each entry is the
+    /// directory containing a `SKILL.md`) for inclusion in a system prompt.
+    ///
+    /// `format` accepts `"md"` (default) or `"xml"`. Missing skill directories
+    /// — i.e. those without a `SKILL.md` — are silently skipped. Returns an
+    /// empty string when no skills are loadable so callers can detect the
+    /// "nothing to render" case with `is_empty()`.
+    pub async fn render_skills(
+        &self,
+        skills: &[PathBuf],
+        format: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let mut metas = Vec::with_capacity(skills.len());
+        for dir in skills {
+            if let Some(meta) = self.get_skill(dir).await? {
+                metas.push(meta);
+            }
+        }
+
+        if metas.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut out = String::new();
+        match format.unwrap_or("md") {
+            "md" | "markdown" => {
+                out.push_str(
+                    "## Available Skills\n\
+                     Each skill is a directory containing `SKILL.md` (with `name:` and \
+                     `description:` frontmatter) plus any supporting files (other \
+                     markdown, scripts, etc.). Read the `SKILL.md` with `cat <path>` \
+                     before following its steps.\n\n\
+                     | Name | Description | SKILL.md |\n|------|-------------|----------|\n",
+                );
+                for s in &metas {
+                    let _ = writeln!(
+                        out,
+                        "| {} | {} | {} |",
+                        s.name,
+                        s.description,
+                        s.skill_md_path().display()
+                    );
+                }
+            }
+            "xml" => {
+                out.push_str("<available_skills>\n");
+                for s in &metas {
+                    let escape = |s: &str| {
+                        s.replace('&', "&amp;")
+                            .replace('<', "&lt;")
+                            .replace('>', "&gt;")
+                    };
+                    let _ = write!(
+                        out,
+                        "<skill>\n<name>{}</name>\n<description>{}</description>\n<path>{}</path>\n</skill>\n",
+                        escape(&s.name),
+                        escape(&s.description),
+                        escape(&s.skill_md_path().to_string_lossy()),
+                    );
+                }
+                out.push_str("</available_skills>\n");
+            }
+            other => anyhow::bail!("unknown skill render format: {other}"),
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]

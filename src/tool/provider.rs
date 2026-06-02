@@ -161,7 +161,7 @@ impl ToolProvider {
     /// matches `spec.tools` element-for-element. Returns an error if any
     /// requested tool name is not registered.
     ///
-    /// Called by [`Agent::try_with_provider_and_runenv`](crate::agent::Agent::try_with_provider_and_runenv)
+    /// Called by [`Agent::try_with_provider_and_state`](crate::agent::Agent::try_with_provider_and_state)
     /// during agent construction.
     pub fn provide(&self, spec: &[ToolDesc]) -> anyhow::Result<HashMap<String, ToolFunc>> {
         let mut funcs = HashMap::with_capacity(spec.len());

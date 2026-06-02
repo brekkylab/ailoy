@@ -1,10 +1,10 @@
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use url::Url;
 
-use super::{LangModelAPISchema, LangModelProviderElem};
+use super::LangModelAPISchema;
 use crate::{
     datatype::Value,
-    lang_model::{LangModelOptions, r#impl::api},
+    lang_model::{LangModelOptions, LangModelProvider, LangModelProviderElem, r#impl::api},
     message::{Delta as _, Marshaled, Message, MessageOutput, Unmarshal as _},
     tool::ToolDesc,
 };
@@ -73,8 +73,34 @@ pub(crate) struct LangModelRequest<'a> {
 }
 
 impl LangModel {
-    pub fn new(model: String, provider: LangModelProviderElem) -> Self {
-        Self { model, provider }
+    /// Create a [`LangModel`] using the process-wide
+    /// [`default_provider`](crate::agent::default_provider)'s model registry.
+    pub fn try_new(model: String) -> anyhow::Result<Self> {
+        Self::try_with_provider(model, &crate::agent::default_provider().models)
+    }
+
+    /// Create a [`LangModel`] using an explicit [`LangModelProvider`].
+    ///
+    /// Looks up `model` against the registry (exact then glob fallback), strips any
+    /// `provider/` prefix to recover the API-side model id (e.g.
+    /// `"openai/gpt-4o"` → `"gpt-4o"`), and binds the runtime to the resolved
+    /// endpoint.
+    pub fn try_with_provider(
+        model: String,
+        provider: &LangModelProvider,
+    ) -> anyhow::Result<Self> {
+        let elem = provider
+            .get(&model)
+            .ok_or_else(|| anyhow::anyhow!("No provider found for model '{}'", model))?
+            .clone();
+        let model_id = model
+            .split_once('/')
+            .map(|(_, id)| id.to_string())
+            .unwrap_or(model);
+        Ok(Self {
+            model: model_id,
+            provider: elem,
+        })
     }
 
     pub fn model_id(&self) -> &str {
@@ -230,7 +256,7 @@ impl LangModel {
 mod tests {
     use super::*;
     use crate::{
-        lang_model::LangModelProvider,
+        lang_model::{LangModelAPISchema, LangModelProvider},
         message::{FinishReason, Part, Role},
         to_value,
         tool::{ToolDesc, ToolDescBuilder},
@@ -274,14 +300,15 @@ mod tests {
     }
 
     fn openai_chat_completion(model: &str, api_key: String) -> LangModel {
-        LangModel::new(
-            model.to_string(),
-            LangModelProvider::chat_completion(
-                "https://api.openai.com/v1/chat/completions",
-                Some(api_key),
-            )
-            .unwrap(),
+        let mut p = LangModelProvider::new();
+        p.insert_api(
+            model.into(),
+            LangModelAPISchema::ChatCompletion,
+            "https://api.openai.com/v1/chat/completions",
+            Some(api_key),
         )
+        .unwrap();
+        LangModel::try_with_provider(model.to_string(), &p).unwrap()
     }
 
     /// Verifies that the POST request is sent and response is parsed.
@@ -428,10 +455,15 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let model = LangModel::new(
-            "test-model".to_string(),
-            LangModelProvider::chat_completion(&format!("http://{}/", addr), None).unwrap(),
-        );
+        let mut p = LangModelProvider::new();
+        p.insert_api(
+            "test-model".into(),
+            LangModelAPISchema::ChatCompletion,
+            format!("http://{}/", addr),
+            None,
+        )
+        .unwrap();
+        let model = LangModel::try_with_provider("test-model".to_string(), &p).unwrap();
         let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
 
         let resp = model

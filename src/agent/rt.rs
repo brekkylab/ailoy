@@ -1,13 +1,12 @@
-use std::{collections::HashMap, path::PathBuf, pin::Pin};
+use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
 
 use futures::{FutureExt as _, Stream, StreamExt as _};
 
 use crate::{
-    agent::{AgentProvider, AgentSpec, ContextManager, default_provider},
+    agent::{AgentProvider, AgentSpec, AgentState, default_provider},
     lang_model::{LangModel, LangModelOptions},
     message::{FinishReason, Message, MessageOutput, Part, Role},
     runenv::{Console, RunEnv},
-    skill::{render_skills_table, scan_declared_skills},
     tool::{
         ToolDesc, ToolFunc,
         r#impl::{get_subagent_tool_desc, get_subagent_tool_func, get_web_search_tool_factory},
@@ -37,41 +36,6 @@ fn materialise_files_recursive<'a>(
     })
 }
 
-pub struct AgentState {
-    pub history: Vec<Message>,
-
-    pub runenv: RunEnv,
-
-    /// Token count from the most recent model API call; used to decide when to truncate history.
-    pub last_input_tokens: Option<u64>,
-}
-
-impl Default for AgentState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl AgentState {
-    pub fn new() -> Self {
-        Self {
-            history: Vec::new(),
-            runenv: RunEnv::local(),
-            last_input_tokens: None,
-        }
-    }
-
-    pub fn history(mut self, history: Vec<Message>) -> Self {
-        self.history = history;
-        self
-    }
-
-    pub fn runenv(mut self, runenv: RunEnv) -> Self {
-        self.runenv = runenv;
-        self
-    }
-}
-
 /// An agent that drives a language model through multi-turn, tool-augmented conversations.
 ///
 /// `Agent` pairs an [`AgentSpec`] (model + instruction + tools + sub-agents) with an
@@ -85,7 +49,7 @@ impl AgentState {
 /// filesystem state.
 ///
 /// For construction options, see [`Agent::try_new`], [`Agent::try_with_provider`],
-/// [`Agent::try_with_runenv`], and [`Agent::try_with_provider_and_runenv`].
+/// [`Agent::try_with_state`], and [`Agent::try_with_provider_and_state`].
 pub struct Agent {
     model: LangModel,
 
@@ -95,33 +59,25 @@ pub struct Agent {
 
     tools: HashMap<String, ToolFunc>,
 
-    pub state: AgentState,
-
-    context_manager: Option<ContextManager>,
+    state: AgentState,
 
     /// The spec this agent was built from.  Carries the agent's identity:
     /// model, instruction, tools, sub-agents, card, declared files, and
     /// declared [`AgentSpec::skills`].
     spec: AgentSpec,
-
-    /// Lazy gate: whether the declared [`FileEntry`](crate::runenv::FileEntry)
-    /// list for this agent (and its declared sub-spec subtree) has been
-    /// written to the runenv.  Toggled by `ensure_files_materialised` on
-    /// the first [`Self::run`].
-    files_materialised: bool,
 }
 
 impl Agent {
     /// Create an agent using the process-wide [`default_provider`] and a [`Local`] runenv.
-    pub fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
+    pub async fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
         let provider = default_provider();
-        Self::try_with_provider(spec, &provider)
+        Self::try_with_provider(spec, &provider).await
     }
 
-    /// Create an agent using the process-wide [`default_provider`] and an explicit [`RunEnv`].
-    pub fn try_with_runenv(spec: AgentSpec, runenv: RunEnv) -> anyhow::Result<Self> {
+    /// Create an agent using the process-wide [`default_provider`] and an explicit [`AgentState`].
+    pub async fn try_with_state(spec: AgentSpec, state: AgentState) -> anyhow::Result<Self> {
         let provider = default_provider();
-        Self::try_with_provider_and_runenv(spec, &provider, runenv)
+        Self::try_with_provider_and_state(spec, &provider, state).await
     }
 
     /// Create an agent with an explicit [`AgentProvider`] and a local runenv.
@@ -129,28 +85,40 @@ impl Agent {
     /// Use this for scoped, explicit control over models and tool sources without
     /// touching global state.  The provider is not stored in the agent and can be
     /// reused across multiple agents.
-    pub fn try_with_provider(spec: AgentSpec, provider: &AgentProvider) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_runenv(spec, provider, RunEnv::local())
-    }
-
-    /// Create an agent with an explicit [`AgentProvider`] and [`RunEnv`].
-    ///
-    /// The full constructor.  The supplied `runenv` is stored in [`AgentState::runenv`]
-    /// and is also cloned into every sub-agent declared in [`AgentSpec::subagents`], so
-    /// the parent and its sub-agents observe the same filesystem and process state.
-    ///
-    /// Files declared in [`AgentSpec::files`] are materialised lazily on the
-    /// first [`Self::run`].  Each path in [`AgentSpec::skills`] is an absolute
-    /// directory containing a `SKILL.md`; the spec is taken as-is — sub-spec
-    /// skill paths are **not** rewritten, so sub-agent skills are portable
-    /// across parents.
-    pub fn try_with_provider_and_runenv(
+    pub async fn try_with_provider(
         spec: AgentSpec,
         provider: &AgentProvider,
-        runenv: RunEnv,
     ) -> anyhow::Result<Self> {
+        Self::try_with_provider_and_state(spec, provider, AgentState::new()).await
+    }
+
+    /// Create an agent with an explicit [`AgentProvider`] and [`AgentState`].
+    ///
+    /// The full constructor.  The supplied `state` is stored on the agent and its
+    /// [`AgentState::runenv`] is cloned into every sub-agent declared in
+    /// [`AgentSpec::subagents`], so the parent and its sub-agents observe the same
+    /// filesystem and process state.
+    ///
+    /// When the supplied [`AgentState::messages`] is empty, a system message is
+    /// derived from [`AgentSpec::instruction`] and the declared skills table and
+    /// prepended to history.  Otherwise the caller-supplied messages are used as-is
+    /// (useful for session resumption).
+    ///
+    /// Files declared in [`AgentSpec::files`] (and the entire sub-spec subtree)
+    /// are materialised into the runenv eagerly with write-once semantics so
+    /// that the skills table can be rendered from the runenv via
+    /// [`AgentState::render_skills`].  Each path in [`AgentSpec::skills`] is an
+    /// absolute directory containing a `SKILL.md`; the spec is taken as-is —
+    /// sub-spec skill paths are **not** rewritten, so sub-agent skills are
+    /// portable across parents.
+    pub async fn try_with_provider_and_state(
+        spec: AgentSpec,
+        provider: &AgentProvider,
+        mut state: AgentState,
+    ) -> anyhow::Result<Self> {
+        let runenv: Arc<RunEnv> = state.runenv.clone();
         // Resolve LangModel from the registry (handles glob lookup + prefix stripping)
-        let model = provider.models.provide(&spec.model)?;
+        let model = LangModel::try_with_provider(spec.model.clone(), &provider.models)?;
 
         let model_options = spec.model_options.clone().unwrap_or_default();
 
@@ -169,8 +137,7 @@ impl Agent {
         // that materialises a fresh Agent on call and shares the parent's
         // runenv so filesystem state is shared.  Sub-specs are taken as-is —
         // no path rewriting — so sub-agent skills are portable across
-        // parents.  Files are materialised lazily on the first run via
-        // [`Self::ensure_files_materialised`].
+        // parents.
         for sub_spec in &spec.subagents {
             let card = sub_spec
                 .card
@@ -183,22 +150,39 @@ impl Agent {
             tools.insert(tool_name, func);
         }
 
-        // Build the system message: instruction + (optionally) the skills table.
-        // The table is rendered from declared `spec.skills` by matching
-        // each entry against an in-memory `SKILL.md` FileEntry.
-        let declared_skills = scan_declared_skills(&spec.files, &spec.skills)?;
-        let skills_block = render_skills_table(&declared_skills);
-        let system_text = match (spec.instruction.as_deref(), skills_block) {
-            (Some(inst), Some(block)) => Some(format!("{inst}\n\n{block}")),
-            (Some(inst), None) => Some(inst.to_string()),
-            (None, Some(block)) => Some(block),
-            (None, None) => None,
-        };
-        let history = system_text
-            .map(|t| vec![Message::new(Role::System).with_contents([Part::text(t)])])
-            .unwrap_or_default();
+        // Materialise declared files (this agent's plus the entire sub-spec
+        // subtree) eagerly so that the skills table below — and any later
+        // `run` — can read SKILL.md from the runenv.  Write-once semantics
+        // preserve any runtime modifications across re-constructions.
+        let handle = state.runenv.get().await?;
+        materialise_files_recursive(&spec, &**handle).await?;
+        drop(handle);
 
-        let state = AgentState::new().history(history).runenv(runenv);
+        // Build the system message: instruction + (optionally) the skills table.
+        // The block is rendered by [`AgentState::render_skills`] from
+        // declared `spec.skills` against the `SKILL.md` files just materialised
+        // in the runenv.  Only seed when the caller hasn't supplied their own
+        // messages — a non-empty `state.messages` is taken as a deliberate
+        // resume and overrides the spec-derived system message.
+        if state.messages.is_empty() {
+            let skills_block = state.render_skills(&spec.skills, None).await?;
+            let skills_block = if skills_block.is_empty() {
+                None
+            } else {
+                Some(skills_block)
+            };
+            let system_text = match (spec.instruction.as_deref(), skills_block) {
+                (Some(inst), Some(block)) => Some(format!("{inst}\n\n{block}")),
+                (Some(inst), None) => Some(inst.to_string()),
+                (None, Some(block)) => Some(block),
+                (None, None) => None,
+            };
+            if let Some(t) = system_text {
+                state
+                    .messages
+                    .push(Message::new(Role::System).with_contents([Part::text(t)]));
+            }
+        }
 
         Ok(Self {
             model,
@@ -206,9 +190,7 @@ impl Agent {
             tools,
             tool_descs,
             state,
-            context_manager: None,
             spec,
-            files_materialised: false,
         })
     }
 
@@ -249,24 +231,6 @@ impl Agent {
             }
         }
         msg
-    }
-
-    pub(crate) fn set_context_manager(&mut self, cm: Option<ContextManager>) {
-        self.context_manager = cm;
-    }
-
-    /// Lazy gate: materialise this agent's declared files (and the entire
-    /// declared sub-spec subtree) into the runenv on first call.  Uses
-    /// write-once semantics — files that already exist are left untouched —
-    /// so any runtime modifications survive subsequent invocations.
-    async fn ensure_files_materialised(&mut self) -> anyhow::Result<()> {
-        if self.files_materialised {
-            return Ok(());
-        }
-        let handle = self.state.runenv.get().await?;
-        materialise_files_recursive(&self.spec, &**handle).await?;
-        self.files_materialised = true;
-        Ok(())
     }
 
     /// Read-only view of the spec this agent was built from.
@@ -407,11 +371,7 @@ impl Agent {
 
     /// Return the full message history accumulated so far.
     pub fn get_history(&self) -> &[Message] {
-        &self.state.history
-    }
-
-    pub fn get_context_manager(&self) -> Option<&ContextManager> {
-        self.context_manager.as_ref()
+        &self.state.messages
     }
 
     /// Stream all events for a single agent turn.
@@ -420,23 +380,15 @@ impl Agent {
         query: Message,
     ) -> Pin<Box<impl Stream<Item = anyhow::Result<MessageOutput>> + Send + '_>> {
         Box::pin(async_stream::try_stream! {
-            // Lazy gate: write declared files (this agent + sub-spec subtree)
-            // to the runenv on first call.  Write-once semantics preserve any
-            // runtime modifications across subsequent runs.
-            self.ensure_files_materialised().await?;
-
-            self.state.history.push(query);
+            self.state.messages.push(query);
 
             loop {
                 // Truncation check based on previous call's token usage.
-                if let Some(cm) = &self.context_manager
-                    && self.state.last_input_tokens.unwrap_or(0) > cm.max_input_tokens {
-                        cm.truncate_history(&mut self.state.history);
-                    }
+                self.state.truncate_if_needed();
 
                 let mut output = self
                     .model
-                    .run(&self.state.history, &self.tool_descs, &self.model_options)
+                    .run(&self.state.messages, &self.tool_descs, &self.model_options)
                     .await?;
 
                 // Capture token usage for next iteration's truncation check.
@@ -445,7 +397,7 @@ impl Agent {
                 }
 
                 output.depth = Some(0);
-                self.state.history.push(output.message.clone());
+                self.state.messages.push(output.message.clone());
                 self.stamp_source_agent(&mut output);
 
                 let tool_calls = match &output.finish_reason {
@@ -467,7 +419,7 @@ impl Agent {
                         Ok(mut output) => {
                             if output.message.role == Role::Tool && output.depth == Some(0) {
                                 output.message = Self::cap_tool_result(output.message);
-                                self.state.history.push(output.message.clone());
+                                self.state.messages.push(output.message.clone());
                             }
                             self.stamp_source_agent(&mut output);
                             yield output;
@@ -485,9 +437,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        agent::{AgentCard, AgentProvider, AgentSpec, ContextManager},
+        agent::{AgentCard, AgentProvider, AgentSpec},
         datatype::Value,
-        lang_model::LangModelProvider,
+        lang_model::LangModelAPISchema,
         message::{Message, Part, Role},
         suppress_panics, to_value,
         tool::{ToolDescBuilder, ToolProvider},
@@ -501,13 +453,24 @@ mod tests {
         if let Ok(key) = std::env::var("OPENAI_API_KEY") {
             provider
                 .models
-                .insert("openai/*".into(), LangModelProvider::openai(key.clone()));
+                .insert_api(
+                    "openai/*".into(),
+                    LangModelAPISchema::OpenAI,
+                    "https://api.openai.com/v1/responses",
+                    Some(key),
+                )
+                .unwrap();
         }
         if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-            provider.models.insert(
-                "anthropic/*".into(),
-                LangModelProvider::anthropic(key.clone()),
-            );
+            provider
+                .models
+                .insert_api(
+                    "anthropic/*".into(),
+                    LangModelAPISchema::Anthropic,
+                    "https://api.anthropic.com/v1/messages",
+                    Some(key),
+                )
+                .unwrap();
         }
         provider
     }
@@ -537,7 +500,7 @@ mod tests {
         provider.tools.insert_func("temperature", temperature_fn);
 
         let spec = AgentSpec::new("openai/gpt-4o-mini").tool(temperature_desc);
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the temperature in Seoul?")]);
@@ -604,7 +567,9 @@ mod tests {
             )
             .subagent(sub_spec);
 
-        let mut main_agent = Agent::try_with_provider(main_spec, &provider).unwrap();
+        let mut main_agent = Agent::try_with_provider(main_spec, &provider)
+            .await
+            .unwrap();
 
         let query =
             Message::new(Role::User).with_contents([Part::text("What is 123 multiplied by 7?")]);
@@ -657,7 +622,9 @@ mod tests {
 
         let main_spec = AgentSpec::new("openai/gpt-4o-mini").subagent(sub_spec);
 
-        let mut main_agent = Agent::try_with_provider(main_spec, &provider).unwrap();
+        let mut main_agent = Agent::try_with_provider(main_spec, &provider)
+            .await
+            .unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text("What is 99 plus 1?")]);
 
@@ -761,7 +728,7 @@ mod tests {
                     .to_string(),
             );
 
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text(
             "Get the temperature in Tokyo using temperature_fast \
@@ -876,7 +843,7 @@ mod tests {
                     .to_string(),
             );
 
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text(
             "Tell me about Seoul. Use get_weather for weather and get_traffic for traffic.",
@@ -946,7 +913,7 @@ mod tests {
         );
     }
 
-    /// Verifies that ContextManager replaces old tool results with "[context truncated]"
+    /// Verifies that AgentState replaces old tool results with "[context truncated]"
     /// when last_input_tokens exceeds max_input_tokens at the start of a run.
     ///
     /// History layout when truncation fires (after run() pushes the new query):
@@ -971,7 +938,7 @@ mod tests {
             .instruction("Reply with exactly 'OK'. Do not call any tools.")
             .tool(dummy_desc);
 
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         // Build two complete tool-call turns in history.
         let old_id = "call_old";
@@ -979,28 +946,26 @@ mod tests {
         for (user_text, call_id) in [("q1", old_id), ("q2", recent_id)] {
             agent
                 .state
-                .history
+                .messages
                 .push(Message::new(Role::User).with_contents([Part::text(user_text)]));
-            agent.state.history.push(
+            agent.state.messages.push(
                 Message::new(Role::Assistant).with_tool_calls([Part::function(
                     call_id,
                     "dummy_tool",
                     to_value!({}),
                 )]),
             );
-            agent.state.history.push(
+            agent.state.messages.push(
                 Message::new(Role::Tool)
                     .with_id(call_id)
                     .with_contents([Part::value(Value::string(format!("{call_id}_value")))]),
             );
         }
 
-        agent.set_context_manager(Some(ContextManager {
-            max_input_tokens: 1, // always exceeded
-            // Two recent turns: the just-pushed `u3` plus the previous `u2`, so the
-            // boundary lands on `u2` and only `tr_old` (from the `u1` turn) is truncated.
-            preserve_recent_turns: 2,
-        }));
+        agent.state.context_manager.max_input_tokens = 1; // always exceeded
+        // Two recent turns: the just-pushed `u3` plus the previous `u2`, so the
+        // boundary lands on `u2` and only `tr_old` (from the `u1` turn) is truncated.
+        agent.state.context_manager.preserve_recent_turns = 2;
         agent.state.last_input_tokens = Some(9999);
 
         {
@@ -1040,7 +1005,7 @@ mod tests {
         );
     }
 
-    /// Verifies that ContextManager does NOT truncate tool results when
+    /// Verifies that AgentState does NOT truncate tool results when
     /// last_input_tokens is below max_input_tokens.
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
@@ -1058,7 +1023,7 @@ mod tests {
             .instruction("Reply with exactly 'OK'. Do not call any tools.")
             .tool(dummy_desc);
 
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         // Same two-turn history shape as the threshold test.
         let old_id = "call_old_b";
@@ -1066,16 +1031,16 @@ mod tests {
         for (user_text, call_id) in [("q1", old_id), ("q2", recent_id)] {
             agent
                 .state
-                .history
+                .messages
                 .push(Message::new(Role::User).with_contents([Part::text(user_text)]));
-            agent.state.history.push(
+            agent.state.messages.push(
                 Message::new(Role::Assistant).with_tool_calls([Part::function(
                     call_id,
                     "dummy_tool",
                     to_value!({}),
                 )]),
             );
-            agent.state.history.push(
+            agent.state.messages.push(
                 Message::new(Role::Tool)
                     .with_id(call_id)
                     .with_contents([Part::value(Value::string(format!("{call_id}_value")))]),
@@ -1083,10 +1048,8 @@ mod tests {
         }
 
         // High threshold — will never be exceeded by the preset last_input_tokens.
-        agent.set_context_manager(Some(ContextManager {
-            max_input_tokens: 1_000_000,
-            preserve_recent_turns: 1,
-        }));
+        agent.state.context_manager.max_input_tokens = 1_000_000;
+        agent.state.context_manager.preserve_recent_turns = 1;
         agent.state.last_input_tokens = Some(100);
 
         {
@@ -1139,7 +1102,10 @@ mod tests {
         let runenv = RunEnv::sandbox(SandboxConfig::default())
             .await
             .expect("sandbox creation failed");
-        let mut agent = Agent::try_with_provider_and_runenv(spec, &provider, runenv).unwrap();
+        let state = AgentState::new().runenv(runenv);
+        let mut agent = Agent::try_with_provider_and_state(spec, &provider, state)
+            .await
+            .unwrap();
 
         let log = "/tmp/agent_serial_test.txt";
         let query = Message::new(Role::User).with_contents([Part::text(format!(
@@ -1310,7 +1276,10 @@ To activate a skill, read its SKILL.md using the shell tool \
         let runenv = RunEnv::sandbox(SandboxConfig::default())
             .await
             .expect("sandbox creation failed");
-        let mut agent = Agent::try_with_provider_and_runenv(spec, &provider, runenv).unwrap();
+        let state = AgentState::new().runenv(runenv);
+        let mut agent = Agent::try_with_provider_and_state(spec, &provider, state)
+            .await
+            .unwrap();
 
         // Seed the sandbox with the skill file and the test PDF before running the agent.
         let pdf_bytes = minimal_pdf_bytes();
@@ -1406,7 +1375,7 @@ To activate a skill, read its SKILL.md using the shell tool \
     /// End-to-end: parent agent delegates to subagent via tool call, subagent writes
     /// a sentinel file in the shared sandbox, parent reads it back with its own shell tool
     /// and returns the content.  Proves the runenv passed to
-    /// [`Agent::try_with_provider_and_runenv`] is propagated to spec subagents so they
+    /// [`Agent::try_with_provider_and_state`] is propagated to spec subagents so they
     /// share the same VM.
     #[cfg(feature = "sandbox")]
     #[test_with::env(ANTHROPIC_API_KEY)]
@@ -1417,9 +1386,11 @@ To activate a skill, read its SKILL.md using the shell tool \
         let mut provider = get_provider();
         provider.tools = ToolProvider::new();
 
-        let runenv = RunEnv::sandbox(SandboxConfig::default())
-            .await
-            .expect("sandbox creation failed");
+        let runenv = Arc::new(
+            RunEnv::sandbox(SandboxConfig::default())
+                .await
+                .expect("sandbox creation failed"),
+        );
 
         // Subagent: writes a file when asked, has shell tool + shared sandbox.
         let sub_spec = AgentSpec::new("anthropic/claude-haiku-4-5-20251001")
@@ -1448,7 +1419,8 @@ To activate a skill, read its SKILL.md using the shell tool \
             )
             .subagent(sub_spec);
 
-        let mut parent = Agent::try_with_provider_and_runenv(main_spec, &provider, runenv.clone())
+        let state = AgentState::new().runenv(runenv.clone());
+        let mut parent = Agent::try_with_provider_and_state(main_spec, &provider, state)
             .expect("parent build failed");
 
         let query =

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use futures::StreamExt as _;
 
 use crate::{
-    agent::{Agent, AgentCard, AgentProvider, AgentSpec},
+    agent::{Agent, AgentCard, AgentProvider, AgentSpec, AgentState},
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role},
     runenv::{RunEnv, RunEnvHandle},
@@ -69,7 +69,7 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
 pub fn get_subagent_tool_func(
     spec: AgentSpec,
     provider: AgentProvider,
-    runenv: RunEnv,
+    runenv: Arc<RunEnv>,
 ) -> ToolFunc {
     // Capture the card name once; it's needed on every synthesised MessageOutput.
     let card_name = spec.card.as_ref().map(|c| c.name.clone());
@@ -101,7 +101,8 @@ pub fn get_subagent_tool_func(
                 }
             };
 
-            let mut agent = match Agent::try_with_provider_and_runenv(spec, &provider, runenv) {
+            let state = AgentState::new().runenv(runenv);
+            let mut agent = match Agent::try_with_provider_and_state(spec, &provider, state).await {
                 Ok(a) => a,
                 Err(e) => {
                     yield MessageOutput {

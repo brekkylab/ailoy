@@ -1,12 +1,7 @@
-use url::Url;
-
 use super::super::response_format::ResponseSchemaMarshal;
 use crate::{
     datatype::Value,
-    lang_model::{
-        LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest,
-        ResponseFormat,
-    },
+    lang_model::{LangModelRequest, ResponseFormat},
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, Unmarshal,
@@ -14,16 +9,6 @@ use crate::{
     to_value,
     tool::ToolDesc,
 };
-
-impl LangModelProvider {
-    pub fn openai(api_key: String) -> LangModelProviderElem {
-        LangModelProviderElem::API {
-            schema: LangModelAPISchema::OpenAI,
-            url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
-            api_key: Some(api_key),
-        }
-    }
-}
 
 /// Returns whether `model` is an OpenAI reasoning model that does not accept
 /// the `temperature` / `top_p` / `top_k` sampling parameters.
@@ -419,10 +404,17 @@ mod tests {
     use super::*;
     use crate::{
         datatype::Bytes,
-        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
+        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProvider},
         message::{FinishReason, Message, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    fn make_model(model: &str, url: &str, api_key: Option<String>) -> LangModel {
+        let mut p = LangModelProvider::new();
+        p.insert_api(model.into(), LangModelAPISchema::OpenAI, url, api_key)
+            .unwrap();
+        LangModel::try_with_provider(model.to_string(), &p).unwrap()
+    }
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
     where
@@ -665,13 +657,10 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
-        let model = LangModel::new(
-            "gpt-5.4-mini".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::OpenAI,
-                url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
-                api_key: Some(api_key),
-            },
+        let model = make_model(
+            "gpt-5.4-mini",
+            "https://api.openai.com/v1/responses",
+            Some(api_key),
         );
         let messages = vec![
             Message::new(Role::User)
@@ -710,13 +699,10 @@ mod tests {
             "additionalProperties": false
         });
 
-        let model = LangModel::new(
-            "gpt-4.1-mini".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::OpenAI,
-                url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
-                api_key: Some(api_key),
-            },
+        let model = make_model(
+            "gpt-4.1-mini",
+            "https://api.openai.com/v1/responses",
+            Some(api_key),
         );
         let messages = vec![Message::new(Role::User).with_contents([Part::text(
             "Return France's country name and capital city in the requested format.",
@@ -765,13 +751,10 @@ mod tests {
         .unwrap()
         .to_vec();
 
-        let model = LangModel::new(
-            "gpt-5.4-mini".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::OpenAI,
-                url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
-                api_key: Some(api_key),
-            },
+        let model = make_model(
+            "gpt-5.4-mini",
+            "https://api.openai.com/v1/responses",
+            Some(api_key),
         );
 
         let messages = vec![
