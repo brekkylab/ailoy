@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use crate::{
-    agent::{Agent, AgentProvider, AgentSpec, ContextManager},
+    agent::{Agent, AgentProvider, AgentSpec, ContextManager, SharedMachine, shared_machine},
     message::Message,
-    runenv::{FileEntry, RunEnv},
+    runenv::{FileEntry, Machine},
     tool::{ToolDesc, WebSearchEngineKind},
 };
 
@@ -51,7 +51,7 @@ pub struct AgentBuilder {
 
     history: Vec<Message>,
 
-    runenv: Option<RunEnv>,
+    machine: Option<SharedMachine>,
 
     context_manager: Option<ContextManager>,
 }
@@ -65,7 +65,7 @@ impl AgentBuilder {
             spec,
             provider: None,
             history: Vec::new(),
-            runenv: None,
+            machine: None,
             context_manager: None,
         }
     }
@@ -116,7 +116,7 @@ impl AgentBuilder {
     }
 
     /// Append a sub-agent spec.  At [`build`](Self::build) time the sub-agent is
-    /// materialised and registered as a callable tool, sharing the parent's [`RunEnv`].
+    /// materialised and registered as a callable tool, sharing the parent's machine.
     /// The sub-spec must carry an [`AgentCard`](crate::agent::AgentCard).
     pub fn subagent(mut self, spec: AgentSpec) -> Self {
         self.spec.subagents.push(spec);
@@ -131,39 +131,37 @@ impl AgentBuilder {
         self
     }
 
-    /// Use this [`RunEnv`] for tool execution instead of the default local runenv.
-    /// `RunEnv` is cheaply cloneable, so the same underlying VM can be shared between
-    /// multiple agents by cloning the value.
-    pub fn runenv(mut self, runenv: RunEnv) -> Self {
-        self.runenv = Some(runenv);
+    /// Use this [`Machine`] for tool execution instead of a default [`Local`].
+    /// Wraps the machine in `Arc<Mutex<>>` so sub-agents inherit the same VM.
+    pub fn machine<M: Machine>(mut self, m: M) -> Self {
+        self.machine = Some(shared_machine(m));
+        self
+    }
+
+    /// Use this pre-shared machine handle. Useful when the same VM should be
+    /// shared with another `Agent` built elsewhere.
+    pub fn shared_machine(mut self, m: SharedMachine) -> Self {
+        self.machine = Some(m);
         self
     }
 
     /// Set the context window management spec.
-    ///
-    /// When set, the agent will automatically truncate history when the input token count
-    /// exceeds `spec.max_input_tokens`, preserving the most recent turns.
     pub fn context_manager(mut self, spec: ContextManager) -> Self {
         self.context_manager = Some(spec);
         self
     }
 
     /// Sampling temperature forwarded to the language model on every call.
-    /// See [`AgentSpec::temperature`].
     pub fn temperature(mut self, temperature: f64) -> Self {
         self.spec = self.spec.temperature(temperature);
         self
     }
 
-    /// Top-p (nucleus) sampling parameter forwarded to the language model on
-    /// every call. See [`AgentSpec::top_p`].
     pub fn top_p(mut self, top_p: f64) -> Self {
         self.spec = self.spec.top_p(top_p);
         self
     }
 
-    /// Top-k sampling parameter forwarded to the language model on every call.
-    /// See [`AgentSpec::top_k`].
     pub fn top_k(mut self, top_k: u64) -> Self {
         self.spec = self.spec.top_k(top_k);
         self
@@ -174,14 +172,11 @@ impl AgentBuilder {
         self
     }
 
-    /// Append a single pre-fill [`FileEntry`] to `spec.files`.  The file is
-    /// written into the runenv on the agent's first `run`.
     pub fn file(mut self, entry: FileEntry) -> Self {
         self.spec.files.push(entry);
         self
     }
 
-    /// Append several [`FileEntry`]s to `spec.files`.
     pub fn files(mut self, entries: impl IntoIterator<Item = FileEntry>) -> Self {
         self.spec.files.extend(entries);
         self
@@ -205,20 +200,18 @@ impl AgentBuilder {
             spec,
             provider,
             history,
-            runenv,
+            machine,
             context_manager,
         } = self;
 
-        let mut agent = match (provider, runenv) {
+        let mut agent = match (provider, machine) {
             (None, None) => Agent::try_new(spec)?,
-            (None, Some(runenv)) => Agent::try_with_runenv(spec, runenv)?,
+            (None, Some(m)) => Agent::try_with_machine(spec, m)?,
             (Some(provider), None) => Agent::try_with_provider(spec, &provider)?,
-            (Some(provider), Some(runenv)) => {
-                Agent::try_with_provider_and_runenv(spec, &provider, runenv)?
+            (Some(provider), Some(m)) => {
+                Agent::try_with_provider_and_machine(spec, &provider, m)?
             }
         };
-        // Only override the spec-derived history (which seeds the system instruction)
-        // when the caller explicitly supplied one — e.g. for session resumption.
         if !history.is_empty() {
             agent.state.history = history;
         }
@@ -232,7 +225,12 @@ impl AgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{agent::AgentCard, lang_model::LangModelProvider, message::Role};
+    use crate::{
+        agent::AgentCard,
+        lang_model::LangModelProvider,
+        message::Role,
+        runenv::Local,
+    };
 
     const TEST_MODEL: &str = "openai/gpt-4o-mini";
 
@@ -278,31 +276,28 @@ mod tests {
         assert!(agent.get_history().is_empty());
     }
 
-    /// `runenv()` carries the supplied `RunEnv` through to `state.runenv`.
+    /// `machine()` carries the supplied [`Machine`] through to `state.machine`.
     #[tokio::test]
-    async fn test_builder_runenv_is_applied() {
+    async fn test_builder_machine_is_applied() {
         let agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
-            .runenv(RunEnv::local())
+            .machine(Local::new())
             .build()
             .unwrap();
-        // Smoke check: runenv is plugged in and usable.
-        let handle = agent.state.runenv.get().await.expect("runenv start failed");
-        let result = handle
+        // Smoke check: machine is plugged in and usable.
+        let mut guard = agent.state.machine.lock().await;
+        let console = guard.start().await.expect("machine start failed");
+        let result = console
             .exec("sh".into(), vec!["-c".into(), "echo ok".into()], None)
             .await
             .expect("exec failed");
         assert!(result.stdout.contains("ok"));
     }
 
-    /// Helper: build a SKILL.md body with the given name/description/body.
     fn skill_md(name: &str, desc: &str, body: &str) -> Vec<u8> {
         format!("---\nname: {name}\ndescription: {desc}\n---\n{body}").into_bytes()
     }
 
-    /// `.skill(dir, [SKILL.md])` declares a skill and seeds its content in
-    /// one call; the spec carries both pieces and the system instruction
-    /// lists the skill.
     #[tokio::test]
     async fn test_file_skill_seeds_spec() {
         let dir = tempfile::tempdir().unwrap();
@@ -310,7 +305,7 @@ mod tests {
         let skill_path = greet_dir.join("SKILL.md");
         let agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
-            .runenv(RunEnv::local())
+            .machine(Local::new())
             .skill(
                 &greet_dir,
                 [FileEntry::new(
@@ -330,21 +325,15 @@ mod tests {
         assert!(sys.contains("greet"));
     }
 
-    /// With no skills declared, the Available Skills block is omitted
-    /// entirely (no noise in the system message).
     #[tokio::test]
     async fn test_no_skill_block_when_nothing_declared() {
         let agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
             .build()
             .unwrap();
-        // No instruction, no skills → no system message at all.
         assert!(agent.get_history().is_empty());
     }
 
-    /// Per-agent skill isolation: parent and sub each declare their own
-    /// skill dir explicitly (no nesting convention).  Parent's system
-    /// instruction lists only its own skill.
     #[tokio::test]
     async fn test_per_agent_skill_isolation() {
         let dir = tempfile::tempdir().unwrap();
@@ -369,7 +358,7 @@ mod tests {
 
         let parent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
-            .runenv(RunEnv::local())
+            .machine(Local::new())
             .skill(
                 &parent_skill_dir,
                 [FileEntry::new(
@@ -381,7 +370,6 @@ mod tests {
             .build()
             .unwrap();
 
-        // Parent's system message references only its own skill, not the sub's.
         let sys = system_text(&parent).expect("parent system message");
         assert!(sys.contains("a_skill"), "parent should advertise a_skill");
         assert!(
@@ -390,10 +378,6 @@ mod tests {
         );
     }
 
-    /// Same-named skills (last path segment "foo") declared on parent and
-    /// sub at explicit, disjoint paths carry different content without
-    /// conflict — the new design relies on the user picking distinct paths,
-    /// no automatic nesting.
     #[tokio::test]
     async fn test_same_skill_name_across_levels_no_conflict() {
         let dir = tempfile::tempdir().unwrap();
@@ -418,7 +402,7 @@ mod tests {
 
         let parent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
-            .runenv(RunEnv::local())
+            .machine(Local::new())
             .skill(
                 &parent_foo_dir,
                 [FileEntry::new(
@@ -430,7 +414,6 @@ mod tests {
             .build()
             .unwrap();
 
-        // Parent + sub specs hold distinct files at distinct paths.
         let parent_entry = parent
             .spec()
             .files
@@ -454,8 +437,6 @@ mod tests {
         );
     }
 
-    /// Subagents declared in the spec are accepted by `build()` (full delegation
-    /// is exercised by integration tests in [`crate::agent::rt`]).
     #[tokio::test]
     async fn test_builder_subagent_in_spec() {
         use crate::agent::AgentSpec;
@@ -471,83 +452,6 @@ mod tests {
             .subagent(sub_spec)
             .build()
             .unwrap();
-    }
-
-    /// Two agents built with the same cloned `RunEnv` see each other's
-    /// filesystem writes — confirms `.runenv()` carries the VM reference
-    /// through to the agent's `state.runenv`, and that cloning the v2
-    /// `RunEnv` shares the underlying container.
-    #[cfg(feature = "sandbox")]
-    #[tokio::test]
-    async fn test_builder_shared_arc_sandbox() {
-        use crate::runenv::SandboxConfig;
-
-        let runenv = RunEnv::sandbox(SandboxConfig::default())
-            .await
-            .expect("sandbox creation failed");
-
-        let sub_agent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
-            .runenv(runenv.clone())
-            .build()
-            .unwrap();
-
-        let parent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
-            .runenv(runenv.clone())
-            .build()
-            .unwrap();
-
-        // Write through the underlying VM, read back through parent's runenv.
-        let handle = runenv.get().await.expect("runenv start failed");
-        handle
-            .write(
-                std::path::Path::new("/workspace/shared_test.txt"),
-                b"shared_ok",
-            )
-            .await
-            .expect("write failed");
-
-        let bytes = parent
-            .state
-            .runenv
-            .get()
-            .await
-            .expect("runenv start failed")
-            .read(std::path::Path::new("/workspace/shared_test.txt"))
-            .await
-            .expect("read failed");
-
-        assert_eq!(
-            bytes, b"shared_ok",
-            "parent runenv must see file written through shared vm"
-        );
-
-        // And the subagent's runenv sees writes from the parent.
-        parent
-            .state
-            .runenv
-            .get()
-            .await
-            .expect("runenv start failed")
-            .write(std::path::Path::new("/workspace/shared.txt"), b"shared_ok")
-            .await
-            .expect("write failed");
-
-        let bytes = sub_agent
-            .state
-            .runenv
-            .get()
-            .await
-            .expect("runenv start failed")
-            .read(std::path::Path::new("/workspace/shared.txt"))
-            .await
-            .expect("subagent runenv should see file written by parent");
-
-        assert!(
-            bytes.starts_with(b"shared_ok"),
-            "subagent runenv did not see the file written by parent, got: {bytes:?}"
-        );
     }
 
     #[tokio::test]

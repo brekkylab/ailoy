@@ -29,7 +29,7 @@ pub fn get_write_tool_desc() -> ToolDesc {
 }
 
 pub fn get_write_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, runenv: Arc<RunEnvHandle>| -> Value {
+    tool_func!(async |args: Value, console: &dyn Console| -> Value {
         let Some(path) = args.pointer("/path").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: path",
@@ -43,7 +43,7 @@ pub fn get_write_tool_func() -> ToolFunc {
             });
         };
 
-        match runenv.write(Path::new(path), content.as_bytes()).await {
+        match console.write(Path::new(path), content.as_bytes()).await {
             Ok(()) => crate::to_value!({
                 "ok": true,
                 "bytes_written": content.len() as i64,
@@ -61,7 +61,13 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, message::Message, runenv::RunEnv, to_value, tool::ToolProvider};
+    use crate::{
+        datatype::Value,
+        message::Message,
+        runenv::{Local, Machine},
+        to_value,
+        tool::ToolProvider,
+    };
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -73,8 +79,9 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_write_tool_desc()]).unwrap();
         let f = funcs.get("write").unwrap();
-        let runenv = RunEnv::local().get().await.unwrap();
-        f.call(args, "1", runenv).next().await.unwrap().message
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
+        f.call(args, "1", console).next().await.unwrap().message
     }
 
     #[tokio::test]

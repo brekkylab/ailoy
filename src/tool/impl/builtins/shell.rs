@@ -29,7 +29,7 @@ pub fn get_shell_tool_desc() -> ToolDesc {
 }
 
 pub fn get_shell_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, runenv: Arc<RunEnvHandle>| -> Value {
+    tool_func!(async |args: Value, console: &dyn Console| -> Value {
         let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
@@ -42,7 +42,7 @@ pub fn get_shell_tool_func() -> ToolFunc {
             }
         };
 
-        let Ok(out) = runenv.exec_shell(cmd, None).await else {
+        let Ok(out) = console.exec_shell(cmd, None).await else {
             return crate::to_value!({
                 "stdout": String::new(),
                 "stderr": String::from("Internal error"),
@@ -64,7 +64,11 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{runenv::RunEnv, to_value, tool::ToolProvider};
+    use crate::{
+        runenv::{Local, Machine},
+        to_value,
+        tool::ToolProvider,
+    };
 
     async fn provider() -> ToolProvider {
         let mut provider = ToolProvider::new();
@@ -77,9 +81,10 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
         let f = funcs.get("shell").unwrap();
-        let runenv = RunEnv::local().get().await.unwrap();
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
         let msg = f
-            .call(to_value!({}), "", runenv)
+            .call(to_value!({}), "", console)
             .next()
             .await
             .unwrap()
@@ -98,9 +103,10 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
         let f = funcs.get("shell").unwrap();
-        let runenv = RunEnv::local().get().await.unwrap();
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
         let msg = f
-            .call(to_value!({ "cmd": "echo ailoy" }), "", runenv)
+            .call(to_value!({ "cmd": "echo ailoy" }), "", console)
             .next()
             .await
             .unwrap()
@@ -119,9 +125,10 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
         let f = funcs.get("shell").unwrap();
-        let runenv = RunEnv::local().get().await.unwrap();
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
         let msg = f
-            .call(to_value!({ "cmd": "exit 42" }), "", runenv)
+            .call(to_value!({ "cmd": "exit 42" }), "", console)
             .next()
             .await
             .unwrap()
@@ -142,13 +149,14 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
         let f = funcs.get("shell").unwrap();
-        let runenv = RunEnv::local().get().await.unwrap();
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
 
         let r1 = f
             .call(
                 to_value!({ "cmd": format!("echo persisted > {path}") }),
                 "",
-                runenv.clone(),
+                console,
             )
             .next()
             .await
@@ -165,7 +173,7 @@ mod tests {
         );
 
         let r2 = f
-            .call(to_value!({ "cmd": format!("cat {path}") }), "", runenv)
+            .call(to_value!({ "cmd": format!("cat {path}") }), "", console)
             .next()
             .await
             .unwrap()

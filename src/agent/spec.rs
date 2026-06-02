@@ -24,8 +24,9 @@ use crate::{
 /// to, and the sub-agents it can delegate work to.  Changing any of these fields
 /// changes the fundamental nature of the agent.
 ///
-/// Runtime concerns — credentials, tool sources, and the [`RunEnv`](crate::runenv::RunEnv)
-/// — live on [`AgentProvider`](crate::agent::AgentProvider) and the constructors in
+/// Runtime concerns — credentials, tool sources, and the
+/// [`Machine`](crate::runenv::Machine) — live on
+/// [`AgentProvider`](crate::agent::AgentProvider) and the constructors in
 /// [`Agent`](crate::agent::Agent), not here.
 ///
 /// # `instruction` vs `card`
@@ -66,16 +67,16 @@ pub struct AgentSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub card: Option<AgentCard>,
 
-    /// Files this agent pre-fills into the runenv at build time.  Each entry
+    /// Files this agent pre-fills into the machine at build time.  Each entry
     /// carries an absolute path and its content, so a serialised `AgentSpec`
-    /// reproduces the same runenv layout elsewhere.
+    /// reproduces the same machine layout elsewhere.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<FileEntry>,
 
     /// Skill directories owned by this agent.  Each entry is the absolute
     /// path of a directory containing a `SKILL.md` file (plus any supporting
     /// files).  The skill's identifier is the final path segment.  Entries
-    /// can live anywhere on the runenv — they do not need to share a parent.
+    /// can live anywhere on the machine — they do not need to share a parent.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<PathBuf>,
 
