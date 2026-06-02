@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use crate::{
-    agent::{Agent, AgentProvider, AgentSpec, ContextManager, SharedMachine, shared_machine},
+    agent::{Agent, AgentProvider, AgentSpec, ContextManager},
     message::Message,
-    runenv::{FileEntry, Machine},
+    runenv::{FileEntry, Machine, SharedMachine},
     tool::{ToolDesc, WebSearchEngineKind},
 };
 
@@ -134,7 +134,7 @@ impl AgentBuilder {
     /// Use this [`Machine`] for tool execution instead of a default [`Local`].
     /// Wraps the machine in `Arc<Mutex<>>` so sub-agents inherit the same VM.
     pub fn machine<M: Machine>(mut self, m: M) -> Self {
-        self.machine = Some(shared_machine(m));
+        self.machine = Some(SharedMachine::new(m));
         self
     }
 
@@ -208,9 +208,7 @@ impl AgentBuilder {
             (None, None) => Agent::try_new(spec)?,
             (None, Some(m)) => Agent::try_with_machine(spec, m)?,
             (Some(provider), None) => Agent::try_with_provider(spec, &provider)?,
-            (Some(provider), Some(m)) => {
-                Agent::try_with_provider_and_machine(spec, &provider, m)?
-            }
+            (Some(provider), Some(m)) => Agent::try_with_provider_and_machine(spec, &provider, m)?,
         };
         if !history.is_empty() {
             agent.state.history = history;
@@ -225,12 +223,7 @@ impl AgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        agent::AgentCard,
-        lang_model::LangModelProvider,
-        message::Role,
-        runenv::Local,
-    };
+    use crate::{agent::AgentCard, lang_model::LangModelProvider, message::Role, runenv::Local};
 
     const TEST_MODEL: &str = "openai/gpt-4o-mini";
 
@@ -285,7 +278,7 @@ mod tests {
             .build()
             .unwrap();
         // Smoke check: machine is plugged in and usable.
-        let mut guard = agent.state.machine.lock().await;
+        let mut guard = agent.state.machine.get().await;
         let console = guard.start().await.expect("machine start failed");
         let result = console
             .exec("sh".into(), vec!["-c".into(), "echo ok".into()], None)

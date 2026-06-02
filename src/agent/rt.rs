@@ -1,30 +1,18 @@
-use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, pin::Pin};
 
 use futures::{FutureExt as _, Stream, StreamExt as _, stream::FuturesUnordered};
-use tokio::sync::Mutex;
 
 use crate::{
     agent::{AgentProvider, AgentSpec, ContextManager, default_provider},
     lang_model::{LangModel, LangModelOptions},
     message::{FinishReason, Message, MessageOutput, Part, Role},
-    runenv::{Console, Local, Machine, MachineDyn},
+    runenv::{Console, Local, SharedMachine},
     skill::{render_skills_table, scan_declared_skills},
     tool::{
         ToolDesc, ToolFunc,
         r#impl::{get_subagent_tool_desc, get_subagent_tool_func, get_web_search_tool_factory},
     },
 };
-
-/// Shared, lockable machine handle. `Arc` lets sub-agents inherit the parent
-/// machine; `Mutex` serialises `start()`/operations across concurrent tool calls
-/// and re-entrant sub-agent runs.
-pub type SharedMachine = Arc<Mutex<dyn MachineDyn>>;
-
-/// Wrap a concrete [`Machine`] in [`SharedMachine`] so it can be passed to
-/// [`Agent::try_with_provider_and_machine`] or shared between agents.
-pub fn shared_machine<M: Machine>(machine: M) -> SharedMachine {
-    Arc::new(Mutex::new(machine))
-}
 
 /// Walk the spec tree and write every declared file (this agent's plus the
 /// subtree's) to the machine with **write-once** semantics: if a file already
@@ -70,7 +58,7 @@ impl AgentState {
     pub fn new() -> Self {
         Self {
             history: Vec::new(),
-            machine: shared_machine(Local::new()),
+            machine: SharedMachine::new(Local::new()),
             last_input_tokens: None,
         }
     }
@@ -144,7 +132,7 @@ impl Agent {
     /// touching global state.  The provider is not stored in the agent and can be
     /// reused across multiple agents.
     pub fn try_with_provider(spec: AgentSpec, provider: &AgentProvider) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_machine(spec, provider, shared_machine(Local::new()))
+        Self::try_with_provider_and_machine(spec, provider, SharedMachine::new(Local::new()))
     }
 
     /// Create an agent with an explicit [`AgentProvider`] and shared machine.
@@ -192,8 +180,7 @@ impl Agent {
                 .ok_or_else(|| anyhow::anyhow!("subagent must declare an AgentCard"))?;
             let desc = get_subagent_tool_desc(card);
             let tool_name = desc.name.clone();
-            let func =
-                get_subagent_tool_func(sub_spec.clone(), provider.clone(), machine.clone());
+            let func = get_subagent_tool_func(sub_spec.clone(), provider.clone(), machine.clone());
             tool_descs.push(desc);
             tools.insert(tool_name, func);
         }
@@ -278,7 +265,7 @@ impl Agent {
         if self.files_materialised {
             return Ok(());
         }
-        let mut guard = self.state.machine.lock().await;
+        let mut guard = self.state.machine.get().await;
         let console = guard.start().await?;
         materialise_files_recursive(&self.spec, console).await?;
         self.files_materialised = true;
@@ -347,7 +334,7 @@ impl Agent {
                         if tool.needs_console() {
                             // Lock the machine for the duration of the tool's stream:
                             // the returned BoxStream borrows the started console.
-                            let mut guard = machine.lock().await;
+                            let mut guard = machine.get().await;
                             let console = guard.start().await?;
                             let mut stream = tool.call(call_args, call_id_for_call, console);
                             let mut last: Option<MessageOutput> = None;
@@ -375,7 +362,8 @@ impl Agent {
                             // re-locks the same Arc<Mutex<>>) without deadlocking
                             // against the parent's tool batch.
                             let dummy = Local::default();
-                            let mut stream = tool.call(call_args, call_id_for_call, dummy.into_dummy_console());
+                            let mut stream =
+                                tool.call(call_args, call_id_for_call, dummy.into_dummy_console());
                             let mut last: Option<MessageOutput> = None;
                             while let Some(item) = stream.next().await {
                                 if let Some(mut prev) = last.replace(item) {

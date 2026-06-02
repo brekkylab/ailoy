@@ -440,7 +440,7 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
 
         // Sanity: the SKILL.md was materialised into the sandbox.
         let skill_md_on_disk = {
-            let mut guard = agent.state.machine.lock().await;
+            let mut guard = agent.state.machine.get().await;
             let console = guard.start().await.expect("machine start failed");
             console
                 .read(&skill_dir.join("SKILL.md"))

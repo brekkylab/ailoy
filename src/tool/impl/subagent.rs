@@ -1,9 +1,10 @@
 use futures::StreamExt as _;
 
 use crate::{
-    agent::{Agent, AgentCard, AgentProvider, AgentSpec, SharedMachine},
+    agent::{Agent, AgentCard, AgentProvider, AgentSpec},
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role},
+    runenv::SharedMachine,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
 };
 
