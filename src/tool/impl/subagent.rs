@@ -102,7 +102,7 @@ pub fn get_subagent_tool_func(
             };
 
             let state = AgentState::new().runenv(runenv);
-            let mut agent = match Agent::try_with_provider_and_state(spec, &provider, state) {
+            let mut agent = match Agent::try_with_provider_and_state(spec, &provider, state).await {
                 Ok(a) => a,
                 Err(e) => {
                     yield MessageOutput {

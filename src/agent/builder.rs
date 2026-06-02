@@ -42,7 +42,8 @@ use crate::{
 ///         .parameters(to_value!({ "type": "object", "properties": {} }))
 ///         .build()
 ///     )
-///     .build()?;
+///     .build()
+///     .await?;
 /// #   Ok(())
 /// # }
 /// ```
@@ -221,7 +222,7 @@ impl AgentBuilder {
     /// (`max_input_tokens` / `preserve_recent_turns`) is applied to the agent's
     /// history.  An explicitly seeded `messages` list overrides the spec-derived
     /// system message (used for session resumption).
-    pub fn build(self) -> anyhow::Result<Agent> {
+    pub async fn build(self) -> anyhow::Result<Agent> {
         let Self {
             spec,
             provider,
@@ -229,8 +230,8 @@ impl AgentBuilder {
         } = self;
 
         match provider {
-            None => Agent::try_with_provider_and_state(spec, &default_provider(), state),
-            Some(provider) => Agent::try_with_provider_and_state(spec, &provider, state),
+            None => Agent::try_with_provider_and_state(spec, &default_provider(), state).await,
+            Some(provider) => Agent::try_with_provider_and_state(spec, &provider, state).await,
         }
     }
 }
@@ -274,6 +275,7 @@ mod tests {
             .provider(dummy_provider())
             .instruction("You are a test agent.")
             .build()
+            .await
             .unwrap();
 
         let history = agent.get_history();
@@ -286,6 +288,7 @@ mod tests {
         let agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
             .build()
+            .await
             .unwrap();
         assert!(agent.get_history().is_empty());
     }
@@ -314,6 +317,7 @@ mod tests {
                 )],
             )
             .build()
+            .await
             .unwrap();
 
         assert_eq!(agent.spec().files.len(), 1);
@@ -332,6 +336,7 @@ mod tests {
         let agent = AgentBuilder::new(TEST_MODEL)
             .provider(dummy_provider())
             .build()
+            .await
             .unwrap();
         // No instruction, no skills → no system message at all.
         assert!(agent.get_history().is_empty());
@@ -374,6 +379,7 @@ mod tests {
             )
             .subagent(sub_spec)
             .build()
+            .await
             .unwrap();
 
         // Parent's system message references only its own skill, not the sub's.
@@ -423,6 +429,7 @@ mod tests {
             )
             .subagent(sub_spec)
             .build()
+            .await
             .unwrap();
 
         // Parent + sub specs hold distinct files at distinct paths.
@@ -465,6 +472,7 @@ mod tests {
             .provider(dummy_provider())
             .subagent(sub_spec)
             .build()
+            .await
             .unwrap();
     }
 }

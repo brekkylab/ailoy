@@ -201,7 +201,9 @@ impl AgentState {
     /// directory containing a `SKILL.md`) for inclusion in a system prompt.
     ///
     /// `format` accepts `"md"` (default) or `"xml"`. Missing skill directories
-    /// — i.e. those without a `SKILL.md` — are silently skipped.
+    /// — i.e. those without a `SKILL.md` — are silently skipped. Returns an
+    /// empty string when no skills are loadable so callers can detect the
+    /// "nothing to render" case with `is_empty()`.
     pub async fn render_skills(
         &self,
         skills: &[PathBuf],
@@ -214,12 +216,29 @@ impl AgentState {
             }
         }
 
+        if metas.is_empty() {
+            return Ok(String::new());
+        }
+
         let mut out = String::new();
         match format.unwrap_or("md") {
             "md" | "markdown" => {
-                out.push_str("## Available skills\n\n");
+                out.push_str(
+                    "## Available Skills\n\
+                     Each skill is a directory containing `SKILL.md` (with `name:` and \
+                     `description:` frontmatter) plus any supporting files (other \
+                     markdown, scripts, etc.). Read the `SKILL.md` with `cat <path>` \
+                     before following its steps.\n\n\
+                     | Name | Description | SKILL.md |\n|------|-------------|----------|\n",
+                );
                 for s in &metas {
-                    let _ = writeln!(out, "- `{}`: {}", s.name, s.description);
+                    let _ = writeln!(
+                        out,
+                        "| {} | {} | {} |",
+                        s.name,
+                        s.description,
+                        s.skill_md_path().display()
+                    );
                 }
             }
             "xml" => {
@@ -232,9 +251,10 @@ impl AgentState {
                     };
                     let _ = write!(
                         out,
-                        "<skill>\n<name>{}</name>\n<description>{}</description>\n</skill>\n",
+                        "<skill>\n<name>{}</name>\n<description>{}</description>\n<path>{}</path>\n</skill>\n",
                         escape(&s.name),
                         escape(&s.description),
+                        escape(&s.skill_md_path().to_string_lossy()),
                     );
                 }
                 out.push_str("</available_skills>\n");

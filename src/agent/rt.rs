@@ -7,7 +7,6 @@ use crate::{
     lang_model::{LangModel, LangModelOptions},
     message::{FinishReason, Message, MessageOutput, Part, Role},
     runenv::{Console, RunEnv},
-    skill::{render_skills_table, scan_declared_skills},
     tool::{
         ToolDesc, ToolFunc,
         r#impl::{get_subagent_tool_desc, get_subagent_tool_func, get_web_search_tool_factory},
@@ -66,25 +65,19 @@ pub struct Agent {
     /// model, instruction, tools, sub-agents, card, declared files, and
     /// declared [`AgentSpec::skills`].
     spec: AgentSpec,
-
-    /// Lazy gate: whether the declared [`FileEntry`](crate::runenv::FileEntry)
-    /// list for this agent (and its declared sub-spec subtree) has been
-    /// written to the runenv.  Toggled by `ensure_files_materialised` on
-    /// the first [`Self::run`].
-    files_materialised: bool,
 }
 
 impl Agent {
     /// Create an agent using the process-wide [`default_provider`] and a [`Local`] runenv.
-    pub fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
+    pub async fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
         let provider = default_provider();
-        Self::try_with_provider(spec, &provider)
+        Self::try_with_provider(spec, &provider).await
     }
 
     /// Create an agent using the process-wide [`default_provider`] and an explicit [`AgentState`].
-    pub fn try_with_state(spec: AgentSpec, state: AgentState) -> anyhow::Result<Self> {
+    pub async fn try_with_state(spec: AgentSpec, state: AgentState) -> anyhow::Result<Self> {
         let provider = default_provider();
-        Self::try_with_provider_and_state(spec, &provider, state)
+        Self::try_with_provider_and_state(spec, &provider, state).await
     }
 
     /// Create an agent with an explicit [`AgentProvider`] and a local runenv.
@@ -92,8 +85,11 @@ impl Agent {
     /// Use this for scoped, explicit control over models and tool sources without
     /// touching global state.  The provider is not stored in the agent and can be
     /// reused across multiple agents.
-    pub fn try_with_provider(spec: AgentSpec, provider: &AgentProvider) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_state(spec, provider, AgentState::new())
+    pub async fn try_with_provider(
+        spec: AgentSpec,
+        provider: &AgentProvider,
+    ) -> anyhow::Result<Self> {
+        Self::try_with_provider_and_state(spec, provider, AgentState::new()).await
     }
 
     /// Create an agent with an explicit [`AgentProvider`] and [`AgentState`].
@@ -108,12 +104,14 @@ impl Agent {
     /// prepended to history.  Otherwise the caller-supplied messages are used as-is
     /// (useful for session resumption).
     ///
-    /// Files declared in [`AgentSpec::files`] are materialised lazily on the
-    /// first [`Self::run`].  Each path in [`AgentSpec::skills`] is an absolute
-    /// directory containing a `SKILL.md`; the spec is taken as-is — sub-spec
-    /// skill paths are **not** rewritten, so sub-agent skills are portable
-    /// across parents.
-    pub fn try_with_provider_and_state(
+    /// Files declared in [`AgentSpec::files`] (and the entire sub-spec subtree)
+    /// are materialised into the runenv eagerly with write-once semantics so
+    /// that the skills table can be rendered from the runenv via
+    /// [`AgentState::render_skills`].  Each path in [`AgentSpec::skills`] is an
+    /// absolute directory containing a `SKILL.md`; the spec is taken as-is —
+    /// sub-spec skill paths are **not** rewritten, so sub-agent skills are
+    /// portable across parents.
+    pub async fn try_with_provider_and_state(
         spec: AgentSpec,
         provider: &AgentProvider,
         mut state: AgentState,
@@ -139,8 +137,7 @@ impl Agent {
         // that materialises a fresh Agent on call and shares the parent's
         // runenv so filesystem state is shared.  Sub-specs are taken as-is —
         // no path rewriting — so sub-agent skills are portable across
-        // parents.  Files are materialised lazily on the first run via
-        // [`Self::ensure_files_materialised`].
+        // parents.
         for sub_spec in &spec.subagents {
             let card = sub_spec
                 .card
@@ -153,15 +150,27 @@ impl Agent {
             tools.insert(tool_name, func);
         }
 
+        // Materialise declared files (this agent's plus the entire sub-spec
+        // subtree) eagerly so that the skills table below — and any later
+        // `run` — can read SKILL.md from the runenv.  Write-once semantics
+        // preserve any runtime modifications across re-constructions.
+        let handle = state.runenv.get().await?;
+        materialise_files_recursive(&spec, &**handle).await?;
+        drop(handle);
+
         // Build the system message: instruction + (optionally) the skills table.
-        // The table is rendered from declared `spec.skills` by matching
-        // each entry against an in-memory `SKILL.md` FileEntry.
-        // Only seed when the caller hasn't supplied their own messages — a
-        // non-empty `state.messages` is taken as a deliberate resume and
-        // overrides the spec-derived system message.
+        // The block is rendered by [`AgentState::render_skills`] from
+        // declared `spec.skills` against the `SKILL.md` files just materialised
+        // in the runenv.  Only seed when the caller hasn't supplied their own
+        // messages — a non-empty `state.messages` is taken as a deliberate
+        // resume and overrides the spec-derived system message.
         if state.messages.is_empty() {
-            let declared_skills = scan_declared_skills(&spec.files, &spec.skills)?;
-            let skills_block = render_skills_table(&declared_skills);
+            let skills_block = state.render_skills(&spec.skills, None).await?;
+            let skills_block = if skills_block.is_empty() {
+                None
+            } else {
+                Some(skills_block)
+            };
             let system_text = match (spec.instruction.as_deref(), skills_block) {
                 (Some(inst), Some(block)) => Some(format!("{inst}\n\n{block}")),
                 (Some(inst), None) => Some(inst.to_string()),
@@ -182,7 +191,6 @@ impl Agent {
             tool_descs,
             state,
             spec,
-            files_materialised: false,
         })
     }
 
@@ -223,20 +231,6 @@ impl Agent {
             }
         }
         msg
-    }
-
-    /// Lazy gate: materialise this agent's declared files (and the entire
-    /// declared sub-spec subtree) into the runenv on first call.  Uses
-    /// write-once semantics — files that already exist are left untouched —
-    /// so any runtime modifications survive subsequent invocations.
-    async fn ensure_files_materialised(&mut self) -> anyhow::Result<()> {
-        if self.files_materialised {
-            return Ok(());
-        }
-        let handle = self.state.runenv.get().await?;
-        materialise_files_recursive(&self.spec, &**handle).await?;
-        self.files_materialised = true;
-        Ok(())
     }
 
     /// Read-only view of the spec this agent was built from.
@@ -386,11 +380,6 @@ impl Agent {
         query: Message,
     ) -> Pin<Box<impl Stream<Item = anyhow::Result<MessageOutput>> + Send + '_>> {
         Box::pin(async_stream::try_stream! {
-            // Lazy gate: write declared files (this agent + sub-spec subtree)
-            // to the runenv on first call.  Write-once semantics preserve any
-            // runtime modifications across subsequent runs.
-            self.ensure_files_materialised().await?;
-
             self.state.messages.push(query);
 
             loop {
@@ -511,7 +500,7 @@ mod tests {
         provider.tools.insert_func("temperature", temperature_fn);
 
         let spec = AgentSpec::new("openai/gpt-4o-mini").tool(temperature_desc);
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the temperature in Seoul?")]);
@@ -578,7 +567,9 @@ mod tests {
             )
             .subagent(sub_spec);
 
-        let mut main_agent = Agent::try_with_provider(main_spec, &provider).unwrap();
+        let mut main_agent = Agent::try_with_provider(main_spec, &provider)
+            .await
+            .unwrap();
 
         let query =
             Message::new(Role::User).with_contents([Part::text("What is 123 multiplied by 7?")]);
@@ -631,7 +622,9 @@ mod tests {
 
         let main_spec = AgentSpec::new("openai/gpt-4o-mini").subagent(sub_spec);
 
-        let mut main_agent = Agent::try_with_provider(main_spec, &provider).unwrap();
+        let mut main_agent = Agent::try_with_provider(main_spec, &provider)
+            .await
+            .unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text("What is 99 plus 1?")]);
 
@@ -735,7 +728,7 @@ mod tests {
                     .to_string(),
             );
 
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text(
             "Get the temperature in Tokyo using temperature_fast \
@@ -850,7 +843,7 @@ mod tests {
                     .to_string(),
             );
 
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text(
             "Tell me about Seoul. Use get_weather for weather and get_traffic for traffic.",
@@ -945,7 +938,7 @@ mod tests {
             .instruction("Reply with exactly 'OK'. Do not call any tools.")
             .tool(dummy_desc);
 
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         // Build two complete tool-call turns in history.
         let old_id = "call_old";
@@ -1030,7 +1023,7 @@ mod tests {
             .instruction("Reply with exactly 'OK'. Do not call any tools.")
             .tool(dummy_desc);
 
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         // Same two-turn history shape as the threshold test.
         let old_id = "call_old_b";
@@ -1110,7 +1103,9 @@ mod tests {
             .await
             .expect("sandbox creation failed");
         let state = AgentState::new().runenv(runenv);
-        let mut agent = Agent::try_with_provider_and_state(spec, &provider, state).unwrap();
+        let mut agent = Agent::try_with_provider_and_state(spec, &provider, state)
+            .await
+            .unwrap();
 
         let log = "/tmp/agent_serial_test.txt";
         let query = Message::new(Role::User).with_contents([Part::text(format!(
@@ -1282,7 +1277,9 @@ To activate a skill, read its SKILL.md using the shell tool \
             .await
             .expect("sandbox creation failed");
         let state = AgentState::new().runenv(runenv);
-        let mut agent = Agent::try_with_provider_and_state(spec, &provider, state).unwrap();
+        let mut agent = Agent::try_with_provider_and_state(spec, &provider, state)
+            .await
+            .unwrap();
 
         // Seed the sandbox with the skill file and the test PDF before running the agent.
         let pdf_bytes = minimal_pdf_bytes();

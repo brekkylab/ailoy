@@ -151,7 +151,7 @@ trait MachineDyn: Send + Sync + 'static {
 }
 
 #[async_trait]
-impl<B: Machine> MachineDyn for B {
+impl<M: Machine> MachineDyn for M {
     async fn start(&mut self) -> anyhow::Result<Arc<dyn Console>> {
         // UFCS so this doesn't recurse into the MachineDyn impl we're in.
         Ok(Arc::new(Machine::start(self).await?))
