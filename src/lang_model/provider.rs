@@ -38,6 +38,19 @@ pub enum LangModelProviderElem {
     },
 }
 
+#[derive(Clone, Debug)]
+pub struct LangModelFactory {
+    model: String,
+
+    elem: LangModelProviderElem,
+}
+
+impl LangModelFactory {
+    pub fn make(self) -> LangModel {
+        LangModel::new(self.model, self.elem)
+    }
+}
+
 /// Registry of language model endpoints, keyed by model-name patterns.
 ///
 /// Keys may be exact model names (e.g. `"openai/gpt-4o"`) or globs supporting
@@ -146,7 +159,7 @@ impl LangModelProvider {
     /// Looks up `spec_model` (with glob fallback), strips any `provider/` prefix
     /// to recover the API-side model id (e.g. `"openai/gpt-4o"` → `"gpt-4o"`),
     /// and hands the resolved endpoint to [`LangModel::new`].
-    pub fn provide(&self, spec_model: impl AsRef<str>) -> anyhow::Result<LangModel> {
+    pub fn provide(&self, spec_model: impl AsRef<str>) -> anyhow::Result<LangModelFactory> {
         let spec_model = spec_model.as_ref();
         let elem = self
             .get(spec_model)
@@ -156,7 +169,10 @@ impl LangModelProvider {
             .split_once('/')
             .map(|(_, id)| id.to_string())
             .unwrap_or_else(|| spec_model.to_string());
-        Ok(LangModel::new(model_id, elem))
+        Ok(LangModelFactory {
+            model: model_id,
+            elem,
+        })
     }
 }
 
@@ -229,6 +245,6 @@ mod tests {
         let mut p = LangModelProvider::new();
         p.insert("openai/*".into(), dummy());
         let m = p.provide("openai/gpt-4o").unwrap();
-        assert_eq!(m.model_id(), "gpt-4o");
+        assert_eq!(m.model, "gpt-4o");
     }
 }

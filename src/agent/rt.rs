@@ -3,74 +3,125 @@ use std::{collections::HashMap, path::PathBuf, pin::Pin};
 use futures::{FutureExt as _, Stream, StreamExt as _, stream::FuturesUnordered};
 
 use crate::{
-    agent::{AgentProvider, AgentSpec, ContextManager, default_provider},
-    lang_model::{LangModel, LangModelOptions},
-    message::{FinishReason, Message, MessageOutput, Part, Role},
-    runenv::{Console, Local, SharedMachine},
-    skill::{render_skills_table, scan_declared_skills},
-    tool::{
-        ToolDesc, ToolFunc,
-        r#impl::{get_subagent_tool_desc, get_subagent_tool_func, get_web_search_tool_factory},
+    agent::{
+        AgentProvider, AgentSpec, AgentState, ContextManager, default_provider,
+        subagent::{get_subagent_tool_desc, get_subagent_tool_func},
     },
+    lang_model::{LangModel, LangModelFactory, LangModelOptions},
+    message::{FinishReason, Message, MessageOutput, Part, Role},
+    runenv::{Console, FileEntry, Local, SharedMachine},
+    skill::{render_skills_table, scan_declared_skills},
+    tool::{ToolDesc, ToolFunc, r#impl::get_web_search_tool_factory},
 };
 
-/// Walk the spec tree and write every declared file (this agent's plus the
-/// subtree's) to the machine with **write-once** semantics: if a file already
-/// exists at the target path, the existing content is left untouched so that
-/// runtime modifications survive subsequent invocations.
-fn materialise_files_recursive<'a>(
-    spec: &'a AgentSpec,
-    console: &'a dyn Console,
-) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + 'a>> {
-    Box::pin(async move {
-        for f in &spec.files {
-            // Write-once: skip if the file already exists.
-            if console.read(&f.path).await.is_ok() {
-                continue;
-            }
-            console.write(&f.path, f.content.as_ref()).await?;
-        }
-        for sub in &spec.subagents {
-            materialise_files_recursive(sub, console).await?;
-        }
-        Ok(())
-    })
+/// Pre-resolved parts derived from an [`AgentSpec`] + [`AgentProvider`].
+///
+/// Produced by [`AgentParts::from_spec`] and consumed by both
+/// [`Agent::try_with_provider_and_state`] (immediate construction) and
+/// [`get_subagent_tool_func`] (deferred construction inside the sub-agent
+/// closure).  Decoupling resolution from construction is what lets a sub-agent
+/// ToolFunc capture only cheap, owned values — no [`AgentProvider`] clone per
+/// invocation.
+#[derive(Clone)]
+pub(super) struct AgentParts {
+    model_factory: LangModelFactory,
+
+    model_options: LangModelOptions,
+
+    tool_descs: Vec<ToolDesc>,
+
+    tools: HashMap<String, ToolFunc>,
+
+    /// Every file this agent (and its declared sub-spec subtree) needs to see
+    /// in the machine.  Flattened at build time so [`Agent`] doesn't have to
+    /// retain a full [`AgentSpec`] just to walk the subtree on first run.
+    files: Vec<FileEntry>,
+
+    /// Skill directories declared on the originating spec — surfaced by
+    /// [`Agent::skills`] without exposing the whole spec.
+    skills: Vec<PathBuf>,
+
+    /// Card name lifted from the originating spec, used by
+    /// [`Agent::stamp_source_agent`].
+    card_name: Option<String>,
+
+    system_message: Option<Message>,
 }
 
-pub struct AgentState {
-    pub history: Vec<Message>,
-
-    /// Shared machine handle. Defaults to [`Local`] wrapped in `Arc<Mutex<>>`.
-    /// Sub-agents inherit this via `Arc::clone` so they share the same VM.
-    pub machine: SharedMachine,
-
-    /// Token count from the most recent model API call; used to decide when to truncate history.
-    pub last_input_tokens: Option<u64>,
-}
-
-impl Default for AgentState {
-    fn default() -> Self {
-        Self::new()
+/// Flatten `spec.files` plus every nested `sub_spec.files` into `out`.
+fn collect_files_recursive(spec: &AgentSpec, out: &mut Vec<FileEntry>) {
+    out.extend(spec.files.iter().cloned());
+    for sub in &spec.subagents {
+        collect_files_recursive(sub, out);
     }
 }
 
-impl AgentState {
-    pub fn new() -> Self {
-        Self {
-            history: Vec::new(),
-            machine: SharedMachine::new(Local::new()),
-            last_input_tokens: None,
+impl AgentParts {
+    /// Resolve the model factory, tools, sub-agent tool funcs, and system
+    /// message for `spec` against `provider`.  Recurses into
+    /// [`AgentSpec::subagents`] via [`get_subagent_tool_func`], so every nested
+    /// sub-agent is fully wired before the caller gets a chance to construct
+    /// an [`Agent`].
+    pub(super) fn from_spec(
+        spec: &AgentSpec,
+        provider: &AgentProvider,
+        machine: &SharedMachine,
+    ) -> anyhow::Result<Self> {
+        let model_factory = provider.models.provide(&spec.model)?;
+        let model_options = spec.model_options.clone().unwrap_or_default();
+
+        // Collect tools required by the spec; error if any tool is missing.
+        // When the spec requests specific web_search engines, override the default factory.
+        let mut tools = if let Some(engines) = spec.web_search_engines.as_ref() {
+            let mut tp = provider.tools.clone();
+            tp.insert_func_factory("web_search", get_web_search_tool_factory(engines.clone()));
+            tp.provide(&spec.tools)?
+        } else {
+            provider.tools.provide(&spec.tools)?
+        };
+        let mut tool_descs = spec.tools.clone();
+
+        // Sub-agents become regular tool entries: each is a one-shot ToolFunc
+        // that materialises a fresh Agent on call and shares the parent's
+        // machine so filesystem state is shared.  Sub-specs are taken as-is —
+        // no path rewriting — so sub-agent skills are portable across parents.
+        for sub_spec in &spec.subagents {
+            let card = sub_spec
+                .card
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("subagent must declare an AgentCard"))?;
+            let desc = get_subagent_tool_desc(card);
+            let tool_name = desc.name.clone();
+            let func = get_subagent_tool_func(sub_spec.clone(), provider, machine.clone())?;
+            tool_descs.push(desc);
+            tools.insert(tool_name, func);
         }
-    }
 
-    pub fn history(mut self, history: Vec<Message>) -> Self {
-        self.history = history;
-        self
-    }
+        // Build the system message: instruction + (optionally) skills table.
+        let declared_skills = scan_declared_skills(&spec.files, &spec.skills)?;
+        let skills_block = render_skills_table(&declared_skills);
+        let system_text = match (spec.instruction.as_deref(), skills_block) {
+            (Some(inst), Some(block)) => Some(format!("{inst}\n\n{block}")),
+            (Some(inst), None) => Some(inst.to_string()),
+            (None, Some(block)) => Some(block),
+            (None, None) => None,
+        };
+        let system_message =
+            system_text.map(|t| Message::new(Role::System).with_contents([Part::text(t)]));
 
-    pub fn machine(mut self, machine: SharedMachine) -> Self {
-        self.machine = machine;
-        self
+        let mut files = Vec::new();
+        collect_files_recursive(spec, &mut files);
+
+        Ok(Self {
+            model_factory,
+            model_options,
+            tool_descs,
+            tools,
+            files,
+            skills: spec.skills.clone(),
+            card_name: spec.card.as_ref().map(|c| c.name.clone()),
+            system_message,
+        })
     }
 }
 
@@ -101,15 +152,22 @@ pub struct Agent {
 
     context_manager: Option<ContextManager>,
 
-    /// The spec this agent was built from.  Carries the agent's identity:
-    /// model, instruction, tools, sub-agents, card, declared files, and
-    /// declared [`AgentSpec::skills`].
-    spec: AgentSpec,
+    /// Files this agent (and its declared sub-spec subtree) writes to the
+    /// machine on first run.  Pre-flattened at construction time so the
+    /// runtime no longer needs to keep the originating [`AgentSpec`] around.
+    files: Vec<FileEntry>,
 
-    /// Lazy gate: whether the declared [`FileEntry`](crate::runenv::FileEntry)
-    /// list for this agent (and its declared sub-spec subtree) has been
-    /// written to the machine.  Toggled by `ensure_files_materialised` on
-    /// the first [`Self::run`].
+    /// Skill directories declared on the originating spec.  Surfaced by
+    /// [`Self::skills`].
+    skills: Vec<PathBuf>,
+
+    /// Card name lifted from the originating spec.  Used by
+    /// [`Self::stamp_source_agent`] to tag streamed events.
+    card_name: Option<String>,
+
+    /// Lazy gate: whether the declared [`FileEntry`] list has been written
+    /// to the machine.  Toggled by `ensure_files_materialised` on the first
+    /// [`Self::run`].
     files_materialised: bool,
 }
 
@@ -120,19 +178,19 @@ impl Agent {
         Self::try_with_provider(spec, &provider)
     }
 
-    /// Create an agent using the process-wide [`default_provider`] and an explicit machine.
-    pub fn try_with_machine(spec: AgentSpec, machine: SharedMachine) -> anyhow::Result<Self> {
+    /// Create an agent using the process-wide [`default_provider`] and an explicit state.
+    pub fn try_with_state(spec: AgentSpec, runenv: SharedMachine) -> anyhow::Result<Self> {
         let provider = default_provider();
-        Self::try_with_provider_and_machine(spec, &provider, machine)
+        Self::try_with_provider_and_state(spec, &provider, runenv)
     }
 
-    /// Create an agent with an explicit [`AgentProvider`] and a local machine.
+    /// Create an agent with an explicit [`AgentProvider`].
     ///
     /// Use this for scoped, explicit control over models and tool sources without
     /// touching global state.  The provider is not stored in the agent and can be
     /// reused across multiple agents.
     pub fn try_with_provider(spec: AgentSpec, provider: &AgentProvider) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_machine(spec, provider, SharedMachine::new(Local::new()))
+        Self::try_with_provider_and_state(spec, provider, SharedMachine::new(Local::new()))
     }
 
     /// Create an agent with an explicit [`AgentProvider`] and shared machine.
@@ -146,72 +204,47 @@ impl Agent {
     /// directory containing a `SKILL.md`; the spec is taken as-is — sub-spec
     /// skill paths are **not** rewritten, so sub-agent skills are portable
     /// across parents.
-    pub fn try_with_provider_and_machine(
+    pub fn try_with_provider_and_state(
         spec: AgentSpec,
         provider: &AgentProvider,
-        machine: SharedMachine,
+        runenv: SharedMachine,
     ) -> anyhow::Result<Self> {
-        // Resolve LangModel from the registry (handles glob lookup + prefix stripping)
-        let model = provider.models.provide(&spec.model)?;
+        let parts = AgentParts::from_spec(&spec, provider, &runenv)?;
+        Ok(Self::from_resolved_parts(parts, runenv))
+    }
 
-        let model_options = spec.model_options.clone().unwrap_or_default();
-
-        // Collect tools required by the spec; error if any tool is missing.
-        // When the spec requests specific web_search engines, override the default factory.
-        let mut tools = if let Some(engines) = spec.web_search_engines.as_ref() {
-            let mut tp = provider.tools.clone();
-            tp.insert_func_factory("web_search", get_web_search_tool_factory(engines.clone()));
-            tp.provide(&spec.tools)?
-        } else {
-            provider.tools.provide(&spec.tools)?
-        };
-        let mut tool_descs = spec.tools.clone();
-
-        // Sub-agents become regular tool entries: each is a one-shot ToolFunc
-        // that materialises a fresh Agent on call and shares the parent's
-        // machine so filesystem state is shared.  Sub-specs are taken as-is —
-        // no path rewriting — so sub-agent skills are portable across
-        // parents.  Files are materialised lazily on the first run via
-        // [`Self::ensure_files_materialised`].
-        for sub_spec in &spec.subagents {
-            let card = sub_spec
-                .card
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("subagent must declare an AgentCard"))?;
-            let desc = get_subagent_tool_desc(card);
-            let tool_name = desc.name.clone();
-            let func = get_subagent_tool_func(sub_spec.clone(), provider.clone(), machine.clone());
-            tool_descs.push(desc);
-            tools.insert(tool_name, func);
-        }
-
-        // Build the system message: instruction + (optionally) the skills table.
-        // The table is rendered from declared `spec.skills` by matching
-        // each entry against an in-memory `SKILL.md` FileEntry.
-        let declared_skills = scan_declared_skills(&spec.files, &spec.skills)?;
-        let skills_block = render_skills_table(&declared_skills);
-        let system_text = match (spec.instruction.as_deref(), skills_block) {
-            (Some(inst), Some(block)) => Some(format!("{inst}\n\n{block}")),
-            (Some(inst), None) => Some(inst.to_string()),
-            (None, Some(block)) => Some(block),
-            (None, None) => None,
-        };
-        let history = system_text
-            .map(|t| vec![Message::new(Role::System).with_contents([Part::text(t)])])
-            .unwrap_or_default();
-
-        let state = AgentState::new().history(history).machine(machine);
-
-        Ok(Self {
-            model,
+    /// Construct an [`Agent`] from already-resolved parts.
+    ///
+    /// This is the seam used by [`get_subagent_tool_func`] to build a fresh
+    /// sub-agent per invocation without re-walking the provider registries.
+    /// `parts.system_message` seeds [`AgentState::history`]; `runenv` is
+    /// stored as-is on the state so sub-agents share filesystem state with
+    /// the parent.
+    pub(super) fn from_resolved_parts(parts: AgentParts, runenv: SharedMachine) -> Self {
+        let AgentParts {
+            model_factory,
             model_options,
-            tools,
             tool_descs,
+            tools,
+            files,
+            skills,
+            card_name,
+            system_message,
+        } = parts;
+        let history = system_message.map(|m| vec![m]).unwrap_or_default();
+        let state = AgentState::new().history(history).machine(runenv);
+        Self {
+            model: model_factory.make(),
+            model_options,
+            tool_descs,
+            tools,
             state,
             context_manager: None,
-            spec,
+            files,
+            skills,
+            card_name,
             files_materialised: false,
-        })
+        }
     }
 
     /// Maximum number of characters kept in a single tool-result message before
@@ -257,29 +290,37 @@ impl Agent {
         self.context_manager = cm;
     }
 
-    /// Lazy gate: materialise this agent's declared files (and the entire
-    /// declared sub-spec subtree) into the machine on first call.  Uses
-    /// write-once semantics — files that already exist are left untouched —
-    /// so any runtime modifications survive subsequent invocations.
+    /// Lazy gate: materialise this agent's declared files (this agent's plus
+    /// the sub-spec subtree's, pre-flattened by [`AgentParts::from_spec`]) into
+    /// the machine on first call.  Uses write-once semantics — files that
+    /// already exist are left untouched — so any runtime modifications survive
+    /// subsequent invocations.
     async fn ensure_files_materialised(&mut self) -> anyhow::Result<()> {
         if self.files_materialised {
             return Ok(());
         }
         let mut guard = self.state.machine.get().await;
         let console = guard.start().await?;
-        materialise_files_recursive(&self.spec, console).await?;
+        for f in &self.files {
+            // Write-once: skip if the file already exists.
+            if console.read(&f.path).await.is_ok() {
+                continue;
+            }
+            console.write(&f.path, f.content.as_ref()).await?;
+        }
         self.files_materialised = true;
         Ok(())
     }
 
-    /// Read-only view of the spec this agent was built from.
-    pub fn spec(&self) -> &AgentSpec {
-        &self.spec
-    }
-
     /// Read-only view of the agent's declared skill directories.
     pub fn skills(&self) -> &[PathBuf] {
-        &self.spec.skills
+        &self.skills
+    }
+
+    /// Read-only view of the files materialised onto the machine on first
+    /// run (this agent's plus the sub-spec subtree's, pre-flattened).
+    pub fn files(&self) -> &[FileEntry] {
+        &self.files
     }
 
     /// Execute tool calls concurrently within the current task and return a
@@ -454,9 +495,9 @@ impl Agent {
     /// unchanged — the innermost producer always wins in nested chains.
     fn stamp_source_agent(&self, out: &mut MessageOutput) {
         if out.source_agent.is_none()
-            && let Some(card) = self.spec.card.as_ref()
+            && let Some(name) = self.card_name.as_ref()
         {
-            out.source_agent = Some(card.name.clone());
+            out.source_agent = Some(name.clone());
         }
     }
 

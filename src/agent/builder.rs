@@ -206,9 +206,9 @@ impl AgentBuilder {
 
         let mut agent = match (provider, machine) {
             (None, None) => Agent::try_new(spec)?,
-            (None, Some(m)) => Agent::try_with_machine(spec, m)?,
+            (None, Some(m)) => Agent::try_with_state(spec, m)?,
             (Some(provider), None) => Agent::try_with_provider(spec, &provider)?,
-            (Some(provider), Some(m)) => Agent::try_with_provider_and_machine(spec, &provider, m)?,
+            (Some(provider), Some(m)) => Agent::try_with_provider_and_state(spec, &provider, m)?,
         };
         if !history.is_empty() {
             agent.state.history = history;
@@ -309,9 +309,9 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(agent.spec().files.len(), 1);
-        assert_eq!(agent.spec().files[0].path, skill_path);
-        assert_eq!(agent.spec().skills, vec![greet_dir.clone()]);
+        assert_eq!(agent.files().len(), 1);
+        assert_eq!(agent.files()[0].path, skill_path);
+        assert_eq!(agent.skills(), vec![greet_dir.clone()]);
 
         let sys = system_text(&agent).expect("expected system message");
         assert!(sys.contains("Available Skills"));
@@ -408,13 +408,12 @@ mod tests {
             .unwrap();
 
         let parent_entry = parent
-            .spec()
-            .files
+            .files()
             .iter()
             .find(|f| f.path == parent_foo)
             .expect("parent file");
-        let child_entry = parent.spec().subagents[0]
-            .files
+        let child_entry = parent
+            .files()
             .iter()
             .find(|f| f.path == child_foo)
             .expect("child file");
