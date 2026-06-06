@@ -63,7 +63,7 @@ impl LangModelFactory {
 /// [`chat_completion`](Self::chat_completion), …) which return
 /// [`LangModelProviderElem`] values, then [`insert`](Self::insert) them under
 /// the chosen pattern. At agent construction the registry is consulted via
-/// [`make_runtime`](Self::make_runtime) to build a [`LangModel`].
+/// [`provide`](Self::provide) to build a [`LangModel`].
 ///
 /// [`Default::default`] (and therefore [`AgentProvider::new`]) returns a
 /// registry pre-populated from the environment:  registers `openai/*`,
@@ -154,11 +154,12 @@ impl LangModelProvider {
             .map(|(_, elem)| elem)
     }
 
-    /// Build a runtime [`LangModel`] for `spec_model`.
+    /// Resolve `spec_model` to a [`LangModelFactory`] ready to build a [`LangModel`].
     ///
-    /// Looks up `spec_model` (with glob fallback), strips any `provider/` prefix
-    /// to recover the API-side model id (e.g. `"openai/gpt-4o"` → `"gpt-4o"`),
-    /// and hands the resolved endpoint to [`LangModel::new`].
+    /// Looks up `spec_model` (with glob fallback via [`get`](Self::get)) and
+    /// strips any `provider/` prefix to recover the API-side model id (e.g.
+    /// `"openai/gpt-4o"` → `"gpt-4o"`). Returns an error if no pattern matches.
+    /// Call [`LangModelFactory::make`] to instantiate the [`LangModel`].
     pub fn provide(&self, spec_model: impl AsRef<str>) -> anyhow::Result<LangModelFactory> {
         let spec_model = spec_model.as_ref();
         let elem = self
