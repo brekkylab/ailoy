@@ -1,57 +1,12 @@
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use url::Url;
 
-use super::{LangModelAPISchema, LangModelProviderElem};
+use super::LangModelProviderElem;
 use crate::{
     datatype::Value,
-    lang_model::{LangModelOptions, r#impl::api},
-    message::{Delta as _, Marshaled, Message, MessageOutput, Unmarshal as _},
+    lang_model::LangModelOptions,
+    message::{Delta as _, Marshal as _, Message, MessageOutput, Unmarshal as _},
     tool::ToolDesc,
 };
-
-/// Constrains the model's response to a specific JSON format.
-///
-/// Constructed via [`ResponseFormat::json_schema`], which validates the schema
-/// against JSON Schema Draft 7 before storing it, then normalises it to satisfy
-/// provider-specific requirements.  The stored schema is provider-agnostic;
-/// each marshal converts it to the wire format expected by its API.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "type", content = "schema", rename_all = "snake_case")]
-pub enum ResponseFormat {
-    JsonSchema(Value),
-}
-
-impl ResponseFormat {
-    /// Validate `schema` against JSON Schema Draft 7.  Returns `Err` if the
-    /// schema is structurally invalid (e.g. `"type": 123`).  The stored schema
-    /// is the user's original; provider-specific transformations happen in each
-    /// marshal via [`ResponseSchemaMarshal::marshal_response_schema`].
-    pub fn json_schema(schema: Value) -> anyhow::Result<Self> {
-        let serde_schema: serde_json::Value = schema.clone().into();
-        jsonschema::validator_for(&serde_schema)
-            .map_err(|e| anyhow::anyhow!("Invalid JSON schema: {}", e))?;
-        Ok(Self::JsonSchema(schema))
-    }
-}
-
-impl schemars::JsonSchema for ResponseFormat {
-    fn schema_name() -> String {
-        "ResponseFormat".into()
-    }
-
-    fn json_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-        use schemars::schema::{InstanceType, ObjectValidation, SchemaObject, SingleOrVec};
-        SchemaObject {
-            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
-            object: Some(Box::new(ObjectValidation {
-                required: ["type".to_owned()].into(),
-                ..Default::default()
-            })),
-            ..Default::default()
-        }
-        .into()
-    }
-}
 
 /// Runtime
 pub struct LangModel {
@@ -63,13 +18,8 @@ pub(crate) struct LangModelRequest<'a> {
     pub model: &'a str,
     pub messages: &'a [Message],
     pub tools: &'a [ToolDesc],
-    pub url: &'a Url,
-    pub api_key: &'a Option<String>,
-    pub max_tokens: Option<u64>,
-    pub temperature: Option<f64>,
-    pub top_p: Option<f64>,
-    pub top_k: Option<u64>,
-    pub response_format: Option<&'a ResponseFormat>,
+    pub provider: &'a LangModelProviderElem,
+    pub options: &'a LangModelOptions,
 }
 
 impl LangModel {
@@ -87,44 +37,20 @@ impl LangModel {
         tools: &[ToolDesc],
         options: &LangModelOptions,
     ) -> anyhow::Result<MessageOutput> {
-        match &self.provider {
-            LangModelProviderElem::API {
-                schema,
-                url,
-                api_key,
-            } => {
+        let provider = &self.provider;
+        match provider {
+            LangModelProviderElem::API { schema, .. } => {
                 // Create request
                 let req = LangModelRequest {
                     model: &self.model,
                     messages,
                     tools,
-                    url,
-                    api_key,
-                    max_tokens: options.max_tokens,
-                    temperature: options.temperature,
-                    top_p: options.top_p,
-                    top_k: options.top_k,
-                    response_format: options.response_format.as_ref(),
+                    provider,
+                    options,
                 };
 
-                let req = match schema {
-                    LangModelAPISchema::Anthropic => Value::from(Marshaled::<
-                        LangModelRequest,
-                        api::AnthropicMarshal,
-                    >::new(&req)),
-                    LangModelAPISchema::ChatCompletion => {
-                        Value::from(
-                            Marshaled::<LangModelRequest, api::ChatCompletionMarshal>::new(&req),
-                        )
-                    }
-                    LangModelAPISchema::Gemini => {
-                        Value::from(Marshaled::<LangModelRequest, api::GeminiMarshal>::new(&req))
-                    }
-                    LangModelAPISchema::OpenAI => {
-                        Value::from(Marshaled::<LangModelRequest, api::OpenAIMarshal>::new(&req))
-                    }
-                };
-
+                // Marshal req
+                let req = schema.marshal(&req);
                 let req = req.as_object().ok_or(anyhow::anyhow!("Invalid Marshal"))?;
 
                 // Build url
@@ -205,21 +131,14 @@ impl LangModel {
                     anyhow::bail!("API request failed with status {status}: {response_text}");
                 }
 
-                let response_value: Value =
-                    serde_json::from_str::<serde_json::Value>(&response_text)?.into();
-
-                // Unmarshal
-                let delta_output = match schema {
-                    LangModelAPISchema::Anthropic => {
-                        api::AnthropicUnmarshal.unmarshal(response_value)?
-                    }
-                    LangModelAPISchema::ChatCompletion => {
-                        api::ChatCompletionUnmarshal.unmarshal(response_value)?
-                    }
-                    LangModelAPISchema::Gemini => api::GeminiUnmarshal.unmarshal(response_value)?,
-                    LangModelAPISchema::OpenAI => api::OpenAIUnmarshal.unmarshal(response_value)?,
+                // Decode via the schema's unmarshal impl into a single delta.
+                let delta_output = {
+                    let response_value: Value =
+                        serde_json::from_str::<serde_json::Value>(&response_text)?.into();
+                    schema.unmarshal(response_value)?
                 };
 
+                // In non-streaming API, a single delta is the complete output, so finalize now.
                 delta_output.finish()
             }
         }
@@ -230,7 +149,7 @@ impl LangModel {
 mod tests {
     use super::*;
     use crate::{
-        lang_model::LangModelProvider,
+        lang_model::{LangModelProvider, ResponseFormat},
         message::{FinishReason, Part, Role},
         to_value,
         tool::{ToolDesc, ToolDescBuilder},

@@ -4,25 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use super::LangModel;
-
-/// Wire protocol used when calling a language model API.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum LangModelAPISchema {
-    /// OpenAI-compatible `/v1/chat/completions` format
-    ChatCompletion,
-
-    /// Anthropic Messages API format
-    Anthropic,
-
-    /// Google Gemini API format
-    Gemini,
-
-    /// OpenAI Responses API format
-    #[serde(rename = "openai")]
-    OpenAI,
-}
+use crate::lang_model::{LangModel, LangModelAPISchema};
 
 /// Describes the runtime endpoint used to invoke a language model.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

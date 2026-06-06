@@ -58,7 +58,7 @@ pub struct ChatCompletionMarshal;
 impl ResponseSchemaMarshal for ChatCompletionMarshal {}
 
 impl Marshal<Message> for ChatCompletionMarshal {
-    fn marshal(&mut self, item: &Message) -> Value {
+    fn marshal(&self, item: &Message) -> Value {
         let part_to_value = |part: &Part| -> Value {
             match part {
                 Part::Text { text } => to_value!({"type": "text", "text": text}),
@@ -155,7 +155,7 @@ impl Marshal<Message> for ChatCompletionMarshal {
 }
 
 impl Marshal<ToolDesc> for ChatCompletionMarshal {
-    fn marshal(&mut self, item: &ToolDesc) -> Value {
+    fn marshal(&self, item: &ToolDesc) -> Value {
         if let Some(desc) = &item.description {
             to_value!({
                 "type": "function",
@@ -178,7 +178,9 @@ impl Marshal<ToolDesc> for ChatCompletionMarshal {
 }
 
 impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
-    fn marshal(&mut self, req: &LangModelRequest<'_>) -> Value {
+    fn marshal(&self, req: &LangModelRequest<'_>) -> Value {
+        let LangModelProviderElem::API { url, api_key, .. } = req.provider;
+        let options = req.options;
         let model = Value::from(req.model);
         let messages = self.marshal(req.messages);
         let tools = if !req.tools.is_empty() {
@@ -187,12 +189,12 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
             Value::Null
         };
 
-        let url = req.url.to_string();
+        let url = url.to_string();
 
         let mut header = to_value!({
             "Content-Type": "application/json",
         });
-        if let Some(api_key) = &req.api_key {
+        if let Some(api_key) = api_key {
             header
                 .as_object_mut()
                 .unwrap()
@@ -211,21 +213,21 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
                 .unwrap()
                 .insert("tools".to_owned(), tools);
         }
-        if let Some(max_tokens) = req.max_tokens {
+        if let Some(max_tokens) = options.max_tokens {
             body.as_object_mut().unwrap().insert(
                 "max_completion_tokens".to_owned(),
                 (max_tokens as i64).into(),
             );
         }
         // OpenAI reasoning models (o-series, gpt-5) reject temperature/top_p; drop them silently.
-        if let Some(temperature) = req.temperature
+        if let Some(temperature) = options.temperature
             && !is_openai_reasoning_model(req.model)
         {
             body.as_object_mut()
                 .unwrap()
                 .insert("temperature".to_owned(), temperature.into());
         }
-        if let Some(top_p) = req.top_p
+        if let Some(top_p) = options.top_p
             && !is_openai_reasoning_model(req.model)
         {
             body.as_object_mut()
@@ -233,7 +235,7 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
                 .insert("top_p".to_owned(), top_p.into());
         }
         // top_k is not part of the OpenAI ChatCompletion spec; intentionally ignored.
-        if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+        if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
             let wire_schema = self.marshal_response_schema(schema);
             body.as_object_mut().unwrap().insert(
                 "response_format".into(),
@@ -320,7 +322,7 @@ impl ChatCompletionUnmarshal {
 }
 
 impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
-    fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
+    fn unmarshal(&self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let choice = val
             .pointer("/choices/0")
             .ok_or_else(|| anyhow::anyhow!("Missing 'choices[0]' in response"))?;
@@ -431,19 +433,21 @@ mod tests {
     {
         let messages: Vec<Message> = vec![];
         let tools: Vec<ToolDesc> = vec![];
-        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
-        let api_key: Option<String> = None;
+        let provider = LangModelProviderElem::API {
+            schema: LangModelAPISchema::ChatCompletion,
+            url: Url::parse("https://api.openai.com/v1/chat/completions").unwrap(),
+            api_key: None,
+        };
+        let options = LangModelOptions {
+            max_tokens,
+            ..Default::default()
+        };
         let req = LangModelRequest {
             model,
             messages: &messages,
             tools: &tools,
-            url: &url,
-            api_key: &api_key,
-            max_tokens,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            response_format: None,
+            provider: &provider,
+            options: &options,
         };
         f(&req)
     }
@@ -491,19 +495,21 @@ mod tests {
         let fmt = ResponseFormat::json_schema(schema.clone().into()).unwrap();
         let messages: Vec<Message> = vec![];
         let tools: Vec<ToolDesc> = vec![];
-        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
-        let api_key: Option<String> = None;
+        let provider = LangModelProviderElem::API {
+            schema: LangModelAPISchema::ChatCompletion,
+            url: Url::parse("https://api.openai.com/v1/chat/completions").unwrap(),
+            api_key: None,
+        };
+        let options = LangModelOptions {
+            response_format: Some(fmt),
+            ..Default::default()
+        };
         let req = LangModelRequest {
             model: "gpt-4.1-mini",
             messages: &messages,
             tools: &tools,
-            url: &url,
-            api_key: &api_key,
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            response_format: Some(&fmt),
+            provider: &provider,
+            options: &options,
         };
         let val = ChatCompletionMarshal::default().marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();

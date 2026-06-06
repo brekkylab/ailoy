@@ -206,13 +206,13 @@ fn marshal_messages(msgs: &[Message]) -> Value {
 }
 
 impl Marshal<Message> for GeminiMarshal {
-    fn marshal(&mut self, msg: &Message) -> Value {
+    fn marshal(&self, msg: &Message) -> Value {
         marshal_message(msg, true)
     }
 }
 
 impl Marshal<ToolDesc> for GeminiMarshal {
-    fn marshal(&mut self, item: &ToolDesc) -> Value {
+    fn marshal(&self, item: &ToolDesc) -> Value {
         if let Some(desc) = &item.description {
             to_value!({
                 "name": &item.name,
@@ -229,7 +229,10 @@ impl Marshal<ToolDesc> for GeminiMarshal {
 }
 
 impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
-    fn marshal(&mut self, req: &LangModelRequest<'_>) -> Value {
+    fn marshal(&self, req: &LangModelRequest<'_>) -> Value {
+        let LangModelProviderElem::API { url, api_key, .. } = req.provider;
+        let options = req.options;
+
         // Extract system instruction from system message if present
         let system_instruction = req
             .messages
@@ -257,12 +260,12 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
             Value::Null
         };
 
-        let url = format!("{}{}:generateContent", req.url, req.model);
+        let url = format!("{}{}:generateContent", url, req.model);
 
         let mut header = to_value!({
             "content-type": "application/json",
         });
-        if let Some(api_key) = req.api_key.as_ref() {
+        if let Some(api_key) = api_key.as_ref() {
             header
                 .as_object_mut()
                 .unwrap()
@@ -281,31 +284,31 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
             body.as_object_mut().unwrap().insert("tools".into(), tools);
         }
         let mut generation_config = to_value!({});
-        if let Some(max_tokens) = req.max_tokens {
+        if let Some(max_tokens) = options.max_tokens {
             generation_config
                 .as_object_mut()
                 .unwrap()
                 .insert("maxOutputTokens".into(), (max_tokens as i64).into());
         }
-        if let Some(temperature) = req.temperature {
+        if let Some(temperature) = options.temperature {
             generation_config
                 .as_object_mut()
                 .unwrap()
                 .insert("temperature".into(), temperature.into());
         }
-        if let Some(top_p) = req.top_p {
+        if let Some(top_p) = options.top_p {
             generation_config
                 .as_object_mut()
                 .unwrap()
                 .insert("topP".into(), top_p.into());
         }
-        if let Some(top_k) = req.top_k {
+        if let Some(top_k) = options.top_k {
             generation_config
                 .as_object_mut()
                 .unwrap()
                 .insert("topK".into(), (top_k as i64).into());
         }
-        if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+        if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
             generation_config
                 .as_object_mut()
                 .unwrap()
@@ -333,7 +336,7 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
 pub struct GeminiUnmarshal;
 
 impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
-    fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
+    fn unmarshal(&self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let candidate = val
             .pointer("/candidates/0")
             .ok_or_else(|| anyhow::anyhow!("Missing candidates[0] in response"))?
@@ -496,19 +499,21 @@ mod tests {
     {
         let messages: Vec<Message> = vec![];
         let tools: Vec<ToolDesc> = vec![];
-        let url = Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap();
-        let api_key: Option<String> = None;
+        let provider = LangModelProviderElem::API {
+            schema: LangModelAPISchema::Gemini,
+            url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap(),
+            api_key: None,
+        };
+        let options = LangModelOptions {
+            max_tokens,
+            ..Default::default()
+        };
         let req = LangModelRequest {
             model,
             messages: &messages,
             tools: &tools,
-            url: &url,
-            api_key: &api_key,
-            max_tokens,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            response_format: None,
+            provider: &provider,
+            options: &options,
         };
         f(&req)
     }
@@ -705,19 +710,21 @@ mod tests {
         let fmt = ResponseFormat::json_schema(schema.clone().into()).unwrap();
         let messages: Vec<Message> = vec![];
         let tools: Vec<ToolDesc> = vec![];
-        let url = Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap();
-        let api_key: Option<String> = None;
+        let provider = LangModelProviderElem::API {
+            schema: LangModelAPISchema::Gemini,
+            url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap(),
+            api_key: None,
+        };
+        let options = LangModelOptions {
+            response_format: Some(fmt),
+            ..Default::default()
+        };
         let req = LangModelRequest {
             model: "gemini-2.5-flash-lite",
             messages: &messages,
             tools: &tools,
-            url: &url,
-            api_key: &api_key,
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            response_format: Some(&fmt),
+            provider: &provider,
+            options: &options,
         };
         let val = GeminiMarshal::default().marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();
