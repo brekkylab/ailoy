@@ -3,7 +3,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use super::LangModelProviderElem;
 use crate::{
     datatype::Value,
-    lang_model::LangModelOptions,
+    lang_model::{LangModelOptions, get_lm_providers},
     message::{Delta as _, Marshal as _, Message, MessageOutput, Unmarshal as _},
     tool::ToolDesc,
 };
@@ -14,7 +14,7 @@ pub struct LangModel {
     provider: LangModelProviderElem,
 }
 
-pub(crate) struct LangModelRequest<'a> {
+pub(super) struct LangModelRequest<'a> {
     pub model: &'a str,
     pub messages: &'a [Message],
     pub tools: &'a [ToolDesc],
@@ -23,8 +23,48 @@ pub(crate) struct LangModelRequest<'a> {
 }
 
 impl LangModel {
-    pub fn new(model: String, provider: LangModelProviderElem) -> Self {
-        Self { model, provider }
+    /// Resolve `model` against the `"default"` entry of
+    /// [`get_lm_providers`](crate::lang_model::get_lm_providers).  Convenience
+    /// over [`try_from_provider`](Self::try_from_provider).
+    ///
+    /// Returns an error if the `"default"` provider is missing or has no
+    /// entry matching `model`.
+    pub fn try_new(model: String) -> anyhow::Result<Self> {
+        Self::try_from_provider(model, "default")
+    }
+
+    /// Resolve `model` against the [`LangModelProvider`](super::LangModelProvider)
+    /// registered under `provider` in
+    /// [`get_lm_providers`](crate::lang_model::get_lm_providers).
+    ///
+    /// `model` is the spec-side name (e.g. `"openai/gpt-4o"`) used to look up
+    /// the registered pattern; the stored API-side id has any `provider/`
+    /// prefix stripped (e.g. `"gpt-4o"`) so it matches what the upstream
+    /// endpoint expects.
+    ///
+    /// Returns an error if `provider` is not registered, or if no entry
+    /// inside it matches `model` (with the usual exact-then-glob lookup).
+    pub fn try_from_provider(model: String, provider: impl AsRef<str>) -> anyhow::Result<Self> {
+        let provider_name = provider.as_ref();
+        let registry = get_lm_providers();
+        let lmp = registry.get(provider_name).ok_or_else(|| {
+            anyhow::anyhow!("lang_model_provider '{}' not registered", provider_name)
+        })?;
+        let provider_elem = lmp
+            .get(&model)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no entry for model '{}' in lang_model_provider '{}'",
+                    model,
+                    provider_name
+                )
+            })?
+            .clone();
+        let api_model_id = lmp.resolve_model_id(&model)?;
+        Ok(Self {
+            model: api_model_id,
+            provider: provider_elem,
+        })
     }
 
     pub fn model_id(&self) -> &str {
@@ -149,7 +189,7 @@ impl LangModel {
 mod tests {
     use super::*;
     use crate::{
-        lang_model::{LangModelProvider, ResponseFormat},
+        lang_model::{LangModelProvider, ResponseFormat, get_lm_providers_mut},
         message::{FinishReason, Part, Role},
         to_value,
         tool::{ToolDesc, ToolDescBuilder},
@@ -192,15 +232,27 @@ mod tests {
         assert_eq!(original, restored);
     }
 
+    /// Register a one-off [`LangModelProvider`] under a unique key in the
+    /// global registry and build a [`LangModel`] from it via
+    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    fn build_test_model(
+        provider_name: &str,
+        model: &str,
+        elem: LangModelProviderElem,
+    ) -> LangModel {
+        let mut lmp = LangModelProvider::new();
+        lmp.insert(model.into(), elem);
+        get_lm_providers_mut().insert(provider_name.into(), lmp);
+        LangModel::try_from_provider(model.to_string(), provider_name).unwrap()
+    }
+
     fn openai_chat_completion(model: &str, api_key: String) -> LangModel {
-        LangModel::new(
-            model.to_string(),
-            LangModelProvider::chat_completion(
-                "https://api.openai.com/v1/chat/completions",
-                Some(api_key),
-            )
-            .unwrap(),
+        let elem = LangModelProvider::chat_completion(
+            "https://api.openai.com/v1/chat/completions",
+            Some(api_key),
         )
+        .unwrap();
+        build_test_model("test_openai_chat_completion", model, elem)
     }
 
     /// Verifies that the POST request is sent and response is parsed.
@@ -347,10 +399,8 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let model = LangModel::new(
-            "test-model".to_string(),
-            LangModelProvider::chat_completion(&format!("http://{}/", addr), None).unwrap(),
-        );
+        let elem = LangModelProvider::chat_completion(&format!("http://{}/", addr), None).unwrap();
+        let model = build_test_model("test_run_lang_model_mock", "test-model", elem);
         let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
 
         let resp = model

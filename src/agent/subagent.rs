@@ -1,7 +1,7 @@
 use futures::StreamExt as _;
 
 use crate::{
-    agent::{Agent, AgentCard, AgentProvider, AgentSpec, rt::AgentParts},
+    agent::{Agent, AgentCard, AgentSpec, AgentState},
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role},
     runenv::SharedMachine,
@@ -51,11 +51,11 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
 /// supplied [`AgentSpec`] every time the tool is invoked, runs it for one turn,
 /// then drops it.
 ///
-/// Resolution against the [`AgentProvider`] happens **once at outer call time**:
-/// the model is captured as a cheap [`LangModelFactory`], the sub-agent's tools
-/// and any nested sub-sub-agent tool funcs are pre-resolved, and the initial
-/// system message is pre-rendered.  The returned closure captures only owned,
-/// `Clone`-able values — no provider clone per invocation.
+/// The closure captures only owned, cheaply-cloneable values: the spec, the
+/// agent-provider name (a [`String`]), the shared machine, and the card name.
+/// The provider name is re-resolved against [`get_agent_providers`] on every
+/// invocation via [`Agent::try_with_provider_and_state`], so the registry
+/// entry must stay live for the parent agent's lifetime.
 ///
 /// The returned function:
 /// 1. Streams every [`MessageOutput`](crate::message::MessageOutput) produced by
@@ -65,18 +65,15 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
 ///    last assistant answer, also tagged with `source_agent`.
 pub fn get_subagent_tool_func(
     spec: AgentSpec,
-    provider: &AgentProvider,
+    provider: String,
     machine: SharedMachine,
-) -> anyhow::Result<ToolFunc> {
+) -> ToolFunc {
     // Capture the card name once; it's needed on every synthesised MessageOutput.
     let card_name = spec.card.as_ref().map(|c| c.name.clone());
 
-    // Pre-resolve everything that depends on the provider so the closure can
-    // capture cheap, owned values only — no AgentProvider in the capture set.
-    let parts = AgentParts::from_spec(&spec, provider, &machine)?;
-
-    Ok(ToolFunc::new(move |args: Value, id: String| {
-        let parts = parts.clone();
+    ToolFunc::new(move |args: Value, id: String| {
+        let spec = spec.clone();
+        let provider = provider.clone();
         let machine = machine.clone();
         let card_name = card_name.clone();
 
@@ -101,9 +98,24 @@ pub fn get_subagent_tool_func(
                 }
             };
 
-            // Build a fresh Agent for this invocation directly from the
-            // pre-resolved parts; no provider lookup required.
-            let mut agent = Agent::from_resolved_parts(parts, machine);
+            // Build a fresh Agent for this invocation; the parent's machine is
+            // shared so filesystem state stays consistent across the call.
+            let state = AgentState::new().with_runenv(machine);
+            let mut agent = match Agent::try_with_provider_and_state(spec, &provider, state) {
+                Ok(a) => a,
+                Err(e) => {
+                    yield MessageOutput {
+                        message: Message::new(Role::Tool)
+                            .with_contents([Part::value(Value::string(format!("Error: {e}")))])
+                            .with_id(id),
+                        finish_reason: FinishReason::Stop {},
+                        usage: None,
+                        depth: None,
+                        source_agent: card_name,
+                    };
+                    return;
+                }
+            };
 
             let query = Message::new(Role::User).with_contents([Part::text(task)]);
             let mut last_answer = String::new();
@@ -155,5 +167,5 @@ pub fn get_subagent_tool_func(
             };
         }
         .boxed()
-    }))
+    })
 }

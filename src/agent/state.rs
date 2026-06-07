@@ -29,12 +29,12 @@ impl AgentState {
         }
     }
 
-    pub fn history(mut self, history: Vec<Message>) -> Self {
-        self.history = history;
+    pub fn with_history(mut self, history: impl IntoIterator<Item = Message>) -> Self {
+        self.history = history.into_iter().collect();
         self
     }
 
-    pub fn machine(mut self, machine: SharedMachine) -> Self {
+    pub fn with_runenv(mut self, machine: SharedMachine) -> Self {
         self.machine = machine;
         self
     }

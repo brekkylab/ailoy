@@ -4,124 +4,21 @@ use futures::{FutureExt as _, Stream, StreamExt as _, stream::FuturesUnordered};
 
 use crate::{
     agent::{
-        AgentProvider, AgentSpec, AgentState, ContextManager, default_provider,
+        AgentProvider, AgentSpec, AgentState, ContextManager, get_agent_providers,
         subagent::{get_subagent_tool_desc, get_subagent_tool_func},
     },
-    lang_model::{LangModel, LangModelFactory, LangModelOptions},
+    lang_model::{LangModel, LangModelOptions},
     message::{FinishReason, Message, MessageOutput, Part, Role},
-    runenv::{Console, FileEntry, Local, SharedMachine},
+    runenv::{Console, FileEntry, Local},
     skill::{render_skills_table, scan_declared_skills},
-    tool::{ToolDesc, ToolFunc, r#impl::get_web_search_tool_factory},
+    tool::{ToolDesc, ToolFunc, get_tool_providers, r#impl::get_web_search_tool_factory},
 };
-
-/// Pre-resolved parts derived from an [`AgentSpec`] + [`AgentProvider`].
-///
-/// Produced by [`AgentParts::from_spec`] and consumed by both
-/// [`Agent::try_with_provider_and_state`] (immediate construction) and
-/// [`get_subagent_tool_func`] (deferred construction inside the sub-agent
-/// closure).  Decoupling resolution from construction is what lets a sub-agent
-/// ToolFunc capture only cheap, owned values — no [`AgentProvider`] clone per
-/// invocation.
-#[derive(Clone)]
-pub(super) struct AgentParts {
-    model_factory: LangModelFactory,
-
-    model_options: LangModelOptions,
-
-    tool_descs: Vec<ToolDesc>,
-
-    tools: HashMap<String, ToolFunc>,
-
-    /// Every file this agent (and its declared sub-spec subtree) needs to see
-    /// in the machine.  Flattened at build time so [`Agent`] doesn't have to
-    /// retain a full [`AgentSpec`] just to walk the subtree on first run.
-    files: Vec<FileEntry>,
-
-    /// Skill directories declared on the originating spec — surfaced by
-    /// [`Agent::skills`] without exposing the whole spec.
-    skills: Vec<PathBuf>,
-
-    /// Card name lifted from the originating spec, used by
-    /// [`Agent::stamp_source_agent`].
-    card_name: Option<String>,
-
-    system_message: Option<Message>,
-}
 
 /// Flatten `spec.files` plus every nested `sub_spec.files` into `out`.
 fn collect_files_recursive(spec: &AgentSpec, out: &mut Vec<FileEntry>) {
     out.extend(spec.files.iter().cloned());
     for sub in &spec.subagents {
         collect_files_recursive(sub, out);
-    }
-}
-
-impl AgentParts {
-    /// Resolve the model factory, tools, sub-agent tool funcs, and system
-    /// message for `spec` against `provider`.  Recurses into
-    /// [`AgentSpec::subagents`] via [`get_subagent_tool_func`], so every nested
-    /// sub-agent is fully wired before the caller gets a chance to construct
-    /// an [`Agent`].
-    pub(super) fn from_spec(
-        spec: &AgentSpec,
-        provider: &AgentProvider,
-        machine: &SharedMachine,
-    ) -> anyhow::Result<Self> {
-        let model_factory = provider.models.provide(&spec.model)?;
-        let model_options = spec.model_options.clone().unwrap_or_default();
-
-        // Collect tools required by the spec; error if any tool is missing.
-        // When the spec requests specific web_search engines, override the default factory.
-        let mut tools = if let Some(engines) = spec.web_search_engines.as_ref() {
-            let mut tp = provider.tools.clone();
-            tp.insert_func_factory("web_search", get_web_search_tool_factory(engines.clone()));
-            tp.provide(&spec.tools)?
-        } else {
-            provider.tools.provide(&spec.tools)?
-        };
-        let mut tool_descs = spec.tools.clone();
-
-        // Sub-agents become regular tool entries: each is a one-shot ToolFunc
-        // that materialises a fresh Agent on call and shares the parent's
-        // machine so filesystem state is shared.  Sub-specs are taken as-is —
-        // no path rewriting — so sub-agent skills are portable across parents.
-        for sub_spec in &spec.subagents {
-            let card = sub_spec
-                .card
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("subagent must declare an AgentCard"))?;
-            let desc = get_subagent_tool_desc(card);
-            let tool_name = desc.name.clone();
-            let func = get_subagent_tool_func(sub_spec.clone(), provider, machine.clone())?;
-            tool_descs.push(desc);
-            tools.insert(tool_name, func);
-        }
-
-        // Build the system message: instruction + (optionally) skills table.
-        let declared_skills = scan_declared_skills(&spec.files, &spec.skills)?;
-        let skills_block = render_skills_table(&declared_skills);
-        let system_text = match (spec.instruction.as_deref(), skills_block) {
-            (Some(inst), Some(block)) => Some(format!("{inst}\n\n{block}")),
-            (Some(inst), None) => Some(inst.to_string()),
-            (None, Some(block)) => Some(block),
-            (None, None) => None,
-        };
-        let system_message =
-            system_text.map(|t| Message::new(Role::System).with_contents([Part::text(t)]));
-
-        let mut files = Vec::new();
-        collect_files_recursive(spec, &mut files);
-
-        Ok(Self {
-            model_factory,
-            model_options,
-            tool_descs,
-            tools,
-            files,
-            skills: spec.skills.clone(),
-            card_name: spec.card.as_ref().map(|c| c.name.clone()),
-            system_message,
-        })
     }
 }
 
@@ -137,8 +34,11 @@ impl AgentParts {
 /// and registered as callable tools, inheriting the parent's machine so they share
 /// filesystem state.
 ///
-/// For construction options, see [`Agent::try_new`], [`Agent::try_with_provider`],
-/// [`Agent::try_with_machine`], and [`Agent::try_with_provider_and_machine`].
+/// Constructors:
+/// * [`Agent::try_new`] — `"default"` provider + fresh [`AgentState`].
+/// * [`Agent::try_with_provider`] — named provider + fresh state.
+/// * [`Agent::try_with_state`] — `"default"` provider + explicit state.
+/// * [`Agent::try_with_provider_and_state`] — named provider + explicit state.
 pub struct Agent {
     model: LangModel,
 
@@ -172,79 +72,133 @@ pub struct Agent {
 }
 
 impl Agent {
-    /// Create an agent using the process-wide [`default_provider`] and a [`Local`] machine.
+    /// Create an agent using the `"default"` entry of the process-wide
+    /// [`get_agent_providers`] registry and a fresh [`AgentState`].
     pub fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
-        let provider = default_provider();
-        Self::try_with_provider(spec, &provider)
+        Self::try_with_provider_and_state(spec, "default", AgentState::new())
     }
 
-    /// Create an agent using the process-wide [`default_provider`] and an explicit state.
-    pub fn try_with_state(spec: AgentSpec, runenv: SharedMachine) -> anyhow::Result<Self> {
-        let provider = default_provider();
-        Self::try_with_provider_and_state(spec, &provider, runenv)
+    /// Create an agent using the [`AgentProvider`] registered under `provider`
+    /// in [`get_agent_providers`] and a fresh [`AgentState`].
+    pub fn try_with_provider(spec: AgentSpec, provider: impl AsRef<str>) -> anyhow::Result<Self> {
+        Self::try_with_provider_and_state(spec, provider, AgentState::new())
     }
 
-    /// Create an agent with an explicit [`AgentProvider`].
+    /// Create an agent using the `"default"` entry of the process-wide
+    /// [`get_agent_providers`] registry and an explicit [`AgentState`].
+    pub fn try_with_state(spec: AgentSpec, state: AgentState) -> anyhow::Result<Self> {
+        Self::try_with_provider_and_state(spec, "default", state)
+    }
+
+    /// Create an agent using the [`AgentProvider`] registered under `provider`
+    /// in [`get_agent_providers`] and an explicit [`AgentState`].
     ///
-    /// Use this for scoped, explicit control over models and tool sources without
-    /// touching global state.  The provider is not stored in the agent and can be
-    /// reused across multiple agents.
-    pub fn try_with_provider(spec: AgentSpec, provider: &AgentProvider) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_state(spec, provider, SharedMachine::new(Local::new()))
-    }
-
-    /// Create an agent with an explicit [`AgentProvider`] and shared machine.
-    ///
-    /// The full constructor.  The supplied `machine` is stored in [`AgentState::machine`]
-    /// and is also cloned into every sub-agent declared in [`AgentSpec::subagents`], so
-    /// the parent and its sub-agents observe the same filesystem and process state.
+    /// The canonical constructor.  `state.machine` is cloned into every
+    /// sub-agent declared in [`AgentSpec::subagents`], so the parent and its
+    /// sub-agents observe the same filesystem and process state.  Sub-agents
+    /// inherit the same `provider` name and re-resolve it from the registry
+    /// on every invocation — make sure the name stays registered for the
+    /// lifetime of the agent.
     ///
     /// Files declared in [`AgentSpec::files`] are materialised lazily on the
     /// first [`Self::run`].  Each path in [`AgentSpec::skills`] is an absolute
     /// directory containing a `SKILL.md`; the spec is taken as-is — sub-spec
     /// skill paths are **not** rewritten, so sub-agent skills are portable
     /// across parents.
+    ///
+    /// If `state.history` is empty, a system message synthesised from
+    /// `spec.instruction` and the declared skills table is seeded as the first
+    /// entry.  When `state.history` is non-empty (e.g. resuming a prior
+    /// session) it is taken as-is and no system message is synthesised.
     pub fn try_with_provider_and_state(
         spec: AgentSpec,
-        provider: &AgentProvider,
-        runenv: SharedMachine,
+        provider: impl AsRef<str>,
+        mut state: AgentState,
     ) -> anyhow::Result<Self> {
-        let parts = AgentParts::from_spec(&spec, provider, &runenv)?;
-        Ok(Self::from_resolved_parts(parts, runenv))
-    }
+        let provider_name = provider.as_ref();
+        let provider_value: AgentProvider = get_agent_providers()
+            .get(provider_name)
+            .ok_or_else(|| anyhow::anyhow!("agent_provider '{}' not registered", provider_name))?
+            .clone();
 
-    /// Construct an [`Agent`] from already-resolved parts.
-    ///
-    /// This is the seam used by [`get_subagent_tool_func`] to build a fresh
-    /// sub-agent per invocation without re-walking the provider registries.
-    /// `parts.system_message` seeds [`AgentState::history`]; `runenv` is
-    /// stored as-is on the state so sub-agents share filesystem state with
-    /// the parent.
-    pub(super) fn from_resolved_parts(parts: AgentParts, runenv: SharedMachine) -> Self {
-        let AgentParts {
-            model_factory,
-            model_options,
-            tool_descs,
-            tools,
-            files,
-            skills,
-            card_name,
-            system_message,
-        } = parts;
-        let history = system_message.map(|m| vec![m]).unwrap_or_default();
-        let state = AgentState::new().history(history).machine(runenv);
-        Self {
-            model: model_factory.make(),
+        let model =
+            LangModel::try_from_provider(spec.model.clone(), &provider_value.lang_model_provider)?;
+        let model_options = spec.model_options.clone().unwrap_or_default();
+
+        // Collect tools required by the spec; error if any tool is missing.
+        // When the spec requests specific web_search engines, override the default factory.
+        let mut tools = {
+            let registry = get_tool_providers();
+            let tp = registry.get(&provider_value.tool_provider).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "tool_provider '{}' not registered",
+                    provider_value.tool_provider
+                )
+            })?;
+            if let Some(engines) = spec.web_search_engines.as_ref() {
+                let mut tp = tp.clone();
+                tp.insert_func_factory("web_search", get_web_search_tool_factory(engines.clone()));
+                tp.provide(&spec.tools)?
+            } else {
+                tp.provide(&spec.tools)?
+            }
+        };
+        let mut tool_descs = spec.tools.clone();
+
+        // Sub-agents become regular tool entries: each is a one-shot ToolFunc
+        // that materialises a fresh Agent on call (re-resolving the provider
+        // name from the registry) and shares the parent's machine so
+        // filesystem state is shared.  Sub-specs are taken as-is — no path
+        // rewriting — so sub-agent skills are portable across parents.
+        for sub_spec in &spec.subagents {
+            let card = sub_spec
+                .card
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("subagent must declare an AgentCard"))?;
+            let desc = get_subagent_tool_desc(card);
+            let tool_name = desc.name.clone();
+            let func = get_subagent_tool_func(
+                sub_spec.clone(),
+                provider_name.to_string(),
+                state.machine.clone(),
+            );
+            tool_descs.push(desc);
+            tools.insert(tool_name, func);
+        }
+
+        // Build the system message: instruction + (optionally) skills table.
+        // Only seeded when the caller didn't supply a pre-existing history.
+        if state.history.is_empty() {
+            let declared_skills = scan_declared_skills(&spec.files, &spec.skills)?;
+            let skills_block = render_skills_table(&declared_skills);
+            let system_text = match (spec.instruction.as_deref(), skills_block) {
+                (Some(inst), Some(block)) => Some(format!("{inst}\n\n{block}")),
+                (Some(inst), None) => Some(inst.to_string()),
+                (None, Some(block)) => Some(block),
+                (None, None) => None,
+            };
+            if let Some(text) = system_text {
+                state
+                    .history
+                    .push(Message::new(Role::System).with_contents([Part::text(text)]));
+            }
+        }
+
+        let mut files = Vec::new();
+        collect_files_recursive(&spec, &mut files);
+
+        Ok(Self {
+            model,
             model_options,
             tool_descs,
             tools,
             state,
             context_manager: None,
             files,
-            skills,
-            card_name,
+            skills: spec.skills,
+            card_name: spec.card.map(|c| c.name),
             files_materialised: false,
-        }
+        })
     }
 
     /// Maximum number of characters kept in a single tool-result message before
@@ -601,31 +555,47 @@ mod tests {
 
     use super::*;
     use crate::{
-        agent::{AgentCard, AgentProvider, AgentSpec, ContextManager},
+        agent::{AgentCard, AgentProvider, AgentSpec, ContextManager, get_agent_providers_mut},
         datatype::Value,
-        lang_model::LangModelProvider,
+        lang_model::{LangModelProvider, get_lm_providers_mut},
         message::{Message, Part, Role},
         suppress_panics, to_value,
-        tool::{ToolDescBuilder, ToolProvider},
+        tool::{ToolDescBuilder, ToolProvider, get_tool_providers_mut},
         tool_func,
     };
 
     // ── helpers ───────────────────────────────────────────────────────────────
-    fn get_provider() -> AgentProvider {
+
+    /// Load `.env`, then re-register the `"default"` lang-model provider so
+    /// that any `*_API_KEY` introduced by `dotenv` is picked up — the
+    /// `LangModelProvider::default()` that backs the global LazyLock may have
+    /// been initialised before `dotenv` ran.
+    fn refresh_default_lang_models() {
         dotenvy::dotenv().ok();
-        let mut provider = AgentProvider::new();
-        if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-            provider
-                .models
-                .insert("openai/*".into(), LangModelProvider::openai(key.clone()));
-        }
-        if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-            provider.models.insert(
-                "anthropic/*".into(),
-                LangModelProvider::anthropic(key.clone()),
-            );
-        }
-        provider
+        get_lm_providers_mut().insert("default".to_string(), LangModelProvider::default());
+    }
+
+    /// Register an `AgentProvider` under `unique_name` whose `tool_provider`
+    /// points at a freshly-registered `ToolProvider` configured by `build`.
+    /// Reuses the `"default"` lang-model provider.  Returns the registry name
+    /// to pass into `Agent::try_with_provider*`.
+    fn provider_with_tools(unique_name: &str, build: impl FnOnce(&mut ToolProvider)) -> String {
+        refresh_default_lang_models();
+        let mut tp = ToolProvider::new();
+        build(&mut tp);
+        get_tool_providers_mut().insert(unique_name.to_string(), tp);
+        get_agent_providers_mut().insert(
+            unique_name.to_string(),
+            AgentProvider::new("default", unique_name),
+        );
+        unique_name.to_string()
+    }
+
+    /// Refresh env-derived lang-model providers and return the `"default"`
+    /// agent-provider name (auto-registered at startup).
+    fn default_test_provider() -> &'static str {
+        refresh_default_lang_models();
+        "default"
     }
 
     // ── tests ─────────────────────────────────────────────────────────────────
@@ -648,9 +618,9 @@ mod tests {
             }))
             .build();
         let temperature_fn = tool_func!(|_args: Value| -> Value { Value::unsigned(25) });
-        let mut provider = get_provider();
-        provider.tools = ToolProvider::new();
-        provider.tools.insert_func("temperature", temperature_fn);
+        let provider = provider_with_tools("test_simple_tool_call", |tp| {
+            tp.insert_func("temperature", temperature_fn);
+        });
 
         let spec = AgentSpec::new("openai/gpt-4o-mini").tool(temperature_desc);
         let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
@@ -688,7 +658,7 @@ mod tests {
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_delegate_to_subagent() {
-        let provider = get_provider();
+        let provider = default_test_provider();
 
         let sub_spec = AgentSpec::new("openai/gpt-4o-mini")
             .instruction(
@@ -746,7 +716,7 @@ mod tests {
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_streaming_subagent_emits_tool_deltas() {
-        let provider = get_provider();
+        let provider = default_test_provider();
 
         let sub_spec = AgentSpec::new("openai/gpt-4o-mini")
             .instruction(
@@ -829,10 +799,10 @@ mod tests {
             Value::null()
         });
 
-        let mut provider = get_provider();
-        provider.tools = ToolProvider::new();
-        provider.tools.insert_func("get_weather", good_fn);
-        provider.tools.insert_func("get_traffic", bad_fn);
+        let provider = provider_with_tools("test_tool_panic_causes_inconsistent_history", |tp| {
+            tp.insert_func("get_weather", good_fn);
+            tp.insert_func("get_traffic", bad_fn);
+        });
 
         let spec = AgentSpec::new("openai/gpt-4o-mini")
             .tools([good_desc, bad_desc])
@@ -912,9 +882,12 @@ mod tests {
             .parameters(to_value!({ "type": "object", "properties": {} }))
             .build();
         let dummy_fn = tool_func!(|_args: Value| -> Value { Value::string("result".to_string()) });
-        let mut provider = get_provider();
-        provider.tools = ToolProvider::new();
-        provider.tools.insert_func("dummy_tool", dummy_fn);
+        let provider = provider_with_tools(
+            "test_context_manager_truncates_tool_results_when_threshold_exceeded",
+            |tp| {
+                tp.insert_func("dummy_tool", dummy_fn);
+            },
+        );
 
         let spec = AgentSpec::new("openai/gpt-5.4-mini")
             .instruction("Reply with exactly 'OK'. Do not call any tools.")
@@ -994,9 +967,12 @@ mod tests {
             .parameters(to_value!({ "type": "object", "properties": {} }))
             .build();
         let dummy_fn = tool_func!(|_args: Value| -> Value { Value::string("result".to_string()) });
-        let mut provider = get_provider();
-        provider.tools = ToolProvider::new();
-        provider.tools.insert_func("dummy_tool", dummy_fn);
+        let provider = provider_with_tools(
+            "test_context_manager_no_truncation_when_below_threshold",
+            |tp| {
+                tp.insert_func("dummy_tool", dummy_fn);
+            },
+        );
 
         let spec = AgentSpec::new("openai/gpt-5.4-mini")
             .instruction("Reply with exactly 'OK'. Do not call any tools.")

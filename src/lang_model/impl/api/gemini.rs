@@ -488,10 +488,28 @@ mod tests {
     use super::*;
     use crate::{
         datatype::{Bytes, Value},
-        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
+        lang_model::{
+            LangModel, LangModelAPISchema, LangModelOptions, LangModelProvider,
+            LangModelProviderElem, get_lm_providers_mut,
+        },
         message::{FinishReason, Message, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    /// Register a one-off [`LangModelProvider`] under `provider_name` in the
+    /// global registry and build the [`LangModel`] via
+    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    fn build_gemini_model(provider_name: &str, model: &str, api_key: String) -> LangModel {
+        let elem = LangModelProviderElem::API {
+            schema: LangModelAPISchema::Gemini,
+            url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap(),
+            api_key: Some(api_key),
+        };
+        let mut lmp = LangModelProvider::new();
+        lmp.insert(model.into(), elem);
+        get_lm_providers_mut().insert(provider_name.into(), lmp);
+        LangModel::try_from_provider(model.to_string(), provider_name).unwrap()
+    }
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
     where
@@ -759,14 +777,10 @@ mod tests {
             "required": ["country", "capital"]
         });
 
-        let model = LangModel::new(
-            "gemini-2.5-flash-lite".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::Gemini,
-                url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
-                    .unwrap(),
-                api_key: Some(api_key),
-            },
+        let model = build_gemini_model(
+            "gemini_test_run_response_format_json_schema",
+            "gemini-2.5-flash-lite",
+            api_key,
         );
         let messages = vec![Message::new(Role::User).with_contents([Part::text(
             "Return France's country name and capital city in the requested format.",
@@ -803,15 +817,8 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set in .env");
 
-        let model = LangModel::new(
-            "gemini-2.5-flash-lite".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::Gemini,
-                url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
-                    .unwrap(),
-                api_key: Some(api_key),
-            },
-        );
+        let model =
+            build_gemini_model("gemini_test_run_max_tokens", "gemini-2.5-flash-lite", api_key);
         let messages = vec![
             Message::new(Role::User)
                 .with_contents([Part::text("Tell me a long story about a dragon.")]),
@@ -856,14 +863,10 @@ mod tests {
         .unwrap()
         .to_vec();
 
-        let model = LangModel::new(
-            "gemini-3-flash-preview".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::Gemini,
-                url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
-                    .unwrap(),
-                api_key: Some(api_key),
-            },
+        let model = build_gemini_model(
+            "gemini_test_tool_result_with_image",
+            "gemini-3-flash-preview",
+            api_key,
         );
 
         let tools =

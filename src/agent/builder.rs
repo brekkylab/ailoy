@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{
-    agent::{Agent, AgentProvider, AgentSpec, ContextManager},
+    agent::{Agent, AgentSpec, AgentState, ContextManager},
     message::Message,
     runenv::{FileEntry, Machine, SharedMachine},
     tool::{ToolDesc, WebSearchEngineKind},
@@ -14,27 +14,25 @@ use crate::{
 /// up front.
 ///
 /// When you already hold a fully-formed [`AgentSpec`], call
-/// [`Agent::try_with_provider`] / [`Agent::try_new`] directly instead.
+/// [`Agent::try_with_provider_name`] / [`Agent::try_new`] / [`Agent::try_with_provider`]
+/// directly instead.
 ///
 /// # Examples
 ///
 /// ```rust,no_run
 /// # use ailoy::{
-/// #     agent::{AgentBuilder, AgentProvider},
-/// #     lang_model::LangModelProvider,
+/// #     agent::AgentBuilder,
 /// #     tool::ToolDescBuilder,
 /// #     to_value,
 /// # };
 /// # #[tokio::main]
 /// # async fn main() -> anyhow::Result<()> {
-/// let mut provider = AgentProvider::new();
-/// provider.models.insert(
-///     "openai/gpt-4o".into(),
-///     LangModelProvider::openai(std::env::var("OPENAI_API_KEY")?),
-/// );
-///
+/// // Use the global `"default"` agent-provider bundle (env-driven lang-model
+/// // registry + built-in tools).  Register additional named providers via
+/// // `get_lm_providers_mut()` / `get_tool_providers_mut()` /
+/// // `get_agent_providers_mut()` and reference them by name with
+/// // [`AgentBuilder::agent_provider`].
 /// let agent = AgentBuilder::new("openai/gpt-4o")
-///     .provider(provider)
 ///     .tool(ToolDescBuilder::new("web_search")
 ///         .description("Search the web.")
 ///         .parameters(to_value!({ "type": "object", "properties": {} }))
@@ -47,7 +45,9 @@ use crate::{
 pub struct AgentBuilder {
     spec: AgentSpec,
 
-    provider: Option<AgentProvider>,
+    /// Name of the [`AgentProvider`](crate::agent::AgentProvider) bundle to
+    /// resolve at [`build`](Self::build) time.  Defaults to `"default"`.
+    agent_provider: String,
 
     history: Vec<Message>,
 
@@ -58,21 +58,26 @@ pub struct AgentBuilder {
 
 impl AgentBuilder {
     /// Create a builder for the given model identifier (e.g. `"openai/gpt-4o"`).
-    /// The model must be registered in the [`AgentProvider`] used at [`build`](Self::build) time.
+    /// The model must be resolvable by the [`AgentProvider`](crate::agent::AgentProvider)
+    /// bundle selected at [`build`](Self::build) time.
     pub fn new(model: impl Into<String>) -> Self {
         let spec = AgentSpec::new(model);
         Self {
             spec,
-            provider: None,
+            agent_provider: "default".to_string(),
             history: Vec::new(),
             machine: None,
             context_manager: None,
         }
     }
 
-    /// Use this [`AgentProvider`] instead of the global [`default_provider`](crate::agent::default_provider).
-    pub fn provider(mut self, provider: AgentProvider) -> Self {
-        self.provider = Some(provider);
+    /// Select the [`AgentProvider`](crate::agent::AgentProvider) bundle to
+    /// resolve against at [`build`](Self::build) time.  `name` must exist in
+    /// the global registry exposed by
+    /// [`get_agent_providers`](crate::agent::get_agent_providers); defaults
+    /// to `"default"` if this method is never called.
+    pub fn agent_provider(mut self, name: impl Into<String>) -> Self {
+        self.agent_provider = name.into();
         self
     }
 
@@ -193,26 +198,27 @@ impl AgentBuilder {
         self
     }
 
-    /// Materialise the agent by dispatching to the appropriate `Agent::try_*` constructor
-    /// based on which optional fields were supplied.
+    /// Materialise the agent by dispatching to
+    /// [`Agent::try_with_provider_name_and_state`] with a state assembled from
+    /// the optional machine and history.
     pub fn build(self) -> anyhow::Result<Agent> {
         let Self {
             spec,
-            provider,
+            agent_provider,
             history,
             machine,
             context_manager,
         } = self;
 
-        let mut agent = match (provider, machine) {
-            (None, None) => Agent::try_new(spec)?,
-            (None, Some(m)) => Agent::try_with_state(spec, m)?,
-            (Some(provider), None) => Agent::try_with_provider(spec, &provider)?,
-            (Some(provider), Some(m)) => Agent::try_with_provider_and_state(spec, &provider, m)?,
-        };
-        if !history.is_empty() {
-            agent.state.history = history;
+        let mut state = AgentState::new();
+        if let Some(m) = machine {
+            state = state.with_runenv(m);
         }
+        if !history.is_empty() {
+            state = state.with_history(history);
+        }
+
+        let mut agent = Agent::try_with_provider_and_state(spec, &agent_provider, state)?;
         if context_manager.is_some() {
             agent.set_context_manager(context_manager);
         }
@@ -223,16 +229,29 @@ impl AgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{agent::AgentCard, lang_model::LangModelProvider, message::Role, runenv::Local};
+    use crate::{
+        agent::{AgentCard, AgentProvider, get_agent_providers_mut},
+        lang_model::{LangModelProvider, get_lm_providers_mut},
+        message::Role,
+        runenv::Local,
+    };
 
     const TEST_MODEL: &str = "openai/gpt-4o-mini";
+    const TEST_PROVIDER_NAME: &str = "agent_builder_tests";
 
-    fn dummy_provider() -> AgentProvider {
-        let mut provider = AgentProvider::new();
-        provider
-            .models
-            .insert(TEST_MODEL.into(), LangModelProvider::openai("dummy".into()));
-        provider
+    /// Register a dummy lang-model provider scoped to this test module and an
+    /// `AgentProvider` bundle that points at it.  Each call is idempotent.
+    fn ensure_dummy_provider() {
+        let mut lmps = get_lm_providers_mut();
+        if !lmps.contains_key(TEST_PROVIDER_NAME) {
+            let mut lmp = LangModelProvider::new();
+            lmp.insert(TEST_MODEL.into(), LangModelProvider::openai("dummy".into()));
+            lmps.insert(TEST_PROVIDER_NAME.to_string(), lmp);
+        }
+        drop(lmps);
+        let mut aps = get_agent_providers_mut();
+        aps.entry(TEST_PROVIDER_NAME.to_string())
+            .or_insert_with(|| AgentProvider::new(TEST_PROVIDER_NAME, "default"));
     }
 
     fn system_text(agent: &Agent) -> Option<String> {
@@ -249,8 +268,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_simple_builder() {
+        ensure_dummy_provider();
         let agent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
+            .agent_provider(TEST_PROVIDER_NAME)
             .instruction("You are a test agent.")
             .build()
             .unwrap();
@@ -262,8 +282,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_builder_no_instruction() {
+        ensure_dummy_provider();
         let agent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
+            .agent_provider(TEST_PROVIDER_NAME)
             .build()
             .unwrap();
         assert!(agent.get_history().is_empty());
@@ -272,8 +293,9 @@ mod tests {
     /// `machine()` carries the supplied [`Machine`] through to `state.machine`.
     #[tokio::test]
     async fn test_builder_machine_is_applied() {
+        ensure_dummy_provider();
         let agent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
+            .agent_provider(TEST_PROVIDER_NAME)
             .machine(Local::new())
             .build()
             .unwrap();
@@ -293,11 +315,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_skill_seeds_spec() {
+        ensure_dummy_provider();
         let dir = tempfile::tempdir().unwrap();
         let greet_dir = dir.path().join("skills/greet");
         let skill_path = greet_dir.join("SKILL.md");
         let agent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
+            .agent_provider(TEST_PROVIDER_NAME)
             .machine(Local::new())
             .skill(
                 &greet_dir,
@@ -320,8 +343,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_skill_block_when_nothing_declared() {
+        ensure_dummy_provider();
         let agent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
+            .agent_provider(TEST_PROVIDER_NAME)
             .build()
             .unwrap();
         assert!(agent.get_history().is_empty());
@@ -329,6 +353,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_per_agent_skill_isolation() {
+        ensure_dummy_provider();
         let dir = tempfile::tempdir().unwrap();
         let parent_skill_dir = dir.path().join("parent_skills/a_skill");
         let parent_skill_path = parent_skill_dir.join("SKILL.md");
@@ -350,7 +375,7 @@ mod tests {
             );
 
         let parent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
+            .agent_provider(TEST_PROVIDER_NAME)
             .machine(Local::new())
             .skill(
                 &parent_skill_dir,
@@ -373,6 +398,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_same_skill_name_across_levels_no_conflict() {
+        ensure_dummy_provider();
         let dir = tempfile::tempdir().unwrap();
         let parent_foo_dir = dir.path().join("parent/foo");
         let child_foo_dir = dir.path().join("child/foo");
@@ -394,7 +420,7 @@ mod tests {
             );
 
         let parent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
+            .agent_provider(TEST_PROVIDER_NAME)
             .machine(Local::new())
             .skill(
                 &parent_foo_dir,
@@ -433,6 +459,7 @@ mod tests {
     async fn test_builder_subagent_in_spec() {
         use crate::agent::AgentSpec;
 
+        ensure_dummy_provider();
         let sub_spec = AgentSpec::new(TEST_MODEL).card(AgentCard {
             name: "child".into(),
             description: "child agent".into(),
@@ -440,7 +467,7 @@ mod tests {
         });
 
         AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
+            .agent_provider(TEST_PROVIDER_NAME)
             .subagent(sub_spec)
             .build()
             .unwrap();
@@ -448,12 +475,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_builder_context_manager_is_applied() {
+        ensure_dummy_provider();
         let cm = ContextManager {
             max_input_tokens: 10_000,
             preserve_recent_turns: 2,
         };
         let agent = AgentBuilder::new(TEST_MODEL)
-            .provider(dummy_provider())
+            .agent_provider(TEST_PROVIDER_NAME)
             .context_manager(cm)
             .build()
             .unwrap();
