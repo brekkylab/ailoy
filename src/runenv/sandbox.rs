@@ -9,14 +9,68 @@ use anyhow::Context as _;
 use async_trait::async_trait;
 use microsandbox::{
     ExecOutput, MicrosandboxError, NetworkPolicy, Sandbox as MsbSandbox, SandboxConfig, Snapshot,
-    sandbox::{ExecOptionsBuilder, IntoImage, PullPolicy},
+    sandbox::{ExecOptionsBuilder, IntoImage, MountBuilder, PullPolicy},
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
     runenv::{Console, ExecResult, Machine},
     util::truncate::middle_truncate,
 };
+
+/// A volume mount attached to a sandbox at creation time.
+///
+/// Narrow surface over microsandbox's mount model: only the three variants
+/// agents need (`Bind`, `Named`, `Tmpfs`), with `readonly` as the only policy
+/// knob. Lower-level options (stat virtualization, host permission
+/// propagation, disk-image mounts) stay inside the sandbox module.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum VolumeMount {
+    /// Bind-mount a host directory into the guest.
+    Bind {
+        /// Absolute or relative host path.
+        host: PathBuf,
+        /// Absolute guest path (e.g. `/data`).
+        guest: String,
+        /// When `true`, the guest cannot write to this mount.
+        #[serde(default)]
+        readonly: bool,
+    },
+    /// Mount a microsandbox named volume, stored under the resolved
+    /// microsandbox home directory (e.g. `~/.microsandbox/volumes/<name>/`
+    /// or `$MSB_HOME/volumes/<name>/`). The volume persists across sandbox
+    /// restarts and can be shared between sandboxes.
+    Named {
+        /// Name of the pre-existing microsandbox volume.
+        name: String,
+        /// Absolute guest path.
+        guest: String,
+        /// When `true`, the guest cannot write to this mount.
+        #[serde(default)]
+        readonly: bool,
+    },
+    /// Memory-backed temporary filesystem. Disappears when the sandbox stops.
+    Tmpfs {
+        /// Absolute guest path.
+        guest: String,
+        /// Size limit in MiB. `None` means no limit.
+        size_mib: Option<u32>,
+    },
+}
+
+impl VolumeMount {
+    /// Guest mount path. Matches the `guest` field across all variants.
+    pub fn guest_path(&self) -> &str {
+        match self {
+            VolumeMount::Bind { guest, .. }
+            | VolumeMount::Named { guest, .. }
+            | VolumeMount::Tmpfs { guest, .. } => guest,
+        }
+    }
+}
 
 /// Resolve `MSB_HOME` (or `$HOME/.microsandbox` if unset). Sync so `Drop`
 /// can reuse it without spinning up a runtime.
@@ -151,6 +205,41 @@ impl SandboxBuilder {
         if disable {
             self.config.network.enabled = false;
             self.config.network.policy = NetworkPolicy::none();
+        }
+        self
+    }
+
+    /// Append a volume mount.
+    pub fn mount(mut self, mount: VolumeMount) -> Self {
+        let builder = match mount {
+            VolumeMount::Bind {
+                host,
+                guest,
+                readonly,
+            } => {
+                let b = MountBuilder::new(guest).bind(host);
+                if readonly { b.readonly() } else { b }
+            }
+            VolumeMount::Named {
+                name,
+                guest,
+                readonly,
+            } => {
+                let b = MountBuilder::new(guest).named(name);
+                if readonly { b.readonly() } else { b }
+            }
+            VolumeMount::Tmpfs { guest, size_mib } => {
+                let b = MountBuilder::new(guest).tmpfs();
+                if let Some(s) = size_mib { b.size(s) } else { b }
+            }
+        };
+        match builder.build() {
+            Ok(vm) => self.config.mounts.push(vm),
+            Err(e) => {
+                if self.build_error.is_none() {
+                    self.build_error = Some(format!("invalid mount: {e}"));
+                }
+            }
         }
         self
     }
