@@ -4,8 +4,9 @@ use std::time::{Duration, Instant};
 
 use html_to_markdown_rs::{ConversionOptions, OutputFormat};
 use parking_lot::Mutex;
-use reqwest::Client;
 use url::Url;
+use wreq::Client;
+use wreq_util::Emulation;
 
 use crate::{
     datatype::Value,
@@ -19,8 +20,6 @@ const MAX_DOWNLOAD_BYTES: usize = 2 * 1024 * 1024;
 const MAX_URL_CHARS: usize = 2048;
 const REQUEST_TIMEOUT_SECS: u64 = 10;
 const PER_HOST_MIN_INTERVAL: Duration = Duration::from_millis(1000);
-const USER_AGENT: &str =
-    "Mozilla/5.0 (compatible; ailoy/web_fetch; +https://github.com/brekkylab/ailoy)";
 
 #[derive(Clone)]
 struct WebFetchState {
@@ -31,10 +30,10 @@ struct WebFetchState {
 impl WebFetchState {
     fn new() -> Self {
         let client = Client::builder()
-            .user_agent(USER_AGENT)
+            .emulation(Emulation::Firefox135)
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .build()
-            .expect("reqwest::Client builder cannot fail with these settings");
+            .expect("wreq::Client builder cannot fail with these settings");
         Self {
             client,
             last_hit: Arc::new(Mutex::new(HashMap::new())),
@@ -76,7 +75,7 @@ async fn download(
     let final_url = resp.url().to_string();
     let content_type = resp
         .headers()
-        .get(reqwest::header::CONTENT_TYPE)
+        .get(wreq::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
@@ -531,7 +530,8 @@ mod tests {
         let state = WebFetchState::new();
         let result = fetch_one(
             state,
-            "https://example.com/".to_string(),
+            "https://www.accuweather.com/ko/kr/bundang-gu/2330398/current-weather/2330398"
+                .to_string(),
             0,
             DEFAULT_BODY_CHARS,
             BodyFormat::Text,
@@ -551,8 +551,8 @@ mod tests {
             .unwrap_or("");
         assert_eq!(status, 200, "result: {result:?}");
         assert!(
-            body.to_ascii_lowercase().contains("example domain"),
-            "body should mention `Example Domain`, got first 200 chars: {:?}",
+            body.to_ascii_lowercase().contains("accuweather") || body.contains("분당구"),
+            "body should mention AccuWeather or 분당구, got first 200 chars: {:?}",
             &body.chars().take(200).collect::<String>()
         );
         assert!(retrieved_at.ends_with('Z'), "retrieved_at: {retrieved_at}");
