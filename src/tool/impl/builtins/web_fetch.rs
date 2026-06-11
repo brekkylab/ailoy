@@ -31,6 +31,7 @@ impl WebFetchState {
     fn new() -> Self {
         let client = Client::builder()
             .emulation(Emulation::Firefox135)
+            .redirect(wreq::redirect::Policy::limited(10))
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .build()
             .expect("wreq::Client builder cannot fail with these settings");
