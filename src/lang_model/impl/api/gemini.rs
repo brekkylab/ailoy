@@ -398,7 +398,7 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
         .pointer("/content")
         .ok_or_else(|| anyhow::anyhow!("Missing content in candidate"))?;
 
-    // Parse role
+    // Gemini occasionally omits `content.role`; candidates are always model output.
     if let Some(r) = content.pointer("/role") {
         let s = r
             .as_str()
@@ -412,6 +412,8 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
             other => bail!("Unknown role: {other}"),
         };
         rv.role = Some(v);
+    } else {
+        rv.role = Some(Role::Assistant);
     }
 
     // Parse parts
@@ -486,7 +488,7 @@ mod tests {
     use crate::{
         datatype::{Bytes, Value},
         lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
-        message::{FinishReason, Message, Part, Role, TokenUsage},
+        message::{Delta, FinishReason, Message, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
 
@@ -538,6 +540,21 @@ mod tests {
                 cache_read_input_tokens: None,
             })
         );
+    }
+
+    /// Missing `content.role` defaults to Assistant instead of bailing.
+    #[test]
+    fn test_unmarshal_missing_content_role_defaults_to_assistant() {
+        let response = to_value!({
+            "candidates": [{
+                "content": {"parts": [{"text": "Hello from Gemini."}]},
+                "finishReason": "STOP"
+            }]
+        });
+        let out = GeminiUnmarshal::default().unmarshal(response).unwrap();
+        assert_eq!(out.delta.role, Some(Role::Assistant));
+        let msg = out.delta.finish().expect("finish() must not bail");
+        assert_eq!(msg.role, Role::Assistant);
     }
 
     /// Verifies functionResponse.response.result marshaling for all Part variants.
