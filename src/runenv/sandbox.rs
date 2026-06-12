@@ -389,6 +389,15 @@ impl Sandbox {
             }
         }
     }
+
+    /// Returns `true` if a persisted sandbox with the given name already exists,
+    /// without creating or starting it.
+    ///
+    /// This is a lightweight existence probe — it never modifies sandbox state.
+    /// Returns `false` on any error (e.g. microsandbox runtime not installed).
+    pub async fn exists(name: &str) -> bool {
+        MsbSandbox::get(name).await.is_ok()
+    }
 }
 
 impl std::fmt::Debug for Sandbox {
@@ -1067,6 +1076,35 @@ mod tests {
         );
         drop(_h);
         Sandbox::remove_persisted(&name).await.ok();
+    }
+
+    // ── exists ───────────────────────────────────────────────────────────────
+
+    /// A randomly generated name that was never registered returns `false`.
+    #[tokio::test]
+    async fn test_exists_returns_false_for_unknown_name() {
+        let name = format!("at-ex-unknown-{}", short_id());
+        assert!(
+            !Sandbox::exists(&name).await,
+            "a never-registered name must not exist"
+        );
+    }
+
+    /// `exists()` tracks the full lifecycle: `true` after creation, `false` after removal.
+    #[tokio::test]
+    async fn test_exists_lifecycle() {
+        let name = format!("at-ex-{}", short_id());
+        let _env = RunEnv::sandbox(SandboxConfig {
+            name: Some(name.clone()),
+            persist: true,
+            ..SandboxConfig::default()
+        })
+        .await
+        .expect("failed to create sandbox");
+
+        assert!(Sandbox::exists(&name).await, "must exist after creation");
+        Sandbox::remove_persisted(&name).await.expect("remove failed");
+        assert!(!Sandbox::exists(&name).await, "must not exist after removal");
     }
 
     // ── concurrent access ────────────────────────────────────────────────────
