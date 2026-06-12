@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use microsandbox::{
     ExecOutput, MicrosandboxError, Sandbox as MsbSandbox, Snapshot,
     sandbox::{ExecOptionsBuilder, PullPolicy, SandboxBuilder, SandboxStatus},
+    validate_sandbox_name,
 };
 use tokio::sync::OnceCell;
 use schemars::JsonSchema;
@@ -42,13 +43,26 @@ pub enum VolumeMount {
     /// or `$MSB_HOME/volumes/<name>/`).
     /// The volume persists across sandbox restarts and can be shared between sandboxes.
     Named {
-        /// Name of the pre-existing microsandbox volume.
+        /// Name of the microsandbox volume.
         name: String,
         /// Absolute guest path.
         guest: String,
         /// When `true`, the guest cannot write to this mount.
         #[serde(default)]
         readonly: bool,
+        /// When `true`, create the named volume atomically with the sandbox
+        /// if it does not yet exist, or reuse a compatible existing one. The
+        /// volume row is inserted in the same DB transaction as the sandbox
+        /// row, so a parallel scan never observes an orphan-shaped row.
+        ///
+        /// When `false` (default), the volume must already exist.
+        #[serde(default)]
+        create_if_missing: bool,
+        /// Labels attached to the volume when it is created. When reusing an
+        /// existing volume, microsandbox requires these to match the
+        /// persisted labels.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        labels: Vec<(String, String)>,
     },
     /// Memory-backed temporary filesystem. Disappears when the sandbox stops.
     Tmpfs {
@@ -248,57 +262,36 @@ impl Sandbox {
             .await;
 
         let name = config.name.clone().unwrap_or_else(fresh_sandbox_name);
-        validate_sandbox_name(&name)?;
+        validate_sandbox_name(&name)
+            .map_err(|e| anyhow::anyhow!("sandbox name '{name}': {e}"))?;
 
-        // Pre-populate `/tmp` with a per-sandbox named volume so the
-        // microsandbox auto-tmpfs escape hatch (apply_runtime_defaults in
-        // microsandbox 0.4.6 lib/sandbox/config.rs:305-323) fires and `/tmp`
+        // Pre-populate `/tmp` with a per-sandbox named volume so it
         // survives the start/stop cycle that `RunEnvHandle::Drop` drives.
         // A user-supplied `/tmp` mount takes precedence.
-        let tmp_vol_provisioned = if config.volumes.iter().any(|v| v.guest_path() == "/tmp") {
-            None
-        } else {
-            let vol_name = tmp_volume_name(&name);
-            match microsandbox::Volume::builder(&vol_name)
-                .label(AILOY_VOLUME_LABEL_KEY, AILOY_VOLUME_LABEL_VALUE)
-                .create()
-                .await
-            {
-                Ok(_) => {}
-                // `persist=true` reattach: reuse the existing volume.
-                Err(MicrosandboxError::VolumeAlreadyExists(_)) => {}
-                Err(e) => {
-                    return Err(anyhow::anyhow!("create /tmp named volume: {e}"));
-                }
-            }
+        if !config.volumes.iter().any(|v| v.guest_path() == "/tmp") {
             config.volumes.push(VolumeMount::Named {
-                name: vol_name.clone(),
+                name: tmp_volume_name(&name),
                 guest: "/tmp".to_string(),
                 readonly: false,
+                create_if_missing: true,
+                labels: vec![(
+                    AILOY_VOLUME_LABEL_KEY.to_string(),
+                    AILOY_VOLUME_LABEL_VALUE.to_string(),
+                )],
             });
-            Some(vol_name)
-        };
+        }
 
-        let inner = match if config.persist && MsbSandbox::get(&name).await.is_ok() {
+        let inner = if config.persist && MsbSandbox::get(&name).await.is_ok() {
             MsbSandbox::start_detached(&name)
                 .await
-                .context("sandbox start")
+                .context("sandbox start")?
         } else {
             create_registered(&name, &config)
                 .await
-                .context("sandbox create-registered")
-        } {
-            Ok(s) => s,
-            Err(e) => {
-                // Roll back the volume we just provisioned.
-                if let Some(vol) = tmp_vol_provisioned {
-                    let _ = microsandbox::Volume::remove(&vol).await;
-                }
-                return Err(e);
-            }
+                .context("sandbox create-registered")?
         };
         let _ = inner.shell(&format!("mkdir -p {}", config.workdir)).await;
-        inner.stop_and_wait().await?;
+        inner.stop().await?;
 
         Ok(Self { config, name })
     }
@@ -314,7 +307,8 @@ impl Sandbox {
         }
 
         let new_name = new_cfg.name.clone().unwrap_or_else(fresh_sandbox_name);
-        validate_sandbox_name(&new_name)?;
+        validate_sandbox_name(&new_name)
+            .map_err(|e| anyhow::anyhow!("sandbox name '{new_name}': {e}"))?;
         let snap_name = format!("fork-{new_name}");
 
         let handle = MsbSandbox::get(&self.name)
@@ -383,16 +377,13 @@ impl Sandbox {
         match MsbSandbox::get(name).await {
             Err(_) => Ok(()),
             Ok(handle) => {
-                match handle.status() {
-                    SandboxStatus::Running | SandboxStatus::Draining => {
-                        let connected = handle.connect().await?;
-                        connected.stop_and_wait().await?;
-                        connected.remove_persisted().await?;
-                    }
-                    _ => {
-                        handle.remove().await?;
-                    }
+                if matches!(
+                    handle.status(),
+                    SandboxStatus::Running | SandboxStatus::Draining
+                ) {
+                    handle.stop().await?;
                 }
+                handle.remove().await?;
                 let _ = microsandbox::Volume::remove(&tmp_volume_name(name)).await;
                 Ok(())
             }
@@ -549,10 +540,8 @@ async fn start_and_connect(name: &str) -> anyhow::Result<MsbSandbox> {
     let inner = match MsbSandbox::start_detached(name).await {
         Ok(s) => s,
         Err(MicrosandboxError::SandboxStillRunning(_)) => {
-            if let Ok(h) = MsbSandbox::get(name).await
-                && let Ok(c) = h.connect().await
-            {
-                let _ = c.stop_and_wait().await;
+            if let Ok(h) = MsbSandbox::get(name).await {
+                let _ = h.stop().await;
             }
             MsbSandbox::start_detached(name)
                 .await
@@ -610,48 +599,13 @@ fn check_home_conflict(requested: &Path, current: Option<&std::ffi::OsStr>) -> a
     Ok(())
 }
 
-/// Validate that `name` won't produce a socket path that exceeds the OS limit.
-fn validate_sandbox_name(name: &str) -> anyhow::Result<()> {
-    #[cfg(target_os = "macos")]
-    const SUN_PATH_MAX: usize = 104;
-    #[cfg(not(target_os = "macos"))]
-    const SUN_PATH_MAX: usize = 108;
-
-    let home = microsandbox::config::config().home();
-    let home_str = home
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("home directory path is not valid UTF-8"))?;
-
-    const SANDBOXES_PREFIX: &str = "/sandboxes/";
-    const RUNTIME_SUFFIX: &str = "/runtime/agent.sock";
-
-    let socket_path_len =
-        home_str.len() + SANDBOXES_PREFIX.len() + name.len() + RUNTIME_SUFFIX.len() + 1; // null terminator
-
-    if socket_path_len > SUN_PATH_MAX {
-        let max_name = SUN_PATH_MAX
-            .saturating_sub(home_str.len() + SANDBOXES_PREFIX.len() + RUNTIME_SUFFIX.len() + 1);
-        anyhow::bail!(
-            "sandbox name '{}' is too long ({} chars); the resulting socket path \
-             would be {} bytes but the OS limit (SUN_PATH_MAX) is {}. \
-             With home directory '{}', the maximum sandbox name length is {} chars.",
-            name,
-            name.len(),
-            socket_path_len,
-            SUN_PATH_MAX,
-            home_str,
-            max_name,
-        );
-    }
-    Ok(())
-}
-
 async fn create_registered(name: &str, config: &SandboxConfig) -> anyhow::Result<MsbSandbox> {
     let mut builder = MsbSandbox::builder(name)
         .image(config.image.as_str())
         .cpus(config.cpus)
         .memory(config.memory_mib)
-        .pull_policy(PullPolicy::IfMissing);
+        .pull_policy(PullPolicy::IfMissing)
+        .detached(true);
 
     for (k, v) in &config.env {
         builder = builder.env(k.as_str(), v.as_str());
@@ -662,7 +616,7 @@ async fn create_registered(name: &str, config: &SandboxConfig) -> anyhow::Result
     for mount in &config.volumes {
         builder = apply_volume_mount(builder, mount);
     }
-    let sb = builder.create_detached().await?;
+    let sb = builder.create().await?;
     Ok(sb)
 }
 
@@ -674,7 +628,8 @@ async fn create_from_snapshot(
     let mut builder = MsbSandbox::builder(new_name)
         .from_snapshot(snap_name)
         .cpus(config.cpus)
-        .memory(config.memory_mib);
+        .memory(config.memory_mib)
+        .detached(true);
 
     for (k, v) in &config.env {
         builder = builder.env(k.as_str(), v.as_str());
@@ -687,7 +642,7 @@ async fn create_from_snapshot(
     }
 
     let sb = builder
-        .create_detached()
+        .create()
         .await
         .map_err(|e| anyhow::anyhow!("fork: create from snapshot: {e}"))?;
 
@@ -695,7 +650,7 @@ async fn create_from_snapshot(
     // required when forking a sandbox whose workdir wasn't in the source.
     let _ = sb.shell(&format!("mkdir -p {}", config.workdir)).await;
 
-    sb.stop_and_wait()
+    sb.stop()
         .await
         .map_err(|e| anyhow::anyhow!("fork: stop new sandbox: {e}"))?;
 
@@ -727,11 +682,25 @@ fn apply_volume_mount(builder: SandboxBuilder, mount: &VolumeMount) -> SandboxBu
             name,
             guest,
             readonly,
+            create_if_missing,
+            labels,
         } => {
             let name = name.clone();
             let ro = *readonly;
+            let ensure = *create_if_missing;
+            let labels = labels.clone();
             builder.volume(guest, move |m| {
-                let m = m.named(name);
+                let m = if ensure {
+                    m.named_with(name, move |mut n| {
+                        n = n.ensure_exists();
+                        for (k, v) in labels {
+                            n = n.label(k, v);
+                        }
+                        n
+                    })
+                } else {
+                    m.named(name)
+                };
                 if ro { m.readonly() } else { m }
             })
         }
@@ -855,17 +824,27 @@ mod tests {
         );
     }
 
-    /// Names that would exceed the socket path limit are rejected synchronously.
+    /// Names beyond the upstream 128 UTF-8 byte limit are rejected
+    /// synchronously by upstream `microsandbox::validate_sandbox_name`.
     #[test]
     fn test_name_too_long_is_rejected() {
-        let long_name = "a".repeat(100);
+        let long_name = "a".repeat(129);
         let result = validate_sandbox_name(&long_name);
-        assert!(result.is_err(), "expected Err for a 100-char name");
+        assert!(result.is_err(), "expected Err for a 129-byte name");
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("too long") && msg.contains("SUN_PATH_MAX"),
-            "error message should explain the limit, got: {msg}"
+            msg.contains("too long") || msg.contains("128"),
+            "error message should explain the byte limit, got: {msg}"
         );
+    }
+
+    /// Names up to 128 UTF-8 bytes pass syntactic validation; the runtime
+    /// may still reject longer-derived paths beyond that, but validation
+    /// itself accepts the boundary.
+    #[test]
+    fn test_name_at_128_bytes_passes_validation() {
+        let name = "a".repeat(128);
+        assert!(validate_sandbox_name(&name).is_ok());
     }
 
     // ── exec ─────────────────────────────────────────────────────────────────
@@ -1468,6 +1447,8 @@ mod tests {
                     name: vol_name.clone(),
                     guest: "/mnt/vol".to_string(),
                     readonly: false,
+                    create_if_missing: false,
+                    labels: Vec::new(),
                 }],
                 ..SandboxConfig::default()
             })
@@ -1486,12 +1467,16 @@ mod tests {
             write_result.stderr
         );
 
+        // Second mount opts into `create_if_missing` to also exercise the
+        // `ensure_exists` reuse path against the volume the first mount used.
         let read_result = async {
             let env = RunEnv::sandbox(SandboxConfig {
                 volumes: vec![VolumeMount::Named {
                     name: vol_name.clone(),
                     guest: "/mnt/vol".to_string(),
                     readonly: false,
+                    create_if_missing: true,
+                    labels: Vec::new(),
                 }],
                 ..SandboxConfig::default()
             })
