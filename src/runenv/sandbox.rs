@@ -389,6 +389,15 @@ impl Sandbox {
             }
         }
     }
+
+    /// Returns `true` if a persisted sandbox with the given name already exists,
+    /// without creating or starting it.
+    ///
+    /// This is a lightweight existence probe — it never modifies sandbox state.
+    /// Returns `false` on any error (e.g. microsandbox runtime not installed).
+    pub async fn exists(name: &str) -> bool {
+        MsbSandbox::get(name).await.is_ok()
+    }
 }
 
 impl std::fmt::Debug for Sandbox {
