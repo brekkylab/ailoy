@@ -4,8 +4,8 @@ use url::Url;
 use super::{LangModelAPISchema, LangModelProviderElem};
 use crate::{
     datatype::Value,
-    lang_model::{LangModelOptions, r#impl::api, r#impl::api::QuotaClassifier as _},
-    message::{Delta as _, Marshaled, Message, MessageOutput, Unmarshal as _},
+    lang_model::{LangModelOptions, r#impl::api},
+    message::{Delta as _, Marshaled, Message, MessageOutput},
     tool::ToolDesc,
 };
 
@@ -157,6 +157,7 @@ impl LangModel {
                 let body: serde_json::Value = body.clone().into();
 
                 // Send request with retry on 429 (rate limit)
+                let provider = api::provider_api(schema);
                 let client = reqwest::Client::new();
                 const MAX_RETRIES: u32 = 3;
                 let (status, response_text) = {
@@ -181,21 +182,7 @@ impl LangModel {
                                 .min(MAX_WAIT_SECS);
                             let text = response.text().await?;
                             // Permanent quota/credit exhaustion never recovers; don't retry.
-                            let permanent = match schema {
-                                LangModelAPISchema::Anthropic => {
-                                    api::AnthropicUnmarshal.is_permanent_quota_error(&text)
-                                }
-                                LangModelAPISchema::ChatCompletion => {
-                                    api::ChatCompletionUnmarshal.is_permanent_quota_error(&text)
-                                }
-                                LangModelAPISchema::Gemini => {
-                                    api::GeminiUnmarshal.is_permanent_quota_error(&text)
-                                }
-                                LangModelAPISchema::OpenAI => {
-                                    api::OpenAIUnmarshal.is_permanent_quota_error(&text)
-                                }
-                            };
-                            if permanent {
+                            if provider.is_permanent_quota_error(&text) {
                                 log::warn!("Quota exhausted (429), not retrying: {text}");
                                 last_status = Some(s);
                                 last_text = Some(text);
@@ -230,16 +217,7 @@ impl LangModel {
                     serde_json::from_str::<serde_json::Value>(&response_text)?.into();
 
                 // Unmarshal
-                let delta_output = match schema {
-                    LangModelAPISchema::Anthropic => {
-                        api::AnthropicUnmarshal.unmarshal(response_value)?
-                    }
-                    LangModelAPISchema::ChatCompletion => {
-                        api::ChatCompletionUnmarshal.unmarshal(response_value)?
-                    }
-                    LangModelAPISchema::Gemini => api::GeminiUnmarshal.unmarshal(response_value)?,
-                    LangModelAPISchema::OpenAI => api::OpenAIUnmarshal.unmarshal(response_value)?,
-                };
+                let delta_output = provider.unmarshal_response(response_value)?;
 
                 delta_output.finish()
             }
