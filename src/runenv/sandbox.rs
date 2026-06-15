@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use microsandbox::{
     ExecOutput, MicrosandboxError, NetworkPolicy, Sandbox as MsbSandbox, SandboxConfig, Snapshot,
     sandbox::{ExecOptionsBuilder, IntoImage, MountBuilder, PullPolicy},
+    snapshot::ExportOpts,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -284,6 +285,35 @@ impl SandboxSnapshot {
         Ok(Self { inner: snap })
     }
 
+    /// Import a snapshot archive (`.tar.zst` or `.tar`) into the
+    /// microsandbox snapshots directory and wrap it as a `SandboxSnapshot`.
+    /// The returned snapshot's `Drop` will remove the unpacked directory.
+    pub async fn try_from_archive(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        ensure_msb().await?;
+        let handle = Snapshot::import(path.as_ref(), None)
+            .await
+            .context("import snapshot archive")?;
+        let inner = handle.open().await.context("open imported snapshot")?;
+        Ok(Self { inner })
+    }
+
+    /// Bundle this snapshot into a `.tar.zst` archive at `dir/filename` and return the resulting path.
+    pub async fn archive(
+        &self,
+        dir: impl AsRef<Path>,
+        filename: impl AsRef<str>,
+    ) -> anyhow::Result<PathBuf> {
+        let out = dir.as_ref().join(filename.as_ref());
+        Snapshot::export(
+            self.inner.path().to_string_lossy().as_ref(),
+            &out,
+            ExportOpts::default(),
+        )
+        .await
+        .context("export snapshot archive")?;
+        Ok(out)
+    }
+
     pub fn path(&self) -> &Path {
         &self.inner.path()
     }
@@ -337,10 +367,10 @@ impl Sandbox {
     /// directory's basename as its name and is created in the stopped state.
     /// `archive` is consumed; its `Drop` removes the snapshot directory after
     /// this function returns (success or failure).
-    pub async fn try_from_archive(archive: SandboxSnapshot) -> anyhow::Result<Self> {
+    pub async fn try_from_snapshot(snapshot: SandboxSnapshot) -> anyhow::Result<Self> {
         ensure_msb().await?;
 
-        let path = archive.path();
+        let path = snapshot.path();
         let name = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -372,7 +402,7 @@ impl Sandbox {
     /// Snapshot this sandbox into a microsandbox-managed artifact directory
     /// and return its path. The sandbox must be stopped (which is the state
     /// `SandboxBuilder::build` leaves it in).
-    pub async fn archive(self) -> anyhow::Result<SandboxSnapshot> {
+    pub async fn snapshot(self) -> anyhow::Result<SandboxSnapshot> {
         SandboxSnapshot::new(self.get_name()).await
     }
 
@@ -678,37 +708,37 @@ mod tests {
         // Snapshot needs a quiesced VM.
         sandbox.stop().await.expect("stop before archive");
 
-        let archive = sandbox.archive().await.expect("archive sandbox");
-        let archive_path = archive.path().to_path_buf();
+        let snapshot = sandbox.snapshot().await.expect("snapshot sandbox");
+        let snapshot_path = snapshot.path().to_path_buf();
         assert!(
-            archive_path.is_dir(),
-            "archive path is not a directory: {}",
-            archive_path.display()
+            snapshot_path.is_dir(),
+            "snapshot path is not a directory: {}",
+            snapshot_path.display()
         );
         assert!(
-            archive_path.join("manifest.json").exists(),
+            snapshot_path.join("manifest.json").exists(),
             "expected manifest.json under {}",
-            archive_path.display()
+            snapshot_path.display()
         );
         assert_eq!(
-            archive_path.file_name().and_then(|s| s.to_str()),
+            snapshot_path.file_name().and_then(|s| s.to_str()),
             Some(original_name.as_str()),
             "snapshot directory basename should match the sandbox name"
         );
 
-        let mut restored = Sandbox::try_from_archive(archive)
+        let mut restored = Sandbox::try_from_snapshot(snapshot)
             .await
-            .expect("restore from archive");
+            .expect("restore from snapshot");
         assert_eq!(
             restored.get_name(),
             original_name,
             "restored sandbox should reuse the snapshot's name"
         );
-        // `archive` is consumed above; its Drop must have removed the dir.
+        // `snapshot` is consumed above; its Drop must have removed the dir.
         assert!(
-            !archive_path.exists(),
-            "archive Drop should have removed the snapshot directory: {}",
-            archive_path.display()
+            !snapshot_path.exists(),
+            "snapshot Drop should have removed the snapshot directory: {}",
+            snapshot_path.display()
         );
 
         // Files written before archiving should still be present.
