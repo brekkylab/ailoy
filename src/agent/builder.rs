@@ -1,9 +1,11 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
+
+use tokio::sync::Mutex;
 
 use crate::{
     agent::{Agent, AgentSpec, AgentState, ContextManager},
     message::Message,
-    runenv::{FileEntry, Machine, SharedMachine},
+    runenv::{FileEntry, Machine, MachineDyn},
     tool::{ToolDesc, WebSearchEngineKind},
 };
 
@@ -51,7 +53,7 @@ pub struct AgentBuilder {
 
     history: Vec<Message>,
 
-    machine: Option<SharedMachine>,
+    machine: Option<Arc<Mutex<dyn MachineDyn>>>,
 
     context_manager: Option<ContextManager>,
 }
@@ -139,13 +141,15 @@ impl AgentBuilder {
     /// Use this [`Machine`] for tool execution instead of a default [`Local`].
     /// Wraps the machine in `Arc<Mutex<>>` so sub-agents inherit the same VM.
     pub fn machine<M: Machine>(mut self, m: M) -> Self {
-        self.machine = Some(SharedMachine::new(m));
+        let m: Arc<Mutex<dyn MachineDyn>> = Arc::new(Mutex::new(m));
+        self.machine = Some(m);
         self
     }
 
     /// Use this pre-shared machine handle. Useful when the same VM should be
     /// shared with another `Agent` built elsewhere.
-    pub fn shared_machine(mut self, m: SharedMachine) -> Self {
+    pub fn shared_machine<M: Machine>(mut self, m: Arc<Mutex<M>>) -> Self {
+        let m: Arc<Mutex<dyn MachineDyn>> = m;
         self.machine = Some(m);
         self
     }
@@ -212,7 +216,7 @@ impl AgentBuilder {
 
         let mut state = AgentState::new();
         if let Some(m) = machine {
-            state = state.with_runenv(m);
+            state.machine = m;
         }
         if !history.is_empty() {
             state = state.with_history(history);
@@ -300,7 +304,7 @@ mod tests {
             .build()
             .unwrap();
         // Smoke check: machine is plugged in and usable.
-        let mut guard = agent.state.machine.get().await;
+        let mut guard = agent.state.machine.lock().await;
         let console = guard.start().await.expect("machine start failed");
         let result = console
             .exec("sh".into(), vec!["-c".into(), "echo ok".into()], None)

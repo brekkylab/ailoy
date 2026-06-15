@@ -109,14 +109,10 @@
 //! # Ok(()) }
 //! ```
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use tokio::sync::{Mutex, MutexGuard};
 
 mod file_entry;
 mod local;
@@ -183,34 +179,6 @@ impl<B: Machine> MachineDyn for B {
 
     async fn stop(&mut self) -> anyhow::Result<()> {
         Machine::stop(self).await
-    }
-}
-
-/// Shared, lockable machine handle. `Arc` lets sub-agents inherit the parent
-/// machine; `Mutex` serialises `start()`/operations across concurrent tool calls
-/// and re-entrant sub-agent runs.
-#[derive(Clone)]
-pub struct SharedMachine {
-    inner: Arc<Mutex<dyn MachineDyn>>,
-}
-
-impl SharedMachine {
-    /// Wrap a concrete [`Machine`] so it can be shared between agents.
-    pub fn new<M: Machine>(machine: M) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(machine)),
-        }
-    }
-
-    /// Acquire the lock and return a guard exposing the erased [`MachineDyn`] view.
-    pub async fn get(&self) -> MutexGuard<'_, dyn MachineDyn> {
-        self.inner.lock().await
-    }
-}
-
-impl<M: Machine> From<M> for SharedMachine {
-    fn from(machine: M) -> Self {
-        Self::new(machine)
     }
 }
 
