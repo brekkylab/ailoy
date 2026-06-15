@@ -4,7 +4,7 @@ use url::Url;
 use super::{LangModelAPISchema, LangModelProviderElem};
 use crate::{
     datatype::Value,
-    lang_model::{LangModelOptions, r#impl::api},
+    lang_model::{LangModelOptions, r#impl::api, r#impl::api::QuotaClassifier as _},
     message::{Delta as _, Marshaled, Message, MessageOutput, Unmarshal as _},
     tool::ToolDesc,
 };
@@ -181,7 +181,21 @@ impl LangModel {
                                 .min(MAX_WAIT_SECS);
                             let text = response.text().await?;
                             // Permanent quota/credit exhaustion never recovers; don't retry.
-                            if is_permanent_quota_error(schema, &text) {
+                            let permanent = match schema {
+                                LangModelAPISchema::Anthropic => {
+                                    api::AnthropicUnmarshal.is_permanent_quota_error(&text)
+                                }
+                                LangModelAPISchema::ChatCompletion => {
+                                    api::ChatCompletionUnmarshal.is_permanent_quota_error(&text)
+                                }
+                                LangModelAPISchema::Gemini => {
+                                    api::GeminiUnmarshal.is_permanent_quota_error(&text)
+                                }
+                                LangModelAPISchema::OpenAI => {
+                                    api::OpenAIUnmarshal.is_permanent_quota_error(&text)
+                                }
+                            };
+                            if permanent {
                                 log::warn!("Quota exhausted (429), not retrying: {text}");
                                 last_status = Some(s);
                                 last_text = Some(text);
@@ -230,34 +244,6 @@ impl LangModel {
                 delta_output.finish()
             }
         }
-    }
-}
-
-/// Whether a 429 body is permanent quota exhaustion (don't retry) vs a transient rate limit.
-fn is_permanent_quota_error(schema: &LangModelAPISchema, body: &str) -> bool {
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(body) else {
-        return false;
-    };
-    let error = &json["error"];
-    match schema {
-        LangModelAPISchema::OpenAI | LangModelAPISchema::ChatCompletion => {
-            error["type"] == "insufficient_quota" || error["code"] == "insufficient_quota"
-        }
-        // RESOURCE_EXHAUSTED covers both; a RetryInfo in `details` marks the transient case.
-        LangModelAPISchema::Gemini => {
-            error["status"] == "RESOURCE_EXHAUSTED"
-                && !error["details"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .any(|d| {
-                        d["@type"]
-                            .as_str()
-                            .is_some_and(|t| t.ends_with("google.rpc.RetryInfo"))
-                    })
-        }
-        // 429 is always transient; credit exhaustion is a 402, outside this path.
-        LangModelAPISchema::Anthropic => false,
     }
 }
 
@@ -515,7 +501,11 @@ mod tests {
 
         let model = LangModel::new(
             "test-model".to_string(),
-            LangModelProvider::chat_completion(&format!("http://{}/", addr), None).unwrap(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::OpenAI,
+                url: format!("http://{}/", addr).parse().unwrap(),
+                api_key: None,
+            },
         );
         let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
 
@@ -529,27 +519,5 @@ mod tests {
             1,
             "permanent quota 429 must not be retried (1 attempt only)"
         );
-    }
-
-    #[test]
-    fn test_is_permanent_quota_error() {
-        use LangModelAPISchema::*;
-
-        let openai_quota = r#"{"error":{"type":"insufficient_quota","code":"insufficient_quota"}}"#;
-        let openai_rate = r#"{"error":{"type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}"#;
-        assert!(is_permanent_quota_error(&ChatCompletion, openai_quota));
-        assert!(is_permanent_quota_error(&OpenAI, openai_quota));
-        assert!(!is_permanent_quota_error(&ChatCompletion, openai_rate));
-
-        let gemini_quota = r#"{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure"}]}}"#;
-        let gemini_rate = r#"{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"34s"}]}}"#;
-        assert!(is_permanent_quota_error(&Gemini, gemini_quota));
-        assert!(!is_permanent_quota_error(&Gemini, gemini_rate));
-
-        // Anthropic 429 is always transient; billing exhaustion is a 402.
-        assert!(!is_permanent_quota_error(&Anthropic, r#"{"type":"error","error":{"type":"rate_limit_error"}}"#));
-
-        // Unparseable body is treated as transient (don't suppress retries).
-        assert!(!is_permanent_quota_error(&OpenAI, "not json"));
     }
 }

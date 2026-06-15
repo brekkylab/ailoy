@@ -262,6 +262,10 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
 #[derive(Clone, Debug, Default)]
 pub struct ChatCompletionUnmarshal;
 
+// Shared by arbitrary OpenAI-compatible providers, so no provider-specific
+// quota signal can be assumed; treat 429 as transient and retry.
+impl super::QuotaClassifier for ChatCompletionUnmarshal {}
+
 impl ChatCompletionUnmarshal {
     fn parse_finish_reason(val: &Value) -> FinishReason {
         match val.as_str() {

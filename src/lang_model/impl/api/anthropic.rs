@@ -263,6 +263,9 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
 #[derive(Clone, Debug, Default)]
 pub struct AnthropicUnmarshal;
 
+// 429 is always transient; billing exhaustion is reported as 402, outside this path.
+impl super::QuotaClassifier for AnthropicUnmarshal {}
+
 impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
     fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let root = val
