@@ -332,6 +332,26 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
 #[derive(Clone, Debug, Default)]
 pub struct GeminiUnmarshal;
 
+impl super::QuotaClassifier for GeminiUnmarshal {
+    fn is_permanent_quota_error(&self, body: &str) -> bool {
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(body) else {
+            return false;
+        };
+        let error = &json["error"];
+        // RESOURCE_EXHAUSTED covers both; a RetryInfo detail marks the transient case.
+        error["status"] == "RESOURCE_EXHAUSTED"
+            && !error["details"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|d| {
+                    d["@type"]
+                        .as_str()
+                        .is_some_and(|t| t.ends_with("google.rpc.RetryInfo"))
+                })
+    }
+}
+
 impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
     fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let candidate = val
@@ -484,6 +504,7 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
 mod tests {
     use url::Url;
 
+    use super::super::QuotaClassifier;
     use super::*;
     use crate::{
         datatype::{Bytes, Value},
@@ -940,6 +961,16 @@ mod tests {
             step2.message.contents.iter().any(|p| p.as_text().is_some()),
             "Expected text response after image tool result"
         );
+    }
+
+    #[test]
+    fn test_is_permanent_quota_error() {
+        let u = GeminiUnmarshal;
+        let quota = r#"{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure"}]}}"#;
+        let rate = r#"{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"34s"}]}}"#;
+        assert!(u.is_permanent_quota_error(quota));
+        assert!(!u.is_permanent_quota_error(rate));
+        assert!(!u.is_permanent_quota_error("not json"));
     }
 }
 

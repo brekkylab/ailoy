@@ -259,6 +259,16 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
 #[derive(Clone, Debug, Default)]
 pub struct OpenAIUnmarshal;
 
+impl super::QuotaClassifier for OpenAIUnmarshal {
+    fn is_permanent_quota_error(&self, body: &str) -> bool {
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(body) else {
+            return false;
+        };
+        let error = &json["error"];
+        error["type"] == "insufficient_quota" || error["code"] == "insufficient_quota"
+    }
+}
+
 impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
     fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let root = val
@@ -416,6 +426,7 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
 mod tests {
     use url::Url;
 
+    use super::super::QuotaClassifier;
     use super::*;
     use crate::{
         datatype::Bytes,
@@ -808,6 +819,17 @@ mod tests {
             resp.message.contents.iter().any(|p| p.as_text().is_some()),
             "Expected text response after image tool result"
         );
+    }
+
+    #[test]
+    fn test_is_permanent_quota_error() {
+        let u = OpenAIUnmarshal;
+        let quota = r#"{"error":{"type":"insufficient_quota","code":"insufficient_quota"}}"#;
+        let rate = r#"{"error":{"type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}"#;
+        assert!(u.is_permanent_quota_error(quota));
+        assert!(!u.is_permanent_quota_error(rate));
+        // Unparseable body is treated as transient (don't suppress retries).
+        assert!(!u.is_permanent_quota_error("not json"));
     }
 }
 

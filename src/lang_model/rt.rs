@@ -5,7 +5,7 @@ use super::{LangModelAPISchema, LangModelProviderElem};
 use crate::{
     datatype::Value,
     lang_model::{LangModelOptions, r#impl::api},
-    message::{Delta as _, Marshaled, Message, MessageOutput, Unmarshal as _},
+    message::{Delta as _, Marshaled, Message, MessageOutput},
     tool::ToolDesc,
 };
 
@@ -157,6 +157,7 @@ impl LangModel {
                 let body: serde_json::Value = body.clone().into();
 
                 // Send request with retry on 429 (rate limit)
+                let provider = api::provider_api(schema);
                 let client = reqwest::Client::new();
                 const MAX_RETRIES: u32 = 3;
                 let (status, response_text) = {
@@ -180,6 +181,13 @@ impl LangModel {
                                 .unwrap_or(1u64 << attempt)
                                 .min(MAX_WAIT_SECS);
                             let text = response.text().await?;
+                            // Permanent quota/credit exhaustion never recovers; don't retry.
+                            if provider.is_permanent_quota_error(&text) {
+                                log::warn!("Quota exhausted (429), not retrying: {text}");
+                                last_status = Some(s);
+                                last_text = Some(text);
+                                break;
+                            }
                             log::warn!(
                                 "Rate limited (429). Retrying after {}s (attempt {}/{}): {}",
                                 wait_secs,
@@ -209,16 +217,7 @@ impl LangModel {
                     serde_json::from_str::<serde_json::Value>(&response_text)?.into();
 
                 // Unmarshal
-                let delta_output = match schema {
-                    LangModelAPISchema::Anthropic => {
-                        api::AnthropicUnmarshal.unmarshal(response_value)?
-                    }
-                    LangModelAPISchema::ChatCompletion => {
-                        api::ChatCompletionUnmarshal.unmarshal(response_value)?
-                    }
-                    LangModelAPISchema::Gemini => api::GeminiUnmarshal.unmarshal(response_value)?,
-                    LangModelAPISchema::OpenAI => api::OpenAIUnmarshal.unmarshal(response_value)?,
-                };
+                let delta_output = provider.unmarshal_response(response_value)?;
 
                 delta_output.finish()
             }
@@ -445,5 +444,58 @@ mod tests {
             "should have made 3 total attempts (2x 429 retried + 1 success)"
         );
         assert!(!resp.message.contents.is_empty());
+    }
+
+    /// Verifies a permanent quota 429 (`insufficient_quota`) is not retried.
+    #[tokio::test]
+    async fn test_run_does_not_retry_on_permanent_429() {
+        use std::sync::{Arc, Mutex};
+
+        use axum::{Router, body::Body, response::Response, routing::post};
+
+        let call_count = Arc::new(Mutex::new(0u32));
+        let count = call_count.clone();
+        let app = Router::new().route(
+            "/",
+            post(move || {
+                let count = count.clone();
+                async move {
+                    *count.lock().unwrap() += 1;
+                    Response::builder()
+                        .status(429)
+                        .body(Body::from(
+                            r#"{"error":{"type":"insufficient_quota","code":"insufficient_quota","message":"You exceeded your current quota"}}"#,
+                        ))
+                        .unwrap()
+                }
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let model = LangModel::new(
+            "test-model".to_string(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::OpenAI,
+                url: format!("http://{}/", addr).parse().unwrap(),
+                api_key: None,
+            },
+        );
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+
+        let result = model
+            .run(&messages, &[], &LangModelOptions::default())
+            .await;
+
+        assert!(result.is_err(), "permanent quota 429 must fail");
+        assert_eq!(
+            *call_count.lock().unwrap(),
+            1,
+            "permanent quota 429 must not be retried (1 attempt only)"
+        );
     }
 }
