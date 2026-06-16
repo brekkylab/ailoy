@@ -216,7 +216,7 @@ impl AgentBuilder {
 
         let mut state = AgentState::new();
         if let Some(m) = machine {
-            state.machine = m;
+            state.runenv = m;
         }
         if !history.is_empty() {
             state = state.with_history(history);
@@ -304,7 +304,7 @@ mod tests {
             .build()
             .unwrap();
         // Smoke check: machine is plugged in and usable.
-        let mut guard = agent.state.machine.lock().await;
+        let mut guard = agent.state.runenv.lock().await;
         let console = guard.start().await.expect("machine start failed");
         let result = console
             .exec("sh".into(), vec!["-c".into(), "echo ok".into()], None)

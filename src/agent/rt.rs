@@ -160,7 +160,7 @@ impl Agent {
             let func = get_subagent_tool_func(
                 sub_spec.clone(),
                 provider_name.to_string(),
-                state.machine.clone(),
+                state.runenv.clone(),
             );
             tool_descs.push(desc);
             tools.insert(tool_name, func);
@@ -253,7 +253,7 @@ impl Agent {
         if self.files_materialised {
             return Ok(());
         }
-        let mut guard = self.state.machine.lock().await;
+        let mut guard = self.state.runenv.lock().await;
         let console = guard.start().await?;
         for f in &self.files {
             // Write-once: skip if the file already exists.
@@ -316,7 +316,7 @@ impl Agent {
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("No tool found for '{}'", tool_name))?;
 
-            let machine = self.state.machine.clone();
+            let runenv = self.state.runenv.clone();
             let tx = tx.clone();
 
             futs.push(Box::pin(async move {
@@ -329,7 +329,7 @@ impl Agent {
                         if tool.needs_console() {
                             // Lock the machine for the duration of the tool's stream:
                             // the returned BoxStream borrows the started console.
-                            let mut guard = machine.lock().await;
+                            let mut guard = runenv.lock().await;
                             let console = guard.start().await?;
                             let mut stream = tool.call(call_args, call_id_for_call, console);
                             let mut last: Option<MessageOutput> = None;

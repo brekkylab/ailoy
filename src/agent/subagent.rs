@@ -104,7 +104,7 @@ pub fn get_subagent_tool_func(
             // Build a fresh Agent for this invocation; the parent's machine is
             // shared so filesystem state stays consistent across the call.
             let mut state = AgentState::new();
-            state.machine = machine;
+            state.runenv = machine;
             let mut agent = match Agent::try_with_provider_and_state(spec, &provider, state) {
                 Ok(a) => a,
                 Err(e) => {
