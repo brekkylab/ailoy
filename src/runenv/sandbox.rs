@@ -271,65 +271,16 @@ impl SandboxBuilder {
     }
 }
 
-pub struct SandboxSnapshot {
-    inner: Snapshot,
-}
-
-impl SandboxSnapshot {
-    async fn new(name: impl AsRef<str>) -> anyhow::Result<Self> {
-        let snap = Snapshot::builder(name.as_ref())
-            .name(name.as_ref())
-            .create()
-            .await
-            .context("create snapshot")?;
-        Ok(Self { inner: snap })
-    }
-
-    /// Import a snapshot archive (`.tar.zst` or `.tar`) into the
-    /// microsandbox snapshots directory and wrap it as a `SandboxSnapshot`.
-    /// The returned snapshot's `Drop` will remove the unpacked directory.
-    pub async fn try_from_archive(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        ensure_msb().await?;
-        let handle = Snapshot::import(path.as_ref(), None)
-            .await
-            .context("import snapshot archive")?;
-        let inner = handle.open().await.context("open imported snapshot")?;
-        Ok(Self { inner })
-    }
-
-    /// Bundle this snapshot into a `.tar.zst` archive at `dir/filename` and return the resulting path.
-    pub async fn archive(
-        &self,
-        dir: impl AsRef<Path>,
-        filename: impl AsRef<str>,
-    ) -> anyhow::Result<PathBuf> {
-        let out = dir.as_ref().join(filename.as_ref());
-        Snapshot::export(
-            self.inner.path().to_string_lossy().as_ref(),
-            &out,
-            ExportOpts::default(),
-        )
-        .await
-        .context("export snapshot archive")?;
-        Ok(out)
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.inner.path()
-    }
-}
-
-impl Drop for SandboxSnapshot {
-    fn drop(&mut self) {
-        let path = self.inner.path();
-        if let Err(e) = run_msb_cli([
-            std::ffi::OsStr::new("snapshot"),
-            std::ffi::OsStr::new("remove"),
-            std::ffi::OsStr::new("-f"),
-            path.as_os_str(),
-        ]) {
-            log::warn!("cleanup snapshot {}: {e}", path.display());
-        }
+/// Remove a microsandbox snapshot directory by path. Best-effort: any
+/// failure is logged at `warn!` and swallowed so callers can continue.
+fn cleanup_snapshot_dir(path: &Path) {
+    if let Err(e) = run_msb_cli([
+        std::ffi::OsStr::new("snapshot"),
+        std::ffi::OsStr::new("remove"),
+        std::ffi::OsStr::new("-f"),
+        path.as_os_str(),
+    ]) {
+        log::warn!("cleanup snapshot {}: {e}", path.display());
     }
 }
 
@@ -362,27 +313,38 @@ impl Sandbox {
         })
     }
 
-    /// Create a sandbox from an archive previously produced by
-    /// [`archive`](Self::archive). The new sandbox reuses the snapshot
-    /// directory's basename as its name and is created in the stopped state.
-    /// `archive` is consumed; its `Drop` removes the snapshot directory after
-    /// this function returns (success or failure).
-    pub async fn try_from_snapshot(snapshot: SandboxSnapshot) -> anyhow::Result<Self> {
+    /// Restore a sandbox from a `.tar.zst` (or `.tar`) archive previously
+    /// produced by [`archive`](Self::archive). The restored sandbox is
+    /// created in the stopped state, reusing the embedded snapshot name.
+    /// The intermediate microsandbox snapshot directory unpacked by this
+    /// call is cleaned up before returning (success or failure).
+    pub async fn try_from_archive(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         ensure_msb().await?;
 
-        let path = snapshot.path();
-        let name = path
+        let handle = Snapshot::import(path.as_ref(), None)
+            .await
+            .context("import snapshot archive")?;
+        let snap = handle.open().await.context("open imported snapshot")?;
+        let snap_path = snap.path().to_path_buf();
+
+        let name = snap_path
             .file_name()
             .and_then(|s| s.to_str())
-            .ok_or_else(|| anyhow::anyhow!("snapshot path has no file name: {}", path.display()))?
+            .ok_or_else(|| {
+                anyhow::anyhow!("snapshot path has no file name: {}", snap_path.display())
+            })?
             .to_string();
-        let inner = microsandbox::Sandbox::builder(&name)
-            .from_snapshot(path.to_string_lossy().into_owned())
+
+        let result = microsandbox::Sandbox::builder(&name)
+            .from_snapshot(snap_path.to_string_lossy().into_owned())
             .pull_policy(PullPolicy::IfMissing)
             .create()
             .await
-            .context("create sandbox from snapshot")?;
+            .context("create sandbox from snapshot");
 
+        cleanup_snapshot_dir(&snap_path);
+
+        let inner = result?;
         Ok(Self {
             name,
             default_timeout_secs: 60,
@@ -399,11 +361,31 @@ impl Sandbox {
         &self.name
     }
 
-    /// Snapshot this sandbox into a microsandbox-managed artifact directory
-    /// and return its path. The sandbox must be stopped (which is the state
-    /// `SandboxBuilder::build` leaves it in).
-    pub async fn snapshot(self) -> anyhow::Result<SandboxSnapshot> {
-        SandboxSnapshot::new(self.get_name()).await
+    /// Snapshot this sandbox and bundle the result into a `.tar.zst` archive
+    /// at `path`. The sandbox must be stopped — call [`Machine::stop`] first,
+    /// or rely on the stopped state that [`SandboxBuilder::build`] leaves it
+    /// in. The intermediate microsandbox snapshot directory created by this
+    /// call is cleaned up before returning (success or failure).
+    pub async fn archive(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+        let snap = Snapshot::builder(&self.name)
+            .name(&self.name)
+            .create()
+            .await
+            .context("create snapshot")?;
+        let snap_path = snap.path().to_path_buf();
+
+        let result = Snapshot::export(
+            snap_path.to_string_lossy().as_ref(),
+            path.as_ref(),
+            ExportOpts::default(),
+        )
+        .await
+        .context("export snapshot archive");
+
+        cleanup_snapshot_dir(&snap_path);
+
+        result?;
+        Ok(())
     }
 
     /// Fork this sandbox into a new one initialized from a filesystem
@@ -708,37 +690,25 @@ mod tests {
         // Snapshot needs a quiesced VM.
         sandbox.stop().await.expect("stop before archive");
 
-        let snapshot = sandbox.snapshot().await.expect("snapshot sandbox");
-        let snapshot_path = snapshot.path().to_path_buf();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let archive_path = tmp.path().join("sandbox.tar.zst");
+        sandbox
+            .archive(&archive_path)
+            .await
+            .expect("archive sandbox");
         assert!(
-            snapshot_path.is_dir(),
-            "snapshot path is not a directory: {}",
-            snapshot_path.display()
-        );
-        assert!(
-            snapshot_path.join("manifest.json").exists(),
-            "expected manifest.json under {}",
-            snapshot_path.display()
-        );
-        assert_eq!(
-            snapshot_path.file_name().and_then(|s| s.to_str()),
-            Some(original_name.as_str()),
-            "snapshot directory basename should match the sandbox name"
+            archive_path.is_file(),
+            "archive file is missing: {}",
+            archive_path.display()
         );
 
-        let mut restored = Sandbox::try_from_snapshot(snapshot)
+        let mut restored = Sandbox::try_from_archive(&archive_path)
             .await
-            .expect("restore from snapshot");
+            .expect("restore from archive");
         assert_eq!(
             restored.get_name(),
             original_name,
-            "restored sandbox should reuse the snapshot's name"
-        );
-        // `snapshot` is consumed above; its Drop must have removed the dir.
-        assert!(
-            !snapshot_path.exists(),
-            "snapshot Drop should have removed the snapshot directory: {}",
-            snapshot_path.display()
+            "restored sandbox should reuse the archive's embedded name"
         );
 
         // Files written before archiving should still be present.
