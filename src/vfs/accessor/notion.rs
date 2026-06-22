@@ -20,10 +20,11 @@ impl NotionAccessor {
     }
 
     async fn send(&self, req: reqwest::RequestBuilder) -> anyhow::Result<Value> {
+        // Content-Type is set by `.json(...)` on the builder; do not add a
+        // second one here (duplicate Content-Type makes Notion ignore the body).
         let resp = req
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Notion-Version", NOTION_VERSION)
-            .header("Content-Type", "application/json")
             .send()
             .await?;
         let status = resp.status();

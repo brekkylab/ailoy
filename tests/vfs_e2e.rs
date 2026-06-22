@@ -253,8 +253,13 @@ async fn gdrive_read_and_command_smoke() {
     let doc_id = doc.get("documentId").and_then(|v| v.as_str()).expect("documentId").to_string();
     println!("read {} -> documentId={doc_id}", gdoc.name);
 
+    // Append to a user-owned doc (the read doc above may be read-only-shared).
+    // Override via AILOY_GDOC_ID; defaults to a known-writable doc.
+    let write_doc = std::env::var("AILOY_GDOC_ID")
+        .unwrap_or_else(|_| "10NTjr9rPPqZKzoW_YpP9z-8WfSMuN0z1-mDq012KWuI".into());
+    let _ = doc_id;
     let (res, _) = vfs.route("/gdrive/.cmd/docs-append").unwrap();
-    let body = serde_json::json!({"document_id": doc_id, "text": "\nappended by ailoy vfs phase 2\n"});
+    let body = serde_json::json!({"document_id": write_doc, "text": "\nappended by ailoy vfs phase 2\n"});
     match res.command("docs-append", body.to_string().as_bytes()).await {
         Ok(result) => {
             assert!(!result.is_empty(), "docs-append returned empty");
