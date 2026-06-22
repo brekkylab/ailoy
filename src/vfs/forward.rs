@@ -1,14 +1,13 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tokio::runtime::Handle;
-use tokio::task::JoinHandle;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+    runtime::Handle,
+    task::JoinHandle,
+};
 
-use crate::vfs::path::VPath;
-use crate::vfs::resource::FileKind;
-use crate::vfs::Vfs;
+use crate::vfs::{Vfs, path::VPath, resource::FileKind};
 
 /// Host-side forward server exposing a [`Vfs`] over a tiny HTTP/1.1 API for the
 /// in-guest FUSE forwarder. Bound to an OS-assigned ephemeral port; requests
@@ -146,7 +145,10 @@ async fn handle_conn(mut stream: TcpStream, vfs: Arc<Vfs>, token: String) -> any
     }
 
     let params = parse_query(&req.query);
-    let path = params.get("path").cloned().unwrap_or_else(|| "/".to_string());
+    let path = params
+        .get("path")
+        .cloned()
+        .unwrap_or_else(|| "/".to_string());
 
     let result = match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/readdir") => readdir_json(&vfs, &path).await,
@@ -161,7 +163,9 @@ async fn handle_conn(mut stream: TcpStream, vfs: Arc<Vfs>, token: String) -> any
         }
         ("PUT", "/write") => {
             let body = read_body(&mut stream, &req).await?;
-            write_bytes(&vfs, &path, body).await.map(|_| b"{\"ok\":true}".to_vec())
+            write_bytes(&vfs, &path, body)
+                .await
+                .map(|_| b"{\"ok\":true}".to_vec())
         }
         _ => return respond(&mut stream, 404, "text/plain", b"not found".to_vec()).await,
     };
@@ -208,7 +212,9 @@ async fn readdir_json(vfs: &Vfs, path: &str) -> anyhow::Result<Vec<u8>> {
             serde_json::json!({"name": name, "is_dir": matches!(kind, FileKind::Dir), "size": size})
         })
         .collect();
-    Ok(serde_json::to_vec(&serde_json::json!({ "entries": items }))?)
+    Ok(serde_json::to_vec(
+        &serde_json::json!({ "entries": items }),
+    )?)
 }
 
 async fn stat_json(vfs: &Vfs, path: &str) -> anyhow::Result<Vec<u8>> {

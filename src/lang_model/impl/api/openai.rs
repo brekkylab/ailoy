@@ -426,8 +426,7 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
 mod tests {
     use url::Url;
 
-    use super::super::QuotaClassifier;
-    use super::*;
+    use super::{super::QuotaClassifier, *};
     use crate::{
         datatype::Bytes,
         lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},

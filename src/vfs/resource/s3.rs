@@ -1,12 +1,15 @@
 use std::ops::Range;
 
 use async_trait::async_trait;
-use object_store::path::Path as OsPath;
-use object_store::{Error as OsError, GetOptions, GetRange, ObjectStore, PutPayload};
+use object_store::{
+    Error as OsError, GetOptions, GetRange, ObjectStore, PutPayload, path::Path as OsPath,
+};
 
-use crate::vfs::accessor::{S3Accessor, S3Config};
-use crate::vfs::path::VPath;
-use crate::vfs::resource::{DirEntry, FileKind, FileStat, Resource};
+use crate::vfs::{
+    accessor::{S3Accessor, S3Config},
+    path::VPath,
+    resource::{DirEntry, FileKind, FileStat, Resource},
+};
 
 const S3_PROMPT: &str = "\
 Amazon S3 (read/write). Object keys map to paths; directories are key prefixes.
@@ -45,7 +48,11 @@ impl Resource for S3Resource {
             range: range.map(GetRange::Bounded),
             ..Default::default()
         };
-        let res = self.accessor.store.get_opts(&self.os_path(path), opts).await?;
+        let res = self
+            .accessor
+            .store
+            .get_opts(&self.os_path(path), opts)
+            .await?;
         Ok(res.bytes().await?.to_vec())
     }
 

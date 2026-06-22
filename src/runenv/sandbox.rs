@@ -16,9 +16,9 @@ use microsandbox::{
     sandbox::{ExecOptionsBuilder, PullPolicy, SandboxBuilder, SandboxStatus},
     validate_sandbox_name,
 };
-use tokio::sync::OnceCell;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use tokio::sync::OnceCell;
 use uuid::Uuid;
 
 use super::{Console, ExecResult, Machine};
@@ -126,9 +126,10 @@ async fn sweep_orphan_tmp_volumes() {
         let Some(owner) = vname.strip_prefix(AILOY_TMP_VOLUME_PREFIX) else {
             continue;
         };
-        let labelled = v.labels().iter().any(|(k, val)| {
-            k == AILOY_VOLUME_LABEL_KEY && val == AILOY_VOLUME_LABEL_VALUE
-        });
+        let labelled = v
+            .labels()
+            .iter()
+            .any(|(k, val)| k == AILOY_VOLUME_LABEL_KEY && val == AILOY_VOLUME_LABEL_VALUE);
         if !labelled {
             continue;
         }
@@ -270,8 +271,7 @@ impl Sandbox {
             .await;
 
         let name = config.name.clone().unwrap_or_else(fresh_sandbox_name);
-        validate_sandbox_name(&name)
-            .map_err(|e| anyhow::anyhow!("sandbox name '{name}': {e}"))?;
+        validate_sandbox_name(&name).map_err(|e| anyhow::anyhow!("sandbox name '{name}': {e}"))?;
 
         // Pre-populate `/tmp` with a per-sandbox named volume so it
         // survives the start/stop cycle that `RunEnvHandle::Drop` drives.
@@ -1115,8 +1115,13 @@ mod tests {
         .expect("failed to create sandbox");
 
         assert!(Sandbox::exists(&name).await, "must exist after creation");
-        Sandbox::remove_persisted(&name).await.expect("remove failed");
-        assert!(!Sandbox::exists(&name).await, "must not exist after removal");
+        Sandbox::remove_persisted(&name)
+            .await
+            .expect("remove failed");
+        assert!(
+            !Sandbox::exists(&name).await,
+            "must not exist after removal"
+        );
     }
 
     // ── concurrent access ────────────────────────────────────────────────────
@@ -1577,11 +1582,7 @@ mod tests {
             .await
             .expect("read failed");
         assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
-        assert!(
-            r.stdout.contains("hello"),
-            "stdout: {:?}",
-            r.stdout
-        );
+        assert!(r.stdout.contains("hello"), "stdout: {:?}", r.stdout);
     }
 
     /// User-supplied `/tmp` mounts take precedence over the auto-injected

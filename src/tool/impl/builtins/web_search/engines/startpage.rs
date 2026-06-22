@@ -205,8 +205,10 @@ impl SearchEngine for Startpage {
         let mut html_text = response.error_for_status()?.text().await?;
 
         if Self::is_interstitial(&html_text) {
-            let follow_fields = Self::extract_interstitial_form_data(&html_text)
-                .ok_or_else(|| SearchError::Parse("interstitial form data not found".to_string()))?;
+            let follow_fields =
+                Self::extract_interstitial_form_data(&html_text).ok_or_else(|| {
+                    SearchError::Parse("interstitial form data not found".to_string())
+                })?;
 
             let follow_pairs: Vec<(&str, &str)> = follow_fields
                 .iter()

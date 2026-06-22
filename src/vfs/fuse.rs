@@ -1,8 +1,10 @@
-use std::collections::HashMap;
-use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::{Duration, UNIX_EPOCH};
+use std::{
+    collections::HashMap,
+    ffi::OsStr,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::{Duration, UNIX_EPOCH},
+};
 
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory,
@@ -10,8 +12,7 @@ use fuser::{
 };
 use tokio::runtime::Handle;
 
-use crate::vfs::Vfs;
-use crate::vfs::resource::FileKind;
+use crate::vfs::{Vfs, resource::FileKind};
 
 const TTL: Duration = Duration::from_secs(1);
 const ROOT_INO: u64 = 1;
@@ -26,11 +27,7 @@ impl VfsMount {
     /// Mount `vfs` at `mountpoint` (must exist). `rt` is the tokio runtime
     /// handle used to drive async [`Resource`](crate::vfs::Resource) calls from
     /// the synchronous FUSE callbacks. Returns a guard that unmounts on drop.
-    pub fn spawn(
-        vfs: Arc<Vfs>,
-        mountpoint: impl AsRef<Path>,
-        rt: Handle,
-    ) -> anyhow::Result<Self> {
+    pub fn spawn(vfs: Arc<Vfs>, mountpoint: impl AsRef<Path>, rt: Handle) -> anyhow::Result<Self> {
         let mountpoint = mountpoint.as_ref().to_path_buf();
         let fs = VfsFs::new(vfs, rt);
         let options = vec![
@@ -338,7 +335,14 @@ impl Filesystem for VfsFs {
         reply.written(data.len() as u32);
     }
 
-    fn flush(&mut self, _req: &Request<'_>, _ino: u64, _fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
+    fn flush(
+        &mut self,
+        _req: &Request<'_>,
+        _ino: u64,
+        _fh: u64,
+        _lock_owner: u64,
+        reply: ReplyEmpty,
+    ) {
         reply.ok();
     }
 

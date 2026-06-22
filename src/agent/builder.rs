@@ -238,19 +238,11 @@ impl AgentBuilder {
         // With an explicit runenv (sandbox) → host forward server + in-guest
         // forwarder mounted on first run. Both augment the instruction.
         #[cfg(feature = "vfs")]
-        let mut vfs_mount = None;
-        #[cfg(feature = "vfs")]
-        let mut vfs_sandbox = None;
-        #[cfg(feature = "vfs")]
-        match vfs {
-            Some(config) if runenv.is_none() => {
-                vfs_mount = Some(setup_host_vfs(&mut spec, config)?);
-            }
-            Some(config) => {
-                vfs_sandbox = Some(setup_sandbox_vfs(&mut spec, config)?);
-            }
-            None => {}
-        }
+        let vfs_session = match vfs {
+            Some(config) if runenv.is_none() => Some(setup_host_vfs(&mut spec, config)?),
+            Some(config) => Some(setup_sandbox_vfs(&mut spec, config)?),
+            None => None,
+        };
 
         let mut agent = match (provider, runenv) {
             (None, None) => Agent::try_new(spec)?,
@@ -262,12 +254,8 @@ impl AgentBuilder {
         };
 
         #[cfg(feature = "vfs")]
-        if let Some(mount) = vfs_mount {
-            agent.attach_vfs_mount(mount);
-        }
-        #[cfg(feature = "vfs")]
-        if let Some((forward, mount_root, port, token)) = vfs_sandbox {
-            agent.attach_vfs_sandbox(forward, mount_root, port, token);
+        if let Some(session) = vfs_session {
+            agent.attach_vfs(session);
         }
         // Only override the spec-derived history (which seeds the system instruction)
         // when the caller explicitly supplied one — e.g. for session resumption.
@@ -282,21 +270,22 @@ impl AgentBuilder {
 }
 
 /// Build a [`Vfs`](crate::vfs::Vfs), mount it on the host via FUSE, and append
-/// a description of the mount paths to the spec's instruction. Returns the
-/// mount guard (unmounts on drop). Must run within a tokio runtime.
+/// a description of the mount paths to the spec's instruction. Must run within
+/// a tokio runtime.
 #[cfg(feature = "vfs")]
 fn setup_host_vfs(
     spec: &mut AgentSpec,
     config: crate::vfs::VfsConfig,
-) -> anyhow::Result<crate::vfs::VfsMount> {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicU64, Ordering};
+) -> anyhow::Result<crate::vfs::AgentVfs> {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-    let handle = tokio::runtime::Handle::try_current().map_err(|_| {
-        anyhow::anyhow!("AgentBuilder::vfs must be built within a tokio runtime")
-    })?;
+    let handle = tokio::runtime::Handle::try_current()
+        .map_err(|_| anyhow::anyhow!("AgentBuilder::vfs must be built within a tokio runtime"))?;
 
     let vfs = Arc::new(crate::vfs::Vfs::from_config(config)?);
 
@@ -317,23 +306,23 @@ fn setup_host_vfs(
     let inst = spec.instruction.take().unwrap_or_default();
     spec.instruction = Some(format!("{inst}{section}"));
 
-    crate::vfs::VfsMount::spawn(vfs, &mountpoint, handle)
+    let mount = crate::vfs::VfsMount::spawn(vfs, &mountpoint, handle)?;
+    Ok(crate::vfs::AgentVfs::host(mount))
 }
 
 /// Start a host forward server for a [`Vfs`](crate::vfs::Vfs) and append the
 /// in-sandbox mount paths to the instruction. The in-guest forwarder is mounted
-/// on the agent's first run. Returns `(forward, mount_root, port, token)`.
-/// Requires the sandbox to be created with `allow_host_egress = true`.
+/// on the agent's first run. Requires the sandbox to be created with
+/// `allow_host_egress = true`.
 #[cfg(feature = "vfs")]
 fn setup_sandbox_vfs(
     spec: &mut AgentSpec,
     config: crate::vfs::VfsConfig,
-) -> anyhow::Result<(crate::vfs::VfsForward, String, u16, String)> {
+) -> anyhow::Result<crate::vfs::AgentVfs> {
     use std::sync::Arc;
 
-    let handle = tokio::runtime::Handle::try_current().map_err(|_| {
-        anyhow::anyhow!("AgentBuilder::vfs must be built within a tokio runtime")
-    })?;
+    let handle = tokio::runtime::Handle::try_current()
+        .map_err(|_| anyhow::anyhow!("AgentBuilder::vfs must be built within a tokio runtime"))?;
 
     let vfs = Arc::new(crate::vfs::Vfs::from_config(config)?);
     let forward = crate::vfs::VfsForward::spawn(vfs.clone(), &handle)?;
@@ -353,7 +342,7 @@ fn setup_sandbox_vfs(
     let inst = spec.instruction.take().unwrap_or_default();
     spec.instruction = Some(format!("{inst}{section}"));
 
-    Ok((forward, mount_root, port, token))
+    Ok(crate::vfs::AgentVfs::sandbox(forward, mount_root, port, token))
 }
 
 #[cfg(test)]

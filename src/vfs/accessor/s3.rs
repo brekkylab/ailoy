@@ -37,7 +37,9 @@ impl S3Accessor {
             .with_access_key_id(config.access_key_id.as_str())
             .with_secret_access_key(config.secret_access_key.as_str());
         if let Some(endpoint) = &config.endpoint {
-            builder = builder.with_endpoint(endpoint.as_str()).with_allow_http(true);
+            builder = builder
+                .with_endpoint(endpoint.as_str())
+                .with_allow_http(true);
         }
         let store = builder.build()?;
         let key_prefix = config

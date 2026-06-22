@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::vfs::accessor::{GDriveAccessor, GDriveConfig};
-use crate::vfs::path::VPath;
-use crate::vfs::resource::{DirEntry, FileKind, FileStat, Resource};
+use crate::vfs::{
+    accessor::{GDriveAccessor, GDriveConfig},
+    path::VPath,
+    resource::{DirEntry, FileKind, FileStat, Resource},
+};
 
 const DOC_MIME: &str = "application/vnd.google-apps.document";
 const GDOC_SUFFIX: &str = ".gdoc.json";

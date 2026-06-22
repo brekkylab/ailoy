@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
-use crate::vfs::accessor::{GDriveConfig, NotionConfig, S3Config};
-use crate::vfs::path::VPath;
-use crate::vfs::resource::{GDriveResource, NotionResource, Resource, S3Resource};
+use crate::vfs::{
+    accessor::{GDriveConfig, NotionConfig, S3Config},
+    path::VPath,
+    resource::{GDriveResource, NotionResource, Resource, S3Resource},
+};
 
 /// Per-mount provider configuration (carries credentials, host-only).
 #[derive(Clone)]
@@ -43,7 +45,10 @@ impl Vfs {
     pub fn new(mut mounts: Vec<Mount>) -> anyhow::Result<Self> {
         for m in &mounts {
             if m.prefix.is_empty() || !m.prefix.starts_with('/') {
-                anyhow::bail!("mount prefix must be absolute and non-empty: {:?}", m.prefix);
+                anyhow::bail!(
+                    "mount prefix must be absolute and non-empty: {:?}",
+                    m.prefix
+                );
             }
         }
         for i in 0..mounts.len() {

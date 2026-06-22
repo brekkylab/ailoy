@@ -52,12 +52,16 @@ impl NotionAccessor {
     }
 
     pub async fn get_page(&self, id: &str) -> anyhow::Result<Value> {
-        self.send(self.client.get(format!("{API}/pages/{id}"))).await
+        self.send(self.client.get(format!("{API}/pages/{id}")))
+            .await
     }
 
     pub async fn list_children(&self, id: &str) -> anyhow::Result<Vec<Value>> {
         let v = self
-            .send(self.client.get(format!("{API}/blocks/{id}/children?page_size=100")))
+            .send(
+                self.client
+                    .get(format!("{API}/blocks/{id}/children?page_size=100")),
+            )
             .await?;
         Ok(v.get("results")
             .and_then(|r| r.as_array())
@@ -66,7 +70,8 @@ impl NotionAccessor {
     }
 
     pub async fn create_page(&self, body: Value) -> anyhow::Result<Value> {
-        self.send(self.client.post(format!("{API}/pages")).json(&body)).await
+        self.send(self.client.post(format!("{API}/pages")).json(&body))
+            .await
     }
 
     pub async fn append_blocks(&self, block_id: &str, children: Value) -> anyhow::Result<Value> {
@@ -80,6 +85,7 @@ impl NotionAccessor {
     }
 
     pub async fn add_comment(&self, body: Value) -> anyhow::Result<Value> {
-        self.send(self.client.post(format!("{API}/comments")).json(&body)).await
+        self.send(self.client.post(format!("{API}/comments")).json(&body))
+            .await
     }
 }

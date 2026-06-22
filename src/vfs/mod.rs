@@ -12,6 +12,7 @@ pub mod fuse;
 pub mod guest;
 pub mod path;
 pub mod resource;
+pub mod session;
 
 mod vfs;
 
@@ -19,6 +20,7 @@ pub use accessor::{GDriveConfig, NotionConfig, S3Config};
 pub use forward::VfsForward;
 pub use fuse::VfsMount;
 pub use guest::bootstrap_guest_forwarder;
+pub use session::AgentVfs;
 pub use path::VPath;
 pub use resource::{DirEntry, FileKind, FileStat, Resource, S3Resource};
 pub use vfs::{Mount, MountSpec, ProviderConfig, Vfs, VfsConfig};

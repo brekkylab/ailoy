@@ -74,11 +74,7 @@ impl SearchEngine for Brave {
         let cookie_header = if server_cookies.is_empty() {
             brave_default_cookies().to_string()
         } else {
-            format!(
-                "{}; {}",
-                server_cookies.join("; "),
-                brave_default_cookies()
-            )
+            format!("{}; {}", server_cookies.join("; "), brave_default_cookies())
         };
 
         // spellcheck=0 prevents silent query rewrites (e.g. "ailoy" → "alloy").

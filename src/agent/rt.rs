@@ -110,33 +110,10 @@ pub struct Agent {
     /// the first [`Self::run`].
     files_materialised: bool,
 
-    /// Host FUSE mount backing external provider paths (non-sandbox runenv).
-    /// Held for the agent's lifetime; unmounts on drop.
+    /// External-provider VFS bound to this agent (host FUSE mount or sandbox
+    /// forwarder). Held for the agent's lifetime; tears down on drop.
     #[cfg(feature = "vfs")]
-    vfs_mount: Option<crate::vfs::VfsMount>,
-
-    /// Host forward server backing the in-sandbox FUSE forwarder (sandbox runenv).
-    /// Held for the agent's lifetime; aborts on drop.
-    #[cfg(feature = "vfs")]
-    vfs_forward: Option<crate::vfs::VfsForward>,
-
-    /// Pending in-guest forwarder bootstrap; consumed once on first `run`.
-    #[cfg(feature = "vfs")]
-    vfs_bootstrap: Option<VfsBootstrap>,
-
-    /// Strong handle held for the session so the sandbox VM (and the in-guest
-    /// forwarder process/mount) stays up across tool calls. Dropping the last
-    /// handle stops the VM, which would kill the mount.
-    #[cfg(feature = "vfs")]
-    vfs_handle: Option<std::sync::Arc<crate::runenv::RunEnvHandle>>,
-}
-
-/// Coordinates for bootstrapping the in-guest FUSE forwarder on first run.
-#[cfg(feature = "vfs")]
-struct VfsBootstrap {
-    mount_root: String,
-    port: u16,
-    token: String,
+    vfs: Option<crate::vfs::AgentVfs>,
 }
 
 impl Agent {
@@ -238,49 +215,24 @@ impl Agent {
             spec,
             files_materialised: false,
             #[cfg(feature = "vfs")]
-            vfs_mount: None,
-            #[cfg(feature = "vfs")]
-            vfs_forward: None,
-            #[cfg(feature = "vfs")]
-            vfs_bootstrap: None,
-            #[cfg(feature = "vfs")]
-            vfs_handle: None,
+            vfs: None,
         })
     }
 
-    /// Attach a host FUSE mount whose lifetime is tied to this agent.
+    /// Attach the agent's VFS (host FUSE mount or sandbox forwarder), tying its
+    /// lifetime to this agent.
     #[cfg(feature = "vfs")]
-    pub(crate) fn attach_vfs_mount(&mut self, mount: crate::vfs::VfsMount) {
-        self.vfs_mount = Some(mount);
+    pub(crate) fn attach_vfs(&mut self, vfs: crate::vfs::AgentVfs) {
+        self.vfs = Some(vfs);
     }
 
-    /// Attach the host forward server and pending in-guest bootstrap (sandbox).
-    #[cfg(feature = "vfs")]
-    pub(crate) fn attach_vfs_sandbox(
-        &mut self,
-        forward: crate::vfs::VfsForward,
-        mount_root: String,
-        port: u16,
-        token: String,
-    ) {
-        self.vfs_forward = Some(forward);
-        self.vfs_bootstrap = Some(VfsBootstrap {
-            mount_root,
-            port,
-            token,
-        });
-    }
-
-    /// Run the in-guest forwarder bootstrap once, on first run (sandbox runenv).
+    /// Ensure the VFS is mounted in the runenv (once, on first run). No-op for
+    /// host mounts; bootstraps the in-guest forwarder for sandbox runenvs.
     #[cfg(feature = "vfs")]
     async fn ensure_vfs_mounted(&mut self) -> anyhow::Result<()> {
-        let Some(b) = self.vfs_bootstrap.take() else {
-            return Ok(());
-        };
-        let handle = self.state.runenv.get().await?;
-        crate::vfs::bootstrap_guest_forwarder(&handle, &b.mount_root, b.port, &b.token).await?;
-        // Keep the VM up for the session so the forwarder/mount survives.
-        self.vfs_handle = Some(handle);
+        if let Some(vfs) = self.vfs.as_mut() {
+            vfs.ensure_mounted(&self.state.runenv).await?;
+        }
         Ok(())
     }
 

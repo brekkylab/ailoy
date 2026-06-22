@@ -340,15 +340,11 @@ impl super::QuotaClassifier for GeminiUnmarshal {
         let error = &json["error"];
         // RESOURCE_EXHAUSTED covers both; a RetryInfo detail marks the transient case.
         error["status"] == "RESOURCE_EXHAUSTED"
-            && !error["details"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|d| {
-                    d["@type"]
-                        .as_str()
-                        .is_some_and(|t| t.ends_with("google.rpc.RetryInfo"))
-                })
+            && !error["details"].as_array().into_iter().flatten().any(|d| {
+                d["@type"]
+                    .as_str()
+                    .is_some_and(|t| t.ends_with("google.rpc.RetryInfo"))
+            })
     }
 }
 
@@ -504,8 +500,7 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
 mod tests {
     use url::Url;
 
-    use super::super::QuotaClassifier;
-    use super::*;
+    use super::{super::QuotaClassifier, *};
     use crate::{
         datatype::{Bytes, Value},
         lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},

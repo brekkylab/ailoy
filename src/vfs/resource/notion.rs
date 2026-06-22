@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::vfs::accessor::{NotionAccessor, NotionConfig};
-use crate::vfs::path::VPath;
-use crate::vfs::resource::{DirEntry, FileKind, FileStat, Resource};
+use crate::vfs::{
+    accessor::{NotionAccessor, NotionConfig},
+    path::VPath,
+    resource::{DirEntry, FileKind, FileStat, Resource},
+};
 
 const NOTION_PROMPT: &str = "\
 Notion (read + write). Layout:
@@ -149,7 +151,11 @@ fn segments(path: &VPath) -> Vec<String> {
 }
 
 fn page_id(dir_name: &str) -> String {
-    dir_name.rsplit_once("__").map(|(_, id)| id).unwrap_or(dir_name).to_string()
+    dir_name
+        .rsplit_once("__")
+        .map(|(_, id)| id)
+        .unwrap_or(dir_name)
+        .to_string()
 }
 
 fn page_title(page: &Value) -> String {
@@ -176,7 +182,13 @@ fn page_title(page: &Value) -> String {
 fn sanitize(title: &str) -> String {
     let s: String = title
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let trimmed = s.trim_matches('_');
     if trimmed.is_empty() {

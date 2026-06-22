@@ -63,8 +63,9 @@ impl GDriveAccessor {
 
     pub async fn list_files(&self) -> anyhow::Result<Vec<Value>> {
         let token = self.token().await?;
-        let url =
-            format!("{DRIVE_FILES}?fields=files(id,name,mimeType,size)&pageSize=200&q=trashed%3Dfalse");
+        let url = format!(
+            "{DRIVE_FILES}?fields=files(id,name,mimeType,size)&pageSize=200&q=trashed%3Dfalse"
+        );
         let resp = self
             .client
             .get(url)
@@ -73,7 +74,10 @@ impl GDriveAccessor {
             .await?
             .error_for_status()?;
         let v: Value = resp.json().await?;
-        Ok(v.get("files").and_then(|f| f.as_array()).cloned().unwrap_or_default())
+        Ok(v.get("files")
+            .and_then(|f| f.as_array())
+            .cloned()
+            .unwrap_or_default())
     }
 
     pub async fn download(&self, id: &str) -> anyhow::Result<Vec<u8>> {

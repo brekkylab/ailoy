@@ -10,7 +10,8 @@
     },
     "rust-analyzer.cargo.buildScripts.enable": true,
     "rust-analyzer.cargo.features": [
-        "sandbox"
+        "sandbox",
+        "vfs",
     ],
     "rust-analyzer.procMacro.enable": true,
     "rust-analyzer.runnables.extraEnv": {
