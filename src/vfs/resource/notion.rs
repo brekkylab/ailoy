@@ -164,15 +164,15 @@ fn page_title(page: &Value) -> String {
         None => return "untitled".to_string(),
     };
     for prop in props.values() {
-        if prop.get("type").and_then(|t| t.as_str()) == Some("title") {
-            if let Some(arr) = prop.get("title").and_then(|t| t.as_array()) {
-                let s: String = arr
-                    .iter()
-                    .filter_map(|t| t.get("plain_text").and_then(|p| p.as_str()))
-                    .collect();
-                if !s.is_empty() {
-                    return s;
-                }
+        if prop.get("type").and_then(|t| t.as_str()) == Some("title")
+            && let Some(arr) = prop.get("title").and_then(|t| t.as_array())
+        {
+            let s: String = arr
+                .iter()
+                .filter_map(|t| t.get("plain_text").and_then(|p| p.as_str()))
+                .collect();
+            if !s.is_empty() {
+                return s;
             }
         }
     }

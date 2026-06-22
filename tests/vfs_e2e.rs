@@ -11,11 +11,13 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ailoy::agent::{Agent, AgentBuilder, AgentProvider};
-use ailoy::lang_model::LangModelProvider;
-use ailoy::message::{Message, Part, Role};
-use ailoy::runenv::{RunEnv, SandboxConfig};
-use ailoy::vfs::{MountSpec, ProviderConfig, S3Config, Vfs, VfsConfig};
+use ailoy::{
+    agent::{Agent, AgentBuilder, AgentProvider},
+    lang_model::LangModelProvider,
+    message::{Message, Part, Role},
+    runenv::{RunEnv, SandboxConfig},
+    vfs::{MountSpec, ProviderConfig, S3Config, Vfs, VfsConfig},
+};
 use futures::StreamExt;
 
 const MODEL: &str = "anthropic/claude-haiku-4-5";
@@ -43,12 +45,16 @@ fn vfs_config() -> VfsConfig {
 fn provider() -> AgentProvider {
     let key = std::env::var("ANTHROPIC_API_KEY").unwrap();
     let mut p = AgentProvider::new();
-    p.models.insert(MODEL.into(), LangModelProvider::anthropic(key));
+    p.models
+        .insert(MODEL.into(), LangModelProvider::anthropic(key));
     p
 }
 
 fn stamp() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 async fn drive(mut agent: Agent, task: &str) -> String {
@@ -110,8 +116,14 @@ async fn e2e_non_sandbox_host_fuser() {
         .build()
         .expect("build agent");
     let transcript = drive(agent, &task_for(&fname, &content)).await;
-    println!("--- non-sandbox transcript tail ---\n{}", tail(&transcript, 500));
-    assert!(verify_s3(&fname, &content).await, "non-sandbox write not found in S3");
+    println!(
+        "--- non-sandbox transcript tail ---\n{}",
+        tail(&transcript, 500)
+    );
+    assert!(
+        verify_s3(&fname, &content).await,
+        "non-sandbox write not found in S3"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -135,8 +147,14 @@ async fn e2e_sandbox_forwarder() {
         .build()
         .expect("build agent");
     let transcript = drive(agent, &task_for(&fname, &content)).await;
-    println!("--- sandbox transcript tail ---\n{}", tail(&transcript, 500));
-    assert!(verify_s3(&fname, &content).await, "sandbox write not found in S3");
+    println!(
+        "--- sandbox transcript tail ---\n{}",
+        tail(&transcript, 500)
+    );
+    assert!(
+        verify_s3(&fname, &content).await,
+        "sandbox write not found in S3"
+    );
 }
 
 fn notion_vfs() -> VfsConfig {
@@ -160,14 +178,22 @@ async fn notion_read_and_command_smoke() {
 
     let (res, vp) = vfs.route("/notion/pages").expect("route pages");
     let entries = res.readdir(&vp).await.expect("readdir pages");
-    println!("pages: {:?}", entries.iter().map(|e| &e.name).collect::<Vec<_>>());
+    println!(
+        "pages: {:?}",
+        entries.iter().map(|e| &e.name).collect::<Vec<_>>()
+    );
     // Prefer a known write-shared parent; fall back to the first page.
     let parent = entries
         .iter()
         .find(|e| e.name.contains("Engineering_Logs"))
         .or_else(|| entries.first())
         .expect("at least one shared page");
-    let parent_id = parent.name.rsplit_once("__").map(|(_, id)| id).unwrap().to_string();
+    let parent_id = parent
+        .name
+        .rsplit_once("__")
+        .map(|(_, id)| id)
+        .unwrap()
+        .to_string();
 
     let (res, vp) = vfs
         .route(&format!("/notion/pages/{}/page.json", parent.name))
@@ -190,8 +216,11 @@ async fn notion_read_and_command_smoke() {
     {
         Ok(created) => {
             let created: serde_json::Value = serde_json::from_slice(&created).unwrap();
-            let new_id =
-                created.get("id").and_then(|v| v.as_str()).expect("new page id").to_string();
+            let new_id = created
+                .get("id")
+                .and_then(|v| v.as_str())
+                .expect("new page id")
+                .to_string();
             println!("created page id: {new_id}");
             let append_body = serde_json::json!({
                 "block_id": new_id,
@@ -238,7 +267,10 @@ async fn gdrive_read_and_command_smoke() {
     let (res, vp) = vfs.route("/gdrive").expect("route gdrive");
     let entries = res.readdir(&vp).await.expect("readdir gdrive");
     let names: Vec<&String> = entries.iter().map(|e| &e.name).collect();
-    println!("gdrive entries (first 10): {:?}", &names[..names.len().min(10)]);
+    println!(
+        "gdrive entries (first 10): {:?}",
+        &names[..names.len().min(10)]
+    );
 
     let gdoc = entries.iter().find(|e| e.name.ends_with(".gdoc.json"));
     let Some(gdoc) = gdoc else {
@@ -250,7 +282,11 @@ async fn gdrive_read_and_command_smoke() {
         .expect("route gdoc");
     let data = res.read_bytes(&vp, None).await.expect("read gdoc");
     let doc: serde_json::Value = serde_json::from_slice(&data).unwrap();
-    let doc_id = doc.get("documentId").and_then(|v| v.as_str()).expect("documentId").to_string();
+    let doc_id = doc
+        .get("documentId")
+        .and_then(|v| v.as_str())
+        .expect("documentId")
+        .to_string();
     println!("read {} -> documentId={doc_id}", gdoc.name);
 
     // Append to a user-owned doc (the read doc above may be read-only-shared).
@@ -259,8 +295,12 @@ async fn gdrive_read_and_command_smoke() {
         .unwrap_or_else(|_| "10NTjr9rPPqZKzoW_YpP9z-8WfSMuN0z1-mDq012KWuI".into());
     let _ = doc_id;
     let (res, _) = vfs.route("/gdrive/.cmd/docs-append").unwrap();
-    let body = serde_json::json!({"document_id": write_doc, "text": "\nappended by ailoy vfs phase 2\n"});
-    match res.command("docs-append", body.to_string().as_bytes()).await {
+    let body =
+        serde_json::json!({"document_id": write_doc, "text": "\nappended by ailoy vfs phase 2\n"});
+    match res
+        .command("docs-append", body.to_string().as_bytes())
+        .await
+    {
         Ok(result) => {
             assert!(!result.is_empty(), "docs-append returned empty");
             println!("docs-append OK ✅");
@@ -272,6 +312,59 @@ async fn gdrive_read_and_command_smoke() {
             );
         }
     }
+}
+
+/// Brings up a NAMED sandbox with Notion mounted at /mnt/vfs, triggers the
+/// in-guest forwarder mount, then sleeps so you can inspect it directly:
+///   msb ls
+///   msb exec ailoy-vfs-inspect -- sh -c 'ls -la /mnt/vfs/notion/pages'
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "interactive: holds a named sandbox up for manual msb exec inspection"]
+async fn vfs_inspect_sandbox_notion() {
+    let name = "ailoy-vfs-inspect";
+    let sandbox = RunEnv::sandbox(SandboxConfig {
+        name: Some(name.into()),
+        allow_host_egress: true,
+        ..Default::default()
+    })
+    .await
+    .expect("sandbox create");
+
+    let mut agent = AgentBuilder::new(MODEL)
+        .provider(provider())
+        .instruction("You are a tester. Use the shell tool.")
+        .shell_tool()
+        .runenv(sandbox)
+        .vfs(notion_vfs())
+        .build()
+        .expect("build agent");
+
+    // First run triggers the in-guest mount (ensure_vfs_mounted). Keep `agent`
+    // alive afterwards so the strong runenv handle keeps the VM (and mount) up.
+    {
+        let q = Message::new(Role::User)
+            .with_contents([Part::text("Reply with the single word READY.")]);
+        let mut strm = agent.run(q);
+        while let Some(ev) = strm.next().await {
+            if let Err(e) = ev {
+                eprintln!("run error (mount may have failed): {e}");
+            }
+        }
+    }
+
+    println!("\n================ VFS INSPECT READY ================");
+    println!("sandbox name : {name}");
+    println!("guest mount  : /mnt/vfs/notion");
+    println!("inspect from another terminal:");
+    println!("  msb ls");
+    println!("  msb exec {name} -- sh -c 'mount | grep fuse; ls -la /mnt/vfs/notion/pages'");
+    println!(
+        "  msb exec {name} -- sh -c 'P=$(ls /mnt/vfs/notion/pages | head -1); cat \"/mnt/vfs/notion/pages/$P/page.json\" | head -40'"
+    );
+    println!("sleeping 1h — Ctrl-C this process to tear down.");
+    println!("===================================================\n");
+
+    tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
 }
 
 fn tail(s: &str, n: usize) -> String {

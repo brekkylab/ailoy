@@ -99,10 +99,10 @@ impl Vfs {
             if abs == m.prefix {
                 return Some((&m.resource, VPath::root()));
             }
-            if let Some(rest) = abs.strip_prefix(&m.prefix) {
-                if rest.starts_with('/') {
-                    return Some((&m.resource, VPath::new(rest)));
-                }
+            if let Some(rest) = abs.strip_prefix(&m.prefix)
+                && rest.starts_with('/')
+            {
+                return Some((&m.resource, VPath::new(rest)));
             }
         }
         None

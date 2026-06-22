@@ -342,7 +342,9 @@ fn setup_sandbox_vfs(
     let inst = spec.instruction.take().unwrap_or_default();
     spec.instruction = Some(format!("{inst}{section}"));
 
-    Ok(crate::vfs::AgentVfs::sandbox(forward, mount_root, port, token))
+    Ok(crate::vfs::AgentVfs::sandbox(
+        forward, mount_root, port, token,
+    ))
 }
 
 #[cfg(test)]
