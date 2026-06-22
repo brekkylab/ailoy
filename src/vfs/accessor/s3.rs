@@ -1,9 +1,26 @@
 use std::sync::Arc;
 
 use object_store::aws::{AmazonS3, AmazonS3Builder};
+use serde::{Deserialize, Serialize};
 
-use crate::vfs::accessor::S3Config;
 use crate::vfs::path::VPath;
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct S3Config {
+    pub bucket: String,
+    #[serde(default = "default_region")]
+    pub region: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub key_prefix: Option<String>,
+}
+
+fn default_region() -> String {
+    "us-east-1".to_string()
+}
 
 /// Holds the S3 client (one credential set) and the optional key prefix.
 /// Mirrors mirage `accessor/s3.py`.

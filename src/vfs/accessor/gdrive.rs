@@ -1,11 +1,17 @@
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-
-use crate::vfs::accessor::GDriveConfig;
 
 const OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const DRIVE_FILES: &str = "https://www.googleapis.com/drive/v3/files";
 const DOCS_API: &str = "https://docs.googleapis.com/v1/documents";
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GDriveConfig {
+    pub client_id: String,
+    pub client_secret: String,
+    pub refresh_token: String,
+}
 
 /// Holds Google OAuth credentials (one refresh token) and a cached access
 /// token. Mirrors mirage `accessor/gdrive.py` + `core/google/config.py`.

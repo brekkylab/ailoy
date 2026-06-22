@@ -1,9 +1,13 @@
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-
-use crate::vfs::accessor::NotionConfig;
 
 const API: &str = "https://api.notion.com/v1";
 const NOTION_VERSION: &str = "2022-06-28";
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct NotionConfig {
+    pub api_key: String,
+}
 
 /// Holds the Notion API client (one token). Mirrors mirage `accessor/notion.py`.
 pub struct NotionAccessor {
