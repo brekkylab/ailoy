@@ -26,6 +26,7 @@ path = "src/lib.rs"
 [features]
 default = []
 sandbox = ["dep:microsandbox"]
+vfs = ["dep:object_store", "dep:fuser", "dep:libc"]
 
 [dependencies]
 anyhow = "1"
@@ -44,6 +45,9 @@ indexmap = { version = "2", features = ["serde"] }
 infer = "0.16"
 log = "0.4"
 microsandbox = { version = "0.5.6", optional = true }
+object_store = { version = "0.12", features = ["aws"], optional = true }
+fuser = { version = "0.15", optional = true }
+libc = { version = "0.2", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 parking_lot = "0.12.4"
 png = "0.18"

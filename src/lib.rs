@@ -9,4 +9,6 @@ pub mod message;
 pub mod runenv;
 pub mod skill;
 pub mod tool;
+#[cfg(feature = "vfs")]
+pub mod vfs;
 pub(crate) mod util;

@@ -12,7 +12,7 @@ use std::{
 
 use async_trait::async_trait;
 use microsandbox::{
-    ExecOutput, MicrosandboxError, Sandbox as MsbSandbox, Snapshot,
+    ExecOutput, MicrosandboxError, NetworkPolicy, Sandbox as MsbSandbox, Snapshot,
     sandbox::{ExecOptionsBuilder, PullPolicy, SandboxBuilder, SandboxStatus},
     validate_sandbox_name,
 };
@@ -172,6 +172,13 @@ pub struct SandboxConfig {
     /// When `true`, disable all network access. Default: `false`.
     pub disable_network: bool,
 
+    /// When `true`, allow the guest to reach host services (the
+    /// `host.microsandbox.internal` alias), e.g. an ailoy VFS forward server.
+    /// Applies a permissive egress policy at creation. Ignored when
+    /// `disable_network` is set. Default: `false`.
+    #[serde(default)]
+    pub allow_host_egress: bool,
+
     /// Per-exec timeout in seconds. Default: `60`.
     pub default_timeout_secs: u64,
 
@@ -208,6 +215,7 @@ impl Default for SandboxConfig {
             workdir: "/workspace".to_string(),
             env: HashMap::new(),
             disable_network: false,
+            allow_host_egress: false,
             default_timeout_secs: 60,
             max_output_chars: 30_000,
             persist: false,
@@ -621,6 +629,8 @@ async fn create_registered(name: &str, config: &SandboxConfig) -> anyhow::Result
     }
     if config.disable_network {
         builder = builder.disable_network();
+    } else if config.allow_host_egress {
+        builder = builder.network(|n| n.policy(NetworkPolicy::allow_all()));
     }
     for mount in &config.volumes {
         builder = apply_volume_mount(builder, mount);
@@ -645,6 +655,8 @@ async fn create_from_snapshot(
     }
     if config.disable_network {
         builder = builder.disable_network();
+    } else if config.allow_host_egress {
+        builder = builder.network(|n| n.policy(NetworkPolicy::allow_all()));
     }
     for mount in &config.volumes {
         builder = apply_volume_mount(builder, mount);

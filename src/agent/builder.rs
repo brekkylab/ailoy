@@ -54,6 +54,9 @@ pub struct AgentBuilder {
     runenv: Option<RunEnv>,
 
     context_manager: Option<ContextManager>,
+
+    #[cfg(feature = "vfs")]
+    vfs: Option<crate::vfs::VfsConfig>,
 }
 
 impl AgentBuilder {
@@ -67,7 +70,21 @@ impl AgentBuilder {
             history: Vec::new(),
             runenv: None,
             context_manager: None,
+            #[cfg(feature = "vfs")]
+            vfs: None,
         }
+    }
+
+    /// Mount external providers (S3/Notion/GDrive) as a host FUSE filesystem so
+    /// the agent's shell/read/write tools operate on them transparently. The
+    /// mount paths are appended to the system instruction. Credentials stay on
+    /// the host. Currently supports the default local runenv (non-sandbox);
+    /// combining with a custom `runenv()` is rejected at build time pending the
+    /// guest forwarder.
+    #[cfg(feature = "vfs")]
+    pub fn vfs(mut self, config: crate::vfs::VfsConfig) -> Self {
+        self.vfs = Some(config);
+        self
     }
 
     /// Use this [`AgentProvider`] instead of the global [`default_provider`](crate::agent::default_provider).
@@ -207,12 +224,33 @@ impl AgentBuilder {
     /// based on which optional fields were supplied.
     pub fn build(self) -> anyhow::Result<Agent> {
         let Self {
-            spec,
+            #[allow(unused_mut)]
+            mut spec,
             provider,
-            history,
             runenv,
+            history,
             context_manager,
+            #[cfg(feature = "vfs")]
+            vfs,
         } = self;
+
+        // Wire the VFS. Non-sandbox (no explicit runenv) → host FUSE mount.
+        // With an explicit runenv (sandbox) → host forward server + in-guest
+        // forwarder mounted on first run. Both augment the instruction.
+        #[cfg(feature = "vfs")]
+        let mut vfs_mount = None;
+        #[cfg(feature = "vfs")]
+        let mut vfs_sandbox = None;
+        #[cfg(feature = "vfs")]
+        match vfs {
+            Some(config) if runenv.is_none() => {
+                vfs_mount = Some(setup_host_vfs(&mut spec, config)?);
+            }
+            Some(config) => {
+                vfs_sandbox = Some(setup_sandbox_vfs(&mut spec, config)?);
+            }
+            None => {}
+        }
 
         let mut agent = match (provider, runenv) {
             (None, None) => Agent::try_new(spec)?,
@@ -222,6 +260,15 @@ impl AgentBuilder {
                 Agent::try_with_provider_and_runenv(spec, &provider, runenv)?
             }
         };
+
+        #[cfg(feature = "vfs")]
+        if let Some(mount) = vfs_mount {
+            agent.attach_vfs_mount(mount);
+        }
+        #[cfg(feature = "vfs")]
+        if let Some((forward, mount_root, port, token)) = vfs_sandbox {
+            agent.attach_vfs_sandbox(forward, mount_root, port, token);
+        }
         // Only override the spec-derived history (which seeds the system instruction)
         // when the caller explicitly supplied one — e.g. for session resumption.
         if !history.is_empty() {
@@ -232,6 +279,81 @@ impl AgentBuilder {
         }
         Ok(agent)
     }
+}
+
+/// Build a [`Vfs`](crate::vfs::Vfs), mount it on the host via FUSE, and append
+/// a description of the mount paths to the spec's instruction. Returns the
+/// mount guard (unmounts on drop). Must run within a tokio runtime.
+#[cfg(feature = "vfs")]
+fn setup_host_vfs(
+    spec: &mut AgentSpec,
+    config: crate::vfs::VfsConfig,
+) -> anyhow::Result<crate::vfs::VfsMount> {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    let handle = tokio::runtime::Handle::try_current().map_err(|_| {
+        anyhow::anyhow!("AgentBuilder::vfs must be built within a tokio runtime")
+    })?;
+
+    let vfs = Arc::new(crate::vfs::Vfs::from_config(config)?);
+
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mountpoint = std::env::temp_dir().join(format!("ailoy-vfs-{}-{id}", std::process::id()));
+    std::fs::create_dir_all(&mountpoint)?;
+
+    let mut section = String::from(
+        "\n\nExternal data sources are mounted on the local filesystem. \
+         Use normal shell tools (ls, cat, grep, head, tee) on these absolute paths:",
+    );
+    for mount in vfs.mounts() {
+        let name = mount.prefix.trim_start_matches('/');
+        let path = mountpoint.join(name);
+        let first_line = mount.resource.prompt().lines().next().unwrap_or("");
+        section.push_str(&format!("\n  {} — {first_line}", path.display()));
+    }
+    let inst = spec.instruction.take().unwrap_or_default();
+    spec.instruction = Some(format!("{inst}{section}"));
+
+    crate::vfs::VfsMount::spawn(vfs, &mountpoint, handle)
+}
+
+/// Start a host forward server for a [`Vfs`](crate::vfs::Vfs) and append the
+/// in-sandbox mount paths to the instruction. The in-guest forwarder is mounted
+/// on the agent's first run. Returns `(forward, mount_root, port, token)`.
+/// Requires the sandbox to be created with `allow_host_egress = true`.
+#[cfg(feature = "vfs")]
+fn setup_sandbox_vfs(
+    spec: &mut AgentSpec,
+    config: crate::vfs::VfsConfig,
+) -> anyhow::Result<(crate::vfs::VfsForward, String, u16, String)> {
+    use std::sync::Arc;
+
+    let handle = tokio::runtime::Handle::try_current().map_err(|_| {
+        anyhow::anyhow!("AgentBuilder::vfs must be built within a tokio runtime")
+    })?;
+
+    let vfs = Arc::new(crate::vfs::Vfs::from_config(config)?);
+    let forward = crate::vfs::VfsForward::spawn(vfs.clone(), &handle)?;
+    let port = forward.port();
+    let token = forward.token().to_string();
+    let mount_root = "/mnt/vfs".to_string();
+
+    let mut section = String::from(
+        "\n\nExternal data sources are mounted in the sandbox filesystem. \
+         Use normal shell tools (ls, cat, grep, head, tee) on these absolute paths:",
+    );
+    for mount in vfs.mounts() {
+        let name = mount.prefix.trim_start_matches('/');
+        let first_line = mount.resource.prompt().lines().next().unwrap_or("");
+        section.push_str(&format!("\n  {mount_root}/{name} — {first_line}"));
+    }
+    let inst = spec.instruction.take().unwrap_or_default();
+    spec.instruction = Some(format!("{inst}{section}"));
+
+    Ok((forward, mount_root, port, token))
 }
 
 #[cfg(test)]
