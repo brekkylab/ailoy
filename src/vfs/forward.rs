@@ -250,7 +250,12 @@ async fn write_bytes(vfs: &Vfs, path: &str, data: Vec<u8>) -> anyhow::Result<()>
     let (res, vp): (_, VPath) = vfs
         .route(path)
         .ok_or_else(|| anyhow::anyhow!("no mount for {path}"))?;
-    res.write_bytes(&vp, data).await
+    if let Some(op) = vp.as_str().strip_prefix("/.cmd/") {
+        res.command(op, &data).await?;
+        Ok(())
+    } else {
+        res.write_bytes(&vp, data).await
+    }
 }
 
 async fn respond(

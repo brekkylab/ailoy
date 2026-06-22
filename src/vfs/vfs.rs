@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::vfs::accessor::{GDriveConfig, NotionConfig, S3Config};
 use crate::vfs::path::VPath;
-use crate::vfs::resource::{Resource, S3Resource};
+use crate::vfs::resource::{GDriveResource, NotionResource, Resource, S3Resource};
 
 /// Per-mount provider configuration (carries credentials, host-only).
 #[derive(Clone)]
@@ -63,12 +63,8 @@ impl Vfs {
         for spec in config.mounts {
             let resource: Arc<dyn Resource> = match spec.provider {
                 ProviderConfig::S3(c) => Arc::new(S3Resource::new(&c)?),
-                ProviderConfig::Notion(_) => {
-                    anyhow::bail!("notion adapter not implemented yet")
-                }
-                ProviderConfig::GDrive(_) => {
-                    anyhow::bail!("gdrive adapter not implemented yet")
-                }
+                ProviderConfig::Notion(c) => Arc::new(NotionResource::new(&c)?),
+                ProviderConfig::GDrive(c) => Arc::new(GDriveResource::new(&c)?),
             };
             mounts.push(Mount {
                 prefix: spec.prefix,

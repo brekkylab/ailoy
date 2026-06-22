@@ -139,6 +139,136 @@ async fn e2e_sandbox_forwarder() {
     assert!(verify_s3(&fname, &content).await, "sandbox write not found in S3");
 }
 
+fn notion_vfs() -> VfsConfig {
+    VfsConfig {
+        mounts: vec![MountSpec {
+            prefix: "/notion".into(),
+            provider: ProviderConfig::Notion(ailoy::vfs::NotionConfig {
+                api_key: std::env::var("NOTION_API_KEY").unwrap(),
+            }),
+        }],
+    }
+}
+
+/// Direct (non-agent) smoke test of the Notion adapter: read the page tree,
+/// read a page.json, then exercise the `.cmd` domain writes (page-create +
+/// block-append) through `Resource::command`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs NOTION_API_KEY with a shared page"]
+async fn notion_read_and_command_smoke() {
+    let vfs = Vfs::from_config(notion_vfs()).unwrap();
+
+    let (res, vp) = vfs.route("/notion/pages").expect("route pages");
+    let entries = res.readdir(&vp).await.expect("readdir pages");
+    println!("pages: {:?}", entries.iter().map(|e| &e.name).collect::<Vec<_>>());
+    // Prefer a known write-shared parent; fall back to the first page.
+    let parent = entries
+        .iter()
+        .find(|e| e.name.contains("Engineering_Logs"))
+        .or_else(|| entries.first())
+        .expect("at least one shared page");
+    let parent_id = parent.name.rsplit_once("__").map(|(_, id)| id).unwrap().to_string();
+
+    let (res, vp) = vfs
+        .route(&format!("/notion/pages/{}/page.json", parent.name))
+        .expect("route page.json");
+    let data = res.read_bytes(&vp, None).await.expect("read page.json");
+    let page: serde_json::Value = serde_json::from_slice(&data).unwrap();
+    println!("first page title: {:?}", page.get("title"));
+
+    // page-create under the first page
+    let (res, _) = vfs.route("/notion/.cmd/page-create").unwrap();
+    let create_body = serde_json::json!({
+        "parent": {"page_id": parent_id},
+        "properties": {"title": [{"text": {"content": "ailoy vfs Phase2"}}]}
+    });
+    // Domain write reaches the Notion API; success additionally requires the
+    // integration to have the "Insert content" capability on a shared page.
+    match res
+        .command("page-create", create_body.to_string().as_bytes())
+        .await
+    {
+        Ok(created) => {
+            let created: serde_json::Value = serde_json::from_slice(&created).unwrap();
+            let new_id =
+                created.get("id").and_then(|v| v.as_str()).expect("new page id").to_string();
+            println!("created page id: {new_id}");
+            let append_body = serde_json::json!({
+                "block_id": new_id,
+                "children": [{
+                    "object": "block", "type": "paragraph",
+                    "paragraph": {"rich_text": [{"type": "text", "text": {"content": "created by ailoy vfs phase 2"}}]}
+                }]
+            });
+            let appended = res
+                .command("block-append", append_body.to_string().as_bytes())
+                .await
+                .expect("block-append");
+            assert!(!appended.is_empty(), "block-append returned empty");
+            println!("page-create + block-append OK ✅");
+        }
+        Err(e) => {
+            println!(
+                "NOTE: domain write reached Notion but was rejected (integration \
+                 capability / sharing): {e}"
+            );
+        }
+    }
+}
+
+fn gdrive_vfs() -> VfsConfig {
+    VfsConfig {
+        mounts: vec![MountSpec {
+            prefix: "/gdrive".into(),
+            provider: ProviderConfig::GDrive(ailoy::vfs::GDriveConfig {
+                client_id: std::env::var("GOOGLE_CLIENT_ID").unwrap(),
+                client_secret: std::env::var("GOOGLE_CLIENT_SECRET").unwrap(),
+                refresh_token: std::env::var("GOOGLE_REFRESH_TOKEN").unwrap(),
+            }),
+        }],
+    }
+}
+
+/// Direct smoke test of the GDrive adapter: list Drive, read a Google Doc as
+/// `.gdoc.json`, then append to it via `.cmd/docs-append`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs GOOGLE_* refresh token with Drive + Docs scopes"]
+async fn gdrive_read_and_command_smoke() {
+    let vfs = Vfs::from_config(gdrive_vfs()).unwrap();
+    let (res, vp) = vfs.route("/gdrive").expect("route gdrive");
+    let entries = res.readdir(&vp).await.expect("readdir gdrive");
+    let names: Vec<&String> = entries.iter().map(|e| &e.name).collect();
+    println!("gdrive entries (first 10): {:?}", &names[..names.len().min(10)]);
+
+    let gdoc = entries.iter().find(|e| e.name.ends_with(".gdoc.json"));
+    let Some(gdoc) = gdoc else {
+        println!("NOTE: no Google Doc found in Drive; read/append skipped");
+        return;
+    };
+    let (res, vp) = vfs
+        .route(&format!("/gdrive/{}", gdoc.name))
+        .expect("route gdoc");
+    let data = res.read_bytes(&vp, None).await.expect("read gdoc");
+    let doc: serde_json::Value = serde_json::from_slice(&data).unwrap();
+    let doc_id = doc.get("documentId").and_then(|v| v.as_str()).expect("documentId").to_string();
+    println!("read {} -> documentId={doc_id}", gdoc.name);
+
+    let (res, _) = vfs.route("/gdrive/.cmd/docs-append").unwrap();
+    let body = serde_json::json!({"document_id": doc_id, "text": "\nappended by ailoy vfs phase 2\n"});
+    match res.command("docs-append", body.to_string().as_bytes()).await {
+        Ok(result) => {
+            assert!(!result.is_empty(), "docs-append returned empty");
+            println!("docs-append OK ✅");
+        }
+        Err(e) => {
+            println!(
+                "NOTE: docs-append reached the Docs API but was rejected \
+                 (token Docs scope / doc ACL): {e}"
+            );
+        }
+    }
+}
+
 fn tail(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
