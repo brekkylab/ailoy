@@ -39,7 +39,10 @@ impl GDriveResource {
         }
     }
 
-    async fn resolve(&self, display: &str) -> anyhow::Result<(String, bool)> {
+    /// Resolve a display name to `(file id, is_google_doc, metadata size)`. The
+    /// size comes from the Drive listing (no download); `None` for Google Docs,
+    /// which carry no byte size in metadata.
+    async fn resolve(&self, display: &str) -> anyhow::Result<(String, bool, Option<u64>)> {
         let files = self.accessor.list_files().await?;
         let (base, want_doc) = match display.strip_suffix(GDOC_SUFFIX) {
             Some(b) => (b, true),
@@ -54,7 +57,11 @@ impl GDriveResource {
                     .get("id")
                     .and_then(|i| i.as_str())
                     .ok_or_else(|| anyhow::anyhow!("file has no id"))?;
-                return Ok((id.to_string(), is_doc));
+                let size = f
+                    .get("size")
+                    .and_then(|s| s.as_str())
+                    .and_then(|s| s.parse::<u64>().ok());
+                return Ok((id.to_string(), is_doc, size));
             }
         }
         anyhow::bail!("gdrive file not found: {display}")
@@ -72,7 +79,7 @@ impl Resource for GDriveResource {
         if name.is_empty() {
             anyhow::bail!("is a directory: /");
         }
-        let (id, is_doc) = self.resolve(name).await?;
+        let (id, is_doc, _size) = self.resolve(name).await?;
         let data = if is_doc {
             let text = self.accessor.export_text(&id).await?;
             serde_json::to_vec_pretty(&json!({
@@ -130,11 +137,13 @@ impl Resource for GDriveResource {
             });
         }
         let name = path.as_str().trim_start_matches('/');
-        let (id, is_doc) = self.resolve(name).await?;
-        let size = if is_doc {
-            self.accessor.export_text(&id).await?.len() as u64
-        } else {
-            self.accessor.download(&id).await?.len() as u64
+        let (id, is_doc, meta_size) = self.resolve(name).await?;
+        // Never download to stat: binary files take their size from Drive
+        // metadata; Google Docs (no metadata size) use the cached export.
+        let size = match meta_size {
+            Some(s) => s,
+            None if is_doc => self.accessor.export_text(&id).await?.len() as u64,
+            None => 0,
         };
         Ok(FileStat {
             kind: FileKind::File,

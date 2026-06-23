@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
@@ -5,6 +8,7 @@ use tokio::sync::Mutex;
 const OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const DRIVE_FILES: &str = "https://www.googleapis.com/drive/v3/files";
 const DOCS_API: &str = "https://docs.googleapis.com/v1/documents";
+const LIST_TTL: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct GDriveConfig {
@@ -19,6 +23,11 @@ pub struct GDriveAccessor {
     client: reqwest::Client,
     config: GDriveConfig,
     access_token: Mutex<Option<String>>,
+    /// Short-TTL cache of the Drive file listing, shared by readdir/stat/resolve
+    /// so an `ls` (one readdir + a getattr per entry) costs one Drive call, not one per entry.
+    list_cache: Mutex<Option<(Instant, Vec<Value>)>>,
+    /// Cache of exported Google Doc text (keyed by file id), shared by stat and read.
+    export_cache: Mutex<HashMap<String, Vec<u8>>>,
 }
 
 impl GDriveAccessor {
@@ -27,6 +36,8 @@ impl GDriveAccessor {
             client: reqwest::Client::new(),
             config: config.clone(),
             access_token: Mutex::new(None),
+            list_cache: Mutex::new(None),
+            export_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -62,6 +73,14 @@ impl GDriveAccessor {
     }
 
     pub async fn list_files(&self) -> anyhow::Result<Vec<Value>> {
+        {
+            let cache = self.list_cache.lock().await;
+            if let Some((at, files)) = cache.as_ref()
+                && at.elapsed() < LIST_TTL
+            {
+                return Ok(files.clone());
+            }
+        }
         let token = self.token().await?;
         let url = format!(
             "{DRIVE_FILES}?fields=files(id,name,mimeType,size)&pageSize=200&q=trashed%3Dfalse"
@@ -74,10 +93,13 @@ impl GDriveAccessor {
             .await?
             .error_for_status()?;
         let v: Value = resp.json().await?;
-        Ok(v.get("files")
+        let files = v
+            .get("files")
             .and_then(|f| f.as_array())
             .cloned()
-            .unwrap_or_default())
+            .unwrap_or_default();
+        *self.list_cache.lock().await = Some((Instant::now(), files.clone()));
+        Ok(files)
     }
 
     pub async fn download(&self, id: &str) -> anyhow::Result<Vec<u8>> {
@@ -92,7 +114,12 @@ impl GDriveAccessor {
         Ok(resp.bytes().await?.to_vec())
     }
 
+    /// Export a Google Doc as text/plain, caching the result so stat (size) and
+    /// a subsequent read share one network round trip.
     pub async fn export_text(&self, id: &str) -> anyhow::Result<Vec<u8>> {
+        if let Some(cached) = self.export_cache.lock().await.get(id) {
+            return Ok(cached.clone());
+        }
         let token = self.token().await?;
         let resp = self
             .client
@@ -101,7 +128,12 @@ impl GDriveAccessor {
             .send()
             .await?
             .error_for_status()?;
-        Ok(resp.bytes().await?.to_vec())
+        let data = resp.bytes().await?.to_vec();
+        self.export_cache
+            .lock()
+            .await
+            .insert(id.to_string(), data.clone());
+        Ok(data)
     }
 
     pub async fn docs_append(&self, document_id: &str, text: &str) -> anyhow::Result<Value> {
