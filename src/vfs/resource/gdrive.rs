@@ -141,11 +141,24 @@ impl GDriveResource {
             .ok_or_else(|| anyhow::anyhow!("gdrive path not found: {path}"))
     }
 
+    /// The exact bytes a workspace doc (Doc/Sheet/Slide) reads as: a JSON
+    /// envelope with the file id and its exported text. `read` and `stat` both
+    /// go through this so the reported size always matches the content.
+    async fn workspace_doc_bytes(&self, child: &Child) -> anyhow::Result<Vec<u8>> {
+        let text = self
+            .accessor
+            .export_text(&child.id, export_mime(child.kind))
+            .await?;
+        Ok(serde_json::to_vec_pretty(&json!({
+            "documentId": child.id,
+            "text": String::from_utf8_lossy(&text),
+        }))?)
+    }
+
     async fn doc_size(&self, child: &Child) -> u64 {
         match child.kind {
             k if k.is_workspace_doc() => self
-                .accessor
-                .export_text(&child.id)
+                .workspace_doc_bytes(child)
                 .await
                 .map(|d| d.len() as u64)
                 .unwrap_or(0),
@@ -167,13 +180,7 @@ impl Resource for GDriveResource {
         let child = self.resolve(path.as_str()).await?;
         let data = match child.kind {
             k if k.is_dir() => anyhow::bail!("is a directory: {}", path.as_str()),
-            k if k.is_workspace_doc() => {
-                let text = self.accessor.export_text(&child.id).await?;
-                serde_json::to_vec_pretty(&json!({
-                    "documentId": child.id,
-                    "text": String::from_utf8_lossy(&text),
-                }))?
-            }
+            k if k.is_workspace_doc() => self.workspace_doc_bytes(&child).await?,
             _ => self.accessor.download(&child.id).await?,
         };
         match range {
@@ -254,6 +261,15 @@ impl Resource for GDriveResource {
     }
 }
 
+/// Export MIME for a workspace doc: Sheets must use `text/csv` (Google rejects
+/// `text/plain` for spreadsheets); Docs and Slides use `text/plain`.
+fn export_mime(kind: GKind) -> &'static str {
+    match kind {
+        GKind::Sheet => "text/csv",
+        _ => "text/plain",
+    }
+}
+
 fn child_from_file(f: &Value) -> Option<Child> {
     let name = f.get("name")?.as_str()?;
     let id = f.get("id")?.as_str()?;
@@ -282,7 +298,11 @@ fn child_from_file(f: &Value) -> Option<Child> {
         vfs_name,
         id: id.to_string(),
         drive_id,
-        size,
+        // Workspace docs read as a JSON envelope of exported text, so their
+        // Drive `quotaBytesUsed` is not the byte length `read` produces. Leave
+        // the size unknown so `stat` computes the real content length instead
+        // of caching a mismatching value (which would truncate/zero-fill cat).
+        size: if kind.is_workspace_doc() { None } else { size },
         kind,
     })
 }

@@ -180,20 +180,32 @@ impl Resource for CachedResource {
 
     async fn stat(&self, path: &VPath) -> anyhow::Result<FileStat> {
         let key = path.as_str();
-        if let Some(e) = self.cache.get(key) {
-            return Ok(FileStat {
-                kind: if e.is_dir {
-                    FileKind::Dir
-                } else {
-                    FileKind::File
-                },
-                size: e.size,
-            });
-        }
-        // Negative cache: a fresh parent listing that lacks this path proves it
-        // does not exist — skip the network probe.
-        if !path.is_root() && self.cache.is_listed(parent_of(key)) {
-            anyhow::bail!("not found: {key}");
+        match self.cache.get(key) {
+            Some(e) if e.is_dir => {
+                return Ok(FileStat {
+                    kind: FileKind::Dir,
+                    size: 0,
+                });
+            }
+            // A file with a known (>0) size: serve it.
+            Some(e) if e.size > 0 => {
+                return Ok(FileStat {
+                    kind: FileKind::File,
+                    size: e.size,
+                });
+            }
+            // A file with size 0 is ambiguous: providers report 0 for sizes
+            // they don't cheaply know (rendered Notion page.json, exported
+            // Google docs). Don't trust it — compute via the provider so reads
+            // aren't clamped to nothing. (A genuinely empty file just re-stats.)
+            Some(_) => return self.inner.stat(path).await,
+            None => {
+                // Negative cache: a fresh parent listing that lacks this path
+                // proves it does not exist — skip the network probe.
+                if !path.is_root() && self.cache.is_listed(parent_of(key)) {
+                    anyhow::bail!("not found: {key}");
+                }
+            }
         }
         self.inner.stat(path).await
     }

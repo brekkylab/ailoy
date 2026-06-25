@@ -170,27 +170,29 @@ impl GDriveAccessor {
         Ok(resp.bytes().await?.to_vec())
     }
 
-    /// Export a Workspace doc (Doc/Sheet/Slide) as text/plain, caching the
-    /// result so stat (size) and a subsequent read share one round trip.
-    pub async fn export_text(&self, id: &str) -> anyhow::Result<Vec<u8>> {
-        if let Some(cached) = self.export_cache.lock().await.get(id) {
+    /// Export a Workspace doc as `mime` text (Docs/Slides use `text/plain`,
+    /// Sheets use `text/csv` — Google rejects `text/plain` for spreadsheets),
+    /// caching the result so stat (size) and a subsequent read share one round
+    /// trip. Keyed by id+mime.
+    pub async fn export_text(&self, id: &str, mime: &str) -> anyhow::Result<Vec<u8>> {
+        let key = format!("{id}|{mime}");
+        if let Some(cached) = self.export_cache.lock().await.get(&key) {
             return Ok(cached.clone());
         }
         let token = self.token().await?;
+        let url = reqwest::Url::parse_with_params(
+            &format!("{DRIVE_FILES}/{id}/export"),
+            &[("mimeType", mime), ("supportsAllDrives", "true")],
+        )?;
         let resp = self
             .client
-            .get(format!(
-                "{DRIVE_FILES}/{id}/export?mimeType=text/plain&supportsAllDrives=true"
-            ))
+            .get(url)
             .bearer_auth(token)
             .send()
             .await?
             .error_for_status()?;
         let data = resp.bytes().await?.to_vec();
-        self.export_cache
-            .lock()
-            .await
-            .insert(id.to_string(), data.clone());
+        self.export_cache.lock().await.insert(key, data.clone());
         Ok(data)
     }
 

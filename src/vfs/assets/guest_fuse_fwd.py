@@ -43,7 +43,13 @@ class Forward(Operations):
             if path in self.wbuf:
                 return self._attr(False, len(self.wbuf[path]))
             ent = self.acache.get(path)
-            if ent is not None and ent[0] > time.monotonic():
+            # Trust the cache only for directories or files with a known (>0)
+            # size. Listings report size 0 for files whose size isn't cheaply
+            # known (rendered Notion page.json, exported Google docs); serving 0
+            # makes the kernel clamp reads to nothing, so fall through to /stat,
+            # which computes the real size. ent = (expiry, is_dir, size).
+            if (ent is not None and ent[0] > time.monotonic()
+                    and (ent[1] or ent[2] > 0)):
                 return self._attr(ent[1], ent[2])
         st = json.loads(_request("GET", "/stat", path).decode())
         if not st.get("exists"):
@@ -86,10 +92,9 @@ class Forward(Operations):
         with self._mu:
             data = self.rcache.get(path)
         if data is None:
-            # Fetch the whole object once and serve every chunk from it. With
-            # direct_io the kernel reads until a short read signals EOF, so a
-            # stable buffer gives deterministic EOF and avoids re-fetching (and,
-            # for rendered files like Notion page.json, re-rendering) per chunk.
+            # Fetch the whole object once and serve every chunk from a stable
+            # buffer: deterministic EOF and no re-fetch (and, for rendered files
+            # like Notion page.json, no re-render) per read chunk.
             data = _request("GET", "/read", path)
             with self._mu:
                 self.rcache[path] = data
@@ -142,9 +147,4 @@ class Forward(Operations):
 
 
 if __name__ == "__main__":
-    # direct_io: reads go straight to the read handler, so the kernel does not
-    # clamp them to the stat size. Listings may report size 0/unknown for
-    # dynamically rendered files (e.g. Notion page.json); the handler returns
-    # the real bytes and signals EOF via a short read.
-    FUSE(Forward(), sys.argv[1], foreground=True, nothreads=False,
-         direct_io=True)
+    FUSE(Forward(), sys.argv[1], foreground=True, nothreads=False)
