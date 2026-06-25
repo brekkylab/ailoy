@@ -7,6 +7,7 @@
 //! See `docs/vfs-integration-report.md` for the design rationale.
 
 pub mod accessor;
+mod cache;
 pub mod forward;
 pub mod fuse;
 pub mod guest;
