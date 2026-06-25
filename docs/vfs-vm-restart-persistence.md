@@ -43,6 +43,8 @@ always talks to the live server.
 | reconnect fails "already running" | `Sandbox::new` propagated `SandboxStillRunning` when the previous owner's async stop hadn't finished | force-stop + restart on `SandboxStillRunning` |
 | read clamped to wrong size | rendered files (Notion page.json) report listing size 0 | stat verifies size for size-0 files; gdrive read/stat share one render |
 | crate vs runtime mismatch | crate 0.5.6 vs installed CLI/runtime 0.5.10 | bump crate to 0.5.10 |
+| intermittent multi-minute hang on `cat`/`ls` (the mount, and any process touching it, wedged forever) | **two unbounded I/O paths behind the FUSE forward server** — (a) provider HTTP clients had no timeout (`reqwest::Client::new()`; default object_store options), so a hung upstream API call never returned and the host never answered the forwarder; (b) the forwarder read via `read_to_end` + `SO_RCVTIMEO`, which on the musl build did not reliably abort a stalled read (10-min hang despite a 120s timeout). Found via a native `sample` of the hung process + a `VFS_DIAG`-gated forwarder log. | providers: 30s request + 10s connect timeout (notion/gdrive `reqwest` builder, S3 `object_store` ClientOptions). forwarder: 8s connect timeout + a **manual read loop with a hard 45s wall-clock deadline** — a guaranteed upper bound on any FUSE op regardless of host-side cause |
+| one slow op froze the whole mount | single-threaded `fuser` dispatch serialized every FUSE op | worker-pool forwarder (8 workers) offloads each blocking HTTP round trip; panics isolated per-job so a worker can't die and shrink the pool |
 
 ## Proof
 
@@ -54,6 +56,22 @@ re-mounts and reads again (489 B). Passes repeatedly.
 Key property: forwarder **deps persist on the rootfs**, so `apt` runs only on the
 **first** mount of a fresh sandbox. VM **restarts** (the actual requirement) find
 deps present → fast, deterministic, no network for setup.
+
+Verified across all dimensions (all `tests/vfs_e2e.rs`, live, `#[ignore]`):
+
+- `vfs_sandbox_remount_after_restart` — 25 consecutive clean attaches (6–10 s each).
+- `vfs_static_forwarder_large_read` — 300 KB chunked read, sampled bytes match.
+- `vfs_static_forwarder_write_unlink` — write → read-back → unlink → gone.
+- `vfs_concurrent_access_stress` — 8 simultaneous readers, all return identical
+  complete data (the worker-pool forwarder's purpose).
+- `vfs_sandbox_reconnect_race` — 12 rapid drop→reconnect cycles, no wedge.
+
+**Liveness guarantee:** every provider/forwarder I/O is now bounded, so a FUSE
+operation can never block indefinitely — worst case it fails fast (≤45 s) and
+recoverably. A transient failure is per-op (the mount stays; the next op recovers),
+and `AgentVfs::ensure_mounted` re-bootstraps on each attach. The liveness probe
+(`mount_is_live`) round-trips a root `ls` through the forwarder, so it now also
+detects a dead host server (fast connect-refused) and re-mounts.
 
 ## Forwarder: static binary (default) with a Python fallback
 
