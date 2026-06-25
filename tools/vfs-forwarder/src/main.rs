@@ -5,9 +5,29 @@
 use std::collections::{HashMap, VecDeque};
 use std::ffi::OsStr;
 use std::io::{Read, Write};
-use std::net::TcpStream;
-use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, UNIX_EPOCH};
+use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant, UNIX_EPOCH};
+
+/// Append a timestamped diagnostic line to /tmp/ailoy-vfs-fwd.log when VFS_DIAG
+/// is set. /tmp is a persisted volume in the sandbox, so the log survives a VM
+/// restart and can be inspected after a hang. No-op unless VFS_DIAG=1.
+fn diag(msg: &str) {
+    static ON: OnceLock<bool> = OnceLock::new();
+    static T0: OnceLock<Instant> = OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var("VFS_DIAG").as_deref() == Ok("1")) {
+        return;
+    }
+    let t0 = T0.get_or_init(Instant::now);
+    let ms = t0.elapsed().as_millis();
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/ailoy-vfs-fwd.log")
+    {
+        let _ = writeln!(f, "[{ms:>8}ms] {msg}");
+    }
+}
 
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData,
@@ -43,10 +63,28 @@ fn pct(s: &str) -> String {
 }
 
 /// Minimal HTTP/1.1 client over raw TCP. Returns (status, body).
+///
+/// Bounded at every step so a host server that is gone/unreachable surfaces as a
+/// fast error instead of wedging the FUSE op (and any process touching the mount)
+/// indefinitely: name resolution and connect are capped, as are read/write.
 fn http(method: &str, route: &str, query: &str, body: Option<&[u8]>) -> std::io::Result<(u16, Vec<u8>)> {
-    let mut s = TcpStream::connect(host_port())?;
-    s.set_read_timeout(Some(Duration::from_secs(120)))?;
-    s.set_write_timeout(Some(Duration::from_secs(120)))?;
+    let hp = host_port();
+    diag(&format!("http {method} {route} -> resolve {hp}"));
+    let addr = hp
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "no addr"))?;
+    diag(&format!("http {method} {route} -> connect {addr}"));
+    let t = Instant::now();
+    let mut s = TcpStream::connect_timeout(&addr, Duration::from_secs(8))?;
+    diag(&format!("http {method} {route} -> connected in {}ms", t.elapsed().as_millis()));
+    // Short per-syscall timeout so each read()/write() returns promptly; the
+    // overall request is bounded by an explicit wall-clock deadline below. We do
+    // NOT rely on read_to_end + SO_RCVTIMEO alone: on this musl build a recv
+    // timeout did not reliably abort a stalled read_to_end (observed a multi-
+    // minute hang), which would wedge the FUSE op — and the whole mount — forever.
+    s.set_read_timeout(Some(Duration::from_secs(5)))?;
+    s.set_write_timeout(Some(Duration::from_secs(5)))?;
     let mut head = format!(
         "{method} {route}?{query} HTTP/1.1\r\nHost: vfs\r\nx-vfs-token: {}\r\nConnection: close\r\n",
         token()
@@ -60,8 +98,33 @@ fn http(method: &str, route: &str, query: &str, body: Option<&[u8]>) -> std::io:
         s.write_all(b)?;
     }
     s.flush()?;
+    diag(&format!("http {method} {route} -> sent, reading"));
+    // Read until EOF, but enforce a hard wall-clock deadline: a host that
+    // accepted the connection but never answers must not block this FUSE op
+    // forever. WouldBlock/TimedOut/Interrupted just means "no data yet" — keep
+    // going until either EOF or the deadline.
     let mut resp = Vec::new();
-    s.read_to_end(&mut resp)?;
+    let rt = Instant::now();
+    let deadline = Duration::from_secs(45);
+    let mut buf = [0u8; 16384];
+    loop {
+        if rt.elapsed() > deadline {
+            diag(&format!("http {method} {route} -> DEADLINE after {}ms ({} bytes)", rt.elapsed().as_millis(), resp.len()));
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "read deadline exceeded"));
+        }
+        match s.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => resp.extend_from_slice(&buf[..n]),
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted) => {
+                continue;
+            }
+            Err(e) => {
+                diag(&format!("http {method} {route} -> READ ERR {e} after {}ms", rt.elapsed().as_millis()));
+                return Err(e);
+            }
+        }
+    }
+    diag(&format!("http {method} {route} -> read {} bytes in {}ms", resp.len(), rt.elapsed().as_millis()));
     let sep = resp.windows(4).position(|w| w == b"\r\n\r\n").unwrap_or(resp.len());
     let head_s = String::from_utf8_lossy(&resp[..sep]);
     let status = head_s

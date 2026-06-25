@@ -32,7 +32,14 @@ pub struct GDriveAccessor {
 impl GDriveAccessor {
     pub fn new(config: &GDriveConfig) -> anyhow::Result<Self> {
         Ok(Self {
-            client: reqwest::Client::new(),
+            // Bound every request: a hung upstream call run behind the FUSE
+            // forward server would otherwise wedge the guest FUSE op (and any
+            // process touching the mount) forever. A timeout makes it recoverable.
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             config: config.clone(),
             access_token: Mutex::new(None),
             export_cache: Mutex::new(HashMap::new()),

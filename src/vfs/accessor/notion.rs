@@ -20,7 +20,15 @@ pub struct NotionAccessor {
 impl NotionAccessor {
     pub fn new(config: &NotionConfig) -> anyhow::Result<Self> {
         Ok(Self {
-            client: reqwest::Client::new(),
+            // Bound every request: a hung upstream call would otherwise never
+            // return, and since these run behind the FUSE forward server, that
+            // wedges the guest FUSE op (and any process touching the mount)
+            // indefinitely. A timeout turns that into a recoverable error.
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             api_key: config.api_key.clone(),
         })
     }

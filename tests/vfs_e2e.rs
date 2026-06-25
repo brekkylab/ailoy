@@ -507,6 +507,50 @@ async fn vfs_sandbox_remount_after_restart() {
     let _ = std::process::Command::new("msb").args(["rm", &name]).status();
 }
 
+/// Deterministic stress of the drop -> immediate-reconnect race on a persisted
+/// sandbox — the agent-k lifecycle (drop runtime, recreate against the same VM)
+/// with no agent/LLM variance. Each iteration acquires the VM handle, runs a
+/// trivial exec, then drops the handle (which kicks off a fire-and-forget async
+/// VM stop) and immediately reconnects by name. If the in-flight stop races the
+/// next reconnect's force-stop/start and wedges the msb VM, the iteration blows
+/// past its timeout and fails here instead of hanging the whole suite.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: stress sandbox reconnect race (needs microsandbox)"]
+async fn vfs_sandbox_reconnect_race() {
+    dotenvy::dotenv().ok();
+    let name = format!("ailoy-vfs-race-{}", stamp());
+    for i in 0..12 {
+        let t0 = std::time::Instant::now();
+        let iter = async {
+            let env = RunEnv::sandbox(SandboxConfig {
+                name: Some(name.clone()),
+                persist: true,
+                allow_host_egress: true,
+                ..Default::default()
+            })
+            .await
+            .expect("sandbox new");
+            let handle = env.get().await.expect("get handle");
+            let out = handle
+                .exec_shell("echo ok".into(), Some(20))
+                .await
+                .expect("exec");
+            assert_eq!(out.exit_code, 0, "iter {i} exec exit");
+            // Drop handle (fire-and-forget async stop) then env; immediately loop
+            // into the next reconnect to maximize the race window.
+            drop(handle);
+            drop(env);
+        };
+        match tokio::time::timeout(std::time::Duration::from_secs(90), iter).await {
+            Ok(()) => println!("iter {i}: ok in {:.1}s", t0.elapsed().as_secs_f32()),
+            Err(_) => panic!("iter {i} HUNG > 90s — reconnect race wedged the VM"),
+        }
+    }
+    let _ = std::process::Command::new("msb").args(["stop", &name]).status();
+    let _ = std::process::Command::new("msb").args(["rm", &name]).status();
+    println!("RACE TEST DONE (12 reconnects clean)");
+}
+
 /// Does a freshly crate-created sandbox (allow_host_egress) have working network
 /// egress via the crate's exec path? Checks DNS + apt immediately, before any
 /// bootstrap — to rule out the killed-apt state as a confound.

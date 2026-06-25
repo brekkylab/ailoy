@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use object_store::ClientOptions;
 use object_store::aws::{AmazonS3, AmazonS3Builder};
 use serde::{Deserialize, Serialize};
 
@@ -30,11 +31,18 @@ pub struct S3Accessor {
 
 impl S3Accessor {
     pub fn new(config: &S3Config) -> anyhow::Result<Self> {
+        // Bound every request: run behind the FUSE forward server, an unbounded
+        // hung call would wedge the guest FUSE op (and any process touching the
+        // mount) forever. A timeout makes it a recoverable error instead.
+        let client_options = ClientOptions::new()
+            .with_timeout(std::time::Duration::from_secs(30))
+            .with_connect_timeout(std::time::Duration::from_secs(10));
         let mut builder = AmazonS3Builder::new()
             .with_bucket_name(config.bucket.as_str())
             .with_region(config.region.as_str())
             .with_access_key_id(config.access_key_id.as_str())
-            .with_secret_access_key(config.secret_access_key.as_str());
+            .with_secret_access_key(config.secret_access_key.as_str())
+            .with_client_options(client_options);
         if let Some(endpoint) = &config.endpoint {
             builder = builder
                 .with_endpoint(endpoint.as_str())
