@@ -171,15 +171,24 @@ impl Pool {
             let p = pool.clone();
             std::thread::spawn(move || loop {
                 let job = {
-                    let mut q = p.q.lock().unwrap();
+                    let mut q = match p.q.lock() {
+                        Ok(g) => g,
+                        Err(e) => e.into_inner(), // a prior panicking job poisoned the queue; keep serving
+                    };
                     loop {
                         if let Some(j) = q.pop_front() {
                             break j;
                         }
-                        q = p.cv.wait(q).unwrap();
+                        q = match p.cv.wait(q) {
+                            Ok(g) => g,
+                            Err(e) => e.into_inner(),
+                        };
                     }
                 };
-                job();
+                // Isolate a panicking job so it kills only that one FUSE op, never the
+                // worker — a dead worker would permanently shrink the pool and could
+                // eventually wedge the whole mount.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
             });
         }
         pool
