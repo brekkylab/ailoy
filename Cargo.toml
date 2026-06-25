@@ -4,6 +4,9 @@ members = [
 ]
 exclude = [
     ".worktrees",
+    # Built only for <arch>-linux-musl (the sandbox guest), not the host. See
+    # tools/vfs-forwarder/README.md.
+    "tools/vfs-forwarder",
 ]
 
 [workspace.package]

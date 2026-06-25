@@ -687,6 +687,76 @@ async fn vfs_host_fuse_bind_into_guest() {
     );
 }
 
+/// Full dep-free forwarder end to end: host forward server (notion) + a CLEAN
+/// sandbox (no python/fuse3/apt) running the static Rust forwarder binary, which
+/// reaches the host over allow@host egress and serves provider content.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "poc: full static dep-free forwarder serves a provider (needs creds + sandbox + cross-built binary)"]
+async fn vfs_static_forwarder_full() {
+    use std::path::Path;
+    use std::sync::Arc;
+    dotenvy::dotenv().ok();
+    // Cross-build first: see tools/vfs-forwarder/README.md.
+    let target = format!("{}-unknown-linux-musl", std::env::consts::ARCH);
+    let bin_path = format!(
+        "{}/tools/vfs-forwarder/target/{target}/release/ailoy-vfs-fwd",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let bin = std::fs::read(&bin_path)
+        .unwrap_or_else(|e| panic!("forwarder binary missing at {bin_path}: {e}"));
+
+    let vfs = Arc::new(Vfs::from_config(notion_vfs()).unwrap());
+    let rt = tokio::runtime::Handle::current();
+    let forward = ailoy::vfs::VfsForward::spawn(vfs, &rt).expect("forward");
+    let (port, tok) = (forward.port(), forward.token().to_string());
+
+    let name = format!("ailoy-fwdfull-{}", stamp());
+    let sandbox = RunEnv::sandbox(SandboxConfig {
+        name: Some(name.clone()),
+        persist: false,
+        allow_host_egress: true,
+        ..Default::default()
+    })
+    .await
+    .expect("sandbox");
+    let h = sandbox.get().await.expect("handle");
+    for _ in 0..40 {
+        if h.exec_shell("true".into(), Some(10)).await.map(|o| o.exit_code == 0).unwrap_or(false) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    h.write(Path::new("/opt/ailoy-vfs-fwd"), &bin).await.expect("write binary");
+    let page = "/mnt/vfs/notion/pages/\
+                Engineering_Logs__490e8208-3e62-48ef-a8ce-bc08755ea4ff/page.json";
+    let script = format!(
+        "echo \"deps: python3=$(command -v python3) fusermount3=$(command -v fusermount3)\"; \
+         chmod +x /opt/ailoy-vfs-fwd; mkdir -p /mnt/vfs; \
+         VFS_HOST='http://host.microsandbox.internal:{port}' VFS_TOKEN='{tok}' \
+         setsid sh -c '/opt/ailoy-vfs-fwd /mnt/vfs >/tmp/fwd.log 2>&1' </dev/null >/dev/null 2>&1 & \
+         for _ in $(seq 1 40); do grep -q ' /mnt/vfs ' /proc/mounts && break; sleep 0.25; done; \
+         echo '== mount =='; mount | grep /mnt/vfs || echo '(not mounted)'; \
+         echo '== ls pages =='; ls /mnt/vfs/notion/pages 2>&1 | head; \
+         echo '== cat bytes =='; cat '{page}' 2>/dev/null | wc -c; \
+         echo '== log =='; cat /tmp/fwd.log 2>&1 | tail -5"
+    );
+    let out = h.exec_shell(script, Some(60)).await.expect("guest exec");
+    println!("--- guest ---\n{}", out.stdout);
+    if !out.stderr.trim().is_empty() {
+        println!("--- stderr ---\n{}", out.stderr);
+    }
+    let bytes: i64 = out
+        .stdout
+        .lines()
+        .skip_while(|l| !l.contains("== cat bytes =="))
+        .nth(1)
+        .and_then(|l| l.trim().parse().ok())
+        .unwrap_or(0);
+    let _ = std::process::Command::new("msb").args(["stop", &name]).status();
+    let _ = std::process::Command::new("msb").args(["rm", &name]).status();
+    assert!(bytes > 0, "dep-free forwarder did not serve provider page.json ({bytes}B)");
+}
+
 /// All three providers mounted together at /mnt/vfs/{s3,notion,gdrive}.
 fn all_vfs() -> VfsConfig {
     VfsConfig {

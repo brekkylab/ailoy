@@ -1,0 +1,21 @@
+[package]
+name = "ailoy-vfs-forwarder"
+version = "0.1.0"
+edition = "2021"
+description = "Static, dependency-free in-guest FUSE forwarder for the ailoy VFS sandbox path"
+publish = false
+
+[[bin]]
+name = "ailoy-vfs-fwd"
+path = "src/main.rs"
+
+[dependencies]
+# default-features = false → pure-Rust mount (no libfuse). The guest mounts
+# /dev/fuse directly as root, so no fusermount3/libfuse is needed.
+fuser = { version = "0.15", default-features = false }
+libc = "0.2"
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
