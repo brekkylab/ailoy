@@ -16,7 +16,7 @@ use ailoy::{
     lang_model::LangModelProvider,
     message::{Message, Part, Role},
     runenv::{RunEnv, SandboxConfig},
-    vfs::{MountSpec, ProviderConfig, S3Config, Vfs, VfsConfig},
+    vfs::{FileKind, MountSpec, ProviderConfig, S3Config, Vfs, VfsConfig},
 };
 use futures::StreamExt;
 
@@ -195,12 +195,48 @@ async fn notion_read_and_command_smoke() {
         .unwrap()
         .to_string();
 
+    // Descend into the page dir: it should contain page.json plus a
+    // subdirectory per child_page block (hierarchical, mirroring mirage).
+    let (res, vp) = vfs
+        .route(&format!("/notion/pages/{}", parent.name))
+        .expect("route page dir");
+    let dir_entries = res.readdir(&vp).await.expect("readdir page dir");
+    println!(
+        "{} contents: {:?}",
+        parent.name,
+        dir_entries
+            .iter()
+            .map(|e| format!("{}{}", e.name, if e.kind == FileKind::Dir { "/" } else { "" }))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        dir_entries.iter().any(|e| e.name == "page.json"),
+        "page dir must expose page.json"
+    );
+
     let (res, vp) = vfs
         .route(&format!("/notion/pages/{}/page.json", parent.name))
         .expect("route page.json");
     let data = res.read_bytes(&vp, None).await.expect("read page.json");
     let page: serde_json::Value = serde_json::from_slice(&data).unwrap();
     println!("first page title: {:?}", page.get("title"));
+    // Normalized schema parity with mirage `normalize_page`.
+    for k in [
+        "page_id",
+        "title",
+        "url",
+        "created_time",
+        "last_edited_time",
+        "parent_type",
+        "parent_id",
+        "archived",
+        "created_by",
+        "last_edited_by",
+        "markdown",
+        "blocks",
+    ] {
+        assert!(page.get(k).is_some(), "page.json missing key `{k}`");
+    }
 
     // page-create under the first page
     let (res, _) = vfs.route("/notion/.cmd/page-create").unwrap();
