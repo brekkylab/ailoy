@@ -13,7 +13,8 @@ use crate::vfs::{Vfs, path::VPath, resource::FileKind};
 /// in-guest FUSE forwarder. Bound to an OS-assigned ephemeral port; requests
 /// must carry the session token in the `x-vfs-token` header. Aborts on drop.
 ///
-/// Routes: `GET /readdir|/stat|/read?path=…[&offset=&size=]`, `PUT /write?path=…`.
+/// Routes: `GET /readdir|/stat|/read?path=…[&offset=&size=]`, `PUT /write?path=…`,
+/// `DELETE /unlink?path=…`.
 pub struct VfsForward {
     addr: SocketAddr,
     token: String,
@@ -167,6 +168,7 @@ async fn handle_conn(mut stream: TcpStream, vfs: Arc<Vfs>, token: String) -> any
                 .await
                 .map(|_| b"{\"ok\":true}".to_vec())
         }
+        ("DELETE", "/unlink") => unlink_path(&vfs, &path).await.map(|_| b"{\"ok\":true}".to_vec()),
         _ => return respond(&mut stream, 404, "text/plain", b"not found".to_vec()).await,
     };
 
@@ -250,6 +252,13 @@ async fn read_bytes(
         _ => None,
     };
     res.read_bytes(&vp, range).await
+}
+
+async fn unlink_path(vfs: &Vfs, path: &str) -> anyhow::Result<()> {
+    let (res, vp) = vfs
+        .route(path)
+        .ok_or_else(|| anyhow::anyhow!("no mount for {path}"))?;
+    res.unlink(&vp).await
 }
 
 async fn write_bytes(vfs: &Vfs, path: &str, data: Vec<u8>) -> anyhow::Result<()> {

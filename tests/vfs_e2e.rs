@@ -721,6 +721,70 @@ async fn vfs_static_forwarder_full() {
     assert!(bytes > 0, "dep-free forwarder did not serve provider page.json ({bytes}B)");
 }
 
+/// Full filesystem access through the static dep-free forwarder: write a file to
+/// the S3 mount, read it back, then `rm` it (unlink) — all from a clean guest
+/// with no python/fuse3/apt. Proves write + unlink work over the forward path.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "poc: write+rm through static forwarder on S3 (needs AWS creds + sandbox + cross-built binary)"]
+async fn vfs_static_forwarder_write_unlink() {
+    use std::path::Path;
+    use std::sync::Arc;
+    dotenvy::dotenv().ok();
+    let target = format!("{}-unknown-linux-musl", std::env::consts::ARCH);
+    let bin_path = format!(
+        "{}/tools/vfs-forwarder/target/{target}/release/ailoy-vfs-fwd",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let bin = std::fs::read(&bin_path)
+        .unwrap_or_else(|e| panic!("forwarder binary missing at {bin_path}: {e}"));
+
+    let vfs = Arc::new(Vfs::from_config(vfs_config()).unwrap()); // s3-only
+    let rt = tokio::runtime::Handle::current();
+    let forward = ailoy::vfs::VfsForward::spawn(vfs, &rt).expect("forward");
+    let (port, tok) = (forward.port(), forward.token().to_string());
+
+    let s = stamp();
+    let name = format!("ailoy-fwdrm-{s}");
+    let fname = format!("vfs-fwd-rm-{s}.txt");
+    let sandbox = RunEnv::sandbox(SandboxConfig {
+        name: Some(name.clone()),
+        persist: false,
+        allow_host_egress: true,
+        ..Default::default()
+    })
+    .await
+    .expect("sandbox");
+    let h = sandbox.get().await.expect("handle");
+    for _ in 0..40 {
+        if h.exec_shell("true".into(), Some(10)).await.map(|o| o.exit_code == 0).unwrap_or(false) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    h.write(Path::new("/opt/ailoy-vfs-fwd"), &bin).await.expect("write binary");
+    let f = format!("/mnt/vfs/s3/{fname}");
+    let script = format!(
+        "chmod +x /opt/ailoy-vfs-fwd; mkdir -p /mnt/vfs; \
+         VFS_HOST='http://host.microsandbox.internal:{port}' VFS_TOKEN='{tok}' \
+         setsid sh -c '/opt/ailoy-vfs-fwd /mnt/vfs >/tmp/fwd.log 2>&1' </dev/null >/dev/null 2>&1 & \
+         for _ in $(seq 1 40); do grep -q ' /mnt/vfs ' /proc/mounts && break; sleep 0.25; done; \
+         printf 'rmcontent-{s}' > '{f}'; \
+         echo \"WROTE=$(cat '{f}')\"; \
+         rm '{f}' && echo RM_OK || echo RM_FAIL; \
+         (ls '{f}' >/dev/null 2>&1 && echo STILL_THERE || echo GONE)"
+    );
+    let out = h.exec_shell(script, Some(60)).await.expect("guest exec");
+    println!("--- guest ---\n{}", out.stdout);
+    if !out.stderr.trim().is_empty() {
+        println!("--- stderr ---\n{}", out.stderr);
+    }
+    let _ = std::process::Command::new("msb").args(["stop", &name]).status();
+    let _ = std::process::Command::new("msb").args(["rm", &name]).status();
+    assert!(out.stdout.contains(&format!("WROTE=rmcontent-{s}")), "write/read failed");
+    assert!(out.stdout.contains("RM_OK"), "rm (unlink) failed");
+    assert!(out.stdout.contains("GONE"), "file still present after rm");
+}
+
 /// All three providers mounted together at /mnt/vfs/{s3,notion,gdrive}.
 fn all_vfs() -> VfsConfig {
     VfsConfig {

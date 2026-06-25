@@ -250,6 +250,15 @@ impl Filesystem for Fs {
         buf[off..off + data.len()].copy_from_slice(data);
         reply.written(data.len() as u32);
     }
+    fn unlink(&mut self, _r: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+        let Some(pp) = self.path(parent) else { reply.error(libc::ENOENT); return; };
+        let Some(nm) = name.to_str() else { reply.error(libc::EINVAL); return; };
+        let path = self.child(&pp, nm);
+        match http("DELETE", "/unlink", &format!("path={}", pct(&path)), None) {
+            Ok((200, _)) => reply.ok(),
+            _ => reply.error(libc::EIO),
+        }
+    }
     fn flush(&mut self, _r: &Request, ino: u64, _fh: u64, _lock: u64, reply: ReplyEmpty) {
         self.put(ino); reply.ok();
     }
