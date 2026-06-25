@@ -32,13 +32,19 @@ mkdir -p {mount_root} /opt/ailoy
 # contains that path, so `pkill -f <path>` would SIGTERM the bootstrap itself.
 fusermount3 -u {mount_root} 2>/dev/null || umount -l {mount_root} 2>/dev/null || true
 if ! command -v python3 >/dev/null 2>&1 || ! command -v fusermount3 >/dev/null 2>&1; then
-  # Best-effort install for non-baked images. `DPkg::Lock::Timeout` waits out the
-  # boot-time apt-daily/unattended-upgrades dpkg lock instead of hanging on it.
-  # Production should bake python3/fuse3/mfusepy into the guest image so this
-  # branch is skipped entirely (fast, offline, no lock contention).
-  apt-get -o DPkg::Lock::Timeout=120 update -qq >/dev/null 2>&1 || true
-  DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 \
-    install -y -qq python3 python3-pip fuse3 >/dev/null 2>&1 || true
+  # Best-effort install for non-baked images, ONLY on the first mount of a fresh
+  # sandbox (deps then persist on the rootfs, so restarts skip this). Each apt is
+  # bounded by `timeout` so a slow mirror or stuck lock fails fast instead of
+  # hanging to the exec timeout; DPkg::Lock::Timeout waits out boot-time
+  # apt-daily; retried twice for transient contention.
+  # Production should bake python3/fuse3/mfusepy into the guest image to skip
+  # this entirely (fast, offline, deterministic).
+  for _ in 1 2; do
+    timeout 45 apt-get -o DPkg::Lock::Timeout=40 update -qq >/dev/null 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive timeout 80 apt-get -o DPkg::Lock::Timeout=40 \
+      install -y -qq python3 python3-pip fuse3 >/dev/null 2>&1 || true
+    command -v python3 >/dev/null 2>&1 && command -v fusermount3 >/dev/null 2>&1 && break
+  done
 fi
 python3 -c 'import mfusepy' 2>/dev/null || pip3 install --break-system-packages -q mfusepy >/dev/null 2>&1 || true
 export VFS_HOST="http://host.microsandbox.internal:{port}"
