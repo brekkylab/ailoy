@@ -551,6 +551,68 @@ async fn vfs_sandbox_reconnect_race() {
     println!("RACE TEST DONE (12 reconnects clean)");
 }
 
+/// Stress concurrent access through the guest mount — the scenario the worker-pool
+/// forwarder exists for (a recursive grep, or parallel readers in an agent shell).
+/// Launches 8 simultaneous readers of the same Notion page.json and asserts they
+/// all return identical, complete byte counts within a bounded time. A forwarder
+/// that serialized badly or deadlocked under concurrency would hang (the guest
+/// `timeout` then yields short/zero counts and the assert fails) rather than wedge
+/// the whole suite.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: concurrent mount access (needs creds + sandbox + macFUSE)"]
+async fn vfs_concurrent_access_stress() {
+    dotenvy::dotenv().ok();
+    let name = format!("ailoy-vfs-concur-{}", stamp());
+    let page = "/mnt/vfs/notion/pages/\
+                Engineering_Logs__490e8208-3e62-48ef-a8ce-bc08755ea4ff/page.json";
+    let sandbox = RunEnv::sandbox(SandboxConfig {
+        name: Some(name.clone()),
+        persist: true,
+        allow_host_egress: true,
+        ..Default::default()
+    })
+    .await
+    .expect("sandbox");
+    let mut agent = AgentBuilder::new(MODEL)
+        .provider(provider())
+        .instruction("You are a tester. Use the shell tool.")
+        .shell_tool()
+        .runenv(sandbox)
+        .vfs(notion_vfs())
+        .build()
+        .expect("build agent");
+    let q = Message::new(Role::User).with_contents([Part::text("Reply with READY.")]);
+    let mut strm = agent.run(q);
+    while let Some(ev) = strm.next().await {
+        if let Err(e) = ev {
+            eprintln!("run error: {e}");
+        }
+    }
+    // 8 readers in parallel; each prints its byte count. Guest-side `timeout`
+    // bounds a hang so the test fails fast instead of blocking the suite.
+    let script = format!("for i in $(seq 1 8); do (cat {page} | wc -c) & done; wait");
+    let out = std::process::Command::new("msb")
+        .args(["exec", &name, "--", "timeout", "70", "sh", "-c", &script])
+        .output()
+        .expect("msb exec");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let counts: Vec<i64> = stdout
+        .split_whitespace()
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    println!("concurrent read counts: {counts:?}");
+    let _ = std::process::Command::new("msb").args(["stop", &name]).status();
+    let _ = std::process::Command::new("msb").args(["rm", &name]).status();
+    assert_eq!(counts.len(), 8, "expected 8 reader results, got {counts:?}");
+    let first = counts[0];
+    assert!(first > 0, "reads returned empty: {counts:?}");
+    assert!(
+        counts.iter().all(|&c| c == first),
+        "concurrent reads returned inconsistent sizes: {counts:?}"
+    );
+    println!("CONCURRENT STRESS DONE ({first} bytes x8)");
+}
+
 /// Does a freshly crate-created sandbox (allow_host_egress) have working network
 /// egress via the crate's exec path? Checks DNS + apt immediately, before any
 /// bootstrap — to rule out the killed-apt state as a confound.
