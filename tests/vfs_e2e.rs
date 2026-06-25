@@ -258,6 +258,36 @@ fn gdrive_vfs() -> VfsConfig {
     }
 }
 
+/// Verify the GDrive adapter mirrors the Drive folder hierarchy: the root
+/// lists folders as directories, and descending into a folder lists its
+/// children (not a flat dump of the whole Drive).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs GOOGLE_* refresh token with Drive scope"]
+async fn gdrive_hierarchy_smoke() {
+    let vfs = Vfs::from_config(gdrive_vfs()).unwrap();
+    let (res, vp) = vfs.route("/gdrive").expect("route gdrive");
+    let root = res.readdir(&vp).await.expect("readdir root");
+    let dirs: Vec<&String> = root
+        .iter()
+        .filter(|e| matches!(e.kind, ailoy::vfs::FileKind::Dir))
+        .map(|e| &e.name)
+        .collect();
+    println!("root: {} entries, {} folders", root.len(), dirs.len());
+    println!("folders: {:?}", &dirs[..dirs.len().min(8)]);
+    assert!(!dirs.is_empty(), "expected at least one folder at root");
+
+    let folder = dirs[0].clone();
+    let (res, vp) = vfs
+        .route(&format!("/gdrive/{folder}"))
+        .expect("route subfolder");
+    let children = res.readdir(&vp).await.expect("readdir subfolder");
+    println!(
+        "  /{folder}: {} children -> {:?}",
+        children.len(),
+        children.iter().map(|e| &e.name).take(8).collect::<Vec<_>>()
+    );
+}
+
 /// Direct smoke test of the GDrive adapter: list Drive, read a Google Doc as
 /// `.gdoc.json`, then append to it via `.cmd/docs-append`.
 #[tokio::test(flavor = "multi_thread")]
@@ -314,13 +344,41 @@ async fn gdrive_read_and_command_smoke() {
     }
 }
 
-/// Brings up a NAMED sandbox with Notion mounted at /mnt/vfs, triggers the
-/// in-guest forwarder mount, then sleeps so you can inspect it directly:
+/// All three providers mounted together at /mnt/vfs/{s3,notion,gdrive}.
+fn all_vfs() -> VfsConfig {
+    VfsConfig {
+        mounts: vec![
+            MountSpec {
+                prefix: "/s3".into(),
+                provider: ProviderConfig::S3(s3_config()),
+            },
+            MountSpec {
+                prefix: "/notion".into(),
+                provider: ProviderConfig::Notion(ailoy::vfs::NotionConfig {
+                    api_key: std::env::var("NOTION_API_KEY").unwrap(),
+                }),
+            },
+            MountSpec {
+                prefix: "/gdrive".into(),
+                provider: ProviderConfig::GDrive(ailoy::vfs::GDriveConfig {
+                    client_id: std::env::var("GOOGLE_CLIENT_ID").unwrap(),
+                    client_secret: std::env::var("GOOGLE_CLIENT_SECRET").unwrap(),
+                    refresh_token: std::env::var("GOOGLE_REFRESH_TOKEN").unwrap(),
+                }),
+            },
+        ],
+    }
+}
+
+/// Brings up a NAMED sandbox with S3 + Notion + GDrive mounted under /mnt/vfs,
+/// triggers the in-guest forwarder mount, then sleeps so you can inspect it:
 ///   msb ls
-///   msb exec ailoy-vfs-inspect -- sh -c 'ls -la /mnt/vfs/notion/pages'
+///   msb exec ailoy-vfs-inspect -- sh -c 'ls /mnt/vfs; ls /mnt/vfs/s3; ls /mnt/vfs/notion/pages; ls /mnt/vfs/gdrive'
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "interactive: holds a named sandbox up for manual msb exec inspection"]
-async fn vfs_inspect_sandbox_notion() {
+async fn vfs_inspect_sandbox() {
+    dotenvy::dotenv().ok();
+
     let name = "ailoy-vfs-inspect";
     let sandbox = RunEnv::sandbox(SandboxConfig {
         name: Some(name.into()),
@@ -335,7 +393,7 @@ async fn vfs_inspect_sandbox_notion() {
         .instruction("You are a tester. Use the shell tool.")
         .shell_tool()
         .runenv(sandbox)
-        .vfs(notion_vfs())
+        .vfs(all_vfs())
         .build()
         .expect("build agent");
 
@@ -354,13 +412,13 @@ async fn vfs_inspect_sandbox_notion() {
 
     println!("\n================ VFS INSPECT READY ================");
     println!("sandbox name : {name}");
-    println!("guest mount  : /mnt/vfs/notion");
+    println!("guest mounts : /mnt/vfs/{{s3,notion,gdrive}}");
     println!("inspect from another terminal:");
     println!("  msb ls");
-    println!("  msb exec {name} -- sh -c 'mount | grep fuse; ls -la /mnt/vfs/notion/pages'");
-    println!(
-        "  msb exec {name} -- sh -c 'P=$(ls /mnt/vfs/notion/pages | head -1); cat \"/mnt/vfs/notion/pages/$P/page.json\" | head -40'"
-    );
+    println!("  msb exec {name} -- sh -c 'mount | grep fuse; ls -la /mnt/vfs'");
+    println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/s3'");
+    println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/notion/pages'");
+    println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/gdrive | head'");
     println!("sleeping 1h — Ctrl-C this process to tear down.");
     println!("===================================================\n");
 

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -7,8 +6,10 @@ use tokio::sync::Mutex;
 
 const OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const DRIVE_FILES: &str = "https://www.googleapis.com/drive/v3/files";
+const DRIVE_DRIVES: &str = "https://www.googleapis.com/drive/v3/drives";
 const DOCS_API: &str = "https://docs.googleapis.com/v1/documents";
-const LIST_TTL: Duration = Duration::from_secs(10);
+const FILE_FIELDS: &str =
+    "nextPageToken,files(id,name,mimeType,driveId,size,quotaBytesUsed,modifiedTime,parents)";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct GDriveConfig {
@@ -17,16 +18,15 @@ pub struct GDriveConfig {
     pub refresh_token: String,
 }
 
-/// Holds Google OAuth credentials (one refresh token) and a cached access
-/// token. Mirrors mirage `accessor/gdrive.py` + `core/google/config.py`.
+/// Holds Google OAuth credentials (one refresh token), a cached access token,
+/// and a cache of exported Workspace-doc text. Mirrors mirage
+/// `accessor/gdrive.py` + `core/google/{config,drive}.py`.
 pub struct GDriveAccessor {
     client: reqwest::Client,
     config: GDriveConfig,
     access_token: Mutex<Option<String>>,
-    /// Short-TTL cache of the Drive file listing, shared by readdir/stat/resolve
-    /// so an `ls` (one readdir + a getattr per entry) costs one Drive call, not one per entry.
-    list_cache: Mutex<Option<(Instant, Vec<Value>)>>,
-    /// Cache of exported Google Doc text (keyed by file id), shared by stat and read.
+    /// Exported Google Doc/Sheet/Slide text (keyed by file id), shared by stat
+    /// (size) and read so they share one network round trip.
     export_cache: Mutex<HashMap<String, Vec<u8>>>,
 }
 
@@ -36,7 +36,6 @@ impl GDriveAccessor {
             client: reqwest::Client::new(),
             config: config.clone(),
             access_token: Mutex::new(None),
-            list_cache: Mutex::new(None),
             export_cache: Mutex::new(HashMap::new()),
         })
     }
@@ -72,41 +71,99 @@ impl GDriveAccessor {
         Ok(token)
     }
 
-    pub async fn list_files(&self) -> anyhow::Result<Vec<Value>> {
-        {
-            let cache = self.list_cache.lock().await;
-            if let Some((at, files)) = cache.as_ref()
-                && at.elapsed() < LIST_TTL
-            {
-                return Ok(files.clone());
+    /// List the immediate children of `folder_id` ("root" for My Drive root).
+    /// `drive_id` is set when listing inside a shared drive.
+    pub async fn list_files(
+        &self,
+        folder_id: &str,
+        drive_id: Option<&str>,
+    ) -> anyhow::Result<Vec<Value>> {
+        let token = self.token().await?;
+        let q = format!("'{folder_id}' in parents and trashed=false");
+        let mut files = Vec::new();
+        let mut page_token: Option<String> = None;
+        loop {
+            let mut params: Vec<(&str, String)> = vec![
+                ("q", q.clone()),
+                ("fields", FILE_FIELDS.to_string()),
+                ("pageSize", "1000".to_string()),
+                ("orderBy", "modifiedTime desc".to_string()),
+            ];
+            if let Some(d) = drive_id {
+                params.push(("corpora", "drive".to_string()));
+                params.push(("driveId", d.to_string()));
+                params.push(("includeItemsFromAllDrives", "true".to_string()));
+                params.push(("supportsAllDrives", "true".to_string()));
+            }
+            if let Some(pt) = &page_token {
+                params.push(("pageToken", pt.clone()));
+            }
+            let url = reqwest::Url::parse_with_params(DRIVE_FILES, &params)?;
+            let resp = self
+                .client
+                .get(url)
+                .bearer_auth(&token)
+                .send()
+                .await?
+                .error_for_status()?;
+            let v: Value = resp.json().await?;
+            if let Some(arr) = v.get("files").and_then(|f| f.as_array()) {
+                files.extend(arr.iter().cloned());
+            }
+            page_token = v
+                .get("nextPageToken")
+                .and_then(|t| t.as_str())
+                .map(|s| s.to_string());
+            if page_token.is_none() {
+                break;
             }
         }
-        let token = self.token().await?;
-        let url = format!(
-            "{DRIVE_FILES}?fields=files(id,name,mimeType,size)&pageSize=200&q=trashed%3Dfalse"
-        );
-        let resp = self
-            .client
-            .get(url)
-            .bearer_auth(token)
-            .send()
-            .await?
-            .error_for_status()?;
-        let v: Value = resp.json().await?;
-        let files = v
-            .get("files")
-            .and_then(|f| f.as_array())
-            .cloned()
-            .unwrap_or_default();
-        *self.list_cache.lock().await = Some((Instant::now(), files.clone()));
         Ok(files)
+    }
+
+    /// Shared drives visible to the account (best-effort; needs scope).
+    pub async fn list_shared_drives(&self) -> anyhow::Result<Vec<Value>> {
+        let token = self.token().await?;
+        let mut drives = Vec::new();
+        let mut page_token: Option<String> = None;
+        loop {
+            let mut params: Vec<(&str, String)> = vec![
+                ("fields", "nextPageToken,drives(id,name)".to_string()),
+                ("pageSize", "100".to_string()),
+            ];
+            if let Some(pt) = &page_token {
+                params.push(("pageToken", pt.clone()));
+            }
+            let url = reqwest::Url::parse_with_params(DRIVE_DRIVES, &params)?;
+            let resp = self
+                .client
+                .get(url)
+                .bearer_auth(&token)
+                .send()
+                .await?
+                .error_for_status()?;
+            let v: Value = resp.json().await?;
+            if let Some(arr) = v.get("drives").and_then(|d| d.as_array()) {
+                drives.extend(arr.iter().cloned());
+            }
+            page_token = v
+                .get("nextPageToken")
+                .and_then(|t| t.as_str())
+                .map(|s| s.to_string());
+            if page_token.is_none() {
+                break;
+            }
+        }
+        Ok(drives)
     }
 
     pub async fn download(&self, id: &str) -> anyhow::Result<Vec<u8>> {
         let token = self.token().await?;
         let resp = self
             .client
-            .get(format!("{DRIVE_FILES}/{id}?alt=media"))
+            .get(format!(
+                "{DRIVE_FILES}/{id}?alt=media&supportsAllDrives=true"
+            ))
             .bearer_auth(token)
             .send()
             .await?
@@ -114,8 +171,8 @@ impl GDriveAccessor {
         Ok(resp.bytes().await?.to_vec())
     }
 
-    /// Export a Google Doc as text/plain, caching the result so stat (size) and
-    /// a subsequent read share one network round trip.
+    /// Export a Workspace doc (Doc/Sheet/Slide) as text/plain, caching the
+    /// result so stat (size) and a subsequent read share one round trip.
     pub async fn export_text(&self, id: &str) -> anyhow::Result<Vec<u8>> {
         if let Some(cached) = self.export_cache.lock().await.get(id) {
             return Ok(cached.clone());
@@ -123,7 +180,9 @@ impl GDriveAccessor {
         let token = self.token().await?;
         let resp = self
             .client
-            .get(format!("{DRIVE_FILES}/{id}/export?mimeType=text/plain"))
+            .get(format!(
+                "{DRIVE_FILES}/{id}/export?mimeType=text/plain&supportsAllDrives=true"
+            ))
             .bearer_auth(token)
             .send()
             .await?
