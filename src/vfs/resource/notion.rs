@@ -180,7 +180,6 @@ fn segments(path: &VPath) -> Vec<String> {
 }
 
 /// Page id encoded as the part after the last `__` in a directory name.
-/// Mirrors mirage `split_suffix_id` / `parse_id_name`.
 fn page_id(dir_name: &str) -> String {
     dir_name
         .rsplit_once("__")
@@ -190,7 +189,7 @@ fn page_id(dir_name: &str) -> String {
 }
 
 /// Directory name for a page: `<sanitized-title>__<id>`, falling back to
-/// `untitled` when the page has no title. Mirrors mirage `page_dirname`.
+/// `untitled` when the page has no title.
 fn page_dirname(page: &Value) -> String {
     let title = extract_title(page);
     let id = page.get("id").and_then(|v| v.as_str()).unwrap_or("");
@@ -202,8 +201,8 @@ fn page_dirname(page: &Value) -> String {
     format!("{label}__{id}")
 }
 
-/// Concatenated plain text of the page's `title` property. Mirrors mirage
-/// `extract_title` (returns "" when there is no title property).
+/// Concatenated plain text of the page's `title` property (returns "" when
+/// there is no title property).
 fn extract_title(page: &Value) -> String {
     let props = match page.get("properties").and_then(|p| p.as_object()) {
         Some(p) => p,
@@ -225,9 +224,9 @@ fn extract_title(page: &Value) -> String {
     String::new()
 }
 
-/// Page metadata + markdown body + raw blocks, matching mirage `normalize_page`.
-/// `child_page`/`child_database` blocks are excluded from both `markdown` and
-/// `blocks` (they surface as subdirectories instead).
+/// Page metadata + markdown body + raw blocks. `child_page`/`child_database`
+/// blocks are excluded from both `markdown` and `blocks` (they surface as
+/// subdirectories instead).
 fn normalize_page(page: &Value, blocks: &[Value]) -> Value {
     let parent = page.get("parent").cloned().unwrap_or_else(|| json!({}));
     let parent_type = parent.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -259,9 +258,9 @@ fn normalize_page(page: &Value, blocks: &[Value]) -> Value {
     })
 }
 
-/// Sanitize a name for use in a virtual path segment. Mirrors mirage
-/// `sanitize_name`: keep word chars / whitespace / `-` / `.`, replace the rest
-/// with `_`, fold spaces and runs of `_`, strip, cap at 100 chars.
+/// Sanitize a name for use in a virtual path segment: keep word chars /
+/// whitespace / `-` / `.`, replace the rest with `_`, fold spaces and runs of
+/// `_`, strip, cap at 100 chars.
 fn sanitize_name(name: &str) -> String {
     if name.trim().is_empty() {
         return "unknown".to_string();

@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 
 const API: &str = "https://api.notion.com/v1";
 const NOTION_VERSION: &str = "2022-06-28";
-/// Recursion ceiling for `list_block_tree`, mirroring mirage's `MAX_BLOCK_DEPTH`.
+/// Recursion ceiling for `list_block_tree`.
 const MAX_BLOCK_DEPTH: usize = 10;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -11,7 +11,7 @@ pub struct NotionConfig {
     pub api_key: String,
 }
 
-/// Holds the Notion API client (one token). Mirrors mirage `accessor/notion.py`.
+/// Holds the Notion API client (one token).
 pub struct NotionAccessor {
     client: reqwest::Client,
     api_key: String,
@@ -42,7 +42,7 @@ impl NotionAccessor {
     }
 
     /// Pages shared with the integration (search, filtered to pages), paging
-    /// through every result. Mirrors mirage `paginate_post("/search", ...)`.
+    /// through every result.
     pub async fn search_pages(&self) -> anyhow::Result<Vec<Value>> {
         let mut results = Vec::new();
         let mut cursor: Option<String> = None;
@@ -77,7 +77,6 @@ impl NotionAccessor {
     }
 
     /// All immediate block children of `id`, paging through every result.
-    /// Mirrors mirage `list_block_children` / `paginate_list`.
     pub async fn list_children(&self, id: &str) -> anyhow::Result<Vec<Value>> {
         let mut results = Vec::new();
         let mut cursor: Option<String> = None;
@@ -105,7 +104,7 @@ impl NotionAccessor {
     /// List block children recursively, embedding nested blocks under a
     /// `children` key. Blocks of type `child_page`/`child_database` are not
     /// descended into (their children belong to a different page). Recursion
-    /// stops at [`MAX_BLOCK_DEPTH`]. Mirrors mirage `list_block_tree`.
+    /// stops at [`MAX_BLOCK_DEPTH`].
     pub async fn list_block_tree(&self, id: &str) -> anyhow::Result<Vec<Value>> {
         self.list_block_tree_depth(id.to_string(), 0).await
     }

@@ -304,8 +304,7 @@ fn split_last(path: &str) -> (String, String) {
     }
 }
 
-/// Disambiguate a shared-drive name that collides with a My Drive entry,
-/// mirroring mirage's `unique_shared_drive_name`.
+/// Disambiguate a shared-drive name that collides with a My Drive entry.
 fn unique_name(name: &str, existing: &HashSet<String>) -> String {
     if !existing.contains(name) {
         return name.to_string();

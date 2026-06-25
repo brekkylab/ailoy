@@ -26,9 +26,8 @@ pub struct FileStat {
 /// A mounted provider. One instance owns one set of credentials, so the same
 /// provider type mounted with different credentials is distinct instances.
 ///
-/// Mirrors mirage's `BaseResource`; the FUSE frontends translate filesystem
-/// callbacks into these operations. Errors propagate as `anyhow`; callers map
-/// them to errno (see mirage `fuse/fs.py`).
+/// The FUSE frontends translate filesystem callbacks into these operations.
+/// Errors propagate as `anyhow`; callers map them to errno.
 #[async_trait]
 pub trait Resource: Send + Sync {
     async fn read_bytes(&self, path: &VPath, range: Option<Range<u64>>) -> anyhow::Result<Vec<u8>>;

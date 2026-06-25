@@ -19,8 +19,7 @@ pub struct GDriveConfig {
 }
 
 /// Holds Google OAuth credentials (one refresh token), a cached access token,
-/// and a cache of exported Workspace-doc text. Mirrors mirage
-/// `accessor/gdrive.py` + `core/google/{config,drive}.py`.
+/// and a cache of exported Workspace-doc text.
 pub struct GDriveAccessor {
     client: reqwest::Client,
     config: GDriveConfig,

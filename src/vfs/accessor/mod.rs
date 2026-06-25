@@ -1,5 +1,5 @@
 //! Provider accessors: each holds its config (credentials/endpoint) and the
-//! client built from it. Mirrors mirage `accessor/`.
+//! client built from it.
 //!
 //! Config structs intentionally do not derive `Debug` to avoid leaking
 //! credentials into logs. They stay host-only.

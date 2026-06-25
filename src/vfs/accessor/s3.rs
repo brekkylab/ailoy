@@ -23,7 +23,6 @@ fn default_region() -> String {
 }
 
 /// Holds the S3 client (one credential set) and the optional key prefix.
-/// Mirrors mirage `accessor/s3.py`.
 pub struct S3Accessor {
     pub store: Arc<AmazonS3>,
     key_prefix: String,
