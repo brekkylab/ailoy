@@ -36,10 +36,10 @@ class Forward(Operations):
         self.acache = {}
         # Guards the dicts above. Never held across a network _request so FUSE
         # callbacks (run on multiple threads) issue provider calls concurrently.
-        self.lock = threading.Lock()
+        self._mu = threading.Lock()
 
     def getattr(self, path, fh=None):
-        with self.lock:
+        with self._mu:
             if path in self.wbuf:
                 return self._attr(False, len(self.wbuf[path]))
             ent = self.acache.get(path)
@@ -49,7 +49,7 @@ class Forward(Operations):
         if not st.get("exists"):
             raise FuseOSError(errno.ENOENT)
         is_dir, size = st["is_dir"], st.get("size", 0)
-        with self.lock:
+        with self._mu:
             self.acache[path] = (time.monotonic() + ATTR_TTL, is_dir, size)
         return self._attr(is_dir, size)
 
@@ -67,7 +67,7 @@ class Forward(Operations):
         # already carries name/is_dir/size, so this costs nothing extra.
         base = path.rstrip("/")
         exp = time.monotonic() + ATTR_TTL
-        with self.lock:
+        with self._mu:
             for e in entries:
                 child = f"{base}/{e['name']}" if base else f"/{e['name']}"
                 self.acache[child] = (exp, e.get("is_dir", False),
@@ -78,12 +78,12 @@ class Forward(Operations):
         return 0
 
     def create(self, path, mode, fi=None):
-        with self.lock:
+        with self._mu:
             self.wbuf[path] = bytearray()
         return 0
 
     def read(self, path, size, offset, fh):
-        with self.lock:
+        with self._mu:
             data = self.rcache.get(path)
         if data is None:
             # Fetch the whole object once and serve every chunk from it. With
@@ -91,12 +91,12 @@ class Forward(Operations):
             # stable buffer gives deterministic EOF and avoids re-fetching (and,
             # for rendered files like Notion page.json, re-rendering) per chunk.
             data = _request("GET", "/read", path)
-            with self.lock:
+            with self._mu:
                 self.rcache[path] = data
         return bytes(data[offset:offset + size])
 
     def write(self, path, data, offset, fh):
-        with self.lock:
+        with self._mu:
             buf = self.wbuf.setdefault(path, bytearray())
             if offset > len(buf):
                 buf.extend(b"\x00" * (offset - len(buf)))
@@ -104,7 +104,7 @@ class Forward(Operations):
             return len(data)
 
     def truncate(self, path, length, fh=None):
-        with self.lock:
+        with self._mu:
             buf = self.wbuf.get(path)
         if buf is None:
             try:
@@ -113,9 +113,9 @@ class Forward(Operations):
             except Exception:
                 data = b""
             buf = bytearray(data)
-            with self.lock:
+            with self._mu:
                 self.wbuf[path] = buf
-        with self.lock:
+        with self._mu:
             del buf[length:]
 
     def flush(self, path, fh):
@@ -125,17 +125,17 @@ class Forward(Operations):
     def release(self, path, fh):
         self._put(path)
         # Drop the read buffer so a re-open re-fetches (and memory is bounded).
-        with self.lock:
+        with self._mu:
             self.rcache.pop(path, None)
         return 0
 
     def _put(self, path):
-        with self.lock:
+        with self._mu:
             if path not in self.wbuf:
                 return
             payload = bytes(self.wbuf[path])
         _request("PUT", "/write", path, body=payload)
-        with self.lock:
+        with self._mu:
             self.wbuf.pop(path, None)
             self.rcache.pop(path, None)
             self.acache.pop(path, None)
