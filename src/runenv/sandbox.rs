@@ -255,10 +255,13 @@ impl Sandbox {
         }
 
         if !microsandbox::setup::is_installed() {
+            let home = microsandbox::config::load_persisted_config_or_default()
+                .map(|c| c.home())
+                .unwrap_or_default();
             log::warn!(
                 "microsandbox runtime not found — downloading to {}, \
                  this may take a moment",
-                microsandbox::config::config().home().display(),
+                home.display(),
             );
             microsandbox::setup::install()
                 .await
@@ -386,7 +389,7 @@ impl Sandbox {
             Err(_) => Ok(()),
             Ok(handle) => {
                 if matches!(
-                    handle.status(),
+                    handle.status_snapshot(),
                     SandboxStatus::Running | SandboxStatus::Draining
                 ) {
                     handle.stop().await?;
@@ -681,7 +684,12 @@ async fn create_from_snapshot(
 async fn vm_is_running(name: &str) -> bool {
     MsbSandbox::get(name)
         .await
-        .map(|h| matches!(h.status(), SandboxStatus::Running | SandboxStatus::Draining))
+        .map(|h| {
+            matches!(
+                h.status_snapshot(),
+                SandboxStatus::Running | SandboxStatus::Draining
+            )
+        })
         .unwrap_or(false)
 }
 
@@ -1916,7 +1924,8 @@ mod tests {
             .await
             .expect("fork");
 
-        let snap_dir = microsandbox::config::config()
+        let snap_dir = microsandbox::config::load_persisted_config_or_default()
+            .unwrap()
             .home()
             .join("snapshots")
             .join(&snap_name);
