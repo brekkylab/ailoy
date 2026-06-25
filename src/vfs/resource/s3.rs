@@ -65,11 +65,16 @@ impl Resource for S3Resource {
     }
 
     async fn readdir(&self, path: &VPath) -> anyhow::Result<Vec<DirEntry>> {
+        let listing = self.list_prefix(path);
         let res = self
             .accessor
             .store
-            .list_with_delimiter(self.list_prefix(path).as_ref())
+            .list_with_delimiter(listing.as_ref())
             .await?;
+        // The key we listed under; an object whose key equals it is the
+        // zero-byte "directory marker" for this prefix and must be skipped
+        // (mirage drops it via `relative and "/" not in relative`).
+        let marker = listing.as_ref().map(|p| p.as_ref()).unwrap_or("");
         let mut out = Vec::new();
         for cp in res.common_prefixes {
             if let Some(name) = cp.filename() {
@@ -81,6 +86,9 @@ impl Resource for S3Resource {
             }
         }
         for obj in res.objects {
+            if obj.location.as_ref() == marker {
+                continue;
+            }
             if let Some(name) = obj.location.filename() {
                 out.push(DirEntry {
                     name: name.to_string(),
@@ -89,6 +97,9 @@ impl Resource for S3Resource {
                 });
             }
         }
+        // mirage returns one merged, name-sorted listing; coreutils `ls`
+        // re-sorts anyway, but match the order for parity.
+        out.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(out)
     }
 

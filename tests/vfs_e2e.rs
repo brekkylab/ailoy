@@ -157,6 +157,72 @@ async fn e2e_sandbox_forwarder() {
     );
 }
 
+/// Direct smoke test of the S3 adapter's `readdir` parity with mirage:
+/// children come back name-sorted, subfolders are directories (via the `/`
+/// delimiter), and a zero-byte "directory marker" object for the listed
+/// prefix is excluded (mirage drops it; object_store does not).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs AWS creds + aws CLI"]
+async fn s3_readdir_marker_and_sort_smoke() {
+    let bucket = std::env::var("AWS_S3_BUCKET").unwrap();
+    let s = stamp();
+    let base = format!("vfs-s3-smoke-{s}");
+    let vfs = Vfs::from_config(vfs_config()).unwrap();
+
+    // Write three children (out of order) plus a nested object.
+    for (name, body) in [("b.txt", "B"), ("a.txt", "A"), ("sub/c.txt", "C")] {
+        let (res, vp) = vfs.route(&format!("/s3/{base}/{name}")).expect("route");
+        res.write_bytes(&vp, body.as_bytes().to_vec())
+            .await
+            .expect("write");
+    }
+    // Create the explicit directory-marker object `<base>/` (a zero-byte key
+    // ending in `/`), which the Resource API cannot create on its own.
+    let marker_key = format!("{base}/");
+    let status = std::process::Command::new("aws")
+        .args([
+            "s3api",
+            "put-object",
+            "--bucket",
+            &bucket,
+            "--key",
+            &marker_key,
+        ])
+        .status()
+        .expect("run aws put-object");
+    assert!(status.success(), "failed to create folder marker");
+
+    let (res, vp) = vfs.route(&format!("/s3/{base}")).expect("route dir");
+    let entries = res.readdir(&vp).await.expect("readdir");
+    let names: Vec<(String, bool)> = entries
+        .iter()
+        .map(|e| (e.name.clone(), e.kind == FileKind::Dir))
+        .collect();
+    println!("readdir {base}: {names:?}");
+
+    // Marker for the listed prefix must be gone; entries name-sorted; sub is a dir.
+    assert!(
+        !entries.iter().any(|e| e.name == base),
+        "directory marker leaked as a child entry"
+    );
+    assert_eq!(
+        entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+        vec!["a.txt", "b.txt", "sub"],
+        "entries should be name-sorted with sub/ as a directory"
+    );
+    assert!(
+        entries.iter().find(|e| e.name == "sub").unwrap().kind == FileKind::Dir
+    );
+
+    // Cleanup.
+    let _ = std::process::Command::new("aws")
+        .args(["s3", "rm", &format!("s3://{bucket}/{base}"), "--recursive"])
+        .status();
+    let _ = std::process::Command::new("aws")
+        .args(["s3api", "delete-object", "--bucket", &bucket, "--key", &marker_key])
+        .status();
+}
+
 fn notion_vfs() -> VfsConfig {
     VfsConfig {
         mounts: vec![MountSpec {
