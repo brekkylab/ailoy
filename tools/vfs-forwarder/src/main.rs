@@ -11,7 +11,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData,
-    ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request,
+    ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow,
 };
 
 const TTL: Duration = Duration::from_secs(1);
@@ -191,6 +191,36 @@ impl Filesystem for Fs {
             if reply.add(*e_ino, (i + 1) as i64, *kind, name) { break; }
         }
         reply.ok();
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn setattr(
+        &mut self, _r: &Request, ino: u64, _mode: Option<u32>, _uid: Option<u32>,
+        _gid: Option<u32>, size: Option<u64>, _atime: Option<TimeOrNow>,
+        _mtime: Option<TimeOrNow>, _ctime: Option<std::time::SystemTime>, _fh: Option<u64>,
+        _crtime: Option<std::time::SystemTime>, _chgtime: Option<std::time::SystemTime>,
+        _bkuptime: Option<std::time::SystemTime>, _flags: Option<u32>, reply: ReplyAttr,
+    ) {
+        // Honor truncate (e.g. `echo > file` opens O_TRUNC). Adjust the write
+        // buffer so a subsequent write produces the intended content/size.
+        if let Some(sz) = size {
+            let mut wb = self.wbuf.lock().unwrap();
+            let buf = wb.entry(ino).or_default();
+            buf.resize(sz as usize, 0);
+            reply.attr(&TTL, &file_attr(ino, sz));
+            return;
+        }
+        // No size change requested: report current attrs.
+        let cur = self.wbuf.lock().unwrap().get(&ino).map(|b| b.len() as u64);
+        match cur {
+            Some(n) => reply.attr(&TTL, &file_attr(ino, n)),
+            None => match self.path(ino) {
+                Some(p) if p != "/" => {
+                    let s = stat(&p);
+                    reply.attr(&TTL, &if s.is_dir { dir_attr(ino) } else { file_attr(ino, s.size) });
+                }
+                _ => reply.attr(&TTL, &dir_attr(ino)),
+            },
+        }
     }
     fn open(&mut self, _r: &Request, _ino: u64, _flags: i32, reply: ReplyOpen) {
         // direct_io: don't clamp reads to stat size (dynamic/rendered files).
