@@ -25,6 +25,12 @@ pub async fn bootstrap_guest_forwarder(
     let script = format!(
         r#"set -e
 mkdir -p {mount_root} /opt/ailoy
+# Idempotent: tear down any stale forwarder/mount left by a previous VM boot or
+# agent attach, so the fresh mount points at the current host server (the
+# port/token below). A defunct FUSE mount from a stopped VM also lingers as an
+# unconnected endpoint until unmounted.
+pkill -f {GUEST_FWD_PATH} 2>/dev/null || true
+fusermount3 -u {mount_root} 2>/dev/null || umount -l {mount_root} 2>/dev/null || true
 if ! command -v python3 >/dev/null 2>&1 || ! command -v fusermount3 >/dev/null 2>&1; then
   apt-get update -qq >/dev/null 2>&1 || true
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-pip fuse3 >/dev/null 2>&1 || true
