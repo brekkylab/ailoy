@@ -62,17 +62,21 @@ rustup target add aarch64-unknown-linux-musl
 cargo build --release --target aarch64-unknown-linux-musl
 ```
 
-## Integration (TODO — needs a build-pipeline decision)
+## Integration (done)
 
-To replace the Python forwarder, ailoy must ship this binary per guest arch and
-have `src/vfs/guest.rs` copy + run it instead of installing python:
+`src/vfs/guest.rs` ships this binary per guest arch as
+`src/vfs/assets/ailoy-vfs-fwd.{aarch64,x86_64}` (`include_bytes!`), picks by the
+host arch (guest arch == host arch under libkrun), writes it, `chmod +x`, and
+runs it with `VFS_HOST`/`VFS_TOKEN` — falling back to the Python `mfusepy`
+forwarder only for arches without a shipped binary or if the static mount fails.
+The mount/re-mount lifecycle (`AgentVfs::ensure_mounted`) is unchanged.
 
-- **Option A** — commit pre-built static binaries (aarch64 + x86_64) as
-  `src/vfs/assets/` and `include_bytes!` them; `guest.rs` picks by `uname -m`,
-  writes it, `chmod +x`, runs with `VFS_HOST`/`VFS_TOKEN`. No build-time zig.
-- **Option B** — cross-compile in a release/CI step and bundle the artifacts.
-
-`guest.rs` should keep the Python forwarder as a fallback for arches without a
-shipped binary. The mount/re-mount lifecycle (`AgentVfs::ensure_mounted`) is
-unchanged — only the bootstrap's "ensure a forwarder is running" step swaps the
-Python install for copying + running this binary.
+**Updating the committed binaries** after changing `src/main.rs`: cross-build
+both arches (see above) and copy the outputs to `src/vfs/assets/`:
+```sh
+cargo build --release --target aarch64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl
+cp target/aarch64-unknown-linux-musl/release/ailoy-vfs-fwd ../../src/vfs/assets/ailoy-vfs-fwd.aarch64
+cp target/x86_64-unknown-linux-musl/release/ailoy-vfs-fwd  ../../src/vfs/assets/ailoy-vfs-fwd.x86_64
+```
+A CI cross-build step could replace the committed blobs later.
