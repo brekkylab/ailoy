@@ -251,6 +251,16 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
             .unwrap()
             .retain(|_key, value| !value.is_null());
 
+        if req.stream {
+            body.as_object_mut()
+                .unwrap()
+                .insert("stream".into(), true.into());
+            header
+                .as_object_mut()
+                .unwrap()
+                .insert("accept".into(), "text/event-stream".into());
+        }
+
         to_value!({
             "url": url,
             "header": header,
@@ -265,6 +275,9 @@ pub struct ChatCompletionUnmarshal;
 // Shared by arbitrary OpenAI-compatible providers, so no provider-specific
 // quota signal can be assumed; treat 429 as transient and retry.
 impl super::QuotaClassifier for ChatCompletionUnmarshal {}
+
+// Streaming not yet implemented; uses the default (errors).
+impl super::StreamUnmarshal for ChatCompletionUnmarshal {}
 
 impl ChatCompletionUnmarshal {
     fn parse_finish_reason(val: &Value) -> FinishReason {
@@ -448,6 +461,7 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: None,
+            stream: false,
         };
         f(&req)
     }
@@ -508,6 +522,7 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: Some(&fmt),
+            stream: false,
         };
         let val = ChatCompletionMarshal::default().marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();

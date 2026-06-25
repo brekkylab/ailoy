@@ -257,7 +257,13 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
             Value::Null
         };
 
-        let url = format!("{}{}:generateContent", req.url, req.model);
+        // Gemini selects streaming via the endpoint, not a body flag:
+        // `:streamGenerateContent?alt=sse` emits SSE; `:generateContent` returns one JSON.
+        let url = if req.stream {
+            format!("{}{}:streamGenerateContent?alt=sse", req.url, req.model)
+        } else {
+            format!("{}{}:generateContent", req.url, req.model)
+        };
 
         let mut header = to_value!({
             "content-type": "application/json",
@@ -267,6 +273,12 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
                 .as_object_mut()
                 .unwrap()
                 .insert("x-goog-api-key".into(), api_key.into());
+        }
+        if req.stream {
+            header
+                .as_object_mut()
+                .unwrap()
+                .insert("accept".into(), "text/event-stream".into());
         }
 
         let mut body = to_value!({
@@ -340,17 +352,16 @@ impl super::QuotaClassifier for GeminiUnmarshal {
         let error = &json["error"];
         // RESOURCE_EXHAUSTED covers both; a RetryInfo detail marks the transient case.
         error["status"] == "RESOURCE_EXHAUSTED"
-            && !error["details"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|d| {
-                    d["@type"]
-                        .as_str()
-                        .is_some_and(|t| t.ends_with("google.rpc.RetryInfo"))
-                })
+            && !error["details"].as_array().into_iter().flatten().any(|d| {
+                d["@type"]
+                    .as_str()
+                    .is_some_and(|t| t.ends_with("google.rpc.RetryInfo"))
+            })
     }
 }
+
+// Streaming not yet implemented; uses the default (errors).
+impl super::StreamUnmarshal for GeminiUnmarshal {}
 
 impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
     fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
@@ -532,8 +543,51 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: None,
+            stream: false,
         };
         f(&req)
+    }
+
+    #[test]
+    fn test_marshal_stream_endpoint() {
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let url = Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap();
+        let api_key: Option<String> = None;
+        let mut req = LangModelRequest {
+            model: "gemini-2.5-flash",
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: None,
+            stream: false,
+        };
+
+        // stream: false → non-streaming endpoint, no accept header.
+        let val = GeminiMarshal::default().marshal(&req);
+        let endpoint = val.pointer("/url").and_then(|v| v.as_str()).unwrap();
+        assert!(endpoint.ends_with(":generateContent"), "got {endpoint}");
+        assert!(val.pointer("/header/accept").is_none());
+
+        // stream: true → SSE streaming endpoint (the `?alt=sse` endpoint is the
+        // streaming trigger), plus an `Accept: text/event-stream` header so
+        // intermediaries don't buffer.
+        req.stream = true;
+        let val = GeminiMarshal::default().marshal(&req);
+        let endpoint = val.pointer("/url").and_then(|v| v.as_str()).unwrap();
+        assert!(
+            endpoint.ends_with(":streamGenerateContent?alt=sse"),
+            "got {endpoint}"
+        );
+        assert_eq!(
+            val.pointer("/header/accept").and_then(|v| v.as_str()),
+            Some("text/event-stream")
+        );
     }
 
     #[test]
@@ -756,6 +810,7 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: Some(&fmt),
+            stream: false,
         };
         let val = GeminiMarshal::default().marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();

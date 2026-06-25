@@ -297,7 +297,7 @@ impl Delta for MessageDeltaOutput {
     fn accumulate(self, other: Self) -> anyhow::Result<Self> {
         let delta = self.delta.accumulate(other.delta)?;
         let finish_reason = other.finish_reason.or(self.finish_reason);
-        let usage = other.usage.or(self.usage);
+        let usage = merge_token_usage(self.usage, other.usage);
         Ok(Self {
             delta,
             finish_reason,
@@ -324,5 +324,39 @@ impl fmt::Display for MessageDeltaOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
         write!(f, "MessageDeltaOutput {}", s)
+    }
+}
+
+/// Merges two streamed [`TokenUsage`] snapshots field-wise, taking the larger
+/// value per field.
+///
+/// Providers spread usage across stream events — e.g. Anthropic reports
+/// `input_tokens` (and cache tokens) once in `message_start` and the final
+/// cumulative `output_tokens` in `message_delta`. A whole-value replace would
+/// drop whichever the latest event omits, so each counter is merged
+/// independently; `max` is correct because these counters are monotonic
+/// (constant input, cumulative output).
+fn merge_token_usage(a: Option<TokenUsage>, b: Option<TokenUsage>) -> Option<TokenUsage> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(TokenUsage {
+            input_tokens: a.input_tokens.max(b.input_tokens),
+            output_tokens: a.output_tokens.max(b.output_tokens),
+            cache_creation_input_tokens: merge_opt_max(
+                a.cache_creation_input_tokens,
+                b.cache_creation_input_tokens,
+            ),
+            cache_read_input_tokens: merge_opt_max(
+                a.cache_read_input_tokens,
+                b.cache_read_input_tokens,
+            ),
+        }),
+        (a, b) => b.or(a),
+    }
+}
+
+fn merge_opt_max(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => b.or(a),
     }
 }

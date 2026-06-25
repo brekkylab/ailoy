@@ -248,6 +248,16 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
             );
         }
 
+        if req.stream {
+            body.as_object_mut()
+                .unwrap()
+                .insert("stream".into(), true.into());
+            header
+                .as_object_mut()
+                .unwrap()
+                .insert("accept".into(), "text/event-stream".into());
+        }
+
         to_value!({
             "url": url,
             "header": header,
@@ -268,6 +278,9 @@ impl super::QuotaClassifier for OpenAIUnmarshal {
         error["type"] == "insufficient_quota" || error["code"] == "insufficient_quota"
     }
 }
+
+// Streaming not yet implemented; uses the default (errors).
+impl super::StreamUnmarshal for OpenAIUnmarshal {}
 
 impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
     fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
@@ -454,6 +467,7 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: None,
+            stream: false,
         };
         f(&req)
     }
@@ -495,6 +509,7 @@ mod tests {
             top_p: None,
             top_k: None,
             response_format: Some(&fmt),
+            stream: false,
         };
 
         let val = OpenAIMarshal::default().marshal(&req);

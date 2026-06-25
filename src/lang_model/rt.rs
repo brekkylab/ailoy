@@ -1,3 +1,4 @@
+use futures::{StreamExt as _, stream::BoxStream};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use url::Url;
 
@@ -5,7 +6,7 @@ use super::{LangModelAPISchema, LangModelProviderElem};
 use crate::{
     datatype::Value,
     lang_model::{LangModelOptions, r#impl::api},
-    message::{Delta as _, Marshaled, Message, MessageOutput},
+    message::{Delta as _, Marshaled, Message, MessageDeltaOutput, MessageOutput},
     tool::ToolDesc,
 };
 
@@ -70,6 +71,8 @@ pub(crate) struct LangModelRequest<'a> {
     pub top_p: Option<f64>,
     pub top_k: Option<u64>,
     pub response_format: Option<&'a ResponseFormat>,
+    /// When true, the marshal requests a streaming (SSE) response.
+    pub stream: bool,
 }
 
 impl LangModel {
@@ -93,7 +96,7 @@ impl LangModel {
                 url,
                 api_key,
             } => {
-                // Create request
+                // Create request (non-streaming)
                 let req = LangModelRequest {
                     model: &self.model,
                     messages,
@@ -105,113 +108,16 @@ impl LangModel {
                     top_p: options.top_p,
                     top_k: options.top_k,
                     response_format: options.response_format.as_ref(),
+                    stream: false,
                 };
+                let (url, header_map, body) = marshal_request(schema, &req)?;
 
-                let req = match schema {
-                    LangModelAPISchema::Anthropic => Value::from(Marshaled::<
-                        LangModelRequest,
-                        api::AnthropicMarshal,
-                    >::new(&req)),
-                    LangModelAPISchema::ChatCompletion => {
-                        Value::from(
-                            Marshaled::<LangModelRequest, api::ChatCompletionMarshal>::new(&req),
-                        )
-                    }
-                    LangModelAPISchema::Gemini => {
-                        Value::from(Marshaled::<LangModelRequest, api::GeminiMarshal>::new(&req))
-                    }
-                    LangModelAPISchema::OpenAI => {
-                        Value::from(Marshaled::<LangModelRequest, api::OpenAIMarshal>::new(&req))
-                    }
-                };
-
-                let req = req.as_object().ok_or(anyhow::anyhow!("Invalid Marshal"))?;
-
-                // Build url
-                let url = req
-                    .get("url")
-                    .ok_or(anyhow::anyhow!("No URL in marshaled request"))?
-                    .as_str()
-                    .ok_or(anyhow::anyhow!("Invalid URL"))?;
-
-                // Build headers
-                let headers = req
-                    .get("header")
-                    .ok_or(anyhow::anyhow!("No headers in marshaled request"))?;
-                let mut header_map = HeaderMap::new();
-                if let Some(header_obj) = headers.as_object() {
-                    for (key, value) in header_obj.iter() {
-                        if let Some(val_str) = value.as_str() {
-                            header_map.insert(
-                                HeaderName::from_bytes(key.as_bytes())?,
-                                HeaderValue::from_str(val_str)?,
-                            );
-                        }
-                    }
-                }
-
-                // Build body
-                let body = req
-                    .get("body")
-                    .ok_or(anyhow::anyhow!("No body in marshaled request"))?;
-                let body: serde_json::Value = body.clone().into();
-
-                // Send request with retry on 429 (rate limit)
+                // Send with retry on 429, then read the whole response.
                 let provider = api::provider_api(schema);
                 let client = reqwest::Client::new();
-                const MAX_RETRIES: u32 = 3;
-                let (status, response_text) = {
-                    let mut last_status = None;
-                    let mut last_text = None;
-                    for attempt in 0..=MAX_RETRIES {
-                        let response = client
-                            .post(url)
-                            .headers(header_map.clone())
-                            .json(&body)
-                            .send()
-                            .await?;
-                        let s = response.status();
-                        if s.as_u16() == 429 && attempt < MAX_RETRIES {
-                            const MAX_WAIT_SECS: u64 = 10;
-                            let wait_secs = response
-                                .headers()
-                                .get("retry-after")
-                                .and_then(|v| v.to_str().ok())
-                                .and_then(|v| v.parse::<u64>().ok())
-                                .unwrap_or(1u64 << attempt)
-                                .min(MAX_WAIT_SECS);
-                            let text = response.text().await?;
-                            // Permanent quota/credit exhaustion never recovers; don't retry.
-                            if provider.is_permanent_quota_error(&text) {
-                                log::warn!("Quota exhausted (429), not retrying: {text}");
-                                last_status = Some(s);
-                                last_text = Some(text);
-                                break;
-                            }
-                            log::warn!(
-                                "Rate limited (429). Retrying after {}s (attempt {}/{}): {}",
-                                wait_secs,
-                                attempt + 1,
-                                MAX_RETRIES,
-                                text
-                            );
-                            tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
-                            last_status = Some(s);
-                            last_text = Some(text);
-                            continue;
-                        }
-                        let text = response.text().await?;
-                        last_status = Some(s);
-                        last_text = Some(text);
-                        break;
-                    }
-                    (last_status.unwrap(), last_text.unwrap())
-                };
-
-                // Check response status
-                if !status.is_success() {
-                    anyhow::bail!("API request failed with status {status}: {response_text}");
-                }
+                let response =
+                    send_with_retry(&client, &url, header_map, &body, provider.as_ref()).await?;
+                let response_text = response.text().await?;
 
                 let response_value: Value =
                     serde_json::from_str::<serde_json::Value>(&response_text)?.into();
@@ -223,6 +129,197 @@ impl LangModel {
             }
         }
     }
+
+    /// Streaming counterpart to [`run`](Self::run): requests an SSE response and
+    /// yields one [`MessageDeltaOutput`] per incremental update. Callers
+    /// accumulate the deltas (via [`Delta::accumulate`]) to build the final
+    /// message. The stream ends after the delta carrying a `finish_reason`.
+    pub fn run_stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDesc],
+        options: &LangModelOptions,
+    ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
+        // Own everything the stream touches so the returned future is 'static.
+        let model = self.model.clone();
+        let provider_elem = self.provider.clone();
+        let messages = messages.to_vec();
+        let tools = tools.to_vec();
+        let options = options.clone();
+
+        Box::pin(async_stream::try_stream! {
+            let LangModelProviderElem::API { schema, url, api_key } = &provider_elem;
+
+            // Create request (streaming)
+            let req = LangModelRequest {
+                model: &model,
+                messages: &messages,
+                tools: &tools,
+                url,
+                api_key,
+                max_tokens: options.max_tokens,
+                temperature: options.temperature,
+                top_p: options.top_p,
+                top_k: options.top_k,
+                response_format: options.response_format.as_ref(),
+                stream: true,
+            };
+            let (url, header_map, body) = marshal_request(schema, &req)?;
+
+            let provider = api::provider_api(schema);
+            let client = reqwest::Client::new();
+            let response =
+                send_with_retry(&client, &url, header_map, &body, provider.as_ref()).await?;
+
+            // Read the SSE body chunk by chunk, framing complete events out of a
+            // buffer (network chunks don't align with event boundaries).
+            let mut byte_stream = response.bytes_stream();
+            let mut buf: Vec<u8> = Vec::new();
+            'outer: while let Some(chunk) = byte_stream.next().await {
+                buf.extend_from_slice(&chunk?);
+                while let Some(data) = drain_next_event(&mut buf) {
+                    if data.is_empty() {
+                        continue; // keep-alive / comment line
+                    }
+                    if let Some(output) = provider.unmarshal_event(&data)? {
+                        let done = output.finish_reason.is_some();
+                        yield output;
+                        if done {
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+        })
+    }
+}
+
+/// Marshals a [`LangModelRequest`] for `schema` into the wire `(url, headers,
+/// body)` tuple shared by the blocking and streaming paths.
+fn marshal_request(
+    schema: &LangModelAPISchema,
+    req: &LangModelRequest,
+) -> anyhow::Result<(String, HeaderMap, serde_json::Value)> {
+    let marshaled = match schema {
+        LangModelAPISchema::Anthropic => {
+            Value::from(Marshaled::<LangModelRequest, api::AnthropicMarshal>::new(req))
+        }
+        LangModelAPISchema::ChatCompletion => {
+            Value::from(Marshaled::<LangModelRequest, api::ChatCompletionMarshal>::new(req))
+        }
+        LangModelAPISchema::Gemini => {
+            Value::from(Marshaled::<LangModelRequest, api::GeminiMarshal>::new(req))
+        }
+        LangModelAPISchema::OpenAI => {
+            Value::from(Marshaled::<LangModelRequest, api::OpenAIMarshal>::new(req))
+        }
+    };
+    let obj = marshaled
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("Invalid Marshal"))?;
+
+    let url = obj
+        .get("url")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("No URL in marshaled request"))?
+        .to_owned();
+
+    let mut header_map = HeaderMap::new();
+    if let Some(header_obj) = obj.get("header").and_then(|v| v.as_object()) {
+        for (key, value) in header_obj.iter() {
+            if let Some(val_str) = value.as_str() {
+                header_map.insert(
+                    HeaderName::from_bytes(key.as_bytes())?,
+                    HeaderValue::from_str(val_str)?,
+                );
+            }
+        }
+    }
+
+    let body = obj
+        .get("body")
+        .ok_or_else(|| anyhow::anyhow!("No body in marshaled request"))?;
+    let body: serde_json::Value = body.clone().into();
+
+    Ok((url, header_map, body))
+}
+
+/// POSTs the request, retrying transient 429s with backoff, and returns the
+/// successful (2xx) response **unconsumed** so the caller decides whether to
+/// read it whole (`run`) or stream it (`run_stream`). Bails on a non-2xx
+/// response or exhausted retries.
+async fn send_with_retry(
+    client: &reqwest::Client,
+    url: &str,
+    headers: HeaderMap,
+    body: &serde_json::Value,
+    provider: &(dyn api::ProviderApi + Send + Sync),
+) -> anyhow::Result<reqwest::Response> {
+    const MAX_RETRIES: u32 = 3;
+    const MAX_WAIT_SECS: u64 = 10;
+    for attempt in 0..=MAX_RETRIES {
+        let response = client
+            .post(url)
+            .headers(headers.clone())
+            .json(body)
+            .send()
+            .await?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(response);
+        }
+        if status.as_u16() == 429 && attempt < MAX_RETRIES {
+            let wait_secs = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(1u64 << attempt)
+                .min(MAX_WAIT_SECS);
+            let text = response.text().await?;
+            // Permanent quota/credit exhaustion never recovers; don't retry.
+            if provider.is_permanent_quota_error(&text) {
+                log::warn!("Quota exhausted (429), not retrying: {text}");
+                anyhow::bail!("API request failed with status {status}: {text}");
+            }
+            log::warn!(
+                "Rate limited (429). Retrying after {}s (attempt {}/{}): {}",
+                wait_secs,
+                attempt + 1,
+                MAX_RETRIES,
+                text
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
+            continue;
+        }
+        let text = response.text().await.unwrap_or_default();
+        anyhow::bail!("API request failed with status {status}: {text}");
+    }
+    unreachable!("retry loop returns or bails on every path")
+}
+
+/// Drains the next complete SSE event from `buf`, returning its concatenated
+/// `data:` payload. Returns `None` if no event (terminated by a blank line) is
+/// fully buffered yet; the partial bytes stay in `buf` for the next chunk.
+fn drain_next_event(buf: &mut Vec<u8>) -> Option<String> {
+    // Events are separated by a blank line: "\n\n" (LF) or "\r\n\r\n" (CRLF).
+    let (sep_pos, sep_len) = buf
+        .windows(2)
+        .position(|w| w == b"\n\n")
+        .map(|p| (p, 2))
+        .or_else(|| buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| (p, 4)))?;
+
+    let raw: Vec<u8> = buf.drain(..sep_pos + sep_len).collect();
+    let text = String::from_utf8_lossy(&raw);
+
+    // SSE permits multiple `data:` lines per event; concatenate with newlines.
+    let data = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .map(|rest| rest.trim())
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(data)
 }
 
 #[cfg(test)]
