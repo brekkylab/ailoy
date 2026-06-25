@@ -613,6 +613,113 @@ async fn vfs_concurrent_access_stress() {
     println!("CONCURRENT STRESS DONE ({first} bytes x8)");
 }
 
+/// The realistic agent-k scenario: an agent mounts MULTIPLE providers at once
+/// (notion + s3) and must keep accessing all of them across a VM restart. Round 1
+/// writes a marker through the s3 mount and reads a notion page; the agent drops
+/// (VM stops); round 2 attaches a fresh agent to the same persisted sandbox and
+/// must read the s3 marker back (write-through to the provider survived the
+/// restart) AND re-read notion — proving every mount re-mounts, not just one.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: multi-mount (notion+s3) survives VM restart (needs creds + sandbox + macFUSE)"]
+async fn vfs_multimount_remount_after_restart() {
+    dotenvy::dotenv().ok();
+    let name = format!("ailoy-vfs-multi-{}", stamp());
+    let marker = format!("/mnt/vfs/s3/ailoy-multimount-{}.txt", stamp());
+    let content = "multimount-ok";
+    let page = "/mnt/vfs/notion/pages/\
+                Engineering_Logs__490e8208-3e62-48ef-a8ce-bc08755ea4ff/page.json";
+
+    fn cfg() -> VfsConfig {
+        VfsConfig {
+            mounts: vec![
+                MountSpec {
+                    prefix: "/notion".into(),
+                    provider: ProviderConfig::Notion(ailoy::vfs::NotionConfig {
+                        api_key: std::env::var("NOTION_API_KEY").unwrap(),
+                    }),
+                },
+                MountSpec {
+                    prefix: "/s3".into(),
+                    provider: ProviderConfig::S3(s3_config()),
+                },
+            ],
+        }
+    }
+
+    async fn attach(name: &str) -> Agent {
+        let sandbox = RunEnv::sandbox(SandboxConfig {
+            name: Some(name.into()),
+            persist: true,
+            allow_host_egress: true,
+            ..Default::default()
+        })
+        .await
+        .expect("sandbox");
+        let mut agent = AgentBuilder::new(MODEL)
+            .provider(provider())
+            .instruction("You are a tester. Use the shell tool.")
+            .shell_tool()
+            .runenv(sandbox)
+            .vfs(cfg())
+            .build()
+            .expect("build agent");
+        let q = Message::new(Role::User).with_contents([Part::text("Reply with READY.")]);
+        let mut strm = agent.run(q);
+        while let Some(ev) = strm.next().await {
+            if let Err(e) = ev {
+                eprintln!("run error: {e}");
+            }
+        }
+        drop(strm); // release the borrow on `agent` so it can be returned
+        agent
+    }
+
+    // Round 1: write through the s3 mount + read the notion mount (VM held by agent).
+    let a1 = attach(&name).await;
+    let r1 = std::process::Command::new("msb")
+        .args([
+            "exec", &name, "--", "sh", "-c",
+            &format!("printf '{content}' > {marker} && cat {page} | wc -c"),
+        ])
+        .output()
+        .expect("msb exec r1");
+    let n1: i64 = String::from_utf8_lossy(&r1.stdout)
+        .split_whitespace()
+        .last()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    println!("round 1: notion={n1} bytes, wrote s3 marker {marker}");
+    assert!(n1 > 0, "round 1 notion read should be non-empty");
+    drop(a1); // VM stops
+
+    // Round 2: fresh agent, same sandbox — both mounts must re-mount and serve.
+    let a2 = attach(&name).await;
+    let r2 = std::process::Command::new("msb")
+        .args([
+            "exec", &name, "--", "sh", "-c",
+            &format!("cat {marker}; echo '|'; cat {page} | wc -c; rm -f {marker}"),
+        ])
+        .output()
+        .expect("msb exec r2");
+    let stdout = String::from_utf8_lossy(&r2.stdout);
+    println!("round 2 output: {stdout:?}");
+    let n2: i64 = stdout
+        .split_whitespace()
+        .last()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    drop(a2);
+    let _ = std::process::Command::new("msb").args(["stop", &name]).status();
+    let _ = std::process::Command::new("msb").args(["rm", &name]).status();
+
+    assert!(
+        stdout.contains(content),
+        "round 2: s3 write-through should survive VM restart, got {stdout:?}"
+    );
+    assert!(n2 > 0, "round 2 notion re-read should be non-empty");
+    println!("MULTIMOUNT DONE (s3 marker + notion both survived restart)");
+}
+
 /// Does a freshly crate-created sandbox (allow_host_egress) have working network
 /// egress via the crate's exec path? Checks DNS + apt immediately, before any
 /// bootstrap — to rule out the killed-apt state as a confound.
