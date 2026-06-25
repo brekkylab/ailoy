@@ -252,7 +252,12 @@ impl Filesystem for VfsFs {
         if write {
             self.wbuf.entry(ino).or_default();
         }
-        reply.opened(0, 0);
+        // direct_io: serve reads straight from the read handler instead of the
+        // page cache, so the kernel does not clamp them to the stat size. File
+        // sizes from a listing may be 0/unknown (e.g. dynamically rendered
+        // Notion page.json); the handler returns the real bytes and signals EOF
+        // via a short read.
+        reply.opened(0, fuser::consts::FOPEN_DIRECT_IO);
     }
 
     fn create(
@@ -276,7 +281,13 @@ impl Filesystem for VfsFs {
         let path = join(&parent_path, name);
         let ino = self.intern(&path);
         self.wbuf.insert(ino, Vec::new());
-        reply.created(&TTL, &make_attr(ino, FileKind::File, 0), 0, 0, 0);
+        reply.created(
+            &TTL,
+            &make_attr(ino, FileKind::File, 0),
+            0,
+            0,
+            fuser::consts::FOPEN_DIRECT_IO,
+        );
     }
 
     fn read(

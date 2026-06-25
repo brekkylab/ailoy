@@ -86,9 +86,13 @@ class Forward(Operations):
         with self.lock:
             data = self.rcache.get(path)
         if data is None:
-            data = _request("GET", "/read", path,
-                            query={"offset": offset, "size": size})
-            return bytes(data)
+            # Fetch the whole object once and serve every chunk from it. With
+            # direct_io the kernel reads until a short read signals EOF, so a
+            # stable buffer gives deterministic EOF and avoids re-fetching (and,
+            # for rendered files like Notion page.json, re-rendering) per chunk.
+            data = _request("GET", "/read", path)
+            with self.lock:
+                self.rcache[path] = data
         return bytes(data[offset:offset + size])
 
     def write(self, path, data, offset, fh):
@@ -120,6 +124,9 @@ class Forward(Operations):
 
     def release(self, path, fh):
         self._put(path)
+        # Drop the read buffer so a re-open re-fetches (and memory is bounded).
+        with self.lock:
+            self.rcache.pop(path, None)
         return 0
 
     def _put(self, path):
@@ -135,4 +142,9 @@ class Forward(Operations):
 
 
 if __name__ == "__main__":
-    FUSE(Forward(), sys.argv[1], foreground=True, nothreads=False)
+    # direct_io: reads go straight to the read handler, so the kernel does not
+    # clamp them to the stat size. Listings may report size 0/unknown for
+    # dynamically rendered files (e.g. Notion page.json); the handler returns
+    # the real bytes and signals EOF via a short read.
+    FUSE(Forward(), sys.argv[1], foreground=True, nothreads=False,
+         direct_io=True)
