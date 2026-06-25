@@ -293,9 +293,22 @@ impl Sandbox {
         }
 
         let inner = if config.persist && MsbSandbox::get(&name).await.is_ok() {
-            MsbSandbox::start_detached(&name)
-                .await
-                .context("sandbox start")?
+            match MsbSandbox::start_detached(&name).await {
+                Ok(s) => s,
+                // Reconnecting to a persisted sandbox that is still running (or
+                // whose previous owner's async stop hasn't finished). Force-stop
+                // then re-start so we hold a fresh handle; it is stopped below
+                // and restarted on demand.
+                Err(MicrosandboxError::SandboxStillRunning(_)) => {
+                    if let Ok(h) = MsbSandbox::get(&name).await {
+                        let _ = h.stop().await;
+                    }
+                    MsbSandbox::start_detached(&name)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("sandbox start after force-stop: {e}"))?
+                }
+                Err(e) => return Err(anyhow::anyhow!("sandbox start: {e}")),
+            }
         } else {
             create_registered(&name, &config)
                 .await
