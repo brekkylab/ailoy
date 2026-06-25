@@ -32,8 +32,13 @@ mkdir -p {mount_root} /opt/ailoy
 # contains that path, so `pkill -f <path>` would SIGTERM the bootstrap itself.
 fusermount3 -u {mount_root} 2>/dev/null || umount -l {mount_root} 2>/dev/null || true
 if ! command -v python3 >/dev/null 2>&1 || ! command -v fusermount3 >/dev/null 2>&1; then
-  apt-get update -qq >/dev/null 2>&1 || true
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-pip fuse3 >/dev/null 2>&1 || true
+  # Best-effort install for non-baked images. `DPkg::Lock::Timeout` waits out the
+  # boot-time apt-daily/unattended-upgrades dpkg lock instead of hanging on it.
+  # Production should bake python3/fuse3/mfusepy into the guest image so this
+  # branch is skipped entirely (fast, offline, no lock contention).
+  apt-get -o DPkg::Lock::Timeout=120 update -qq >/dev/null 2>&1 || true
+  DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 \
+    install -y -qq python3 python3-pip fuse3 >/dev/null 2>&1 || true
 fi
 python3 -c 'import mfusepy' 2>/dev/null || pip3 install --break-system-packages -q mfusepy >/dev/null 2>&1 || true
 export VFS_HOST="http://host.microsandbox.internal:{port}"

@@ -446,6 +446,211 @@ async fn gdrive_read_and_command_smoke() {
     }
 }
 
+/// Mirrors agent-k's lifecycle: build an agent against a persisted (by-name)
+/// sandbox, use it, drop it (VM stops while idle → in-guest forwarder dies),
+/// then build a *new* agent against the same sandbox — which must transparently
+/// re-mount. Drive each agent once (triggers ensure_mounted), then read the
+/// page.json byte count via `msb exec` while the agent still holds the VM up.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: re-mount across sandbox restart (needs creds + sandbox + macFUSE)"]
+async fn vfs_sandbox_remount_after_restart() {
+    dotenvy::dotenv().ok();
+    // Fresh, unique name — avoid corrupt leftover state from prior runs.
+    let name = format!("ailoy-vfs-remount-{}", stamp());
+    let page = "/mnt/vfs/notion/pages/\
+                Engineering_Logs__490e8208-3e62-48ef-a8ce-bc08755ea4ff/page.json";
+
+    async fn attach_round(name: &str, page: &str) -> i64 {
+        let sandbox = RunEnv::sandbox(SandboxConfig {
+            name: Some(name.into()),
+            persist: true,
+            allow_host_egress: true,
+            ..Default::default()
+        })
+        .await
+        .expect("sandbox");
+        let mut agent = AgentBuilder::new(MODEL)
+            .provider(provider())
+            .instruction("You are a tester. Use the shell tool.")
+            .shell_tool()
+            .runenv(sandbox)
+            .vfs(notion_vfs())
+            .build()
+            .expect("build agent");
+        let q = Message::new(Role::User).with_contents([Part::text("Reply with READY.")]);
+        let mut strm = agent.run(q);
+        while let Some(ev) = strm.next().await {
+            if let Err(e) = ev {
+                eprintln!("run error: {e}");
+            }
+        }
+        // VM is up (agent holds the handle); read via msb exec before dropping.
+        let out = std::process::Command::new("msb")
+            .args(["exec", name, "--", "sh", "-c", &format!("cat {page} | wc -c")])
+            .output()
+            .expect("msb exec");
+        String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0)
+        // `agent` drops here -> AgentVfs + handle drop -> VM stops.
+    }
+
+    // No pre-install: the bootstrap itself installs deps on round 1 (unbaked
+    // image path). Round 2 reuses the persisted rootfs (deps present → fast).
+    let n1 = attach_round(&name, page).await;
+    println!("round 1 (fresh attach): {n1} bytes");
+    assert!(n1 > 0, "round 1 mount/read should be non-empty");
+
+    let n2 = attach_round(&name, page).await;
+    println!("round 2 (re-attach after VM stop): {n2} bytes");
+    assert!(n2 > 0, "round 2 re-mount after restart should be non-empty");
+
+    let _ = std::process::Command::new("msb").args(["stop", &name]).status();
+    let _ = std::process::Command::new("msb").args(["rm", &name]).status();
+}
+
+/// Does a freshly crate-created sandbox (allow_host_egress) have working network
+/// egress via the crate's exec path? Checks DNS + apt immediately, before any
+/// bootstrap — to rule out the killed-apt state as a confound.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: sandbox network egress check (needs microsandbox)"]
+async fn sandbox_network_check() {
+    dotenvy::dotenv().ok();
+    let name = format!("ailoy-net-check-{}", stamp());
+    let sandbox = RunEnv::sandbox(SandboxConfig {
+        name: Some(name.clone()),
+        persist: false,
+        allow_host_egress: true,
+        ..Default::default()
+    })
+    .await
+    .expect("sandbox");
+    let h = sandbox.get().await.expect("handle");
+    for _ in 0..40 {
+        if h.exec_shell("true".into(), Some(10))
+            .await
+            .map(|o| o.exit_code == 0)
+            .unwrap_or(false)
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    let dns = h
+        .exec_shell(
+            "getent hosts archive.ubuntu.com >/dev/null 2>&1; echo dns_rc=$?".into(),
+            Some(15),
+        )
+        .await
+        .expect("dns exec");
+    println!(
+        "DNS => {:?} (exit={}, timed_out={})",
+        dns.stdout.trim(),
+        dns.exit_code,
+        dns.timed_out
+    );
+    let host = h
+        .exec_shell(
+            "getent hosts host.microsandbox.internal >/dev/null 2>&1; echo host_rc=$?".into(),
+            Some(15),
+        )
+        .await
+        .expect("host exec");
+    println!(
+        "host.microsandbox.internal => {:?} (exit={}, timed_out={})",
+        host.stdout.trim(),
+        host.exit_code,
+        host.timed_out
+    );
+    // Actual apt via the crate exec on a fresh sandbox (the bootstrap path).
+    let apt = h
+        .exec_shell(
+            "S=$(date +%s); apt-get update -qq >/dev/null 2>&1; \
+             echo \"update_rc=$? t=$(( $(date +%s) - S ))s\"; \
+             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 fuse3 \
+             >/dev/null 2>&1; echo \"install_rc=$? t=$(( $(date +%s) - S ))s py=$(command -v python3)\""
+                .into(),
+            Some(180),
+        )
+        .await
+        .expect("apt exec");
+    println!(
+        "APT => {:?} (exit={}, timed_out={})",
+        apt.stdout.trim(),
+        apt.exit_code,
+        apt.timed_out
+    );
+}
+
+/// PROBE the "fundamentally different" design: mount the provider FUSE on the
+/// HOST (macFUSE), then bind that host dir into the guest as a microsandbox
+/// volume (virtiofs). If the guest can read provider files through the bind,
+/// this needs NO in-guest process and microsandbox re-applies the bind on every
+/// VM start — surviving restarts for free. Risk: virtiofs may refuse to export
+/// a FUSE mountpoint ("Operation not permitted").
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "probe: host-FUSE bound into guest via virtiofs (needs creds + macFUSE + sandbox)"]
+async fn vfs_host_fuse_bind_into_guest() {
+    use std::sync::Arc;
+
+    dotenvy::dotenv().ok();
+    // Host FUSE mount of the notion provider.
+    let vfs = Arc::new(Vfs::from_config(notion_vfs()).unwrap());
+    let rt = tokio::runtime::Handle::current();
+    let mountpoint = std::env::temp_dir().join(format!("ailoy-hostfuse-{}", stamp()));
+    std::fs::create_dir_all(&mountpoint).unwrap();
+    let _mount = ailoy::vfs::VfsMount::spawn(vfs, &mountpoint, rt).expect("host fuse mount");
+
+    // Wait for the host FUSE mount to be ready + populated (first readdir
+    // triggers the provider fetch) before binding it into the guest.
+    let mut host_ls = 0;
+    for _ in 0..40 {
+        host_ls = std::fs::read_dir(mountpoint.join("notion/pages"))
+            .map(|rd| rd.filter_map(|e| e.ok()).count())
+            .unwrap_or(0);
+        if host_ls > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    println!("host sees notion/pages entries: {host_ls}");
+    assert!(host_ls > 0, "host FUSE mount not ready/populated");
+
+    let name = format!("ailoy-hostbind-{}", stamp());
+    let sandbox = RunEnv::sandbox(SandboxConfig {
+        name: Some(name.clone()),
+        persist: false,
+        allow_host_egress: true,
+        volumes: vec![ailoy::runenv::VolumeMount::Bind {
+            host: mountpoint.clone(),
+            guest: "/mnt/vfs".into(),
+            readonly: false,
+        }],
+        ..Default::default()
+    })
+    .await
+    .expect("sandbox");
+    let h = sandbox.get().await.expect("handle");
+    for _ in 0..40 {
+        if h.exec_shell("true".into(), Some(10)).await.map(|o| o.exit_code == 0).unwrap_or(false) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    let out = h
+        .exec_shell(
+            "echo '== ls /mnt/vfs =='; ls /mnt/vfs 2>&1; \
+             echo '== ls /mnt/vfs/notion/pages =='; ls /mnt/vfs/notion/pages 2>&1; \
+             echo '== mount =='; mount | grep -i 'mnt/vfs\\|virtiofs' 2>&1"
+                .into(),
+            Some(30),
+        )
+        .await
+        .expect("guest ls");
+    println!(
+        "GUEST:\n{}\n--- stderr ---\n{} (exit={}, timed_out={})",
+        out.stdout, out.stderr, out.exit_code, out.timed_out
+    );
+}
+
 /// All three providers mounted together at /mnt/vfs/{s3,notion,gdrive}.
 fn all_vfs() -> VfsConfig {
     VfsConfig {
