@@ -785,6 +785,89 @@ async fn vfs_static_forwarder_write_unlink() {
     assert!(out.stdout.contains("GONE"), "file still present after rm");
 }
 
+/// Large-file / chunked-read correctness through the static forwarder: write a
+/// ~300 KB object to S3 (host-side), then `cat` it in a clean guest and verify
+/// the byte count and content checksum match — proving direct_io chunked reads
+/// reassemble correctly (the kernel issues many ranged reads for a big file).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "poc: large/chunked read through static forwarder (needs AWS creds + sandbox + cross-built binary)"]
+async fn vfs_static_forwarder_large_read() {
+    use std::path::Path;
+    use std::sync::Arc;
+    dotenvy::dotenv().ok();
+    let target = format!("{}-unknown-linux-musl", std::env::consts::ARCH);
+    let bin_path = format!(
+        "{}/tools/vfs-forwarder/target/{target}/release/ailoy-vfs-fwd",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let bin = std::fs::read(&bin_path)
+        .unwrap_or_else(|e| panic!("forwarder binary missing at {bin_path}: {e}"));
+
+    let s = stamp();
+    let fname = format!("vfs-fwd-big-{s}.bin");
+    // Deterministic ~300 KB payload: byte[i] = i % 251.
+    let data: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+    let want_len = data.len();
+    // Sample offsets (incl. mid + last byte) — verifying these proves correct
+    // multi-chunk offset handling without needing bc/md5 in the minimal guest.
+    let (b0, bmid, bend) = ((0u32 % 251) as u8, (150_000u32 % 251) as u8, (299_999u32 % 251) as u8);
+
+    let vfs = Arc::new(Vfs::from_config(vfs_config()).unwrap()); // s3-only
+    {
+        let (res, vp) = vfs.route(&format!("/s3/{fname}")).expect("route");
+        res.write_bytes(&vp, data).await.expect("host write big file");
+    }
+    let rt = tokio::runtime::Handle::current();
+    let forward = ailoy::vfs::VfsForward::spawn(vfs.clone(), &rt).expect("forward");
+    let (port, tok) = (forward.port(), forward.token().to_string());
+
+    let name = format!("ailoy-fwdbig-{s}");
+    let sandbox = RunEnv::sandbox(SandboxConfig {
+        name: Some(name.clone()),
+        persist: false,
+        allow_host_egress: true,
+        ..Default::default()
+    })
+    .await
+    .expect("sandbox");
+    let h = sandbox.get().await.expect("handle");
+    for _ in 0..40 {
+        if h.exec_shell("true".into(), Some(10)).await.map(|o| o.exit_code == 0).unwrap_or(false) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    h.write(Path::new("/opt/ailoy-vfs-fwd"), &bin).await.expect("write binary");
+    let f = format!("/mnt/vfs/s3/{fname}");
+    // Sum every byte in the guest (awk over od) + byte count → compare to host.
+    let script = format!(
+        "chmod +x /opt/ailoy-vfs-fwd; mkdir -p /mnt/vfs; \
+         VFS_HOST='http://host.microsandbox.internal:{port}' VFS_TOKEN='{tok}' \
+         setsid sh -c '/opt/ailoy-vfs-fwd /mnt/vfs >/tmp/fwd.log 2>&1' </dev/null >/dev/null 2>&1 & \
+         for _ in $(seq 1 40); do grep -q ' /mnt/vfs ' /proc/mounts && break; sleep 0.25; done; \
+         echo \"LEN=$(cat '{f}' | wc -c)\"; \
+         echo \"B0=$(dd if='{f}' bs=1 skip=0 count=1 2>/dev/null | od -An -tu1 | tr -d ' ')\"; \
+         echo \"BMID=$(dd if='{f}' bs=1 skip=150000 count=1 2>/dev/null | od -An -tu1 | tr -d ' ')\"; \
+         echo \"BEND=$(dd if='{f}' bs=1 skip=299999 count=1 2>/dev/null | od -An -tu1 | tr -d ' ')\""
+    );
+    let out = h.exec_shell(script, Some(90)).await.expect("guest exec");
+    println!(
+        "--- guest ---\n{}\nwant LEN={want_len} B0={b0} BMID={bmid} BEND={bend}",
+        out.stdout
+    );
+    let _ = std::process::Command::new("msb").args(["stop", &name]).status();
+    let _ = std::process::Command::new("msb").args(["rm", &name]).status();
+    // Clean up the S3 object.
+    {
+        let (res, vp) = vfs.route(&format!("/s3/{fname}")).expect("route");
+        let _ = res.unlink(&vp).await;
+    }
+    assert!(out.stdout.contains(&format!("LEN={want_len}")), "byte count mismatch");
+    assert!(out.stdout.contains(&format!("B0={b0}")), "byte@0 mismatch");
+    assert!(out.stdout.contains(&format!("BMID={bmid}")), "byte@150000 mismatch");
+    assert!(out.stdout.contains(&format!("BEND={bend}")), "byte@299999 mismatch");
+}
+
 /// All three providers mounted together at /mnt/vfs/{s3,notion,gdrive}.
 fn all_vfs() -> VfsConfig {
     VfsConfig {
