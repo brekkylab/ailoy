@@ -2,6 +2,8 @@ import errno
 import json
 import os
 import sys
+import threading
+import time
 import urllib.parse
 import urllib.request
 
@@ -9,6 +11,10 @@ from mfusepy import FUSE, FuseOSError, Operations
 
 BASE = os.environ["VFS_HOST"].rstrip("/")
 TOKEN = os.environ.get("VFS_TOKEN", "")
+# How long a readdir-populated attr survives. The point is to absorb the
+# getattr storm the kernel issues right after a readdir (e.g. `ls -la`), so
+# even a small value avoids one network /stat per entry. Tunable via env.
+ATTR_TTL = float(os.environ.get("VFS_ATTR_TTL", "5"))
 
 
 def _request(method, route, path, query=None, body=None):
@@ -26,14 +32,26 @@ class Forward(Operations):
     def __init__(self):
         self.wbuf = {}
         self.rcache = {}
+        # path -> (expiry_monotonic, is_dir, size); filled by readdir + getattr.
+        self.acache = {}
+        # Guards the dicts above. Never held across a network _request so FUSE
+        # callbacks (run on multiple threads) issue provider calls concurrently.
+        self.lock = threading.Lock()
 
     def getattr(self, path, fh=None):
-        if path in self.wbuf:
-            return self._attr(False, len(self.wbuf[path]))
+        with self.lock:
+            if path in self.wbuf:
+                return self._attr(False, len(self.wbuf[path]))
+            ent = self.acache.get(path)
+            if ent is not None and ent[0] > time.monotonic():
+                return self._attr(ent[1], ent[2])
         st = json.loads(_request("GET", "/stat", path).decode())
         if not st.get("exists"):
             raise FuseOSError(errno.ENOENT)
-        return self._attr(st["is_dir"], st.get("size", 0))
+        is_dir, size = st["is_dir"], st.get("size", 0)
+        with self.lock:
+            self.acache[path] = (time.monotonic() + ATTR_TTL, is_dir, size)
+        return self._attr(is_dir, size)
 
     def _attr(self, is_dir, size):
         mode = 0o040755 if is_dir else 0o100644
@@ -43,17 +61,30 @@ class Forward(Operations):
 
     def readdir(self, path, fh):
         d = json.loads(_request("GET", "/readdir", path).decode())
-        return [".", ".."] + [e["name"] for e in d["entries"]]
+        entries = d["entries"]
+        # Cache each child's attrs so the kernel's follow-up getattr storm is
+        # served locally instead of one /stat round trip per entry. readdir
+        # already carries name/is_dir/size, so this costs nothing extra.
+        base = path.rstrip("/")
+        exp = time.monotonic() + ATTR_TTL
+        with self.lock:
+            for e in entries:
+                child = f"{base}/{e['name']}" if base else f"/{e['name']}"
+                self.acache[child] = (exp, e.get("is_dir", False),
+                                      e.get("size", 0))
+        return [".", ".."] + [e["name"] for e in entries]
 
     def open(self, path, flags):
         return 0
 
     def create(self, path, mode, fi=None):
-        self.wbuf[path] = bytearray()
+        with self.lock:
+            self.wbuf[path] = bytearray()
         return 0
 
     def read(self, path, size, offset, fh):
-        data = self.rcache.get(path)
+        with self.lock:
+            data = self.rcache.get(path)
         if data is None:
             data = _request("GET", "/read", path,
                             query={"offset": offset, "size": size})
@@ -61,22 +92,27 @@ class Forward(Operations):
         return bytes(data[offset:offset + size])
 
     def write(self, path, data, offset, fh):
-        buf = self.wbuf.setdefault(path, bytearray())
-        if offset > len(buf):
-            buf.extend(b"\x00" * (offset - len(buf)))
-        buf[offset:offset + len(data)] = data
-        return len(data)
+        with self.lock:
+            buf = self.wbuf.setdefault(path, bytearray())
+            if offset > len(buf):
+                buf.extend(b"\x00" * (offset - len(buf)))
+            buf[offset:offset + len(data)] = data
+            return len(data)
 
     def truncate(self, path, length, fh=None):
-        buf = self.wbuf.get(path)
+        with self.lock:
+            buf = self.wbuf.get(path)
         if buf is None:
             try:
-                buf = bytearray(_request("GET", "/read", path,
-                                         query={"offset": 0, "size": length}))
+                data = _request("GET", "/read", path,
+                                query={"offset": 0, "size": length})
             except Exception:
-                buf = bytearray()
-            self.wbuf[path] = buf
-        del buf[length:]
+                data = b""
+            buf = bytearray(data)
+            with self.lock:
+                self.wbuf[path] = buf
+        with self.lock:
+            del buf[length:]
 
     def flush(self, path, fh):
         self._put(path)
@@ -87,12 +123,16 @@ class Forward(Operations):
         return 0
 
     def _put(self, path):
-        if path not in self.wbuf:
-            return
-        _request("PUT", "/write", path, body=bytes(self.wbuf[path]))
-        del self.wbuf[path]
-        self.rcache.pop(path, None)
+        with self.lock:
+            if path not in self.wbuf:
+                return
+            payload = bytes(self.wbuf[path])
+        _request("PUT", "/write", path, body=payload)
+        with self.lock:
+            self.wbuf.pop(path, None)
+            self.rcache.pop(path, None)
+            self.acache.pop(path, None)
 
 
 if __name__ == "__main__":
-    FUSE(Forward(), sys.argv[1], foreground=True, nothreads=True)
+    FUSE(Forward(), sys.argv[1], foreground=True, nothreads=False)
