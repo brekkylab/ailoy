@@ -73,9 +73,19 @@ existing shell/read/write tools operate on `/mnt/vfs/...`.
   export a macFUSE mountpoint — the guest sees the bind but `ls` → ENOENT. So the
   in-guest forwarder is required on macOS. *May* work on a Linux host (libfuse) —
   untested; would eliminate the in-guest process and re-mount entirely.
-- **Static, apt-free forwarder (future).** Replace the Python/mfusepy forwarder
-  with a statically-linked Rust binary (the `fuser` crate, mounting `/dev/fuse`
-  directly as root — FUSE is built into the guest kernel). Baked as an
-  arch-specific asset, copied in at boot. Removes the Python + apt dependency
-  entirely and makes even the first boot deterministic. Higher effort than image
-  baking; pursue if baking is not viable for a deployment.
+- **Static, apt-free forwarder (PROVEN — `tools/vfs-forwarder`).** A
+  statically-linked Rust `fuser` binary that mounts `/dev/fuse` directly as root
+  (pure-Rust mount path — FUSE is built into the guest kernel) and forwards to
+  the host server over plain HTTP. It needs **no python/fuse3/mfusepy/apt** and
+  works on **any** guest image, removing the runtime-apt fragility entirely (and
+  the need to bake deps). Validated end to end by
+  `vfs_static_forwarder_full`: in a clean guest (python3 + fusermount3 absent) it
+  mounts `/mnt/vfs` and serves a Notion `page.json` (489 B) over `allow@host`.
+
+  This is the recommended long-term forwarder. Remaining integration work (a
+  build-pipeline decision): ship the binary per guest arch (commit pre-built
+  static binaries and `include_bytes!`, or cross-compile in a release step) and
+  change `src/vfs/guest.rs` to copy + run it instead of installing python. Keep
+  the Python forwarder as a fallback for arches without a shipped binary. The
+  mount/re-mount lifecycle (`ensure_mounted`) is unchanged. Build/cross-compile
+  recipe and gotchas are in `tools/vfs-forwarder/README.md`.
