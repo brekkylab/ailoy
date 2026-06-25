@@ -493,8 +493,44 @@ async fn vfs_sandbox_remount_after_restart() {
         // `agent` drops here -> AgentVfs + handle drop -> VM stops.
     }
 
-    // No pre-install: the bootstrap itself installs deps on round 1 (unbaked
-    // image path). Round 2 reuses the persisted rootfs (deps present → fast).
+    // Pre-install deps once (simulates a BAKED guest image — the production
+    // path). Runtime apt-in-bootstrap is inherently flaky (boot-time apt-daily
+    // dpkg-lock contention / slow mirrors), so a reliable test must not depend
+    // on it. With deps present, each round's bootstrap skips apt and is fast.
+    // A generous lock timeout waits out apt-daily.
+    {
+        let sb = RunEnv::sandbox(SandboxConfig {
+            name: Some(name.clone()),
+            persist: true,
+            allow_host_egress: true,
+            ..Default::default()
+        })
+        .await
+        .expect("setup sandbox");
+        let h = sb.get().await.expect("setup handle");
+        for _ in 0..40 {
+            if h.exec_shell("true".into(), Some(10)).await.map(|o| o.exit_code == 0).unwrap_or(false) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        let out = h
+            .exec_shell(
+                "apt-get -o DPkg::Lock::Timeout=300 update -qq >/dev/null 2>&1; \
+                 DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 \
+                 install -y -qq python3 python3-pip fuse3 >/dev/null 2>&1; \
+                 pip3 install --break-system-packages -q mfusepy >/dev/null 2>&1; \
+                 python3 -c 'import mfusepy' 2>/dev/null && command -v fusermount3 >/dev/null \
+                 && echo DEPS_OK"
+                    .into(),
+                Some(360),
+            )
+            .await
+            .expect("setup deps exec");
+        println!("setup deps => {:?}", out.stdout.trim());
+        assert!(out.stdout.contains("DEPS_OK"), "dep pre-install failed (env apt issue)");
+    }
+
     let n1 = attach_round(&name, page).await;
     println!("round 1 (fresh attach): {n1} bytes");
     assert!(n1 > 0, "round 1 mount/read should be non-empty");

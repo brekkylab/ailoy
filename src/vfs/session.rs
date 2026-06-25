@@ -101,14 +101,19 @@ async fn wait_exec_ready(handle: &RunEnvHandle) {
     }
 }
 
-/// Whether the in-guest FUSE mount is present and connected. A VM stopped /
-/// resumed / recreated since the last attach reports it absent (the forwarder
-/// process is gone, or the mountpoint is a defunct endpoint), which triggers a
-/// re-mount.
+/// Whether the in-guest FUSE mount is present AND functional. Beyond
+/// `mountpoint -q` (which a stale mount left by a previous attach still passes
+/// even though its forwarder points at a now-dead host server), this lists the
+/// mount root — a readdir that round-trips to the current host forward server.
+/// A dead/stale forwarder makes that hang or fail within the short timeout, so
+/// we treat it as not-live and re-bootstrap against the current server.
 async fn mount_is_live(handle: &RunEnvHandle, mount_root: &str) -> bool {
     handle
-        .exec_shell(format!("mountpoint -q {mount_root}"), Some(10))
+        .exec_shell(
+            format!("mountpoint -q {mount_root} && ls {mount_root} >/dev/null 2>&1"),
+            Some(8),
+        )
         .await
-        .map(|o| o.exit_code == 0)
+        .map(|o| o.exit_code == 0 && !o.timed_out)
         .unwrap_or(false)
 }
