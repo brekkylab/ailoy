@@ -360,8 +360,79 @@ impl super::QuotaClassifier for GeminiUnmarshal {
     }
 }
 
-// Streaming not yet implemented; uses the default (errors).
-impl super::StreamUnmarshal for GeminiUnmarshal {}
+impl GeminiUnmarshal {
+    /// Maps a Gemini `finishReason` to a [`FinishReason`].
+    fn parse_finish_reason(reason: &str) -> FinishReason {
+        match reason {
+            "STOP" => FinishReason::Stop {},
+            "MAX_TOKENS" => FinishReason::Length {},
+            other => FinishReason::Refusal {
+                reason: other.to_owned(),
+            },
+        }
+    }
+
+    /// Parses Gemini `usageMetadata` (`promptTokenCount` / `candidatesTokenCount`).
+    /// `promptTokenCount` includes any cached-content tokens (folded into `input_tokens`).
+    fn parse_usage(root: &Value) -> Option<TokenUsage> {
+        let u = root
+            .pointer("/usageMetadata")
+            .filter(|u| !u.is_null())?
+            .as_object()?;
+        Some(TokenUsage {
+            input_tokens: u
+                .get("promptTokenCount")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0) as u64,
+            output_tokens: u
+                .get("candidatesTokenCount")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0) as u64,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        })
+    }
+}
+
+/// Parses one Gemini SSE chunk (`?alt=sse`) into a delta. Each chunk is a
+/// partial `GenerateContentResponse` of the same shape as the final response
+/// and carries incremental text, so it reuses `parse_candidate_content` and
+/// accumulates. A chunk without a candidate yields no delta; `finishReason` and
+/// `usageMetadata` arrive on the final chunk (alongside the function call, if
+/// any — Gemini sends `STOP` even for tool calls, adjusted to `ToolCall`).
+impl super::StreamUnmarshal for GeminiUnmarshal {
+    fn unmarshal_event(&self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
+        let val: Value = serde_json::from_str(data)?;
+        let Some(candidate) = val.pointer("/candidates/0").map(|c| c.to_owned()) else {
+            return Ok(None);
+        };
+
+        let mut finish_reason = candidate
+            .pointer("/finishReason")
+            .and_then(|v| v.as_str())
+            .map(Self::parse_finish_reason);
+
+        // Content is present on text/tool chunks; a finish-only chunk may omit
+        // it. Treat absence (or a refusal) as an empty delta.
+        let delta = match (&finish_reason, candidate.pointer("/content")) {
+            (Some(FinishReason::Refusal { .. }), _) | (_, None) => MessageDelta::default(),
+            _ => parse_candidate_content(&candidate)?,
+        };
+
+        // Gemini reports "STOP" even for tool calls; adjust when present.
+        if !delta.tool_calls.is_empty() && matches!(finish_reason, Some(FinishReason::Stop {})) {
+            finish_reason = Some(FinishReason::ToolCall {});
+        }
+
+        let usage = Self::parse_usage(&val);
+
+        Ok(Some(MessageDeltaOutput {
+            delta,
+            finish_reason,
+            usage,
+        }))
+    }
+}
 
 impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
     fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
@@ -373,13 +444,7 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
         let mut finish_reason = candidate
             .pointer("/finishReason")
             .and_then(|v| v.as_str())
-            .map(|reason| match reason {
-                "STOP" => FinishReason::Stop {},
-                "MAX_TOKENS" => FinishReason::Length {},
-                reason => FinishReason::Refusal {
-                    reason: reason.to_owned(),
-                },
-            });
+            .map(Self::parse_finish_reason);
 
         let delta = match &finish_reason {
             Some(FinishReason::Refusal { .. }) => MessageDelta::default(),
@@ -397,22 +462,7 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
         }
 
         // Parse usage (Gemini: usageMetadata.promptTokenCount / candidatesTokenCount)
-        let usage = val
-            .as_object()
-            .and_then(|r| r.get("usageMetadata"))
-            .and_then(|u| u.as_object())
-            .map(|u| TokenUsage {
-                input_tokens: u
-                    .get("promptTokenCount")
-                    .and_then(|v| v.as_integer())
-                    .unwrap_or(0) as u64,
-                output_tokens: u
-                    .get("candidatesTokenCount")
-                    .and_then(|v| v.as_integer())
-                    .unwrap_or(0) as u64,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-            });
+        let usage = Self::parse_usage(&val);
 
         Ok(MessageDeltaOutput {
             delta,
@@ -515,14 +565,115 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
 mod tests {
     use url::Url;
 
-    use super::super::QuotaClassifier;
+    use super::super::{QuotaClassifier, StreamUnmarshal};
     use super::*;
     use crate::{
         datatype::{Bytes, Value},
         lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
-        message::{Delta, FinishReason, Message, Part, Role, TokenUsage},
+        message::{Delta, FinishReason, Message, MessageDeltaOutput, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    /// Feeds Gemini SSE chunk payloads through `unmarshal_event`, accumulating
+    /// to a final `MessageDeltaOutput`.
+    fn accumulate_stream(inputs: &[&str]) -> MessageDeltaOutput {
+        let u = GeminiUnmarshal;
+        let mut acc = MessageDeltaOutput::new();
+        for input in inputs {
+            if let Some(out) = u.unmarshal_event(input).unwrap() {
+                acc = acc.accumulate(out).unwrap();
+            }
+        }
+        acc
+    }
+
+    #[test]
+    fn test_unmarshal_event_text_stream() {
+        // Incremental text across chunks; the final chunk carries finishReason +
+        // usageMetadata with no content (exercises the content-optional path).
+        let inputs = [
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"Hello"}]}}]}"#,
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"text":" world!"}]}}]}"#,
+            r#"{"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3}}"#,
+        ];
+        let result = accumulate_stream(&inputs).finish().unwrap();
+        assert_eq!(result.finish_reason, FinishReason::Stop {});
+        let usage = result.usage.expect("expected usage");
+        assert_eq!(usage.input_tokens, 7);
+        assert_eq!(usage.output_tokens, 3);
+        assert_eq!(result.message.role, Role::Assistant);
+        assert_eq!(result.message.contents.len(), 1);
+        assert_eq!(result.message.contents[0].as_text(), Some("Hello world!"));
+    }
+
+    #[test]
+    fn test_unmarshal_event_tool_call_stream() {
+        // Gemini sends the whole functionCall and finishReason in one chunk.
+        let inputs = [
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"location":"Paris"}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":6}}"#,
+        ];
+        let out = accumulate_stream(&inputs);
+        assert_eq!(out.finish_reason, Some(FinishReason::ToolCall {}));
+        let msg = out.finish().unwrap().message;
+        let tool_calls = msg.tool_calls.expect("expected tool_calls");
+        assert_eq!(tool_calls.len(), 1);
+        let (id, name, args) = tool_calls[0]
+            .as_function()
+            .expect("expected a function call");
+        assert!(id.starts_with("get_weather/"), "got id {id}");
+        assert_eq!(name, "get_weather");
+        assert_eq!(
+            args.pointer("/location").and_then(|v| v.as_str()),
+            Some("Paris")
+        );
+    }
+
+    /// End-to-end: `run_stream` over Gemini `:streamGenerateContent?alt=sse`
+    /// yields multiple deltas that accumulate into a complete message.
+    #[test_with::env(GEMINI_API_KEY)]
+    #[tokio::test]
+    async fn test_run_stream_text() {
+        use futures::StreamExt as _;
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set");
+
+        let model = LangModel::new(
+            "gemini-2.5-flash-lite".to_string(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::Gemini,
+                url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
+                    .unwrap(),
+                api_key: Some(api_key),
+            },
+        );
+        let messages = vec![
+            Message::new(Role::User).with_contents([Part::text("Reply with a short greeting.")]),
+        ];
+
+        let mut stream = model.run_stream(&messages, &[], &LangModelOptions::default());
+        let mut acc = MessageDeltaOutput::new();
+        let mut chunks = 0usize;
+        while let Some(item) = stream.next().await {
+            acc = acc.accumulate(item.unwrap()).unwrap();
+            chunks += 1;
+        }
+
+        assert!(
+            chunks >= 1,
+            "expected at least one streamed delta, got {chunks}"
+        );
+        let result = acc.finish().unwrap();
+        assert_eq!(result.finish_reason, FinishReason::Stop {});
+        assert!(
+            result
+                .message
+                .contents
+                .iter()
+                .any(|p| p.as_text().is_some_and(|t| !t.is_empty())),
+            "expected non-empty text in the streamed message"
+        );
+    }
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
     where
