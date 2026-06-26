@@ -279,8 +279,98 @@ impl super::QuotaClassifier for OpenAIUnmarshal {
     }
 }
 
-// Streaming not yet implemented; uses the default (errors).
-impl super::StreamUnmarshal for OpenAIUnmarshal {}
+/// Parses one Responses API SSE event (`response.*`) into a delta: incremental
+/// text (`output_text.delta`), reasoning (`reasoning_summary_text.delta`), and
+/// whole function calls (`output_item.done`); `response.completed` reuses the
+/// full-response `Unmarshal` for finish_reason + usage. Other events: no delta.
+impl super::StreamUnmarshal for OpenAIUnmarshal {
+    fn unmarshal_event(&self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
+        let val: Value = serde_json::from_str(data)?;
+        let ty = val.pointer("/type").and_then(|v| v.as_str()).unwrap_or("");
+
+        let mut delta = MessageDelta::new();
+        match ty {
+            // A message output item begins: establish the assistant role.
+            "response.output_item.added"
+                if val.pointer("/item/type").and_then(|v| v.as_str()) == Some("message") =>
+            {
+                delta = delta.with_role(Role::Assistant);
+            }
+            // Incremental assistant text.
+            "response.output_text.delta" => {
+                let Some(text) = val.pointer("/delta").and_then(|v| v.as_str()) else {
+                    return Ok(None);
+                };
+                delta = delta
+                    .with_role(Role::Assistant)
+                    .with_contents([PartDelta::Text {
+                        text: text.to_owned(),
+                    }]);
+            }
+            // Incremental reasoning summary -> thinking.
+            "response.reasoning_summary_text.delta" => {
+                let Some(text) = val.pointer("/delta").and_then(|v| v.as_str()) else {
+                    return Ok(None);
+                };
+                delta.thinking = Some(text.to_owned());
+            }
+            // A finalized function call (carries call_id + name + full arguments).
+            "response.output_item.done"
+                if val.pointer("/item/type").and_then(|v| v.as_str()) == Some("function_call") =>
+            {
+                let id = val
+                    .pointer("/item/call_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_owned());
+                let name = val
+                    .pointer("/item/name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                let arguments = val
+                    .pointer("/item/arguments")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                delta = delta
+                    .with_role(Role::Assistant)
+                    .with_tool_calls([PartDelta::Function {
+                        id,
+                        function: PartDeltaFunction::WithStringArgs { name, arguments },
+                    }]);
+            }
+            // Terminal: reuse the full-response parser on the embedded `response`
+            // for finish_reason + usage. Its content is dropped — already
+            // streamed by the delta events above.
+            "response.completed" | "response.incomplete" | "response.failed" => {
+                let Some(resp) = val.pointer("/response") else {
+                    return Ok(None);
+                };
+                let parsed = OpenAIUnmarshal.unmarshal(resp.clone())?;
+                return Ok(Some(MessageDeltaOutput {
+                    delta: MessageDelta::new(),
+                    finish_reason: parsed.finish_reason,
+                    usage: parsed.usage,
+                }));
+            }
+            "error" => {
+                let msg = val
+                    .pointer("/message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown error");
+                anyhow::bail!("OpenAI Responses stream error: {msg}");
+            }
+            // Lifecycle / no-delta events (created, in_progress, content_part.*,
+            // *_text.done, output_item.added for non-message items, ...).
+            _ => return Ok(None),
+        }
+        Ok(Some(MessageDeltaOutput {
+            delta,
+            finish_reason: None,
+            usage: None,
+        }))
+    }
+}
 
 impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
     fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
@@ -439,14 +529,120 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
 mod tests {
     use url::Url;
 
-    use super::super::QuotaClassifier;
+    use super::super::{QuotaClassifier, StreamUnmarshal};
     use super::*;
     use crate::{
         datatype::Bytes,
         lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
-        message::{FinishReason, Message, Part, Role, TokenUsage},
+        message::{Delta, FinishReason, Message, MessageDeltaOutput, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    /// Feeds Responses SSE event payloads through `unmarshal_event`,
+    /// accumulating to a final `MessageDeltaOutput`.
+    fn accumulate_stream(inputs: &[&str]) -> MessageDeltaOutput {
+        let u = OpenAIUnmarshal;
+        let mut acc = MessageDeltaOutput::new();
+        for input in inputs {
+            if let Some(out) = u.unmarshal_event(input).unwrap() {
+                acc = acc.accumulate(out).unwrap();
+            }
+        }
+        acc
+    }
+
+    #[test]
+    fn test_unmarshal_event_text_stream() {
+        let inputs = [
+            r#"{"type":"response.created","response":{"status":"in_progress"}}"#,
+            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_1","role":"assistant","content":[]}}"#,
+            r#"{"type":"response.content_part.added","item_id":"msg_1","output_index":0,"content_index":0,"part":{"type":"output_text","text":""}}"#,
+            r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"Hello"}"#,
+            r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":" world!"}"#,
+            r#"{"type":"response.output_text.done","item_id":"msg_1","output_index":0,"content_index":0,"text":"Hello world!"}"#,
+            r#"{"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello world!"}]}],"usage":{"input_tokens":9,"output_tokens":3}}}"#,
+        ];
+        let result = accumulate_stream(&inputs).finish().unwrap();
+        assert_eq!(result.finish_reason, FinishReason::Stop {});
+        let usage = result.usage.expect("expected usage");
+        assert_eq!(usage.input_tokens, 9);
+        assert_eq!(usage.output_tokens, 3);
+        assert_eq!(result.message.role, Role::Assistant);
+        assert_eq!(result.message.contents.len(), 1);
+        assert_eq!(result.message.contents[0].as_text(), Some("Hello world!"));
+    }
+
+    #[test]
+    fn test_unmarshal_event_tool_call_stream() {
+        let inputs = [
+            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"get_weather","arguments":""}}"#,
+            r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"location"}"#,
+            r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"\":\"Paris\"}"}"#,
+            r#"{"type":"response.function_call_arguments.done","item_id":"fc_1","output_index":0,"arguments":"{\"location\":\"Paris\"}"}"#,
+            r#"{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"get_weather","arguments":"{\"location\":\"Paris\"}"}}"#,
+            r#"{"type":"response.completed","response":{"status":"completed","output":[{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"location\":\"Paris\"}"}],"usage":{"input_tokens":20,"output_tokens":8}}}"#,
+        ];
+        let out = accumulate_stream(&inputs);
+        assert_eq!(out.finish_reason, Some(FinishReason::ToolCall {}));
+        let msg = out.finish().unwrap().message;
+        let tool_calls = msg.tool_calls.expect("expected tool_calls");
+        assert_eq!(tool_calls.len(), 1);
+        let (id, name, args) = tool_calls[0]
+            .as_function()
+            .expect("expected a function call");
+        assert_eq!(id, "call_1");
+        assert_eq!(name, "get_weather");
+        assert_eq!(
+            args.pointer("/location").and_then(|v| v.as_str()),
+            Some("Paris")
+        );
+    }
+
+    /// End-to-end: `run_stream` over the OpenAI Responses API yields multiple
+    /// deltas that accumulate into a complete message.
+    #[test_with::env(OPENAI_API_KEY)]
+    #[tokio::test]
+    async fn test_run_stream_text() {
+        use futures::StreamExt as _;
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set");
+
+        let model = LangModel::new(
+            "gpt-4.1-mini".to_string(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::OpenAI,
+                url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
+                api_key: Some(api_key),
+            },
+        );
+        let messages = vec![
+            Message::new(Role::User).with_contents([Part::text("Reply with a short greeting.")]),
+        ];
+
+        let mut stream = model.run_stream(&messages, &[], &LangModelOptions::default());
+        let mut acc = MessageDeltaOutput::new();
+        let mut chunks = 0usize;
+        while let Some(item) = stream.next().await {
+            acc = acc.accumulate(item.unwrap()).unwrap();
+            chunks += 1;
+        }
+
+        assert!(
+            chunks > 1,
+            "expected multiple streamed deltas, got {chunks}"
+        );
+        let result = acc.finish().unwrap();
+        assert_eq!(result.finish_reason, FinishReason::Stop {});
+        assert!(
+            result
+                .message
+                .contents
+                .iter()
+                .any(|p| p.as_text().is_some_and(|t| !t.is_empty())),
+            "expected non-empty text in the streamed message"
+        );
+    }
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
     where
