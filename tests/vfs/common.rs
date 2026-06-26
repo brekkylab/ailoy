@@ -7,7 +7,7 @@ pub use ailoy::{
     agent::{Agent, AgentBuilder, AgentProvider},
     lang_model::LangModelProvider,
     message::{Message, Part, Role},
-    runenv::{RunEnv, SandboxConfig},
+    runenv::{RunEnv, RunEnvHandle, SandboxConfig},
     vfs::{FileKind, MountSpec, ProviderConfig, S3Config, Vfs, VfsConfig},
 };
 pub use futures::StreamExt;
@@ -192,4 +192,75 @@ pub fn tail(s: &str, n: usize) -> String {
     } else {
         format!("…{}", &s[s.len() - n..])
     }
+}
+
+// ---- sandbox / msb helpers ----------------------------------------------
+
+/// Stop + remove a named sandbox (best-effort teardown).
+pub fn msb_rm(name: &str) {
+    let _ = std::process::Command::new("msb")
+        .args(["stop", name])
+        .status();
+    let _ = std::process::Command::new("msb").args(["rm", name]).status();
+}
+
+/// `cat <guest_path> | wc -c` via `msb exec`, parsed (0 on any failure).
+pub fn msb_read_count(name: &str, guest_path: &str) -> i64 {
+    let out = std::process::Command::new("msb")
+        .args([
+            "exec",
+            name,
+            "--",
+            "sh",
+            "-c",
+            &format!("cat {guest_path} | wc -c"),
+        ])
+        .output()
+        .expect("msb exec read");
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .unwrap_or(0)
+}
+
+/// Read the cross-built static forwarder binary (per the crate's arch).
+/// See `crates/ailoy-vfs-forwarder/README.md` for how to build it.
+pub fn forwarder_bin() -> Vec<u8> {
+    let target = format!("{}-unknown-linux-musl", std::env::consts::ARCH);
+    let bin_path = format!(
+        "{}/crates/ailoy-vfs-forwarder/target/{target}/release/ailoy-vfs-fwd",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    std::fs::read(&bin_path)
+        .unwrap_or_else(|e| panic!("forwarder binary missing at {bin_path}: {e}"))
+}
+
+/// Deploy + launch the static forwarder in a fresh guest: wait for the guest to
+/// accept exec, write the binary to `/opt/ailoy-vfs-fwd`, start it against the
+/// host forward server (`port`/`tok`), and wait for the `/mnt/vfs` mount. The
+/// forwarder is `setsid`-detached, so it outlives this exec and serves later
+/// `exec_shell` calls. Subsequent provider ops go through `h.exec_shell(...)`.
+pub async fn launch_static_forwarder(h: &RunEnvHandle, port: u16, tok: &str) {
+    for _ in 0..40 {
+        if h.exec_shell("true".into(), Some(10))
+            .await
+            .map(|o| o.exit_code == 0)
+            .unwrap_or(false)
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    h.write(std::path::Path::new("/opt/ailoy-vfs-fwd"), &forwarder_bin())
+        .await
+        .expect("write forwarder binary");
+    let launch = format!(
+        "chmod +x /opt/ailoy-vfs-fwd; mkdir -p /mnt/vfs; \
+         VFS_HOST='http://host.microsandbox.internal:{port}' VFS_TOKEN='{tok}' \
+         setsid sh -c '/opt/ailoy-vfs-fwd /mnt/vfs >/tmp/fwd.log 2>&1' </dev/null >/dev/null 2>&1 & \
+         for _ in $(seq 1 40); do grep -q ' /mnt/vfs ' /proc/mounts && break; sleep 0.25; done; \
+         mount | grep -q /mnt/vfs && echo MOUNTED || echo NOT_MOUNTED"
+    );
+    let out = h.exec_shell(launch, Some(60)).await.expect("launch forwarder");
+    println!("launch: {}", out.stdout.trim());
 }

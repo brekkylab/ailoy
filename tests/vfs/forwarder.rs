@@ -17,16 +17,6 @@ async fn vfs_recovers_from_forwarder_death() {
     let name = format!("ailoy-vfs-fwddeath-{}", stamp());
     let fx = Fixture::create("/s3").await;
     let path = fx.guest_path();
-    let read_count = |n: &str| -> i64 {
-        let out = std::process::Command::new("msb")
-            .args(["exec", n, "--", "sh", "-c", &format!("cat {path} | wc -c")])
-            .output()
-            .expect("msb exec read");
-        String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .parse()
-            .unwrap_or(0)
-    };
 
     let sandbox = RunEnv::sandbox(SandboxConfig {
         name: Some(name.clone()),
@@ -54,7 +44,7 @@ async fn vfs_recovers_from_forwarder_death() {
         }
     }
     let want = fx.len() as i64;
-    let n1 = read_count(&name);
+    let n1 = msb_read_count(&name, &path);
     println!("before forwarder kill: {n1} bytes");
     assert_eq!(n1, want, "initial mount read should match the fixture size");
 
@@ -86,15 +76,10 @@ async fn vfs_recovers_from_forwarder_death() {
             }
         }
     }
-    let n2 = read_count(&name);
+    let n2 = msb_read_count(&name, &path);
     println!("after forwarder death + self-heal: {n2} bytes");
 
-    let _ = std::process::Command::new("msb")
-        .args(["stop", &name])
-        .status();
-    let _ = std::process::Command::new("msb")
-        .args(["rm", &name])
-        .status();
+    msb_rm(&name);
     fx.teardown().await;
     assert_eq!(
         n2, want,
@@ -115,16 +100,6 @@ async fn vfs_repeated_forwarder_death_recovery() {
     let name = format!("ailoy-vfs-fwdloop-{}", stamp());
     let fx = Fixture::create("/s3").await;
     let path = fx.guest_path();
-    let read_count = |n: &str| -> i64 {
-        let out = std::process::Command::new("msb")
-            .args(["exec", n, "--", "sh", "-c", &format!("cat {path} | wc -c")])
-            .output()
-            .expect("msb exec read");
-        String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .parse()
-            .unwrap_or(0)
-    };
     async fn drive_once(agent: &mut Agent) {
         let q = Message::new(Role::User).with_contents([Part::text("Reply with READY.")]);
         let mut strm = agent.run(q);
@@ -154,7 +129,7 @@ async fn vfs_repeated_forwarder_death_recovery() {
 
     let want = fx.len() as i64;
     drive_once(&mut agent).await; // initial mount
-    assert_eq!(read_count(&name), want, "initial mount read failed");
+    assert_eq!(msb_read_count(&name, &path), want, "initial mount read failed");
 
     for round in 1..=3 {
         let _ = std::process::Command::new("msb")
@@ -168,7 +143,7 @@ async fn vfs_repeated_forwarder_death_recovery() {
             ])
             .status();
         drive_once(&mut agent).await; // self-heal re-mount
-        let n = read_count(&name);
+        let n = msb_read_count(&name, &path);
         println!("round {round}: after kill+heal -> {n} bytes");
         assert_eq!(
             n, want,
@@ -194,12 +169,7 @@ async fn vfs_repeated_forwarder_death_recovery() {
         .unwrap_or(-1);
     println!("/mnt/vfs entries in /proc/mounts after 3 kill+heal rounds: {count}");
 
-    let _ = std::process::Command::new("msb")
-        .args(["stop", &name])
-        .status();
-    let _ = std::process::Command::new("msb")
-        .args(["rm", &name])
-        .status();
+    msb_rm(&name);
     fx.teardown().await;
     assert_eq!(
         count, 1,
@@ -215,17 +185,8 @@ async fn vfs_repeated_forwarder_death_recovery() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "poc: full static dep-free forwarder serves a provider (needs creds + sandbox + cross-built binary)"]
 async fn vfs_static_forwarder_full() {
-    use std::path::Path;
     use std::sync::Arc;
     dotenvy::dotenv().ok();
-    // Cross-build first: see crates/ailoy-vfs-forwarder/README.md.
-    let target = format!("{}-unknown-linux-musl", std::env::consts::ARCH);
-    let bin_path = format!(
-        "{}/crates/ailoy-vfs-forwarder/target/{target}/release/ailoy-vfs-fwd",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    let bin = std::fs::read(&bin_path)
-        .unwrap_or_else(|e| panic!("forwarder binary missing at {bin_path}: {e}"));
 
     let fx = Fixture::create("/s3").await;
     let vfs = Arc::new(Vfs::from_config(all_vfs()).unwrap()); // s3-only
@@ -243,49 +204,17 @@ async fn vfs_static_forwarder_full() {
     .await
     .expect("sandbox");
     let h = sandbox.get().await.expect("handle");
-    for _ in 0..40 {
-        if h.exec_shell("true".into(), Some(10))
-            .await
-            .map(|o| o.exit_code == 0)
-            .unwrap_or(false)
-        {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    }
-    h.write(Path::new("/opt/ailoy-vfs-fwd"), &bin)
-        .await
-        .expect("write binary");
+    launch_static_forwarder(&h, port, &tok).await;
+
     let path = fx.guest_path();
-    let script = format!(
-        "echo \"deps: python3=$(command -v python3) fusermount3=$(command -v fusermount3)\"; \
-         chmod +x /opt/ailoy-vfs-fwd; mkdir -p /mnt/vfs; \
-         VFS_HOST='http://host.microsandbox.internal:{port}' VFS_TOKEN='{tok}' \
-         setsid sh -c '/opt/ailoy-vfs-fwd /mnt/vfs >/tmp/fwd.log 2>&1' </dev/null >/dev/null 2>&1 & \
-         for _ in $(seq 1 40); do grep -q ' /mnt/vfs ' /proc/mounts && break; sleep 0.25; done; \
-         echo '== mount =='; mount | grep /mnt/vfs || echo '(not mounted)'; \
-         echo '== ls s3 =='; ls /mnt/vfs/s3 2>&1 | head; \
-         echo '== cat bytes =='; cat '{path}' 2>/dev/null | wc -c; \
-         echo '== log =='; cat /tmp/fwd.log 2>&1 | tail -5"
-    );
-    let out = h.exec_shell(script, Some(60)).await.expect("guest exec");
-    println!("--- guest ---\n{}", out.stdout);
-    if !out.stderr.trim().is_empty() {
-        println!("--- stderr ---\n{}", out.stderr);
-    }
-    let bytes: i64 = out
-        .stdout
-        .lines()
-        .skip_while(|l| !l.contains("== cat bytes =="))
-        .nth(1)
-        .and_then(|l| l.trim().parse().ok())
-        .unwrap_or(0);
-    let _ = std::process::Command::new("msb")
-        .args(["stop", &name])
-        .status();
-    let _ = std::process::Command::new("msb")
-        .args(["rm", &name])
-        .status();
+    let out = h
+        .exec_shell(format!("cat '{path}' 2>/dev/null | wc -c"), Some(60))
+        .await
+        .expect("guest read");
+    let bytes: i64 = out.stdout.trim().parse().unwrap_or(0);
+    println!("static forwarder served {bytes} bytes (want {})", fx.len());
+
+    msb_rm(&name);
     fx.teardown().await;
     assert_eq!(
         bytes,
@@ -301,16 +230,8 @@ async fn vfs_static_forwarder_full() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "poc: write+rm through static forwarder on S3 (needs AWS creds + sandbox + cross-built binary)"]
 async fn vfs_static_forwarder_write_unlink() {
-    use std::path::Path;
     use std::sync::Arc;
     dotenvy::dotenv().ok();
-    let target = format!("{}-unknown-linux-musl", std::env::consts::ARCH);
-    let bin_path = format!(
-        "{}/crates/ailoy-vfs-forwarder/target/{target}/release/ailoy-vfs-fwd",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    let bin = std::fs::read(&bin_path)
-        .unwrap_or_else(|e| panic!("forwarder binary missing at {bin_path}: {e}"));
 
     let vfs = Arc::new(Vfs::from_config(all_vfs()).unwrap()); // s3-only
     let rt = tokio::runtime::Handle::current();
@@ -329,26 +250,10 @@ async fn vfs_static_forwarder_write_unlink() {
     .await
     .expect("sandbox");
     let h = sandbox.get().await.expect("handle");
-    for _ in 0..40 {
-        if h.exec_shell("true".into(), Some(10))
-            .await
-            .map(|o| o.exit_code == 0)
-            .unwrap_or(false)
-        {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    }
-    h.write(Path::new("/opt/ailoy-vfs-fwd"), &bin)
-        .await
-        .expect("write binary");
+    launch_static_forwarder(&h, port, &tok).await;
     let f = format!("/mnt/vfs/s3/{fname}");
     let script = format!(
-        "chmod +x /opt/ailoy-vfs-fwd; mkdir -p /mnt/vfs; \
-         VFS_HOST='http://host.microsandbox.internal:{port}' VFS_TOKEN='{tok}' \
-         setsid sh -c '/opt/ailoy-vfs-fwd /mnt/vfs >/tmp/fwd.log 2>&1' </dev/null >/dev/null 2>&1 & \
-         for _ in $(seq 1 40); do grep -q ' /mnt/vfs ' /proc/mounts && break; sleep 0.25; done; \
-         printf 'rmcontent-{s}' > '{f}'; \
+        "printf 'rmcontent-{s}' > '{f}'; \
          echo \"WROTE=$(cat '{f}')\"; \
          rm '{f}' && echo RM_OK || echo RM_FAIL; \
          (ls '{f}' >/dev/null 2>&1 && echo STILL_THERE || echo GONE)"
@@ -358,12 +263,7 @@ async fn vfs_static_forwarder_write_unlink() {
     if !out.stderr.trim().is_empty() {
         println!("--- stderr ---\n{}", out.stderr);
     }
-    let _ = std::process::Command::new("msb")
-        .args(["stop", &name])
-        .status();
-    let _ = std::process::Command::new("msb")
-        .args(["rm", &name])
-        .status();
+    msb_rm(&name);
     assert!(
         out.stdout.contains(&format!("WROTE=rmcontent-{s}")),
         "write/read failed"
@@ -379,16 +279,8 @@ async fn vfs_static_forwarder_write_unlink() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "poc: large/chunked read through static forwarder (needs AWS creds + sandbox + cross-built binary)"]
 async fn vfs_static_forwarder_large_read() {
-    use std::path::Path;
     use std::sync::Arc;
     dotenvy::dotenv().ok();
-    let target = format!("{}-unknown-linux-musl", std::env::consts::ARCH);
-    let bin_path = format!(
-        "{}/crates/ailoy-vfs-forwarder/target/{target}/release/ailoy-vfs-fwd",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    let bin = std::fs::read(&bin_path)
-        .unwrap_or_else(|e| panic!("forwarder binary missing at {bin_path}: {e}"));
 
     let s = stamp();
     let fname = format!("vfs-fwd-big-{s}.bin");
@@ -424,27 +316,11 @@ async fn vfs_static_forwarder_large_read() {
     .await
     .expect("sandbox");
     let h = sandbox.get().await.expect("handle");
-    for _ in 0..40 {
-        if h.exec_shell("true".into(), Some(10))
-            .await
-            .map(|o| o.exit_code == 0)
-            .unwrap_or(false)
-        {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    }
-    h.write(Path::new("/opt/ailoy-vfs-fwd"), &bin)
-        .await
-        .expect("write binary");
+    launch_static_forwarder(&h, port, &tok).await;
     let f = format!("/mnt/vfs/s3/{fname}");
     // Sum every byte in the guest (awk over od) + byte count → compare to host.
     let script = format!(
-        "chmod +x /opt/ailoy-vfs-fwd; mkdir -p /mnt/vfs; \
-         VFS_HOST='http://host.microsandbox.internal:{port}' VFS_TOKEN='{tok}' \
-         setsid sh -c '/opt/ailoy-vfs-fwd /mnt/vfs >/tmp/fwd.log 2>&1' </dev/null >/dev/null 2>&1 & \
-         for _ in $(seq 1 40); do grep -q ' /mnt/vfs ' /proc/mounts && break; sleep 0.25; done; \
-         echo \"LEN=$(cat '{f}' | wc -c)\"; \
+        "echo \"LEN=$(cat '{f}' | wc -c)\"; \
          echo \"B0=$(dd if='{f}' bs=1 skip=0 count=1 2>/dev/null | od -An -tu1 | tr -d ' ')\"; \
          echo \"BMID=$(dd if='{f}' bs=1 skip=150000 count=1 2>/dev/null | od -An -tu1 | tr -d ' ')\"; \
          echo \"BEND=$(dd if='{f}' bs=1 skip=299999 count=1 2>/dev/null | od -An -tu1 | tr -d ' ')\""
@@ -454,12 +330,7 @@ async fn vfs_static_forwarder_large_read() {
         "--- guest ---\n{}\nwant LEN={want_len} B0={b0} BMID={bmid} BEND={bend}",
         out.stdout
     );
-    let _ = std::process::Command::new("msb")
-        .args(["stop", &name])
-        .status();
-    let _ = std::process::Command::new("msb")
-        .args(["rm", &name])
-        .status();
+    msb_rm(&name);
     // Clean up the S3 object.
     {
         let (res, vp) = vfs.route(&format!("/s3/{fname}")).expect("route");

@@ -76,21 +76,7 @@ async fn vfs_sandbox_remount_after_restart() {
             }
         }
         // VM is up (agent holds the handle); read via msb exec before dropping.
-        let out = std::process::Command::new("msb")
-            .args([
-                "exec",
-                name,
-                "--",
-                "sh",
-                "-c",
-                &format!("cat {path} | wc -c"),
-            ])
-            .output()
-            .expect("msb exec");
-        String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .parse()
-            .unwrap_or(0)
+        msb_read_count(name, path)
         // `agent` drops here -> AgentVfs + handle drop -> VM stops.
     }
 
@@ -109,12 +95,7 @@ async fn vfs_sandbox_remount_after_restart() {
         "round 2 re-mount after restart should match the fixture size"
     );
 
-    let _ = std::process::Command::new("msb")
-        .args(["stop", &name])
-        .status();
-    let _ = std::process::Command::new("msb")
-        .args(["rm", &name])
-        .status();
+    msb_rm(&name);
     fx.teardown().await;
 }
 
@@ -159,12 +140,7 @@ async fn vfs_sandbox_reconnect_race() {
             Err(_) => panic!("iter {i} HUNG > 140s — reconnect race wedged the VM"),
         }
     }
-    let _ = std::process::Command::new("msb")
-        .args(["stop", &name])
-        .status();
-    let _ = std::process::Command::new("msb")
-        .args(["rm", &name])
-        .status();
+    msb_rm(&name);
     println!("RACE TEST DONE (12 reconnects clean)");
 }
 
@@ -218,12 +194,7 @@ async fn vfs_concurrent_access_stress() {
         .filter_map(|s| s.parse().ok())
         .collect();
     println!("concurrent read counts: {counts:?}");
-    let _ = std::process::Command::new("msb")
-        .args(["stop", &name])
-        .status();
-    let _ = std::process::Command::new("msb")
-        .args(["rm", &name])
-        .status();
+    msb_rm(&name);
     fx.teardown().await;
     assert_eq!(counts.len(), 8, "expected 8 reader results, got {counts:?}");
     let first = counts[0];
@@ -363,12 +334,7 @@ async fn vfs_multimount_remount_after_restart() {
     let s2 = String::from_utf8_lossy(&r2.stdout);
     println!("round 2 output: {s2:?}");
     drop(a2);
-    let _ = std::process::Command::new("msb")
-        .args(["stop", &name])
-        .status();
-    let _ = std::process::Command::new("msb")
-        .args(["rm", &name])
-        .status();
+    msb_rm(&name);
 
     assert!(
         s2.contains(content),
@@ -450,12 +416,7 @@ async fn vfs_agent_reads_across_restart() {
         "--- agent-k round 2 transcript tail ---\n{}",
         tail(&transcript, 700)
     );
-    let _ = std::process::Command::new("msb")
-        .args(["stop", &name])
-        .status();
-    let _ = std::process::Command::new("msb")
-        .args(["rm", &name])
-        .status();
+    msb_rm(&name);
     fx.teardown().await;
     assert!(
         transcript.contains(&fx.content),
@@ -525,12 +486,7 @@ async fn vfs_concurrent_agents_remount() {
         }
         let n1 = attach_round(&name, path.as_str()).await;
         let n2 = attach_round(&name, path.as_str()).await;
-        let _ = std::process::Command::new("msb")
-            .args(["stop", &name])
-            .status();
-        let _ = std::process::Command::new("msb")
-            .args(["rm", &name])
-            .status();
+        msb_rm(&name);
         (n1, n2)
     }
 
