@@ -204,6 +204,15 @@ pub fn msb_rm(name: &str) {
     let _ = std::process::Command::new("msb").args(["rm", name]).status();
 }
 
+/// Run a shell script in the guest via `msb exec` (60s bound); return stdout.
+pub fn msb_exec(name: &str, script: &str) -> String {
+    let out = std::process::Command::new("msb")
+        .args(["exec", name, "--", "timeout", "60", "sh", "-c", script])
+        .output()
+        .expect("msb exec");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
 /// `cat <guest_path> | wc -c` via `msb exec`, parsed (0 on any failure).
 pub fn msb_read_count(name: &str, guest_path: &str) -> i64 {
     let out = std::process::Command::new("msb")
@@ -221,6 +230,38 @@ pub fn msb_read_count(name: &str, guest_path: &str) -> i64 {
         .trim()
         .parse()
         .unwrap_or(0)
+}
+
+/// Build an agent on a fresh persisted sandbox with `all_vfs` mounted and drive
+/// it once ("READY") to bring the in-guest mount up via `ensure_mounted`. Returns
+/// the live agent — keep it alive to hold the VM, then read through the mount with
+/// the `msb_*` helpers.
+pub async fn attach_mounted_agent(name: &str) -> Agent {
+    let sandbox = RunEnv::sandbox(SandboxConfig {
+        name: Some(name.into()),
+        persist: true,
+        allow_host_egress: true,
+        ..Default::default()
+    })
+    .await
+    .expect("sandbox");
+    let mut agent = AgentBuilder::new(MODEL)
+        .provider(provider())
+        .instruction("You are a tester. Use the shell tool.")
+        .shell_tool()
+        .runenv(sandbox)
+        .vfs(all_vfs())
+        .build()
+        .expect("build agent");
+    let q = Message::new(Role::User).with_contents([Part::text("Reply with READY.")]);
+    let mut strm = agent.run(q);
+    while let Some(ev) = strm.next().await {
+        if let Err(e) = ev {
+            eprintln!("[{name}] run error: {e}");
+        }
+    }
+    drop(strm); // release the borrow on `agent` so it can be returned
+    agent
 }
 
 /// Read the cross-built static forwarder binary (per the crate's arch).

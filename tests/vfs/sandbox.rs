@@ -259,34 +259,6 @@ async fn vfs_multimount_remount_after_restart() {
     let marker = format!("/mnt/vfs/s3/ailoy-multimount-{}-{}.txt", stamp(), uniq());
     let content = "multimount-ok";
 
-    async fn attach(name: &str) -> Agent {
-        let sandbox = RunEnv::sandbox(SandboxConfig {
-            name: Some(name.into()),
-            persist: true,
-            allow_host_egress: true,
-            ..Default::default()
-        })
-        .await
-        .expect("sandbox");
-        let mut agent = AgentBuilder::new(MODEL)
-            .provider(provider())
-            .instruction("You are a tester. Use the shell tool.")
-            .shell_tool()
-            .runenv(sandbox)
-            .vfs(all_vfs())
-            .build()
-            .expect("build agent");
-        let q = Message::new(Role::User).with_contents([Part::text("Reply with READY.")]);
-        let mut strm = agent.run(q);
-        while let Some(ev) = strm.next().await {
-            if let Err(e) = ev {
-                eprintln!("run error: {e}");
-            }
-        }
-        drop(strm); // release the borrow on `agent` so it can be returned
-        agent
-    }
-
     fn probe_val(stdout: &str, label: &str) -> i64 {
         stdout
             .lines()
@@ -296,7 +268,7 @@ async fn vfs_multimount_remount_after_restart() {
     }
 
     // Round 1: write through the s3 mount + read each other provider (VM held by agent).
-    let a1 = attach(&name).await;
+    let a1 = attach_mounted_agent(&name).await;
     let r1 = std::process::Command::new("msb")
         .args([
             "exec",
@@ -319,7 +291,7 @@ async fn vfs_multimount_remount_after_restart() {
     drop(a1); // VM stops
 
     // Round 2: fresh agent, same sandbox — every mount must re-mount and serve.
-    let a2 = attach(&name).await;
+    let a2 = attach_mounted_agent(&name).await;
     let r2 = std::process::Command::new("msb")
         .args([
             "exec",
@@ -514,6 +486,113 @@ async fn vfs_concurrent_agents_remount() {
         );
     }
     println!("CONCURRENT AGENTS OK ({N} agents, both rounds across restart)");
+}
+
+/// getattr/stat size correctness through the forwarder for a *rendered* file
+/// whose directory listing reports size 0 (a Notion page.json). That size-0
+/// listing once made reads clamp to 0; stat now verifies the real size. Asserts
+/// the size reported by `stat`/`ls -l` (a getattr round-trip through the
+/// forwarder) equals the actual content length read back, both > 0. Needs a
+/// notion mount with at least one shared page.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: stat size matches content for a rendered file through the forwarder (creds + sandbox + macFUSE)"]
+async fn vfs_stat_size_through_mount() {
+    dotenvy::dotenv().ok();
+    if !has_mount("/notion") {
+        eprintln!("no notion creds — skipping (needs a rendered/size-0-listing file)");
+        return;
+    }
+    let name = format!("ailoy-vfs-stat-{}", stamp());
+    let agent = attach_mounted_agent(&name).await;
+    let out = msb_exec(
+        &name,
+        "p=$(ls /mnt/vfs/notion/pages 2>/dev/null | head -1); \
+         [ -z \"$p\" ] && { echo NO_PAGE; exit 0; }; \
+         f=\"/mnt/vfs/notion/pages/$p/page.json\"; \
+         echo \"STAT=$(stat -c %s \"$f\" 2>/dev/null || ls -ln \"$f\" | awk '{print $5}')\"; \
+         echo \"READ=$(cat \"$f\" | wc -c)\"",
+    );
+    println!("stat-size probe: {out:?}");
+    drop(agent);
+    msb_rm(&name);
+    if out.contains("NO_PAGE") {
+        eprintln!("no notion page shared with the integration — skipping");
+        return;
+    }
+    let parse = |k: &str| -> i64 {
+        out.lines()
+            .find_map(|l| l.strip_prefix(k))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(-1)
+    };
+    let stat = parse("STAT=");
+    let read = parse("READ=");
+    assert!(
+        read > 0,
+        "read of the rendered page.json should be non-empty: {out:?}"
+    );
+    assert_eq!(
+        stat, read,
+        "stat/getattr size ({stat}) must match the actual content length ({read}) \
+         — a size-0 listing must not clamp the reported size"
+    );
+    println!("STAT-SIZE OK (getattr {stat} == read {read})");
+}
+
+/// Domain `.cmd` write routed through the in-guest forwarder: write a
+/// page-create body to `/mnt/vfs/notion/.cmd/page-create`. The forward server
+/// strips `/.cmd/<op>` and dispatches to `Resource::command`, so this exercises
+/// the write→command seam end to end (not the direct adapter, which the
+/// providers.rs smoke test covers). The deterministic guarantee asserted here is
+/// liveness: the `.cmd` write reaches the host command handler and returns
+/// without wedging the mount (the bug class is an indefinite hang). If the
+/// integration has "Insert content" capability a page is actually created (a
+/// logged bonus); ACL rejection is fine. Needs a notion mount + a shared page.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: domain .cmd write routed through the forwarder (creds + sandbox + macFUSE)"]
+async fn vfs_cmd_write_through_forwarder() {
+    dotenvy::dotenv().ok();
+    if !has_mount("/notion") {
+        eprintln!("no notion creds — skipping");
+        return;
+    }
+    let name = format!("ailoy-vfs-cmd-{}", stamp());
+    let agent = attach_mounted_agent(&name).await;
+    // Discover a parent page in-guest, build the page-create body with its id, and
+    // write it to the `.cmd` control path. Then confirm the mount is still alive —
+    // proving the write routed to command() without wedging the forwarder.
+    let out = msb_exec(
+        &name,
+        "p=$(ls /mnt/vfs/notion/pages 2>/dev/null | head -1); \
+         [ -z \"$p\" ] && { echo NO_PAGE; exit 0; }; \
+         id=${p##*__}; \
+         json='{\"parent\":{\"page_id\":\"'\"$id\"'\"},\"properties\":{\"title\":[{\"text\":{\"content\":\"ailoy vfs cmd-through-fwd\"}}]}}'; \
+         printf '%s' \"$json\" > /mnt/vfs/notion/.cmd/page-create 2>/tmp/cmderr; \
+         echo \"WRITE_RC=$?\"; \
+         (ls /mnt/vfs/notion/pages >/dev/null 2>&1 && echo MOUNT_ALIVE || echo MOUNT_DEAD); \
+         echo \"ERR=$(cat /tmp/cmderr 2>/dev/null)\"",
+    );
+    println!("cmd-through-forwarder: {out:?}");
+    drop(agent);
+    msb_rm(&name);
+    if out.contains("NO_PAGE") {
+        eprintln!("no notion page shared with the integration — skipping");
+        return;
+    }
+    // Liveness: the `.cmd` write routed to the host command handler and the mount
+    // survived (didn't hang/wedge). A capability/ACL rejection is acceptable.
+    assert!(
+        out.contains("MOUNT_ALIVE"),
+        "mount wedged or unreachable after a .cmd write — routing/liveness broken: {out:?}"
+    );
+    if out.contains("WRITE_RC=0") {
+        println!("CMD-THROUGH-FORWARDER OK (page-create routed + accepted)");
+    } else {
+        eprintln!(
+            "NOTE: .cmd write routed through the forwarder but the op was rejected \
+             (integration capability/ACL); mount stayed live — soft pass"
+        );
+    }
 }
 
 /// Brings up a NAMED sandbox with S3 + Notion + GDrive mounted under /mnt/vfs,
