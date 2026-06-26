@@ -11,10 +11,14 @@ use crate::common::*;
 #[ignore = "live: needs AWS creds + aws CLI"]
 async fn s3_readdir_marker_and_sort_smoke() {
     dotenvy::dotenv().ok();
+    if !has_mount("/s3") {
+        eprintln!("no s3 creds — skipping");
+        return;
+    }
     let bucket = std::env::var("AWS_S3_BUCKET").unwrap();
     let s = stamp();
     let base = format!("vfs-s3-smoke-{s}");
-    let vfs = Vfs::from_config(vfs_config()).unwrap();
+    let vfs = Vfs::from_config(all_vfs()).unwrap();
 
     // Write three children (out of order) plus a nested object.
     for (name, body) in [("b.txt", "B"), ("a.txt", "A"), ("sub/c.txt", "C")] {
@@ -82,7 +86,11 @@ async fn s3_readdir_marker_and_sort_smoke() {
 #[ignore = "live: needs NOTION_API_KEY with a shared page"]
 async fn notion_read_and_command_smoke() {
     dotenvy::dotenv().ok();
-    let vfs = Vfs::from_config(notion_vfs()).unwrap();
+    if !has_mount("/notion") {
+        eprintln!("no notion creds — skipping");
+        return;
+    }
+    let vfs = Vfs::from_config(all_vfs()).unwrap();
 
     let (res, vp) = vfs.route("/notion/pages").expect("route pages");
     let entries = res.readdir(&vp).await.expect("readdir pages");
@@ -199,7 +207,11 @@ async fn notion_read_and_command_smoke() {
 #[ignore = "live: needs GOOGLE_* refresh token with Drive scope"]
 async fn gdrive_hierarchy_smoke() {
     dotenvy::dotenv().ok();
-    let vfs = Vfs::from_config(gdrive_vfs()).unwrap();
+    if !has_mount("/gdrive") {
+        eprintln!("no gdrive creds — skipping");
+        return;
+    }
+    let vfs = Vfs::from_config(all_vfs()).unwrap();
     let (res, vp) = vfs.route("/gdrive").expect("route gdrive");
     let root = res.readdir(&vp).await.expect("readdir root");
     let dirs: Vec<&String> = root
@@ -229,7 +241,11 @@ async fn gdrive_hierarchy_smoke() {
 #[ignore = "live: needs GOOGLE_* refresh token with Drive + Docs scopes"]
 async fn gdrive_read_and_command_smoke() {
     dotenvy::dotenv().ok();
-    let vfs = Vfs::from_config(gdrive_vfs()).unwrap();
+    if !has_mount("/gdrive") {
+        eprintln!("no gdrive creds — skipping");
+        return;
+    }
+    let vfs = Vfs::from_config(all_vfs()).unwrap();
     let (res, vp) = vfs.route("/gdrive").expect("route gdrive");
     let entries = res.readdir(&vp).await.expect("readdir gdrive");
     let names: Vec<&String> = entries.iter().map(|e| &e.name).collect();
@@ -255,14 +271,12 @@ async fn gdrive_read_and_command_smoke() {
         .to_string();
     println!("read {} -> documentId={doc_id}", gdoc.name);
 
-    // Append to a user-owned doc (the read doc above may be read-only-shared).
-    // Override via AILOY_GDOC_ID; defaults to a known-writable doc.
-    let write_doc = std::env::var("AILOY_GDOC_ID")
-        .unwrap_or_else(|_| "10NTjr9rPPqZKzoW_YpP9z-8WfSMuN0z1-mDq012KWuI".into());
-    let _ = doc_id;
+    // Append to the doc we just discovered (no hardcoded doc id). It may be
+    // read-only-shared, in which case the Docs API rejects the write and we treat
+    // that as a soft skip in the `Err` arm below.
     let (res, _) = vfs.route("/gdrive/.cmd/docs-append").unwrap();
     let body =
-        serde_json::json!({"document_id": write_doc, "text": "\nappended by ailoy vfs phase 2\n"});
+        serde_json::json!({"document_id": doc_id, "text": "\nappended by ailoy vfs phase 2\n"});
     match res
         .command("docs-append", body.to_string().as_bytes())
         .await

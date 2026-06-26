@@ -41,7 +41,7 @@ async fn vfs_recovers_from_forwarder_death() {
         .instruction("You are a tester. Use the shell tool.")
         .shell_tool()
         .runenv(sandbox)
-        .vfs(vfs_config())
+        .vfs(all_vfs())
         .build()
         .expect("build agent");
 
@@ -148,7 +148,7 @@ async fn vfs_repeated_forwarder_death_recovery() {
         .instruction("You are a tester. Use the shell tool.")
         .shell_tool()
         .runenv(sandbox)
-        .vfs(vfs_config())
+        .vfs(all_vfs())
         .build()
         .expect("build agent");
 
@@ -228,7 +228,7 @@ async fn vfs_static_forwarder_full() {
         .unwrap_or_else(|e| panic!("forwarder binary missing at {bin_path}: {e}"));
 
     let fx = S3Fixture::create().await;
-    let vfs = Arc::new(Vfs::from_config(vfs_config()).unwrap()); // s3-only
+    let vfs = Arc::new(Vfs::from_config(all_vfs()).unwrap()); // s3-only
     let rt = tokio::runtime::Handle::current();
     let forward = ailoy::vfs::VfsForward::spawn(vfs, &rt).expect("forward");
     let (port, tok) = (forward.port(), forward.token().to_string());
@@ -312,7 +312,7 @@ async fn vfs_static_forwarder_write_unlink() {
     let bin = std::fs::read(&bin_path)
         .unwrap_or_else(|e| panic!("forwarder binary missing at {bin_path}: {e}"));
 
-    let vfs = Arc::new(Vfs::from_config(vfs_config()).unwrap()); // s3-only
+    let vfs = Arc::new(Vfs::from_config(all_vfs()).unwrap()); // s3-only
     let rt = tokio::runtime::Handle::current();
     let forward = ailoy::vfs::VfsForward::spawn(vfs, &rt).expect("forward");
     let (port, tok) = (forward.port(), forward.token().to_string());
@@ -403,7 +403,7 @@ async fn vfs_static_forwarder_large_read() {
         (299_999u32 % 251) as u8,
     );
 
-    let vfs = Arc::new(Vfs::from_config(vfs_config()).unwrap()); // s3-only
+    let vfs = Arc::new(Vfs::from_config(all_vfs()).unwrap()); // s3-only
     {
         let (res, vp) = vfs.route(&format!("/s3/{fname}")).expect("route");
         res.write_bytes(&vp, data)

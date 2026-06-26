@@ -25,15 +25,6 @@ pub fn s3_config() -> S3Config {
     }
 }
 
-pub fn vfs_config() -> VfsConfig {
-    VfsConfig {
-        mounts: vec![MountSpec {
-            prefix: "/s3".into(),
-            provider: ProviderConfig::S3(s3_config()),
-        }],
-    }
-}
-
 pub fn provider() -> AgentProvider {
     let key = std::env::var("ANTHROPIC_API_KEY").unwrap();
     let mut p = AgentProvider::new();
@@ -68,7 +59,7 @@ pub async fn drive(mut agent: Agent, task: &str) -> String {
 }
 
 pub async fn verify_s3(fname: &str, want: &str) -> bool {
-    let vfs = Vfs::from_config(vfs_config()).unwrap();
+    let vfs = Vfs::from_config(all_vfs()).unwrap();
     let path = format!("/s3/{fname}");
     let (res, vp) = vfs.route(&path).expect("route");
     match res.read_bytes(&vp, None).await {
@@ -107,7 +98,7 @@ impl S3Fixture {
     pub async fn create() -> S3Fixture {
         let key = format!("ailoy-fixture-{}-{}.txt", stamp(), uniq());
         let content = format!("ailoy-fixture-content-{key}");
-        let vfs = Vfs::from_config(vfs_config()).unwrap();
+        let vfs = Vfs::from_config(all_vfs()).unwrap();
         let (res, vp) = vfs.route(&format!("/s3/{key}")).expect("route fixture");
         res.write_bytes(&vp, content.clone().into_bytes())
             .await
@@ -128,7 +119,7 @@ impl S3Fixture {
     /// Best-effort delete of the S3 object. Call once the test is done with it
     /// (before any assertions that might panic and skip cleanup).
     pub async fn teardown(&self) {
-        let vfs = Vfs::from_config(vfs_config()).unwrap();
+        let vfs = Vfs::from_config(all_vfs()).unwrap();
         let (res, vp) = vfs.route(&format!("/s3/{}", self.key)).expect("route");
         let _ = res.unlink(&vp).await;
     }
@@ -144,54 +135,48 @@ pub fn task_for(fname: &str, content: &str) -> String {
     )
 }
 
-pub fn notion_vfs() -> VfsConfig {
-    VfsConfig {
-        mounts: vec![MountSpec {
-            prefix: "/notion".into(),
-            provider: ProviderConfig::Notion(ailoy::vfs::NotionConfig {
-                api_key: std::env::var("NOTION_API_KEY").unwrap(),
-            }),
-        }],
+/// One VFS config with a mount for every provider whose required env vars are
+/// present (s3 at `/s3`, notion at `/notion`, gdrive at `/gdrive`). Tests mount
+/// this and use whichever provider they need; a provider with missing creds is
+/// simply absent — gate provider-specific work on [`has_mount`].
+pub fn all_vfs() -> VfsConfig {
+    let mut mounts = Vec::new();
+    if std::env::var("AWS_S3_BUCKET").is_ok()
+        && std::env::var("AWS_ACCESS_KEY_ID").is_ok()
+        && std::env::var("AWS_SECRET_ACCESS_KEY").is_ok()
+    {
+        mounts.push(MountSpec {
+            prefix: "/s3".into(),
+            provider: ProviderConfig::S3(s3_config()),
+        });
     }
-}
-
-pub fn gdrive_vfs() -> VfsConfig {
-    VfsConfig {
-        mounts: vec![MountSpec {
+    if let Ok(api_key) = std::env::var("NOTION_API_KEY") {
+        mounts.push(MountSpec {
+            prefix: "/notion".into(),
+            provider: ProviderConfig::Notion(ailoy::vfs::NotionConfig { api_key }),
+        });
+    }
+    if let (Ok(client_id), Ok(client_secret), Ok(refresh_token)) = (
+        std::env::var("GOOGLE_CLIENT_ID"),
+        std::env::var("GOOGLE_CLIENT_SECRET"),
+        std::env::var("GOOGLE_REFRESH_TOKEN"),
+    ) {
+        mounts.push(MountSpec {
             prefix: "/gdrive".into(),
             provider: ProviderConfig::GDrive(ailoy::vfs::GDriveConfig {
-                client_id: std::env::var("GOOGLE_CLIENT_ID").unwrap(),
-                client_secret: std::env::var("GOOGLE_CLIENT_SECRET").unwrap(),
-                refresh_token: std::env::var("GOOGLE_REFRESH_TOKEN").unwrap(),
+                client_id,
+                client_secret,
+                refresh_token,
             }),
-        }],
+        });
     }
+    VfsConfig { mounts }
 }
 
-/// All three providers mounted together at /mnt/vfs/{s3,notion,gdrive}.
-pub fn all_vfs() -> VfsConfig {
-    VfsConfig {
-        mounts: vec![
-            MountSpec {
-                prefix: "/s3".into(),
-                provider: ProviderConfig::S3(s3_config()),
-            },
-            MountSpec {
-                prefix: "/notion".into(),
-                provider: ProviderConfig::Notion(ailoy::vfs::NotionConfig {
-                    api_key: std::env::var("NOTION_API_KEY").unwrap(),
-                }),
-            },
-            MountSpec {
-                prefix: "/gdrive".into(),
-                provider: ProviderConfig::GDrive(ailoy::vfs::GDriveConfig {
-                    client_id: std::env::var("GOOGLE_CLIENT_ID").unwrap(),
-                    client_secret: std::env::var("GOOGLE_CLIENT_SECRET").unwrap(),
-                    refresh_token: std::env::var("GOOGLE_REFRESH_TOKEN").unwrap(),
-                }),
-            },
-        ],
-    }
+/// Whether a mount prefix ("/s3", "/notion", "/gdrive") is configured in the
+/// current environment — lets a test skip a provider it has no creds for.
+pub fn has_mount(prefix: &str) -> bool {
+    all_vfs().mounts.iter().any(|m| m.prefix == prefix)
 }
 
 pub fn tail(s: &str, n: usize) -> String {

@@ -22,7 +22,7 @@ async fn e2e_sandbox_forwarder() {
         .instruction("You are a tester. Use the shell tool for everything.")
         .shell_tool()
         .runenv(sandbox)
-        .vfs(vfs_config())
+        .vfs(all_vfs())
         .build()
         .expect("build agent");
     let transcript = drive(agent, &task_for(&fname, &content)).await;
@@ -65,7 +65,7 @@ async fn vfs_sandbox_remount_after_restart() {
             .instruction("You are a tester. Use the shell tool.")
             .shell_tool()
             .runenv(sandbox)
-            .vfs(vfs_config())
+            .vfs(all_vfs())
             .build()
             .expect("build agent");
         let q = Message::new(Role::User).with_contents([Part::text("Reply with READY.")]);
@@ -195,7 +195,7 @@ async fn vfs_concurrent_access_stress() {
         .instruction("You are a tester. Use the shell tool.")
         .shell_tool()
         .runenv(sandbox)
-        .vfs(vfs_config())
+        .vfs(all_vfs())
         .build()
         .expect("build agent");
     let q = Message::new(Role::User).with_contents([Part::text("Reply with READY.")]);
@@ -239,38 +239,54 @@ async fn vfs_concurrent_access_stress() {
     println!("CONCURRENT STRESS DONE ({first} bytes x8)");
 }
 
-/// The realistic agent-k scenario: an agent mounts MULTIPLE providers at once
-/// (notion + s3) and must keep accessing all of them across a VM restart. Round 1
-/// writes a marker through the s3 mount and lists the notion mount; the agent
-/// drops (VM stops); round 2 attaches a fresh agent to the same persisted sandbox
-/// and must read the s3 marker back (write-through to the provider survived the
-/// restart) AND re-list notion — proving every mount re-mounts, not just one.
-/// (Both mounts are exercised without assuming any specific provider file: s3 via
-/// a self-created marker, notion via a top-level readdir that round-trips.)
+/// The realistic agent-k scenario: an agent mounts MULTIPLE providers at once and
+/// must keep accessing all of them across a VM restart. Round 1 writes a marker
+/// through the s3 mount and reads real content from each *other* available
+/// provider through the forwarder (notion: a page.json discovered dynamically;
+/// gdrive: a readdir that round-trips). The agent drops (VM stops); round 2
+/// attaches a fresh agent to the same sandbox and must read the s3 marker back
+/// (write-through survived) AND re-read the other providers — proving every mount
+/// re-mounts, not just one. Nothing is hardcoded: s3 uses a self-created marker,
+/// notion/gdrive are discovered dynamically. (GDrive *content* reads are covered
+/// by the direct-adapter smoke test; here gdrive proves readdir-over-forwarder.)
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "live: multi-mount (notion+s3) survives VM restart (needs creds + sandbox + macFUSE)"]
+#[ignore = "live: multi-mount survives VM restart (needs s3 + notion/gdrive creds + sandbox + macFUSE)"]
 async fn vfs_multimount_remount_after_restart() {
     dotenvy::dotenv().ok();
+    if !has_mount("/s3") {
+        eprintln!("no s3 creds — skipping multimount");
+        return;
+    }
+    // Read real content from each non-s3 provider that's configured. Each snippet
+    // echoes `LABEL=<n>`; we assert n > 0 for every probed provider, in both rounds.
+    let mut probes: Vec<(&str, &str)> = Vec::new();
+    if has_mount("/notion") {
+        probes.push((
+            "NOTION",
+            "p=$(ls /mnt/vfs/notion/pages 2>/dev/null | head -1); \
+             [ -n \"$p\" ] && echo \"NOTION=$(cat \"/mnt/vfs/notion/pages/$p/page.json\" | wc -c)\" \
+             || echo NOTION=0",
+        ));
+    }
+    if has_mount("/gdrive") {
+        probes.push((
+            "GDRIVE",
+            "echo \"GDRIVE=$(ls /mnt/vfs/gdrive 2>/dev/null | wc -l)\"",
+        ));
+    }
+    if probes.is_empty() {
+        eprintln!("no notion/gdrive creds — multimount needs a 2nd provider; skipping");
+        return;
+    }
+    let probe_script = probes
+        .iter()
+        .map(|(_, s)| *s)
+        .collect::<Vec<_>>()
+        .join("; ");
+
     let name = format!("ailoy-vfs-multi-{}", stamp());
     let marker = format!("/mnt/vfs/s3/ailoy-multimount-{}-{}.txt", stamp(), uniq());
     let content = "multimount-ok";
-
-    fn cfg() -> VfsConfig {
-        VfsConfig {
-            mounts: vec![
-                MountSpec {
-                    prefix: "/notion".into(),
-                    provider: ProviderConfig::Notion(ailoy::vfs::NotionConfig {
-                        api_key: std::env::var("NOTION_API_KEY").unwrap(),
-                    }),
-                },
-                MountSpec {
-                    prefix: "/s3".into(),
-                    provider: ProviderConfig::S3(s3_config()),
-                },
-            ],
-        }
-    }
 
     async fn attach(name: &str) -> Agent {
         let sandbox = RunEnv::sandbox(SandboxConfig {
@@ -286,7 +302,7 @@ async fn vfs_multimount_remount_after_restart() {
             .instruction("You are a tester. Use the shell tool.")
             .shell_tool()
             .runenv(sandbox)
-            .vfs(cfg())
+            .vfs(all_vfs())
             .build()
             .expect("build agent");
         let q = Message::new(Role::User).with_contents([Part::text("Reply with READY.")]);
@@ -300,7 +316,15 @@ async fn vfs_multimount_remount_after_restart() {
         agent
     }
 
-    // Round 1: write through the s3 mount + list the notion mount (VM held by agent).
+    fn probe_val(stdout: &str, label: &str) -> i64 {
+        stdout
+            .lines()
+            .find_map(|l| l.strip_prefix(&format!("{label}=")))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(-1)
+    }
+
+    // Round 1: write through the s3 mount + read each other provider (VM held by agent).
     let a1 = attach(&name).await;
     let r1 = std::process::Command::new("msb")
         .args([
@@ -309,19 +333,21 @@ async fn vfs_multimount_remount_after_restart() {
             "--",
             "sh",
             "-c",
-            &format!(
-                "printf '{content}' > {marker} && \
-                 (ls /mnt/vfs/notion >/dev/null 2>&1 && echo NOTION_OK || echo NOTION_FAIL)"
-            ),
+            &format!("printf '{content}' > {marker}; {probe_script}"),
         ])
         .output()
         .expect("msb exec r1");
     let s1 = String::from_utf8_lossy(&r1.stdout);
     println!("round 1: {s1:?}, wrote s3 marker {marker}");
-    assert!(s1.contains("NOTION_OK"), "round 1 notion mount should list");
+    for &(label, _) in &probes {
+        assert!(
+            probe_val(&s1, label) > 0,
+            "round 1 {label} read empty/failed: {s1:?}"
+        );
+    }
     drop(a1); // VM stops
 
-    // Round 2: fresh agent, same sandbox — both mounts must re-mount and serve.
+    // Round 2: fresh agent, same sandbox — every mount must re-mount and serve.
     let a2 = attach(&name).await;
     let r2 = std::process::Command::new("msb")
         .args([
@@ -330,16 +356,12 @@ async fn vfs_multimount_remount_after_restart() {
             "--",
             "sh",
             "-c",
-            &format!(
-                "cat {marker}; echo '|'; \
-                 (ls /mnt/vfs/notion >/dev/null 2>&1 && echo NOTION_OK || echo NOTION_FAIL); \
-                 rm -f {marker}"
-            ),
+            &format!("cat {marker}; echo '|'; {probe_script}; rm -f {marker}"),
         ])
         .output()
         .expect("msb exec r2");
-    let stdout = String::from_utf8_lossy(&r2.stdout);
-    println!("round 2 output: {stdout:?}");
+    let s2 = String::from_utf8_lossy(&r2.stdout);
+    println!("round 2 output: {s2:?}");
     drop(a2);
     let _ = std::process::Command::new("msb")
         .args(["stop", &name])
@@ -349,14 +371,19 @@ async fn vfs_multimount_remount_after_restart() {
         .status();
 
     assert!(
-        stdout.contains(content),
-        "round 2: s3 write-through should survive VM restart, got {stdout:?}"
+        s2.contains(content),
+        "round 2: s3 write-through should survive VM restart, got {s2:?}"
     );
-    assert!(
-        stdout.contains("NOTION_OK"),
-        "round 2 notion mount should re-list, got {stdout:?}"
+    for &(label, _) in &probes {
+        assert!(
+            probe_val(&s2, label) > 0,
+            "round 2 {label} re-read empty/failed: {s2:?}"
+        );
+    }
+    println!(
+        "MULTIMOUNT DONE (s3 marker + {} survived restart)",
+        probes.iter().map(|(l, _)| *l).collect::<Vec<_>>().join("+")
     );
-    println!("MULTIMOUNT DONE (s3 marker + notion both survived restart)");
 }
 
 /// The literal agent-k flow, end-to-end through the LLM's shell tool (not `msb
@@ -389,7 +416,7 @@ async fn vfs_agent_reads_across_restart() {
             .instruction("You are a tester. Use the shell tool for everything.")
             .shell_tool()
             .runenv(sandbox)
-            .vfs(vfs_config())
+            .vfs(all_vfs())
             .build()
             .expect("build agent r1");
         let _ = drive(agent, "Run `ls /mnt/vfs/s3` and report what you see.").await;
@@ -411,7 +438,7 @@ async fn vfs_agent_reads_across_restart() {
         .instruction("You are a tester. Use the shell tool for everything.")
         .shell_tool()
         .runenv(sandbox)
-        .vfs(vfs_config())
+        .vfs(all_vfs())
         .build()
         .expect("build agent r2");
     let task = format!(
@@ -470,7 +497,7 @@ async fn vfs_concurrent_agents_remount() {
                 .instruction("You are a tester. Use the shell tool.")
                 .shell_tool()
                 .runenv(sandbox)
-                .vfs(vfs_config())
+                .vfs(all_vfs())
                 .build()
                 .expect("build agent");
             let q = Message::new(Role::User).with_contents([Part::text("Reply with READY.")]);

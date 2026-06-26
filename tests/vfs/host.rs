@@ -14,7 +14,7 @@ async fn e2e_non_sandbox_host_fuser() {
         .provider(provider())
         .instruction("You are a tester. Use the shell tool for everything.")
         .shell_tool()
-        .vfs(vfs_config())
+        .vfs(all_vfs())
         .build()
         .expect("build agent");
     let transcript = drive(agent, &task_for(&fname, &content)).await;
@@ -43,7 +43,7 @@ async fn vfs_host_fuse_bind_into_guest() {
     // Host FUSE mount of the s3 provider, with our own fixture file to look for
     // (no assumption that any specific provider content already exists).
     let fx = S3Fixture::create().await;
-    let vfs = Arc::new(Vfs::from_config(vfs_config()).unwrap());
+    let vfs = Arc::new(Vfs::from_config(all_vfs()).unwrap());
     let rt = tokio::runtime::Handle::current();
     let mountpoint = std::env::temp_dir().join(format!("ailoy-hostfuse-{}", stamp()));
     std::fs::create_dir_all(&mountpoint).unwrap();
