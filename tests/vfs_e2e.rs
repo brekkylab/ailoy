@@ -493,8 +493,9 @@ async fn vfs_sandbox_remount_after_restart() {
         // `agent` drops here -> AgentVfs + handle drop -> VM stops.
     }
 
-    // No dep pre-install: the bootstrap uses the static, dependency-free
-    // forwarder binary (no python/fuse3/apt). A clean fresh sandbox must mount.
+    // The bootstrap uses the static, dependency-free forwarder binary (mounts
+    // /dev/fuse directly — no python/fuse3/apt), so a clean fresh sandbox mounts
+    // with no setup.
     let n1 = attach_round(&name, page).await;
     println!("round 1 (fresh attach): {n1} bytes");
     assert!(n1 > 0, "round 1 mount/read should be non-empty");
@@ -1033,79 +1034,6 @@ async fn vfs_repeated_forwarder_death_recovery() {
         "stale mounts accumulated ({count} /mnt/vfs entries) — lazy umount is leaking"
     );
     println!("REPEATED FORWARDER-DEATH RECOVERY OK (3 rounds, 1 mount entry)");
-}
-
-/// Does a freshly crate-created sandbox (allow_host_egress) have working network
-/// egress via the crate's exec path? Checks DNS + apt immediately, before any
-/// bootstrap — to rule out the killed-apt state as a confound.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "live: sandbox network egress check (needs microsandbox)"]
-async fn sandbox_network_check() {
-    dotenvy::dotenv().ok();
-    let name = format!("ailoy-net-check-{}", stamp());
-    let sandbox = RunEnv::sandbox(SandboxConfig {
-        name: Some(name.clone()),
-        persist: false,
-        allow_host_egress: true,
-        ..Default::default()
-    })
-    .await
-    .expect("sandbox");
-    let h = sandbox.get().await.expect("handle");
-    for _ in 0..40 {
-        if h.exec_shell("true".into(), Some(10))
-            .await
-            .map(|o| o.exit_code == 0)
-            .unwrap_or(false)
-        {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    }
-    let dns = h
-        .exec_shell(
-            "getent hosts archive.ubuntu.com >/dev/null 2>&1; echo dns_rc=$?".into(),
-            Some(15),
-        )
-        .await
-        .expect("dns exec");
-    println!(
-        "DNS => {:?} (exit={}, timed_out={})",
-        dns.stdout.trim(),
-        dns.exit_code,
-        dns.timed_out
-    );
-    let host = h
-        .exec_shell(
-            "getent hosts host.microsandbox.internal >/dev/null 2>&1; echo host_rc=$?".into(),
-            Some(15),
-        )
-        .await
-        .expect("host exec");
-    println!(
-        "host.microsandbox.internal => {:?} (exit={}, timed_out={})",
-        host.stdout.trim(),
-        host.exit_code,
-        host.timed_out
-    );
-    // Actual apt via the crate exec on a fresh sandbox (the bootstrap path).
-    let apt = h
-        .exec_shell(
-            "S=$(date +%s); apt-get update -qq >/dev/null 2>&1; \
-             echo \"update_rc=$? t=$(( $(date +%s) - S ))s\"; \
-             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 fuse3 \
-             >/dev/null 2>&1; echo \"install_rc=$? t=$(( $(date +%s) - S ))s py=$(command -v python3)\""
-                .into(),
-            Some(180),
-        )
-        .await
-        .expect("apt exec");
-    println!(
-        "APT => {:?} (exit={}, timed_out={})",
-        apt.stdout.trim(),
-        apt.exit_code,
-        apt.timed_out
-    );
 }
 
 /// PROBE the "fundamentally different" design: mount the provider FUSE on the

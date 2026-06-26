@@ -8,10 +8,10 @@ agent-k's lifecycle builds an `Agent` against a **persisted (by-name) sandbox**,
 uses it, drops it, and later builds a **new** agent against the **same** sandbox.
 While idle the sandbox VM is **stopped** (`RunEnvHandle::Drop` stops it; `persist`
 keeps only its registration). The VFS mount inside the guest is served by an
-in-guest `mfusepy` forwarder **process** — which dies when the VM stops. So the
-mount cannot simply "survive"; it must be **re-established** whenever the VM
-comes back. The requirement: continuous provider-filesystem access through the
-VM across these restarts.
+in-guest forwarder **process** — which dies when the VM stops. So the mount
+cannot simply "survive"; it must be **re-established** whenever the VM comes back.
+The requirement: continuous provider-filesystem access through the VM across
+these restarts.
 
 ## Why reviving the same process is impossible (and what we do instead)
 
@@ -74,15 +74,15 @@ and `AgentVfs::ensure_mounted` re-bootstraps on each attach. The liveness probe
 (`mount_is_live`) round-trips a root `ls` through the forwarder, so it now also
 detects a dead host server (fast connect-refused) and re-mounts.
 
-## Forwarder: static binary (default) with a Python fallback
+## Forwarder: static dependency-free binary
 
-The default forwarder is now a **static, dependency-free Rust binary**
-(`tools/vfs-forwarder`, shipped per guest arch in `src/vfs/assets/`). It mounts
-`/dev/fuse` directly as root (FUSE is built into the guest kernel) and needs
-**no python/fuse3/mfusepy/apt** — a clean guest image just works, and the first
-mount is fast (no install). `guest.rs` picks the binary by the host arch (guest
-arch == host arch under libkrun), and falls back to the Python `mfusepy`
-forwarder only for arches without a shipped binary or if the static mount fails.
+The forwarder is a **static, dependency-free Rust binary** (`tools/vfs-forwarder`,
+shipped per guest arch in `src/vfs/assets/`). It mounts `/dev/fuse` directly as
+root (FUSE is built into the guest kernel) and needs **no python/fuse3/apt** — a
+clean guest image just works, and the first mount is fast (no install). `guest.rs`
+picks the binary by the host arch (guest arch == host arch under libkrun); a
+binary ships for every supported arch (aarch64, x86_64), so it is the sole
+forwarder — the earlier Python `mfusepy` fallback has been removed.
 
 Result: the full lifecycle runs in ~6.5 s on a clean image (was ~30 s with apt),
 with no image customization required.

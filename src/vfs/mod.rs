@@ -2,7 +2,7 @@
 //!
 //! A single [`Vfs`] holds the provider [`Resource`]s and routes virtual paths
 //! to them. It is the single source of truth for provider access; FUSE
-//! frontends (host `fuser` mount, guest `mfusepy` forwarder) sit on top.
+//! frontends (host `fuser` mount, static in-guest forwarder) sit on top.
 //!
 //! See `docs/vfs-integration-report.md` for the design rationale.
 

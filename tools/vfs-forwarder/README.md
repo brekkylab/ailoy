@@ -7,10 +7,10 @@ files (S3 / Notion / GDrive) to the guest shell.
 
 ## Why this exists
 
-The current default forwarder is a Python `mfusepy` script, which requires
-`python3` + `fuse3` + `mfusepy` in the guest — installed via `apt`/`pip` on first
-boot. That runtime install is **fragile** (boot-time `apt-daily` dpkg-lock
-contention, slow mirrors) and slow.
+The original forwarder was a Python `mfusepy` script requiring `python3` +
+`fuse3` + `mfusepy` in the guest — installed via `apt`/`pip` on first boot. That
+runtime install was **fragile** (boot-time `apt-daily` dpkg-lock contention, slow
+mirrors) and slow, so it was replaced by this binary.
 
 This binary needs **none of that**. It is statically linked (musl) and mounts via
 the kernel's `/dev/fuse` directly as root (the `fuser` pure-Rust mount path — no
@@ -18,8 +18,8 @@ the kernel's `/dev/fuse` directly as root (the `fuser` pure-Rust mount path — 
 binary works on **any** guest image with **zero** setup, eliminating the apt
 fragility and the need to bake deps.
 
-Proven by `tests/vfs_e2e.rs::vfs_static_forwarder_{poc,full}`: in a clean guest
-with `python3` and `fusermount3` absent, it mounts `/mnt/vfs` and serves a Notion
+Proven by `tests/vfs_e2e.rs::vfs_static_forwarder_full`: in a clean guest with
+`python3` and `fusermount3` absent, it mounts `/mnt/vfs` and serves a Notion
 `page.json` (489 B) over `allow@host` egress.
 
 ## Runtime contract
@@ -67,8 +67,8 @@ cargo build --release --target aarch64-unknown-linux-musl
 `src/vfs/guest.rs` ships this binary per guest arch as
 `src/vfs/assets/ailoy-vfs-fwd.{aarch64,x86_64}` (`include_bytes!`), picks by the
 host arch (guest arch == host arch under libkrun), writes it, `chmod +x`, and
-runs it with `VFS_HOST`/`VFS_TOKEN` — falling back to the Python `mfusepy`
-forwarder only for arches without a shipped binary or if the static mount fails.
+runs it with `VFS_HOST`/`VFS_TOKEN`. It is the sole forwarder — a binary ships
+for every supported arch, so there is no runtime dependency install.
 The mount/re-mount lifecycle (`AgentVfs::ensure_mounted`) is unchanged.
 
 **Updating the committed binaries** after changing `src/main.rs`: cross-build
