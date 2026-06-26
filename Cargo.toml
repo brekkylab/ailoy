@@ -49,7 +49,7 @@ infer = "0.16"
 log = "0.4"
 microsandbox = { version = "0.5.10", optional = true }
 object_store = { version = "0.12", features = ["aws"], optional = true }
-fuser = { version = "0.15", optional = true }
+fuser = { version = "0.17", optional = true }
 libc = { version = "0.2", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 parking_lot = "0.12.4"

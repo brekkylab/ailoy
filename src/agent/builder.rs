@@ -240,7 +240,12 @@ impl AgentBuilder {
         #[cfg(feature = "vfs")]
         let vfs_session = match vfs {
             Some(config) if runenv.is_none() => Some(setup_host_vfs(&mut spec, config)?),
+            #[cfg(feature = "sandbox")]
             Some(config) => Some(setup_sandbox_vfs(&mut spec, config)?),
+            #[cfg(not(feature = "sandbox"))]
+            Some(_) => anyhow::bail!(
+                "vfs() over an explicit (sandbox) runenv requires the `sandbox` feature"
+            ),
             None => None,
         };
 
@@ -314,7 +319,7 @@ fn setup_host_vfs(
 /// in-sandbox mount paths to the instruction. The in-guest forwarder is mounted
 /// on the agent's first run. Requires the sandbox to be created with
 /// `allow_host_egress = true`.
-#[cfg(feature = "vfs")]
+#[cfg(all(feature = "vfs", feature = "sandbox"))]
 fn setup_sandbox_vfs(
     spec: &mut AgentSpec,
     config: crate::vfs::VfsConfig,

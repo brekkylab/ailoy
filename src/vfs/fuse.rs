@@ -2,13 +2,14 @@ use std::{
     collections::HashMap,
     ffi::OsStr,
     path::{Path, PathBuf},
-    sync::Arc,
-    time::{Duration, UNIX_EPOCH},
+    sync::{Arc, Mutex},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use fuser::{
-    FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory,
-    ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow,
+    BsdFileFlags, Config, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation,
+    INodeNo, LockOwner, MountOption, OpenFlags, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory,
+    ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, WriteFlags,
 };
 use tokio::runtime::Handle;
 
@@ -30,11 +31,13 @@ impl VfsMount {
     pub fn spawn(vfs: Arc<Vfs>, mountpoint: impl AsRef<Path>, rt: Handle) -> anyhow::Result<Self> {
         let mountpoint = mountpoint.as_ref().to_path_buf();
         let fs = VfsFs::new(vfs, rt);
-        let options = vec![
+        // `Config` is #[non_exhaustive]; build via Default + set the public field.
+        let mut config = Config::default();
+        config.mount_options = vec![
             MountOption::FSName("ailoy-vfs".to_string()),
             MountOption::DefaultPermissions,
         ];
-        let session = fuser::spawn_mount2(fs, &mountpoint, &options)?;
+        let session = fuser::spawn_mount2(fs, &mountpoint, &config)?;
         Ok(Self {
             _session: session,
             mountpoint,
@@ -46,9 +49,10 @@ impl VfsMount {
     }
 }
 
-struct VfsFs {
-    vfs: Arc<Vfs>,
-    rt: Handle,
+/// Mutable bookkeeping. fuser 0.17 `Filesystem` methods take `&self`, so the
+/// inode<->path maps and pending write buffers live behind a `Mutex` (the host
+/// mount is single-threaded, so contention is nil).
+struct FsState {
     ino_path: HashMap<u64, String>,
     path_ino: HashMap<String, u64>,
     next_ino: u64,
@@ -56,22 +60,7 @@ struct VfsFs {
     wbuf: HashMap<u64, Vec<u8>>,
 }
 
-impl VfsFs {
-    fn new(vfs: Arc<Vfs>, rt: Handle) -> Self {
-        let mut ino_path = HashMap::new();
-        let mut path_ino = HashMap::new();
-        ino_path.insert(ROOT_INO, "/".to_string());
-        path_ino.insert("/".to_string(), ROOT_INO);
-        Self {
-            vfs,
-            rt,
-            ino_path,
-            path_ino,
-            next_ino: ROOT_INO,
-            wbuf: HashMap::new(),
-        }
-    }
-
+impl FsState {
     fn intern(&mut self, path: &str) -> u64 {
         if let Some(&ino) = self.path_ino.get(path) {
             return ino;
@@ -85,6 +74,31 @@ impl VfsFs {
 
     fn path_of(&self, ino: u64) -> Option<String> {
         self.ino_path.get(&ino).cloned()
+    }
+}
+
+struct VfsFs {
+    vfs: Arc<Vfs>,
+    rt: Handle,
+    state: Mutex<FsState>,
+}
+
+impl VfsFs {
+    fn new(vfs: Arc<Vfs>, rt: Handle) -> Self {
+        let mut ino_path = HashMap::new();
+        let mut path_ino = HashMap::new();
+        ino_path.insert(ROOT_INO, "/".to_string());
+        path_ino.insert("/".to_string(), ROOT_INO);
+        Self {
+            vfs,
+            rt,
+            state: Mutex::new(FsState {
+                ino_path,
+                path_ino,
+                next_ino: ROOT_INO,
+                wbuf: HashMap::new(),
+            }),
+        }
     }
 }
 
@@ -104,7 +118,7 @@ fn make_attr(ino: u64, kind: FileKind, size: u64) -> FileAttr {
     let uid = unsafe { libc::getuid() };
     let gid = unsafe { libc::getgid() };
     FileAttr {
-        ino,
+        ino: INodeNo(ino),
         size,
         blocks: size.div_ceil(512),
         atime: UNIX_EPOCH,
@@ -171,158 +185,218 @@ async fn put_path(vfs: &Vfs, path: &str, data: Vec<u8>) -> anyhow::Result<()> {
 }
 
 impl Filesystem for VfsFs {
-    fn lookup(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEntry) {
-        let Some(parent_path) = self.path_of(parent) else {
-            reply.error(libc::ENOENT);
+    fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
+        let Some(parent_path) = self.state.lock().unwrap().path_of(parent.0) else {
+            reply.error(Errno::ENOENT);
             return;
         };
         let Some(name) = name.to_str() else {
-            reply.error(libc::ENOENT);
+            reply.error(Errno::ENOENT);
             return;
         };
         let path = join(&parent_path, name);
         let vfs = self.vfs.clone();
         match self.rt.block_on(stat_path(&vfs, &path)) {
             Ok((kind, size)) => {
-                let ino = self.intern(&path);
-                reply.entry(&TTL, &make_attr(ino, kind, size), 0);
+                let ino = self.state.lock().unwrap().intern(&path);
+                reply.entry(&TTL, &make_attr(ino, kind, size), Generation(0));
             }
-            Err(_) => reply.error(libc::ENOENT),
+            Err(_) => reply.error(Errno::ENOENT),
         }
     }
 
-    fn getattr(&mut self, _req: &Request<'_>, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
-        let Some(path) = self.path_of(ino) else {
-            reply.error(libc::ENOENT);
-            return;
+    fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
+        let ino = ino.0;
+        // Decide under the lock, act (reply / block_on) after releasing it.
+        enum Next {
+            Buffered(u64),
+            Stat(String),
+            NotFound,
+        }
+        let next = {
+            let st = self.state.lock().unwrap();
+            if let Some(buf) = st.wbuf.get(&ino) {
+                Next::Buffered(buf.len() as u64)
+            } else if let Some(path) = st.path_of(ino) {
+                Next::Stat(path)
+            } else {
+                Next::NotFound
+            }
         };
-        if let Some(buf) = self.wbuf.get(&ino) {
-            reply.attr(&TTL, &make_attr(ino, FileKind::File, buf.len() as u64));
-            return;
-        }
-        let vfs = self.vfs.clone();
-        match self.rt.block_on(stat_path(&vfs, &path)) {
-            Ok((kind, size)) => reply.attr(&TTL, &make_attr(ino, kind, size)),
-            Err(_) => reply.error(libc::ENOENT),
+        match next {
+            Next::Buffered(size) => reply.attr(&TTL, &make_attr(ino, FileKind::File, size)),
+            Next::NotFound => reply.error(Errno::ENOENT),
+            Next::Stat(path) => {
+                let vfs = self.vfs.clone();
+                match self.rt.block_on(stat_path(&vfs, &path)) {
+                    Ok((kind, size)) => reply.attr(&TTL, &make_attr(ino, kind, size)),
+                    Err(_) => reply.error(Errno::ENOENT),
+                }
+            }
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn setattr(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
         _mode: Option<u32>,
         _uid: Option<u32>,
         _gid: Option<u32>,
         size: Option<u64>,
         _atime: Option<TimeOrNow>,
         _mtime: Option<TimeOrNow>,
-        _ctime: Option<std::time::SystemTime>,
-        _fh: Option<u64>,
-        _crtime: Option<std::time::SystemTime>,
-        _chgtime: Option<std::time::SystemTime>,
-        _bkuptime: Option<std::time::SystemTime>,
-        _flags: Option<u32>,
+        _ctime: Option<SystemTime>,
+        _fh: Option<FileHandle>,
+        _crtime: Option<SystemTime>,
+        _chgtime: Option<SystemTime>,
+        _bkuptime: Option<SystemTime>,
+        _flags: Option<BsdFileFlags>,
         reply: ReplyAttr,
     ) {
+        let ino = ino.0;
         // Only truncation matters for our write path (e.g. `>` redirect).
         if let Some(new_size) = size {
-            let buf = self.wbuf.entry(ino).or_default();
-            buf.resize(new_size as usize, 0);
+            self.state
+                .lock()
+                .unwrap()
+                .wbuf
+                .entry(ino)
+                .or_default()
+                .resize(new_size as usize, 0);
             reply.attr(&TTL, &make_attr(ino, FileKind::File, new_size));
             return;
         }
-        let Some(path) = self.path_of(ino) else {
-            reply.error(libc::ENOENT);
-            return;
-        };
-        if let Some(buf) = self.wbuf.get(&ino) {
-            reply.attr(&TTL, &make_attr(ino, FileKind::File, buf.len() as u64));
-            return;
+        enum Next {
+            Buffered(u64),
+            Stat(String),
+            NotFound,
         }
-        let vfs = self.vfs.clone();
-        match self.rt.block_on(stat_path(&vfs, &path)) {
-            Ok((kind, sz)) => reply.attr(&TTL, &make_attr(ino, kind, sz)),
-            Err(_) => reply.error(libc::ENOENT),
+        let next = {
+            let st = self.state.lock().unwrap();
+            if let Some(buf) = st.wbuf.get(&ino) {
+                Next::Buffered(buf.len() as u64)
+            } else if let Some(path) = st.path_of(ino) {
+                Next::Stat(path)
+            } else {
+                Next::NotFound
+            }
+        };
+        match next {
+            Next::Buffered(size) => reply.attr(&TTL, &make_attr(ino, FileKind::File, size)),
+            Next::NotFound => reply.error(Errno::ENOENT),
+            Next::Stat(path) => {
+                let vfs = self.vfs.clone();
+                match self.rt.block_on(stat_path(&vfs, &path)) {
+                    Ok((kind, sz)) => reply.attr(&TTL, &make_attr(ino, kind, sz)),
+                    Err(_) => reply.error(Errno::ENOENT),
+                }
+            }
         }
     }
 
-    fn open(&mut self, _req: &Request<'_>, ino: u64, flags: i32, reply: ReplyOpen) {
-        let write = flags & (libc::O_WRONLY | libc::O_RDWR) != 0;
+    fn open(&self, _req: &Request, ino: INodeNo, flags: OpenFlags, reply: ReplyOpen) {
+        let write = flags.0 & (libc::O_WRONLY | libc::O_RDWR) != 0;
         if write {
-            self.wbuf.entry(ino).or_default();
+            self.state.lock().unwrap().wbuf.entry(ino.0).or_default();
         }
-        reply.opened(0, 0);
+        reply.opened(FileHandle(0), FopenFlags::empty());
     }
 
     fn create(
-        &mut self,
-        _req: &Request<'_>,
-        parent: u64,
+        &self,
+        _req: &Request,
+        parent: INodeNo,
         name: &OsStr,
         _mode: u32,
         _umask: u32,
         _flags: i32,
         reply: ReplyCreate,
     ) {
-        let Some(parent_path) = self.path_of(parent) else {
-            reply.error(libc::ENOENT);
+        let Some(parent_path) = self.state.lock().unwrap().path_of(parent.0) else {
+            reply.error(Errno::ENOENT);
             return;
         };
         let Some(name) = name.to_str() else {
-            reply.error(libc::EINVAL);
+            reply.error(Errno::EINVAL);
             return;
         };
         let path = join(&parent_path, name);
-        let ino = self.intern(&path);
-        self.wbuf.insert(ino, Vec::new());
-        reply.created(&TTL, &make_attr(ino, FileKind::File, 0), 0, 0, 0);
+        let ino = {
+            let mut st = self.state.lock().unwrap();
+            let ino = st.intern(&path);
+            st.wbuf.insert(ino, Vec::new());
+            ino
+        };
+        reply.created(
+            &TTL,
+            &make_attr(ino, FileKind::File, 0),
+            Generation(0),
+            FileHandle(0),
+            FopenFlags::empty(),
+        );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn read(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        offset: u64,
         size: u32,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
         reply: ReplyData,
     ) {
-        if let Some(buf) = self.wbuf.get(&ino) {
-            let start = (offset as usize).min(buf.len());
-            let end = (start + size as usize).min(buf.len());
-            reply.data(&buf[start..end]);
-            return;
+        let ino = ino.0;
+        // Serve from the write buffer if open for writing; else read the provider.
+        enum Next {
+            Buffered(Vec<u8>),
+            Read(String),
+            NotFound,
         }
-        let Some(path) = self.path_of(ino) else {
-            reply.error(libc::ENOENT);
-            return;
+        let next = {
+            let st = self.state.lock().unwrap();
+            if let Some(buf) = st.wbuf.get(&ino) {
+                let start = (offset as usize).min(buf.len());
+                let end = (start + size as usize).min(buf.len());
+                Next::Buffered(buf[start..end].to_vec())
+            } else if let Some(path) = st.path_of(ino) {
+                Next::Read(path)
+            } else {
+                Next::NotFound
+            }
         };
-        let vfs = self.vfs.clone();
-        match self
-            .rt
-            .block_on(read_path(&vfs, &path, offset as u64, size as u64))
-        {
-            Ok(data) => reply.data(&data),
-            Err(_) => reply.error(libc::EIO),
+        match next {
+            Next::Buffered(data) => reply.data(&data),
+            Next::NotFound => reply.error(Errno::ENOENT),
+            Next::Read(path) => {
+                let vfs = self.vfs.clone();
+                match self.rt.block_on(read_path(&vfs, &path, offset, size as u64)) {
+                    Ok(data) => reply.data(&data),
+                    Err(_) => reply.error(Errno::EIO),
+                }
+            }
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        offset: u64,
         data: &[u8],
-        _write_flags: u32,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        _write_flags: WriteFlags,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
         reply: ReplyWrite,
     ) {
-        let buf = self.wbuf.entry(ino).or_default();
+        let mut st = self.state.lock().unwrap();
+        let buf = st.wbuf.entry(ino.0).or_default();
         let off = offset as usize;
         if off > buf.len() {
             buf.resize(off, 0);
@@ -336,58 +410,64 @@ impl Filesystem for VfsFs {
     }
 
     fn flush(
-        &mut self,
-        _req: &Request<'_>,
-        _ino: u64,
-        _fh: u64,
-        _lock_owner: u64,
+        &self,
+        _req: &Request,
+        _ino: INodeNo,
+        _fh: FileHandle,
+        _lock_owner: LockOwner,
         reply: ReplyEmpty,
     ) {
         reply.ok();
     }
 
     fn release(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        _fh: u64,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
         _flush: bool,
         reply: ReplyEmpty,
     ) {
-        let Some(data) = self.wbuf.remove(&ino) else {
+        let ino = ino.0;
+        let taken = {
+            let mut st = self.state.lock().unwrap();
+            st.wbuf.remove(&ino).map(|data| (data, st.path_of(ino)))
+        };
+        let Some((data, path)) = taken else {
             reply.ok();
             return;
         };
-        let Some(path) = self.path_of(ino) else {
-            reply.error(libc::ENOENT);
+        let Some(path) = path else {
+            reply.error(Errno::ENOENT);
             return;
         };
         let vfs = self.vfs.clone();
         match self.rt.block_on(put_path(&vfs, &path, data)) {
             Ok(()) => reply.ok(),
-            Err(_) => reply.error(libc::EIO),
+            Err(_) => reply.error(Errno::EIO),
         }
     }
 
     fn readdir(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        offset: u64,
         mut reply: ReplyDirectory,
     ) {
-        let Some(path) = self.path_of(ino) else {
-            reply.error(libc::ENOENT);
+        let ino = ino.0;
+        let Some(path) = self.state.lock().unwrap().path_of(ino) else {
+            reply.error(Errno::ENOENT);
             return;
         };
         let vfs = self.vfs.clone();
         let entries = match self.rt.block_on(list_path(&vfs, &path)) {
             Ok(e) => e,
             Err(_) => {
-                reply.error(libc::EIO);
+                reply.error(Errno::EIO);
                 return;
             }
         };
@@ -395,17 +475,20 @@ impl Filesystem for VfsFs {
             (ino, FileType::Directory, ".".to_string()),
             (ROOT_INO, FileType::Directory, "..".to_string()),
         ];
-        for (name, kind, _size) in entries {
-            let child = join(&path, &name);
-            let child_ino = self.intern(&child);
-            let ftype = match kind {
-                FileKind::Dir => FileType::Directory,
-                FileKind::File => FileType::RegularFile,
-            };
-            rows.push((child_ino, ftype, name));
+        {
+            let mut st = self.state.lock().unwrap();
+            for (name, kind, _size) in entries {
+                let child = join(&path, &name);
+                let child_ino = st.intern(&child);
+                let ftype = match kind {
+                    FileKind::Dir => FileType::Directory,
+                    FileKind::File => FileType::RegularFile,
+                };
+                rows.push((child_ino, ftype, name));
+            }
         }
         for (i, (e_ino, ftype, name)) in rows.into_iter().enumerate().skip(offset as usize) {
-            if reply.add(e_ino, (i + 1) as i64, ftype, name) {
+            if reply.add(INodeNo(e_ino), (i + 1) as u64, ftype, name) {
                 break;
             }
         }

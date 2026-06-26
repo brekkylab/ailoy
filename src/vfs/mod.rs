@@ -8,21 +8,26 @@
 
 pub mod accessor;
 mod cache;
-pub mod forward;
 pub mod fuse;
-pub mod guest;
 pub mod path;
 pub mod resource;
 pub mod session;
+
+/// Sandbox-only frontend (host forward server + in-guest forwarder).
+#[cfg(feature = "sandbox")]
+pub mod sandbox;
 
 #[allow(clippy::module_inception)]
 mod vfs;
 
 pub use accessor::{GDriveConfig, NotionConfig, S3Config};
-pub use forward::VfsForward;
 pub use fuse::VfsMount;
-pub use guest::bootstrap_guest_forwarder;
 pub use path::VPath;
 pub use resource::{DirEntry, FileKind, FileStat, Resource, S3Resource};
 pub use session::AgentVfs;
 pub use vfs::{Mount, MountSpec, ProviderConfig, Vfs, VfsConfig};
+
+// Keep the public paths `crate::vfs::{VfsForward, bootstrap_guest_forwarder}`
+// stable; they live in the sandbox submodule but are only present with the feature.
+#[cfg(feature = "sandbox")]
+pub use sandbox::{VfsForward, bootstrap_guest_forwarder};
