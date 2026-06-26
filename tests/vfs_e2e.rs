@@ -956,6 +956,85 @@ async fn vfs_recovers_from_forwarder_death() {
     println!("FORWARDER-DEATH RECOVERY OK");
 }
 
+/// Repeated forwarder death over a long session: recovery must work EVERY time,
+/// and the lazy unmounts must not leave stale ENOTCONN mounts piling up in
+/// /proc/mounts (a leak that could eventually wedge the mountpoint). Kill + heal
+/// several times, asserting the read recovers each round, then assert the
+/// mountpoint has not accumulated stacked stale mounts.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: repeated forwarder death — recovery + no stale-mount accumulation"]
+async fn vfs_repeated_forwarder_death_recovery() {
+    dotenvy::dotenv().ok();
+    let name = format!("ailoy-vfs-fwdloop-{}", stamp());
+    let page = "/mnt/vfs/notion/pages/\
+                Engineering_Logs__490e8208-3e62-48ef-a8ce-bc08755ea4ff/page.json";
+    let read_count = |n: &str| -> i64 {
+        let out = std::process::Command::new("msb")
+            .args(["exec", n, "--", "sh", "-c", &format!("cat {page} | wc -c")])
+            .output()
+            .expect("msb exec read");
+        String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0)
+    };
+    async fn drive_once(agent: &mut Agent) {
+        let q = Message::new(Role::User).with_contents([Part::text("Reply with READY.")]);
+        let mut strm = agent.run(q);
+        while let Some(ev) = strm.next().await {
+            if let Err(e) = ev {
+                eprintln!("run error: {e}");
+            }
+        }
+    }
+
+    let sandbox = RunEnv::sandbox(SandboxConfig {
+        name: Some(name.clone()),
+        persist: true,
+        allow_host_egress: true,
+        ..Default::default()
+    })
+    .await
+    .expect("sandbox");
+    let mut agent = AgentBuilder::new(MODEL)
+        .provider(provider())
+        .instruction("You are a tester. Use the shell tool.")
+        .shell_tool()
+        .runenv(sandbox)
+        .vfs(notion_vfs())
+        .build()
+        .expect("build agent");
+
+    drive_once(&mut agent).await; // initial mount
+    assert!(read_count(&name) > 0, "initial mount read failed");
+
+    for round in 1..=3 {
+        let _ = std::process::Command::new("msb")
+            .args([
+                "exec", &name, "--", "sh", "-c",
+                "for p in $(pgrep -f 'vfs-fwd /mnt/vfs'); do kill -9 \"$p\"; done; sleep 0.4",
+            ])
+            .status();
+        drive_once(&mut agent).await; // self-heal re-mount
+        let n = read_count(&name);
+        println!("round {round}: after kill+heal -> {n} bytes");
+        assert!(n > 0, "round {round}: provider access did not recover (got {n})");
+    }
+
+    // No stale-mount accumulation: exactly one /mnt/vfs entry in /proc/mounts.
+    let m = std::process::Command::new("msb")
+        .args(["exec", &name, "--", "sh", "-c", "grep -c ' /mnt/vfs ' /proc/mounts"])
+        .output()
+        .expect("msb exec mounts");
+    let count: i64 = String::from_utf8_lossy(&m.stdout).trim().parse().unwrap_or(-1);
+    println!("/mnt/vfs entries in /proc/mounts after 3 kill+heal rounds: {count}");
+
+    let _ = std::process::Command::new("msb").args(["stop", &name]).status();
+    let _ = std::process::Command::new("msb").args(["rm", &name]).status();
+    assert_eq!(
+        count, 1,
+        "stale mounts accumulated ({count} /mnt/vfs entries) — lazy umount is leaking"
+    );
+    println!("REPEATED FORWARDER-DEATH RECOVERY OK (3 rounds, 1 mount entry)");
+}
+
 /// Does a freshly crate-created sandbox (allow_host_egress) have working network
 /// egress via the crate's exec path? Checks DNS + apt immediately, before any
 /// bootstrap — to rule out the killed-apt state as a confound.
