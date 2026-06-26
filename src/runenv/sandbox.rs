@@ -556,6 +556,17 @@ impl Console for SandboxConsole {
     }
 }
 
+/// Whether a microsandbox error message looks like a *transient* startup race
+/// worth retrying (vs. a genuine config error that should surface promptly).
+/// Under rapid sandbox churn a previous owner's async stop can SIGKILL the VM
+/// just as a new start/create brings it up, so the agent relay never comes up.
+fn is_transient_msb_error(msg: &str) -> bool {
+    msg.contains("agent relay")
+        || msg.contains("process exited")
+        || msg.contains("SIGKILL")
+        || msg.contains("signal: 9")
+}
+
 /// `MsbSandbox::start_detached` with the embedded-SQLite hang bounded out.
 ///
 /// Under rapid sandbox churn — the agent-k pattern of dropping and recreating the
@@ -583,18 +594,6 @@ async fn start_detached_resilient(name: &str) -> anyhow::Result<MsbSandbox> {
         }
     }
 
-    // Transient microsandbox startup races under rapid churn: a previous owner's
-    // async stop SIGKILLs the VM just as our start brings it up, so the relay
-    // never comes up. Retrying after a short settle succeeds. Matched by message
-    // so genuine start errors (bad config, missing image) still surface promptly.
-    fn is_transient_start(e: &MicrosandboxError) -> bool {
-        let m = e.to_string();
-        m.contains("agent relay")
-            || m.contains("process exited")
-            || m.contains("SIGKILL")
-            || m.contains("signal: 9")
-    }
-
     let mut last = String::new();
     for attempt in 1..=ATTEMPTS {
         match tokio::time::timeout(PER_TRY, MsbSandbox::start_detached(name)).await {
@@ -602,7 +601,7 @@ async fn start_detached_resilient(name: &str) -> anyhow::Result<MsbSandbox> {
             Ok(Err(MicrosandboxError::SandboxStillRunning(_))) => {
                 force_stop(name).await;
             }
-            Ok(Err(e)) if is_transient_start(&e) => {
+            Ok(Err(e)) if is_transient_msb_error(&e.to_string()) => {
                 last = e.to_string();
                 log::warn!(
                     "sandbox '{name}': transient start failure (attempt {attempt}/{ATTEMPTS}): {e}; \
@@ -690,26 +689,66 @@ fn check_home_conflict(requested: &Path, current: Option<&std::ffi::OsStr>) -> a
 }
 
 async fn create_registered(name: &str, config: &SandboxConfig) -> anyhow::Result<MsbSandbox> {
-    let mut builder = MsbSandbox::builder(name)
-        .image(config.image.as_str())
-        .cpus(config.cpus)
-        .memory(config.memory_mib)
-        .pull_policy(PullPolicy::IfMissing)
-        .detached(true);
+    const ATTEMPTS: usize = 3;
+    // `.create()` registers AND boots the VM (waiting for the agent relay), so it
+    // is subject to the same transient startup hang/race as a reconnect. This is
+    // only the fresh-create path (the sandbox does not exist yet), so cleaning up
+    // and retrying from scratch is safe — there is no prior state to preserve.
+    const CREATE_TIMEOUT: Duration = Duration::from_secs(45);
+    const BACKOFF: Duration = Duration::from_millis(750);
 
-    for (k, v) in &config.env {
-        builder = builder.env(k.as_str(), v.as_str());
+    let mut last = String::new();
+    for attempt in 1..=ATTEMPTS {
+        let mut builder = MsbSandbox::builder(name)
+            .image(config.image.as_str())
+            .cpus(config.cpus)
+            .memory(config.memory_mib)
+            .pull_policy(PullPolicy::IfMissing)
+            .detached(true);
+        for (k, v) in &config.env {
+            builder = builder.env(k.as_str(), v.as_str());
+        }
+        if config.disable_network {
+            builder = builder.disable_network();
+        } else if config.allow_host_egress {
+            builder = builder.network(|n| n.policy(NetworkPolicy::allow_all()));
+        }
+        for mount in &config.volumes {
+            builder = apply_volume_mount(builder, mount);
+        }
+
+        match tokio::time::timeout(CREATE_TIMEOUT, builder.create()).await {
+            Ok(Ok(sb)) => return Ok(sb),
+            // A genuine error (bad image, invalid config) — surface immediately.
+            Ok(Err(e)) if !is_transient_msb_error(&e.to_string()) => {
+                return Err(anyhow::anyhow!("sandbox create: {e}"));
+            }
+            Ok(Err(e)) => {
+                last = e.to_string();
+                log::warn!(
+                    "sandbox '{name}': transient create failure (attempt {attempt}/{ATTEMPTS}): {e}; \
+                     cleaning up and retrying"
+                );
+            }
+            Err(_elapsed) => {
+                last = format!("create timed out after {}s", CREATE_TIMEOUT.as_secs());
+                log::warn!(
+                    "sandbox '{name}': create timed out after {}s (attempt {attempt}/{ATTEMPTS}); \
+                     likely microsandbox SQLite contention / relay-wait — cleaning up and retrying",
+                    CREATE_TIMEOUT.as_secs()
+                );
+            }
+        }
+        // Tear down any partial registration before retrying from scratch.
+        Sandbox::remove(name).await;
+        if attempt < ATTEMPTS {
+            tokio::time::sleep(BACKOFF).await;
+        }
     }
-    if config.disable_network {
-        builder = builder.disable_network();
-    } else if config.allow_host_egress {
-        builder = builder.network(|n| n.policy(NetworkPolicy::allow_all()));
-    }
-    for mount in &config.volumes {
-        builder = apply_volume_mount(builder, mount);
-    }
-    let sb = builder.create().await?;
-    Ok(sb)
+    anyhow::bail!(
+        "sandbox '{name}': create did not complete after {ATTEMPTS} bounded attempts \
+         (last: {last}; microsandbox appears wedged under rapid churn)"
+    )
 }
 
 async fn create_from_snapshot(
