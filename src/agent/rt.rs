@@ -226,8 +226,17 @@ impl Agent {
         self.vfs = Some(vfs);
     }
 
-    /// Ensure the VFS is mounted in the runenv (once, on first run). No-op for
-    /// host mounts; bootstraps the in-guest forwarder for sandbox runenvs.
+    /// Ensure the VFS is mounted in the runenv at the start of the run. No-op for
+    /// host mounts; for sandbox runenvs this (re)bootstraps the in-guest forwarder.
+    ///
+    /// IMPORTANT: this MUST run on every `run()`, not once — it is the self-healing
+    /// path that keeps provider access working across sandbox **VM restarts**. A
+    /// sandbox VM stops whenever no runenv handle is held (e.g. the agent-k pattern
+    /// of dropping and recreating the runtime), so the in-guest forwarder dies with
+    /// it; the next `run()` finds the mount gone and re-establishes it. The
+    /// underlying [`AgentVfs::ensure_mounted`] is idempotent (a no-op when the mount
+    /// is already live), so calling it every run is cheap. Do NOT add a "first run"
+    /// guard here — that would silently break VM-restart persistence.
     #[cfg(feature = "vfs")]
     async fn ensure_vfs_mounted(&mut self) -> anyhow::Result<()> {
         if let Some(vfs) = self.vfs.as_mut() {
