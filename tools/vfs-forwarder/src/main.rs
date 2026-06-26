@@ -7,7 +7,7 @@ use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Append a timestamped diagnostic line to /tmp/ailoy-vfs-fwd.log when VFS_DIAG
 /// is set. /tmp is a persisted volume in the sandbox, so the log survives a VM
@@ -30,8 +30,9 @@ fn diag(msg: &str) {
 }
 
 use fuser::{
-    FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData,
-    ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow,
+    BsdFileFlags, Config, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags,
+    Generation, INodeNo, LockOwner, MountOption, OpenFlags, ReplyAttr, ReplyCreate, ReplyData,
+    ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, WriteFlags,
 };
 
 const TTL: Duration = Duration::from_secs(1);
@@ -171,7 +172,7 @@ fn dir_attr(ino: u64) -> FileAttr { mk(ino, FileType::Directory, 0) }
 fn file_attr(ino: u64, size: u64) -> FileAttr { mk(ino, FileType::RegularFile, size) }
 fn mk(ino: u64, kind: FileType, size: u64) -> FileAttr {
     FileAttr {
-        ino, size, blocks: 1, atime: UNIX_EPOCH, mtime: UNIX_EPOCH, ctime: UNIX_EPOCH,
+        ino: INodeNo(ino), size, blocks: 1, atime: UNIX_EPOCH, mtime: UNIX_EPOCH, ctime: UNIX_EPOCH,
         crtime: UNIX_EPOCH, kind, perm: if kind == FileType::Directory { 0o755 } else { 0o644 },
         nlink: if kind == FileType::Directory { 2 } else { 1 },
         uid: 0, gid: 0, rdev: 0, blksize: 65536, flags: 0,
@@ -290,25 +291,27 @@ impl Fs {
 }
 
 impl Filesystem for Fs {
-    fn lookup(&mut self, _r: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    fn lookup(&self, _r: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
+        let parent = parent.0;
         let nm = match name.to_str() {
             Some(n) => n.to_string(),
-            None => return reply.error(libc::EINVAL),
+            None => return reply.error(Errno::EINVAL),
         };
         self.spawn(move |inner| {
-            let Some(pp) = inner.path(parent) else { return reply.error(libc::ENOENT) };
+            let Some(pp) = inner.path(parent) else { return reply.error(Errno::ENOENT) };
             let path = inner.child(&pp, &nm);
             let s = stat(&path);
             if !s.exists {
-                return reply.error(libc::ENOENT);
+                return reply.error(Errno::ENOENT);
             }
             let ino = inner.intern(&path);
-            reply.entry(&TTL, &if s.is_dir { dir_attr(ino) } else { file_attr(ino, s.size) }, 0);
+            reply.entry(&TTL, &if s.is_dir { dir_attr(ino) } else { file_attr(ino, s.size) }, Generation(0));
         });
     }
-    fn getattr(&mut self, _r: &Request, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
+    fn getattr(&self, _r: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
+        let ino = ino.0;
         self.spawn(move |inner| {
-            let Some(path) = inner.path(ino) else { return reply.error(libc::ENOENT) };
+            let Some(path) = inner.path(ino) else { return reply.error(Errno::ENOENT) };
             if let Some(buf) = inner.wbuf.lock().unwrap().get(&ino) {
                 return reply.attr(&TTL, &file_attr(ino, buf.len() as u64));
             }
@@ -317,18 +320,19 @@ impl Filesystem for Fs {
             }
             let s = stat(&path);
             if !s.exists {
-                return reply.error(libc::ENOENT);
+                return reply.error(Errno::ENOENT);
             }
             reply.attr(&TTL, &if s.is_dir { dir_attr(ino) } else { file_attr(ino, s.size) });
         });
     }
-    fn readdir(&mut self, _r: &Request, ino: u64, _fh: u64, offset: i64, mut reply: ReplyDirectory) {
+    fn readdir(&self, _r: &Request, ino: INodeNo, _fh: FileHandle, offset: u64, mut reply: ReplyDirectory) {
+        let ino = ino.0;
         self.spawn(move |inner| {
-            let Some(path) = inner.path(ino) else { return reply.error(libc::ENOENT) };
+            let Some(path) = inner.path(ino) else { return reply.error(Errno::ENOENT) };
             let (status, body) =
                 http("GET", "/readdir", &format!("path={}", pct(&path)), None).unwrap_or((0, vec![]));
             if status != 200 {
-                return reply.error(libc::EIO);
+                return reply.error(Errno::EIO);
             }
             let j = String::from_utf8_lossy(&body);
             let mut names: Vec<(String, bool)> = Vec::new();
@@ -348,7 +352,7 @@ impl Filesystem for Fs {
                 entries.push((cino, if is_dir { FileType::Directory } else { FileType::RegularFile }, n));
             }
             for (i, (e_ino, kind, name)) in entries.iter().enumerate().skip(offset as usize) {
-                if reply.add(*e_ino, (i + 1) as i64, *kind, name) {
+                if reply.add(INodeNo(*e_ino), (i + 1) as u64, *kind, name) {
                     break;
                 }
             }
@@ -357,12 +361,13 @@ impl Filesystem for Fs {
     }
     #[allow(clippy::too_many_arguments)]
     fn setattr(
-        &mut self, _r: &Request, ino: u64, _mode: Option<u32>, _uid: Option<u32>,
+        &self, _r: &Request, ino: INodeNo, _mode: Option<u32>, _uid: Option<u32>,
         _gid: Option<u32>, size: Option<u64>, _atime: Option<TimeOrNow>,
-        _mtime: Option<TimeOrNow>, _ctime: Option<std::time::SystemTime>, _fh: Option<u64>,
-        _crtime: Option<std::time::SystemTime>, _chgtime: Option<std::time::SystemTime>,
-        _bkuptime: Option<std::time::SystemTime>, _flags: Option<u32>, reply: ReplyAttr,
+        _mtime: Option<TimeOrNow>, _ctime: Option<SystemTime>, _fh: Option<FileHandle>,
+        _crtime: Option<SystemTime>, _chgtime: Option<SystemTime>,
+        _bkuptime: Option<SystemTime>, _flags: Option<BsdFileFlags>, reply: ReplyAttr,
     ) {
+        let ino = ino.0;
         self.spawn(move |inner| {
             // Honor truncate (e.g. `echo > file` opens O_TRUNC).
             if let Some(sz) = size {
@@ -383,28 +388,33 @@ impl Filesystem for Fs {
             }
         });
     }
-    fn open(&mut self, _r: &Request, _ino: u64, _flags: i32, reply: ReplyOpen) {
+    fn open(&self, _r: &Request, _ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
         // direct_io: don't clamp reads to stat size (dynamic/rendered files).
-        reply.opened(0, fuser::consts::FOPEN_DIRECT_IO);
+        reply.opened(FileHandle(0), FopenFlags::FOPEN_DIRECT_IO);
     }
-    fn read(&mut self, _r: &Request, ino: u64, _fh: u64, offset: i64, size: u32, _f: i32, _l: Option<u64>, reply: ReplyData) {
+    #[allow(clippy::too_many_arguments)]
+    fn read(&self, _r: &Request, ino: INodeNo, _fh: FileHandle, offset: u64, size: u32, _flags: OpenFlags, _lock: Option<LockOwner>, reply: ReplyData) {
+        let ino = ino.0;
         self.spawn(move |inner| {
-            let Some(path) = inner.path(ino) else { return reply.error(libc::ENOENT) };
+            let Some(path) = inner.path(ino) else { return reply.error(Errno::ENOENT) };
             match http("GET", "/read", &format!("path={}&offset={offset}&size={size}", pct(&path)), None) {
                 Ok((200, data)) => reply.data(&data),
-                _ => reply.error(libc::EIO),
+                _ => reply.error(Errno::EIO),
             }
         });
     }
-    fn create(&mut self, _r: &Request, parent: u64, name: &OsStr, _mode: u32, _umask: u32, _flags: i32, reply: ReplyCreate) {
-        let Some(pp) = self.inner.path(parent) else { return reply.error(libc::ENOENT) };
-        let Some(nm) = name.to_str() else { return reply.error(libc::EINVAL) };
+    fn create(&self, _r: &Request, parent: INodeNo, name: &OsStr, _mode: u32, _umask: u32, _flags: i32, reply: ReplyCreate) {
+        let parent = parent.0;
+        let Some(pp) = self.inner.path(parent) else { return reply.error(Errno::ENOENT) };
+        let Some(nm) = name.to_str() else { return reply.error(Errno::EINVAL) };
         let path = self.inner.child(&pp, nm);
         let ino = self.inner.intern(&path);
         self.inner.wbuf.lock().unwrap().insert(ino, Vec::new());
-        reply.created(&TTL, &file_attr(ino, 0), 0, 0, fuser::consts::FOPEN_DIRECT_IO);
+        reply.created(&TTL, &file_attr(ino, 0), Generation(0), FileHandle(0), FopenFlags::FOPEN_DIRECT_IO);
     }
-    fn write(&mut self, _r: &Request, ino: u64, _fh: u64, offset: i64, data: &[u8], _w: u32, _f: i32, _l: Option<u64>, reply: ReplyWrite) {
+    #[allow(clippy::too_many_arguments)]
+    fn write(&self, _r: &Request, ino: INodeNo, _fh: FileHandle, offset: u64, data: &[u8], _wf: WriteFlags, _flags: OpenFlags, _lock: Option<LockOwner>, reply: ReplyWrite) {
+        let ino = ino.0;
         let mut wb = self.inner.wbuf.lock().unwrap();
         let buf = wb.entry(ino).or_default();
         let off = offset as usize;
@@ -414,26 +424,32 @@ impl Filesystem for Fs {
         buf[off..off + data.len()].copy_from_slice(data);
         reply.written(data.len() as u32);
     }
-    fn unlink(&mut self, _r: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
-        let Some(nm) = name.to_str().map(str::to_string) else { return reply.error(libc::EINVAL) };
+    fn unlink(&self, _r: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEmpty) {
+        let parent = parent.0;
+        let Some(nm) = name.to_str().map(str::to_string) else { return reply.error(Errno::EINVAL) };
         self.spawn(move |inner| {
-            let Some(pp) = inner.path(parent) else { return reply.error(libc::ENOENT) };
+            let Some(pp) = inner.path(parent) else { return reply.error(Errno::ENOENT) };
             let path = inner.child(&pp, &nm);
             match http("DELETE", "/unlink", &format!("path={}", pct(&path)), None) {
                 Ok((200, _)) => reply.ok(),
-                _ => reply.error(libc::EIO),
+                _ => reply.error(Errno::EIO),
             }
         });
     }
-    fn flush(&mut self, _r: &Request, ino: u64, _fh: u64, _lock: u64, reply: ReplyEmpty) {
+    fn flush(&self, _r: &Request, ino: INodeNo, _fh: FileHandle, _lock: LockOwner, reply: ReplyEmpty) {
+        let ino = ino.0;
         self.spawn(move |inner| { inner.put(ino); reply.ok(); });
     }
-    fn release(&mut self, _r: &Request, ino: u64, _fh: u64, _f: i32, _l: Option<u64>, _fl: bool, reply: ReplyEmpty) {
+    fn release(&self, _r: &Request, ino: INodeNo, _fh: FileHandle, _flags: OpenFlags, _lock: Option<LockOwner>, _flush: bool, reply: ReplyEmpty) {
+        let ino = ino.0;
         self.spawn(move |inner| { inner.put(ino); reply.ok(); });
     }
 }
 
 fn main() {
     let mp = std::env::args().nth(1).expect("mountpoint arg");
-    fuser::mount2(Fs::new(), &mp, &[MountOption::FSName("ailoyvfs".into()), MountOption::RW]).unwrap();
+    // `Config` is #[non_exhaustive]; build via Default + set the public field.
+    let mut cfg = Config::default();
+    cfg.mount_options = vec![MountOption::FSName("ailoyvfs".into()), MountOption::RW];
+    fuser::mount2(Fs::new(), &mp, &cfg).unwrap();
 }

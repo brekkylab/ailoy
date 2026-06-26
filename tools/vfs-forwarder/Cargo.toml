@@ -1,3 +1,9 @@
+# Standalone workspace: this crate is excluded from the ailoy workspace and is
+# only ever built for <arch>-unknown-linux-musl (the sandbox guest), by ailoy's
+# build.rs. The empty `[workspace]` makes it its own workspace root so it builds
+# when invoked from within its own directory.
+[workspace]
+
 [package]
 name = "ailoy-vfs-forwarder"
 version = "0.1.0"
@@ -11,9 +17,10 @@ path = "src/main.rs"
 
 [dependencies]
 # default-features = false → pure-Rust mount (no libfuse). The guest mounts
-# /dev/fuse directly as root, so no fusermount3/libfuse is needed.
-fuser = { version = "0.15", default-features = false }
-libc = "0.2"
+# /dev/fuse directly as root, so no fusermount3/libfuse is needed. fuser 0.17+
+# fixed its build.rs to gate the pure-Rust path on the TARGET os (not the build
+# host), so it cross-compiles to <arch>-linux-musl from a macOS build host.
+fuser = { version = "0.17", default-features = false }
 
 [profile.release]
 strip = true

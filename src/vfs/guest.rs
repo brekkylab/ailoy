@@ -2,20 +2,22 @@ use std::path::Path;
 
 use crate::runenv::RunEnvHandle;
 
-/// Static, dependency-free in-guest FUSE forwarder binaries (one per guest
-/// arch), shipped as data assets. The guest arch equals the host arch under
-/// libkrun (same-arch virtualization), so the host picks by its own arch.
-/// Source: `tools/vfs-forwarder`.
-const FWD_BIN_AARCH64: &[u8] = include_bytes!("assets/ailoy-vfs-fwd.aarch64");
-const FWD_BIN_X86_64: &[u8] = include_bytes!("assets/ailoy-vfs-fwd.x86_64");
+/// Static, dependency-free in-guest FUSE forwarder, compiled from
+/// `tools/vfs-forwarder` by `build.rs` for the crate's target arch (a static
+/// `…-unknown-linux-musl` ELF) and embedded here. The guest arch equals the host
+/// arch under libkrun (same-arch virtualization), which equals the arch this
+/// crate was built for — so the single embedded binary always matches the guest.
+/// (Empty when the `sandbox` feature is off; never used in that case.)
+const FWD_BIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ailoy-vfs-fwd"));
 const GUEST_FWD_BIN: &str = "/opt/ailoy/vfs-fwd";
 
-/// The static forwarder binary matching the (guest == host) arch, if shipped.
+/// The static forwarder binary, or `None` if it was not built into this binary
+/// (e.g. the `sandbox` feature was disabled at compile time).
 fn static_forwarder() -> Option<&'static [u8]> {
-    match std::env::consts::ARCH {
-        "aarch64" => Some(FWD_BIN_AARCH64),
-        "x86_64" => Some(FWD_BIN_X86_64),
-        _ => None,
+    if FWD_BIN.is_empty() {
+        None
+    } else {
+        Some(FWD_BIN)
     }
 }
 
@@ -25,8 +27,8 @@ fn static_forwarder() -> Option<&'static [u8]> {
 /// created with `allow_host_egress = true`). Blocks until the mount appears.
 ///
 /// Uses the static dependency-free binary (no python/fuse3/apt — mounts
-/// `/dev/fuse` directly as root). The guest arch equals the host arch under
-/// libkrun, and a binary ships for every supported arch (aarch64, x86_64).
+/// `/dev/fuse` directly as root) compiled by `build.rs` for this crate's target
+/// arch, which equals the guest arch under libkrun same-arch virtualization.
 pub async fn bootstrap_guest_forwarder(
     handle: &RunEnvHandle,
     mount_root: &str,
@@ -35,8 +37,7 @@ pub async fn bootstrap_guest_forwarder(
 ) -> anyhow::Result<()> {
     let bin = static_forwarder().ok_or_else(|| {
         anyhow::anyhow!(
-            "no static vfs forwarder shipped for guest arch '{}'",
-            std::env::consts::ARCH
+            "vfs forwarder binary was not built into ailoy (build the `sandbox` feature)"
         )
     })?;
     try_static_forwarder(handle, mount_root, port, token, bin).await

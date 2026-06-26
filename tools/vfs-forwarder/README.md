@@ -31,52 +31,36 @@ ailoy-vfs-fwd <mountpoint>
 ```
 Must run as **root** (the guest is). No other guest dependencies.
 
-## Building (per guest arch, static musl)
+## Building (static musl, any host — no external toolchain)
 
 The sandbox guest arch matches the host: aarch64 on Apple Silicon, x86_64 on
-Intel/AMD Linux. Build for the guest's arch.
+Intel/AMD Linux. Build for the guest's arch. The only requirement is the musl
+target; cross-linking from a non-Linux host uses Rust's **bundled lld**
+(`-C linker-flavor=ld.lld`) — no zig, no external linker, no source patches.
+(`fuser` 0.17+ fixed its `build.rs` to gate the pure-Rust path on the *target*
+OS, so it cross-compiles cleanly to Linux from a macOS build host.)
 
-### On a Linux build host (CI — simplest, no patches)
-`fuser` without `libfuse` builds natively on Linux:
 ```sh
 rustup target add aarch64-unknown-linux-musl   # or x86_64-unknown-linux-musl
-cargo build --release --target aarch64-unknown-linux-musl
+RUSTFLAGS="-C linker-flavor=ld.lld" \
+  cargo build --release --target aarch64-unknown-linux-musl
 # -> target/aarch64-unknown-linux-musl/release/ailoy-vfs-fwd  (~600 KB static ELF)
 ```
 
-### Cross-compiling from macOS (dev convenience, via zig)
-Two upstream gotchas, both worked around with config (no source changes here):
-1. `fuser`'s `build.rs` checks the **host** OS, not the target, and refuses the
-   pure-Rust path when the host isn't Linux. Patch its `build.rs` to gate on
-   `CARGO_CFG_TARGET_OS` instead (use a `[patch.crates-io]` vendored copy), or
-   just build on Linux.
-2. zig + Rust musl duplicate the `crt1` startup object. Add
-   `rustflags = ["-C", "link-self-contained=no"]` for the target.
+On a Linux build host the `RUSTFLAGS` is optional (the native linker handles
+musl), but it is harmless and keeps the recipe host-agnostic.
 
-```sh
-rustup target add aarch64-unknown-linux-musl
-# .cargo/config.toml:
-#   [target.aarch64-unknown-linux-musl]
-#   linker = "zcc.sh"                         # exec zig cc -target aarch64-linux-musl "$@"
-#   rustflags = ["-C", "link-self-contained=no"]
-cargo build --release --target aarch64-unknown-linux-musl
-```
+## Integration (done — built from source, no committed binary)
 
-## Integration (done)
+ailoy's top-level `build.rs` compiles this crate for the target arch (the guest
+arch under libkrun) with the recipe above and writes the ELF to `OUT_DIR`;
+`src/vfs/guest.rs` embeds it via
+`include_bytes!(concat!(env!("OUT_DIR"), "/ailoy-vfs-fwd"))`, writes it into the
+guest, `chmod +x`, and runs it with `VFS_HOST`/`VFS_TOKEN`. It is the sole
+forwarder — no runtime dependency install. The mount/re-mount lifecycle
+(`AgentVfs::ensure_mounted`) is unchanged.
 
-`src/vfs/guest.rs` ships this binary per guest arch as
-`src/vfs/assets/ailoy-vfs-fwd.{aarch64,x86_64}` (`include_bytes!`), picks by the
-host arch (guest arch == host arch under libkrun), writes it, `chmod +x`, and
-runs it with `VFS_HOST`/`VFS_TOKEN`. It is the sole forwarder — a binary ships
-for every supported arch, so there is no runtime dependency install.
-The mount/re-mount lifecycle (`AgentVfs::ensure_mounted`) is unchanged.
-
-**Updating the committed binaries** after changing `src/main.rs`: cross-build
-both arches (see above) and copy the outputs to `src/vfs/assets/`:
-```sh
-cargo build --release --target aarch64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl
-cp target/aarch64-unknown-linux-musl/release/ailoy-vfs-fwd ../../src/vfs/assets/ailoy-vfs-fwd.aarch64
-cp target/x86_64-unknown-linux-musl/release/ailoy-vfs-fwd  ../../src/vfs/assets/ailoy-vfs-fwd.x86_64
-```
-A CI cross-build step could replace the committed blobs later.
+There is **no committed binary** and **no release step**: changing `src/main.rs`
+here is picked up automatically on the next `cargo build` of ailoy (build.rs has
+`rerun-if-changed` on the forwarder sources). The build is gated on the
+`vfs` + `sandbox` features; other builds get an empty stub.

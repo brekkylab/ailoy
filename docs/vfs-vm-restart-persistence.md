@@ -76,13 +76,21 @@ detects a dead host server (fast connect-refused) and re-mounts.
 
 ## Forwarder: static dependency-free binary
 
-The forwarder is a **static, dependency-free Rust binary** (`tools/vfs-forwarder`,
-shipped per guest arch in `src/vfs/assets/`). It mounts `/dev/fuse` directly as
-root (FUSE is built into the guest kernel) and needs **no python/fuse3/apt** — a
-clean guest image just works, and the first mount is fast (no install). `guest.rs`
-picks the binary by the host arch (guest arch == host arch under libkrun); a
-binary ships for every supported arch (aarch64, x86_64), so it is the sole
-forwarder — the earlier Python `mfusepy` fallback has been removed.
+The forwarder is a **static, dependency-free Rust binary** (`tools/vfs-forwarder`).
+It mounts `/dev/fuse` directly as root (FUSE is built into the guest kernel) and
+needs **no python/fuse3/apt** — a clean guest image just works, and the first
+mount is fast (no install). It is the sole forwarder — the earlier Python
+`mfusepy` fallback has been removed.
+
+It is **not** committed as a prebuilt binary. ailoy's top-level `build.rs`
+compiles it for the crate's target arch (== the guest arch under libkrun) as a
+static `…-unknown-linux-musl` ELF and embeds it via
+`include_bytes!(concat!(env!("OUT_DIR"), "/ailoy-vfs-fwd"))`. Cross-linking from a
+non-Linux build host needs no external toolchain — Rust's bundled lld
+(`-C linker-flavor=ld.lld`) links the ELF; the only requirement is the musl
+target (`rustup target add <arch>-unknown-linux-musl`). So there is no committed
+artifact and nothing extra to manage at release time — just `cargo build`. The
+build is gated on the `vfs` + `sandbox` features (otherwise an empty stub).
 
 Result: the full lifecycle runs in ~6.5 s on a clean image (was ~30 s with apt),
 with no image customization required.
