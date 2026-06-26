@@ -15,7 +15,7 @@ use crate::common::*;
 async fn vfs_recovers_from_forwarder_death() {
     dotenvy::dotenv().ok();
     let name = format!("ailoy-vfs-fwddeath-{}", stamp());
-    let fx = S3Fixture::create().await;
+    let fx = Fixture::create("/s3").await;
     let path = fx.guest_path();
     let read_count = |n: &str| -> i64 {
         let out = std::process::Command::new("msb")
@@ -113,7 +113,7 @@ async fn vfs_recovers_from_forwarder_death() {
 async fn vfs_repeated_forwarder_death_recovery() {
     dotenvy::dotenv().ok();
     let name = format!("ailoy-vfs-fwdloop-{}", stamp());
-    let fx = S3Fixture::create().await;
+    let fx = Fixture::create("/s3").await;
     let path = fx.guest_path();
     let read_count = |n: &str| -> i64 {
         let out = std::process::Command::new("msb")
@@ -227,7 +227,7 @@ async fn vfs_static_forwarder_full() {
     let bin = std::fs::read(&bin_path)
         .unwrap_or_else(|e| panic!("forwarder binary missing at {bin_path}: {e}"));
 
-    let fx = S3Fixture::create().await;
+    let fx = Fixture::create("/s3").await;
     let vfs = Arc::new(Vfs::from_config(all_vfs()).unwrap()); // s3-only
     let rt = tokio::runtime::Handle::current();
     let forward = ailoy::vfs::VfsForward::spawn(vfs, &rt).expect("forward");

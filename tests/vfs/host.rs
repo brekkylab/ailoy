@@ -42,7 +42,7 @@ async fn vfs_host_fuse_bind_into_guest() {
     dotenvy::dotenv().ok();
     // Host FUSE mount of the s3 provider, with our own fixture file to look for
     // (no assumption that any specific provider content already exists).
-    let fx = S3Fixture::create().await;
+    let fx = Fixture::create("/s3").await;
     let vfs = Arc::new(Vfs::from_config(all_vfs()).unwrap());
     let rt = tokio::runtime::Handle::current();
     let mountpoint = std::env::temp_dir().join(format!("ailoy-hostfuse-{}", stamp()));
@@ -56,7 +56,7 @@ async fn vfs_host_fuse_bind_into_guest() {
         host_sees = std::fs::read_dir(mountpoint.join("s3"))
             .map(|rd| {
                 rd.filter_map(|e| e.ok())
-                    .any(|e| e.file_name().to_string_lossy() == fx.key)
+                    .any(|e| e.file_name().to_string_lossy() == fx.name())
             })
             .unwrap_or(false);
         if host_sees {
@@ -64,7 +64,7 @@ async fn vfs_host_fuse_bind_into_guest() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
-    println!("host sees fixture {}: {host_sees}", fx.key);
+    println!("host sees fixture {}: {host_sees}", fx.name());
     assert!(host_sees, "host FUSE mount not ready / fixture not visible");
 
     let name = format!("ailoy-hostbind-{}", stamp());

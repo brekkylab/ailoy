@@ -84,32 +84,42 @@ pub fn uniq() -> u64 {
     C.fetch_add(1, Ordering::Relaxed)
 }
 
-/// A self-contained S3 test fixture: a uniquely-named object with known content,
-/// created on the host (directly through the S3 `Resource`, no mount needed)
-/// before the test and deleted on `teardown()`. Tests read it through the mounted
-/// VFS instead of assuming some specific provider file already exists in the
-/// account — so they set up their own data and clean it up after.
-pub struct S3Fixture {
-    pub key: String,
+/// A self-contained test fixture: a uniquely-named file with known content,
+/// created on the host (directly through the `Resource`, no mount needed) under a
+/// given mount before the test and deleted on `teardown()`. Tests read it through
+/// the mounted VFS instead of assuming some specific provider file already exists.
+///
+/// The mount must accept writing an arbitrary object at an arbitrary path —
+/// i.e. a blob-style provider (`/s3`); domain providers (notion/gdrive) create
+/// content only via their `.cmd` ops, not a plain write, so they aren't usable
+/// here.
+pub struct Fixture {
+    pub path: String,
     pub content: String,
 }
 
-impl S3Fixture {
-    /// Write the fixture object to S3 and return a handle to it.
-    pub async fn create() -> S3Fixture {
-        let key = format!("ailoy-fixture-{}-{}.txt", stamp(), uniq());
-        let content = format!("ailoy-fixture-content-{key}");
+impl Fixture {
+    /// Write a fixture file under `mount` (e.g. "/s3") and return a handle to it.
+    pub async fn create(mount: &str) -> Fixture {
+        let id = format!("{}-{}", stamp(), uniq());
+        let path = format!("{mount}/ailoy-fixture-{id}.txt");
+        let content = format!("ailoy-fixture-content-{id}");
         let vfs = Vfs::from_config(all_vfs()).unwrap();
-        let (res, vp) = vfs.route(&format!("/s3/{key}")).expect("route fixture");
+        let (res, vp) = vfs.route(&path).expect("route fixture");
         res.write_bytes(&vp, content.clone().into_bytes())
             .await
-            .expect("write s3 fixture");
-        S3Fixture { key, content }
+            .expect("write fixture");
+        Fixture { path, content }
     }
 
-    /// Guest mount path of the fixture (under the `/s3` mount).
+    /// Guest mount path of the fixture (the vfs path under `/mnt/vfs`).
     pub fn guest_path(&self) -> String {
-        format!("/mnt/vfs/s3/{}", self.key)
+        format!("/mnt/vfs{}", self.path)
+    }
+
+    /// The fixture's file name (last path segment).
+    pub fn name(&self) -> &str {
+        self.path.rsplit('/').next().unwrap_or(&self.path)
     }
 
     /// Known byte length of the fixture content.
@@ -117,11 +127,11 @@ impl S3Fixture {
         self.content.len()
     }
 
-    /// Best-effort delete of the S3 object. Call once the test is done with it
+    /// Best-effort delete of the fixture file. Call once the test is done with it
     /// (before any assertions that might panic and skip cleanup).
     pub async fn teardown(&self) {
         let vfs = Vfs::from_config(all_vfs()).unwrap();
-        let (res, vp) = vfs.route(&format!("/s3/{}", self.key)).expect("route");
+        let (res, vp) = vfs.route(&self.path).expect("route");
         let _ = res.unlink(&vp).await;
     }
 }

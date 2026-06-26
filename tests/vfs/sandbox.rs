@@ -48,7 +48,7 @@ async fn vfs_sandbox_remount_after_restart() {
     // Fresh, unique name — avoid corrupt leftover state from prior runs.
     let name = format!("ailoy-vfs-remount-{}", stamp());
     // Set up our own S3 fixture instead of assuming a pre-existing provider file.
-    let fx = S3Fixture::create().await;
+    let fx = Fixture::create("/s3").await;
     let path = fx.guest_path();
 
     async fn attach_round(name: &str, path: &str) -> i64 {
@@ -180,7 +180,7 @@ async fn vfs_sandbox_reconnect_race() {
 async fn vfs_concurrent_access_stress() {
     dotenvy::dotenv().ok();
     let name = format!("ailoy-vfs-concur-{}", stamp());
-    let fx = S3Fixture::create().await;
+    let fx = Fixture::create("/s3").await;
     let path = fx.guest_path();
     let sandbox = RunEnv::sandbox(SandboxConfig {
         name: Some(name.clone()),
@@ -398,7 +398,7 @@ async fn vfs_multimount_remount_after_restart() {
 async fn vfs_agent_reads_across_restart() {
     dotenvy::dotenv().ok();
     let name = format!("ailoy-vfs-agentk-{}", stamp());
-    let fx = S3Fixture::create().await;
+    let fx = Fixture::create("/s3").await;
     let path = fx.guest_path();
 
     // Round 1: bring the mount up via a real agent, then drop it (VM stops).
@@ -479,7 +479,7 @@ async fn vfs_concurrent_agents_remount() {
     dotenvy::dotenv().ok();
     const N: usize = 4;
     // One shared S3 fixture; all agents read it (read-only, so sharing is fine).
-    let fx = S3Fixture::create().await;
+    let fx = Fixture::create("/s3").await;
 
     async fn one_agent(idx: usize, stamp: u64, path: String) -> (i64, i64) {
         let name = format!("ailoy-vfs-cc-{stamp}-{idx}");
