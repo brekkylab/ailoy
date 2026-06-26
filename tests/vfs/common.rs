@@ -84,6 +84,56 @@ pub async fn verify_s3(fname: &str, want: &str) -> bool {
     }
 }
 
+/// Process-unique counter, so fixtures created within the same wall-clock
+/// second (e.g. concurrent tests) still get distinct keys.
+pub fn uniq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static C: AtomicU64 = AtomicU64::new(0);
+    C.fetch_add(1, Ordering::Relaxed)
+}
+
+/// A self-contained S3 test fixture: a uniquely-named object with known content,
+/// created on the host (directly through the S3 `Resource`, no mount needed)
+/// before the test and deleted on `teardown()`. Tests read it through the mounted
+/// VFS instead of assuming some specific provider file already exists in the
+/// account — so they set up their own data and clean it up after.
+pub struct S3Fixture {
+    pub key: String,
+    pub content: String,
+}
+
+impl S3Fixture {
+    /// Write the fixture object to S3 and return a handle to it.
+    pub async fn create() -> S3Fixture {
+        let key = format!("ailoy-fixture-{}-{}.txt", stamp(), uniq());
+        let content = format!("ailoy-fixture-content-{key}");
+        let vfs = Vfs::from_config(vfs_config()).unwrap();
+        let (res, vp) = vfs.route(&format!("/s3/{key}")).expect("route fixture");
+        res.write_bytes(&vp, content.clone().into_bytes())
+            .await
+            .expect("write s3 fixture");
+        S3Fixture { key, content }
+    }
+
+    /// Guest mount path of the fixture (under the `/s3` mount).
+    pub fn guest_path(&self) -> String {
+        format!("/mnt/vfs/s3/{}", self.key)
+    }
+
+    /// Known byte length of the fixture content.
+    pub fn len(&self) -> usize {
+        self.content.len()
+    }
+
+    /// Best-effort delete of the S3 object. Call once the test is done with it
+    /// (before any assertions that might panic and skip cleanup).
+    pub async fn teardown(&self) {
+        let vfs = Vfs::from_config(vfs_config()).unwrap();
+        let (res, vp) = vfs.route(&format!("/s3/{}", self.key)).expect("route");
+        let _ = res.unlink(&vp).await;
+    }
+}
+
 pub fn task_for(fname: &str, content: &str) -> String {
     format!(
         "Your instructions list an external S3 mount path. \

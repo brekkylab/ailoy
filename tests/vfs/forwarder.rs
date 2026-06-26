@@ -15,11 +15,11 @@ use crate::common::*;
 async fn vfs_recovers_from_forwarder_death() {
     dotenvy::dotenv().ok();
     let name = format!("ailoy-vfs-fwddeath-{}", stamp());
-    let page = "/mnt/vfs/notion/pages/\
-                Engineering_Logs__490e8208-3e62-48ef-a8ce-bc08755ea4ff/page.json";
+    let fx = S3Fixture::create().await;
+    let path = fx.guest_path();
     let read_count = |n: &str| -> i64 {
         let out = std::process::Command::new("msb")
-            .args(["exec", n, "--", "sh", "-c", &format!("cat {page} | wc -c")])
+            .args(["exec", n, "--", "sh", "-c", &format!("cat {path} | wc -c")])
             .output()
             .expect("msb exec read");
         String::from_utf8_lossy(&out.stdout)
@@ -41,7 +41,7 @@ async fn vfs_recovers_from_forwarder_death() {
         .instruction("You are a tester. Use the shell tool.")
         .shell_tool()
         .runenv(sandbox)
-        .vfs(notion_vfs())
+        .vfs(vfs_config())
         .build()
         .expect("build agent");
 
@@ -53,9 +53,10 @@ async fn vfs_recovers_from_forwarder_death() {
             let _ = ev;
         }
     }
+    let want = fx.len() as i64;
     let n1 = read_count(&name);
     println!("before forwarder kill: {n1} bytes");
-    assert!(n1 > 0, "initial mount read should succeed");
+    assert_eq!(n1, want, "initial mount read should match the fixture size");
 
     // Kill the in-guest forwarder (simulate a crash) — the mount now has a dead
     // FUSE daemon; any access to it would block in the kernel. Match the binary
@@ -94,8 +95,9 @@ async fn vfs_recovers_from_forwarder_death() {
     let _ = std::process::Command::new("msb")
         .args(["rm", &name])
         .status();
-    assert!(
-        n2 > 0,
+    fx.teardown().await;
+    assert_eq!(
+        n2, want,
         "provider access should recover after forwarder process death (got {n2})"
     );
     println!("FORWARDER-DEATH RECOVERY OK");
@@ -111,11 +113,11 @@ async fn vfs_recovers_from_forwarder_death() {
 async fn vfs_repeated_forwarder_death_recovery() {
     dotenvy::dotenv().ok();
     let name = format!("ailoy-vfs-fwdloop-{}", stamp());
-    let page = "/mnt/vfs/notion/pages/\
-                Engineering_Logs__490e8208-3e62-48ef-a8ce-bc08755ea4ff/page.json";
+    let fx = S3Fixture::create().await;
+    let path = fx.guest_path();
     let read_count = |n: &str| -> i64 {
         let out = std::process::Command::new("msb")
-            .args(["exec", n, "--", "sh", "-c", &format!("cat {page} | wc -c")])
+            .args(["exec", n, "--", "sh", "-c", &format!("cat {path} | wc -c")])
             .output()
             .expect("msb exec read");
         String::from_utf8_lossy(&out.stdout)
@@ -146,12 +148,13 @@ async fn vfs_repeated_forwarder_death_recovery() {
         .instruction("You are a tester. Use the shell tool.")
         .shell_tool()
         .runenv(sandbox)
-        .vfs(notion_vfs())
+        .vfs(vfs_config())
         .build()
         .expect("build agent");
 
+    let want = fx.len() as i64;
     drive_once(&mut agent).await; // initial mount
-    assert!(read_count(&name) > 0, "initial mount read failed");
+    assert_eq!(read_count(&name), want, "initial mount read failed");
 
     for round in 1..=3 {
         let _ = std::process::Command::new("msb")
@@ -167,8 +170,8 @@ async fn vfs_repeated_forwarder_death_recovery() {
         drive_once(&mut agent).await; // self-heal re-mount
         let n = read_count(&name);
         println!("round {round}: after kill+heal -> {n} bytes");
-        assert!(
-            n > 0,
+        assert_eq!(
+            n, want,
             "round {round}: provider access did not recover (got {n})"
         );
     }
@@ -197,6 +200,7 @@ async fn vfs_repeated_forwarder_death_recovery() {
     let _ = std::process::Command::new("msb")
         .args(["rm", &name])
         .status();
+    fx.teardown().await;
     assert_eq!(
         count, 1,
         "stale mounts accumulated ({count} /mnt/vfs entries) — lazy umount is leaking"
@@ -204,9 +208,10 @@ async fn vfs_repeated_forwarder_death_recovery() {
     println!("REPEATED FORWARDER-DEATH RECOVERY OK (3 rounds, 1 mount entry)");
 }
 
-/// Full dep-free forwarder end to end: host forward server (notion) + a CLEAN
+/// Full dep-free forwarder end to end: host forward server (s3) + a CLEAN
 /// sandbox (no python/fuse3/apt) running the static Rust forwarder binary, which
-/// reaches the host over allow@host egress and serves provider content.
+/// reaches the host over allow@host egress and serves provider content (a
+/// self-created S3 fixture, cleaned up afterwards).
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "poc: full static dep-free forwarder serves a provider (needs creds + sandbox + cross-built binary)"]
 async fn vfs_static_forwarder_full() {
@@ -222,7 +227,8 @@ async fn vfs_static_forwarder_full() {
     let bin = std::fs::read(&bin_path)
         .unwrap_or_else(|e| panic!("forwarder binary missing at {bin_path}: {e}"));
 
-    let vfs = Arc::new(Vfs::from_config(notion_vfs()).unwrap());
+    let fx = S3Fixture::create().await;
+    let vfs = Arc::new(Vfs::from_config(vfs_config()).unwrap()); // s3-only
     let rt = tokio::runtime::Handle::current();
     let forward = ailoy::vfs::VfsForward::spawn(vfs, &rt).expect("forward");
     let (port, tok) = (forward.port(), forward.token().to_string());
@@ -250,8 +256,7 @@ async fn vfs_static_forwarder_full() {
     h.write(Path::new("/opt/ailoy-vfs-fwd"), &bin)
         .await
         .expect("write binary");
-    let page = "/mnt/vfs/notion/pages/\
-                Engineering_Logs__490e8208-3e62-48ef-a8ce-bc08755ea4ff/page.json";
+    let path = fx.guest_path();
     let script = format!(
         "echo \"deps: python3=$(command -v python3) fusermount3=$(command -v fusermount3)\"; \
          chmod +x /opt/ailoy-vfs-fwd; mkdir -p /mnt/vfs; \
@@ -259,8 +264,8 @@ async fn vfs_static_forwarder_full() {
          setsid sh -c '/opt/ailoy-vfs-fwd /mnt/vfs >/tmp/fwd.log 2>&1' </dev/null >/dev/null 2>&1 & \
          for _ in $(seq 1 40); do grep -q ' /mnt/vfs ' /proc/mounts && break; sleep 0.25; done; \
          echo '== mount =='; mount | grep /mnt/vfs || echo '(not mounted)'; \
-         echo '== ls pages =='; ls /mnt/vfs/notion/pages 2>&1 | head; \
-         echo '== cat bytes =='; cat '{page}' 2>/dev/null | wc -c; \
+         echo '== ls s3 =='; ls /mnt/vfs/s3 2>&1 | head; \
+         echo '== cat bytes =='; cat '{path}' 2>/dev/null | wc -c; \
          echo '== log =='; cat /tmp/fwd.log 2>&1 | tail -5"
     );
     let out = h.exec_shell(script, Some(60)).await.expect("guest exec");
@@ -281,9 +286,12 @@ async fn vfs_static_forwarder_full() {
     let _ = std::process::Command::new("msb")
         .args(["rm", &name])
         .status();
-    assert!(
-        bytes > 0,
-        "dep-free forwarder did not serve provider page.json ({bytes}B)"
+    fx.teardown().await;
+    assert_eq!(
+        bytes,
+        fx.len() as i64,
+        "dep-free forwarder did not serve the fixture file ({bytes}B, want {})",
+        fx.len()
     );
 }
 

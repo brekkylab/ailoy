@@ -40,27 +40,32 @@ async fn vfs_host_fuse_bind_into_guest() {
     use std::sync::Arc;
 
     dotenvy::dotenv().ok();
-    // Host FUSE mount of the notion provider.
-    let vfs = Arc::new(Vfs::from_config(notion_vfs()).unwrap());
+    // Host FUSE mount of the s3 provider, with our own fixture file to look for
+    // (no assumption that any specific provider content already exists).
+    let fx = S3Fixture::create().await;
+    let vfs = Arc::new(Vfs::from_config(vfs_config()).unwrap());
     let rt = tokio::runtime::Handle::current();
     let mountpoint = std::env::temp_dir().join(format!("ailoy-hostfuse-{}", stamp()));
     std::fs::create_dir_all(&mountpoint).unwrap();
     let _mount = ailoy::vfs::VfsMount::spawn(vfs, &mountpoint, rt).expect("host fuse mount");
 
-    // Wait for the host FUSE mount to be ready + populated (first readdir
+    // Wait for the host FUSE mount to be ready + show our fixture (first readdir
     // triggers the provider fetch) before binding it into the guest.
-    let mut host_ls = 0;
+    let mut host_sees = false;
     for _ in 0..40 {
-        host_ls = std::fs::read_dir(mountpoint.join("notion/pages"))
-            .map(|rd| rd.filter_map(|e| e.ok()).count())
-            .unwrap_or(0);
-        if host_ls > 0 {
+        host_sees = std::fs::read_dir(mountpoint.join("s3"))
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .any(|e| e.file_name().to_string_lossy() == fx.key)
+            })
+            .unwrap_or(false);
+        if host_sees {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
-    println!("host sees notion/pages entries: {host_ls}");
-    assert!(host_ls > 0, "host FUSE mount not ready/populated");
+    println!("host sees fixture {}: {host_sees}", fx.key);
+    assert!(host_sees, "host FUSE mount not ready / fixture not visible");
 
     let name = format!("ailoy-hostbind-{}", stamp());
     let sandbox = RunEnv::sandbox(SandboxConfig {
@@ -90,7 +95,7 @@ async fn vfs_host_fuse_bind_into_guest() {
     let out = h
         .exec_shell(
             "echo '== ls /mnt/vfs =='; ls /mnt/vfs 2>&1; \
-             echo '== ls /mnt/vfs/notion/pages =='; ls /mnt/vfs/notion/pages 2>&1; \
+             echo '== ls /mnt/vfs/s3 =='; ls /mnt/vfs/s3 2>&1; \
              echo '== mount =='; mount | grep -i 'mnt/vfs\\|virtiofs' 2>&1"
                 .into(),
             Some(30),
@@ -101,6 +106,7 @@ async fn vfs_host_fuse_bind_into_guest() {
         "GUEST:\n{}\n--- stderr ---\n{} (exit={}, timed_out={})",
         out.stdout, out.stderr, out.exit_code, out.timed_out
     );
+    fx.teardown().await;
 }
 
 /// Non-sandbox counterpart to `vfs_inspect_sandbox`: builds a host-FUSE agent
