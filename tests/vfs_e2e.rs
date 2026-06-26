@@ -1116,10 +1116,10 @@ async fn vfs_static_forwarder_full() {
     use std::path::Path;
     use std::sync::Arc;
     dotenvy::dotenv().ok();
-    // Cross-build first: see tools/vfs-forwarder/README.md.
+    // Cross-build first: see crates/ailoy-vfs-forwarder/README.md.
     let target = format!("{}-unknown-linux-musl", std::env::consts::ARCH);
     let bin_path = format!(
-        "{}/tools/vfs-forwarder/target/{target}/release/ailoy-vfs-fwd",
+        "{}/crates/ailoy-vfs-forwarder/target/{target}/release/ailoy-vfs-fwd",
         env!("CARGO_MANIFEST_DIR")
     );
     let bin = std::fs::read(&bin_path)
@@ -1188,7 +1188,7 @@ async fn vfs_static_forwarder_write_unlink() {
     dotenvy::dotenv().ok();
     let target = format!("{}-unknown-linux-musl", std::env::consts::ARCH);
     let bin_path = format!(
-        "{}/tools/vfs-forwarder/target/{target}/release/ailoy-vfs-fwd",
+        "{}/crates/ailoy-vfs-forwarder/target/{target}/release/ailoy-vfs-fwd",
         env!("CARGO_MANIFEST_DIR")
     );
     let bin = std::fs::read(&bin_path)
@@ -1253,7 +1253,7 @@ async fn vfs_static_forwarder_large_read() {
     dotenvy::dotenv().ok();
     let target = format!("{}-unknown-linux-musl", std::env::consts::ARCH);
     let bin_path = format!(
-        "{}/tools/vfs-forwarder/target/{target}/release/ailoy-vfs-fwd",
+        "{}/crates/ailoy-vfs-forwarder/target/{target}/release/ailoy-vfs-fwd",
         env!("CARGO_MANIFEST_DIR")
     );
     let bin = std::fs::read(&bin_path)

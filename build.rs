@@ -1,7 +1,7 @@
 //! Build the in-guest VFS forwarder from source (no committed binary).
 //!
 //! The sandbox VFS path mounts a small static FUSE forwarder inside the guest
-//! (`tools/vfs-forwarder`). Rather than commit a prebuilt per-arch binary, we
+//! (`crates/ailoy-vfs-forwarder`). Rather than commit a prebuilt per-arch binary, we
 //! compile it here for the guest arch (== the crate's target arch under libkrun
 //! same-arch virtualization) as a static `…-unknown-linux-musl` ELF and embed it
 //! via `include_bytes!(concat!(env!("OUT_DIR"), "/ailoy-vfs-fwd"))`.
@@ -31,7 +31,7 @@ fn main() {
     }
 
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let fwd_dir = manifest_dir.join("tools/vfs-forwarder");
+    let fwd_dir = manifest_dir.join("crates/ailoy-vfs-forwarder");
     let arch = std::env::var("CARGO_CFG_TARGET_ARCH").expect("CARGO_CFG_TARGET_ARCH");
     let triple = format!("{arch}-unknown-linux-musl");
 

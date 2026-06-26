@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::runenv::RunEnvHandle;
 
 /// Static, dependency-free in-guest FUSE forwarder, compiled from
-/// `tools/vfs-forwarder` by `build.rs` for the crate's target arch (a static
+/// `crates/ailoy-vfs-forwarder` by `build.rs` for the crate's target arch (a static
 /// `…-unknown-linux-musl` ELF) and embedded here. The guest arch equals the host
 /// arch under libkrun (same-arch virtualization), which equals the arch this
 /// crate was built for — so the single embedded binary always matches the guest.

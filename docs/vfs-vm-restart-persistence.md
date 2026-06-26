@@ -76,7 +76,7 @@ detects a dead host server (fast connect-refused) and re-mounts.
 
 ## Forwarder: static dependency-free binary
 
-The forwarder is a **static, dependency-free Rust binary** (`tools/vfs-forwarder`).
+The forwarder is a **static, dependency-free Rust binary** (`crates/ailoy-vfs-forwarder`).
 It mounts `/dev/fuse` directly as root (FUSE is built into the guest kernel) and
 needs **no python/fuse3/apt** — a clean guest image just works, and the first
 mount is fast (no install). It is the sole forwarder — the earlier Python
@@ -111,4 +111,4 @@ existing shell/read/write tools operate on `/mnt/vfs/...`. Nothing to bake.
   binary is produced for release: it currently ships as committed assets
   (`src/vfs/assets/ailoy-vfs-fwd.{aarch64,x86_64}`, ~1.2 MB total); a CI
   cross-build step could replace the committed blobs later. Build/cross-compile
-  recipe and gotchas are in `tools/vfs-forwarder/README.md`.
+  recipe and gotchas are in `crates/ailoy-vfs-forwarder/README.md`.
