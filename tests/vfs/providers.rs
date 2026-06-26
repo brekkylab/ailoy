@@ -200,6 +200,84 @@ async fn notion_read_and_command_smoke() {
     }
 }
 
+/// Multi-mount of the SAME provider type with isolated config — the plan's
+/// first-class "N instances of one provider, each with its own creds/scope".
+/// Mounts S3 twice: `/s3` (whole bucket) and `/scoped` (a `key_prefix`). Proves
+/// (a) top-level prefix routing reaches the right instance, and (b) `key_prefix`
+/// is a real scope: a write through `/scoped/<f>` lands under the prefix, so the
+/// unprefixed mount sees it only at `/s3/<prefix>/<f>`, never at `/s3/<f>`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: multi-mount same provider, key_prefix isolation (needs AWS creds)"]
+async fn s3_multi_mount_key_prefix_isolation() {
+    dotenvy::dotenv().ok();
+    if !has_mount("/s3") {
+        eprintln!("no s3 creds — skipping");
+        return;
+    }
+    let s = format!("{}-{}", stamp(), uniq());
+    let key_prefix = format!("vfs-isolated-{s}");
+    let s3 = |prefix: Option<String>| S3Config {
+        bucket: std::env::var("AWS_S3_BUCKET").unwrap(),
+        region: std::env::var("AWS_DEFAULT_REGION").unwrap_or_else(|_| "us-east-1".into()),
+        access_key_id: std::env::var("AWS_ACCESS_KEY_ID").unwrap(),
+        secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").unwrap(),
+        endpoint: None,
+        key_prefix: prefix,
+    };
+    let vfs = Vfs::from_config(VfsConfig {
+        mounts: vec![
+            MountSpec {
+                prefix: "/s3".into(),
+                provider: ProviderConfig::S3(s3(None)),
+            },
+            MountSpec {
+                prefix: "/scoped".into(),
+                provider: ProviderConfig::S3(s3(Some(key_prefix.clone()))),
+            },
+        ],
+    })
+    .unwrap();
+
+    let fname = format!("iso-{s}.txt");
+    let content = format!("isolated-{s}");
+
+    // Write through the scoped (key_prefix'd) mount, read it back there.
+    let (res, vp) = vfs.route(&format!("/scoped/{fname}")).expect("route scoped");
+    res.write_bytes(&vp, content.clone().into_bytes())
+        .await
+        .expect("write scoped");
+    let (res, vp) = vfs.route(&format!("/scoped/{fname}")).expect("route scoped read");
+    let got = res.read_bytes(&vp, None).await.expect("read scoped");
+    assert_eq!(
+        String::from_utf8_lossy(&got),
+        content,
+        "scoped mount should read back its own write"
+    );
+
+    // The unprefixed mount must NOT see it at the bare path (it's under the prefix)…
+    let (res, vp) = vfs.route(&format!("/s3/{fname}")).expect("route base bare");
+    assert!(
+        res.read_bytes(&vp, None).await.is_err(),
+        "base mount must not see the scoped object at the unprefixed path"
+    );
+    // …but DOES see it under the prefix, proving key_prefix is a real scope.
+    let (res, vp) = vfs
+        .route(&format!("/s3/{key_prefix}/{fname}"))
+        .expect("route base prefixed");
+    let got2 = res
+        .read_bytes(&vp, None)
+        .await
+        .expect("base mount should see the object at the prefixed key");
+    assert_eq!(String::from_utf8_lossy(&got2), content);
+
+    // Cleanup via the scoped mount.
+    let (res, vp) = vfs
+        .route(&format!("/scoped/{fname}"))
+        .expect("route scoped unlink");
+    let _ = res.unlink(&vp).await;
+    println!("S3 MULTI-MOUNT KEY-PREFIX ISOLATION OK");
+}
+
 /// Verify the GDrive adapter mirrors the Drive folder hierarchy: the root
 /// lists folders as directories, and descending into a folder lists its
 /// children (not a flat dump of the whole Drive).
