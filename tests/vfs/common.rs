@@ -14,17 +14,6 @@ pub use futures::StreamExt;
 
 pub const MODEL: &str = "anthropic/claude-haiku-4-5";
 
-pub fn s3_config() -> S3Config {
-    S3Config {
-        bucket: std::env::var("AWS_S3_BUCKET").unwrap(),
-        region: std::env::var("AWS_DEFAULT_REGION").unwrap_or_else(|_| "us-east-1".into()),
-        access_key_id: std::env::var("AWS_ACCESS_KEY_ID").unwrap(),
-        secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").unwrap(),
-        endpoint: None,
-        key_prefix: None,
-    }
-}
-
 pub fn provider() -> AgentProvider {
     let key = std::env::var("ANTHROPIC_API_KEY").unwrap();
     let mut p = AgentProvider::new();
@@ -158,7 +147,14 @@ pub fn all_vfs() -> VfsConfig {
     {
         mounts.push(MountSpec {
             prefix: "/s3".into(),
-            provider: ProviderConfig::S3(s3_config()),
+            provider: ProviderConfig::S3(S3Config {
+                bucket: std::env::var("AWS_S3_BUCKET").unwrap(),
+                region: std::env::var("AWS_DEFAULT_REGION").unwrap_or_else(|_| "us-east-1".into()),
+                access_key_id: std::env::var("AWS_ACCESS_KEY_ID").unwrap(),
+                secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").unwrap(),
+                endpoint: None,
+                key_prefix: None,
+            }),
         });
     }
     if let Ok(api_key) = std::env::var("NOTION_API_KEY") {

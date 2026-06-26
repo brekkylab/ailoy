@@ -21,7 +21,14 @@ async fn vfs_forward_overhead_bench() {
     let cfg = VfsConfig {
         mounts: vec![MountSpec {
             prefix: "/s3".into(),
-            provider: ProviderConfig::S3(s3_config()),
+            provider: ProviderConfig::S3(S3Config {
+                bucket: std::env::var("AWS_S3_BUCKET").unwrap(),
+                region: std::env::var("AWS_DEFAULT_REGION").unwrap_or_else(|_| "us-east-1".into()),
+                access_key_id: std::env::var("AWS_ACCESS_KEY_ID").unwrap(),
+                secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").unwrap(),
+                endpoint: None,
+                key_prefix: None,
+            }),
         }],
     };
     let vfs = Arc::new(Vfs::from_config(cfg).unwrap());
