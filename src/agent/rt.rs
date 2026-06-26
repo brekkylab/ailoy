@@ -5,7 +5,7 @@ use futures::{FutureExt as _, Stream, StreamExt as _};
 use crate::{
     agent::{AgentProvider, AgentSpec, ContextManager, default_provider},
     lang_model::{LangModel, LangModelOptions},
-    message::{FinishReason, Message, MessageOutput, Part, Role},
+    message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
     runenv::{Console, RunEnv},
     skill::{render_skills_table, scan_declared_skills},
     tool::{
@@ -13,6 +13,19 @@ use crate::{
         r#impl::{get_subagent_tool_desc, get_subagent_tool_func, get_web_search_tool_factory},
     },
 };
+
+/// An item emitted by [`Agent::run_stream`].
+///
+/// `Delta` carries an incremental model update (text / thinking / tool-argument
+/// fragments) for live rendering; `Message` is a completed turn — an assistant
+/// message or a tool result — equivalent to what [`Agent::run`] yields, and the
+/// unit consumers use to drive history/tool logic. A consumer that only wants
+/// the blocking behaviour can ignore `Delta` and read `Message`.
+#[derive(Clone, Debug)]
+pub enum AgentEvent {
+    Delta(MessageDeltaOutput),
+    Message(MessageOutput),
+}
 
 /// Walk the spec tree and write every declared file (this agent's plus the
 /// subtree's) to the runenv with **write-once** semantics: if a file already
@@ -477,6 +490,84 @@ impl Agent {
             }
         })
     }
+
+    /// Token-streaming counterpart to [`run`](Self::run). Drives the same
+    /// agentic loop but calls [`LangModel::run_stream`] per turn: each model
+    /// delta is yielded as [`AgentEvent::Delta`] for live rendering and
+    /// accumulated into the turn's full message, which is yielded as
+    /// [`AgentEvent::Message`] (alongside tool results) to drive history and
+    /// tool execution.
+    pub fn run_stream(
+        &mut self,
+        query: Message,
+    ) -> Pin<Box<impl Stream<Item = anyhow::Result<AgentEvent>> + Send + '_>> {
+        Box::pin(async_stream::try_stream! {
+            self.ensure_files_materialised().await?;
+
+            self.state.history.push(query);
+
+            loop {
+                // Truncation check based on previous call's token usage.
+                if let Some(cm) = &self.context_manager
+                    && self.state.last_input_tokens.unwrap_or(0) > cm.max_input_tokens {
+                        cm.truncate_history(&mut self.state.history);
+                    }
+
+                // Stream the model response: forward each delta for live
+                // rendering while accumulating the full turn for loop control.
+                let mut acc = MessageDeltaOutput::new();
+                {
+                    let mut delta_stream = self.model.run_stream(
+                        &self.state.history,
+                        &self.tool_descs,
+                        &self.model_options,
+                    );
+                    while let Some(item) = delta_stream.next().await {
+                        let delta = item?;
+                        acc = acc.accumulate(delta.clone())?;
+                        yield AgentEvent::Delta(delta);
+                    }
+                }
+                let mut output = acc.finish()?;
+
+                // Capture token usage for next iteration's truncation check.
+                if let Some(u) = &output.usage {
+                    self.state.last_input_tokens = Some(u.input_tokens);
+                }
+
+                output.depth = Some(0);
+                self.state.history.push(output.message.clone());
+                self.stamp_source_agent(&mut output);
+
+                let tool_calls = match &output.finish_reason {
+                    FinishReason::ToolCall {} => {
+                        let tc = output.message.tool_calls.clone().unwrap_or_default();
+                        yield AgentEvent::Message(output);
+                        tc
+                    }
+                    _ => {
+                        yield AgentEvent::Message(output);
+                        break;
+                    }
+                };
+
+                let mut tool_stream = self.execute_tool_calls(tool_calls)?;
+                while let Some(event) = tool_stream.next().await {
+                    match event {
+                        Err(e) => Err(e)?,
+                        Ok(mut output) => {
+                            if output.message.role == Role::Tool && output.depth == Some(0) {
+                                output.message = Self::cap_tool_result(output.message);
+                                self.state.history.push(output.message.clone());
+                            }
+                            self.stamp_source_agent(&mut output);
+                            yield AgentEvent::Message(output);
+                        }
+                    }
+                }
+            }
+        })
+    }
 }
 
 #[cfg(test)]
@@ -488,7 +579,7 @@ mod tests {
         agent::{AgentCard, AgentProvider, AgentSpec, ContextManager},
         datatype::Value,
         lang_model::LangModelProvider,
-        message::{Message, Part, Role},
+        message::{Message, Part, PartDelta, Role},
         suppress_panics, to_value,
         tool::{ToolDescBuilder, ToolProvider},
         tool_func,
@@ -513,6 +604,53 @@ mod tests {
     }
 
     // ── tests ─────────────────────────────────────────────────────────────────
+
+    /// Verifies `run_stream` emits multiple incremental `Delta` events whose
+    /// accumulated text matches the final assistant `Message`.
+    #[test_with::env(OPENAI_API_KEY)]
+    #[tokio::test]
+    async fn test_run_stream_emits_text_deltas() {
+        let provider = get_provider();
+        let spec = AgentSpec::new("openai/gpt-4o-mini");
+        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+
+        let query =
+            Message::new(Role::User).with_contents([Part::text("Reply with a short greeting.")]);
+
+        let mut strm = agent.run_stream(query);
+        let mut delta_text = String::new();
+        let mut delta_count = 0usize;
+        let mut final_text: Option<String> = None;
+        while let Some(event) = strm.next().await {
+            match event.unwrap() {
+                AgentEvent::Delta(d) => {
+                    delta_count += 1;
+                    for p in &d.delta.contents {
+                        if let PartDelta::Text { text } = p {
+                            delta_text.push_str(text);
+                        }
+                    }
+                }
+                AgentEvent::Message(m) if m.message.role == Role::Assistant => {
+                    final_text = m
+                        .message
+                        .contents
+                        .iter()
+                        .find_map(|p| p.as_text().map(|s| s.to_owned()));
+                }
+                AgentEvent::Message(_) => {}
+            }
+        }
+
+        assert!(
+            delta_count > 1,
+            "expected multiple Delta events, got {delta_count}"
+        );
+        let final_text = final_text.expect("expected a final assistant Message");
+        assert!(!final_text.is_empty());
+        // The agent accumulates the same deltas, so the streamed text must match.
+        assert_eq!(delta_text, final_text);
+    }
 
     /// Verifies that the agent calls the temperature tool and returns a final answer.
     #[test_with::env(OPENAI_API_KEY)]
