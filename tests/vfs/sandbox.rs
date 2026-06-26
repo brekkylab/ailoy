@@ -31,7 +31,7 @@ async fn e2e_sandbox_forwarder() {
         tail(&transcript, 500)
     );
     assert!(
-        verify_s3(&fname, &content).await,
+        verify(&format!("/s3/{fname}"), &content).await,
         "sandbox write not found in S3"
     );
 }

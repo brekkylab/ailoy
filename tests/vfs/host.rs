@@ -23,7 +23,7 @@ async fn e2e_non_sandbox_host_fuser() {
         tail(&transcript, 500)
     );
     assert!(
-        verify_s3(&fname, &content).await,
+        verify(&format!("/s3/{fname}"), &content).await,
         "non-sandbox write not found in S3"
     );
 }

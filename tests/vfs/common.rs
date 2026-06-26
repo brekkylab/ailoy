@@ -58,14 +58,15 @@ pub async fn drive(mut agent: Agent, task: &str) -> String {
     transcript
 }
 
-pub async fn verify_s3(fname: &str, want: &str) -> bool {
+/// Read a VFS path host-side (through the core, no mount) and check it contains
+/// `want`. Provider-agnostic — pass the full path, e.g. `/s3/foo.txt`.
+pub async fn verify(path: &str, want: &str) -> bool {
     let vfs = Vfs::from_config(all_vfs()).unwrap();
-    let path = format!("/s3/{fname}");
-    let (res, vp) = vfs.route(&path).expect("route");
+    let (res, vp) = vfs.route(path).expect("route");
     match res.read_bytes(&vp, None).await {
         Ok(data) => {
             let got = String::from_utf8_lossy(&data);
-            println!("    [verify] s3 {fname} => {:?}", got.trim());
+            println!("    [verify] {path} => {:?}", got.trim());
             got.contains(want)
         }
         Err(e) => {
