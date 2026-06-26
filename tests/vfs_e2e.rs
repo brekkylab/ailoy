@@ -868,6 +868,94 @@ async fn vfs_concurrent_agents_remount() {
     println!("CONCURRENT AGENTS OK ({N} agents, both rounds across restart)");
 }
 
+/// Recovery from in-guest forwarder *process death* (crash / OOM / SIGKILL) —
+/// distinct from a VM restart. Bring the mount up, then kill the forwarder so the
+/// mount is left with a dead FUSE daemon (any access would hang in the kernel),
+/// then drive the SAME agent again: `ensure_mounted`'s functional liveness probe
+/// must detect the dead daemon (its `ls` times out), tear the stale mount down,
+/// and re-bootstrap a fresh forwarder — restoring provider access. A hang here
+/// would mean the liveness probe itself gets stuck on the dead daemon.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: recover from forwarder process death via self-healing re-mount"]
+async fn vfs_recovers_from_forwarder_death() {
+    dotenvy::dotenv().ok();
+    let name = format!("ailoy-vfs-fwddeath-{}", stamp());
+    let page = "/mnt/vfs/notion/pages/\
+                Engineering_Logs__490e8208-3e62-48ef-a8ce-bc08755ea4ff/page.json";
+    let read_count = |n: &str| -> i64 {
+        let out = std::process::Command::new("msb")
+            .args(["exec", n, "--", "sh", "-c", &format!("cat {page} | wc -c")])
+            .output()
+            .expect("msb exec read");
+        String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0)
+    };
+
+    let sandbox = RunEnv::sandbox(SandboxConfig {
+        name: Some(name.clone()),
+        persist: true,
+        allow_host_egress: true,
+        ..Default::default()
+    })
+    .await
+    .expect("sandbox");
+    let mut agent = AgentBuilder::new(MODEL)
+        .provider(provider())
+        .instruction("You are a tester. Use the shell tool.")
+        .shell_tool()
+        .runenv(sandbox)
+        .vfs(notion_vfs())
+        .build()
+        .expect("build agent");
+
+    // Run 1: bring the mount up.
+    {
+        let q = Message::new(Role::User).with_contents([Part::text("Reply with READY.")]);
+        let mut strm = agent.run(q);
+        while let Some(ev) = strm.next().await {
+            let _ = ev;
+        }
+    }
+    let n1 = read_count(&name);
+    println!("before forwarder kill: {n1} bytes");
+    assert!(n1 > 0, "initial mount read should succeed");
+
+    // Kill the in-guest forwarder (simulate a crash) — the mount now has a dead
+    // FUSE daemon; any access to it would block in the kernel. Match the binary
+    // by basename via `pgrep -> kill` so we don't SIGKILL our own `sh -c` (whose
+    // argv contains the full path).
+    let k = std::process::Command::new("msb")
+        .args([
+            "exec", &name, "--", "sh", "-c",
+            "for p in $(pgrep -f 'vfs-fwd /mnt/vfs'); do kill -9 \"$p\"; done; sleep 0.4; echo killed",
+        ])
+        .output()
+        .expect("msb exec kill");
+    println!("forwarder killed: {}", String::from_utf8_lossy(&k.stdout).trim());
+
+    // Run 2 on the SAME agent: ensure_mounted's liveness probe must detect the
+    // dead daemon (the mount is now "Transport endpoint not connected"), tear it
+    // down, and re-bootstrap a fresh forwarder.
+    {
+        let q = Message::new(Role::User).with_contents([Part::text("Reply with READY.")]);
+        let mut strm = agent.run(q);
+        while let Some(ev) = strm.next().await {
+            if let Err(e) = ev {
+                eprintln!("run2 error: {e}");
+            }
+        }
+    }
+    let n2 = read_count(&name);
+    println!("after forwarder death + self-heal: {n2} bytes");
+
+    let _ = std::process::Command::new("msb").args(["stop", &name]).status();
+    let _ = std::process::Command::new("msb").args(["rm", &name]).status();
+    assert!(
+        n2 > 0,
+        "provider access should recover after forwarder process death (got {n2})"
+    );
+    println!("FORWARDER-DEATH RECOVERY OK");
+}
+
 /// Does a freshly crate-created sandbox (allow_host_egress) have working network
 /// egress via the crate's exec path? Checks DNS + apt immediately, before any
 /// bootstrap — to rule out the killed-apt state as a confound.

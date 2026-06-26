@@ -63,9 +63,13 @@ async fn try_static_forwarder(
 
     let script = format!(
         r#"set -e
-mkdir -p {mount_root} /opt/ailoy
-# Idempotent: detach any stale/defunct mount from a previous boot/attach.
+mkdir -p /opt/ailoy
+# Detach any stale/defunct mount from a previous boot/attach FIRST — including a
+# dead-daemon mount (forwarder crashed/killed) left in the "Transport endpoint is
+# not connected" state. `mkdir`/stat on such a mountpoint errors, so clearing it
+# before touching {mount_root} is what lets a crashed forwarder be re-mounted.
 umount -l {mount_root} 2>/dev/null || fusermount3 -u {mount_root} 2>/dev/null || true
+mkdir -p {mount_root}
 chmod +x {GUEST_FWD_BIN}
 export VFS_HOST="http://host.microsandbox.internal:{port}"
 export VFS_TOKEN="{token}"
@@ -105,12 +109,15 @@ async fn bootstrap_python_forwarder(
 
     let script = format!(
         r#"set -e
-mkdir -p {mount_root} /opt/ailoy
-# Idempotent: unmount any stale/defunct mount left by a previous boot or attach
-# so the fresh mount points at the current host server (port/token below).
+mkdir -p /opt/ailoy
+# Unmount any stale/defunct mount left by a previous boot or attach FIRST — incl.
+# a dead-daemon mount (forwarder crashed) in the "Transport endpoint is not
+# connected" state, on which mkdir/stat would error. Clearing it before touching
+# {mount_root} lets a crashed forwarder be re-mounted against the current host.
 # NOTE: do NOT pkill by the forwarder path — this script's own `sh -c` argv
 # contains that path, so `pkill -f <path>` would SIGTERM the bootstrap itself.
 fusermount3 -u {mount_root} 2>/dev/null || umount -l {mount_root} 2>/dev/null || true
+mkdir -p {mount_root}
 if ! command -v python3 >/dev/null 2>&1 || ! command -v fusermount3 >/dev/null 2>&1; then
   # Best-effort install for non-baked images, ONLY on the first mount of a fresh
   # sandbox (deps then persist on the rootfs, so restarts skip this). Each apt is
