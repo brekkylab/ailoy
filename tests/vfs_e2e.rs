@@ -541,9 +541,11 @@ async fn vfs_sandbox_reconnect_race() {
             drop(handle);
             drop(env);
         };
-        match tokio::time::timeout(std::time::Duration::from_secs(90), iter).await {
+        // Allow > the bounded reconnect retry budget (start_detached_resilient:
+        // 4 x 25s + backoff): a full retry recovery is success, not a wedge.
+        match tokio::time::timeout(std::time::Duration::from_secs(140), iter).await {
             Ok(()) => println!("iter {i}: ok in {:.1}s", t0.elapsed().as_secs_f32()),
-            Err(_) => panic!("iter {i} HUNG > 90s — reconnect race wedged the VM"),
+            Err(_) => panic!("iter {i} HUNG > 140s — reconnect race wedged the VM"),
         }
     }
     let _ = std::process::Command::new("msb").args(["stop", &name]).status();

@@ -292,23 +292,14 @@ impl Sandbox {
             });
         }
 
+        // Reconnecting to a persisted sandbox that may still be running (or whose
+        // previous owner's async stop hasn't finished): `start_detached_resilient`
+        // handles `SandboxStillRunning` (force-stop then restart) and bounds the
+        // intermittent microsandbox SQLite hang so the reconnect can't stall the
+        // agent indefinitely. The fresh-create path is one-shot, not the churn hot
+        // path.
         let inner = if config.persist && MsbSandbox::get(&name).await.is_ok() {
-            match MsbSandbox::start_detached(&name).await {
-                Ok(s) => s,
-                // Reconnecting to a persisted sandbox that is still running (or
-                // whose previous owner's async stop hasn't finished). Force-stop
-                // then re-start so we hold a fresh handle; it is stopped below
-                // and restarted on demand.
-                Err(MicrosandboxError::SandboxStillRunning(_)) => {
-                    if let Ok(h) = MsbSandbox::get(&name).await {
-                        let _ = h.stop().await;
-                    }
-                    MsbSandbox::start_detached(&name)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("sandbox start after force-stop: {e}"))?
-                }
-                Err(e) => return Err(anyhow::anyhow!("sandbox start: {e}")),
-            }
+            start_detached_resilient(&name).await?
         } else {
             create_registered(&name, &config)
                 .await
@@ -565,23 +556,89 @@ impl Console for SandboxConsole {
     }
 }
 
-/// Start the sandbox with one force-stop retry on `SandboxStillRunning`, then
-/// detach lifecycle ownership and reconnect without it, so dropping the
-/// returned handle will not SIGTERM the VM. SIGTERM bypasses agentd's stop
-/// path and loses in-flight dirty pages; all stops must go through `Sandbox::stop`.
-async fn start_and_connect(name: &str) -> anyhow::Result<MsbSandbox> {
-    let inner = match MsbSandbox::start_detached(name).await {
-        Ok(s) => s,
-        Err(MicrosandboxError::SandboxStillRunning(_)) => {
-            if let Ok(h) = MsbSandbox::get(name).await {
-                let _ = h.stop().await;
-            }
-            MsbSandbox::start_detached(name)
-                .await
-                .map_err(|e| anyhow::anyhow!("sandbox start after force-stop: {e}"))?
+/// `MsbSandbox::start_detached` with the embedded-SQLite hang bounded out.
+///
+/// Under rapid sandbox churn — the agent-k pattern of dropping and recreating the
+/// runtime against a persisted sandbox — microsandbox's SQLite state layer can
+/// intermittently block while acquiring a DB connection
+/// (`sqlx ConnectionWorker::establish`), hanging the start *indefinitely*. That
+/// stalls the agent's reconnect and, with it, all provider-filesystem access via
+/// the VM. Observed in soak tests as a ~10% multi-minute hang on reconnect.
+///
+/// Bound each attempt with a timeout and retry a few times: a transient lock is
+/// ridden over (a fresh connection attempt after abandoning the stuck one
+/// usually succeeds), and a genuinely wedged DB surfaces as a fast error instead
+/// of an unbounded hang. `SandboxStillRunning` keeps its prior handling
+/// (force-stop then retry); the force-stop is bounded too so it can't hang either.
+async fn start_detached_resilient(name: &str) -> anyhow::Result<MsbSandbox> {
+    const ATTEMPTS: usize = 4;
+    const PER_TRY: Duration = Duration::from_secs(25);
+    const BACKOFF: Duration = Duration::from_millis(750);
+
+    // Force-stop the named VM, bounded, to clear partial/transitional state
+    // before a retry (also drains a still-running previous owner).
+    async fn force_stop(name: &str) {
+        if let Ok(h) = MsbSandbox::get(name).await {
+            let _ = tokio::time::timeout(PER_TRY, h.stop()).await;
         }
-        Err(e) => return Err(anyhow::anyhow!("sandbox start: {e}")),
-    };
+    }
+
+    // Transient microsandbox startup races under rapid churn: a previous owner's
+    // async stop SIGKILLs the VM just as our start brings it up, so the relay
+    // never comes up. Retrying after a short settle succeeds. Matched by message
+    // so genuine start errors (bad config, missing image) still surface promptly.
+    fn is_transient_start(e: &MicrosandboxError) -> bool {
+        let m = e.to_string();
+        m.contains("agent relay")
+            || m.contains("process exited")
+            || m.contains("SIGKILL")
+            || m.contains("signal: 9")
+    }
+
+    let mut last = String::new();
+    for attempt in 1..=ATTEMPTS {
+        match tokio::time::timeout(PER_TRY, MsbSandbox::start_detached(name)).await {
+            Ok(Ok(s)) => return Ok(s),
+            Ok(Err(MicrosandboxError::SandboxStillRunning(_))) => {
+                force_stop(name).await;
+            }
+            Ok(Err(e)) if is_transient_start(&e) => {
+                last = e.to_string();
+                log::warn!(
+                    "sandbox '{name}': transient start failure (attempt {attempt}/{ATTEMPTS}): {e}; \
+                     forcing stop and retrying"
+                );
+                force_stop(name).await;
+            }
+            Ok(Err(e)) => return Err(anyhow::anyhow!("sandbox start: {e}")),
+            Err(_elapsed) => {
+                last = format!("start_detached timed out after {}s", PER_TRY.as_secs());
+                log::warn!(
+                    "sandbox '{name}': start_detached timed out after {}s \
+                     (attempt {attempt}/{ATTEMPTS}); likely microsandbox SQLite \
+                     contention — forcing stop and retrying",
+                    PER_TRY.as_secs()
+                );
+                force_stop(name).await;
+            }
+        }
+        if attempt < ATTEMPTS {
+            tokio::time::sleep(BACKOFF).await;
+        }
+    }
+    anyhow::bail!(
+        "sandbox '{name}': failed to start after {ATTEMPTS} bounded attempts \
+         (last: {last}; microsandbox appears wedged under rapid churn)"
+    )
+}
+
+/// Start the sandbox (bounded + retrying on the SQLite hang and on
+/// `SandboxStillRunning`), then detach lifecycle ownership and reconnect without
+/// it, so dropping the returned handle will not SIGTERM the VM. SIGTERM bypasses
+/// agentd's stop path and loses in-flight dirty pages; all stops must go through
+/// `Sandbox::stop`.
+async fn start_and_connect(name: &str) -> anyhow::Result<MsbSandbox> {
+    let inner = start_detached_resilient(name).await?;
     inner.detach().await;
     MsbSandbox::get(name)
         .await
