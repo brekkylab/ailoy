@@ -720,6 +720,80 @@ async fn vfs_multimount_remount_after_restart() {
     println!("MULTIMOUNT DONE (s3 marker + notion both survived restart)");
 }
 
+/// The literal agent-k flow, end-to-end through the LLM's shell tool (not `msb
+/// exec`): create an agent on a persisted sandbox and drive it once (mount comes
+/// up), drop it (VM stops), then create a NEW agent on the same sandbox and have
+/// the model itself read the provider file via the shell tool. Asserts the
+/// recreated agent's transcript reports the file's byte count — proving the agent
+/// transparently regained provider access across the VM restart with no manual
+/// re-mount.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: agent-k flow — recreated agent reads provider file via shell tool across VM restart"]
+async fn vfs_agent_reads_across_restart() {
+    dotenvy::dotenv().ok();
+    let name = format!("ailoy-vfs-agentk-{}", stamp());
+    let page = "/mnt/vfs/notion/pages/\
+                Engineering_Logs__490e8208-3e62-48ef-a8ce-bc08755ea4ff/page.json";
+
+    // Round 1: bring the mount up via a real agent, then drop it (VM stops).
+    {
+        let sandbox = RunEnv::sandbox(SandboxConfig {
+            name: Some(name.clone()),
+            persist: true,
+            allow_host_egress: true,
+            ..Default::default()
+        })
+        .await
+        .expect("sandbox r1");
+        let agent = AgentBuilder::new(MODEL)
+            .provider(provider())
+            .instruction("You are a tester. Use the shell tool for everything.")
+            .shell_tool()
+            .runenv(sandbox)
+            .vfs(notion_vfs())
+            .build()
+            .expect("build agent r1");
+        let _ = drive(agent, "Run `ls /mnt/vfs/notion` and report what you see.").await;
+        // agent drops here -> VM stops
+    }
+
+    // Round 2: a *new* agent on the same persisted sandbox; the model reads the
+    // provider file through the shell tool after the restart.
+    let sandbox = RunEnv::sandbox(SandboxConfig {
+        name: Some(name.clone()),
+        persist: true,
+        allow_host_egress: true,
+        ..Default::default()
+    })
+    .await
+    .expect("sandbox r2");
+    let agent = AgentBuilder::new(MODEL)
+        .provider(provider())
+        .instruction("You are a tester. Use the shell tool for everything.")
+        .shell_tool()
+        .runenv(sandbox)
+        .vfs(notion_vfs())
+        .build()
+        .expect("build agent r2");
+    let task = format!(
+        "Run exactly this one shell command and then tell me, as a plain number, \
+         the single integer it prints: cat {page} | wc -c"
+    );
+    let transcript = drive(agent, &task).await;
+    println!(
+        "--- agent-k round 2 transcript tail ---\n{}",
+        tail(&transcript, 700)
+    );
+    let _ = std::process::Command::new("msb").args(["stop", &name]).status();
+    let _ = std::process::Command::new("msb").args(["rm", &name]).status();
+    assert!(
+        transcript.contains("489"),
+        "recreated agent should read the provider file via its shell tool across \
+         the VM restart (expected byte count 489 in transcript): {transcript:?}"
+    );
+    println!("AGENT-K FLOW OK: recreated agent read provider file across VM restart");
+}
+
 /// Does a freshly crate-created sandbox (allow_host_egress) have working network
 /// egress via the crate's exec path? Checks DNS + apt immediately, before any
 /// bootstrap — to rule out the killed-apt state as a confound.
