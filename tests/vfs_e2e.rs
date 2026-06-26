@@ -796,6 +796,78 @@ async fn vfs_agent_reads_across_restart() {
     println!("AGENT-K FLOW OK: recreated agent read provider file across VM restart");
 }
 
+/// Multi-agent agent-k stress: N agents, each on its own persisted sandbox, all
+/// going through attach → mount → drop → reconnect → read CONCURRENTLY. This is
+/// the worst case for microsandbox's shared SQLite state layer (the contention
+/// that intermittently hung create/reconnect), so it directly validates that the
+/// bounded+retry sandbox-acquire path keeps provider access working under the
+/// concurrency agent-k actually produces. Every agent must read the page in both
+/// rounds; a wedged lifecycle would surface as a zero/by the bounded error.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: N concurrent agents re-mount across VM restart (creds + sandbox + macFUSE)"]
+async fn vfs_concurrent_agents_remount() {
+    dotenvy::dotenv().ok();
+    const N: usize = 4;
+    let page = "/mnt/vfs/notion/pages/\
+                Engineering_Logs__490e8208-3e62-48ef-a8ce-bc08755ea4ff/page.json";
+
+    async fn one_agent(idx: usize, stamp: u64, page: String) -> (i64, i64) {
+        let name = format!("ailoy-vfs-cc-{stamp}-{idx}");
+        async fn attach_round(name: &str, page: &str) -> i64 {
+            let sandbox = RunEnv::sandbox(SandboxConfig {
+                name: Some(name.into()),
+                persist: true,
+                allow_host_egress: true,
+                ..Default::default()
+            })
+            .await
+            .expect("sandbox");
+            let mut agent = AgentBuilder::new(MODEL)
+                .provider(provider())
+                .instruction("You are a tester. Use the shell tool.")
+                .shell_tool()
+                .runenv(sandbox)
+                .vfs(notion_vfs())
+                .build()
+                .expect("build agent");
+            let q = Message::new(Role::User).with_contents([Part::text("Reply with READY.")]);
+            let mut strm = agent.run(q);
+            while let Some(ev) = strm.next().await {
+                if let Err(e) = ev {
+                    eprintln!("[{name}] run error: {e}");
+                }
+            }
+            let out = std::process::Command::new("msb")
+                .args(["exec", name, "--", "sh", "-c", &format!("cat {page} | wc -c")])
+                .output()
+                .expect("msb exec");
+            String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0)
+        }
+        let n1 = attach_round(&name, page.as_str()).await;
+        let n2 = attach_round(&name, page.as_str()).await;
+        let _ = std::process::Command::new("msb").args(["stop", &name]).status();
+        let _ = std::process::Command::new("msb").args(["rm", &name]).status();
+        (n1, n2)
+    }
+
+    let stamp = stamp();
+    let mut handles = Vec::new();
+    for i in 0..N {
+        let page = page.to_string();
+        handles.push(tokio::spawn(one_agent(i, stamp, page)));
+    }
+    let mut results = Vec::new();
+    for h in handles {
+        results.push(h.await.expect("agent task panicked"));
+    }
+    println!("concurrent results (n1,n2) per agent: {results:?}");
+    for (i, (n1, n2)) in results.iter().enumerate() {
+        assert!(*n1 > 0, "agent {i} round 1 (fresh attach) returned empty");
+        assert!(*n2 > 0, "agent {i} round 2 (re-mount after restart) returned empty");
+    }
+    println!("CONCURRENT AGENTS OK ({N} agents, both rounds across restart)");
+}
+
 /// Does a freshly crate-created sandbox (allow_host_egress) have working network
 /// egress via the crate's exec path? Checks DNS + apt immediately, before any
 /// bootstrap — to rule out the killed-apt state as a confound.
