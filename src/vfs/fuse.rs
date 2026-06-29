@@ -13,7 +13,10 @@ use fuser::{
 };
 use tokio::runtime::Handle;
 
-use crate::vfs::{Vfs, resource::FileKind};
+use crate::vfs::{
+    Vfs,
+    resource::{FileKind, FileStat},
+};
 
 const TTL: Duration = Duration::from_secs(1);
 const ROOT_INO: u64 = 1;
@@ -185,15 +188,28 @@ fn make_attr(ino: u64, kind: FileKind, size: u64) -> FileAttr {
     }
 }
 
-async fn stat_path(vfs: &Vfs, path: &str) -> anyhow::Result<(FileKind, u64)> {
+async fn stat_path(vfs: &Vfs, path: &str) -> anyhow::Result<FileStat> {
     if path == "/" {
-        return Ok((FileKind::Dir, 0));
+        return Ok(FileStat {
+            kind: FileKind::Dir,
+            ..Default::default()
+        });
     }
     let (res, vp) = vfs
         .route(path)
         .ok_or_else(|| anyhow::anyhow!("no mount for {path}"))?;
-    let s = res.stat(&vp).await?;
-    Ok((s.kind, s.size))
+    res.stat(&vp).await
+}
+
+/// Build a [`FileAttr`], using the backend's mtime when it reports one (S3-1) so
+/// `ls -l` / make / rsync see real timestamps instead of the epoch.
+fn attr_from_stat(ino: u64, s: &FileStat) -> FileAttr {
+    let mut attr = make_attr(ino, s.kind, s.size);
+    if let Some(t) = s.mtime {
+        attr.mtime = t;
+        attr.ctime = t;
+    }
+    attr
 }
 
 async fn list_path(vfs: &Vfs, path: &str) -> anyhow::Result<Vec<(String, FileKind, u64)>> {
@@ -301,9 +317,9 @@ impl Filesystem for VfsFs {
         }
         let vfs = self.vfs.clone();
         match self.rt.block_on(stat_path(&vfs, &path)) {
-            Ok((kind, size)) => {
+            Ok(s) => {
                 let ino = self.state.lock().unwrap().intern(&path);
-                reply.entry(&TTL, &make_attr(ino, kind, size), Generation(0));
+                reply.entry(&TTL, &attr_from_stat(ino, &s), Generation(0));
             }
             Err(_) => reply.error(Errno::ENOENT),
         }
@@ -337,7 +353,7 @@ impl Filesystem for VfsFs {
             Next::Stat(path) => {
                 let vfs = self.vfs.clone();
                 match self.rt.block_on(stat_path(&vfs, &path)) {
-                    Ok((kind, size)) => reply.attr(&TTL, &make_attr(ino, kind, size)),
+                    Ok(s) => reply.attr(&TTL, &attr_from_stat(ino, &s)),
                     Err(_) => reply.error(Errno::ENOENT),
                 }
             }
@@ -407,7 +423,7 @@ impl Filesystem for VfsFs {
             Next::Stat(path) => {
                 let vfs = self.vfs.clone();
                 match self.rt.block_on(stat_path(&vfs, &path)) {
-                    Ok((kind, sz)) => reply.attr(&TTL, &make_attr(ino, kind, sz)),
+                    Ok(s) => reply.attr(&TTL, &attr_from_stat(ino, &s)),
                     Err(_) => reply.error(Errno::ENOENT),
                 }
             }

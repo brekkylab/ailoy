@@ -236,11 +236,18 @@ async fn stat_json(vfs: &Vfs, path: &str) -> anyhow::Result<Vec<u8>> {
         return Ok(serde_json::to_vec(&serde_json::json!({"exists": false}))?);
     };
     match res.stat(&vp).await {
-        Ok(s) => Ok(serde_json::to_vec(&serde_json::json!({
-            "exists": true,
-            "is_dir": matches!(s.kind, FileKind::Dir),
-            "size": s.size,
-        }))?),
+        Ok(s) => {
+            let mtime = s
+                .mtime
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs());
+            Ok(serde_json::to_vec(&serde_json::json!({
+                "exists": true,
+                "is_dir": matches!(s.kind, FileKind::Dir),
+                "size": s.size,
+                "mtime": mtime,
+            }))?)
+        }
         Err(_) => Ok(serde_json::to_vec(&serde_json::json!({"exists": false}))?),
     }
 }

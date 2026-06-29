@@ -270,7 +270,8 @@ async fn vfs_static_forwarder_write_unlink() {
          (mkdir '{rdir}' 2>/dev/null && echo MKDIR_OK || echo MKDIR_FAIL); \
          printf 'x' > '{rdir}/c.txt'; \
          (rmdir '{rdir}' 2>/dev/null && echo RMDIR_OK || echo RMDIR_FAIL); \
-         (ls '{rdir}/c.txt' >/dev/null 2>&1 && echo RD_THERE || echo RD_GONE)"
+         (ls '{rdir}/c.txt' >/dev/null 2>&1 && echo RD_THERE || echo RD_GONE); \
+         printf 'T' > '{f}.mt'; echo \"MTIME=$(stat -c %Y '{f}.mt' 2>/dev/null)\"; rm '{f}.mt'"
     );
     let out = h.exec_shell(script, Some(60)).await.expect("guest exec");
     println!("--- guest ---\n{}", out.stdout);
@@ -321,6 +322,18 @@ async fn vfs_static_forwarder_write_unlink() {
             let _ = res.unlink(&vp).await;
         }
     }
+    // S3-1: a just-written file reports a real mtime (recent epoch), not 1970.
+    let mtime: i64 = out
+        .stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("MTIME="))
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0);
+    assert!(
+        mtime > 1_700_000_000,
+        "S3 mtime not surfaced through the mount (got {mtime}): {}",
+        out.stdout
+    );
 }
 
 /// Large-file / chunked-read correctness through the static forwarder: write a

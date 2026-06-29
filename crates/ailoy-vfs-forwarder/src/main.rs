@@ -184,7 +184,7 @@ fn json_str<'a>(j: &'a str, key: &str) -> Option<&'a str> {
     }
 }
 
-struct Stat { exists: bool, is_dir: bool, size: u64 }
+struct Stat { exists: bool, is_dir: bool, size: u64, mtime: u64 }
 fn stat(path: &str) -> Stat {
     match http("GET", "/stat", &format!("path={}", pct(path)), None) {
         Ok((200, body)) => {
@@ -193,17 +193,27 @@ fn stat(path: &str) -> Stat {
                 exists: json_str(&j, "exists") == Some("true"),
                 is_dir: json_str(&j, "is_dir") == Some("true"),
                 size: json_str(&j, "size").and_then(|s| s.parse().ok()).unwrap_or(0),
+                mtime: json_str(&j, "mtime").and_then(|s| s.parse().ok()).unwrap_or(0),
             }
         }
-        _ => Stat { exists: false, is_dir: false, size: 0 },
+        _ => Stat { exists: false, is_dir: false, size: 0, mtime: 0 },
     }
 }
 
-fn dir_attr(ino: u64) -> FileAttr { mk(ino, FileType::Directory, 0) }
-fn file_attr(ino: u64, size: u64) -> FileAttr { mk(ino, FileType::RegularFile, size) }
-fn mk(ino: u64, kind: FileType, size: u64) -> FileAttr {
+fn dir_attr(ino: u64) -> FileAttr { mk(ino, FileType::Directory, 0, UNIX_EPOCH) }
+fn file_attr(ino: u64, size: u64) -> FileAttr { mk(ino, FileType::RegularFile, size, UNIX_EPOCH) }
+/// File attr with a backend mtime (epoch seconds; 0 = unknown → epoch). S3-1.
+fn file_attr_mt(ino: u64, size: u64, mtime_secs: u64) -> FileAttr {
+    let t = if mtime_secs > 0 {
+        UNIX_EPOCH + Duration::from_secs(mtime_secs)
+    } else {
+        UNIX_EPOCH
+    };
+    mk(ino, FileType::RegularFile, size, t)
+}
+fn mk(ino: u64, kind: FileType, size: u64, mtime: SystemTime) -> FileAttr {
     FileAttr {
-        ino: INodeNo(ino), size, blocks: 1, atime: UNIX_EPOCH, mtime: UNIX_EPOCH, ctime: UNIX_EPOCH,
+        ino: INodeNo(ino), size, blocks: 1, atime: mtime, mtime, ctime: mtime,
         crtime: UNIX_EPOCH, kind, perm: if kind == FileType::Directory { 0o755 } else { 0o644 },
         nlink: if kind == FileType::Directory { 2 } else { 1 },
         uid: 0, gid: 0, rdev: 0, blksize: 65536, flags: 0,
@@ -409,7 +419,7 @@ impl Filesystem for Fs {
                 return reply.error(Errno::ENOENT);
             }
             let ino = inner.intern(&path);
-            reply.entry(&TTL, &if s.is_dir { dir_attr(ino) } else { file_attr(ino, s.size) }, Generation(0));
+            reply.entry(&TTL, &if s.is_dir { dir_attr(ino) } else { file_attr_mt(ino, s.size, s.mtime) }, Generation(0));
         });
     }
     fn getattr(&self, _r: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
@@ -429,7 +439,7 @@ impl Filesystem for Fs {
             if !s.exists {
                 return reply.error(Errno::ENOENT);
             }
-            reply.attr(&TTL, &if s.is_dir { dir_attr(ino) } else { file_attr(ino, s.size) });
+            reply.attr(&TTL, &if s.is_dir { dir_attr(ino) } else { file_attr_mt(ino, s.size, s.mtime) });
         });
     }
     fn readdir(&self, _r: &Request, ino: INodeNo, _fh: FileHandle, offset: u64, mut reply: ReplyDirectory) {
@@ -491,7 +501,7 @@ impl Filesystem for Fs {
                 None => match inner.path(ino) {
                     Some(p) if p != "/" => {
                         let s = stat(&p);
-                        reply.attr(&TTL, &if s.is_dir { dir_attr(ino) } else { file_attr(ino, s.size) });
+                        reply.attr(&TTL, &if s.is_dir { dir_attr(ino) } else { file_attr_mt(ino, s.size, s.mtime) });
                     }
                     _ => reply.attr(&TTL, &dir_attr(ino)),
                 },
