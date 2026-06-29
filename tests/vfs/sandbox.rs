@@ -644,8 +644,30 @@ async fn vfs_inspect_sandbox() {
     println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/s3'");
     println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/notion/pages'");
     println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/gdrive | head'");
-    println!("sleeping 1h — Ctrl-C this process to tear down.");
+    println!("keeping the mount warm (~1h) — inspect anytime; Ctrl-C to tear down.");
     println!("===================================================\n");
 
-    tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+    // The VM is held up but otherwise idle, so the guest→host channel
+    // (`host.microsandbox.internal`, via allow_host_egress) goes stale after
+    // ~2 min with no traffic — after which the in-guest forwarder can't reach the
+    // host forward server and any `msb exec` into the mount blocks out its
+    // deadline. (In the real agent-k flow `ensure_mounted` re-heals this on the
+    // next run; here nothing does.) Poke a provider dir periodically to keep the
+    // channel warm so external inspection works for the whole session.
+    for _ in 0..120 {
+        // ~120 × 30s ≈ 1h
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        let _ = std::process::Command::new("msb")
+            .args([
+                "exec",
+                name,
+                "--",
+                "timeout",
+                "20",
+                "sh",
+                "-c",
+                "for d in /mnt/vfs/*/; do ls \"$d\" >/dev/null 2>&1 && break; done",
+            ])
+            .status();
+    }
 }
