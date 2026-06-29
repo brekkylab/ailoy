@@ -15,6 +15,9 @@ const SHEETS_API: &str = "https://sheets.googleapis.com/v4/spreadsheets";
 const SLIDES_API: &str = "https://slides.googleapis.com/v1/presentations";
 const FILE_FIELDS: &str =
     "nextPageToken,files(id,name,mimeType,driveId,size,quotaBytesUsed,modifiedTime,parents)";
+/// Hard cap on listing pages (1000 files/page for files, 100 drives/page) so a
+/// duplicate/looping `nextPageToken` can't spin forever.
+const MAX_PAGES: usize = 50;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct GDriveConfig {
@@ -128,7 +131,14 @@ impl GDriveAccessor {
         let q = format!("'{folder_id}' in parents and trashed=false");
         let mut files = Vec::new();
         let mut page_token: Option<String> = None;
+        // Bound the pagination: a buggy/duplicate `nextPageToken` (a known Drive
+        // API pathology with some query/corpora combos) must not loop forever.
+        let mut pages = 0usize;
         loop {
+            pages += 1;
+            if pages > MAX_PAGES {
+                break;
+            }
             let mut params: Vec<(&str, String)> = vec![
                 ("q", q.clone()),
                 ("fields", FILE_FIELDS.to_string()),
@@ -153,13 +163,16 @@ impl GDriveAccessor {
             if let Some(arr) = v.get("files").and_then(|f| f.as_array()) {
                 files.extend(arr.iter().cloned());
             }
-            page_token = v
+            let next = v
                 .get("nextPageToken")
                 .and_then(|t| t.as_str())
                 .map(|s| s.to_string());
-            if page_token.is_none() {
+            // Stop on no token, or a token identical to the one we just used
+            // (would otherwise re-fetch the same page forever).
+            if next.is_none() || next == page_token {
                 break;
             }
+            page_token = next;
         }
         Ok(files)
     }
@@ -168,7 +181,12 @@ impl GDriveAccessor {
     pub async fn list_shared_drives(&self) -> anyhow::Result<Vec<Value>> {
         let mut drives = Vec::new();
         let mut page_token: Option<String> = None;
+        let mut pages = 0usize;
         loop {
+            pages += 1;
+            if pages > MAX_PAGES {
+                break;
+            }
             let mut params: Vec<(&str, String)> = vec![
                 ("fields", "nextPageToken,drives(id,name)".to_string()),
                 ("pageSize", "100".to_string()),
@@ -185,13 +203,14 @@ impl GDriveAccessor {
             if let Some(arr) = v.get("drives").and_then(|d| d.as_array()) {
                 drives.extend(arr.iter().cloned());
             }
-            page_token = v
+            let next = v
                 .get("nextPageToken")
                 .and_then(|t| t.as_str())
                 .map(|s| s.to_string());
-            if page_token.is_none() {
+            if next.is_none() || next == page_token {
                 break;
             }
+            page_token = next;
         }
         Ok(drives)
     }

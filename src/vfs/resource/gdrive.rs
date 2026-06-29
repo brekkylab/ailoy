@@ -186,6 +186,11 @@ impl GDriveResource {
 
     async fn doc_size(&self, child: &Child) -> u64 {
         match child.kind {
+            // A Workspace doc's size must be its exported byte length: the guest
+            // kernel clamps reads at the reported size even under FUSE direct_io
+            // (verified — a 0 size truncates `cat`/`dd` to nothing), so reporting
+            // a cheap 0 would silently lose the file's contents. The export is
+            // cached by id in the accessor, so this is paid once per doc.
             k if k.is_workspace_doc() => self
                 .workspace_doc_bytes(child)
                 .await

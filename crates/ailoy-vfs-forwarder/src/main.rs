@@ -175,6 +175,13 @@ fn http(
                         | std::io::ErrorKind::Interrupted
                 ) =>
             {
+                // "No data yet" — wait for the response. The 5s SO_RCVTIMEO is
+                // unreliable on this musl/libkrun build (see above): read() can
+                // return WouldBlock *immediately* instead of blocking, which
+                // turns this loop into a tight spin that pegs a guest core for
+                // the whole 45s deadline (starving every other guest process and
+                // wedging the VM). Back off so we poll at ~50Hz instead.
+                std::thread::sleep(Duration::from_millis(20));
                 continue;
             }
             Err(e) => {
