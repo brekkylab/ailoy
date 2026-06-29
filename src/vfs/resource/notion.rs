@@ -481,6 +481,7 @@ fn dir(name: &str) -> DirEntry {
         name: name.to_string(),
         kind: FileKind::Dir,
         size: 0,
+        mtime: None,
     }
 }
 
@@ -489,5 +490,6 @@ fn file(name: &str, size: u64) -> DirEntry {
         name: name.to_string(),
         kind: FileKind::File,
         size,
+        mtime: None,
     }
 }

@@ -25,6 +25,9 @@ const DEFAULT_TTL: Duration = Duration::from_secs(600);
 struct Entry {
     is_dir: bool,
     size: u64,
+    /// Per-entry last-modified, carried from `readdir` so the stat fast-path
+    /// (`ls -l`) returns a real mtime instead of the epoch (R2).
+    mtime: Option<std::time::SystemTime>,
 }
 
 #[derive(Default)]
@@ -85,6 +88,7 @@ impl IndexCache {
                         FileKind::File
                     },
                     size: e.size,
+                    mtime: e.mtime,
                 })
             })
             .collect();
@@ -108,6 +112,7 @@ impl IndexCache {
                 Entry {
                     is_dir: matches!(e.kind, FileKind::Dir),
                     size: e.size,
+                    mtime: e.mtime,
                 },
             );
             child_keys.push(full);
@@ -191,11 +196,13 @@ impl Resource for CachedResource {
                     ..Default::default()
                 });
             }
-            // A file with a known (>0) size: serve it.
+            // A file with a known (>0) size: serve it (with the cached mtime so
+            // `ls -l` shows a real time, not the epoch — R2).
             Some(e) if e.size > 0 => {
                 return Ok(FileStat {
                     kind: FileKind::File,
                     size: e.size,
+                    mtime: e.mtime,
                     ..Default::default()
                 });
             }
@@ -289,6 +296,7 @@ mod tests {
             name: name.to_string(),
             kind,
             size,
+            mtime: None,
         }
     }
 
@@ -329,6 +337,30 @@ mod tests {
         c.invalidate_parent("/a.txt"); // parent of /a.txt is /
         assert!(!c.is_listed("/"));
         assert!(c.get("/a.txt").is_none());
+    }
+
+    // R2: the stat fast-path reads mtime from the cached Entry, which is
+    // populated from the DirEntry carried by readdir. Verify mtime survives
+    // set_dir -> get (fast-path source) and -> list_dir_entries (reconstruction).
+    #[test]
+    fn mtime_carried_through_cache() {
+        use std::time::{Duration as D, UNIX_EPOCH};
+        let t = UNIX_EPOCH + D::from_secs(1_700_000_000);
+        let c = IndexCache::new(Duration::from_secs(600));
+        c.set_dir(
+            "/",
+            &[DirEntry {
+                name: "a.txt".to_string(),
+                kind: FileKind::File,
+                size: 10,
+                mtime: Some(t),
+            }],
+        );
+        // fast-path source: get() returns the stored mtime (not None/epoch).
+        assert_eq!(c.get("/a.txt").unwrap().mtime, Some(t));
+        // listing reconstruction also carries it.
+        let listed = c.list_dir_entries("/").unwrap();
+        assert_eq!(listed[0].mtime, Some(t));
     }
 
     #[test]

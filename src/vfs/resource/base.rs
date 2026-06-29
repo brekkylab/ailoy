@@ -16,6 +16,10 @@ pub struct DirEntry {
     pub name: String,
     pub kind: FileKind,
     pub size: u64,
+    /// Last-modified time, if the backend reports one per entry (S3
+    /// `LastModified`). Carried from `readdir` so the cache can serve it on the
+    /// stat fast-path (`ls -l`) instead of falling back to the UNIX epoch (R2).
+    pub mtime: Option<std::time::SystemTime>,
 }
 
 #[derive(Clone, Debug, Default)]

@@ -59,9 +59,16 @@ impl VfsMount {
 /// anything was actually written/truncated, so an open-read-close cycle that
 /// never modifies the file is NOT flushed back (which would corrupt rendered /
 /// read-only files like a Notion `page.json`).
+///
+/// `preload_failed` records that the existing-content preload (for a partial
+/// write / append / non-zero truncate of an *existing* file) failed transiently
+/// (timeout / 5xx / network) — distinct from "file doesn't exist" (a legitimate
+/// empty base for a new file). When set, `release` aborts the flush with EIO
+/// instead of overwriting the original with only the partial new bytes (R1).
 struct WriteBuf {
     data: Vec<u8>,
     dirty: bool,
+    preload_failed: bool,
 }
 
 /// Mutable bookkeeping. fuser 0.17 `Filesystem` methods take `&self`, so the
@@ -133,6 +140,7 @@ impl VfsFs {
                 WriteBuf {
                     data: Vec::new(),
                     dirty: true,
+                    preload_failed: false,
                 },
             );
             return;
@@ -144,19 +152,30 @@ impl VfsFs {
             }
             st.path_of(ino)
         };
-        let data = match path {
-            Some(p) => self
-                .rt
-                .block_on(read_full(&self.vfs, &p))
-                .unwrap_or_default(),
-            None => Vec::new(),
+        // Distinguish a transient read failure on an *existing* file from a
+        // genuinely-new file. The former must NOT become an empty base (R1):
+        // a later partial write + flush would overwrite the original with only
+        // the new bytes. Mark it `preload_failed` so `release` aborts the flush.
+        let (data, preload_failed) = match path {
+            Some(p) => match self.rt.block_on(read_full(&self.vfs, &p)) {
+                Ok(d) => (d, false),
+                Err(_) => {
+                    let exists = self.rt.block_on(stat_path(&self.vfs, &p)).is_ok();
+                    (Vec::new(), exists)
+                }
+            },
+            None => (Vec::new(), false),
         };
         self.state
             .lock()
             .unwrap()
             .wbuf
             .entry(ino)
-            .or_insert(WriteBuf { data, dirty: false });
+            .or_insert(WriteBuf {
+                data,
+                dirty: false,
+                preload_failed,
+            });
     }
 }
 
@@ -395,6 +414,7 @@ impl Filesystem for VfsFs {
                     WriteBuf {
                         data: Vec::new(),
                         dirty: true,
+                        preload_failed: false,
                     },
                 );
             } else {
@@ -403,6 +423,7 @@ impl Filesystem for VfsFs {
                 let wb = st.wbuf.entry(ino).or_insert_with(|| WriteBuf {
                     data: Vec::new(),
                     dirty: false,
+                    preload_failed: false,
                 });
                 wb.data.resize(new_size as usize, 0);
                 wb.dirty = true;
@@ -477,6 +498,7 @@ impl Filesystem for VfsFs {
                 WriteBuf {
                     data: Vec::new(),
                     dirty: true,
+                    preload_failed: false,
                 },
             );
             ino
@@ -563,6 +585,7 @@ impl Filesystem for VfsFs {
         let wb = st.wbuf.entry(ino.0).or_insert_with(|| WriteBuf {
             data: Vec::new(),
             dirty: false,
+            preload_failed: false,
         });
         let off = offset as usize;
         if off > wb.data.len() {
@@ -607,6 +630,13 @@ impl Filesystem for VfsFs {
             reply.ok();
             return;
         };
+        // The existing-content preload failed transiently on a file that does
+        // exist — flushing now would overwrite the original with only the
+        // partial new bytes. Abort with EIO and preserve the original (R1).
+        if wb.preload_failed {
+            reply.error(Errno::EIO);
+            return;
+        }
         // Nothing was written/truncated — don't flush (would clobber a
         // read-only/rendered file just because it was opened for writing).
         if !wb.dirty {

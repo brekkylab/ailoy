@@ -360,20 +360,34 @@ impl Inner {
     }
     /// Read-modify-write flush: read current content (unless truncated to empty),
     /// apply truncate, splice the buffered chunks, write the merged result.
-    fn put(&self, ino: u64) {
+    /// Returns `false` when the existing-content preload failed transiently on a
+    /// file that does exist — the PUT is skipped to preserve the original, and
+    /// the caller maps that to EIO (R1). All legitimate outcomes return `true`.
+    fn put(&self, ino: u64) -> bool {
         let Some(p) = self.wbuf.lock().unwrap().remove(&ino) else {
-            return;
+            return true;
         };
         if !p.dirty {
-            return;
+            return true;
         }
-        let Some(path) = self.path(ino) else { return };
+        let Some(path) = self.path(ino) else {
+            return true;
+        };
         let mut merged = match p.truncate {
             Some(0) => Vec::new(),
             other => {
                 let mut base = match http("GET", "/read", &format!("path={}", pct(&path)), None) {
                     Ok((200, d)) => d,
-                    _ => Vec::new(),
+                    // Read failed. If the file exists this is a transient failure
+                    // (timeout / 5xx) — skip the PUT so a partial write doesn't
+                    // overwrite the original. If it doesn't exist, this is a new
+                    // file and an empty base is correct.
+                    _ => {
+                        if stat(&path).exists {
+                            return false;
+                        }
+                        Vec::new()
+                    }
                 };
                 if let Some(n) = other {
                     base.resize(n as usize, 0);
@@ -400,6 +414,7 @@ impl Inner {
                 self.cmd_results.lock().unwrap().insert(path, body);
             }
         }
+        true
     }
 }
 
@@ -862,8 +877,11 @@ impl Filesystem for Fs {
     ) {
         let ino = ino.0;
         self.spawn(move |inner| {
-            inner.put(ino);
-            reply.ok();
+            if inner.put(ino) {
+                reply.ok();
+            } else {
+                reply.error(Errno::EIO);
+            }
         });
     }
     fn release(
@@ -878,8 +896,11 @@ impl Filesystem for Fs {
     ) {
         let ino = ino.0;
         self.spawn(move |inner| {
-            inner.put(ino);
-            reply.ok();
+            if inner.put(ino) {
+                reply.ok();
+            } else {
+                reply.error(Errno::EIO);
+            }
         });
     }
 }

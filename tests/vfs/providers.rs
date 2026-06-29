@@ -169,6 +169,43 @@ async fn s3_dir_ops_smoke() {
     );
 }
 
+/// R2: the hot `ls -l` path. After `readdir` populates the cache, a `stat`
+/// served by the cache fast-path must still report a real mtime — not the epoch.
+/// Before R2 the cache `Entry` dropped mtime, so post-readdir stats showed 1970.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs AWS creds"]
+async fn s3_readdir_then_stat_keeps_mtime() {
+    dotenvy::dotenv().ok();
+    if !has_mount("/s3") {
+        eprintln!("no s3 creds — skipping");
+        return;
+    }
+    let vfs = Vfs::from_config(all_vfs()).unwrap();
+    let base = format!("vfs-r2-mtime-{}-{}", stamp(), uniq());
+    let (res, fvp) = vfs.route(&format!("/s3/{base}/f.txt")).expect("route file");
+    res.write_bytes(&fvp, b"hi".to_vec()).await.expect("write");
+
+    // readdir the parent through the *same* (cached) resource so the cache is
+    // populated — exactly what `ls` does before `ls -l` per-entry stats.
+    let (res, dvp) = vfs.route(&format!("/s3/{base}")).expect("route dir");
+    let _ = res.readdir(&dvp).await.expect("readdir fills cache");
+
+    // Now the file stat is served by the cache fast-path. It must carry mtime.
+    let (res, fvp) = vfs.route(&format!("/s3/{base}/f.txt")).expect("route file");
+    let st = res.stat(&fvp).await.expect("stat after readdir");
+    let mtime = st
+        .mtime
+        .expect("cached stat must keep a real mtime (R2), got None");
+    assert!(
+        mtime > std::time::UNIX_EPOCH + std::time::Duration::from_secs(946_684_800),
+        "cached mtime should be a real (post-2000) time, not the epoch: {mtime:?}"
+    );
+
+    // Cleanup.
+    let (res, dvp) = vfs.route(&format!("/s3/{base}")).expect("route dir");
+    let _ = res.rmdir(&dvp).await;
+}
+
 /// N1: stat of a nonexistent Notion page errors (ENOENT-able) instead of being
 /// reported as a directory.
 #[tokio::test(flavor = "multi_thread")]

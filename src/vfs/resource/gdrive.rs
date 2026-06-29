@@ -22,8 +22,9 @@ const DIR_TTL: Duration = Duration::from_secs(10);
 const GDRIVE_PROMPT: &str = "\
 Google Drive (read + GDocs append). Mirrors the Drive folder hierarchy:
 folders are directories you can descend into; Google Docs/Sheets/Slides appear
-as `<name>.gdoc.json` / `.gsheet.json` / `.gslide.json` (cat returns JSON with
-the file's `documentId` and exported text); other files are downloaded as-is.
+as `<name>.gdoc.json` / `.gsheet.json` / `.gslide.json` (cat returns the native
+Google API JSON — `documents.get` / `spreadsheets.get` / `presentations.get` —
+including the file id and full structured content); other files download as-is.
 Append to a Google Doc by writing JSON to the control path:
   echo '{\"document_id\":\"DOC_ID\",\"text\":\"hello\"}' > .cmd/docs-append";
 
@@ -240,6 +241,7 @@ impl Resource for GDriveResource {
                     FileKind::File
                 },
                 size: c.size.unwrap_or(0),
+                mtime: None,
             })
             .collect())
     }

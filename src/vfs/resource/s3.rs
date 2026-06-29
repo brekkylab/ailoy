@@ -97,6 +97,7 @@ impl Resource for S3Resource {
                     name: name.to_string(),
                     kind: FileKind::Dir,
                     size: 0,
+                    mtime: None,
                 });
             }
         }
@@ -109,6 +110,9 @@ impl Resource for S3Resource {
                     name: name.to_string(),
                     kind: FileKind::File,
                     size: obj.size,
+                    // Carry per-entry mtime so the stat fast-path (`ls -l`)
+                    // serves it from cache instead of the epoch (R2).
+                    mtime: Some(obj.last_modified.into()),
                 });
             }
         }
