@@ -92,3 +92,66 @@ async fn vfs_inspect_host() {
     tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
     drop(agent);
 }
+
+/// Host FUSE frontend write model + dir ops via real `std::fs` syscalls on the
+/// mounted dir (no agent): full write, append (C1), truncate (C2), rename and
+/// remove (C3). Exercises the host fuse.rs callbacks directly — the forwarder
+/// tests cover the sandbox path, this covers the host path.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: host FUSE write/append/truncate/rename/rm (needs AWS + macFUSE)"]
+async fn vfs_host_write_ops() {
+    use std::{io::Write, sync::Arc};
+    dotenvy::dotenv().ok();
+    if !has_mount("/s3") {
+        eprintln!("no s3 creds — skipping");
+        return;
+    }
+    let vfs = Arc::new(Vfs::from_config(all_vfs()).unwrap());
+    let rt = tokio::runtime::Handle::current();
+    let mp = std::env::temp_dir().join(format!("ailoy-hostw-{}", stamp()));
+    std::fs::create_dir_all(&mp).unwrap();
+    let _mount = ailoy::vfs::VfsMount::spawn(vfs, &mp, rt).expect("host fuse mount");
+
+    // Wait for the mount to be live (s3 dir readable).
+    for _ in 0..40 {
+        if std::fs::read_dir(mp.join("s3")).is_ok() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+
+    let s = stamp();
+    let f = mp.join("s3").join(format!("hostw-{s}.txt"));
+    let g = mp.join("s3").join(format!("hostw-{s}-moved.txt"));
+
+    // Full write, then append must preserve it (C1), then truncate keeps the head (C2).
+    std::fs::write(&f, b"AAAA").unwrap();
+    assert_eq!(std::fs::read(&f).unwrap(), b"AAAA", "full write");
+    {
+        let mut h = std::fs::OpenOptions::new().append(true).open(&f).unwrap();
+        h.write_all(b"BBBB").unwrap();
+    }
+    assert_eq!(
+        std::fs::read(&f).unwrap(),
+        b"AAAABBBB",
+        "append must preserve existing (C1)"
+    );
+    {
+        let h = std::fs::OpenOptions::new().write(true).open(&f).unwrap();
+        h.set_len(3).unwrap();
+    }
+    assert_eq!(
+        std::fs::read(&f).unwrap(),
+        b"AAA",
+        "truncate must keep the head (C2)"
+    );
+
+    // Rename (C3): destination has the content, source is gone.
+    std::fs::rename(&f, &g).unwrap();
+    assert_eq!(std::fs::read(&g).unwrap(), b"AAA", "rename moves content");
+    assert!(std::fs::read(&f).is_err(), "rename leaves no source");
+
+    // Remove (C3).
+    std::fs::remove_file(&g).unwrap();
+    assert!(std::fs::read(&g).is_err(), "file still present after rm");
+}

@@ -79,6 +79,116 @@ async fn s3_readdir_marker_and_sort_smoke() {
         .status();
 }
 
+/// Direct S3 stat metadata (S3-1) + range-past-EOF handling (S3-2).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs AWS creds"]
+async fn s3_stat_metadata_and_range_smoke() {
+    dotenvy::dotenv().ok();
+    if !has_mount("/s3") {
+        eprintln!("no s3 creds — skipping");
+        return;
+    }
+    let vfs = Vfs::from_config(all_vfs()).unwrap();
+    let (res, vp) = vfs
+        .route(&format!("/s3/vfs-meta-{}-{}.txt", stamp(), uniq()))
+        .expect("route");
+    res.write_bytes(&vp, b"hello".to_vec())
+        .await
+        .expect("write");
+
+    // S3-1: stat reports size + a real mtime + etag.
+    let st = res.stat(&vp).await.expect("stat");
+    assert_eq!(st.size, 5);
+    assert!(st.mtime.is_some(), "S3 stat should report mtime");
+    assert!(st.etag.is_some(), "S3 stat should report etag");
+
+    // S3-2: a range starting at/after EOF returns empty (clean EOF), not an error.
+    let past = res
+        .read_bytes(&vp, Some(5..100))
+        .await
+        .expect("range at EOF should be Ok(empty), not an error");
+    assert!(
+        past.is_empty(),
+        "range at EOF should be empty, got {past:?}"
+    );
+    // A range that starts in-bounds but overruns is clamped to the available bytes.
+    let tail = res
+        .read_bytes(&vp, Some(3..100))
+        .await
+        .expect("overrun range");
+    assert_eq!(
+        tail, b"lo",
+        "overrunning range should clamp to available bytes"
+    );
+    // A fully in-bounds range slices exactly.
+    let mid = res
+        .read_bytes(&vp, Some(1..3))
+        .await
+        .expect("in-bounds range");
+    assert_eq!(mid, b"el");
+
+    let _ = res.unlink(&vp).await;
+}
+
+/// Direct S3 directory ops (C3): rename (copy+delete), recursive rmdir, mkdir.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs AWS creds"]
+async fn s3_dir_ops_smoke() {
+    dotenvy::dotenv().ok();
+    if !has_mount("/s3") {
+        eprintln!("no s3 creds — skipping");
+        return;
+    }
+    let vfs = Vfs::from_config(all_vfs()).unwrap();
+    let base = format!("vfs-dirops-{}-{}", stamp(), uniq());
+
+    // mkdir is a no-op success on S3 (implicit dirs); it must not error.
+    let (res, dvp) = vfs.route(&format!("/s3/{base}")).expect("route dir");
+    res.mkdir(&dvp).await.expect("mkdir should succeed (no-op)");
+
+    // Write base/a, rename to base/b: b has the content, a is gone.
+    let (res, a) = vfs.route(&format!("/s3/{base}/a")).expect("route a");
+    res.write_bytes(&a, b"DATA".to_vec())
+        .await
+        .expect("write a");
+    let (res, b) = vfs.route(&format!("/s3/{base}/b")).expect("route b");
+    res.rename(&a, &b).await.expect("rename a->b");
+    assert_eq!(res.read_bytes(&b, None).await.expect("read b"), b"DATA");
+    assert!(
+        res.read_bytes(&a, None).await.is_err(),
+        "source should be gone after rename"
+    );
+
+    // rmdir removes the whole prefix recursively.
+    let (res, dvp) = vfs.route(&format!("/s3/{base}")).expect("route dir");
+    res.rmdir(&dvp).await.expect("rmdir");
+    let (res, b) = vfs.route(&format!("/s3/{base}/b")).expect("route b");
+    assert!(
+        res.read_bytes(&b, None).await.is_err(),
+        "rmdir should remove contents"
+    );
+}
+
+/// N1: stat of a nonexistent Notion page errors (ENOENT-able) instead of being
+/// reported as a directory.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs NOTION_API_KEY"]
+async fn notion_stat_nonexistent() {
+    dotenvy::dotenv().ok();
+    if !has_mount("/notion") {
+        eprintln!("no notion creds — skipping");
+        return;
+    }
+    let vfs = Vfs::from_config(all_vfs()).unwrap();
+    let (res, vp) = vfs
+        .route("/notion/pages/Bogus__00000000000000000000000000000000")
+        .expect("route");
+    assert!(
+        res.stat(&vp).await.is_err(),
+        "stat of a nonexistent notion page should error, not report a directory"
+    );
+}
+
 /// Direct (non-agent) smoke test of the Notion adapter: read the page tree,
 /// read a page.json, then exercise the `.cmd` domain writes (page-create +
 /// block-append) through `Resource::command`.
@@ -242,11 +352,15 @@ async fn s3_multi_mount_key_prefix_isolation() {
     let content = format!("isolated-{s}");
 
     // Write through the scoped (key_prefix'd) mount, read it back there.
-    let (res, vp) = vfs.route(&format!("/scoped/{fname}")).expect("route scoped");
+    let (res, vp) = vfs
+        .route(&format!("/scoped/{fname}"))
+        .expect("route scoped");
     res.write_bytes(&vp, content.clone().into_bytes())
         .await
         .expect("write scoped");
-    let (res, vp) = vfs.route(&format!("/scoped/{fname}")).expect("route scoped read");
+    let (res, vp) = vfs
+        .route(&format!("/scoped/{fname}"))
+        .expect("route scoped read");
     let got = res.read_bytes(&vp, None).await.expect("read scoped");
     assert_eq!(
         String::from_utf8_lossy(&got),
