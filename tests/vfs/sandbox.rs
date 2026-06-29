@@ -595,79 +595,51 @@ async fn vfs_cmd_write_through_forwarder() {
     }
 }
 
-/// Brings up a NAMED sandbox with S3 + Notion + GDrive mounted under /mnt/vfs,
-/// triggers the in-guest forwarder mount, then sleeps so you can inspect it:
-///   msb ls
-///   msb exec ailoy-vfs-inspect -- sh -c 'ls /mnt/vfs; ls /mnt/vfs/s3; ls /mnt/vfs/notion/pages; ls /mnt/vfs/gdrive'
+/// Holds a NAMED sandbox (`ailoy-vfs-inspect`) with every configured provider
+/// mounted under /mnt/vfs, so you can poke it from another terminal:
+///   msb exec ailoy-vfs-inspect -- sh -c 'ls /mnt/vfs/s3'
+///   msb exec ailoy-vfs-inspect -- sh -c 'ls /mnt/vfs/notion/pages'
+///   msb exec ailoy-vfs-inspect -- sh -c 'ls /mnt/vfs/gdrive | head'
+///
+/// The guest→host channel (host.microsandbox.internal, via allow_host_egress)
+/// stops working ~2 min after a VM starts — a microsandbox/libkrun limit, NOT
+/// idle-related: constant traffic does not prevent it, and only a VM *restart*
+/// revives it. So rather than hold one VM up (after ~2 min any `msb exec` into
+/// the mount would block), this cycles: bring the mount up fresh, hold it ~90 s
+/// for inspection, then restart the VM and re-mount. The name stays stable, so
+/// the same `msb exec ailoy-vfs-inspect …` keeps working across the session —
+/// with a brief gap (~15-30 s) during each restart. Ctrl-C to stop.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "interactive: holds a named sandbox up for manual msb exec inspection"]
+#[ignore = "interactive: cycles a named sandbox so the mount stays inspectable via msb exec"]
 async fn vfs_inspect_sandbox() {
     dotenvy::dotenv().ok();
-
     let name = "ailoy-vfs-inspect";
-    let sandbox = RunEnv::sandbox(SandboxConfig {
-        name: Some(name.into()),
-        allow_host_egress: true,
-        ..Default::default()
-    })
-    .await
-    .expect("sandbox create");
 
-    let mut agent = AgentBuilder::new(MODEL)
-        .provider(provider())
-        .instruction("You are a tester. Use the shell tool.")
-        .shell_tool()
-        .runenv(sandbox)
-        .vfs(all_vfs())
-        .build()
-        .expect("build agent");
+    // Start clean. The fixed name + a VM that outlives a prior run (its
+    // supervisor survives a non-graceful exit, and `msb rm` won't kill a running
+    // one) would otherwise reattach to a STALE VM whose guest→host channel is
+    // long dead — and inspection would block immediately.
+    msb_rm(name);
 
-    // First run triggers the in-guest mount (ensure_vfs_mounted). Keep `agent`
-    // alive afterwards so the strong runenv handle keeps the VM (and mount) up.
-    {
-        let q = Message::new(Role::User)
-            .with_contents([Part::text("Reply with the single word READY.")]);
-        let mut strm = agent.run(q);
-        while let Some(ev) = strm.next().await {
-            if let Err(e) = ev {
-                eprintln!("run error (mount may have failed): {e}");
-            }
-        }
-    }
-
-    println!("\n================ VFS INSPECT READY ================");
+    println!("\n================ VFS INSPECT ================");
     println!("sandbox name : {name}");
-    println!("guest mounts : /mnt/vfs/{{s3,notion,gdrive}}");
-    println!("inspect from another terminal:");
-    println!("  msb ls");
-    println!("  msb exec {name} -- sh -c 'mount | grep fuse; ls -la /mnt/vfs'");
+    println!("guest mounts : /mnt/vfs/{{s3,notion,gdrive}} (configured providers)");
+    println!("inspect from another terminal (refreshes every ~90s):");
+    println!("  msb exec {name} -- sh -c 'ls -la /mnt/vfs'");
     println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/s3'");
     println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/notion/pages'");
     println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/gdrive | head'");
-    println!("keeping the mount warm (~1h) — inspect anytime; Ctrl-C to tear down.");
-    println!("===================================================\n");
+    println!("Ctrl-C to stop, then: msb rm {name}");
+    println!("=============================================\n");
 
-    // The VM is held up but otherwise idle, so the guest→host channel
-    // (`host.microsandbox.internal`, via allow_host_egress) goes stale after
-    // ~2 min with no traffic — after which the in-guest forwarder can't reach the
-    // host forward server and any `msb exec` into the mount blocks out its
-    // deadline. (In the real agent-k flow `ensure_mounted` re-heals this on the
-    // next run; here nothing does.) Poke a provider dir periodically to keep the
-    // channel warm so external inspection works for the whole session.
-    for _ in 0..120 {
-        // ~120 × 30s ≈ 1h
-        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-        let _ = std::process::Command::new("msb")
-            .args([
-                "exec",
-                name,
-                "--",
-                "timeout",
-                "20",
-                "sh",
-                "-c",
-                "for d in /mnt/vfs/*/; do ls \"$d\" >/dev/null 2>&1 && break; done",
-            ])
-            .status();
+    loop {
+        // Fresh VM + mount (a restart revives the guest→host channel).
+        let agent = attach_mounted_agent(name).await;
+        println!("[inspect] mount fresh — usable now (~90s before the channel dies)");
+        tokio::time::sleep(std::time::Duration::from_secs(90)).await;
+        // Stop the VM so the next cycle restarts it with a fresh channel.
+        drop(agent);
+        msb_rm(name);
+        println!("[inspect] restarting VM to refresh the guest→host channel…");
     }
 }
