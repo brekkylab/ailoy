@@ -172,21 +172,22 @@ impl LangModel {
                 send_with_retry(&client, &url, header_map, &body, provider.as_ref()).await?;
 
             // Read the SSE body chunk by chunk, framing complete events out of a
-            // buffer (network chunks don't align with event boundaries).
+            // buffer (network chunks don't align with event boundaries). We drain
+            // until the body ends rather than stopping at the first `finish_reason`
+            // — some providers (ChatCompletion with `stream_options.include_usage`)
+            // send the usage in a final chunk *after* the finish_reason one. The
+            // server ends the body right after the terminal event, so this exits
+            // promptly without waiting on the connection.
             let mut byte_stream = response.bytes_stream();
             let mut buf: Vec<u8> = Vec::new();
-            'outer: while let Some(chunk) = byte_stream.next().await {
+            while let Some(chunk) = byte_stream.next().await {
                 buf.extend_from_slice(&chunk?);
                 while let Some(data) = drain_next_event(&mut buf) {
                     if data.is_empty() {
                         continue; // keep-alive / comment line
                     }
                     if let Some(output) = provider.unmarshal_event(&data)? {
-                        let done = output.finish_reason.is_some();
                         yield output;
-                        if done {
-                            break 'outer;
-                        }
                     }
                 }
             }

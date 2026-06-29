@@ -252,9 +252,12 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
             .retain(|_key, value| !value.is_null());
 
         if req.stream {
-            body.as_object_mut()
-                .unwrap()
-                .insert("stream".into(), true.into());
+            let body_obj = body.as_object_mut().unwrap();
+            body_obj.insert("stream".into(), true.into());
+            // Request token usage in the final (empty-choices) SSE chunk; without
+            // this, ChatCompletion streaming reports no usage. Supported by OpenAI
+            // and the major OpenAI-compatible backends (Grok / DeepSeek / Kimi).
+            body_obj.insert("stream_options".into(), to_value!({"include_usage": true}));
             header
                 .as_object_mut()
                 .unwrap()
@@ -542,6 +545,45 @@ mod tests {
         tool::ToolDesc,
     };
 
+    #[test]
+    fn test_marshal_stream_options() {
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let url = Url::parse("https://api.openai.com/v1/chat/completions").unwrap();
+        let api_key: Option<String> = None;
+        let mut req = LangModelRequest {
+            model: "gpt-4.1-mini",
+            messages: &messages,
+            tools: &tools,
+            url: &url,
+            api_key: &api_key,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            response_format: None,
+            stream: false,
+        };
+
+        // stream: false → no stream / stream_options.
+        let val = ChatCompletionMarshal::default().marshal(&req);
+        assert!(val.pointer("/body/stream").is_none());
+        assert!(val.pointer("/body/stream_options").is_none());
+
+        // stream: true → stream + stream_options.include_usage so usage is reported.
+        req.stream = true;
+        let val = ChatCompletionMarshal::default().marshal(&req);
+        assert_eq!(
+            val.pointer("/body/stream").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            val.pointer("/body/stream_options/include_usage")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
     /// Feeds SSE chunk payloads through `unmarshal_event`, accumulating to a
     /// final `MessageDeltaOutput`.
     fn accumulate_stream(inputs: &[&str]) -> MessageDeltaOutput {
@@ -644,6 +686,10 @@ mod tests {
                 .any(|p| p.as_text().is_some_and(|t| !t.is_empty())),
             "expected non-empty text in the streamed message"
         );
+        // stream_options.include_usage → usage reported on the final chunk.
+        let usage = result.usage.expect("expected usage from the stream");
+        assert!(usage.input_tokens > 0, "input_tokens should be > 0");
+        assert!(usage.output_tokens > 0, "output_tokens should be > 0");
     }
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
