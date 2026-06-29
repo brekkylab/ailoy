@@ -31,8 +31,9 @@ fn diag(msg: &str) {
 
 use fuser::{
     BsdFileFlags, Config, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags,
-    Generation, INodeNo, LockOwner, MountOption, OpenFlags, ReplyAttr, ReplyCreate, ReplyData,
-    ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, WriteFlags,
+    Generation, INodeNo, LockOwner, MountOption, OpenFlags, RenameFlags, ReplyAttr, ReplyCreate,
+    ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow,
+    WriteFlags,
 };
 
 const TTL: Duration = Duration::from_secs(1);
@@ -247,6 +248,9 @@ struct Inner {
     path_to_ino: Mutex<HashMap<String, u64>>,
     next: Mutex<u64>,
     wbuf: Mutex<HashMap<u64, Pending>>,
+    /// Last JSON result of a `/<mount>/.cmd/<op>` write, keyed by that control
+    /// path, so a subsequent read returns it (C4).
+    cmd_results: Mutex<HashMap<String, Vec<u8>>>,
 }
 impl Inner {
     fn path(&self, ino: u64) -> Option<String> {
@@ -301,7 +305,15 @@ impl Inner {
             }
             merged[*off as usize..end].copy_from_slice(chunk);
         }
-        let _ = http("PUT", "/write", &format!("path={}", pct(&path)), Some(&merged));
+        if let Ok((200, body)) =
+            http("PUT", "/write", &format!("path={}", pct(&path)), Some(&merged))
+        {
+            // C4: a `.cmd/<op>` write returns the command result — cache it so a
+            // read of that path returns it (e.g. the new page id).
+            if path.contains("/.cmd/") {
+                self.cmd_results.lock().unwrap().insert(path, body);
+            }
+        }
     }
 }
 
@@ -365,6 +377,7 @@ impl Fs {
                 path_to_ino: Mutex::new(p2i),
                 next: Mutex::new(2),
                 wbuf: Mutex::new(HashMap::new()),
+                cmd_results: Mutex::new(HashMap::new()),
             }),
             pool: Pool::new(8),
         }
@@ -386,6 +399,11 @@ impl Filesystem for Fs {
         self.spawn(move |inner| {
             let Some(pp) = inner.path(parent) else { return reply.error(Errno::ENOENT) };
             let path = inner.child(&pp, &nm);
+            // C4: a `.cmd/<op>` path with a stashed result reads back as a file.
+            if let Some(len) = inner.cmd_results.lock().unwrap().get(&path).map(|b| b.len() as u64) {
+                let ino = inner.intern(&path);
+                return reply.entry(&TTL, &file_attr(ino, len), Generation(0));
+            }
             let s = stat(&path);
             if !s.exists {
                 return reply.error(Errno::ENOENT);
@@ -400,6 +418,9 @@ impl Filesystem for Fs {
             let Some(path) = inner.path(ino) else { return reply.error(Errno::ENOENT) };
             if let Some(p) = inner.wbuf.lock().unwrap().get(&ino) {
                 return reply.attr(&TTL, &file_attr(ino, p.pending_size()));
+            }
+            if let Some(len) = inner.cmd_results.lock().unwrap().get(&path).map(|b| b.len() as u64) {
+                return reply.attr(&TTL, &file_attr(ino, len));
             }
             if path == "/" {
                 return reply.attr(&TTL, &dir_attr(1));
@@ -497,6 +518,12 @@ impl Filesystem for Fs {
         let ino = ino.0;
         self.spawn(move |inner| {
             let Some(path) = inner.path(ino) else { return reply.error(Errno::ENOENT) };
+            // C4: serve a stashed `.cmd/<op>` result instead of hitting the provider.
+            if let Some(buf) = inner.cmd_results.lock().unwrap().get(&path) {
+                let start = (offset as usize).min(buf.len());
+                let end = (start + size as usize).min(buf.len());
+                return reply.data(&buf[start..end]);
+            }
             match http("GET", "/read", &format!("path={}&offset={offset}&size={size}", pct(&path)), None) {
                 Ok((200, data)) => reply.data(&data),
                 _ => reply.error(Errno::EIO),
@@ -534,6 +561,53 @@ impl Filesystem for Fs {
             let Some(pp) = inner.path(parent) else { return reply.error(Errno::ENOENT) };
             let path = inner.child(&pp, &nm);
             match http("DELETE", "/unlink", &format!("path={}", pct(&path)), None) {
+                Ok((200, _)) => reply.ok(),
+                _ => reply.error(Errno::EIO),
+            }
+        });
+    }
+    fn mkdir(&self, _r: &Request, parent: INodeNo, name: &OsStr, _mode: u32, _umask: u32, reply: ReplyEntry) {
+        let parent = parent.0;
+        let Some(nm) = name.to_str().map(str::to_string) else { return reply.error(Errno::EINVAL) };
+        self.spawn(move |inner| {
+            let Some(pp) = inner.path(parent) else { return reply.error(Errno::ENOENT) };
+            let path = inner.child(&pp, &nm);
+            match http("POST", "/mkdir", &format!("path={}", pct(&path)), None) {
+                Ok((200, _)) => {
+                    let ino = inner.intern(&path);
+                    reply.entry(&TTL, &dir_attr(ino), Generation(0));
+                }
+                _ => reply.error(Errno::EIO),
+            }
+        });
+    }
+    fn rmdir(&self, _r: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEmpty) {
+        let parent = parent.0;
+        let Some(nm) = name.to_str().map(str::to_string) else { return reply.error(Errno::EINVAL) };
+        self.spawn(move |inner| {
+            let Some(pp) = inner.path(parent) else { return reply.error(Errno::ENOENT) };
+            let path = inner.child(&pp, &nm);
+            match http("DELETE", "/rmdir", &format!("path={}", pct(&path)), None) {
+                Ok((200, _)) => reply.ok(),
+                _ => reply.error(Errno::EIO),
+            }
+        });
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn rename(&self, _r: &Request, parent: INodeNo, name: &OsStr, newparent: INodeNo, newname: &OsStr, _flags: RenameFlags, reply: ReplyEmpty) {
+        let parent = parent.0;
+        let newparent = newparent.0;
+        let (Some(nm), Some(nnm)) = (name.to_str().map(str::to_string), newname.to_str().map(str::to_string)) else {
+            return reply.error(Errno::EINVAL);
+        };
+        self.spawn(move |inner| {
+            let (Some(pp), Some(np)) = (inner.path(parent), inner.path(newparent)) else {
+                return reply.error(Errno::ENOENT);
+            };
+            let from = inner.child(&pp, &nm);
+            let to = inner.child(&np, &nnm);
+            let q = format!("path={}&to={}", pct(&from), pct(&to));
+            match http("POST", "/rename", &q, None) {
                 Ok((200, _)) => reply.ok(),
                 _ => reply.error(Errno::EIO),
             }

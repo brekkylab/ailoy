@@ -8,8 +8,8 @@ use std::{
 
 use fuser::{
     BsdFileFlags, Config, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation,
-    INodeNo, LockOwner, MountOption, OpenFlags, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory,
-    ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, WriteFlags,
+    INodeNo, LockOwner, MountOption, OpenFlags, RenameFlags, ReplyAttr, ReplyCreate, ReplyData,
+    ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, WriteFlags,
 };
 use tokio::runtime::Handle;
 
@@ -69,6 +69,10 @@ struct FsState {
     next_ino: u64,
     /// Pending write buffers keyed by inode; flushed to the resource on release.
     wbuf: HashMap<u64, WriteBuf>,
+    /// Last JSON result of a `/<mount>/.cmd/<op>` write, keyed by that control
+    /// path, so the agent can read it back (C4: e.g. the new page id from
+    /// `page-create` before `block-append`).
+    cmd_results: HashMap<String, Vec<u8>>,
 }
 
 impl FsState {
@@ -108,6 +112,7 @@ impl VfsFs {
                 path_ino,
                 next_ino: ROOT_INO,
                 wbuf: HashMap::new(),
+                cmd_results: HashMap::new(),
             }),
         }
     }
@@ -224,16 +229,50 @@ async fn read_full(vfs: &Vfs, path: &str) -> anyhow::Result<Vec<u8>> {
     res.read_bytes(&vp, None).await
 }
 
-async fn put_path(vfs: &Vfs, path: &str, data: Vec<u8>) -> anyhow::Result<()> {
+/// Flush a write. A `/<mount>/.cmd/<op>` path is a control write: it runs the
+/// domain command and returns its JSON result (for C4 read-back); a normal path
+/// writes bytes and returns `None`.
+async fn put_path(vfs: &Vfs, path: &str, data: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>> {
     let (res, vp) = vfs
         .route(path)
         .ok_or_else(|| anyhow::anyhow!("no mount for {path}"))?;
     if let Some(op) = vp.as_str().strip_prefix("/.cmd/") {
-        res.command(op, &data).await?;
-        Ok(())
+        Ok(Some(res.command(op, &data).await?))
     } else {
-        res.write_bytes(&vp, data).await
+        res.write_bytes(&vp, data).await?;
+        Ok(None)
     }
+}
+
+async fn unlink_path(vfs: &Vfs, path: &str) -> anyhow::Result<()> {
+    let (res, vp) = vfs
+        .route(path)
+        .ok_or_else(|| anyhow::anyhow!("no mount for {path}"))?;
+    res.unlink(&vp).await
+}
+
+async fn mkdir_path(vfs: &Vfs, path: &str) -> anyhow::Result<()> {
+    let (res, vp) = vfs
+        .route(path)
+        .ok_or_else(|| anyhow::anyhow!("no mount for {path}"))?;
+    res.mkdir(&vp).await
+}
+
+async fn rmdir_path(vfs: &Vfs, path: &str) -> anyhow::Result<()> {
+    let (res, vp) = vfs
+        .route(path)
+        .ok_or_else(|| anyhow::anyhow!("no mount for {path}"))?;
+    res.rmdir(&vp).await
+}
+
+async fn rename_path(vfs: &Vfs, from: &str, to: &str) -> anyhow::Result<()> {
+    let (res, from_vp) = vfs
+        .route(from)
+        .ok_or_else(|| anyhow::anyhow!("no mount for {from}"))?;
+    let (_, to_vp) = vfs
+        .route(to)
+        .ok_or_else(|| anyhow::anyhow!("no mount for {to}"))?;
+    res.rename(&from_vp, &to_vp).await
 }
 
 impl Filesystem for VfsFs {
@@ -247,6 +286,19 @@ impl Filesystem for VfsFs {
             return;
         };
         let path = join(&parent_path, name);
+        // C4: a `.cmd/<op>` path with a stashed result reads back as a file.
+        if let Some(len) = self
+            .state
+            .lock()
+            .unwrap()
+            .cmd_results
+            .get(&path)
+            .map(|b| b.len() as u64)
+        {
+            let ino = self.state.lock().unwrap().intern(&path);
+            reply.entry(&TTL, &make_attr(ino, FileKind::File, len), Generation(0));
+            return;
+        }
         let vfs = self.vfs.clone();
         match self.rt.block_on(stat_path(&vfs, &path)) {
             Ok((kind, size)) => {
@@ -270,7 +322,11 @@ impl Filesystem for VfsFs {
             if let Some(buf) = st.wbuf.get(&ino) {
                 Next::Buffered(buf.data.len() as u64)
             } else if let Some(path) = st.path_of(ino) {
-                Next::Stat(path)
+                if let Some(b) = st.cmd_results.get(&path) {
+                    Next::Buffered(b.len() as u64)
+                } else {
+                    Next::Stat(path)
+                }
             } else {
                 Next::NotFound
             }
@@ -430,7 +486,13 @@ impl Filesystem for VfsFs {
                 let end = (start + size as usize).min(buf.data.len());
                 Next::Buffered(buf.data[start..end].to_vec())
             } else if let Some(path) = st.path_of(ino) {
-                Next::Read(path)
+                if let Some(b) = st.cmd_results.get(&path) {
+                    let start = (offset as usize).min(b.len());
+                    let end = (start + size as usize).min(b.len());
+                    Next::Buffered(b[start..end].to_vec())
+                } else {
+                    Next::Read(path)
+                }
             } else {
                 Next::NotFound
             }
@@ -524,7 +586,14 @@ impl Filesystem for VfsFs {
         };
         let vfs = self.vfs.clone();
         match self.rt.block_on(put_path(&vfs, &path, wb.data)) {
-            Ok(()) => reply.ok(),
+            Ok(result) => {
+                if let Some(bytes) = result {
+                    // C4: stash the command's JSON result so a read of this
+                    // `.cmd/<op>` path returns it.
+                    self.state.lock().unwrap().cmd_results.insert(path, bytes);
+                }
+                reply.ok()
+            }
             Err(_) => reply.error(Errno::EIO),
         }
     }
@@ -572,5 +641,98 @@ impl Filesystem for VfsFs {
             }
         }
         reply.ok();
+    }
+
+    fn unlink(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEmpty) {
+        let Some(parent_path) = self.state.lock().unwrap().path_of(parent.0) else {
+            reply.error(Errno::ENOENT);
+            return;
+        };
+        let Some(name) = name.to_str() else {
+            reply.error(Errno::EINVAL);
+            return;
+        };
+        let path = join(&parent_path, name);
+        let vfs = self.vfs.clone();
+        match self.rt.block_on(unlink_path(&vfs, &path)) {
+            Ok(()) => reply.ok(),
+            Err(_) => reply.error(Errno::EIO),
+        }
+    }
+
+    fn mkdir(
+        &self,
+        _req: &Request,
+        parent: INodeNo,
+        name: &OsStr,
+        _mode: u32,
+        _umask: u32,
+        reply: ReplyEntry,
+    ) {
+        let Some(parent_path) = self.state.lock().unwrap().path_of(parent.0) else {
+            reply.error(Errno::ENOENT);
+            return;
+        };
+        let Some(name) = name.to_str() else {
+            reply.error(Errno::EINVAL);
+            return;
+        };
+        let path = join(&parent_path, name);
+        let vfs = self.vfs.clone();
+        match self.rt.block_on(mkdir_path(&vfs, &path)) {
+            Ok(()) => {
+                let ino = self.state.lock().unwrap().intern(&path);
+                reply.entry(&TTL, &make_attr(ino, FileKind::Dir, 0), Generation(0));
+            }
+            Err(_) => reply.error(Errno::EIO),
+        }
+    }
+
+    fn rmdir(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEmpty) {
+        let Some(parent_path) = self.state.lock().unwrap().path_of(parent.0) else {
+            reply.error(Errno::ENOENT);
+            return;
+        };
+        let Some(name) = name.to_str() else {
+            reply.error(Errno::EINVAL);
+            return;
+        };
+        let path = join(&parent_path, name);
+        let vfs = self.vfs.clone();
+        match self.rt.block_on(rmdir_path(&vfs, &path)) {
+            Ok(()) => reply.ok(),
+            Err(_) => reply.error(Errno::EIO),
+        }
+    }
+
+    fn rename(
+        &self,
+        _req: &Request,
+        parent: INodeNo,
+        name: &OsStr,
+        newparent: INodeNo,
+        newname: &OsStr,
+        _flags: RenameFlags,
+        reply: ReplyEmpty,
+    ) {
+        let (from_parent, to_parent) = {
+            let st = self.state.lock().unwrap();
+            (st.path_of(parent.0), st.path_of(newparent.0))
+        };
+        let (Some(from_parent), Some(to_parent)) = (from_parent, to_parent) else {
+            reply.error(Errno::ENOENT);
+            return;
+        };
+        let (Some(name), Some(newname)) = (name.to_str(), newname.to_str()) else {
+            reply.error(Errno::EINVAL);
+            return;
+        };
+        let from = join(&from_parent, name);
+        let to = join(&to_parent, newname);
+        let vfs = self.vfs.clone();
+        match self.rt.block_on(rename_path(&vfs, &from, &to)) {
+            Ok(()) => reply.ok(),
+            Err(_) => reply.error(Errno::EIO),
+        }
     }
 }

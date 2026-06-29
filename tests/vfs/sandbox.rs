@@ -569,6 +569,7 @@ async fn vfs_cmd_write_through_forwarder() {
          json='{\"parent\":{\"page_id\":\"'\"$id\"'\"},\"properties\":{\"title\":[{\"text\":{\"content\":\"ailoy vfs cmd-through-fwd\"}}]}}'; \
          printf '%s' \"$json\" > /mnt/vfs/notion/.cmd/page-create 2>/tmp/cmderr; \
          echo \"WRITE_RC=$?\"; \
+         echo \"RESULT=$(cat /mnt/vfs/notion/.cmd/page-create 2>/dev/null | head -c 400)\"; \
          (ls /mnt/vfs/notion/pages >/dev/null 2>&1 && echo MOUNT_ALIVE || echo MOUNT_DEAD); \
          echo \"ERR=$(cat /tmp/cmderr 2>/dev/null)\"",
     );
@@ -586,7 +587,13 @@ async fn vfs_cmd_write_through_forwarder() {
         "mount wedged or unreachable after a .cmd write — routing/liveness broken: {out:?}"
     );
     if out.contains("WRITE_RC=0") {
-        println!("CMD-THROUGH-FORWARDER OK (page-create routed + accepted)");
+        // C4: the command's JSON result is readable back from the `.cmd` path
+        // (here: the created page's id), enabling create→block-append.
+        assert!(
+            out.contains("RESULT=") && out.contains("\"id\""),
+            "C4: page-create result was not readable back from the .cmd path: {out:?}"
+        );
+        println!("CMD-THROUGH-FORWARDER OK (page-create routed + result read back)");
     } else {
         eprintln!(
             "NOTE: .cmd write routed through the forwarder but the op was rejected \

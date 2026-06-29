@@ -254,6 +254,8 @@ async fn vfs_static_forwarder_write_unlink() {
     launch_static_forwarder(&h, port, &tok).await;
     let f = format!("/mnt/vfs/s3/{fname}");
     let af = format!("/mnt/vfs/s3/vfs-fwd-ap-{s}.txt");
+    let mvf = format!("/mnt/vfs/s3/vfs-fwd-mv-{s}.txt");
+    let rdir = format!("/mnt/vfs/s3/vfs-fwd-rd-{s}");
     let script = format!(
         "printf 'rmcontent-{s}' > '{f}'; \
          echo \"WROTE=$(cat '{f}')\"; \
@@ -261,7 +263,14 @@ async fn vfs_static_forwarder_write_unlink() {
          (ls '{f}' >/dev/null 2>&1 && echo STILL_THERE || echo GONE); \
          printf 'AAAA' > '{af}'; printf 'BBBB' >> '{af}'; echo \"APPEND=$(cat '{af}')\"; \
          (truncate -s 3 '{af}' 2>/dev/null && echo \"TRUNC=$(cat '{af}')\" || echo TRUNC=skip); \
-         rm '{af}'"
+         rm '{af}'; \
+         printf 'MOVE' > '{mvf}'; \
+         mv '{mvf}' '{mvf}.x'; echo \"MV_RC=$?\"; \
+         (ls '{mvf}' >/dev/null 2>&1 && echo SRC_THERE || echo SRC_GONE); \
+         (mkdir '{rdir}' 2>/dev/null && echo MKDIR_OK || echo MKDIR_FAIL); \
+         printf 'x' > '{rdir}/c.txt'; \
+         (rmdir '{rdir}' 2>/dev/null && echo RMDIR_OK || echo RMDIR_FAIL); \
+         (ls '{rdir}/c.txt' >/dev/null 2>&1 && echo RD_THERE || echo RD_GONE)"
     );
     let out = h.exec_shell(script, Some(60)).await.expect("guest exec");
     println!("--- guest ---\n{}", out.stdout);
@@ -287,6 +296,31 @@ async fn vfs_static_forwarder_write_unlink() {
         "truncate did not preserve leading content: {}",
         out.stdout
     );
+    // C3: rename (mv) = copy+delete; mkdir succeeds (implicit dir); rmdir removes
+    // the prefix recursively.
+    assert!(
+        out.stdout.contains("MV_RC=0") && out.stdout.contains("SRC_GONE"),
+        "mv (rename) failed or left the source: {}",
+        out.stdout
+    );
+    // Verify host-side that the rename carried content to the destination.
+    assert!(
+        verify(&format!("/s3/vfs-fwd-mv-{s}.txt.x"), "MOVE").await,
+        "rename did not copy content to the destination"
+    );
+    assert!(out.stdout.contains("MKDIR_OK"), "mkdir failed: {}", out.stdout);
+    assert!(
+        out.stdout.contains("RMDIR_OK") && out.stdout.contains("RD_GONE"),
+        "rmdir did not remove the directory contents: {}",
+        out.stdout
+    );
+    // Clean up the renamed object (host-side).
+    {
+        let v = Vfs::from_config(all_vfs()).unwrap();
+        if let Some((res, vp)) = v.route(&format!("/s3/vfs-fwd-mv-{s}.txt.x")) {
+            let _ = res.unlink(&vp).await;
+        }
+    }
 }
 
 /// Large-file / chunked-read correctness through the static forwarder: write a

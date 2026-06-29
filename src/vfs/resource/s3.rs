@@ -46,15 +46,25 @@ impl S3Resource {
 impl Resource for S3Resource {
     async fn read_bytes(&self, path: &VPath, range: Option<Range<u64>>) -> anyhow::Result<Vec<u8>> {
         let opts = GetOptions {
-            range: range.map(GetRange::Bounded),
+            range: range.clone().map(GetRange::Bounded),
             ..Default::default()
         };
-        let res = self
-            .accessor
-            .store
-            .get_opts(&self.os_path(path), opts)
-            .await?;
-        Ok(res.bytes().await?.to_vec())
+        match self.accessor.store.get_opts(&self.os_path(path), opts).await {
+            Ok(res) => Ok(res.bytes().await?.to_vec()),
+            Err(e) => {
+                // S3-2: a bounded range starting at/after EOF returns 416. Treat
+                // it as a clean EOF (empty) rather than EIO, so cat/wc/dd over a
+                // direct_io mount (size unknown up front) stop cleanly. Only the
+                // error path pays the extra head.
+                if let Some(r) = &range
+                    && let Ok(meta) = self.accessor.store.head(&self.os_path(path)).await
+                    && r.start >= meta.size
+                {
+                    return Ok(Vec::new());
+                }
+                Err(e.into())
+            }
+        }
     }
 
     async fn write_bytes(&self, path: &VPath, data: Vec<u8>) -> anyhow::Result<()> {
@@ -162,11 +172,10 @@ impl Resource for S3Resource {
     }
 
     async fn rename(&self, from: &VPath, to: &VPath) -> anyhow::Result<()> {
-        // S3 has no native rename; object_store does copy + delete.
-        self.accessor
-            .store
-            .rename(&self.os_path(from), &self.os_path(to))
-            .await?;
+        // S3 has no native rename: copy then delete the source (mirrors mirage).
+        let (from, to) = (self.os_path(from), self.os_path(to));
+        self.accessor.store.copy(&from, &to).await?;
+        self.accessor.store.delete(&from).await?;
         Ok(())
     }
 

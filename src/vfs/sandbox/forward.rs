@@ -14,7 +14,8 @@ use crate::vfs::{Vfs, path::VPath, resource::FileKind};
 /// must carry the session token in the `x-vfs-token` header. Aborts on drop.
 ///
 /// Routes: `GET /readdir|/stat|/read?path=…[&offset=&size=]`, `PUT /write?path=…`,
-/// `DELETE /unlink?path=…`.
+/// `DELETE /unlink?path=…`, `POST /mkdir?path=…`, `DELETE /rmdir?path=…`,
+/// `POST /rename?path=<from>&to=<to>`.
 pub struct VfsForward {
     addr: SocketAddr,
     token: String,
@@ -164,11 +165,17 @@ async fn handle_conn(mut stream: TcpStream, vfs: Arc<Vfs>, token: String) -> any
         }
         ("PUT", "/write") => {
             let body = read_body(&mut stream, &req).await?;
-            write_bytes(&vfs, &path, body)
-                .await
-                .map(|_| b"{\"ok\":true}".to_vec())
+            // For a `.cmd/<op>` path this returns the command's JSON result (C4);
+            // for a normal write it returns `{"ok":true}`.
+            write_bytes(&vfs, &path, body).await
         }
         ("DELETE", "/unlink") => unlink_path(&vfs, &path).await.map(|_| b"{\"ok\":true}".to_vec()),
+        ("POST", "/mkdir") => mkdir_path(&vfs, &path).await.map(|_| b"{\"ok\":true}".to_vec()),
+        ("DELETE", "/rmdir") => rmdir_path(&vfs, &path).await.map(|_| b"{\"ok\":true}".to_vec()),
+        ("POST", "/rename") => {
+            let to = params.get("to").cloned().unwrap_or_default();
+            rename_path(&vfs, &path, &to).await.map(|_| b"{\"ok\":true}".to_vec())
+        }
         _ => return respond(&mut stream, 404, "text/plain", b"not found".to_vec()).await,
     };
 
@@ -261,15 +268,41 @@ async fn unlink_path(vfs: &Vfs, path: &str) -> anyhow::Result<()> {
     res.unlink(&vp).await
 }
 
-async fn write_bytes(vfs: &Vfs, path: &str, data: Vec<u8>) -> anyhow::Result<()> {
+async fn mkdir_path(vfs: &Vfs, path: &str) -> anyhow::Result<()> {
+    let (res, vp) = vfs
+        .route(path)
+        .ok_or_else(|| anyhow::anyhow!("no mount for {path}"))?;
+    res.mkdir(&vp).await
+}
+
+async fn rmdir_path(vfs: &Vfs, path: &str) -> anyhow::Result<()> {
+    let (res, vp) = vfs
+        .route(path)
+        .ok_or_else(|| anyhow::anyhow!("no mount for {path}"))?;
+    res.rmdir(&vp).await
+}
+
+async fn rename_path(vfs: &Vfs, from: &str, to: &str) -> anyhow::Result<()> {
+    let (res, from_vp) = vfs
+        .route(from)
+        .ok_or_else(|| anyhow::anyhow!("no mount for {from}"))?;
+    let (_, to_vp) = vfs
+        .route(to)
+        .ok_or_else(|| anyhow::anyhow!("no mount for {to}"))?;
+    res.rename(&from_vp, &to_vp).await
+}
+
+/// Returns the command result JSON for a `/<mount>/.cmd/<op>` path (C4 read-back),
+/// or `{"ok":true}` for a normal byte write.
+async fn write_bytes(vfs: &Vfs, path: &str, data: Vec<u8>) -> anyhow::Result<Vec<u8>> {
     let (res, vp): (_, VPath) = vfs
         .route(path)
         .ok_or_else(|| anyhow::anyhow!("no mount for {path}"))?;
     if let Some(op) = vp.as_str().strip_prefix("/.cmd/") {
-        res.command(op, &data).await?;
-        Ok(())
+        res.command(op, &data).await
     } else {
-        res.write_bytes(&vp, data).await
+        res.write_bytes(&vp, data).await?;
+        Ok(b"{\"ok\":true}".to_vec())
     }
 }
 
