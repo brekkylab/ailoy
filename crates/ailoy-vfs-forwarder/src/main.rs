@@ -209,13 +209,44 @@ fn mk(ino: u64, kind: FileType, size: u64) -> FileAttr {
     }
 }
 
+// Linux open(2) flags (the guest is always Linux/musl; this crate has no libc dep).
+const O_ACCMODE: i32 = 0o3;
+const O_WRONLY: i32 = 0o1;
+const O_RDWR: i32 = 0o2;
+const O_TRUNC: i32 = 0o1000;
+
+/// Pending write for one open file, buffered until flush. Mirrors mirage's model:
+/// record `(offset, chunk)` writes (in order) and, at flush, read the current
+/// content, apply an optional truncate, splice the chunks on top, and write the
+/// merged result back. `dirty` gates the write so an open-for-write that never
+/// modifies anything is NOT flushed (which would clobber a rendered/read-only
+/// file). `truncate == Some(0)` (a `>` redirect / create) means "start empty"
+/// (skip reading the existing content).
+#[derive(Default)]
+struct Pending {
+    truncate: Option<u64>,
+    chunks: Vec<(u64, Vec<u8>)>,
+    dirty: bool,
+}
+
+impl Pending {
+    /// Best-effort size while still buffered (for getattr during a write).
+    fn pending_size(&self) -> u64 {
+        let mut sz = self.truncate.unwrap_or(0);
+        for (off, c) in &self.chunks {
+            sz = sz.max(off + c.len() as u64);
+        }
+        sz
+    }
+}
+
 /// Shared forwarder state (inode<->path map + write buffers), behind an `Arc`
 /// so worker threads can access it while the FUSE dispatch loop moves on.
 struct Inner {
     ino_to_path: Mutex<HashMap<u64, String>>,
     path_to_ino: Mutex<HashMap<String, u64>>,
     next: Mutex<u64>,
-    wbuf: Mutex<HashMap<u64, Vec<u8>>>,
+    wbuf: Mutex<HashMap<u64, Pending>>,
 }
 impl Inner {
     fn path(&self, ino: u64) -> Option<String> {
@@ -240,12 +271,37 @@ impl Inner {
             format!("{parent}/{name}")
         }
     }
+    /// Read-modify-write flush: read current content (unless truncated to empty),
+    /// apply truncate, splice the buffered chunks, write the merged result.
     fn put(&self, ino: u64) {
-        let body = self.wbuf.lock().unwrap().get(&ino).cloned();
-        let Some(body) = body else { return };
+        let Some(p) = self.wbuf.lock().unwrap().remove(&ino) else {
+            return;
+        };
+        if !p.dirty {
+            return;
+        }
         let Some(path) = self.path(ino) else { return };
-        let _ = http("PUT", "/write", &format!("path={}", pct(&path)), Some(&body));
-        self.wbuf.lock().unwrap().remove(&ino);
+        let mut merged = match p.truncate {
+            Some(0) => Vec::new(),
+            other => {
+                let mut base = match http("GET", "/read", &format!("path={}", pct(&path)), None) {
+                    Ok((200, d)) => d,
+                    _ => Vec::new(),
+                };
+                if let Some(n) = other {
+                    base.resize(n as usize, 0);
+                }
+                base
+            }
+        };
+        for (off, chunk) in &p.chunks {
+            let end = *off as usize + chunk.len();
+            if end > merged.len() {
+                merged.resize(end, 0);
+            }
+            merged[*off as usize..end].copy_from_slice(chunk);
+        }
+        let _ = http("PUT", "/write", &format!("path={}", pct(&path)), Some(&merged));
     }
 }
 
@@ -342,8 +398,8 @@ impl Filesystem for Fs {
         let ino = ino.0;
         self.spawn(move |inner| {
             let Some(path) = inner.path(ino) else { return reply.error(Errno::ENOENT) };
-            if let Some(buf) = inner.wbuf.lock().unwrap().get(&ino) {
-                return reply.attr(&TTL, &file_attr(ino, buf.len() as u64));
+            if let Some(p) = inner.wbuf.lock().unwrap().get(&ino) {
+                return reply.attr(&TTL, &file_attr(ino, p.pending_size()));
             }
             if path == "/" {
                 return reply.attr(&TTL, &dir_attr(1));
@@ -399,13 +455,16 @@ impl Filesystem for Fs {
     ) {
         let ino = ino.0;
         self.spawn(move |inner| {
-            // Honor truncate (e.g. `echo > file` opens O_TRUNC).
+            // Honor truncate (e.g. `echo > file` opens O_TRUNC). Recorded as a
+            // base-resize applied before the buffered writes at flush time.
             if let Some(sz) = size {
                 let mut wb = inner.wbuf.lock().unwrap();
-                wb.entry(ino).or_default().resize(sz as usize, 0);
+                let p = wb.entry(ino).or_default();
+                p.truncate = Some(sz);
+                p.dirty = true;
                 return reply.attr(&TTL, &file_attr(ino, sz));
             }
-            let cur = inner.wbuf.lock().unwrap().get(&ino).map(|b| b.len() as u64);
+            let cur = inner.wbuf.lock().unwrap().get(&ino).map(|p| p.pending_size());
             match cur {
                 Some(n) => reply.attr(&TTL, &file_attr(ino, n)),
                 None => match inner.path(ino) {
@@ -418,7 +477,18 @@ impl Filesystem for Fs {
             }
         });
     }
-    fn open(&self, _r: &Request, _ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
+    fn open(&self, _r: &Request, ino: INodeNo, flags: OpenFlags, reply: ReplyOpen) {
+        // `>` (O_WRONLY|O_TRUNC): start the pending buffer empty so the old
+        // content isn't read back and re-merged. Non-truncating writes preload
+        // lazily at flush (read-modify-write in `put`).
+        let acc = flags.0 & O_ACCMODE;
+        let write = acc == O_WRONLY || acc == O_RDWR;
+        if write && flags.0 & O_TRUNC != 0 {
+            let mut wb = self.inner.wbuf.lock().unwrap();
+            let p = wb.entry(ino.0).or_default();
+            p.truncate = Some(0);
+            p.dirty = true;
+        }
         // direct_io: don't clamp reads to stat size (dynamic/rendered files).
         reply.opened(FileHandle(0), FopenFlags::FOPEN_DIRECT_IO);
     }
@@ -439,19 +509,22 @@ impl Filesystem for Fs {
         let Some(nm) = name.to_str() else { return reply.error(Errno::EINVAL) };
         let path = self.inner.child(&pp, nm);
         let ino = self.inner.intern(&path);
-        self.inner.wbuf.lock().unwrap().insert(ino, Vec::new());
+        // New file: start empty + dirty so an immediate close still creates it.
+        let mut wb = self.inner.wbuf.lock().unwrap();
+        let p = wb.entry(ino).or_default();
+        p.truncate = Some(0);
+        p.dirty = true;
+        drop(wb);
         reply.created(&TTL, &file_attr(ino, 0), Generation(0), FileHandle(0), FopenFlags::FOPEN_DIRECT_IO);
     }
     #[allow(clippy::too_many_arguments)]
     fn write(&self, _r: &Request, ino: INodeNo, _fh: FileHandle, offset: u64, data: &[u8], _wf: WriteFlags, _flags: OpenFlags, _lock: Option<LockOwner>, reply: ReplyWrite) {
-        let ino = ino.0;
+        // Buffer the chunk in write order; the read-modify-write merge happens in
+        // `put` (flush/release), so the existing content is never clobbered.
         let mut wb = self.inner.wbuf.lock().unwrap();
-        let buf = wb.entry(ino).or_default();
-        let off = offset as usize;
-        if off + data.len() > buf.len() {
-            buf.resize(off + data.len(), 0);
-        }
-        buf[off..off + data.len()].copy_from_slice(data);
+        let p = wb.entry(ino.0).or_default();
+        p.chunks.push((offset, data.to_vec()));
+        p.dirty = true;
         reply.written(data.len() as u32);
     }
     fn unlink(&self, _r: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEmpty) {

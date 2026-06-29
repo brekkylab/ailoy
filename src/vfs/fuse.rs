@@ -52,12 +52,23 @@ impl VfsMount {
 /// Mutable bookkeeping. fuser 0.17 `Filesystem` methods take `&self`, so the
 /// inode<->path maps and pending write buffers live behind a `Mutex` (the host
 /// mount is single-threaded, so contention is nil).
+/// A pending write buffer for one open file. `data` holds the full file content
+/// being assembled (preloaded with the existing content so partial writes,
+/// appends, and truncates don't clobber the rest); `dirty` tracks whether
+/// anything was actually written/truncated, so an open-read-close cycle that
+/// never modifies the file is NOT flushed back (which would corrupt rendered /
+/// read-only files like a Notion `page.json`).
+struct WriteBuf {
+    data: Vec<u8>,
+    dirty: bool,
+}
+
 struct FsState {
     ino_path: HashMap<u64, String>,
     path_ino: HashMap<String, u64>,
     next_ino: u64,
     /// Pending write buffers keyed by inode; flushed to the resource on release.
-    wbuf: HashMap<u64, Vec<u8>>,
+    wbuf: HashMap<u64, WriteBuf>,
 }
 
 impl FsState {
@@ -99,6 +110,39 @@ impl VfsFs {
                 wbuf: HashMap::new(),
             }),
         }
+    }
+
+    /// Ensure a [`WriteBuf`] exists for `ino`. `truncate` (e.g. `O_TRUNC`, a `>`
+    /// redirect) resets it to empty + dirty without reading. Otherwise the
+    /// existing file content is preloaded once (dirty=false) so a later partial
+    /// write / append / truncate splices onto it instead of clobbering it.
+    /// Must not be called while holding the state lock (it `block_on`s a read).
+    fn ensure_wbuf(&self, ino: u64, truncate: bool) {
+        if truncate {
+            self.state
+                .lock()
+                .unwrap()
+                .wbuf
+                .insert(ino, WriteBuf { data: Vec::new(), dirty: true });
+            return;
+        }
+        let path = {
+            let st = self.state.lock().unwrap();
+            if st.wbuf.contains_key(&ino) {
+                return;
+            }
+            st.path_of(ino)
+        };
+        let data = match path {
+            Some(p) => self.rt.block_on(read_full(&self.vfs, &p)).unwrap_or_default(),
+            None => Vec::new(),
+        };
+        self.state
+            .lock()
+            .unwrap()
+            .wbuf
+            .entry(ino)
+            .or_insert(WriteBuf { data, dirty: false });
     }
 }
 
@@ -172,6 +216,14 @@ async fn read_path(vfs: &Vfs, path: &str, offset: u64, size: u64) -> anyhow::Res
     res.read_bytes(&vp, Some(offset..offset + size)).await
 }
 
+/// Read the whole current content of `path` (for read-modify-write preload).
+async fn read_full(vfs: &Vfs, path: &str) -> anyhow::Result<Vec<u8>> {
+    let (res, vp) = vfs
+        .route(path)
+        .ok_or_else(|| anyhow::anyhow!("no mount for {path}"))?;
+    res.read_bytes(&vp, None).await
+}
+
 async fn put_path(vfs: &Vfs, path: &str, data: Vec<u8>) -> anyhow::Result<()> {
     let (res, vp) = vfs
         .route(path)
@@ -216,7 +268,7 @@ impl Filesystem for VfsFs {
         let next = {
             let st = self.state.lock().unwrap();
             if let Some(buf) = st.wbuf.get(&ino) {
-                Next::Buffered(buf.len() as u64)
+                Next::Buffered(buf.data.len() as u64)
             } else if let Some(path) = st.path_of(ino) {
                 Next::Stat(path)
             } else {
@@ -256,15 +308,25 @@ impl Filesystem for VfsFs {
         reply: ReplyAttr,
     ) {
         let ino = ino.0;
-        // Only truncation matters for our write path (e.g. `>` redirect).
+        // Truncation (e.g. `>` redirect, or an explicit truncate(2)). Preserve
+        // the existing content up to the new length instead of zeroing it.
         if let Some(new_size) = size {
-            self.state
-                .lock()
-                .unwrap()
-                .wbuf
-                .entry(ino)
-                .or_default()
-                .resize(new_size as usize, 0);
+            if new_size == 0 {
+                self.state
+                    .lock()
+                    .unwrap()
+                    .wbuf
+                    .insert(ino, WriteBuf { data: Vec::new(), dirty: true });
+            } else {
+                self.ensure_wbuf(ino, false);
+                let mut st = self.state.lock().unwrap();
+                let wb = st
+                    .wbuf
+                    .entry(ino)
+                    .or_insert_with(|| WriteBuf { data: Vec::new(), dirty: false });
+                wb.data.resize(new_size as usize, 0);
+                wb.dirty = true;
+            }
             reply.attr(&TTL, &make_attr(ino, FileKind::File, new_size));
             return;
         }
@@ -276,7 +338,7 @@ impl Filesystem for VfsFs {
         let next = {
             let st = self.state.lock().unwrap();
             if let Some(buf) = st.wbuf.get(&ino) {
-                Next::Buffered(buf.len() as u64)
+                Next::Buffered(buf.data.len() as u64)
             } else if let Some(path) = st.path_of(ino) {
                 Next::Stat(path)
             } else {
@@ -299,7 +361,10 @@ impl Filesystem for VfsFs {
     fn open(&self, _req: &Request, ino: INodeNo, flags: OpenFlags, reply: ReplyOpen) {
         let write = flags.0 & (libc::O_WRONLY | libc::O_RDWR) != 0;
         if write {
-            self.state.lock().unwrap().wbuf.entry(ino.0).or_default();
+            // Preload existing content (unless O_TRUNC) so partial writes/appends
+            // splice onto it; an unwritten close stays non-dirty and isn't flushed.
+            let truncate = flags.0 & libc::O_TRUNC != 0;
+            self.ensure_wbuf(ino.0, truncate);
         }
         reply.opened(FileHandle(0), FopenFlags::empty());
     }
@@ -326,7 +391,8 @@ impl Filesystem for VfsFs {
         let ino = {
             let mut st = self.state.lock().unwrap();
             let ino = st.intern(&path);
-            st.wbuf.insert(ino, Vec::new());
+            // New file: empty + dirty so an immediate close still creates it.
+            st.wbuf.insert(ino, WriteBuf { data: Vec::new(), dirty: true });
             ino
         };
         reply.created(
@@ -360,9 +426,9 @@ impl Filesystem for VfsFs {
         let next = {
             let st = self.state.lock().unwrap();
             if let Some(buf) = st.wbuf.get(&ino) {
-                let start = (offset as usize).min(buf.len());
-                let end = (start + size as usize).min(buf.len());
-                Next::Buffered(buf[start..end].to_vec())
+                let start = (offset as usize).min(buf.data.len());
+                let end = (start + size as usize).min(buf.data.len());
+                Next::Buffered(buf.data[start..end].to_vec())
             } else if let Some(path) = st.path_of(ino) {
                 Next::Read(path)
             } else {
@@ -395,17 +461,24 @@ impl Filesystem for VfsFs {
         _lock_owner: Option<LockOwner>,
         reply: ReplyWrite,
     ) {
+        // Preload existing content first (no-op if already buffered) so a write
+        // at a non-zero offset / append doesn't NUL-fill the untouched bytes.
+        self.ensure_wbuf(ino.0, false);
         let mut st = self.state.lock().unwrap();
-        let buf = st.wbuf.entry(ino.0).or_default();
+        let wb = st
+            .wbuf
+            .entry(ino.0)
+            .or_insert_with(|| WriteBuf { data: Vec::new(), dirty: false });
         let off = offset as usize;
-        if off > buf.len() {
-            buf.resize(off, 0);
+        if off > wb.data.len() {
+            wb.data.resize(off, 0);
         }
         let end = off + data.len();
-        if end > buf.len() {
-            buf.resize(end, 0);
+        if end > wb.data.len() {
+            wb.data.resize(end, 0);
         }
-        buf[off..end].copy_from_slice(data);
+        wb.data[off..end].copy_from_slice(data);
+        wb.dirty = true;
         reply.written(data.len() as u32);
     }
 
@@ -433,18 +506,24 @@ impl Filesystem for VfsFs {
         let ino = ino.0;
         let taken = {
             let mut st = self.state.lock().unwrap();
-            st.wbuf.remove(&ino).map(|data| (data, st.path_of(ino)))
+            st.wbuf.remove(&ino).map(|wb| (wb, st.path_of(ino)))
         };
-        let Some((data, path)) = taken else {
+        let Some((wb, path)) = taken else {
             reply.ok();
             return;
         };
+        // Nothing was written/truncated — don't flush (would clobber a
+        // read-only/rendered file just because it was opened for writing).
+        if !wb.dirty {
+            reply.ok();
+            return;
+        }
         let Some(path) = path else {
             reply.error(Errno::ENOENT);
             return;
         };
         let vfs = self.vfs.clone();
-        match self.rt.block_on(put_path(&vfs, &path, data)) {
+        match self.rt.block_on(put_path(&vfs, &path, wb.data)) {
             Ok(()) => reply.ok(),
             Err(_) => reply.error(Errno::EIO),
         }

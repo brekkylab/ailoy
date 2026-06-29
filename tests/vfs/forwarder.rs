@@ -226,7 +226,8 @@ async fn vfs_static_forwarder_full() {
 
 /// Full filesystem access through the static dep-free forwarder: write a file to
 /// the S3 mount, read it back, then `rm` it (unlink) — all from a clean guest
-/// with no python/fuse3/apt. Proves write + unlink work over the forward path.
+/// with no python/fuse3/apt. Also covers the read-modify-write path (append +
+/// truncate must preserve existing content, not NUL-clobber it).
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "poc: write+rm through static forwarder on S3 (needs AWS creds + sandbox + cross-built binary)"]
 async fn vfs_static_forwarder_write_unlink() {
@@ -252,11 +253,15 @@ async fn vfs_static_forwarder_write_unlink() {
     let h = sandbox.get().await.expect("handle");
     launch_static_forwarder(&h, port, &tok).await;
     let f = format!("/mnt/vfs/s3/{fname}");
+    let af = format!("/mnt/vfs/s3/vfs-fwd-ap-{s}.txt");
     let script = format!(
         "printf 'rmcontent-{s}' > '{f}'; \
          echo \"WROTE=$(cat '{f}')\"; \
          rm '{f}' && echo RM_OK || echo RM_FAIL; \
-         (ls '{f}' >/dev/null 2>&1 && echo STILL_THERE || echo GONE)"
+         (ls '{f}' >/dev/null 2>&1 && echo STILL_THERE || echo GONE); \
+         printf 'AAAA' > '{af}'; printf 'BBBB' >> '{af}'; echo \"APPEND=$(cat '{af}')\"; \
+         (truncate -s 3 '{af}' 2>/dev/null && echo \"TRUNC=$(cat '{af}')\" || echo TRUNC=skip); \
+         rm '{af}'"
     );
     let out = h.exec_shell(script, Some(60)).await.expect("guest exec");
     println!("--- guest ---\n{}", out.stdout);
@@ -270,6 +275,18 @@ async fn vfs_static_forwarder_write_unlink() {
     );
     assert!(out.stdout.contains("RM_OK"), "rm (unlink) failed");
     assert!(out.stdout.contains("GONE"), "file still present after rm");
+    // C1: append must preserve the existing content (RMW), not NUL-clobber it.
+    assert!(
+        out.stdout.contains("APPEND=AAAABBBB"),
+        "append corrupted existing content (read-modify-write broken): {}",
+        out.stdout
+    );
+    // C2: truncate must keep the leading bytes (skip only if guest lacks truncate).
+    assert!(
+        out.stdout.contains("TRUNC=AAA") || out.stdout.contains("TRUNC=skip"),
+        "truncate did not preserve leading content: {}",
+        out.stdout
+    );
 }
 
 /// Large-file / chunked-read correctness through the static forwarder: write a
