@@ -621,7 +621,7 @@ async fn vfs_inspect_sandbox() {
     // Clear any stale instance from a prior run so we always boot fresh (see above).
     msb_rm(name);
 
-    let _agent = attach_mounted_agent(name).await;
+    let agent = attach_mounted_agent(name).await;
 
     println!("\n================ VFS INSPECT READY ================");
     println!("sandbox name : {name}");
@@ -631,10 +631,16 @@ async fn vfs_inspect_sandbox() {
     println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/s3'");
     println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/notion/pages'");
     println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/gdrive | head'");
-    println!("sleeping 1h — Ctrl-C to tear down (then: msb rm {name}).");
+    println!("Ctrl-C to tear down (cleans up the sandbox automatically).");
     println!("===================================================\n");
 
-    // `_agent` stays alive for the whole sleep, holding the VM + host forward
-    // server up; its Drop tears everything down on Ctrl-C.
-    tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+    // Hold the VM + host forward server up until Ctrl-C, then tear the sandbox
+    // down so it doesn't leak — a SIGINT-killed process would otherwise orphan
+    // the VM (its supervisor outlives the process). `tokio::signal::ctrl_c`
+    // intercepts the first Ctrl-C; cleanup runs, then the test returns.
+    let _ = tokio::signal::ctrl_c().await;
+    println!("\n[inspect] Ctrl-C — tearing down {name}…");
+    drop(agent); // AgentVfs Drop stops the VM + host forward server
+    msb_rm(name); // ensure it's stopped + removed (no orphan)
+    println!("[inspect] done.");
 }

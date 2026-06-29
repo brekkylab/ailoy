@@ -85,4 +85,4 @@ wreq-util = "2.2.6"
 axum = "0.8"
 dotenvy = "0.15"
 test-with = { version = "0.16.1", default-features = false, features = ["executable"] }
-tokio = { version = "1.0", features = ["net"] }
+tokio = { version = "1.0", features = ["net", "signal"] }
