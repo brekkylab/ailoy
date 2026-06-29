@@ -467,7 +467,12 @@ impl Filesystem for VfsFs {
             let truncate = flags.0 & libc::O_TRUNC != 0;
             self.ensure_wbuf(ino.0, truncate);
         }
-        reply.opened(FileHandle(0), FopenFlags::empty());
+        // direct_io: the kernel forwards reads straight through instead of
+        // clamping/zero-filling against the stat size. Workspace docs (gdrive)
+        // report a generous over-estimate size from stat to avoid a full export
+        // per `stat`; without direct_io the kernel would pad reads with zeros up
+        // to that size.
+        reply.opened(FileHandle(0), FopenFlags::FOPEN_DIRECT_IO);
     }
 
     fn create(
@@ -508,7 +513,7 @@ impl Filesystem for VfsFs {
             &make_attr(ino, FileKind::File, 0),
             Generation(0),
             FileHandle(0),
-            FopenFlags::empty(),
+            FopenFlags::FOPEN_DIRECT_IO,
         );
     }
 

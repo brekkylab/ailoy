@@ -18,6 +18,11 @@ const DOC_MIME: &str = "application/vnd.google-apps.document";
 const SHEET_MIME: &str = "application/vnd.google-apps.spreadsheet";
 const SLIDE_MIME: &str = "application/vnd.google-apps.presentation";
 const DIR_TTL: Duration = Duration::from_secs(10);
+/// Over-estimate reported by `stat` for an as-yet-unexported Workspace doc, so
+/// the kernel doesn't clamp reads short (it clamps at the reported size even
+/// under direct_io). Reads return the real bytes then empty at EOF, so this only
+/// needs to exceed any real export; 64 MiB covers Docs/Sheets/Slides JSON.
+const WORKSPACE_DOC_SENTINEL_SIZE: u64 = 64 * 1024 * 1024;
 
 const GDRIVE_PROMPT: &str = "\
 Google Drive (read + GDocs append). Mirrors the Drive folder hierarchy:
@@ -186,16 +191,21 @@ impl GDriveResource {
 
     async fn doc_size(&self, child: &Child) -> u64 {
         match child.kind {
-            // A Workspace doc's size must be its exported byte length: the guest
-            // kernel clamps reads at the reported size even under FUSE direct_io
-            // (verified — a 0 size truncates `cat`/`dd` to nothing), so reporting
-            // a cheap 0 would silently lose the file's contents. The export is
-            // cached by id in the accessor, so this is paid once per doc.
+            // Sizing a Workspace doc exactly means exporting it (its JSON length
+            // is unrelated to the Drive-reported size). Doing that in `stat`
+            // turns a single tab-completion / `ls -l` over a folder into one full
+            // export per doc — the storm that blocked the shell. Report the
+            // cached export length if we already fetched it, else a generous
+            // upper-bound sentinel, WITHOUT exporting. Reads run under FUSE
+            // direct_io: the kernel allows reads up to the reported size and the
+            // read path returns the real bytes then empty at EOF, so an
+            // over-estimate never truncates and `cat` stops at the real end.
+            // (A 0 here would instead clamp reads to nothing — verified.)
             k if k.is_workspace_doc() => self
-                .workspace_doc_bytes(child)
+                .accessor
+                .cached_workspace_len(&child.id)
                 .await
-                .map(|d| d.len() as u64)
-                .unwrap_or(0),
+                .unwrap_or(WORKSPACE_DOC_SENTINEL_SIZE),
             _ => child.size.unwrap_or(0),
         }
     }

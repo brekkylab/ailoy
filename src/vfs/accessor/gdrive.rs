@@ -250,6 +250,18 @@ impl GDriveAccessor {
         Ok(bytes)
     }
 
+    /// Byte length of an already-exported Workspace doc if it's cached — WITHOUT
+    /// triggering a network export. `stat` uses this so sizing a directory of
+    /// Workspace docs (tab-completion / `ls -l`) doesn't fetch every document.
+    pub async fn cached_workspace_len(&self, id: &str) -> Option<u64> {
+        let key = format!("{id}|json");
+        self.export_cache
+            .lock()
+            .await
+            .get(&key)
+            .map(|b| b.len() as u64)
+    }
+
     pub async fn docs_append(&self, document_id: &str, text: &str) -> anyhow::Result<Value> {
         let url = format!("{DOCS_API}/{document_id}:batchUpdate");
         let body = json!({
