@@ -122,7 +122,7 @@ impl Resource for NotionResource {
         match segs.as_slice() {
             [] | [_] => Ok(FileStat {
                 kind: FileKind::Dir,
-                size: 0,
+                ..Default::default()
             }),
             [p, rest @ ..] if p == "pages" && !rest.is_empty() => {
                 if rest.last().map(String::as_str) == Some("page.json") {
@@ -131,11 +131,19 @@ impl Resource for NotionResource {
                     Ok(FileStat {
                         kind: FileKind::File,
                         size,
+                        ..Default::default()
                     })
                 } else {
+                    // N1: don't blindly report a page dir as existing — verify the
+                    // page is real (render fails → ENOENT instead of a Dir whose
+                    // readdir later errors).
+                    let id = page_id(rest.last().unwrap());
+                    self.render_page_json(&id).await.map_err(|_| {
+                        anyhow::anyhow!("notion path not found: {}", path.as_str())
+                    })?;
                     Ok(FileStat {
                         kind: FileKind::Dir,
-                        size: 0,
+                        ..Default::default()
                     })
                 }
             }

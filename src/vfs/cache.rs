@@ -184,7 +184,7 @@ impl Resource for CachedResource {
             Some(e) if e.is_dir => {
                 return Ok(FileStat {
                     kind: FileKind::Dir,
-                    size: 0,
+                    ..Default::default()
                 });
             }
             // A file with a known (>0) size: serve it.
@@ -192,6 +192,7 @@ impl Resource for CachedResource {
                 return Ok(FileStat {
                     kind: FileKind::File,
                     size: e.size,
+                    ..Default::default()
                 });
             }
             // A file with size 0 is ambiguous: providers report 0 for sizes
@@ -216,6 +217,33 @@ impl Resource for CachedResource {
             // The path itself may have been a directory; drop its listing too.
             self.cache.invalidate_dir(path.as_str());
             self.cache.invalidate_parent(path.as_str());
+        }
+        r
+    }
+
+    async fn mkdir(&self, path: &VPath) -> anyhow::Result<()> {
+        let r = self.inner.mkdir(path).await;
+        if r.is_ok() {
+            self.cache.invalidate_parent(path.as_str());
+        }
+        r
+    }
+
+    async fn rmdir(&self, path: &VPath) -> anyhow::Result<()> {
+        let r = self.inner.rmdir(path).await;
+        if r.is_ok() {
+            self.cache.invalidate_dir(path.as_str());
+            self.cache.invalidate_parent(path.as_str());
+        }
+        r
+    }
+
+    async fn rename(&self, from: &VPath, to: &VPath) -> anyhow::Result<()> {
+        let r = self.inner.rename(from, to).await;
+        if r.is_ok() {
+            self.cache.invalidate_dir(from.as_str());
+            self.cache.invalidate_parent(from.as_str());
+            self.cache.invalidate_parent(to.as_str());
         }
         r
     }

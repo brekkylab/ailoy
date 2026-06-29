@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -8,6 +9,8 @@ const OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const DRIVE_FILES: &str = "https://www.googleapis.com/drive/v3/files";
 const DRIVE_DRIVES: &str = "https://www.googleapis.com/drive/v3/drives";
 const DOCS_API: &str = "https://docs.googleapis.com/v1/documents";
+const SHEETS_API: &str = "https://sheets.googleapis.com/v4/spreadsheets";
+const SLIDES_API: &str = "https://slides.googleapis.com/v1/presentations";
 const FILE_FIELDS: &str =
     "nextPageToken,files(id,name,mimeType,driveId,size,quotaBytesUsed,modifiedTime,parents)";
 
@@ -23,7 +26,9 @@ pub struct GDriveConfig {
 pub struct GDriveAccessor {
     client: reqwest::Client,
     config: GDriveConfig,
-    access_token: Mutex<Option<String>>,
+    /// Cached OAuth access token + its expiry. Refreshed proactively before
+    /// expiry and on a 401 (see [`Self::send_with_refresh`]).
+    access_token: Mutex<Option<(String, Instant)>>,
     /// Exported Google Doc/Sheet/Slide text (keyed by file id), shared by stat
     /// (size) and read so they share one network round trip.
     export_cache: Mutex<HashMap<String, Vec<u8>>>,
@@ -48,7 +53,11 @@ impl GDriveAccessor {
 
     async fn token(&self) -> anyhow::Result<String> {
         let mut guard = self.access_token.lock().await;
-        if let Some(t) = guard.as_ref() {
+        // Reuse a cached token until it's within 60s of expiry (proactive refresh
+        // avoids the "everything 401s after ~1h" failure).
+        if let Some((t, exp)) = guard.as_ref()
+            && *exp > Instant::now() + Duration::from_secs(60)
+        {
             return Ok(t.clone());
         }
         let resp = self
@@ -73,8 +82,32 @@ impl GDriveAccessor {
             .and_then(|t| t.as_str())
             .ok_or_else(|| anyhow::anyhow!("no access_token in response"))?
             .to_string();
-        *guard = Some(token.clone());
+        let expires_in = v.get("expires_in").and_then(|e| e.as_u64()).unwrap_or(3600);
+        *guard = Some((token.clone(), Instant::now() + Duration::from_secs(expires_in)));
         Ok(token)
+    }
+
+    /// Send a request built from the current access token; on 401 (expired or
+    /// revoked despite proactive refresh) drop the token, refresh, and retry once.
+    async fn send_with_refresh(
+        &self,
+        build: impl Fn(&str) -> reqwest::RequestBuilder,
+    ) -> anyhow::Result<reqwest::Response> {
+        let token = self.token().await?;
+        let resp = build(&token).send().await?;
+        if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(resp);
+        }
+        *self.access_token.lock().await = None;
+        let token = self.token().await?;
+        Ok(build(&token).send().await?)
+    }
+
+    /// Drop any cached exported text for `id` (all mimes) — call after a write
+    /// (docs-append) so a subsequent read/stat re-exports the new content.
+    pub async fn invalidate_export(&self, id: &str) {
+        let pfx = format!("{id}|");
+        self.export_cache.lock().await.retain(|k, _| !k.starts_with(&pfx));
     }
 
     /// List the immediate children of `folder_id` ("root" for My Drive root).
@@ -84,7 +117,6 @@ impl GDriveAccessor {
         folder_id: &str,
         drive_id: Option<&str>,
     ) -> anyhow::Result<Vec<Value>> {
-        let token = self.token().await?;
         let q = format!("'{folder_id}' in parents and trashed=false");
         let mut files = Vec::new();
         let mut page_token: Option<String> = None;
@@ -106,10 +138,7 @@ impl GDriveAccessor {
             }
             let url = reqwest::Url::parse_with_params(DRIVE_FILES, &params)?;
             let resp = self
-                .client
-                .get(url)
-                .bearer_auth(&token)
-                .send()
+                .send_with_refresh(|t| self.client.get(url.clone()).bearer_auth(t))
                 .await?
                 .error_for_status()?;
             let v: Value = resp.json().await?;
@@ -129,7 +158,6 @@ impl GDriveAccessor {
 
     /// Shared drives visible to the account (best-effort; needs scope).
     pub async fn list_shared_drives(&self) -> anyhow::Result<Vec<Value>> {
-        let token = self.token().await?;
         let mut drives = Vec::new();
         let mut page_token: Option<String> = None;
         loop {
@@ -142,10 +170,7 @@ impl GDriveAccessor {
             }
             let url = reqwest::Url::parse_with_params(DRIVE_DRIVES, &params)?;
             let resp = self
-                .client
-                .get(url)
-                .bearer_auth(&token)
-                .send()
+                .send_with_refresh(|t| self.client.get(url.clone()).bearer_auth(t))
                 .await?
                 .error_for_status()?;
             let v: Value = resp.json().await?;
@@ -164,64 +189,55 @@ impl GDriveAccessor {
     }
 
     pub async fn download(&self, id: &str) -> anyhow::Result<Vec<u8>> {
-        let token = self.token().await?;
+        let url = format!("{DRIVE_FILES}/{id}?alt=media&supportsAllDrives=true");
         let resp = self
-            .client
-            .get(format!(
-                "{DRIVE_FILES}/{id}?alt=media&supportsAllDrives=true"
-            ))
-            .bearer_auth(token)
-            .send()
+            .send_with_refresh(|t| self.client.get(&url).bearer_auth(t))
             .await?
             .error_for_status()?;
         Ok(resp.bytes().await?.to_vec())
     }
 
-    /// Export a Workspace doc as `mime` text (Docs/Slides use `text/plain`,
-    /// Sheets use `text/csv` — Google rejects `text/plain` for spreadsheets),
-    /// caching the result so stat (size) and a subsequent read share one round
-    /// trip. Keyed by id+mime.
-    pub async fn export_text(&self, id: &str, mime: &str) -> anyhow::Result<Vec<u8>> {
-        let key = format!("{id}|{mime}");
+    /// A Workspace doc's native API JSON (full document), mirroring mirage:
+    /// Docs `documents.get`, Sheets `spreadsheets.get`, Slides
+    /// `presentations.get`. Pretty-printed bytes are cached by id (shared by
+    /// stat-size and read, and across the kernel's chunked reads of one file).
+    /// `kind` is "sheet" / "slide" / anything-else (= doc).
+    pub async fn workspace_json(&self, id: &str, kind: &str) -> anyhow::Result<Vec<u8>> {
+        let key = format!("{id}|json");
         if let Some(cached) = self.export_cache.lock().await.get(&key) {
             return Ok(cached.clone());
         }
-        let token = self.token().await?;
-        let url = reqwest::Url::parse_with_params(
-            &format!("{DRIVE_FILES}/{id}/export"),
-            &[("mimeType", mime), ("supportsAllDrives", "true")],
-        )?;
+        let base = match kind {
+            "sheet" => SHEETS_API,
+            "slide" => SLIDES_API,
+            _ => DOCS_API,
+        };
+        let url = format!("{base}/{id}");
         let resp = self
-            .client
-            .get(url)
-            .bearer_auth(token)
-            .send()
+            .send_with_refresh(|t| self.client.get(&url).bearer_auth(t))
             .await?
             .error_for_status()?;
-        let data = resp.bytes().await?.to_vec();
-        self.export_cache.lock().await.insert(key, data.clone());
-        Ok(data)
+        let v: Value = resp.json().await?;
+        let bytes = serde_json::to_vec_pretty(&v)?;
+        self.export_cache.lock().await.insert(key, bytes.clone());
+        Ok(bytes)
     }
 
     pub async fn docs_append(&self, document_id: &str, text: &str) -> anyhow::Result<Value> {
-        let token = self.token().await?;
+        let url = format!("{DOCS_API}/{document_id}:batchUpdate");
         let body = json!({
             "requests": [{
                 "insertText": {"endOfSegmentLocation": {}, "text": text}
             }]
         });
         let resp = self
-            .client
-            .post(format!("{DOCS_API}/{document_id}:batchUpdate"))
-            .bearer_auth(token)
-            .json(&body)
-            .send()
+            .send_with_refresh(|t| self.client.post(&url).bearer_auth(t).json(&body))
             .await?;
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let text = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            anyhow::bail!("google docs batchUpdate {status}: {body}");
+            anyhow::bail!("google docs batchUpdate {status}: {text}");
         }
-        Ok(serde_json::from_str(&body).unwrap_or(Value::Null))
+        Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 }

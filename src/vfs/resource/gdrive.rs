@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::vfs::{
@@ -58,6 +58,10 @@ pub struct GDriveResource {
     /// Per-directory listing cache (folder path -> children), short TTL. Lets a
     /// path resolution / `ls` reuse a parent listing instead of re-querying.
     dir_cache: Mutex<HashMap<String, (Instant, Vec<Child>)>>,
+    /// Downloaded content of plain (non-Workspace) files, keyed by file id with
+    /// a short TTL — so the kernel's chunked reads of one file don't re-download
+    /// the whole object on every range request (was O(n²)).
+    content_cache: Mutex<HashMap<String, (Instant, Vec<u8>)>>,
 }
 
 impl GDriveResource {
@@ -65,7 +69,26 @@ impl GDriveResource {
         Ok(Self {
             accessor: GDriveAccessor::new(config)?,
             dir_cache: Mutex::new(HashMap::new()),
+            content_cache: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Download a plain file once and serve subsequent (chunked) reads from cache.
+    async fn cached_download(&self, id: &str) -> anyhow::Result<Vec<u8>> {
+        {
+            let c = self.content_cache.lock().await;
+            if let Some((at, data)) = c.get(id)
+                && at.elapsed() < DIR_TTL
+            {
+                return Ok(data.clone());
+            }
+        }
+        let data = self.accessor.download(id).await?;
+        self.content_cache
+            .lock()
+            .await
+            .insert(id.to_string(), (Instant::now(), data.clone()));
+        Ok(data)
     }
 
     /// List a directory's immediate children (cached). At the root, shared
@@ -110,6 +133,10 @@ impl GDriveResource {
             }
         }
 
+        // G5: two Drive files can share a name; disambiguate so every entry is
+        // reachable (readdir shows distinct names, resolve finds each one).
+        disambiguate(&mut children);
+
         self.dir_cache
             .lock()
             .await
@@ -141,18 +168,17 @@ impl GDriveResource {
             .ok_or_else(|| anyhow::anyhow!("gdrive path not found: {path}"))
     }
 
-    /// The exact bytes a workspace doc (Doc/Sheet/Slide) reads as: a JSON
-    /// envelope with the file id and its exported text. `read` and `stat` both
-    /// go through this so the reported size always matches the content.
+    /// The exact bytes a workspace doc (Doc/Sheet/Slide) reads as: its native
+    /// Google API JSON (`documents.get` / `spreadsheets.get` / `presentations.get`,
+    /// mirroring mirage). `read` and `stat` both go through this (cached in the
+    /// accessor) so the reported size always matches the content.
     async fn workspace_doc_bytes(&self, child: &Child) -> anyhow::Result<Vec<u8>> {
-        let text = self
-            .accessor
-            .export_text(&child.id, export_mime(child.kind))
-            .await?;
-        Ok(serde_json::to_vec_pretty(&json!({
-            "documentId": child.id,
-            "text": String::from_utf8_lossy(&text),
-        }))?)
+        let kind = match child.kind {
+            GKind::Sheet => "sheet",
+            GKind::Slide => "slide",
+            _ => "doc",
+        };
+        self.accessor.workspace_json(&child.id, kind).await
     }
 
     async fn doc_size(&self, child: &Child) -> u64 {
@@ -181,7 +207,7 @@ impl Resource for GDriveResource {
         let data = match child.kind {
             k if k.is_dir() => anyhow::bail!("is a directory: {}", path.as_str()),
             k if k.is_workspace_doc() => self.workspace_doc_bytes(&child).await?,
-            _ => self.accessor.download(&child.id).await?,
+            _ => self.cached_download(&child.id).await?,
         };
         match range {
             Some(r) => {
@@ -220,19 +246,20 @@ impl Resource for GDriveResource {
         if path.is_root() {
             return Ok(FileStat {
                 kind: FileKind::Dir,
-                size: 0,
+                ..Default::default()
             });
         }
         let child = self.resolve(path.as_str()).await?;
         if child.kind.is_dir() {
             return Ok(FileStat {
                 kind: FileKind::Dir,
-                size: 0,
+                ..Default::default()
             });
         }
         Ok(FileStat {
             kind: FileKind::File,
             size: self.doc_size(&child).await,
+            ..Default::default()
         })
     }
 
@@ -250,6 +277,9 @@ impl Resource for GDriveResource {
                     .and_then(|x| x.as_str())
                     .ok_or_else(|| anyhow::anyhow!("docs-append: missing text"))?;
                 let result = self.accessor.docs_append(doc_id, text).await?;
+                // G3: the doc changed — drop its cached export so a later
+                // read/stat re-fetches the new content/size.
+                self.accessor.invalidate_export(doc_id).await;
                 Ok(serde_json::to_vec(&result)?)
             }
             other => anyhow::bail!("unknown gdrive command: {other}"),
@@ -261,12 +291,23 @@ impl Resource for GDriveResource {
     }
 }
 
-/// Export MIME for a workspace doc: Sheets must use `text/csv` (Google rejects
-/// `text/plain` for spreadsheets); Docs and Slides use `text/plain`.
-fn export_mime(kind: GKind) -> &'static str {
-    match kind {
-        GKind::Sheet => "text/csv",
-        _ => "text/plain",
+/// Give every child a unique `vfs_name`: on a collision, append ` (2)`, ` (3)`,
+/// … so duplicate Drive names don't shadow each other in readdir/resolve.
+fn disambiguate(children: &mut [Child]) {
+    let mut seen: HashSet<String> = HashSet::new();
+    for c in children.iter_mut() {
+        if seen.insert(c.vfs_name.clone()) {
+            continue;
+        }
+        let mut n = 2;
+        loop {
+            let cand = format!("{} ({n})", c.vfs_name);
+            if seen.insert(cand.clone()) {
+                c.vfs_name = cand;
+                break;
+            }
+            n += 1;
+        }
     }
 }
 

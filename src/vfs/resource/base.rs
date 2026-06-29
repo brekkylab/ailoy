@@ -4,8 +4,9 @@ use async_trait::async_trait;
 
 use crate::vfs::path::VPath;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum FileKind {
+    #[default]
     File,
     Dir,
 }
@@ -17,10 +18,16 @@ pub struct DirEntry {
     pub size: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct FileStat {
     pub kind: FileKind,
     pub size: u64,
+    /// Last-modified time, if the backend reports one (S3 `LastModified`).
+    pub mtime: Option<std::time::SystemTime>,
+    /// Entity tag / content fingerprint, if available (S3 `ETag`).
+    pub etag: Option<String>,
+    /// Version id, if the backend is versioned (S3 `VersionId`).
+    pub version: Option<String>,
 }
 
 /// A mounted provider. One instance owns one set of credentials, so the same
@@ -41,6 +48,24 @@ pub trait Resource: Send + Sync {
     async fn unlink(&self, path: &VPath) -> anyhow::Result<()> {
         let _ = path;
         anyhow::bail!("unlink not supported by this resource")
+    }
+
+    /// Create a directory at `path`. Default: unsupported.
+    async fn mkdir(&self, path: &VPath) -> anyhow::Result<()> {
+        let _ = path;
+        anyhow::bail!("mkdir not supported by this resource")
+    }
+
+    /// Remove the directory (and its contents) at `path`. Default: unsupported.
+    async fn rmdir(&self, path: &VPath) -> anyhow::Result<()> {
+        let _ = path;
+        anyhow::bail!("rmdir not supported by this resource")
+    }
+
+    /// Rename/move `from` to `to`. Default: unsupported.
+    async fn rename(&self, from: &VPath, to: &VPath) -> anyhow::Result<()> {
+        let _ = (from, to);
+        anyhow::bail!("rename not supported by this resource")
     }
 
     /// Domain operation routed from a `/<mount>/.cmd/<name>` write

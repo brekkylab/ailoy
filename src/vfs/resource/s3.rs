@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use object_store::{
     Error as OsError, GetOptions, GetRange, ObjectStore, PutPayload, path::Path as OsPath,
 };
@@ -106,13 +107,16 @@ impl Resource for S3Resource {
         if path.is_root() {
             return Ok(FileStat {
                 kind: FileKind::Dir,
-                size: 0,
+                ..Default::default()
             });
         }
         match self.accessor.store.head(&self.os_path(path)).await {
             Ok(meta) => Ok(FileStat {
                 kind: FileKind::File,
                 size: meta.size,
+                mtime: Some(meta.last_modified.into()),
+                etag: meta.e_tag.clone(),
+                version: meta.version.clone(),
             }),
             Err(OsError::NotFound { .. }) => {
                 let res = self
@@ -125,7 +129,7 @@ impl Resource for S3Resource {
                 }
                 Ok(FileStat {
                     kind: FileKind::Dir,
-                    size: 0,
+                    ..Default::default()
                 })
             }
             Err(e) => Err(e.into()),
@@ -134,6 +138,35 @@ impl Resource for S3Resource {
 
     async fn unlink(&self, path: &VPath) -> anyhow::Result<()> {
         self.accessor.store.delete(&self.os_path(path)).await?;
+        Ok(())
+    }
+
+    async fn mkdir(&self, _path: &VPath) -> anyhow::Result<()> {
+        // Object stores have no real directories: a prefix exists implicitly once
+        // a key is written under it, and `object_store::Path` can't represent a
+        // trailing-slash marker. So mkdir is a no-op success (the dir appears as
+        // soon as something is written into it).
+        Ok(())
+    }
+
+    async fn rmdir(&self, path: &VPath) -> anyhow::Result<()> {
+        // Recursively delete everything under the prefix (mirrors mirage's
+        // prefix batch delete).
+        let prefix = self.list_prefix(path);
+        let mut stream = self.accessor.store.list(prefix.as_ref());
+        while let Some(item) = stream.next().await {
+            let meta = item?;
+            self.accessor.store.delete(&meta.location).await?;
+        }
+        Ok(())
+    }
+
+    async fn rename(&self, from: &VPath, to: &VPath) -> anyhow::Result<()> {
+        // S3 has no native rename; object_store does copy + delete.
+        self.accessor
+            .store
+            .rename(&self.os_path(from), &self.os_path(to))
+            .await?;
         Ok(())
     }
 
