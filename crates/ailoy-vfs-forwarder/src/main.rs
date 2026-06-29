@@ -5,7 +5,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::ffi::OsStr;
 use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -63,18 +63,48 @@ fn pct(s: &str) -> String {
     o
 }
 
+/// Resolve `host.microsandbox.internal:<port>` ONCE and cache it.
+///
+/// `to_socket_addrs` is itself unbounded and the lookup goes guest→host, so
+/// resolving per request means a degraded guest→host channel hangs *every* FUSE
+/// op forever at the resolve step (the symptom: `ls` on the mount never returns).
+/// The gateway address is stable for the VM's lifetime, so resolve it a single
+/// time — each attempt bounded by a watchdog thread, since `to_socket_addrs`
+/// can't be cancelled — and reuse the cached addr. Thereafter the only network
+/// wait is the bounded `connect_timeout` below, so a dead channel fails in ~8s
+/// (EIO) instead of hanging indefinitely.
+fn host_addr() -> std::io::Result<SocketAddr> {
+    static ADDR: OnceLock<SocketAddr> = OnceLock::new();
+    if let Some(a) = ADDR.get() {
+        return Ok(*a);
+    }
+    let hp = host_port();
+    for attempt in 0..6 {
+        let target = hp.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(target.to_socket_addrs().ok().and_then(|mut it| it.next()));
+        });
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(Some(a)) => return Ok(*ADDR.get_or_init(|| a)),
+            _ => diag(&format!("resolve {hp} attempt {attempt} failed/timed out")),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "resolve host timed out",
+    ))
+}
+
 /// Minimal HTTP/1.1 client over raw TCP. Returns (status, body).
 ///
 /// Bounded at every step so a host server that is gone/unreachable surfaces as a
 /// fast error instead of wedging the FUSE op (and any process touching the mount)
-/// indefinitely: name resolution and connect are capped, as are read/write.
+/// indefinitely: name resolution (cached + watchdog-bounded), connect, and
+/// read/write are all capped.
 fn http(method: &str, route: &str, query: &str, body: Option<&[u8]>) -> std::io::Result<(u16, Vec<u8>)> {
-    let hp = host_port();
-    diag(&format!("http {method} {route} -> resolve {hp}"));
-    let addr = hp
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "no addr"))?;
+    diag(&format!("http {method} {route} -> resolve"));
+    let addr = host_addr()?;
     diag(&format!("http {method} {route} -> connect {addr}"));
     let t = Instant::now();
     let mut s = TcpStream::connect_timeout(&addr, Duration::from_secs(8))?;
