@@ -169,12 +169,20 @@ async fn handle_conn(mut stream: TcpStream, vfs: Arc<Vfs>, token: String) -> any
             // for a normal write it returns `{"ok":true}`.
             write_bytes(&vfs, &path, body).await
         }
-        ("DELETE", "/unlink") => unlink_path(&vfs, &path).await.map(|_| b"{\"ok\":true}".to_vec()),
-        ("POST", "/mkdir") => mkdir_path(&vfs, &path).await.map(|_| b"{\"ok\":true}".to_vec()),
-        ("DELETE", "/rmdir") => rmdir_path(&vfs, &path).await.map(|_| b"{\"ok\":true}".to_vec()),
+        ("DELETE", "/unlink") => unlink_path(&vfs, &path)
+            .await
+            .map(|_| b"{\"ok\":true}".to_vec()),
+        ("POST", "/mkdir") => mkdir_path(&vfs, &path)
+            .await
+            .map(|_| b"{\"ok\":true}".to_vec()),
+        ("DELETE", "/rmdir") => rmdir_path(&vfs, &path)
+            .await
+            .map(|_| b"{\"ok\":true}".to_vec()),
         ("POST", "/rename") => {
             let to = params.get("to").cloned().unwrap_or_default();
-            rename_path(&vfs, &path, &to).await.map(|_| b"{\"ok\":true}".to_vec())
+            rename_path(&vfs, &path, &to)
+                .await
+                .map(|_| b"{\"ok\":true}".to_vec())
         }
         _ => return respond(&mut stream, 404, "text/plain", b"not found".to_vec()).await,
     };

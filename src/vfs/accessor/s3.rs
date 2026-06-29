@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
-use object_store::ClientOptions;
-use object_store::aws::{AmazonS3, AmazonS3Builder};
+use object_store::{
+    ClientOptions,
+    aws::{AmazonS3, AmazonS3Builder},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::vfs::path::VPath;

@@ -129,7 +129,11 @@ async fn vfs_repeated_forwarder_death_recovery() {
 
     let want = fx.len() as i64;
     drive_once(&mut agent).await; // initial mount
-    assert_eq!(msb_read_count(&name, &path), want, "initial mount read failed");
+    assert_eq!(
+        msb_read_count(&name, &path),
+        want,
+        "initial mount read failed"
+    );
 
     for round in 1..=3 {
         let _ = std::process::Command::new("msb")
@@ -309,7 +313,11 @@ async fn vfs_static_forwarder_write_unlink() {
         verify(&format!("/s3/vfs-fwd-mv-{s}.txt.x"), "MOVE").await,
         "rename did not copy content to the destination"
     );
-    assert!(out.stdout.contains("MKDIR_OK"), "mkdir failed: {}", out.stdout);
+    assert!(
+        out.stdout.contains("MKDIR_OK"),
+        "mkdir failed: {}",
+        out.stdout
+    );
     assert!(
         out.stdout.contains("RMDIR_OK") && out.stdout.contains("RD_GONE"),
         "rmdir did not remove the directory contents: {}",

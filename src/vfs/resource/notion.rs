@@ -58,7 +58,11 @@ impl NotionResource {
                 .and_then(|t| t.as_str())
                 .unwrap_or("untitled");
             let child_id = b.get("id").and_then(|i| i.as_str()).unwrap_or("");
-            out.push(dir(&format!("{}__{}", sanitize_name(child_title), child_id)));
+            out.push(dir(&format!(
+                "{}__{}",
+                sanitize_name(child_title),
+                child_id
+            )));
         }
         Ok(out)
     }
@@ -79,7 +83,9 @@ impl Resource for NotionResource {
         range: Option<std::ops::Range<u64>>,
     ) -> anyhow::Result<Vec<u8>> {
         let segs = segments(path);
-        if segs.len() >= 3 && segs[0] == "pages" && segs.last().map(String::as_str) == Some("page.json")
+        if segs.len() >= 3
+            && segs[0] == "pages"
+            && segs.last().map(String::as_str) == Some("page.json")
         {
             let id = page_id(&segs[segs.len() - 2]);
             let data = self.render_page_json(&id).await?;
@@ -138,9 +144,9 @@ impl Resource for NotionResource {
                     // page is real (render fails → ENOENT instead of a Dir whose
                     // readdir later errors).
                     let id = page_id(rest.last().unwrap());
-                    self.render_page_json(&id).await.map_err(|_| {
-                        anyhow::anyhow!("notion path not found: {}", path.as_str())
-                    })?;
+                    self.render_page_json(&id)
+                        .await
+                        .map_err(|_| anyhow::anyhow!("notion path not found: {}", path.as_str()))?;
                     Ok(FileStat {
                         kind: FileKind::Dir,
                         ..Default::default()
@@ -366,20 +372,23 @@ fn block_to_md(block: &Value, indent: usize) -> String {
         }
         "toggle" => format!("{prefix}<details><summary>{text}</summary></details>"),
         "code" => {
-            let language = content.get("language").and_then(|v| v.as_str()).unwrap_or("");
+            let language = content
+                .get("language")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             format!("```{language}\n{text}\n```")
         }
         "quote" => format!("{prefix}> {text}"),
         "callout" => {
             let icon = content.get("icon");
-            let emoji = if icon.and_then(|i| i.get("type")).and_then(|t| t.as_str()) == Some("emoji")
-            {
-                icon.and_then(|i| i.get("emoji"))
-                    .and_then(|e| e.as_str())
-                    .unwrap_or("")
-            } else {
-                ""
-            };
+            let emoji =
+                if icon.and_then(|i| i.get("type")).and_then(|t| t.as_str()) == Some("emoji") {
+                    icon.and_then(|i| i.get("emoji"))
+                        .and_then(|e| e.as_str())
+                        .unwrap_or("")
+                } else {
+                    ""
+                };
             format!("{prefix}> {emoji} {text}")
         }
         "divider" => "---".to_string(),
@@ -413,7 +422,10 @@ fn block_to_md(block: &Value, indent: usize) -> String {
             format!("[{label}]({url})")
         }
         "equation" => {
-            let expr = content.get("expression").and_then(|v| v.as_str()).unwrap_or("");
+            let expr = content
+                .get("expression")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             format!("$${expr}$$")
         }
         "table_of_contents" => "[TOC]".to_string(),

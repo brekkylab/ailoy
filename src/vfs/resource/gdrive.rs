@@ -1,5 +1,7 @@
-use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 use serde_json::Value;

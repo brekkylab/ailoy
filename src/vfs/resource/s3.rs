@@ -49,7 +49,12 @@ impl Resource for S3Resource {
             range: range.clone().map(GetRange::Bounded),
             ..Default::default()
         };
-        match self.accessor.store.get_opts(&self.os_path(path), opts).await {
+        match self
+            .accessor
+            .store
+            .get_opts(&self.os_path(path), opts)
+            .await
+        {
             Ok(res) => Ok(res.bytes().await?.to_vec()),
             Err(e) => {
                 // S3-2: a bounded range starting at/after EOF returns 416. Treat

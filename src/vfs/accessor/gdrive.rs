@@ -1,5 +1,7 @@
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -83,7 +85,10 @@ impl GDriveAccessor {
             .ok_or_else(|| anyhow::anyhow!("no access_token in response"))?
             .to_string();
         let expires_in = v.get("expires_in").and_then(|e| e.as_u64()).unwrap_or(3600);
-        *guard = Some((token.clone(), Instant::now() + Duration::from_secs(expires_in)));
+        *guard = Some((
+            token.clone(),
+            Instant::now() + Duration::from_secs(expires_in),
+        ));
         Ok(token)
     }
 
@@ -107,7 +112,10 @@ impl GDriveAccessor {
     /// (docs-append) so a subsequent read/stat re-exports the new content.
     pub async fn invalidate_export(&self, id: &str) {
         let pfx = format!("{id}|");
-        self.export_cache.lock().await.retain(|k, _| !k.starts_with(&pfx));
+        self.export_cache
+            .lock()
+            .await
+            .retain(|k, _| !k.starts_with(&pfx));
     }
 
     /// List the immediate children of `folder_id` ("root" for My Drive root).

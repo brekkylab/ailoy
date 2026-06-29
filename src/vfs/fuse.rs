@@ -7,9 +7,10 @@ use std::{
 };
 
 use fuser::{
-    BsdFileFlags, Config, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation,
-    INodeNo, LockOwner, MountOption, OpenFlags, RenameFlags, ReplyAttr, ReplyCreate, ReplyData,
-    ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, WriteFlags,
+    BsdFileFlags, Config, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags,
+    Generation, INodeNo, LockOwner, MountOption, OpenFlags, RenameFlags, ReplyAttr, ReplyCreate,
+    ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow,
+    WriteFlags,
 };
 use tokio::runtime::Handle;
 
@@ -52,9 +53,6 @@ impl VfsMount {
     }
 }
 
-/// Mutable bookkeeping. fuser 0.17 `Filesystem` methods take `&self`, so the
-/// inode<->path maps and pending write buffers live behind a `Mutex` (the host
-/// mount is single-threaded, so contention is nil).
 /// A pending write buffer for one open file. `data` holds the full file content
 /// being assembled (preloaded with the existing content so partial writes,
 /// appends, and truncates don't clobber the rest); `dirty` tracks whether
@@ -66,6 +64,9 @@ struct WriteBuf {
     dirty: bool,
 }
 
+/// Mutable bookkeeping. fuser 0.17 `Filesystem` methods take `&self`, so the
+/// inode<->path maps and pending write buffers live behind a `Mutex` (the host
+/// mount is single-threaded, so contention is nil).
 struct FsState {
     ino_path: HashMap<u64, String>,
     path_ino: HashMap<String, u64>,
@@ -127,11 +128,13 @@ impl VfsFs {
     /// Must not be called while holding the state lock (it `block_on`s a read).
     fn ensure_wbuf(&self, ino: u64, truncate: bool) {
         if truncate {
-            self.state
-                .lock()
-                .unwrap()
-                .wbuf
-                .insert(ino, WriteBuf { data: Vec::new(), dirty: true });
+            self.state.lock().unwrap().wbuf.insert(
+                ino,
+                WriteBuf {
+                    data: Vec::new(),
+                    dirty: true,
+                },
+            );
             return;
         }
         let path = {
@@ -142,7 +145,10 @@ impl VfsFs {
             st.path_of(ino)
         };
         let data = match path {
-            Some(p) => self.rt.block_on(read_full(&self.vfs, &p)).unwrap_or_default(),
+            Some(p) => self
+                .rt
+                .block_on(read_full(&self.vfs, &p))
+                .unwrap_or_default(),
             None => Vec::new(),
         };
         self.state
@@ -384,18 +390,20 @@ impl Filesystem for VfsFs {
         // the existing content up to the new length instead of zeroing it.
         if let Some(new_size) = size {
             if new_size == 0 {
-                self.state
-                    .lock()
-                    .unwrap()
-                    .wbuf
-                    .insert(ino, WriteBuf { data: Vec::new(), dirty: true });
+                self.state.lock().unwrap().wbuf.insert(
+                    ino,
+                    WriteBuf {
+                        data: Vec::new(),
+                        dirty: true,
+                    },
+                );
             } else {
                 self.ensure_wbuf(ino, false);
                 let mut st = self.state.lock().unwrap();
-                let wb = st
-                    .wbuf
-                    .entry(ino)
-                    .or_insert_with(|| WriteBuf { data: Vec::new(), dirty: false });
+                let wb = st.wbuf.entry(ino).or_insert_with(|| WriteBuf {
+                    data: Vec::new(),
+                    dirty: false,
+                });
                 wb.data.resize(new_size as usize, 0);
                 wb.dirty = true;
             }
@@ -464,7 +472,13 @@ impl Filesystem for VfsFs {
             let mut st = self.state.lock().unwrap();
             let ino = st.intern(&path);
             // New file: empty + dirty so an immediate close still creates it.
-            st.wbuf.insert(ino, WriteBuf { data: Vec::new(), dirty: true });
+            st.wbuf.insert(
+                ino,
+                WriteBuf {
+                    data: Vec::new(),
+                    dirty: true,
+                },
+            );
             ino
         };
         reply.created(
@@ -518,7 +532,10 @@ impl Filesystem for VfsFs {
             Next::NotFound => reply.error(Errno::ENOENT),
             Next::Read(path) => {
                 let vfs = self.vfs.clone();
-                match self.rt.block_on(read_path(&vfs, &path, offset, size as u64)) {
+                match self
+                    .rt
+                    .block_on(read_path(&vfs, &path, offset, size as u64))
+                {
                     Ok(data) => reply.data(&data),
                     Err(_) => reply.error(Errno::EIO),
                 }
@@ -543,10 +560,10 @@ impl Filesystem for VfsFs {
         // at a non-zero offset / append doesn't NUL-fill the untouched bytes.
         self.ensure_wbuf(ino.0, false);
         let mut st = self.state.lock().unwrap();
-        let wb = st
-            .wbuf
-            .entry(ino.0)
-            .or_insert_with(|| WriteBuf { data: Vec::new(), dirty: false });
+        let wb = st.wbuf.entry(ino.0).or_insert_with(|| WriteBuf {
+            data: Vec::new(),
+            dirty: false,
+        });
         let off = offset as usize;
         if off > wb.data.len() {
             wb.data.resize(off, 0);

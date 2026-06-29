@@ -4,10 +4,12 @@
 //! `ls -la`) costs no provider round trips. [`CachedResource`] wraps a provider
 //! [`Resource`] so both FUSE frontends benefit transparently.
 
-use std::collections::HashMap;
-use std::ops::Range;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    ops::Range,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 
@@ -111,7 +113,9 @@ impl IndexCache {
             child_keys.push(full);
         }
         inner.children.insert(path.to_string(), child_keys);
-        inner.expiry.insert(path.to_string(), Instant::now() + self.ttl);
+        inner
+            .expiry
+            .insert(path.to_string(), Instant::now() + self.ttl);
     }
 
     fn invalidate_dir(&self, path: &str) {
@@ -293,10 +297,7 @@ mod tests {
         let c = IndexCache::new(Duration::from_secs(600));
         c.set_dir(
             "/",
-            &[
-                de("a.txt", FileKind::File, 10),
-                de("sub", FileKind::Dir, 0),
-            ],
+            &[de("a.txt", FileKind::File, 10), de("sub", FileKind::Dir, 0)],
         );
         // stat fast-path
         let a = c.get("/a.txt").unwrap();
