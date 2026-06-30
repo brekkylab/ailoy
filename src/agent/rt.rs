@@ -528,6 +528,14 @@ impl Agent {
                         yield AgentEvent::Delta(delta);
                     }
                 }
+                // If the stream ended without a terminal finish_reason (clean
+                // EOF, provider quirk), treat end-of-stream as a Stop so a
+                // partial-but-usable turn commits instead of aborting the loop
+                // with "finish_reason not specified". finish() still promotes
+                // this to ToolCall if the turn produced tool calls.
+                if acc.finish_reason.is_none() && acc.delta.role.is_some() {
+                    acc.finish_reason = Some(FinishReason::Stop {});
+                }
                 let mut output = acc.finish()?;
 
                 // Capture token usage for next iteration's truncation check.
