@@ -83,4 +83,14 @@ pub trait Resource: Send + Sync {
     fn prompt(&self) -> &str {
         ""
     }
+
+    /// Whether `readdir` returns a *complete* listing of a directory. When true,
+    /// a fresh parent listing that lacks a name proves that name doesn't exist,
+    /// so the cache can answer `stat` of a missing child with ENOENT without a
+    /// network probe (negative caching). Gmail caps listings (newest N messages
+    /// per label/date), so a date/message absent from a listing may still exist
+    /// and must be probed — it returns `false`. Default: `true`.
+    fn listings_complete(&self) -> bool {
+        true
+    }
 }

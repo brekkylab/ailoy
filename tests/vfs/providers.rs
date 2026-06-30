@@ -522,3 +522,389 @@ async fn gdrive_read_and_command_smoke() {
         }
     }
 }
+
+/// Direct smoke test of the Gmail adapter: list labels, descend a label into its
+/// date dirs, read an email `.gmail.json` (asserting the processed shape),
+/// and best-effort read one attachment. A scope/enablement problem (the token
+/// lacking Gmail access) is reported and treated as a soft skip — it's an
+/// external-config issue, not an adapter bug.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs GOOGLE_* refresh token with a Gmail scope (gmail.modify)"]
+async fn gmail_labels_dates_and_read_smoke() {
+    dotenvy::dotenv().ok();
+    if !has_mount("/gmail") {
+        eprintln!("no google creds — skipping");
+        return;
+    }
+    let vfs = Vfs::from_config(all_vfs()).unwrap();
+
+    // Labels (root readdir). A 403 here means the refresh token has no Gmail
+    // scope — surface it clearly and skip (not an adapter failure).
+    let (res, vp) = vfs.route("/gmail").expect("route gmail");
+    let labels = match res.readdir(&vp).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!(
+                "NOTE: gmail readdir failed — likely the refresh token lacks a \
+                 Gmail scope (re-issue with gmail.modify): {e}"
+            );
+            return;
+        }
+    };
+    let names: Vec<&str> = labels.iter().map(|e| e.name.as_str()).collect();
+    println!("gmail labels: {names:?}");
+    assert!(
+        labels.iter().all(|e| e.kind == FileKind::Dir),
+        "labels must be directories"
+    );
+    assert!(
+        names.contains(&"INBOX"),
+        "expected the INBOX system label, got {names:?}"
+    );
+
+    // Dates within INBOX.
+    let (res, vp) = vfs.route("/gmail/INBOX").expect("route INBOX");
+    let dates = res.readdir(&vp).await.expect("readdir INBOX");
+    println!(
+        "INBOX dates ({}, newest first): {:?}",
+        dates.len(),
+        dates.iter().take(5).map(|e| &e.name).collect::<Vec<_>>()
+    );
+    let Some(date) = dates.first() else {
+        println!("NOTE: INBOX is empty — read/attachment checks skipped");
+        return;
+    };
+    // Date dirs must be yyyy-mm-dd and sorted newest-first.
+    assert!(
+        date.name.len() == 10 && date.name.as_bytes()[4] == b'-',
+        "date dir should be yyyy-mm-dd, got {}",
+        date.name
+    );
+
+    // Messages within that date.
+    let (res, vp) = vfs
+        .route(&format!("/gmail/INBOX/{}", date.name))
+        .expect("route date");
+    let entries = res.readdir(&vp).await.expect("readdir date");
+    let msg = entries
+        .iter()
+        .find(|e| e.name.ends_with(".gmail.json"))
+        .expect("a date dir must contain at least one .gmail.json");
+    println!("first message file: {}", msg.name);
+
+    // Read the email JSON and assert the processed schema.
+    let (res, vp) = vfs
+        .route(&format!("/gmail/INBOX/{}/{}", date.name, msg.name))
+        .expect("route msg");
+    let data = res.read_bytes(&vp, None).await.expect("read .gmail.json");
+    let email: serde_json::Value = serde_json::from_slice(&data).expect("valid email JSON");
+    for k in [
+        "id",
+        "thread_id",
+        "from",
+        "to",
+        "cc",
+        "subject",
+        "date",
+        "body_text",
+        "snippet",
+        "labels",
+        "attachments",
+    ] {
+        assert!(email.get(k).is_some(), ".gmail.json missing key `{k}`");
+    }
+    assert!(
+        email.get("from").and_then(|f| f.get("email")).is_some(),
+        "from must be {{name,email}}"
+    );
+    println!(
+        "read email: from={:?} subject={:?}",
+        email["from"]["email"], email["subject"]
+    );
+
+    // A ranged read must slice (direct_io reads aren't clamped to stat size).
+    let head = res.read_bytes(&vp, Some(0..1)).await.expect("ranged read");
+    assert_eq!(head, b"{", "email JSON should start with '{{'");
+
+    // Best-effort: if this message has attachments, list + read the first.
+    let atts = email["attachments"].as_array().cloned().unwrap_or_default();
+    if !atts.is_empty() {
+        let dir = msg.name.trim_end_matches(".gmail.json");
+        let (res, vp) = vfs
+            .route(&format!("/gmail/INBOX/{}/{}", date.name, dir))
+            .expect("route attach dir");
+        let files = res.readdir(&vp).await.expect("readdir attachments");
+        assert!(!files.is_empty(), "attachment dir should list files");
+        let f = &files[0];
+        let (res, vp) = vfs
+            .route(&format!("/gmail/INBOX/{}/{}/{}", date.name, dir, f.name))
+            .expect("route attachment");
+        let bytes = res.read_bytes(&vp, None).await.expect("read attachment");
+        println!(
+            "attachment {} -> {} bytes (stat size {})",
+            f.name,
+            bytes.len(),
+            f.size
+        );
+        assert_eq!(
+            bytes.len() as u64,
+            f.size,
+            "attachment bytes should match its stat size"
+        );
+    } else {
+        println!("(message has no attachments — attachment read skipped)");
+    }
+}
+
+/// Direct smoke test of the Gmail `.cmd/send` control write. Gated on
+/// `GMAIL_TEST_TO` so it never emails a random address; sends a one-off message
+/// and asserts the API returns a message id.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: sends a real email — needs GOOGLE_* (gmail.send/modify) + GMAIL_TEST_TO"]
+async fn gmail_command_send_smoke() {
+    dotenvy::dotenv().ok();
+    if !has_mount("/gmail") {
+        eprintln!("no google creds — skipping");
+        return;
+    }
+    let Ok(to) = std::env::var("GMAIL_TEST_TO") else {
+        eprintln!("set GMAIL_TEST_TO=you@example.com to exercise gmail send — skipping");
+        return;
+    };
+    let vfs = Vfs::from_config(all_vfs()).unwrap();
+    let (res, _) = vfs.route("/gmail/.cmd/send").expect("route .cmd/send");
+    let body = serde_json::json!({
+        "to": to,
+        "subject": format!("ailoy vfs gmail smoke {}", stamp()),
+        "body": "Sent by the ailoy vfs gmail adapter test.\n",
+    });
+    match res.command("send", body.to_string().as_bytes()).await {
+        Ok(result) => {
+            let v: serde_json::Value = serde_json::from_slice(&result).unwrap();
+            let id = v.get("id").and_then(|x| x.as_str());
+            assert!(id.is_some(), "send response should carry a message id: {v}");
+            println!(
+                "gmail send OK -> id={:?} thread={:?}",
+                id,
+                v.get("threadId")
+            );
+        }
+        Err(e) => {
+            println!(
+                "NOTE: gmail send reached the API but failed (token gmail.send \
+                 scope / enablement): {e}"
+            );
+        }
+    }
+}
+
+/// Live test of the Gmail reply / reply-all / forward control writes. Seeds a
+/// message to `GMAIL_TEST_TO` (use your own address), then drives each threaded
+/// send off that seed's id and asserts the API returns an id — and that reply /
+/// reply-all stay in the seed's thread. Sends real email; gated on GMAIL_TEST_TO.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: sends real emails — needs GOOGLE_* (gmail.modify) + GMAIL_TEST_TO"]
+async fn gmail_reply_forward_smoke() {
+    dotenvy::dotenv().ok();
+    if !has_mount("/gmail") {
+        eprintln!("no google creds — skipping");
+        return;
+    }
+    let Ok(to) = std::env::var("GMAIL_TEST_TO") else {
+        eprintln!("set GMAIL_TEST_TO=you@example.com to exercise reply/forward — skipping");
+        return;
+    };
+    let vfs = Vfs::from_config(all_vfs()).unwrap();
+    let (res, _) = vfs.route("/gmail/.cmd/send").expect("route gmail .cmd");
+
+    let cmd = |op: &'static str, body: serde_json::Value| {
+        let res = res.clone();
+        async move {
+            let out = res
+                .command(op, body.to_string().as_bytes())
+                .await
+                .unwrap_or_else(|e| panic!("{op} failed: {e}"));
+            serde_json::from_slice::<serde_json::Value>(&out).expect("json result")
+        }
+    };
+
+    // Seed a message we own, so reply/forward have a real original to thread off.
+    let seed = cmd(
+        "send",
+        serde_json::json!({
+            "to": to,
+            "subject": format!("ailoy reply/fwd seed {}", stamp()),
+            "body": "seed for reply/forward smoke\n",
+        }),
+    )
+    .await;
+    let seed_id = seed["id"].as_str().expect("seed id").to_string();
+    let seed_thread = seed["threadId"].as_str().map(String::from);
+    println!("seed id={seed_id} thread={seed_thread:?}");
+
+    // reply — must carry an id and stay in the seed's thread.
+    let r = cmd(
+        "reply",
+        serde_json::json!({"message_id": seed_id, "body": "live reply\n"}),
+    )
+    .await;
+    assert!(r["id"].as_str().is_some(), "reply must return an id: {r}");
+    if let Some(t) = &seed_thread {
+        assert_eq!(
+            r["threadId"].as_str(),
+            Some(t.as_str()),
+            "reply must stay in-thread"
+        );
+    }
+    println!("reply id={:?} thread={:?}", r["id"], r["threadId"]);
+
+    // reply-all — same threading guarantee.
+    let ra = cmd(
+        "reply-all",
+        serde_json::json!({"message_id": seed_id, "body": "live reply-all\n"}),
+    )
+    .await;
+    assert!(
+        ra["id"].as_str().is_some(),
+        "reply-all must return an id: {ra}"
+    );
+    if let Some(t) = &seed_thread {
+        assert_eq!(
+            ra["threadId"].as_str(),
+            Some(t.as_str()),
+            "reply-all must stay in-thread"
+        );
+    }
+    println!("reply-all id={:?} thread={:?}", ra["id"], ra["threadId"]);
+
+    // forward — a fresh message (new thread) to the recipient.
+    let f = cmd(
+        "forward",
+        serde_json::json!({"message_id": seed_id, "to": to}),
+    )
+    .await;
+    assert!(f["id"].as_str().is_some(), "forward must return an id: {f}");
+    println!("forward id={:?} thread={:?}", f["id"], f["threadId"]);
+    println!("gmail reply / reply-all / forward OK ✅");
+}
+
+/// Regression: Gmail listings are capped (newest 50), so a date dir absent from
+/// the label-level listing must still be reachable. Reproduces the host-mount
+/// flow — list the parent (populating the cache), then `stat`/`readdir` an older
+/// date — which previously hit the cache's negative-ENOENT shortcut and failed
+/// with "No such file or directory". A far-past date keeps this independent of
+/// the live mailbox's contents.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs GOOGLE_* with a Gmail scope (gmail.modify)"]
+async fn gmail_capped_listing_does_not_hide_older_dates() {
+    dotenvy::dotenv().ok();
+    if !has_mount("/gmail") {
+        eprintln!("no google creds — skipping");
+        return;
+    }
+    let vfs = Vfs::from_config(all_vfs()).unwrap();
+
+    // Populate the cache exactly like `ls /gmail/INBOX` does (capped listing).
+    let (res, vp) = vfs.route("/gmail/INBOX").expect("route INBOX");
+    if let Err(e) = res.readdir(&vp).await {
+        eprintln!("NOTE: gmail readdir failed (token Gmail scope?): {e} — skipping");
+        return;
+    }
+
+    // A date not in that capped listing must NOT be negative-cached as absent:
+    // stat must resolve it as a directory (the mount's `lookup` step), and
+    // readdir must succeed (date-narrowed query), not ENOENT.
+    let (res, vp) = vfs
+        .route("/gmail/INBOX/2020-01-01")
+        .expect("route old date");
+    let st = res
+        .stat(&vp)
+        .await
+        .expect("stat of an older date dir must not be negative-cached to ENOENT");
+    assert_eq!(st.kind, FileKind::Dir, "a valid date path is a directory");
+    // The date-narrowed listing resolves (likely empty for a far-past day).
+    let entries = res
+        .readdir(&vp)
+        .await
+        .expect("readdir of an older date dir");
+    println!(
+        "/gmail/INBOX/2020-01-01 reachable after capped INBOX listing: {} entries",
+        entries.len()
+    );
+}
+
+/// Once an older date dir has been visited via `ls <label>/<date>` and turned
+/// out to have mail, it should be folded into the (capped) label listing on the
+/// next `ls <label>` — incrementally, and so tab-completion can offer it. Uses
+/// the same Vfs instance so the cache is shared, mirroring a live shell session.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs GOOGLE_* with a Gmail scope (gmail.modify)"]
+async fn gmail_visited_dates_fold_into_label_listing() {
+    dotenvy::dotenv().ok();
+    if !has_mount("/gmail") {
+        eprintln!("no google creds — skipping");
+        return;
+    }
+    let vfs = Vfs::from_config(all_vfs()).unwrap();
+    let inbox_dates = || {
+        let vfs = &vfs;
+        async move {
+            let (res, vp) = vfs.route("/gmail/INBOX").unwrap();
+            res.readdir(&vp)
+                .await
+                .map(|e| e.into_iter().map(|d| d.name).collect::<Vec<_>>())
+        }
+    };
+
+    let before = match inbox_dates().await {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("NOTE: gmail readdir failed (token Gmail scope?): {e} — skipping");
+            return;
+        }
+    };
+    println!("INBOX before: {before:?}");
+
+    // Find an older date (not already shown) that has mail, and visit it.
+    let candidates = [
+        "2026-06-01",
+        "2026-05-15",
+        "2026-05-01",
+        "2026-04-15",
+        "2026-04-01",
+        "2026-03-01",
+    ];
+    let mut visited: Option<String> = None;
+    for d in candidates {
+        if before.iter().any(|x| x == d) {
+            continue;
+        }
+        let (res, vp) = vfs.route(&format!("/gmail/INBOX/{d}")).unwrap();
+        let msgs = res
+            .readdir(&vp)
+            .await
+            .map(|e| e.iter().filter(|x| x.name.ends_with(".gmail.json")).count())
+            .unwrap_or(0);
+        if msgs > 0 {
+            println!("visited older date {d} -> {msgs} message(s)");
+            visited = Some(d.to_string());
+            break;
+        }
+    }
+    let Some(d) = visited else {
+        println!("no older date with mail among candidates — skipping incremental assert");
+        return;
+    };
+
+    // Re-list INBOX: the visited older date must now be folded in.
+    let after = inbox_dates().await.expect("readdir INBOX again");
+    println!("INBOX after: {after:?}");
+    assert!(
+        after.contains(&d),
+        "visited older date {d} should now appear in the INBOX listing: {after:?}"
+    );
+    assert!(
+        after.len() > before.len() || before.contains(&d),
+        "listing should have grown to include {d}"
+    );
+}

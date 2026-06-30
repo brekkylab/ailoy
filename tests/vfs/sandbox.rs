@@ -603,10 +603,9 @@ async fn vfs_cmd_write_through_forwarder() {
 }
 
 /// Holds a NAMED sandbox (`ailoy-vfs-inspect`) with every configured provider
-/// mounted under /mnt/vfs, so you can poke it from another terminal:
+/// mounted under /mnt/vfs, so you can poke it from another terminal (the test
+/// prints one `ls` hint per configured mount on startup, e.g.):
 ///   msb exec ailoy-vfs-inspect -- sh -c 'ls /mnt/vfs/s3'
-///   msb exec ailoy-vfs-inspect -- sh -c 'ls /mnt/vfs/notion/pages'
-///   msb exec ailoy-vfs-inspect -- sh -c 'ls /mnt/vfs/gdrive | head'
 ///
 /// Starts clean before booting: a VM from a prior run can outlive its process
 /// (the sandbox supervisor survives a non-graceful exit), and the fixed name
@@ -628,26 +627,53 @@ async fn vfs_inspect_sandbox() {
     // Clear any stale instance from a prior run so we always boot fresh (see above).
     msb_rm(name);
 
-    let agent = attach_mounted_agent(name).await;
+    // Install the Ctrl-C teardown BEFORE the (slow) boot, so even a Ctrl-C during
+    // setup tears the VM down. The VM is hosted by a separate `msb sandbox`
+    // supervisor that outlives this process, so cleanup must run `msb stop`+`rm`.
+    // That takes ~10-18s; we detach it into its own process group and do NOT wait,
+    // so a second Ctrl-C (or this process being killed) cannot abort it mid-way —
+    // it completes independently. A non-detached, in-process teardown was the leak.
+    tokio::spawn({
+        let name = name.to_string();
+        async move {
+            let _ = tokio::signal::ctrl_c().await;
+            eprintln!("\n[inspect] Ctrl-C — tearing down {name} (detached; ~15s)…");
+            use std::os::unix::process::CommandExt;
+            let _ = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!(
+                    "msb stop {name} >/dev/null 2>&1; msb rm {name} >/dev/null 2>&1"
+                ))
+                .process_group(0) // own group: tty Ctrl-C cannot kill it
+                .spawn(); // not awaited: survives this process exiting
+            std::process::exit(130);
+        }
+    });
 
+    let _agent = attach_mounted_agent(name).await;
+
+    let prefixes = mount_prefixes();
     println!("\n================ VFS INSPECT READY ================");
     println!("sandbox name : {name}");
-    println!("guest mounts : /mnt/vfs/{{s3,notion,gdrive}} (configured providers)");
+    println!(
+        "guest mounts : {} (configured providers)",
+        prefixes
+            .iter()
+            .map(|p| format!("/mnt/vfs{p}"))
+            .collect::<Vec<_>>()
+            .join("  ")
+    );
     println!("inspect from another terminal:");
     println!("  msb exec {name} -- sh -c 'ls -la /mnt/vfs'");
-    println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/s3'");
-    println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/notion/pages'");
-    println!("  msb exec {name} -- sh -c 'ls /mnt/vfs/gdrive | head'");
-    println!("Ctrl-C to tear down (cleans up the sandbox automatically).");
+    for p in &prefixes {
+        println!("  msb exec {name} -- sh -c 'ls /mnt/vfs{p}'");
+    }
+    println!(
+        "Ctrl-C to tear down (detached cleanup — the VM is removed even if you Ctrl-C again)."
+    );
     println!("===================================================\n");
 
-    // Hold the VM + host forward server up until Ctrl-C, then tear the sandbox
-    // down so it doesn't leak — a SIGINT-killed process would otherwise orphan
-    // the VM (its supervisor outlives the process). `tokio::signal::ctrl_c`
-    // intercepts the first Ctrl-C; cleanup runs, then the test returns.
-    let _ = tokio::signal::ctrl_c().await;
-    println!("\n[inspect] Ctrl-C — tearing down {name}…");
-    drop(agent); // AgentVfs Drop stops the VM + host forward server
-    msb_rm(name); // ensure it's stopped + removed (no orphan)
-    println!("[inspect] done.");
+    // Hold the VM + host forward server up; Ctrl-C is handled by the detached
+    // teardown task installed above.
+    std::future::pending::<()>().await;
 }

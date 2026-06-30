@@ -6,10 +6,10 @@ use crate::{
     runenv::RunEnv,
     vfs::{
         VfsMount,
-        accessor::{GDriveConfig, NotionConfig, S3Config},
+        accessor::{GDriveConfig, GmailConfig, NotionConfig, S3Config},
         cache::CachedResource,
         path::VPath,
-        resource::{GDriveResource, NotionResource, Resource, S3Resource},
+        resource::{GDriveResource, GmailResource, NotionResource, Resource, S3Resource},
     },
 };
 
@@ -19,6 +19,7 @@ pub enum ProviderConfig {
     S3(S3Config),
     Notion(NotionConfig),
     GDrive(GDriveConfig),
+    Gmail(GmailConfig),
 }
 
 /// One mount: a virtual top-level prefix bound to a provider config. The same
@@ -77,6 +78,7 @@ impl Vfs {
                 ProviderConfig::S3(c) => Arc::new(S3Resource::new(&c)?),
                 ProviderConfig::Notion(c) => Arc::new(NotionResource::new(&c)?),
                 ProviderConfig::GDrive(c) => Arc::new(GDriveResource::new(&c)?),
+                ProviderConfig::Gmail(c) => Arc::new(GmailResource::new(&c)?),
             };
             // Wrap every provider in the metadata index cache so `stat` after a
             // `readdir` (e.g. `ls -la`) is served from memory in both frontends.

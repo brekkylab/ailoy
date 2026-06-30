@@ -182,8 +182,20 @@ impl Resource for CachedResource {
         if let Some(entries) = self.cache.list_dir_entries(path.as_str()) {
             return Ok(entries);
         }
+        // Incremental discovery for incomplete-listing providers (gmail): if we
+        // just resolved a child its parent's (capped) listing didn't include,
+        // drop the parent listing so the next readdir re-runs and folds it in
+        // (the provider remembers visited entries). Checked before set_dir,
+        // which would otherwise mark this path as listed.
+        let discovered = !self.inner.listings_complete()
+            && !path.is_root()
+            && self.cache.is_listed(parent_of(path.as_str()))
+            && self.cache.get(path.as_str()).is_none();
         let entries = self.inner.readdir(path).await?;
         self.cache.set_dir(path.as_str(), &entries);
+        if discovered {
+            self.cache.invalidate_dir(parent_of(path.as_str()));
+        }
         Ok(entries)
     }
 
@@ -213,8 +225,13 @@ impl Resource for CachedResource {
             Some(_) => return self.inner.stat(path).await,
             None => {
                 // Negative cache: a fresh parent listing that lacks this path
-                // proves it does not exist — skip the network probe.
-                if !path.is_root() && self.cache.is_listed(parent_of(key)) {
+                // proves it does not exist — skip the network probe. Only valid
+                // when the provider's listings are complete; gmail caps them, so
+                // a missing child may still exist and must be probed.
+                if !path.is_root()
+                    && self.inner.listings_complete()
+                    && self.cache.is_listed(parent_of(key))
+                {
                     anyhow::bail!("not found: {key}");
                 }
             }
@@ -271,6 +288,10 @@ impl Resource for CachedResource {
 
     fn prompt(&self) -> &str {
         self.inner.prompt()
+    }
+
+    fn listings_complete(&self) -> bool {
+        self.inner.listings_complete()
     }
 }
 

@@ -78,13 +78,21 @@ async fn vfs_inspect_host() {
 
     println!("\n================ VFS INSPECT (HOST FUSE) ================");
     println!("host mount   : {mount}");
-    println!("mounts       : {mount}/{{s3,notion,gdrive}}");
+    let prefixes = mount_prefixes();
+    println!(
+        "mounts       : {}",
+        prefixes
+            .iter()
+            .map(|p| format!("{mount}{p}"))
+            .collect::<Vec<_>>()
+            .join("  ")
+    );
     println!("inspect from another terminal (plain host shell, no sandbox):");
     println!("  mount | grep -i fuse");
     println!("  ls -la {mount}");
-    println!("  ls {mount}/s3");
-    println!("  ls {mount}/notion/pages");
-    println!("  ls {mount}/gdrive | head");
+    for p in &prefixes {
+        println!("  ls {mount}{p}");
+    }
     println!("sleeping 1h. Ctrl-C this process when done, then unmount:");
     println!("  umount {mount}   # or: diskutil unmount {mount}");
     println!("========================================================\n");

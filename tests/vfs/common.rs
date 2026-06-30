@@ -171,6 +171,16 @@ pub fn all_vfs() -> VfsConfig {
         mounts.push(MountSpec {
             prefix: "/gdrive".into(),
             provider: ProviderConfig::GDrive(ailoy::vfs::GDriveConfig {
+                client_id: client_id.clone(),
+                client_secret: client_secret.clone(),
+                refresh_token: refresh_token.clone(),
+            }),
+        });
+        // Gmail shares the same Google OAuth creds; needs a token whose scope
+        // covers Gmail (e.g. gmail.modify).
+        mounts.push(MountSpec {
+            prefix: "/gmail".into(),
+            provider: ProviderConfig::Gmail(ailoy::vfs::GmailConfig {
                 client_id,
                 client_secret,
                 refresh_token,
@@ -180,10 +190,18 @@ pub fn all_vfs() -> VfsConfig {
     VfsConfig { mounts }
 }
 
-/// Whether a mount prefix ("/s3", "/notion", "/gdrive") is configured in the
-/// current environment — lets a test skip a provider it has no creds for.
+/// Whether a mount prefix ("/s3", "/notion", "/gdrive", "/gmail") is configured
+/// in the current environment — lets a test skip a provider it has no creds for.
 pub fn has_mount(prefix: &str) -> bool {
     all_vfs().mounts.iter().any(|m| m.prefix == prefix)
+}
+
+/// The configured mount prefixes (e.g. `["/s3", "/notion", "/gdrive", "/gmail"]`)
+/// for the current environment, in config order. Lets the inspector hints list
+/// exactly the providers that are actually mounted, derived from [`all_vfs`]
+/// instead of a hardcoded set.
+pub fn mount_prefixes() -> Vec<String> {
+    all_vfs().mounts.iter().map(|m| m.prefix.clone()).collect()
 }
 
 pub fn tail(s: &str, n: usize) -> String {
@@ -201,7 +219,9 @@ pub fn msb_rm(name: &str) {
     let _ = std::process::Command::new("msb")
         .args(["stop", name])
         .status();
-    let _ = std::process::Command::new("msb").args(["rm", name]).status();
+    let _ = std::process::Command::new("msb")
+        .args(["rm", name])
+        .status();
 }
 
 /// Run a shell script in the guest via `msb exec` (60s bound); return stdout.
@@ -302,6 +322,9 @@ pub async fn launch_static_forwarder(h: &RunEnvHandle, port: u16, tok: &str) {
          for _ in $(seq 1 40); do grep -q ' /mnt/vfs ' /proc/mounts && break; sleep 0.25; done; \
          mount | grep -q /mnt/vfs && echo MOUNTED || echo NOT_MOUNTED"
     );
-    let out = h.exec_shell(launch, Some(60)).await.expect("launch forwarder");
+    let out = h
+        .exec_shell(launch, Some(60))
+        .await
+        .expect("launch forwarder");
     println!("launch: {}", out.stdout.trim());
 }
