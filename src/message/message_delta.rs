@@ -160,12 +160,17 @@ impl Delta for MessageDelta {
         // Assumes the provider streams calls *sequentially* — all fragments of
         // one call before the next — with the call `id` on each call's first
         // fragment; continuation fragments have `id = None` and merge into the
-        // last call. True for OpenAI and Anthropic. A backend that interleaves
-        // calls by `index`, or omits the id on a new call's first fragment,
-        // would misroute argument fragments into the wrong call (the
-        // `tool_calls[].index` field is currently ignored). If that ever
-        // happens, carry `index` through `PartDelta::Function` and match on it
-        // here instead of comparing against `last()`.
+        // last call. Holds for OpenAI and Anthropic today, and in practice for
+        // the OpenAI-compatible backends (DeepSeek / Kimi / Grok).
+        //
+        // KNOWN LIMITATION: this relies on arrival order, but the documented
+        // contract for OpenAI-compatible streaming is to concatenate arguments
+        // by the `tool_calls[].index` field — which is currently ignored here.
+        // A backend is spec-permitted to interleave parallel calls by `index`
+        // (or to omit the id on a new call's first fragment); either would
+        // misroute argument fragments into the wrong call. If that surfaces,
+        // carry `index` through `PartDelta::Function` and match on it here
+        // instead of comparing against `last()`.
         for part_incoming in other.tool_calls {
             if let Some(part_last) = tool_calls.last() {
                 match (part_last, &part_incoming) {
