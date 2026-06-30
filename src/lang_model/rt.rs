@@ -133,7 +133,9 @@ impl LangModel {
     /// Streaming counterpart to [`run`](Self::run): requests an SSE response and
     /// yields one [`MessageDeltaOutput`] per incremental update. Callers
     /// accumulate the deltas (via [`Delta::accumulate`]) to build the final
-    /// message. The stream ends after the delta carrying a `finish_reason`.
+    /// message. The stream ends when the response body ends (after the terminal
+    /// SSE event), not at the first `finish_reason` — some providers send usage
+    /// in a final chunk after it.
     pub fn run_stream(
         &self,
         messages: &[Message],
