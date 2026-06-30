@@ -3,7 +3,8 @@ use std::ops::Range;
 use async_trait::async_trait;
 use futures::StreamExt;
 use object_store::{
-    Error as OsError, GetOptions, GetRange, ObjectStore, PutPayload, path::Path as OsPath,
+    Error as OsError, GetOptions, GetRange, ObjectStore, ObjectStoreExt, PutPayload,
+    path::Path as OsPath,
 };
 
 use crate::vfs::{
