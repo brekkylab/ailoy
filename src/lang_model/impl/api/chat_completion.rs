@@ -310,10 +310,17 @@ impl super::StreamUnmarshal for ChatCompletionUnmarshal {
 
         let mut delta = MessageDelta::new();
 
-        // role: present only on the first chunk.
-        if let Some(role) = choice.pointer("/delta/role").and_then(|v| v.as_str()) {
-            delta = delta.with_role(role.parse::<Role>().unwrap_or(Role::Assistant));
-        }
+        // role: usually present only on the first chunk. Default to Assistant
+        // when a chunk omits it (some OpenAI-compatible backends do), mirroring
+        // the non-streaming `unmarshal` default — otherwise a role-less stream
+        // accumulates to a message with no role and `finish()` bails with
+        // "Role not specified".
+        let role = choice
+            .pointer("/delta/role")
+            .and_then(|v| v.as_str())
+            .map(|r| r.parse::<Role>().unwrap_or(Role::Assistant))
+            .unwrap_or(Role::Assistant);
+        delta = delta.with_role(role);
 
         // content: incremental text (empty on the first chunk, null on the last).
         if let Some(text) = choice.pointer("/delta/content").and_then(|v| v.as_str())
