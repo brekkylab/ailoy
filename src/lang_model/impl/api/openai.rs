@@ -339,9 +339,6 @@ impl super::StreamUnmarshal for OpenAIUnmarshal {
                         function: PartDeltaFunction::WithStringArgs { name, arguments },
                     }]);
             }
-            // Terminal: reuse the full-response parser on the embedded `response`
-            // for finish_reason + usage. Its content is dropped — already
-            // streamed by the delta events above.
             // Terminal success/partial: reuse the full-response parser for
             // finish_reason + usage; streamed content is dropped (already sent).
             "response.completed" | "response.incomplete" => {
