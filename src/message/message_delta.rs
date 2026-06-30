@@ -155,7 +155,17 @@ impl Delta for MessageDelta {
             }
         }
 
-        // Merge tool calls
+        // Merge tool calls.
+        //
+        // Assumes the provider streams calls *sequentially* — all fragments of
+        // one call before the next — with the call `id` on each call's first
+        // fragment; continuation fragments have `id = None` and merge into the
+        // last call. True for OpenAI and Anthropic. A backend that interleaves
+        // calls by `index`, or omits the id on a new call's first fragment,
+        // would misroute argument fragments into the wrong call (the
+        // `tool_calls[].index` field is currently ignored). If that ever
+        // happens, carry `index` through `PartDelta::Function` and match on it
+        // here instead of comparing against `last()`.
         for part_incoming in other.tool_calls {
             if let Some(part_last) = tool_calls.last() {
                 match (part_last, &part_incoming) {
