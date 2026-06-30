@@ -407,7 +407,7 @@ impl super::StreamUnmarshal for GeminiUnmarshal {
             return Ok(None);
         };
 
-        let mut finish_reason = candidate
+        let finish_reason = candidate
             .pointer("/finishReason")
             .and_then(|v| v.as_str())
             .map(Self::parse_finish_reason);
@@ -419,11 +419,11 @@ impl super::StreamUnmarshal for GeminiUnmarshal {
             _ => parse_candidate_content(&candidate)?,
         };
 
-        // Gemini reports "STOP" even for tool calls; adjust when present.
-        if !delta.tool_calls.is_empty() && matches!(finish_reason, Some(FinishReason::Stop {})) {
-            finish_reason = Some(FinishReason::ToolCall {});
-        }
-
+        // NOTE: Gemini reports "STOP" even for tool calls, and can split the
+        // functionCall part and the terminal STOP across separate SSE chunks
+        // (2.5 Pro / 3.x), so neither chunk alone carries both. The
+        // STOP→ToolCall promotion therefore can't be done per chunk — it lives
+        // in `MessageDeltaOutput::finish()`, on the fully accumulated message.
         let usage = Self::parse_usage(&val);
 
         Ok(Some(MessageDeltaOutput {
@@ -612,10 +612,10 @@ mod tests {
         let inputs = [
             r#"{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"location":"Paris"}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":6}}"#,
         ];
-        let out = accumulate_stream(&inputs);
-        assert_eq!(out.finish_reason, Some(FinishReason::ToolCall {}));
-        let msg = out.finish().unwrap().message;
-        let tool_calls = msg.tool_calls.expect("expected tool_calls");
+        // STOP is promoted to ToolCall on the finished message, not per chunk.
+        let finished = accumulate_stream(&inputs).finish().unwrap();
+        assert_eq!(finished.finish_reason, FinishReason::ToolCall {});
+        let tool_calls = finished.message.tool_calls.expect("expected tool_calls");
         assert_eq!(tool_calls.len(), 1);
         let (id, name, args) = tool_calls[0]
             .as_function()
@@ -626,6 +626,27 @@ mod tests {
             args.pointer("/location").and_then(|v| v.as_str()),
             Some("Paris")
         );
+    }
+
+    #[test]
+    fn test_unmarshal_event_tool_call_split_stream() {
+        // Gemini 2.5 Pro / 3.x can deliver the functionCall part and the
+        // terminal `finishReason: STOP` in *separate* SSE chunks. Neither chunk
+        // alone carries both, so the STOP→ToolCall promotion must happen on the
+        // accumulated message (in finish()), not per chunk — otherwise the turn
+        // looks like a plain Stop and the tool call is silently dropped.
+        let inputs = [
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"location":"Paris"}}}]}}]}"#,
+            r#"{"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":6}}"#,
+        ];
+        let finished = accumulate_stream(&inputs).finish().unwrap();
+        assert_eq!(finished.finish_reason, FinishReason::ToolCall {});
+        let tool_calls = finished.message.tool_calls.expect("expected tool_calls");
+        assert_eq!(tool_calls.len(), 1);
+        let (_, name, _) = tool_calls[0]
+            .as_function()
+            .expect("expected a function call");
+        assert_eq!(name, "get_weather");
     }
 
     /// End-to-end: `run_stream` over Gemini `:streamGenerateContent?alt=sse`

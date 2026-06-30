@@ -322,9 +322,20 @@ impl Delta for MessageDeltaOutput {
 
     fn finish(self) -> anyhow::Result<Self::Item> {
         let message = self.delta.finish()?;
-        let finish_reason = self
+        let mut finish_reason = self
             .finish_reason
             .ok_or_else(|| anyhow::anyhow!("finish_reason not specified"))?;
+        // A turn that produced tool calls is a tool-call turn, even if the
+        // provider reported a plain Stop. Gemini can split the functionCall part
+        // and the terminal `finishReason: STOP` across separate SSE chunks (2.5
+        // Pro / 3.x): neither chunk alone carries both, so a per-chunk fix can't
+        // see it. Promote here on the fully accumulated message instead — a
+        // no-op for OpenAI/Anthropic, which already report ToolCall.
+        if matches!(finish_reason, FinishReason::Stop {})
+            && message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty())
+        {
+            finish_reason = FinishReason::ToolCall {};
+        }
         Ok(MessageOutput {
             message,
             finish_reason,
