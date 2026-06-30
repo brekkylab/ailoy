@@ -342,7 +342,9 @@ impl super::StreamUnmarshal for OpenAIUnmarshal {
             // Terminal: reuse the full-response parser on the embedded `response`
             // for finish_reason + usage. Its content is dropped — already
             // streamed by the delta events above.
-            "response.completed" | "response.incomplete" | "response.failed" => {
+            // Terminal success/partial: reuse the full-response parser for
+            // finish_reason + usage; streamed content is dropped (already sent).
+            "response.completed" | "response.incomplete" => {
                 let Some(resp) = val.pointer("/response") else {
                     return Ok(None);
                 };
@@ -353,9 +355,19 @@ impl super::StreamUnmarshal for OpenAIUnmarshal {
                     usage: parsed.usage,
                 }));
             }
+            // A failed response carries its reason in `response.error`; surface
+            // it instead of silently finishing with no finish_reason.
+            "response.failed" => {
+                let msg = val
+                    .pointer("/response/error/message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("response failed");
+                anyhow::bail!("OpenAI Responses failed: {msg}");
+            }
             "error" => {
                 let msg = val
                     .pointer("/message")
+                    .or_else(|| val.pointer("/error/message"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown error");
                 anyhow::bail!("OpenAI Responses stream error: {msg}");
