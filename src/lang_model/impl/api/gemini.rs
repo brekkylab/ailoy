@@ -412,12 +412,11 @@ impl super::StreamUnmarshal for GeminiUnmarshal {
             .and_then(|v| v.as_str())
             .map(Self::parse_finish_reason);
 
-        // Content is present on text/tool chunks; a finish-only chunk may omit
-        // it. Treat absence (or a refusal) as an empty delta.
         let delta = match (&finish_reason, candidate.pointer("/content")) {
-            // Finish-only or refusal chunk may omit content; still set the role
-            // so a stream whose only/first chunk is finish-only doesn't
-            // accumulate to a role-less message that makes `finish()` bail.
+            // A finish-only or refusal chunk may omit content. Still set the role
+            // (candidates are always model output) so a stream whose only/first
+            // chunk is finish-only doesn't accumulate to a role-less message that
+            // makes `finish()` bail.
             (Some(FinishReason::Refusal { .. }), _) | (_, None) => {
                 MessageDelta::new().with_role(Role::Assistant)
             }
