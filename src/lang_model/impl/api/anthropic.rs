@@ -334,6 +334,8 @@ impl AnthropicUnmarshal {
 /// - `content_block_delta`: a text / thinking / signature / tool-args fragment
 /// - `message_delta`: `stop_reason` + final usage (output tokens)
 /// - `ping` / `content_block_stop` / `message_stop`: no delta → `Ok(None)`
+/// - `error`: fails with the server-reported error type + message
+/// - any other (future) type: ignored → `Ok(None)`
 impl super::StreamUnmarshal for AnthropicUnmarshal {
     fn unmarshal_event(&self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;
@@ -404,7 +406,25 @@ impl super::StreamUnmarshal for AnthropicUnmarshal {
             }
             // Control events carry no delta.
             "ping" | "content_block_stop" | "message_stop" => return Ok(None),
-            other => bail!("unknown Anthropic stream event type: {other}"),
+            // Mid-stream error (e.g. `overloaded_error`, rate limit). Surface the
+            // server's own type + message rather than a generic "unknown event".
+            "error" => {
+                let err_type = val
+                    .pointer("/error/type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let message = val
+                    .pointer("/error/message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(no message)");
+                bail!("Anthropic stream error ({err_type}): {message}");
+            }
+            // Unknown / future event types carry no delta we understand; skip
+            // them rather than aborting an otherwise-complete stream.
+            other => {
+                log::debug!("ignoring unknown Anthropic stream event type: {other}");
+                return Ok(None);
+            }
         }
 
         Ok(Some(MessageDeltaOutput {
@@ -648,6 +668,25 @@ mod tests {
         assert_eq!(msg.role, Role::Assistant);
         assert_eq!(msg.contents.len(), 1);
         assert_eq!(msg.contents[0].as_text(), Some("Hello world!"));
+    }
+
+    #[test]
+    fn test_unmarshal_event_error_surfaces_message() {
+        // A mid-stream `error` event must fail with the server's own type +
+        // message, not a generic "unknown event type".
+        let u = AnthropicUnmarshal;
+        let event = r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
+        let err = u.unmarshal_event(event).unwrap_err().to_string();
+        assert!(err.contains("overloaded_error"), "got: {err}");
+        assert!(err.contains("Overloaded"), "got: {err}");
+    }
+
+    #[test]
+    fn test_unmarshal_event_unknown_type_is_ignored() {
+        // An unknown / future event type is skipped (no delta), not fatal.
+        let u = AnthropicUnmarshal;
+        let event = r#"{"type":"some_future_event","foo":"bar"}"#;
+        assert!(u.unmarshal_event(event).unwrap().is_none());
     }
 
     #[test]
