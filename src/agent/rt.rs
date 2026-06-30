@@ -439,6 +439,10 @@ impl Agent {
             self.ensure_files_materialised().await?;
 
             self.state.history.push(query);
+            // See run_stream: pop the dangling query if the turn fails before its
+            // assistant message commits, so the reused agent doesn't later push
+            // two consecutive User messages.
+            let mut committed = false;
 
             loop {
                 // Truncation check based on previous call's token usage.
@@ -447,10 +451,19 @@ impl Agent {
                         cm.truncate_history(&mut self.state.history);
                     }
 
-                let mut output = self
+                let mut output = match self
                     .model
                     .run(&self.state.history, &self.tool_descs, &self.model_options)
-                    .await?;
+                    .await
+                {
+                    Ok(o) => o,
+                    Err(e) => {
+                        if !committed {
+                            self.state.history.pop();
+                        }
+                        Err(e)?
+                    }
+                };
 
                 // Capture token usage for next iteration's truncation check.
                 if let Some(u) = &output.usage {
@@ -459,6 +472,7 @@ impl Agent {
 
                 output.depth = Some(0);
                 self.state.history.push(output.message.clone());
+                committed = true;
                 self.stamp_source_agent(&mut output);
 
                 let tool_calls = match &output.finish_reason {
@@ -505,6 +519,10 @@ impl Agent {
             self.ensure_files_materialised().await?;
 
             self.state.history.push(query);
+            // If a turn fails before its assistant message commits, pop the
+            // dangling user query so the reused agent's next run doesn't push a
+            // second consecutive User message (which most providers reject).
+            let mut committed = false;
 
             loop {
                 // Truncation check based on previous call's token usage.
@@ -523,20 +541,43 @@ impl Agent {
                         &self.model_options,
                     );
                     while let Some(item) = delta_stream.next().await {
-                        let delta = item?;
-                        acc = acc.accumulate(delta.clone())?;
+                        let delta = match item {
+                            Ok(d) => d,
+                            Err(e) => {
+                                if !committed {
+                                    self.state.history.pop();
+                                }
+                                Err(e)?
+                            }
+                        };
+                        acc = match acc.accumulate(delta.clone()) {
+                            Ok(a) => a,
+                            Err(e) => {
+                                if !committed {
+                                    self.state.history.pop();
+                                }
+                                Err(e)?
+                            }
+                        };
                         yield AgentEvent::Delta(delta);
                     }
                 }
-                // If the stream ended without a terminal finish_reason (clean
-                // EOF, provider quirk), treat end-of-stream as a Stop so a
-                // partial-but-usable turn commits instead of aborting the loop
-                // with "finish_reason not specified". finish() still promotes
-                // this to ToolCall if the turn produced tool calls.
+                // Stream ended without a terminal finish_reason (clean EOF /
+                // provider quirk): treat it as Stop so a partial-but-usable turn
+                // commits instead of aborting. finish() promotes to ToolCall if
+                // tool calls were produced.
                 if acc.finish_reason.is_none() && acc.delta.role.is_some() {
                     acc.finish_reason = Some(FinishReason::Stop {});
                 }
-                let mut output = acc.finish()?;
+                let mut output = match acc.finish() {
+                    Ok(o) => o,
+                    Err(e) => {
+                        if !committed {
+                            self.state.history.pop();
+                        }
+                        Err(e)?
+                    }
+                };
 
                 // Capture token usage for next iteration's truncation check.
                 if let Some(u) = &output.usage {
@@ -545,6 +586,7 @@ impl Agent {
 
                 output.depth = Some(0);
                 self.state.history.push(output.message.clone());
+                committed = true;
                 self.stamp_source_agent(&mut output);
 
                 let tool_calls = match &output.finish_reason {
@@ -658,6 +700,63 @@ mod tests {
         assert!(!final_text.is_empty());
         // The agent accumulates the same deltas, so the streamed text must match.
         assert_eq!(delta_text, final_text);
+    }
+
+    /// A model whose endpoint refuses connection, so the first model call fails
+    /// deterministically and offline (no API key needed).
+    fn unreachable_agent() -> Agent {
+        use crate::lang_model::LangModelAPISchema;
+        let mut provider = AgentProvider::new();
+        provider.models.insert_api(
+            "test/*".into(),
+            LangModelAPISchema::ChatCompletion,
+            url::Url::parse("http://127.0.0.1:1/").unwrap(),
+            None,
+        );
+        Agent::try_with_provider(AgentSpec::new("test/model"), &provider).unwrap()
+    }
+
+    /// A first model call that fails must roll the just-pushed user query back
+    /// out of history. Otherwise the reused agent would start its next run with
+    /// the query still dangling at the tail and push a second consecutive User
+    /// message, which most providers reject.
+    #[tokio::test]
+    async fn test_run_stream_rolls_back_query_on_failure() {
+        let mut agent = unreachable_agent();
+        let query = Message::new(Role::User).with_contents([Part::text("hi")]);
+        let mut errored = false;
+        {
+            let mut strm = agent.run_stream(query);
+            while let Some(ev) = strm.next().await {
+                errored |= ev.is_err();
+            }
+        }
+        assert!(errored, "expected the failed model call to surface an error");
+        assert!(
+            agent.get_history().is_empty(),
+            "dangling query not rolled back: {:?}",
+            agent.get_history()
+        );
+    }
+
+    /// Same rollback guarantee for the non-streaming `run`.
+    #[tokio::test]
+    async fn test_run_rolls_back_query_on_failure() {
+        let mut agent = unreachable_agent();
+        let query = Message::new(Role::User).with_contents([Part::text("hi")]);
+        let mut errored = false;
+        {
+            let mut strm = agent.run(query);
+            while let Some(ev) = strm.next().await {
+                errored |= ev.is_err();
+            }
+        }
+        assert!(errored, "expected the failed model call to surface an error");
+        assert!(
+            agent.get_history().is_empty(),
+            "dangling query not rolled back: {:?}",
+            agent.get_history()
+        );
     }
 
     /// Verifies that the agent calls the temperature tool and returns a final answer.
