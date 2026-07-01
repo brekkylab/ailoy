@@ -167,9 +167,13 @@ impl Delta for MessageDelta {
         // contract for OpenAI-compatible streaming is to concatenate arguments
         // by the `tool_calls[].index` field — which is currently ignored here.
         // A backend is spec-permitted to interleave parallel calls by `index`
-        // (or to omit the id on a new call's first fragment); either would
-        // misroute argument fragments into the wrong call. If that surfaces,
-        // carry `index` through `PartDelta::Function` and match on it here
+        // (or to omit the id on a new call's first fragment). That doesn't just
+        // misroute fragments: every continuation lands on `last()`, so one call
+        // ends with empty arguments and another accumulates concatenated JSON
+        // fragments that are no longer valid JSON — which finish() rejects (an
+        // error now, previously a panic). Not reachable with current providers
+        // (OpenAI sends parallel calls sequentially). Full correctness needs
+        // carrying `index` through `PartDelta::Function` and matching on it here
         // instead of comparing against `last()`.
         for part_incoming in other.tool_calls {
             if let Some(part_last) = tool_calls.last() {
