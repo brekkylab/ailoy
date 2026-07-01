@@ -7,7 +7,7 @@ pub use ailoy::{
     agent::{Agent, AgentBuilder, AgentProvider},
     lang_model::LangModelProvider,
     message::{Message, Part, Role},
-    runenv::{RunEnv, RunEnvHandle, SandboxConfig, SandboxNetwork},
+    runenv::{RunEnv, RunEnvHandle, SandboxConfig},
     vfs::{FileKind, MountSpec, ProviderConfig, S3Config, Vfs, VfsConfig},
 };
 pub use futures::StreamExt;
@@ -242,7 +242,6 @@ pub async fn attach_mounted_agent(name: &str) -> Agent {
     let sandbox = RunEnv::sandbox(SandboxConfig {
         name: Some(name.into()),
         persist: true,
-        network: SandboxNetwork::Host,
         ..Default::default()
     })
     .await

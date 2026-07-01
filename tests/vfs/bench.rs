@@ -60,7 +60,6 @@ async fn vfs_forward_overhead_bench() {
 
     // ---- Bring up the sandbox + in-guest forwarder ----
     let sandbox = RunEnv::sandbox(SandboxConfig {
-        network: SandboxNetwork::Host,
         ..Default::default()
     })
     .await
@@ -178,7 +177,6 @@ async fn vfs_provider_overhead_bench() {
 
     // ---- Bring up sandbox + new in-guest forwarder ----
     let sandbox = RunEnv::sandbox(SandboxConfig {
-        network: SandboxNetwork::Host,
         ..Default::default()
     })
     .await

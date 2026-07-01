@@ -23,9 +23,8 @@ fn static_forwarder() -> Option<&'static [u8]> {
 
 /// Inject and start the in-guest FUSE forwarder, mounting the VFS at
 /// `mount_root` inside the sandbox. The forwarder talks to the host forward
-/// server via `host.microsandbox.internal:<port>` (requires the sandbox to be
-/// created with `network: SandboxNetwork::Host` or `HostAndPublic`). Blocks
-/// until the mount appears.
+/// server via `host.microsandbox.internal:<port>` (reachable under every
+/// `SandboxNetwork` variant). Blocks until the mount appears.
 ///
 /// Uses the static dependency-free binary (no python/fuse3/apt — mounts
 /// `/dev/fuse` directly as root) compiled by `build.rs` for this crate's target

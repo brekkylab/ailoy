@@ -75,12 +75,15 @@ impl AgentBuilder {
         }
     }
 
-    /// Mount external providers (S3/Notion/GDrive) as a host FUSE filesystem so
-    /// the agent's shell/read/write tools operate on them transparently. The
-    /// mount paths are appended to the system instruction. Credentials stay on
-    /// the host. Currently supports the default local runenv (non-sandbox);
-    /// combining with a custom `runenv()` is rejected at build time pending the
-    /// guest forwarder.
+    /// Mount external providers (S3/Notion/GDrive) so the agent's
+    /// shell/read/write tools operate on them transparently. The mount paths are
+    /// appended to the system instruction; credentials stay on the host.
+    ///
+    /// - Default local runenv → a host FUSE mount.
+    /// - Sandbox runenv (via [`runenv`](Self::runenv)) → a host forward server +
+    ///   in-guest forwarder, mounted on the agent's first run. Every
+    ///   [`SandboxNetwork`](crate::runenv::SandboxNetwork) variant lets the guest
+    ///   reach the host, so the forwarder always works.
     #[cfg(feature = "vfs")]
     pub fn vfs(mut self, config: crate::vfs::VfsConfig) -> Self {
         self.vfs = Some(config);
@@ -317,9 +320,8 @@ fn setup_host_vfs(
 
 /// Start a host forward server for a [`Vfs`](crate::vfs::Vfs) and append the
 /// in-sandbox mount paths to the instruction. The in-guest forwarder is mounted
-/// on the agent's first run. Requires the sandbox to be created with
-/// `network: SandboxNetwork::Host` (or `HostAndPublic`) so the forwarder can
-/// reach the host forward server.
+/// on the agent's first run. Every [`SandboxNetwork`](crate::runenv::SandboxNetwork)
+/// variant lets the guest reach the host, so the forwarder always works.
 #[cfg(all(feature = "vfs", feature = "sandbox"))]
 fn setup_sandbox_vfs(
     spec: &mut AgentSpec,

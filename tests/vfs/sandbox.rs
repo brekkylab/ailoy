@@ -12,7 +12,6 @@ async fn e2e_sandbox_forwarder() {
     let fname = format!("e2e-sandbox-{s}.txt");
     let content = format!("sandbox-{s}");
     let sandbox = RunEnv::sandbox(SandboxConfig {
-        network: SandboxNetwork::Host,
         ..Default::default()
     })
     .await
@@ -55,7 +54,6 @@ async fn vfs_sandbox_remount_after_restart() {
         let sandbox = RunEnv::sandbox(SandboxConfig {
             name: Some(name.into()),
             persist: true,
-            network: SandboxNetwork::Host,
             ..Default::default()
         })
         .await
@@ -117,7 +115,6 @@ async fn vfs_sandbox_reconnect_race() {
             let env = RunEnv::sandbox(SandboxConfig {
                 name: Some(name.clone()),
                 persist: true,
-                network: SandboxNetwork::Host,
                 ..Default::default()
             })
             .await
@@ -161,7 +158,6 @@ async fn vfs_concurrent_access_stress() {
     let sandbox = RunEnv::sandbox(SandboxConfig {
         name: Some(name.clone()),
         persist: true,
-        network: SandboxNetwork::Host,
         ..Default::default()
     })
     .await
@@ -344,7 +340,6 @@ async fn vfs_agent_reads_across_restart() {
         let sandbox = RunEnv::sandbox(SandboxConfig {
             name: Some(name.clone()),
             persist: true,
-            network: SandboxNetwork::Host,
             ..Default::default()
         })
         .await
@@ -366,7 +361,6 @@ async fn vfs_agent_reads_across_restart() {
     let sandbox = RunEnv::sandbox(SandboxConfig {
         name: Some(name.clone()),
         persist: true,
-        network: SandboxNetwork::Host,
         ..Default::default()
     })
     .await
@@ -420,7 +414,6 @@ async fn vfs_concurrent_agents_remount() {
             let sandbox = RunEnv::sandbox(SandboxConfig {
                 name: Some(name.into()),
                 persist: true,
-                network: SandboxNetwork::Host,
                 ..Default::default()
             })
             .await
