@@ -144,9 +144,18 @@ impl PartDelta {
             Self::Function {
                 id,
                 function: PartDeltaFunction::WithStringArgs { name, arguments },
-            } => serde_json::from_str::<Value>(&arguments)
-                .ok()
-                .map(|arguments| (id, name, arguments)),
+            } => {
+                // A no-arg tool call streams empty arguments (e.g. Anthropic
+                // sends a single `partial_json: ""`); treat blank as an empty
+                // object. Non-empty but malformed JSON stays `None` so callers
+                // can surface it as an error instead of guessing.
+                let arguments = if arguments.trim().is_empty() {
+                    Value::Object(Default::default())
+                } else {
+                    serde_json::from_str::<Value>(&arguments).ok()?
+                };
+                Some((id, name, arguments))
+            }
             Self::Function {
                 id,
                 function: PartDeltaFunction::Verbatim { text },
@@ -280,7 +289,13 @@ impl Delta for PartDelta {
                 text: text.to_owned(),
             }),
             PartDelta::Function { .. } => {
-                let (id, name, arguments) = self.to_parsed_function().unwrap();
+                // Malformed (non-empty, non-JSON) arguments — e.g. a tool call
+                // truncated mid-stream by a token limit — return an error rather
+                // than panic, so the caller can handle it (the agent loop rolls
+                // the turn back).
+                let Some((id, name, arguments)) = self.to_parsed_function() else {
+                    bail!("tool-call arguments are not valid JSON");
+                };
                 let id = id.unwrap_or("fn".into());
                 Ok(Part::Function {
                     id,
@@ -298,5 +313,43 @@ impl fmt::Display for PartDelta {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = serde_json::to_string(self).map_err(|_| fmt::Error)?;
         write!(f, "PartDelta {}", s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A no-arg tool call streams empty accumulated arguments (Anthropic sends a
+    /// single `partial_json: ""`). finish() must yield an empty-object call, not
+    /// panic on `serde_json::from_str("")`.
+    #[test]
+    fn test_finish_function_empty_args_is_empty_object() {
+        let delta = PartDelta::Function {
+            id: Some("get_time/call_1".into()),
+            function: PartDeltaFunction::WithStringArgs {
+                name: "get_time".into(),
+                arguments: String::new(),
+            },
+        };
+        let part = delta.finish().expect("empty args must finish as {}");
+        let (_, name, args) = part.as_function().expect("expected a function part");
+        assert_eq!(name, "get_time");
+        assert!(args.is_object());
+        assert_eq!(args.as_object().map(|o| o.len()), Some(0));
+    }
+
+    /// Non-empty but malformed arguments (e.g. a call truncated mid-stream by a
+    /// token limit) must return an error, not panic, so the caller can roll back.
+    #[test]
+    fn test_finish_function_malformed_args_errors() {
+        let delta = PartDelta::Function {
+            id: None,
+            function: PartDeltaFunction::WithStringArgs {
+                name: "get_weather".into(),
+                arguments: "{\"location\":".into(), // truncated JSON
+            },
+        };
+        assert!(delta.finish().is_err(), "malformed args must error, not panic");
     }
 }
