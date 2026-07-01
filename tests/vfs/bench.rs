@@ -12,8 +12,7 @@ use crate::common::*;
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "bench: measures guest-forward vs host overhead (needs AWS + sandbox + macFUSE)"]
 async fn vfs_forward_overhead_bench() {
-    use std::sync::Arc;
-    use std::time::Instant;
+    use std::{sync::Arc, time::Instant};
 
     dotenvy::dotenv().ok();
 
@@ -61,7 +60,7 @@ async fn vfs_forward_overhead_bench() {
 
     // ---- Bring up the sandbox + in-guest forwarder ----
     let sandbox = RunEnv::sandbox(SandboxConfig {
-        allow_host_egress: true,
+        network: SandboxNetwork::Host,
         ..Default::default()
     })
     .await
@@ -133,8 +132,7 @@ fn shell_quote(s: &str) -> String {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "bench: host vs guest per provider (needs all creds + sandbox + macFUSE)"]
 async fn vfs_provider_overhead_bench() {
-    use std::sync::Arc;
-    use std::time::Instant;
+    use std::{sync::Arc, time::Instant};
 
     dotenvy::dotenv().ok();
 
@@ -180,7 +178,7 @@ async fn vfs_provider_overhead_bench() {
 
     // ---- Bring up sandbox + new in-guest forwarder ----
     let sandbox = RunEnv::sandbox(SandboxConfig {
-        allow_host_egress: true,
+        network: SandboxNetwork::Host,
         ..Default::default()
     })
     .await

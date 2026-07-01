@@ -28,7 +28,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
-sandbox = ["dep:microsandbox"]
+sandbox = ["dep:microsandbox", "dep:microsandbox-network"]
 vfs = ["dep:object_store", "dep:fuser", "dep:libc"]
 
 [dependencies]
@@ -48,6 +48,9 @@ indexmap = { version = "2", features = ["serde"] }
 infer = "0.16"
 log = "0.4"
 microsandbox = { version = "0.6.1", optional = true }
+# Policy construction types (Action/Rule/Destination/DestinationGroup) that the
+# `microsandbox` facade does not re-export; used to build host-scoped egress.
+microsandbox-network = { version = "0.6.1", optional = true }
 object_store = { version = "0.14", features = ["aws"], optional = true }
 fuser = { version = "0.17", optional = true }
 libc = { version = "0.2", optional = true }

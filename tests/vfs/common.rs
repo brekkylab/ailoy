@@ -7,7 +7,7 @@ pub use ailoy::{
     agent::{Agent, AgentBuilder, AgentProvider},
     lang_model::LangModelProvider,
     message::{Message, Part, Role},
-    runenv::{RunEnv, RunEnvHandle, SandboxConfig},
+    runenv::{RunEnv, RunEnvHandle, SandboxConfig, SandboxNetwork},
     vfs::{FileKind, MountSpec, ProviderConfig, S3Config, Vfs, VfsConfig},
 };
 pub use futures::StreamExt;
@@ -201,7 +201,9 @@ pub fn msb_rm(name: &str) {
     let _ = std::process::Command::new("msb")
         .args(["stop", name])
         .status();
-    let _ = std::process::Command::new("msb").args(["rm", name]).status();
+    let _ = std::process::Command::new("msb")
+        .args(["rm", name])
+        .status();
 }
 
 /// Run a shell script in the guest via `msb exec` (60s bound); return stdout.
@@ -240,7 +242,7 @@ pub async fn attach_mounted_agent(name: &str) -> Agent {
     let sandbox = RunEnv::sandbox(SandboxConfig {
         name: Some(name.into()),
         persist: true,
-        allow_host_egress: true,
+        network: SandboxNetwork::Host,
         ..Default::default()
     })
     .await
@@ -302,6 +304,9 @@ pub async fn launch_static_forwarder(h: &RunEnvHandle, port: u16, tok: &str) {
          for _ in $(seq 1 40); do grep -q ' /mnt/vfs ' /proc/mounts && break; sleep 0.25; done; \
          mount | grep -q /mnt/vfs && echo MOUNTED || echo NOT_MOUNTED"
     );
-    let out = h.exec_shell(launch, Some(60)).await.expect("launch forwarder");
+    let out = h
+        .exec_shell(launch, Some(60))
+        .await
+        .expect("launch forwarder");
     println!("launch: {}", out.stdout.trim());
 }

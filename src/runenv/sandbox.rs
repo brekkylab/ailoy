@@ -142,6 +142,77 @@ async fn sweep_orphan_tmp_volumes() {
     }
 }
 
+/// Guest network reachability for a sandbox — a single egress policy.
+///
+/// Each variant maps to a microsandbox [`NetworkPolicy`]; `default_ingress` stays
+/// `Allow` (published-port behavior) for every networked variant. Prefer the
+/// narrowest variant that works — e.g. `Host` for VFS-in-sandbox, so the
+/// LLM-driven guest shell gets host access without the whole internet.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxNetwork {
+    /// No network access at all.
+    Disabled,
+    /// Public internet only — no host, LAN, loopback, or metadata. The default,
+    /// matching microsandbox's baseline. NOTE: VFS-in-sandbox will not work with
+    /// this (the forwarder cannot reach the host); use `Host`/`HostAndPublic`.
+    #[default]
+    Public,
+    /// The sandbox host only (`host.microsandbox.internal`) — nothing else. The
+    /// least-privilege choice for VFS-in-sandbox: the forwarder reaches the host
+    /// forward server, and the guest shell gets no internet/LAN egress.
+    Host,
+    /// The sandbox host plus the public internet — but NOT private LAN (RFC1918),
+    /// loopback, link-local, cloud-metadata (169.254.169.254), or multicast. For
+    /// agents that use VFS and also browse/download while staying off the local
+    /// network. Differs from `Full` only by keeping those groups denied.
+    HostAndPublic,
+    /// Unrestricted egress and ingress: everything `HostAndPublic` allows PLUS
+    /// private LAN, loopback, link-local, cloud-metadata, and multicast. Grant
+    /// deliberately — this reopens SSRF-to-metadata and local-network access.
+    Full,
+}
+
+#[cfg(feature = "sandbox")]
+impl SandboxNetwork {
+    /// Apply this policy to a sandbox builder.
+    fn apply(self, builder: SandboxBuilder) -> SandboxBuilder {
+        match self {
+            // Baseline is already `public_only`; leave the builder untouched so we
+            // don't diverge from microsandbox's default network config.
+            SandboxNetwork::Public => builder,
+            SandboxNetwork::Disabled => builder.disable_network(),
+            other => builder.network(move |n| n.policy(other.policy())),
+        }
+    }
+
+    /// The microsandbox policy for the networked, non-default variants.
+    fn policy(self) -> NetworkPolicy {
+        use microsandbox_network::policy::{Action, Destination, DestinationGroup, Rule};
+        // `allow_egress(Host)` permits any port to the host — including :53, so the
+        // guest's `host.microsandbox.internal` DNS lookup (handled by the host
+        // resolver) works without a separate DNS allow or any public egress.
+        let host = || Rule::allow_egress(Destination::Group(DestinationGroup::Host));
+        let public = || Rule::allow_egress(Destination::Group(DestinationGroup::Public));
+        match self {
+            SandboxNetwork::Full => NetworkPolicy::allow_all(),
+            SandboxNetwork::Host => NetworkPolicy {
+                default_egress: Action::Deny,
+                default_ingress: Action::Allow,
+                rules: vec![host()],
+            },
+            SandboxNetwork::HostAndPublic => NetworkPolicy {
+                default_egress: Action::Deny,
+                default_ingress: Action::Allow,
+                rules: vec![public(), host()],
+            },
+            // Not reached: Public/Disabled handled in `apply`.
+            SandboxNetwork::Public => NetworkPolicy::public_only(),
+            SandboxNetwork::Disabled => NetworkPolicy::none(),
+        }
+    }
+}
+
 /// Configuration for creating a new sandbox.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SandboxConfig {
@@ -170,15 +241,13 @@ pub struct SandboxConfig {
     /// Environment variables passed to every command.
     pub env: HashMap<String, String>,
 
-    /// When `true`, disable all network access. Default: `false`.
-    pub disable_network: bool,
-
-    /// When `true`, allow the guest to reach host services (the
-    /// `host.microsandbox.internal` alias), e.g. an ailoy VFS forward server.
-    /// Applies a permissive egress policy at creation. Ignored when
-    /// `disable_network` is set. Default: `false`.
+    /// Guest network reachability. A single policy instead of exclusive flags;
+    /// see [`SandboxNetwork`]. Default: [`SandboxNetwork::Public`] (public
+    /// internet only — microsandbox's baseline). VFS-in-sandbox needs the guest
+    /// to reach the host forward server, so use [`SandboxNetwork::Host`] (or
+    /// [`SandboxNetwork::HostAndPublic`] to also keep internet access).
     #[serde(default)]
-    pub allow_host_egress: bool,
+    pub network: SandboxNetwork,
 
     /// Per-exec timeout in seconds. Default: `60`.
     pub default_timeout_secs: u64,
@@ -215,8 +284,7 @@ impl Default for SandboxConfig {
             memory_mib: 2048,
             workdir: "/workspace".to_string(),
             env: HashMap::new(),
-            disable_network: false,
-            allow_host_egress: false,
+            network: SandboxNetwork::default(),
             default_timeout_secs: 60,
             max_output_chars: 30_000,
             persist: false,
@@ -708,11 +776,7 @@ async fn create_registered(name: &str, config: &SandboxConfig) -> anyhow::Result
         for (k, v) in &config.env {
             builder = builder.env(k.as_str(), v.as_str());
         }
-        if config.disable_network {
-            builder = builder.disable_network();
-        } else if config.allow_host_egress {
-            builder = builder.network(|n| n.policy(NetworkPolicy::allow_all()));
-        }
+        builder = config.network.apply(builder);
         for mount in &config.volumes {
             builder = apply_volume_mount(builder, mount);
         }
@@ -765,11 +829,7 @@ async fn create_from_snapshot(
     for (k, v) in &config.env {
         builder = builder.env(k.as_str(), v.as_str());
     }
-    if config.disable_network {
-        builder = builder.disable_network();
-    } else if config.allow_host_egress {
-        builder = builder.network(|n| n.policy(NetworkPolicy::allow_all()));
-    }
+    builder = config.network.apply(builder);
     for mount in &config.volumes {
         builder = apply_volume_mount(builder, mount);
     }
@@ -1839,12 +1899,12 @@ mod tests {
         );
     }
 
-    /// With `disable_network = true`, outbound connections are blocked.
+    /// With `network = SandboxNetwork::Disabled`, outbound connections are blocked.
     #[tokio::test]
     async fn test_disable_network_blocks_outbound() {
         let env = RunEnv::sandbox(SandboxConfig {
             image: "alpine:latest".to_string(),
-            disable_network: true,
+            network: SandboxNetwork::Disabled,
             ..SandboxConfig::default()
         })
         .await
@@ -1857,6 +1917,32 @@ mod tests {
         assert_ne!(
             result.exit_code, 0,
             "TCP connect to 8.8.8.8:53 should fail when network is disabled"
+        );
+    }
+
+    /// `SandboxNetwork::Host` grants egress to the sandbox host only; public
+    /// egress stays blocked. Guards against VFS-in-sandbox silently opening the
+    /// whole internet to the LLM-driven guest shell.
+    #[tokio::test]
+    async fn test_host_network_blocks_public_egress() {
+        let env = RunEnv::sandbox(SandboxConfig {
+            image: "alpine:latest".to_string(),
+            network: SandboxNetwork::Host,
+            ..SandboxConfig::default()
+        })
+        .await
+        .unwrap();
+        let handle = env.get().await.unwrap();
+        // Probe a non-DNS port: microsandbox intercepts port 53 with its own
+        // resolver, so :53 "connects" regardless of egress policy. :443 to a raw
+        // public IP is a real egress test (no DNS lookup needed).
+        let result = handle
+            .exec_shell("nc -zw5 1.1.1.1 443 2>/dev/null".to_string(), Some(10))
+            .await
+            .unwrap();
+        assert_ne!(
+            result.exit_code, 0,
+            "public TCP connect (1.1.1.1:443) must be blocked under SandboxNetwork::Host"
         );
     }
 

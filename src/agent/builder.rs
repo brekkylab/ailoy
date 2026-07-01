@@ -318,7 +318,8 @@ fn setup_host_vfs(
 /// Start a host forward server for a [`Vfs`](crate::vfs::Vfs) and append the
 /// in-sandbox mount paths to the instruction. The in-guest forwarder is mounted
 /// on the agent's first run. Requires the sandbox to be created with
-/// `allow_host_egress = true`.
+/// `network: SandboxNetwork::Host` (or `HostAndPublic`) so the forwarder can
+/// reach the host forward server.
 #[cfg(all(feature = "vfs", feature = "sandbox"))]
 fn setup_sandbox_vfs(
     spec: &mut AgentSpec,

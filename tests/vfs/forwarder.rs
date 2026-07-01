@@ -21,7 +21,7 @@ async fn vfs_recovers_from_forwarder_death() {
     let sandbox = RunEnv::sandbox(SandboxConfig {
         name: Some(name.clone()),
         persist: true,
-        allow_host_egress: true,
+        network: SandboxNetwork::Host,
         ..Default::default()
     })
     .await
@@ -113,7 +113,7 @@ async fn vfs_repeated_forwarder_death_recovery() {
     let sandbox = RunEnv::sandbox(SandboxConfig {
         name: Some(name.clone()),
         persist: true,
-        allow_host_egress: true,
+        network: SandboxNetwork::Host,
         ..Default::default()
     })
     .await
@@ -202,7 +202,7 @@ async fn vfs_static_forwarder_full() {
     let sandbox = RunEnv::sandbox(SandboxConfig {
         name: Some(name.clone()),
         persist: false,
-        allow_host_egress: true,
+        network: SandboxNetwork::Host,
         ..Default::default()
     })
     .await
@@ -249,7 +249,7 @@ async fn vfs_static_forwarder_write_unlink() {
     let sandbox = RunEnv::sandbox(SandboxConfig {
         name: Some(name.clone()),
         persist: false,
-        allow_host_egress: true,
+        network: SandboxNetwork::Host,
         ..Default::default()
     })
     .await
@@ -382,7 +382,7 @@ async fn vfs_static_forwarder_large_read() {
     let sandbox = RunEnv::sandbox(SandboxConfig {
         name: Some(name.clone()),
         persist: false,
-        allow_host_egress: true,
+        network: SandboxNetwork::Host,
         ..Default::default()
     })
     .await
