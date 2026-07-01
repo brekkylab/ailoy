@@ -519,7 +519,13 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
                         bail!("Invalid content part")
                     };
                     if thought {
-                        rv.thinking = Some(text.into());
+                        // Append rather than overwrite: a candidate may carry
+                        // multiple thought parts, and thinking concatenates
+                        // across chunks anyway.
+                        match &mut rv.thinking {
+                            Some(existing) => existing.push_str(text),
+                            None => rv.thinking = Some(text.into()),
+                        }
                         if let Some(sig) = part.get("thoughtSignature").and_then(|v| v.as_str()) {
                             rv.signature = Some(sig.to_owned());
                         }
@@ -608,6 +614,17 @@ mod tests {
         assert_eq!(result.message.role, Role::Assistant);
         assert_eq!(result.message.contents.len(), 1);
         assert_eq!(result.message.contents[0].as_text(), Some("Hello world!"));
+    }
+
+    #[test]
+    fn test_unmarshal_event_multiple_thought_parts_concatenate() {
+        // A single chunk carrying more than one thought part must concatenate
+        // them, not overwrite (thinking accumulates across chunks anyway).
+        let inputs = [
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"one ","thought":true},{"text":"two","thought":true}]}}]}"#,
+        ];
+        let out = accumulate_stream(&inputs);
+        assert_eq!(out.delta.thinking.as_deref(), Some("one two"));
     }
 
     #[test]
