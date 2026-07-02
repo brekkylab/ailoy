@@ -307,11 +307,15 @@ impl super::StreamUnmarshal for OpenAIUnmarshal {
                         text: text.to_owned(),
                     }]);
             }
-            // Incremental reasoning summary -> thinking.
+            // Incremental reasoning summary -> thinking. Set the role too (like
+            // output_text.delta): a reasoning model truncated mid-reasoning emits
+            // only reasoning before the terminal event, and without a role the
+            // accumulated message makes finish() bail with "Role not specified".
             "response.reasoning_summary_text.delta" => {
                 let Some(text) = val.pointer("/delta").and_then(|v| v.as_str()) else {
                     return Ok(None);
                 };
+                delta = delta.with_role(Role::Assistant);
                 delta.thinking = Some(text.to_owned());
             }
             // A finalized function call (carries call_id + name + full arguments).
@@ -605,6 +609,22 @@ mod tests {
             args.pointer("/location").and_then(|v| v.as_str()),
             Some("Paris")
         );
+    }
+
+    #[test]
+    fn test_unmarshal_event_reasoning_only_sets_role() {
+        // A reasoning model truncated mid-reasoning (max_output_tokens) emits only
+        // reasoning before the terminal event, with no message item. The role
+        // must still be set so finish() doesn't bail with "Role not specified".
+        let inputs = [
+            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_1"}}"#,
+            r#"{"type":"response.reasoning_summary_text.delta","delta":"thinking hard..."}"#,
+            r#"{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":5,"output_tokens":50}}}"#,
+        ];
+        let result = accumulate_stream(&inputs).finish().unwrap();
+        assert_eq!(result.message.role, Role::Assistant);
+        assert_eq!(result.message.thinking.as_deref(), Some("thinking hard..."));
+        assert_eq!(result.finish_reason, FinishReason::Length {});
     }
 
     /// End-to-end: `run_stream` over the OpenAI Responses API yields multiple

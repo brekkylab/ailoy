@@ -731,7 +731,10 @@ mod tests {
                 errored |= ev.is_err();
             }
         }
-        assert!(errored, "expected the failed model call to surface an error");
+        assert!(
+            errored,
+            "expected the failed model call to surface an error"
+        );
         assert!(
             agent.get_history().is_empty(),
             "dangling query not rolled back: {:?}",
@@ -751,7 +754,10 @@ mod tests {
                 errored |= ev.is_err();
             }
         }
-        assert!(errored, "expected the failed model call to surface an error");
+        assert!(
+            errored,
+            "expected the failed model call to surface an error"
+        );
         assert!(
             agent.get_history().is_empty(),
             "dangling query not rolled back: {:?}",
