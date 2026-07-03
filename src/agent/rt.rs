@@ -14,19 +14,6 @@ use crate::{
     },
 };
 
-/// An item emitted by [`Agent::run_stream`].
-///
-/// `Delta` carries an incremental model update (text / thinking / tool-argument
-/// fragments) for live rendering; `Message` is a completed turn — an assistant
-/// message or a tool result — equivalent to what [`Agent::run`] yields, and the
-/// unit consumers use to drive history/tool logic. A consumer that only wants
-/// the blocking behaviour can ignore `Delta` and read `Message`.
-#[derive(Clone, Debug)]
-pub enum AgentEvent {
-    Delta(MessageDeltaOutput),
-    Message(MessageOutput),
-}
-
 /// Walk the spec tree and write every declared file (this agent's plus the
 /// subtree's) to the runenv with **write-once** semantics: if a file already
 /// exists at the target path, the existing content is left untouched so that
@@ -404,17 +391,16 @@ impl Agent {
         }))
     }
 
-    /// Stamp `out.source_agent` with this agent's card name if not already set.
-    ///
-    /// Called on every `MessageOutput` just before it is yielded from
-    /// [`Agent::run`].  Because it only writes when the field is `None`,
-    /// messages that already carry a name from a deeper subagent are forwarded
+    /// Stamp a `source_agent` field with this agent's card name if not already
+    /// set. Takes the field directly so it works for both `MessageOutput` and
+    /// `MessageDeltaOutput`. Because it only writes when the field is `None`,
+    /// items already carrying a name from a deeper subagent are forwarded
     /// unchanged — the innermost producer always wins in nested chains.
-    fn stamp_source_agent(&self, out: &mut MessageOutput) {
-        if out.source_agent.is_none()
+    fn stamp_source_agent(&self, source_agent: &mut Option<String>) {
+        if source_agent.is_none()
             && let Some(card) = self.spec.card.as_ref()
         {
-            out.source_agent = Some(card.name.clone());
+            *source_agent = Some(card.name.clone());
         }
     }
 
@@ -473,7 +459,7 @@ impl Agent {
                 output.depth = Some(0);
                 self.state.history.push(output.message.clone());
                 committed = true;
-                self.stamp_source_agent(&mut output);
+                self.stamp_source_agent(&mut output.source_agent);
 
                 let tool_calls = match &output.finish_reason {
                     FinishReason::ToolCall {} => {
@@ -496,7 +482,7 @@ impl Agent {
                                 output.message = Self::cap_tool_result(output.message);
                                 self.state.history.push(output.message.clone());
                             }
-                            self.stamp_source_agent(&mut output);
+                            self.stamp_source_agent(&mut output.source_agent);
                             yield output;
                         }
                     }
@@ -506,15 +492,15 @@ impl Agent {
     }
 
     /// Token-streaming counterpart to [`run`](Self::run). Drives the same
-    /// agentic loop but calls [`LangModel::run_stream`] per turn: each model
-    /// delta is yielded as [`AgentEvent::Delta`] for live rendering and
-    /// accumulated into the turn's full message, which is yielded as
-    /// [`AgentEvent::Message`] (alongside tool results) to drive history and
-    /// tool execution.
+    /// agentic loop but calls [`LangModel::run_stream`] per turn, yielding a
+    /// uniform stream of [`MessageDeltaOutput`]: the model's incremental deltas
+    /// for live rendering, then each tool result as a complete one-shot delta.
+    /// A `finish_reason` (or a role change) marks a message boundary; the
+    /// blocking [`run`](Self::run) is the accumulate-and-finish counterpart.
     pub fn run_stream(
         &mut self,
         query: Message,
-    ) -> Pin<Box<impl Stream<Item = anyhow::Result<AgentEvent>> + Send + '_>> {
+    ) -> Pin<Box<impl Stream<Item = anyhow::Result<MessageDeltaOutput>> + Send + '_>> {
         Box::pin(async_stream::try_stream! {
             self.ensure_files_materialised().await?;
 
@@ -531,8 +517,8 @@ impl Agent {
                         cm.truncate_history(&mut self.state.history);
                     }
 
-                // Stream the model response: forward each delta for live
-                // rendering while accumulating the full turn for loop control.
+                // Stream the model's deltas, forwarding each while accumulating
+                // the full turn for loop control (history / tool dispatch).
                 let mut acc = MessageDeltaOutput::new();
                 {
                     let mut delta_stream = self.model.run_stream(
@@ -541,7 +527,7 @@ impl Agent {
                         &self.model_options,
                     );
                     while let Some(item) = delta_stream.next().await {
-                        let delta = match item {
+                        let mut delta = match item {
                             Ok(d) => d,
                             Err(e) => {
                                 if !committed {
@@ -559,7 +545,11 @@ impl Agent {
                                 Err(e)?
                             }
                         };
-                        yield AgentEvent::Delta(delta);
+                        // Tag with the top-level metadata so accumulating these
+                        // deltas reconstructs the same MessageOutput `run` yields.
+                        delta.depth = Some(0);
+                        self.stamp_source_agent(&mut delta.source_agent);
+                        yield delta;
                     }
                 }
                 // Stream ended without a terminal finish_reason (clean EOF /
@@ -587,18 +577,14 @@ impl Agent {
                 output.depth = Some(0);
                 self.state.history.push(output.message.clone());
                 committed = true;
-                self.stamp_source_agent(&mut output);
 
+                // The assistant turn was already streamed as deltas above; drive
+                // the loop off its finish_reason without re-emitting it.
                 let tool_calls = match &output.finish_reason {
                     FinishReason::ToolCall {} => {
-                        let tc = output.message.tool_calls.clone().unwrap_or_default();
-                        yield AgentEvent::Message(output);
-                        tc
+                        output.message.tool_calls.clone().unwrap_or_default()
                     }
-                    _ => {
-                        yield AgentEvent::Message(output);
-                        break;
-                    }
+                    _ => break,
                 };
 
                 let mut tool_stream = self.execute_tool_calls(tool_calls)?;
@@ -606,12 +592,14 @@ impl Agent {
                     match event {
                         Err(e) => Err(e)?,
                         Ok(mut output) => {
+                            // Tool results are complete MessageOutputs; commit to
+                            // history, stamp, then re-emit on the delta stream.
                             if output.message.role == Role::Tool && output.depth == Some(0) {
                                 output.message = Self::cap_tool_result(output.message);
                                 self.state.history.push(output.message.clone());
                             }
-                            self.stamp_source_agent(&mut output);
-                            yield AgentEvent::Message(output);
+                            self.stamp_source_agent(&mut output.source_agent);
+                            yield output.into();
                         }
                     }
                 }
@@ -670,35 +658,26 @@ mod tests {
         let mut strm = agent.run_stream(query);
         let mut delta_text = String::new();
         let mut delta_count = 0usize;
-        let mut final_text: Option<String> = None;
+        let mut acc = MessageDeltaOutput::new();
         while let Some(event) = strm.next().await {
-            match event.unwrap() {
-                AgentEvent::Delta(d) => {
-                    delta_count += 1;
-                    for p in &d.delta.contents {
-                        if let PartDelta::Text { text } = p {
-                            delta_text.push_str(text);
-                        }
-                    }
+            let d = event.unwrap();
+            delta_count += 1;
+            for p in &d.delta.contents {
+                if let PartDelta::Text { text } = p {
+                    delta_text.push_str(text);
                 }
-                AgentEvent::Message(m) if m.message.role == Role::Assistant => {
-                    final_text = m
-                        .message
-                        .contents
-                        .iter()
-                        .find_map(|p| p.as_text().map(|s| s.to_owned()));
-                }
-                AgentEvent::Message(_) => {}
             }
+            acc = acc.accumulate(d).unwrap();
         }
 
         assert!(
             delta_count > 1,
-            "expected multiple Delta events, got {delta_count}"
+            "expected multiple deltas, got {delta_count}"
         );
-        let final_text = final_text.expect("expected a final assistant Message");
+        // Accumulating the same deltas reconstructs the assistant message.
+        let msg = acc.finish().unwrap().message;
+        let final_text: String = msg.contents.iter().filter_map(|p| p.as_text()).collect();
         assert!(!final_text.is_empty());
-        // The agent accumulates the same deltas, so the streamed text must match.
         assert_eq!(delta_text, final_text);
     }
 

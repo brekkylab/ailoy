@@ -168,7 +168,7 @@ impl LangModel {
             };
             let (url, header_map, body) = marshal_request(schema, &req)?;
 
-            let provider = api::provider_api(schema);
+            let mut provider = api::provider_api(schema);
             let client = reqwest::Client::new();
             let response =
                 send_with_retry(&client, &url, header_map, &body, provider.as_ref()).await?;

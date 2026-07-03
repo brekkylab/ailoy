@@ -297,6 +297,16 @@ pub struct MessageDeltaOutput {
     pub finish_reason: Option<FinishReason>,
 
     pub usage: Option<TokenUsage>,
+
+    /// Nesting level relative to the top-level agent turn (see [`MessageOutput::depth`]).
+    /// Populated by the agent runtime; `None` from the language-model layer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth: Option<u8>,
+
+    /// Name of the agent that produced this item (see [`MessageOutput::source_agent`]).
+    /// Populated by the agent runtime; `None` from the language-model layer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_agent: Option<String>,
 }
 
 impl MessageDeltaOutput {
@@ -305,6 +315,74 @@ impl MessageDeltaOutput {
             delta: MessageDelta::new(),
             finish_reason: None,
             usage: None,
+            depth: None,
+            source_agent: None,
+        }
+    }
+}
+
+impl From<Message> for MessageDelta {
+    /// Wraps a finalized [`Message`] as a complete delta (e.g. a tool result,
+    /// produced whole, surfaced on the streaming path).
+    fn from(msg: Message) -> Self {
+        MessageDelta {
+            role: Some(msg.role),
+            contents: msg.contents.into_iter().map(PartDelta::from).collect(),
+            id: msg.id,
+            thinking: msg.thinking,
+            tool_calls: msg
+                .tool_calls
+                .unwrap_or_default()
+                .into_iter()
+                .map(PartDelta::from)
+                .collect(),
+            signature: msg.signature,
+        }
+    }
+}
+
+impl From<MessageOutput> for MessageDeltaOutput {
+    /// Wraps a finalized [`MessageOutput`] as a complete delta, carrying its
+    /// `finish_reason`, usage, and agent-loop metadata (depth / source_agent).
+    fn from(out: MessageOutput) -> Self {
+        MessageDeltaOutput {
+            delta: out.message.into(),
+            finish_reason: Some(out.finish_reason),
+            usage: out.usage,
+            depth: out.depth,
+            source_agent: out.source_agent,
+        }
+    }
+}
+
+/// Adapts a stream of [`MessageDeltaOutput`]s (e.g. from `Agent::run_stream`)
+/// into a stream of completed [`MessageOutput`]s: deltas accumulate until one
+/// carries a `finish_reason` (the message boundary), then the accumulated
+/// message is finished and emitted. This recovers the blocking `Agent::run`
+/// view from the streaming one, so consumers that only want completed messages
+/// don't hand-roll boundary detection.
+pub fn into_messages<S>(
+    deltas: S,
+) -> impl futures::Stream<Item = anyhow::Result<MessageOutput>> + Send
+where
+    S: futures::Stream<Item = anyhow::Result<MessageDeltaOutput>> + Send,
+{
+    use futures::StreamExt as _;
+    async_stream::try_stream! {
+        let mut deltas = std::pin::pin!(deltas);
+        let mut acc = MessageDeltaOutput::new();
+        while let Some(item) = deltas.next().await {
+            acc = acc.accumulate(item?)?;
+            if acc.finish_reason.is_some() {
+                let done = std::mem::replace(&mut acc, MessageDeltaOutput::new());
+                yield done.finish()?;
+            }
+        }
+        // A trailing partial (role set but the stream ended without a terminal
+        // finish_reason) is finalized as a Stop so its content isn't dropped.
+        if acc.delta.role.is_some() {
+            acc.finish_reason = Some(FinishReason::Stop {});
+            yield acc.finish()?;
         }
     }
 }
@@ -317,10 +395,14 @@ impl Delta for MessageDeltaOutput {
         let delta = self.delta.accumulate(other.delta)?;
         let finish_reason = other.finish_reason.or(self.finish_reason);
         let usage = merge_token_usage(self.usage, other.usage);
+        let depth = other.depth.or(self.depth);
+        let source_agent = other.source_agent.or(self.source_agent);
         Ok(Self {
             delta,
             finish_reason,
             usage,
+            depth,
+            source_agent,
         })
     }
 
@@ -344,8 +426,8 @@ impl Delta for MessageDeltaOutput {
             message,
             finish_reason,
             usage: self.usage,
-            depth: None,
-            source_agent: None,
+            depth: self.depth,
+            source_agent: self.source_agent,
         })
     }
 }
@@ -388,5 +470,73 @@ fn merge_opt_max(a: Option<u64>, b: Option<u64>) -> Option<u64> {
     match (a, b) {
         (Some(a), Some(b)) => Some(a.max(b)),
         (a, b) => b.or(a),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::StreamExt as _;
+
+    use super::*;
+    use crate::message::Part;
+
+    fn text_delta(text: &str) -> MessageDeltaOutput {
+        MessageDeltaOutput {
+            delta: MessageDelta::new()
+                .with_role(Role::Assistant)
+                .with_contents([PartDelta::Text { text: text.into() }]),
+            ..MessageDeltaOutput::new()
+        }
+    }
+
+    /// into_messages re-segments a delta stream at finish_reason boundaries:
+    /// fragmented assistant deltas + a one-shot tool delta become two messages.
+    #[tokio::test]
+    async fn test_into_messages_segments_at_boundaries() {
+        let assistant_end = MessageDeltaOutput {
+            finish_reason: Some(FinishReason::ToolCall {}),
+            ..MessageDeltaOutput::new()
+        };
+        let tool_result: MessageDeltaOutput = MessageOutput {
+            message: Message::new(Role::Tool)
+                .with_contents([Part::text("42")])
+                .with_id("calc/1"),
+            finish_reason: FinishReason::Stop {},
+            usage: None,
+            depth: Some(0),
+            source_agent: None,
+        }
+        .into();
+
+        let deltas = futures::stream::iter(
+            [
+                text_delta("Hel"),
+                text_delta("lo"),
+                assistant_end,
+                tool_result,
+            ]
+            .map(anyhow::Ok),
+        );
+        let messages: Vec<_> = into_messages(deltas).map(|m| m.unwrap()).collect().await;
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].message.role, Role::Assistant);
+        assert_eq!(messages[0].message.contents[0].as_text(), Some("Hello"));
+        assert_eq!(messages[0].finish_reason, FinishReason::ToolCall {});
+        assert_eq!(messages[1].message.role, Role::Tool);
+        assert_eq!(messages[1].message.contents[0].as_text(), Some("42"));
+        assert_eq!(messages[1].depth, Some(0));
+    }
+
+    /// A stream that ends mid-message (no terminal finish_reason) still yields
+    /// the partial content as a Stop-finished message instead of dropping it.
+    #[tokio::test]
+    async fn test_into_messages_finishes_trailing_partial() {
+        let deltas = futures::stream::iter([anyhow::Ok(text_delta("partial"))]);
+        let messages: Vec<_> = into_messages(deltas).map(|m| m.unwrap()).collect().await;
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].finish_reason, FinishReason::Stop {});
+        assert_eq!(messages[0].message.contents[0].as_text(), Some("partial"));
     }
 }

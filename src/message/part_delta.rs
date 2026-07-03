@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     datatype::Value,
-    message::{Delta, Part, PartFunction},
+    message::{Delta, Part, PartFunction, PartImage},
 };
 
 /// Represents an incremental update (delta) of a function part.
@@ -71,6 +71,10 @@ pub enum PartDelta {
 
     /// JSON-like value update.
     Value { value: Value },
+
+    /// A complete image part. Images are not produced incrementally (a tool
+    /// result may carry one whole), so this delta always holds a finished image.
+    Image { image: PartImage },
 
     /// Placeholder representing no data yet.
     Null {},
@@ -181,6 +185,26 @@ impl PartDelta {
 impl Default for PartDelta {
     fn default() -> Self {
         Self::Null {}
+    }
+}
+
+impl From<Part> for PartDelta {
+    /// Wraps a finalized [`Part`] as a complete delta (used when a tool result,
+    /// which is produced whole, is surfaced on the streaming path). A function's
+    /// already-parsed arguments map to [`PartDeltaFunction::WithParsedArgs`].
+    fn from(part: Part) -> Self {
+        match part {
+            Part::Text { text } => PartDelta::Text { text },
+            Part::Function {
+                id,
+                function: PartFunction { name, arguments },
+            } => PartDelta::Function {
+                id: Some(id),
+                function: PartDeltaFunction::WithParsedArgs { name, arguments },
+            },
+            Part::Value { value } => PartDelta::Value { value },
+            Part::Image { image } => PartDelta::Image { image },
+        }
     }
 }
 
@@ -304,6 +328,9 @@ impl Delta for PartDelta {
             }
             PartDelta::Value { value } => Ok(Part::Value {
                 value: value.to_owned(),
+            }),
+            PartDelta::Image { image } => Ok(Part::Image {
+                image: image.to_owned(),
             }),
         }
     }

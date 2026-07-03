@@ -283,8 +283,8 @@ impl super::QuotaClassifier for OpenAIUnmarshal {
 /// text (`output_text.delta`), reasoning (`reasoning_summary_text.delta`), and
 /// whole function calls (`output_item.done`); `response.completed` reuses the
 /// full-response `Unmarshal` for finish_reason + usage. Other events: no delta.
-impl super::StreamUnmarshal for OpenAIUnmarshal {
-    fn unmarshal_event(&self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
+impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
+    fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;
         let ty = val.pointer("/type").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -354,6 +354,8 @@ impl super::StreamUnmarshal for OpenAIUnmarshal {
                     delta: MessageDelta::new(),
                     finish_reason: parsed.finish_reason,
                     usage: parsed.usage,
+                    depth: None,
+                    source_agent: None,
                 }));
             }
             // A failed response carries its reason in `response.error`; surface
@@ -381,11 +383,11 @@ impl super::StreamUnmarshal for OpenAIUnmarshal {
             delta,
             finish_reason: None,
             usage: None,
+            depth: None,
+            source_agent: None,
         }))
     }
-}
 
-impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
     fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let root = val
             .as_object()
@@ -534,6 +536,8 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             delta,
             finish_reason,
             usage,
+            depth: None,
+            source_agent: None,
         })
     }
 }
@@ -542,7 +546,7 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
 mod tests {
     use url::Url;
 
-    use super::super::{QuotaClassifier, StreamUnmarshal};
+    use super::super::QuotaClassifier;
     use super::*;
     use crate::{
         datatype::Bytes,
@@ -554,7 +558,7 @@ mod tests {
     /// Feeds Responses SSE event payloads through `unmarshal_event`,
     /// accumulating to a final `MessageDeltaOutput`.
     fn accumulate_stream(inputs: &[&str]) -> MessageDeltaOutput {
-        let u = OpenAIUnmarshal;
+        let mut u = OpenAIUnmarshal;
         let mut acc = MessageDeltaOutput::new();
         for input in inputs {
             if let Some(out) = u.unmarshal_event(input).unwrap() {

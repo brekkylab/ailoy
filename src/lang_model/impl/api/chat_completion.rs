@@ -283,105 +283,6 @@ impl super::QuotaClassifier for ChatCompletionUnmarshal {}
 /// the incremental `choices[0].delta` (role / content / reasoning_content /
 /// tool_call fragments), `finish_reason`, and usage from the final chunk.
 /// `[DONE]` carries no delta.
-impl super::StreamUnmarshal for ChatCompletionUnmarshal {
-    fn unmarshal_event(&self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
-        // OpenAI-compatible streams end with a `[DONE]` sentinel (not JSON).
-        if data.trim() == "[DONE]" {
-            return Ok(None);
-        }
-        let val: Value = serde_json::from_str(data)?;
-
-        let usage = Self::parse_usage(&val);
-
-        // The usage-only final chunk (stream_options.include_usage) has empty
-        // `choices`; emit a usage-only delta.
-        let Some(choice) = val.pointer("/choices/0") else {
-            return Ok(usage.map(|u| MessageDeltaOutput {
-                delta: MessageDelta::new(),
-                finish_reason: None,
-                usage: Some(u),
-            }));
-        };
-
-        let finish_reason = choice
-            .pointer("/finish_reason")
-            .filter(|v| !v.is_null())
-            .map(Self::parse_finish_reason);
-
-        let mut delta = MessageDelta::new();
-
-        // role: usually present only on the first chunk. Default to Assistant
-        // when a chunk omits it (some OpenAI-compatible backends do), mirroring
-        // the non-streaming `unmarshal` default — otherwise a role-less stream
-        // accumulates to a message with no role and `finish()` bails with
-        // "Role not specified".
-        let role = choice
-            .pointer("/delta/role")
-            .and_then(|v| v.as_str())
-            .map(|r| r.parse::<Role>().unwrap_or(Role::Assistant))
-            .unwrap_or(Role::Assistant);
-        delta = delta.with_role(role);
-
-        // content: incremental text (empty on the first chunk, null on the last).
-        if let Some(text) = choice.pointer("/delta/content").and_then(|v| v.as_str())
-            && !text.is_empty()
-        {
-            delta = delta.with_contents([PartDelta::Text {
-                text: text.to_owned(),
-            }]);
-        }
-
-        // reasoning_content: DeepSeek streams thinking incrementally.
-        if let Some(t) = choice
-            .pointer("/delta/reasoning_content")
-            .and_then(|v| v.as_str())
-            && !t.is_empty()
-        {
-            delta.thinking = Some(t.to_owned());
-        }
-
-        // tool_calls: the first delta of each call carries id + name; later
-        // deltas carry only an `arguments` fragment (id/name absent) and merge
-        // into the in-progress call during accumulation.
-        if let Some(tcs) = choice
-            .pointer("/delta/tool_calls")
-            .and_then(|v| v.as_array())
-            && !tcs.is_empty()
-        {
-            let parts: Vec<PartDelta> = tcs
-                .iter()
-                .map(|tc| {
-                    let id = tc
-                        .pointer("/id")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_owned());
-                    let name = tc
-                        .pointer("/function/name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .to_owned();
-                    let arguments = tc
-                        .pointer("/function/arguments")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .to_owned();
-                    PartDelta::Function {
-                        id,
-                        function: PartDeltaFunction::WithStringArgs { name, arguments },
-                    }
-                })
-                .collect();
-            delta = delta.with_tool_calls(parts);
-        }
-
-        Ok(Some(MessageDeltaOutput {
-            delta,
-            finish_reason,
-            usage,
-        }))
-    }
-}
-
 impl ChatCompletionUnmarshal {
     fn parse_finish_reason(val: &Value) -> FinishReason {
         match val.as_str() {
@@ -461,6 +362,107 @@ impl ChatCompletionUnmarshal {
 }
 
 impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
+    fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
+        // OpenAI-compatible streams end with a `[DONE]` sentinel (not JSON).
+        if data.trim() == "[DONE]" {
+            return Ok(None);
+        }
+        let val: Value = serde_json::from_str(data)?;
+
+        let usage = Self::parse_usage(&val);
+
+        // The usage-only final chunk (stream_options.include_usage) has empty
+        // `choices`; emit a usage-only delta.
+        let Some(choice) = val.pointer("/choices/0") else {
+            return Ok(usage.map(|u| MessageDeltaOutput {
+                delta: MessageDelta::new(),
+                finish_reason: None,
+                usage: Some(u),
+                depth: None,
+                source_agent: None,
+            }));
+        };
+
+        let finish_reason = choice
+            .pointer("/finish_reason")
+            .filter(|v| !v.is_null())
+            .map(Self::parse_finish_reason);
+
+        let mut delta = MessageDelta::new();
+
+        // role: usually present only on the first chunk. Default to Assistant
+        // when a chunk omits it (some OpenAI-compatible backends do), mirroring
+        // the non-streaming `unmarshal` default — otherwise a role-less stream
+        // accumulates to a message with no role and `finish()` bails with
+        // "Role not specified".
+        let role = choice
+            .pointer("/delta/role")
+            .and_then(|v| v.as_str())
+            .map(|r| r.parse::<Role>().unwrap_or(Role::Assistant))
+            .unwrap_or(Role::Assistant);
+        delta = delta.with_role(role);
+
+        // content: incremental text (empty on the first chunk, null on the last).
+        if let Some(text) = choice.pointer("/delta/content").and_then(|v| v.as_str())
+            && !text.is_empty()
+        {
+            delta = delta.with_contents([PartDelta::Text {
+                text: text.to_owned(),
+            }]);
+        }
+
+        // reasoning_content: DeepSeek streams thinking incrementally.
+        if let Some(t) = choice
+            .pointer("/delta/reasoning_content")
+            .and_then(|v| v.as_str())
+            && !t.is_empty()
+        {
+            delta.thinking = Some(t.to_owned());
+        }
+
+        // tool_calls: the first delta of each call carries id + name; later
+        // deltas carry only an `arguments` fragment (id/name absent) and merge
+        // into the in-progress call during accumulation.
+        if let Some(tcs) = choice
+            .pointer("/delta/tool_calls")
+            .and_then(|v| v.as_array())
+            && !tcs.is_empty()
+        {
+            let parts: Vec<PartDelta> = tcs
+                .iter()
+                .map(|tc| {
+                    let id = tc
+                        .pointer("/id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_owned());
+                    let name = tc
+                        .pointer("/function/name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_owned();
+                    let arguments = tc
+                        .pointer("/function/arguments")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_owned();
+                    PartDelta::Function {
+                        id,
+                        function: PartDeltaFunction::WithStringArgs { name, arguments },
+                    }
+                })
+                .collect();
+            delta = delta.with_tool_calls(parts);
+        }
+
+        Ok(Some(MessageDeltaOutput {
+            delta,
+            finish_reason,
+            usage,
+            depth: None,
+            source_agent: None,
+        }))
+    }
+
     fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let choice = val
             .pointer("/choices/0")
@@ -484,6 +486,8 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
                 delta: MessageDelta::new().with_role(Role::Assistant),
                 finish_reason: Some(FinishReason::Refusal { reason }),
                 usage: None,
+                depth: None,
+                source_agent: None,
             });
         }
 
@@ -536,6 +540,8 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             delta,
             finish_reason,
             usage,
+            depth: None,
+            source_agent: None,
         })
     }
 }
@@ -544,7 +550,6 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
 mod tests {
     use url::Url;
 
-    use super::super::StreamUnmarshal;
     use super::*;
     use crate::{
         lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
@@ -594,7 +599,7 @@ mod tests {
     /// Feeds SSE chunk payloads through `unmarshal_event`, accumulating to a
     /// final `MessageDeltaOutput`.
     fn accumulate_stream(inputs: &[&str]) -> MessageDeltaOutput {
-        let u = ChatCompletionUnmarshal;
+        let mut u = ChatCompletionUnmarshal;
         let mut acc = MessageDeltaOutput::new();
         for input in inputs {
             if let Some(out) = u.unmarshal_event(input).unwrap() {

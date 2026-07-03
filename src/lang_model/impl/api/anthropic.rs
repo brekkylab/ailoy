@@ -336,8 +336,8 @@ impl AnthropicUnmarshal {
 /// - `ping` / `content_block_stop` / `message_stop`: no delta → `Ok(None)`
 /// - `error`: fails with the server-reported error type + message
 /// - any other (future) type: ignored → `Ok(None)`
-impl super::StreamUnmarshal for AnthropicUnmarshal {
-    fn unmarshal_event(&self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
+impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
+    fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;
         let ty = val.pointer("/type").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -431,11 +431,11 @@ impl super::StreamUnmarshal for AnthropicUnmarshal {
             delta,
             finish_reason,
             usage,
+            depth: None,
+            source_agent: None,
         }))
     }
-}
 
-impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
     fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let root = val
             .as_object()
@@ -537,6 +537,8 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             delta,
             finish_reason,
             usage,
+            depth: None,
+            source_agent: None,
         })
     }
 }
@@ -545,7 +547,6 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
 mod tests {
     use url::Url;
 
-    use super::super::StreamUnmarshal;
     use super::*;
     use crate::{
         datatype::Bytes,
@@ -641,7 +642,7 @@ mod tests {
     /// Feeds a sequence of SSE event payloads through `unmarshal_event`,
     /// accumulating into a final `MessageDeltaOutput`.
     fn accumulate_stream(inputs: &[&str]) -> MessageDeltaOutput {
-        let u = AnthropicUnmarshal;
+        let mut u = AnthropicUnmarshal;
         let mut acc = MessageDeltaOutput::new();
         for input in inputs {
             if let Some(out) = u.unmarshal_event(input).unwrap() {
@@ -674,7 +675,7 @@ mod tests {
     fn test_unmarshal_event_error_surfaces_message() {
         // A mid-stream `error` event must fail with the server's own type +
         // message, not a generic "unknown event type".
-        let u = AnthropicUnmarshal;
+        let mut u = AnthropicUnmarshal;
         let event = r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
         let err = u.unmarshal_event(event).unwrap_err().to_string();
         assert!(err.contains("overloaded_error"), "got: {err}");
@@ -684,7 +685,7 @@ mod tests {
     #[test]
     fn test_unmarshal_event_unknown_type_is_ignored() {
         // An unknown / future event type is skipped (no delta), not fatal.
-        let u = AnthropicUnmarshal;
+        let mut u = AnthropicUnmarshal;
         let event = r#"{"type":"some_future_event","foo":"bar"}"#;
         assert!(u.unmarshal_event(event).unwrap().is_none());
     }

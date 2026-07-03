@@ -22,40 +22,29 @@ pub trait QuotaClassifier {
     }
 }
 
-/// Parses a single streaming (SSE) event payload into a [`MessageDeltaOutput`]
-/// delta.
-///
-/// This is distinct from [`Unmarshal<MessageDeltaOutput>`], which parses a whole
-/// non-streaming response: the on-the-wire shape of a stream event differs from
-/// the final response for every provider (e.g. Anthropic `content_block_delta`
-/// events vs. a complete `content` array; ChatCompletion `choices[].delta` vs.
-/// `choices[].message`), so streaming needs its own parser.
-///
-/// `data` is the raw `data:` field of one SSE event. Control events that carry
-/// no delta (e.g. OpenAI's `[DONE]` sentinel, Anthropic `ping`) return
-/// `Ok(None)`. The default implementation reports that streaming is unsupported,
-/// so a provider opts in by overriding this method.
-pub trait StreamUnmarshal {
-    fn unmarshal_event(&self, _data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
-        Err(anyhow::anyhow!(
-            "streaming (SSE) is not supported for this provider"
-        ))
-    }
-}
-
 /// Provider-specific response handling, dispatched dynamically so callers map a
-/// [`LangModelAPISchema`] to its implementation once and reuse it for both
-/// unmarshaling and 429 classification.
-pub trait ProviderApi: QuotaClassifier + StreamUnmarshal {
+/// [`LangModelAPISchema`] to its implementation once and reuse it for whole-
+/// response unmarshaling, per-event (SSE) unmarshaling, and 429 classification.
+///
+/// Both parsers live on the provider's [`Unmarshal<MessageDeltaOutput>`] impl
+/// (`unmarshal` for a whole response, `unmarshal_event` for one SSE event); this
+/// trait just re-exposes them for dynamic dispatch, since `Unmarshal: Default`
+/// isn't object-safe and so can't be a supertrait of a `dyn` type.
+pub trait ProviderApi: QuotaClassifier {
     fn unmarshal_response(&self, val: Value) -> anyhow::Result<MessageDeltaOutput>;
+    fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>>;
 }
 
 impl<T> ProviderApi for T
 where
-    T: QuotaClassifier + StreamUnmarshal + Unmarshal<MessageDeltaOutput>,
+    T: QuotaClassifier + Unmarshal<MessageDeltaOutput>,
 {
     fn unmarshal_response(&self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         T::default().unmarshal(val)
+    }
+
+    fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
+        <T as Unmarshal<MessageDeltaOutput>>::unmarshal_event(self, data)
     }
 }
 

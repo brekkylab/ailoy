@@ -400,8 +400,8 @@ impl GeminiUnmarshal {
 /// accumulates. A chunk without a candidate yields no delta; `finishReason` and
 /// `usageMetadata` arrive on the final chunk (alongside the function call, if
 /// any — Gemini sends `STOP` even for tool calls, adjusted to `ToolCall`).
-impl super::StreamUnmarshal for GeminiUnmarshal {
-    fn unmarshal_event(&self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
+impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
+    fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;
         let Some(candidate) = val.pointer("/candidates/0").map(|c| c.to_owned()) else {
             return Ok(None);
@@ -434,11 +434,11 @@ impl super::StreamUnmarshal for GeminiUnmarshal {
             delta,
             finish_reason,
             usage,
+            depth: None,
+            source_agent: None,
         }))
     }
-}
 
-impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
     fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let candidate = val
             .pointer("/candidates/0")
@@ -472,6 +472,8 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
             delta,
             finish_reason,
             usage,
+            depth: None,
+            source_agent: None,
         })
     }
 }
@@ -575,7 +577,7 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
 mod tests {
     use url::Url;
 
-    use super::super::{QuotaClassifier, StreamUnmarshal};
+    use super::super::QuotaClassifier;
     use super::*;
     use crate::{
         datatype::{Bytes, Value},
@@ -587,7 +589,7 @@ mod tests {
     /// Feeds Gemini SSE chunk payloads through `unmarshal_event`, accumulating
     /// to a final `MessageDeltaOutput`.
     fn accumulate_stream(inputs: &[&str]) -> MessageDeltaOutput {
-        let u = GeminiUnmarshal;
+        let mut u = GeminiUnmarshal;
         let mut acc = MessageDeltaOutput::new();
         for input in inputs {
             if let Some(out) = u.unmarshal_event(input).unwrap() {
