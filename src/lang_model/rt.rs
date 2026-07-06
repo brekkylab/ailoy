@@ -6,7 +6,7 @@ use super::{LangModelAPISchema, LangModelProviderElem};
 use crate::{
     datatype::Value,
     lang_model::{LangModelOptions, r#impl::api},
-    message::{Delta as _, Marshaled, Message, MessageDeltaOutput, MessageOutput},
+    message::{Delta as _, FinishReason, Marshaled, Message, MessageDeltaOutput, MessageOutput, Role},
     tool::ToolDesc,
 };
 
@@ -136,6 +136,12 @@ impl LangModel {
     /// message. The stream ends when the response body ends (after the terminal
     /// SSE event), not at the first `finish_reason` — some providers send usage
     /// in a final chunk after it.
+    ///
+    /// Contract: every message ends with a delta carrying a `finish_reason`. If
+    /// a provider closes the stream without one, a terminal `Stop` delta is
+    /// synthesized so this holds, letting consumers detect message boundaries by
+    /// `finish_reason` alone (`finish()` promotes `Stop` to `ToolCall` if tool
+    /// calls were produced).
     pub fn run_stream(
         &self,
         messages: &[Message],
@@ -180,6 +186,11 @@ impl LangModel {
             // send the usage in a final chunk *after* the finish_reason one. The
             // server ends the body right after the terminal event, so this exits
             // promptly without waiting on the connection.
+            // Track enough to close the contract at EOF: the role seen so far
+            // and whether any event carried a finish_reason.
+            let mut seen_role: Option<Role> = None;
+            let mut saw_finish = false;
+
             let mut byte_stream = response.bytes_stream();
             let mut buf: Vec<u8> = Vec::new();
             while let Some(chunk) = byte_stream.next().await {
@@ -189,6 +200,10 @@ impl LangModel {
                         continue; // keep-alive / comment line
                     }
                     if let Some(output) = provider.unmarshal_event(&data)? {
+                        if seen_role.is_none() {
+                            seen_role = output.delta.role.clone();
+                        }
+                        saw_finish |= output.finish_reason.is_some();
                         yield output;
                     }
                 }
@@ -205,7 +220,29 @@ impl LangModel {
             #[allow(clippy::collapsible_if)]
             if !data.is_empty() {
                 if let Some(output) = provider.unmarshal_event(&data)? {
+                    if seen_role.is_none() {
+                        seen_role = output.delta.role.clone();
+                    }
+                    saw_finish |= output.finish_reason.is_some();
                     yield output;
+                }
+            }
+
+            // Close the contract: provider ended the stream with no finish_reason
+            // (clean EOF / quirk / truncation). Synthesize a terminal Stop delta
+            // so every message ends with one; no role seen → nothing to close.
+            // Must stay after the EOF-flush (which may set `saw_finish` from a
+            // real terminal event, e.g. Gemini's) or a genuine finish + closer
+            // both emit. A mid-stream error ends the generator before here, so a
+            // failed turn gets no fake Stop — required, not incidental.
+            // Not a let-chain: the `try_stream!` macro rejects them (Rust 2024).
+            #[allow(clippy::collapsible_if)]
+            if !saw_finish {
+                if let Some(role) = seen_role {
+                    let mut closer = MessageDeltaOutput::new();
+                    closer.delta.role = Some(role);
+                    closer.finish_reason = Some(FinishReason::Stop {});
+                    yield closer;
                 }
             }
         })
@@ -349,7 +386,7 @@ mod tests {
     use super::*;
     use crate::{
         lang_model::LangModelProvider,
-        message::{FinishReason, Part, Role},
+        message::{FinishReason, Part, Role, into_messages},
         to_value,
         tool::{ToolDesc, ToolDescBuilder},
     };
@@ -645,6 +682,173 @@ mod tests {
             *call_count.lock().unwrap(),
             1,
             "permanent quota 429 must not be retried (1 attempt only)"
+        );
+    }
+
+    /// A streamed response that never carries a finish_reason still ends with a
+    /// synthesized terminal Stop delta, so consumers can detect the message
+    /// boundary by finish_reason alone (the run_stream contract).
+    #[tokio::test]
+    async fn test_run_stream_synthesizes_terminal_finish_reason() {
+        use axum::{Router, body::Body, response::Response, routing::post};
+
+        let app = Router::new().route(
+            "/",
+            // Content deltas but NO finish_reason anywhere, then [DONE].
+            post(|| async {
+                let sse = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"}}]}\n\n\
+                           data: {\"choices\":[{\"delta\":{\"content\":\"!\"}}]}\n\n\
+                           data: [DONE]\n\n";
+                Response::builder()
+                    .status(200)
+                    .header("content-type", "text/event-stream")
+                    .body(Body::from(sse))
+                    .unwrap()
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let model = LangModel::new(
+            "test-model".to_string(),
+            LangModelProvider::chat_completion(&format!("http://{}/", addr), None).unwrap(),
+        );
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+
+        let deltas: Vec<_> = model
+            .run_stream(&messages, &[], &LangModelOptions::default())
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|d| d.unwrap())
+            .collect();
+
+        // The provider never sent a finish_reason; the last delta is the
+        // synthesized terminal closer: role set, Stop, no content.
+        let last = deltas.last().expect("at least one delta");
+        assert_eq!(last.finish_reason, Some(FinishReason::Stop {}));
+        assert_eq!(last.delta.role, Some(Role::Assistant));
+        assert!(last.delta.contents.is_empty());
+        assert_eq!(
+            deltas.iter().filter(|d| d.finish_reason.is_some()).count(),
+            1,
+            "exactly one finish_reason (the synthesized closer)"
+        );
+
+        // Accumulating the whole stream still reconstructs the message.
+        let msgs: Vec<_> = into_messages(futures::stream::iter(deltas.into_iter().map(anyhow::Ok)))
+            .map(|m| m.unwrap())
+            .collect()
+            .await;
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].message.contents[0].as_text(), Some("Hi!"));
+    }
+
+    /// The terminal finish_reason may arrive in the EOF-terminated final event
+    /// (no trailing blank line — Gemini's finish + usage chunk). The closer must
+    /// see that finish and NOT append a second one. Locks the ordering: the
+    /// closer check runs after the EOF-flush.
+    #[tokio::test]
+    async fn test_run_stream_no_double_finish_when_finish_in_eof_event() {
+        use axum::{Router, body::Body, response::Response, routing::post};
+
+        let app = Router::new().route(
+            "/",
+            // Two framed events, then a final finish event closed by EOF (no
+            // trailing blank line) so it surfaces via the EOF-flush path.
+            post(|| async {
+                let sse = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"}}]}\n\n\
+                           data: {\"choices\":[{\"delta\":{\"content\":\"!\"}}]}\n\n\
+                           data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}";
+                Response::builder()
+                    .status(200)
+                    .header("content-type", "text/event-stream")
+                    .body(Body::from(sse))
+                    .unwrap()
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let model = LangModel::new(
+            "test-model".to_string(),
+            LangModelProvider::chat_completion(&format!("http://{}/", addr), None).unwrap(),
+        );
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+
+        let deltas: Vec<_> = model
+            .run_stream(&messages, &[], &LangModelOptions::default())
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|d| d.unwrap())
+            .collect();
+
+        assert_eq!(
+            deltas.iter().filter(|d| d.finish_reason.is_some()).count(),
+            1,
+            "exactly one finish_reason — the provider's, no synthesized closer"
+        );
+    }
+
+    /// A mid-stream error ends the stream WITHOUT a synthesized closer: `?`
+    /// propagates and the generator stops before the closer. Required, not
+    /// incidental — a fake Stop on a failed turn would make the agent commit it
+    /// to history instead of rolling it back.
+    #[tokio::test]
+    async fn test_run_stream_error_yields_no_closer() {
+        use axum::{Router, body::Body, response::Response, routing::post};
+
+        let app = Router::new().route(
+            "/",
+            // A valid role delta, then a malformed event (invalid JSON) with no
+            // finish_reason — unmarshal_event errors and `?` ends the stream.
+            post(|| async {
+                let sse = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"}}]}\n\n\
+                           data: {not json}\n\n";
+                Response::builder()
+                    .status(200)
+                    .header("content-type", "text/event-stream")
+                    .body(Body::from(sse))
+                    .unwrap()
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let model = LangModel::new(
+            "test-model".to_string(),
+            LangModelProvider::chat_completion(&format!("http://{}/", addr), None).unwrap(),
+        );
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+
+        let results: Vec<_> = model
+            .run_stream(&messages, &[], &LangModelOptions::default())
+            .collect()
+            .await;
+
+        assert!(
+            results.last().is_some_and(|r| r.is_err()),
+            "stream must terminate with the error"
+        );
+        // No Ok delta ever carries a finish_reason: the error path appends no closer.
+        assert!(
+            !results
+                .iter()
+                .any(|r| r.as_ref().is_ok_and(|d| d.finish_reason.is_some())),
+            "no synthesized closer on the error path"
         );
     }
 }

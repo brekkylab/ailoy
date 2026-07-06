@@ -356,14 +356,13 @@ impl From<MessageOutput> for MessageDeltaOutput {
 }
 
 /// Adapts a stream of [`MessageDeltaOutput`]s (e.g. from `Agent::run_stream`)
-/// into a stream of completed [`MessageOutput`]s: deltas accumulate until a
-/// message boundary, then the accumulated message is finished and emitted. A
-/// boundary is a delta carrying a `finish_reason`, or a role change with no
-/// intervening `finish_reason` (e.g. an assistant turn flowing straight into a
-/// tool result) — the latter matching `run_stream`'s contract and avoiding the
-/// role-mismatch error `accumulate` would otherwise raise. This recovers the
-/// blocking `Agent::run` view from the streaming one, so consumers that only
-/// want completed messages don't hand-roll boundary detection.
+/// into a stream of completed [`MessageOutput`]s: deltas accumulate until one
+/// carries a `finish_reason` (the message boundary), then the accumulated
+/// message is finished and emitted. ailoy's producers close the contract that
+/// every message ends with a `finish_reason` delta, so this single signal is
+/// sufficient. This recovers the blocking `Agent::run` view from the streaming
+/// one, so consumers that only want completed messages don't hand-roll boundary
+/// detection.
 pub fn into_messages<S>(
     deltas: S,
 ) -> impl futures::Stream<Item = anyhow::Result<MessageOutput>> + Send
@@ -375,28 +374,15 @@ where
         let mut deltas = std::pin::pin!(deltas);
         let mut acc = MessageDeltaOutput::new();
         while let Some(item) = deltas.next().await {
-            let next = item?;
-            // A role change with no intervening finish_reason is also a message
-            // boundary. accumulate() rejects a role mismatch, so flush the
-            // in-progress message first (finalizing it as Stop) before starting
-            // the new one, rather than letting the whole stream error out.
-            if let (Some(cur), Some(incoming)) = (&acc.delta.role, &next.delta.role)
-                && cur != incoming
-            {
-                let mut done = std::mem::replace(&mut acc, MessageDeltaOutput::new());
-                if done.finish_reason.is_none() {
-                    done.finish_reason = Some(FinishReason::Stop {});
-                }
-                yield done.finish()?;
-            }
-            acc = acc.accumulate(next)?;
+            acc = acc.accumulate(item?)?;
             if acc.finish_reason.is_some() {
                 let done = std::mem::replace(&mut acc, MessageDeltaOutput::new());
                 yield done.finish()?;
             }
         }
-        // A trailing partial (role set but the stream ended without a terminal
-        // finish_reason) is finalized as a Stop so its content isn't dropped.
+        // Defensive: ailoy's producers close the contract (every message ends
+        // with a finish_reason), so this only fires for a non-conforming stream
+        // that ends mid-message — finalize the partial as Stop so it isn't lost.
         if acc.delta.role.is_some() {
             acc.finish_reason = Some(FinishReason::Stop {});
             yield acc.finish()?;
@@ -545,28 +531,26 @@ mod tests {
         assert_eq!(messages[1].depth, Some(0));
     }
 
-    /// A role change with no intervening finish_reason is a message boundary:
-    /// the in-progress message is flushed (as Stop) before the new role starts,
-    /// rather than accumulate() erroring on the role mismatch.
+    /// A role change with no intervening finish_reason violates the producer
+    /// contract (every message ends with a finish_reason). into_messages does
+    /// NOT silently split on it — accumulate surfaces the role mismatch as an
+    /// error. Locks the intent: don't reintroduce a silent role-based split.
     #[tokio::test]
-    async fn test_into_messages_segments_at_role_change() {
+    async fn test_into_messages_errors_on_role_change_without_finish() {
         let tool_delta = MessageDeltaOutput {
             delta: MessageDelta::new()
                 .with_role(Role::Tool)
                 .with_contents([PartDelta::Text { text: "42".into() }]),
             ..MessageDeltaOutput::new()
         };
-        let deltas = futures::stream::iter(
-            [text_delta("Hi"), tool_delta].map(anyhow::Ok),
-        );
-        let messages: Vec<_> = into_messages(deltas).map(|m| m.unwrap()).collect().await;
+        // Assistant content (no finish_reason) flowing straight into a Tool role.
+        let deltas = futures::stream::iter([text_delta("Hi"), tool_delta].map(anyhow::Ok));
+        let results: Vec<_> = into_messages(deltas).collect().await;
 
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].message.role, Role::Assistant);
-        assert_eq!(messages[0].message.contents[0].as_text(), Some("Hi"));
-        assert_eq!(messages[0].finish_reason, FinishReason::Stop {});
-        assert_eq!(messages[1].message.role, Role::Tool);
-        assert_eq!(messages[1].message.contents[0].as_text(), Some("42"));
+        assert!(
+            results.iter().any(|r| r.is_err()),
+            "role change without a finish_reason must error, not silently split"
+        );
     }
 
     /// A stream that ends mid-message (no terminal finish_reason) still yields

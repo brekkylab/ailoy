@@ -552,13 +552,10 @@ impl Agent {
                         yield delta;
                     }
                 }
-                // Stream ended without a terminal finish_reason (clean EOF /
-                // provider quirk): treat it as Stop so a partial-but-usable turn
-                // commits instead of aborting. finish() promotes to ToolCall if
-                // tool calls were produced.
-                if acc.finish_reason.is_none() && acc.delta.role.is_some() {
-                    acc.finish_reason = Some(FinishReason::Stop {});
-                }
+                // LangModel::run_stream closes the contract — every message ends
+                // with a finish_reason delta (a synthesized Stop if the provider
+                // sent none) — so acc always carries one here. finish() promotes
+                // Stop to ToolCall if tool calls were produced.
                 let mut output = match acc.finish() {
                     Ok(o) => o,
                     Err(e) => {
