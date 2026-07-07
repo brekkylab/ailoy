@@ -8,7 +8,7 @@ use std::{
 use anyhow::Context as _;
 use async_trait::async_trait;
 use microsandbox::{
-    ExecOutput, MicrosandboxError, Sandbox as MsbSandbox, SandboxConfig, Snapshot,
+    ExecOutput, MicrosandboxError, NetworkPolicy, Sandbox as MsbSandbox, SandboxConfig, Snapshot,
     sandbox::{ExecOptionsBuilder, IntoImage, MountBuilder, PullPolicy, validate_sandbox_name},
     snapshot::ExportOpts,
 };
@@ -145,6 +145,12 @@ pub struct SandboxBuilder {
     build_error: Option<String>,
 }
 
+/// Serialize a [`NetworkPolicy`] into the `Option<Value>` form the 0.6.x
+/// `SandboxConfig` network spec stores (round-trips via serde; infallible).
+fn network_policy_value(policy: NetworkPolicy) -> serde_json::Value {
+    serde_json::to_value(policy).expect("NetworkPolicy serializes to JSON")
+}
+
 impl Default for SandboxBuilder {
     fn default() -> Self {
         let mut config = SandboxConfig::default();
@@ -214,6 +220,21 @@ impl SandboxBuilder {
         if disable {
             self.config.spec.network.enabled = false;
             self.config.spec.network.policy = None;
+        }
+        self
+    }
+
+    /// Apply a permissive egress policy so the guest can reach host services
+    /// (e.g. an agent-k VFS forward server) via `host.microsandbox.internal`.
+    /// Ignored when the network is disabled.
+    ///
+    /// NOTE: `allow_all` also opens public/LAN/loopback/metadata egress;
+    /// tighten to host-only once least-privilege policy types are wired.
+    pub fn allow_host_egress(mut self, allow: bool) -> Self {
+        if allow {
+            self.config.spec.network.enabled = true;
+            self.config.spec.network.policy =
+                Some(network_policy_value(NetworkPolicy::allow_all()));
         }
         self
     }
@@ -344,6 +365,22 @@ impl Sandbox {
     /// snapshot directory unpacked by this call is cleaned up before
     /// returning (success or failure).
     pub async fn try_from_archive(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        Self::try_from_archive_inner(path, false).await
+    }
+
+    /// Like [`try_from_archive`](Self::try_from_archive) but re-applies a
+    /// host-egress policy on restore — an archive is only a filesystem
+    /// snapshot and doesn't carry the network policy, so it must be re-supplied.
+    pub async fn try_from_archive_with_host_egress(
+        path: impl AsRef<Path>,
+    ) -> anyhow::Result<Self> {
+        Self::try_from_archive_inner(path, true).await
+    }
+
+    async fn try_from_archive_inner(
+        path: impl AsRef<Path>,
+        allow_host_egress: bool,
+    ) -> anyhow::Result<Self> {
         ensure_msb().await?;
 
         let handle = Snapshot::import(path.as_ref(), None)
@@ -362,13 +399,16 @@ impl Sandbox {
             .clone()
             .unwrap_or_else(|| format!("ailoy-{}", hex::encode(&Uuid::new_v4().as_bytes()[..8])));
 
-        let result = microsandbox::Sandbox::builder(&name)
+        let builder = microsandbox::Sandbox::builder(&name)
             .from_snapshot(snap_path.to_string_lossy().into_owned())
             .pull_policy(PullPolicy::IfMissing)
-            .replace()
-            .create()
-            .await
-            .context("create sandbox from snapshot");
+            .replace();
+        let builder = if allow_host_egress {
+            builder.network(|n| n.policy(NetworkPolicy::allow_all()))
+        } else {
+            builder
+        };
+        let result = builder.create().await.context("create sandbox from snapshot");
 
         cleanup_snapshot_dir(&snap_path);
 
