@@ -8,7 +8,7 @@ use std::{
 use anyhow::Context as _;
 use async_trait::async_trait;
 use microsandbox::{
-    ExecOutput, MicrosandboxError, NetworkPolicy, Sandbox as MsbSandbox, SandboxConfig, Snapshot,
+    ExecOutput, MicrosandboxError, Sandbox as MsbSandbox, SandboxConfig, Snapshot,
     sandbox::{ExecOptionsBuilder, IntoImage, MountBuilder, PullPolicy},
     snapshot::ExportOpts,
 };
@@ -142,15 +142,15 @@ impl Default for SandboxBuilder {
         let mut config = SandboxConfig::default();
         // 8 random bytes hex-encoded = 16 hex chars, ~64 bits of entropy. Short
         // enough to fit any reasonable socket-path budget.
-        config.name = format!("ailoy-{}", hex::encode(&Uuid::new_v4().as_bytes()[..8]));
+        config.spec.name = format!("ailoy-{}", hex::encode(&Uuid::new_v4().as_bytes()[..8]));
         // `"ubuntu:latest"` is a stable OCI reference; conversion never fails.
-        config.image = "ubuntu:latest"
+        config.spec.image = "ubuntu:latest"
             .into_rootfs_source()
             .expect("'ubuntu:latest' parses as an OCI image reference");
-        config.cpus = 2;
-        config.memory_mib = 2048;
-        config.workdir = Some("/root".to_string());
-        config.pull_policy = PullPolicy::IfMissing;
+        config.spec.resources.cpus = 2;
+        config.spec.resources.memory_mib = 2048;
+        config.spec.runtime.workdir = Some("/root".to_string());
+        config.spec.pull_policy = PullPolicy::IfMissing;
         Self {
             config,
             default_timeout_secs: 60,
@@ -166,13 +166,13 @@ impl SandboxBuilder {
     }
 
     pub fn name(mut self, name: impl Into<String>) -> Self {
-        self.config.name = name.into();
+        self.config.spec.name = name.into();
         self
     }
 
     pub fn image(mut self, image: impl IntoImage) -> Self {
         match image.into_rootfs_source() {
-            Ok(rfs) => self.config.image = rfs,
+            Ok(rfs) => self.config.spec.image = rfs,
             Err(e) => {
                 if self.build_error.is_none() {
                     self.build_error = Some(format!("invalid image: {e}"));
@@ -183,29 +183,29 @@ impl SandboxBuilder {
     }
 
     pub fn cpus(mut self, cpus: u8) -> Self {
-        self.config.cpus = cpus;
+        self.config.spec.resources.cpus = cpus;
         self
     }
 
     pub fn memory_mib(mut self, memory_mib: u32) -> Self {
-        self.config.memory_mib = memory_mib;
+        self.config.spec.resources.memory_mib = memory_mib;
         self
     }
 
     pub fn workdir(mut self, workdir: impl Into<String>) -> Self {
-        self.config.workdir = Some(workdir.into());
+        self.config.spec.runtime.workdir = Some(workdir.into());
         self
     }
 
     pub fn env(mut self, env: impl IntoIterator<Item = (String, String)>) -> Self {
-        self.config.env = env.into_iter().collect();
+        self.config.spec.env = env.into_iter().map(Into::into).collect();
         self
     }
 
     pub fn disable_network(mut self, disable: bool) -> Self {
         if disable {
-            self.config.network.enabled = false;
-            self.config.network.policy = NetworkPolicy::none();
+            self.config.spec.network.enabled = false;
+            self.config.spec.network.policy = None;
         }
         self
     }
@@ -235,7 +235,7 @@ impl SandboxBuilder {
             }
         };
         match builder.build() {
-            Ok(vm) => self.config.mounts.push(vm),
+            Ok(vm) => self.config.spec.mounts.push(vm),
             Err(e) => {
                 if self.build_error.is_none() {
                     self.build_error = Some(format!("invalid mount: {e}"));
@@ -297,7 +297,7 @@ impl Sandbox {
         default_timeout_secs: u64,
         max_output_chars: usize,
     ) -> anyhow::Result<Sandbox> {
-        let name = config.name.clone();
+        let name = config.spec.name.clone();
         let inner = microsandbox::Sandbox::create(config)
             .await
             .context("sandbox create")?;
@@ -652,7 +652,7 @@ mod tests {
             .await
             .expect("vm record should exist after build");
         assert_eq!(
-            handle.status(),
+            handle.status_snapshot(),
             SandboxStatus::Running,
             "vm should be Running right after build",
         );
@@ -663,7 +663,7 @@ mod tests {
             .await
             .expect("vm record should still exist after stop");
         assert_eq!(
-            handle.status(),
+            handle.status_snapshot(),
             SandboxStatus::Stopped,
             "vm should be Stopped after Machine::stop",
         );
