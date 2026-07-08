@@ -112,6 +112,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn shell_tool(mut self) -> Self {
+        self.spec = self.spec.shell_tool();
+        self
+    }
+
     pub fn web_search_tool(mut self, engines: Vec<WebSearchEngineKind>) -> Self {
         self.spec = self.spec.web_search_tool(engines);
         self

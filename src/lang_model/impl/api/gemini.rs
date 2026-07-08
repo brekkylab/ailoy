@@ -401,7 +401,7 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
         .pointer("/content")
         .ok_or_else(|| anyhow::anyhow!("Missing content in candidate"))?;
 
-    // Parse role
+    // Gemini occasionally omits `content.role`; candidates are always model output.
     if let Some(r) = content.pointer("/role") {
         let s = r
             .as_str()
@@ -415,6 +415,8 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
             other => bail!("Unknown role: {other}"),
         };
         rv.role = Some(v);
+    } else {
+        rv.role = Some(Role::Assistant);
     }
 
     // Parse parts

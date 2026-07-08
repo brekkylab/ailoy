@@ -146,6 +146,13 @@ impl LangModel {
                                 .unwrap_or(1u64 << attempt)
                                 .min(MAX_WAIT_SECS);
                             let text = response.text().await?;
+                            // Permanent quota/credit exhaustion never recovers; don't retry.
+                            if schema.is_permanent_quota_error(&text) {
+                                log::warn!("Quota exhausted (429), not retrying: {text}");
+                                last_status = Some(s);
+                                last_text = Some(text);
+                                break;
+                            }
                             log::warn!(
                                 "Rate limited (429). Retrying after {}s (attempt {}/{}): {}",
                                 wait_secs,

@@ -444,6 +444,30 @@ impl Sandbox {
             }),
         })
     }
+
+    /// Returns `true` if a sandbox with the given name already exists, without
+    /// creating or starting it.
+    ///
+    /// Lightweight existence probe — never modifies sandbox state. Returns
+    /// `false` on any error (e.g. the microsandbox runtime is not installed).
+    pub async fn exists(name: &str) -> bool {
+        MsbSandbox::get(name).await.is_ok()
+    }
+
+    /// Remove a sandbox by name without holding a [`Sandbox`] instance.
+    ///
+    /// Intended for explicit cleanup when the [`Sandbox`] object is no longer
+    /// available (e.g. after a process restart). Force-removes via the `msb`
+    /// CLI in a fresh process, matching how [`Drop`] removes the VM (the
+    /// in-process microsandbox DB pool is bound to the parent runtime).
+    ///
+    /// Idempotent: if the named sandbox does not exist, returns `Ok(())`.
+    pub async fn remove_persisted(name: &str) -> anyhow::Result<()> {
+        if MsbSandbox::get(name).await.is_err() {
+            return Ok(());
+        }
+        run_msb_cli(["remove", "-f", name])
+    }
 }
 
 #[async_trait]
