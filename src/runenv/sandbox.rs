@@ -521,9 +521,10 @@ impl Machine for Sandbox {
     }
 
     async fn stop(&mut self) -> anyhow::Result<()> {
-        if let Some(console) = self.console.take() {
+        if let Some(console) = self.console.as_ref() {
             console.inner.stop_and_wait().await?;
         }
+        self.console = None;
         Ok(())
     }
 }
