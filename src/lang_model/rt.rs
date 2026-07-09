@@ -132,28 +132,33 @@ impl LangModel {
         tools: &[ToolDesc],
         options: &LangModelOptions,
     ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
-        // Own everything the stream touches so the returned future is 'static.
-        let model = self.model.clone();
-        let provider_elem = self.provider.clone();
-        let messages = messages.to_vec();
-        let tools = tools.to_vec();
-        let options = options.clone();
+        let LangModelProviderElem::API { schema, .. } = &self.provider;
+
+        // Marshal up front so the stream captures only the owned wire artifacts,
+        // not a copy of the history. The `'static` return is deliberate: it lets
+        // the caller mutate its own history (e.g. Agent::run_stream's rollback)
+        // while the stream is alive — don't turn this into a borrowing stream.
+        let req = LangModelRequest {
+            model: &self.model,
+            messages,
+            tools,
+            provider: &self.provider,
+            options,
+            stream: true,
+        };
+        let (url, header_map, body) = match marshal_request(schema, &req) {
+            Ok(parts) => parts,
+            // Errors surface through the stream, not via `Result`: emit the
+            // marshal failure as a one-shot stream.
+            Err(e) => {
+                return Box::pin(futures::stream::once(async move {
+                    Err::<MessageDeltaOutput, anyhow::Error>(e)
+                }));
+            }
+        };
+        let mut provider = api::provider_api(schema);
 
         Box::pin(async_stream::try_stream! {
-            let LangModelProviderElem::API { schema, .. } = &provider_elem;
-
-            // Create request (streaming)
-            let req = LangModelRequest {
-                model: &model,
-                messages: &messages,
-                tools: &tools,
-                provider: &provider_elem,
-                options: &options,
-                stream: true,
-            };
-            let (url, header_map, body) = marshal_request(schema, &req)?;
-
-            let mut provider = api::provider_api(schema);
             let client = reqwest::Client::new();
             let response =
                 send_with_retry(&client, &url, header_map, &body, provider.as_ref()).await?;
