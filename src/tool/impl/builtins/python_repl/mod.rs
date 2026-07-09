@@ -34,7 +34,7 @@ pub fn get_python_repl_tool_desc() -> ToolDesc {
 pub fn get_python_repl_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
     |_| {
         let runner = Arc::new(runner::PythonReplRunner::new());
-        tool_func!(async |args: Value, runenv: Arc<RunEnvHandle>| -> Value
+        tool_func!(async |args: Value, console: &dyn Console| -> Value
             with[runner = runner.clone()]
             {
             let code = match args.pointer("/code").and_then(|v| v.as_str()) {
@@ -61,7 +61,7 @@ pub fn get_python_repl_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
 
             if !pip_packages.is_empty() {
                 let pkg_refs: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
-                match runner.install_packages(&runenv, &pkg_refs).await {
+                match runner.install_packages(console, &pkg_refs).await {
                     Ok(r) if r.exit_code != 0 => {
                         return crate::to_value!({
                             "stdout": "",
@@ -82,7 +82,7 @@ pub fn get_python_repl_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
                 }
             }
 
-            match runner.run(&runenv, &code, &[]).await {
+            match runner.run(console, &code, &[]).await {
                 Ok(r) => crate::to_value!({
                     "stdout": r.stdout.as_str(),
                     "stderr": r.stderr.as_str(),
@@ -106,7 +106,12 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, message::Message, runenv::RunEnv, tool::ToolProvider};
+    use crate::{
+        datatype::Value,
+        message::Message,
+        runenv::{Local, Machine},
+        tool::ToolProvider,
+    };
 
     fn provider() -> ToolProvider {
         let mut provider = ToolProvider::new();
@@ -118,8 +123,9 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_python_repl_tool_desc()]).unwrap();
         let f = funcs.get("python_repl").unwrap();
-        let runenv = RunEnv::local().get().await.unwrap();
-        f.call(args, "1", runenv).next().await.unwrap().message
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
+        f.call(args, "1", console).next().await.unwrap().message
     }
 
     #[test]

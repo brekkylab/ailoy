@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{datatype::Bytes, runenv::Console};
 
-/// A file to be pre-filled into a [`RunEnv`], or read back from one.
+/// A file to be pre-filled into a [`Machine`](crate::runenv::Machine)'s
+/// console, or read back from one.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct FileEntry {
     pub path: PathBuf,

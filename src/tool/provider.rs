@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::Arc,
+    sync::{Arc, LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
 use url::Url;
@@ -161,7 +161,7 @@ impl ToolProvider {
     /// matches `spec.tools` element-for-element. Returns an error if any
     /// requested tool name is not registered.
     ///
-    /// Called by [`Agent::try_with_provider_and_runenv`](crate::agent::Agent::try_with_provider_and_runenv)
+    /// Called by [`Agent::try_with_provider_and_state`](crate::agent::Agent::try_with_provider_and_state)
     /// during agent construction.
     pub fn provide(&self, spec: &[ToolDesc]) -> anyhow::Result<HashMap<String, ToolFunc>> {
         let mut funcs = HashMap::with_capacity(spec.len());
@@ -173,4 +173,30 @@ impl ToolProvider {
         }
         Ok(funcs)
     }
+}
+
+/// Process-wide named registry of [`ToolProvider`] instances.
+///
+/// Populated at first access with a single `"default"` entry built from
+/// [`ToolProvider::default`] (i.e. the registry pre-loaded with every built-in
+/// tool).  Additional named providers can be registered via
+/// [`get_tool_providers_mut`], and looked up via [`get_tool_providers`].
+static TOOL_PROVIDERS: LazyLock<RwLock<HashMap<String, ToolProvider>>> = LazyLock::new(|| {
+    let mut map = HashMap::new();
+    map.insert("default".to_string(), ToolProvider::default());
+    RwLock::new(map)
+});
+
+/// Borrow the process-wide [`ToolProvider`] registry for reading.
+pub fn get_tool_providers() -> RwLockReadGuard<'static, HashMap<String, ToolProvider>> {
+    TOOL_PROVIDERS
+        .read()
+        .expect("tool_providers lock poisoned")
+}
+
+/// Borrow the process-wide [`ToolProvider`] registry for writing.
+pub fn get_tool_providers_mut() -> RwLockWriteGuard<'static, HashMap<String, ToolProvider>> {
+    TOOL_PROVIDERS
+        .write()
+        .expect("tool_providers lock poisoned")
 }

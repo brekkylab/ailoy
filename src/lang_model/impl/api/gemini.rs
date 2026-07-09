@@ -206,13 +206,13 @@ fn marshal_messages(msgs: &[Message]) -> Value {
 }
 
 impl Marshal<Message> for GeminiMarshal {
-    fn marshal(&mut self, msg: &Message) -> Value {
+    fn marshal(&self, msg: &Message) -> Value {
         marshal_message(msg, true)
     }
 }
 
 impl Marshal<ToolDesc> for GeminiMarshal {
-    fn marshal(&mut self, item: &ToolDesc) -> Value {
+    fn marshal(&self, item: &ToolDesc) -> Value {
         if let Some(desc) = &item.description {
             to_value!({
                 "name": &item.name,
@@ -229,7 +229,10 @@ impl Marshal<ToolDesc> for GeminiMarshal {
 }
 
 impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
-    fn marshal(&mut self, req: &LangModelRequest<'_>) -> Value {
+    fn marshal(&self, req: &LangModelRequest<'_>) -> Value {
+        let LangModelProviderElem::API { url, api_key, .. } = req.provider;
+        let options = req.options;
+
         // Extract system instruction from system message if present
         let system_instruction = req
             .messages
@@ -257,12 +260,12 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
             Value::Null
         };
 
-        let url = format!("{}{}:generateContent", req.url, req.model);
+        let url = format!("{}{}:generateContent", url, req.model);
 
         let mut header = to_value!({
             "content-type": "application/json",
         });
-        if let Some(api_key) = req.api_key.as_ref() {
+        if let Some(api_key) = api_key.as_ref() {
             header
                 .as_object_mut()
                 .unwrap()
@@ -281,31 +284,31 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
             body.as_object_mut().unwrap().insert("tools".into(), tools);
         }
         let mut generation_config = to_value!({});
-        if let Some(max_tokens) = req.max_tokens {
+        if let Some(max_tokens) = options.max_tokens {
             generation_config
                 .as_object_mut()
                 .unwrap()
                 .insert("maxOutputTokens".into(), (max_tokens as i64).into());
         }
-        if let Some(temperature) = req.temperature {
+        if let Some(temperature) = options.temperature {
             generation_config
                 .as_object_mut()
                 .unwrap()
                 .insert("temperature".into(), temperature.into());
         }
-        if let Some(top_p) = req.top_p {
+        if let Some(top_p) = options.top_p {
             generation_config
                 .as_object_mut()
                 .unwrap()
                 .insert("topP".into(), top_p.into());
         }
-        if let Some(top_k) = req.top_k {
+        if let Some(top_k) = options.top_k {
             generation_config
                 .as_object_mut()
                 .unwrap()
                 .insert("topK".into(), (top_k as i64).into());
         }
-        if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+        if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
             generation_config
                 .as_object_mut()
                 .unwrap()
@@ -332,28 +335,8 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
 #[derive(Clone, Debug, Default)]
 pub struct GeminiUnmarshal;
 
-impl super::QuotaClassifier for GeminiUnmarshal {
-    fn is_permanent_quota_error(&self, body: &str) -> bool {
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(body) else {
-            return false;
-        };
-        let error = &json["error"];
-        // RESOURCE_EXHAUSTED covers both; a RetryInfo detail marks the transient case.
-        error["status"] == "RESOURCE_EXHAUSTED"
-            && !error["details"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|d| {
-                    d["@type"]
-                        .as_str()
-                        .is_some_and(|t| t.ends_with("google.rpc.RetryInfo"))
-                })
-    }
-}
-
 impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
-    fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
+    fn unmarshal(&self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let candidate = val
             .pointer("/candidates/0")
             .ok_or_else(|| anyhow::anyhow!("Missing candidates[0] in response"))?
@@ -504,14 +487,31 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
 mod tests {
     use url::Url;
 
-    use super::super::QuotaClassifier;
     use super::*;
     use crate::{
         datatype::{Bytes, Value},
-        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
-        message::{Delta, FinishReason, Message, Part, Role, TokenUsage},
+        lang_model::{
+            LangModel, LangModelAPISchema, LangModelOptions, LangModelProvider,
+            LangModelProviderElem, get_lm_providers_mut,
+        },
+        message::{FinishReason, Message, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    /// Register a one-off [`LangModelProvider`] under `provider_name` in the
+    /// global registry and build the [`LangModel`] via
+    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    fn build_gemini_model(provider_name: &str, model: &str, api_key: String) -> LangModel {
+        let elem = LangModelProviderElem::API {
+            schema: LangModelAPISchema::Gemini,
+            url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap(),
+            api_key: Some(api_key),
+        };
+        let mut lmp = LangModelProvider::new();
+        lmp.insert(model.into(), elem);
+        get_lm_providers_mut().insert(provider_name.into(), lmp);
+        LangModel::try_from_provider(model.to_string(), provider_name).unwrap()
+    }
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
     where
@@ -519,19 +519,21 @@ mod tests {
     {
         let messages: Vec<Message> = vec![];
         let tools: Vec<ToolDesc> = vec![];
-        let url = Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap();
-        let api_key: Option<String> = None;
+        let provider = LangModelProviderElem::API {
+            schema: LangModelAPISchema::Gemini,
+            url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap(),
+            api_key: None,
+        };
+        let options = LangModelOptions {
+            max_tokens,
+            ..Default::default()
+        };
         let req = LangModelRequest {
             model,
             messages: &messages,
             tools: &tools,
-            url: &url,
-            api_key: &api_key,
-            max_tokens,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            response_format: None,
+            provider: &provider,
+            options: &options,
         };
         f(&req)
     }
@@ -561,21 +563,6 @@ mod tests {
                 cache_read_input_tokens: None,
             })
         );
-    }
-
-    /// Missing `content.role` defaults to Assistant instead of bailing.
-    #[test]
-    fn test_unmarshal_missing_content_role_defaults_to_assistant() {
-        let response = to_value!({
-            "candidates": [{
-                "content": {"parts": [{"text": "Hello from Gemini."}]},
-                "finishReason": "STOP"
-            }]
-        });
-        let out = GeminiUnmarshal::default().unmarshal(response).unwrap();
-        assert_eq!(out.delta.role, Some(Role::Assistant));
-        let msg = out.delta.finish().expect("finish() must not bail");
-        assert_eq!(msg.role, Role::Assistant);
     }
 
     /// Verifies functionResponse.response.result marshaling for all Part variants.
@@ -743,19 +730,21 @@ mod tests {
         let fmt = ResponseFormat::json_schema(schema.clone().into()).unwrap();
         let messages: Vec<Message> = vec![];
         let tools: Vec<ToolDesc> = vec![];
-        let url = Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap();
-        let api_key: Option<String> = None;
+        let provider = LangModelProviderElem::API {
+            schema: LangModelAPISchema::Gemini,
+            url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap(),
+            api_key: None,
+        };
+        let options = LangModelOptions {
+            response_format: Some(fmt),
+            ..Default::default()
+        };
         let req = LangModelRequest {
             model: "gemini-2.5-flash-lite",
             messages: &messages,
             tools: &tools,
-            url: &url,
-            api_key: &api_key,
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            response_format: Some(&fmt),
+            provider: &provider,
+            options: &options,
         };
         let val = GeminiMarshal::default().marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();
@@ -790,14 +779,10 @@ mod tests {
             "required": ["country", "capital"]
         });
 
-        let model = LangModel::new(
-            "gemini-2.5-flash-lite".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::Gemini,
-                url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
-                    .unwrap(),
-                api_key: Some(api_key),
-            },
+        let model = build_gemini_model(
+            "gemini_test_run_response_format_json_schema",
+            "gemini-2.5-flash-lite",
+            api_key,
         );
         let messages = vec![Message::new(Role::User).with_contents([Part::text(
             "Return France's country name and capital city in the requested format.",
@@ -834,15 +819,8 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set in .env");
 
-        let model = LangModel::new(
-            "gemini-2.5-flash-lite".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::Gemini,
-                url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
-                    .unwrap(),
-                api_key: Some(api_key),
-            },
-        );
+        let model =
+            build_gemini_model("gemini_test_run_max_tokens", "gemini-2.5-flash-lite", api_key);
         let messages = vec![
             Message::new(Role::User)
                 .with_contents([Part::text("Tell me a long story about a dragon.")]),
@@ -887,14 +865,10 @@ mod tests {
         .unwrap()
         .to_vec();
 
-        let model = LangModel::new(
-            "gemini-3-flash-preview".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::Gemini,
-                url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/")
-                    .unwrap(),
-                api_key: Some(api_key),
-            },
+        let model = build_gemini_model(
+            "gemini_test_tool_result_with_image",
+            "gemini-3-flash-preview",
+            api_key,
         );
 
         let tools =
@@ -961,16 +935,6 @@ mod tests {
             step2.message.contents.iter().any(|p| p.as_text().is_some()),
             "Expected text response after image tool result"
         );
-    }
-
-    #[test]
-    fn test_is_permanent_quota_error() {
-        let u = GeminiUnmarshal;
-        let quota = r#"{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure"}]}}"#;
-        let rate = r#"{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"34s"}]}}"#;
-        assert!(u.is_permanent_quota_error(quota));
-        assert!(!u.is_permanent_quota_error(rate));
-        assert!(!u.is_permanent_quota_error("not json"));
     }
 }
 

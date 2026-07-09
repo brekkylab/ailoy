@@ -1,80 +1,80 @@
-use std::sync::{LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::{
+    collections::HashMap,
+    sync::{LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard},
+};
 
-use crate::{lang_model::LangModelProvider, tool::ToolProvider};
-
-/// Top-level configuration shared across agents.
+/// Named bundle that ties an agent to a [`LangModelProvider`] and a
+/// [`ToolProvider`] by **name** rather than by value.
 ///
-/// `AgentProvider` is a **shared, top-level configuration object** that is passed
-/// unchanged to every agent in a session.  It answers two questions:
+/// `AgentProvider` itself does not hold model or tool definitions — those live
+/// in their own process-wide registries
+/// ([`lang_model_providers`](crate::lang_model::lang_model_providers),
+/// [`tool_providers`](crate::tool::tool_providers)).  This struct only stores
+/// the *keys* into those registries, so a single update to e.g.
+/// [`lang_model_providers_mut`](crate::lang_model::lang_model_providers_mut)
+/// is immediately visible to every `AgentProvider` that references that name.
 ///
-/// * **How do I call a model?** — [`models`](AgentProvider::models) maps each model
-///   identifier that an [`AgentSpec`](crate::agent::AgentSpec) might reference to its
-///   API schema, endpoint URL, and credentials.  An agent looks up its
-///   [`AgentSpec::model`](crate::agent::AgentSpec::model) here at construction.
+/// Mirror registries:
+/// * [`get_agent_providers`] / [`get_agent_providers_mut`] — the global map of
+///   `AgentProvider`s, pre-populated with a single `"default"` entry that
+///   points at the `"default"` lang-model and tool providers.
 ///
-/// * **How do I initialise a tool?** — [`tools`](AgentProvider::tools) is a
-///   [`ToolProvider`] keyed by tool name (built-ins, MCP servers, remote A2A
-///   agents, or custom function tools).  When an agent is constructed, the
-///   [`ToolDesc`](crate::tool::ToolDesc)s listed in its
-///   [`AgentSpec::tools`](crate::agent::AgentSpec::tools) are resolved against
-///   this registry to produce the [`ToolFunc`](crate::tool::ToolFunc)s that
-///   actually run.
-///
-/// `AgentProvider` is separate from [`AgentSpec`](crate::agent::AgentSpec) because
-/// these settings describe *how* to run an agent, not *what* the agent is.  Swapping
-/// the API endpoint or key does not change the agent's identity; swapping the model
-/// or instruction does.
-///
-/// Both fields are public — populate them directly, e.g.
-/// `provider.models.insert("openai/gpt-4o".into(), LangModelProvider::openai(key))`.
-/// [`tools`](AgentProvider::tools) starts pre-loaded with every built-in tool;
-/// use [`ToolProvider::empty`](crate::tool::ToolProvider::empty) to opt out.
-#[derive(Clone)]
+/// At agent construction time
+/// (e.g. [`AgentBuilder::build`](crate::agent::AgentBuilder::build)) the
+/// builder looks up the chosen [`AgentProvider`] by name, then resolves the
+/// nested `lang_model_provider` / `tool_provider` names against their
+/// respective registries.
+#[derive(Clone, Debug)]
 pub struct AgentProvider {
-    /// Registry of all available language models, keyed by model identifier
-    /// (e.g. `"openai/gpt-4o"` or `"anthropic/claude-sonnet-4-6"`). Lookups
-    /// are by exact match against [`AgentSpec::model`](crate::agent::AgentSpec::model).
-    pub models: LangModelProvider,
+    /// Key into [`lang_model_providers`](crate::lang_model::lang_model_providers).
+    pub lang_model_provider: String,
 
-    /// Registry of tool sources, keyed by tool name. Each
-    /// [`ToolProviderElem`](crate::tool::ToolProviderElem) is resolved to a
-    /// [`ToolFunc`](crate::tool::ToolFunc) when an
-    /// [`AgentSpec`](crate::agent::AgentSpec) requests a matching name.
-    pub tools: ToolProvider,
+    /// Key into [`tool_providers`](crate::tool::tool_providers).
+    pub tool_provider: String,
 }
 
 impl AgentProvider {
-    pub fn new() -> Self {
+    /// Bundle the two given provider names.  Both names must exist in their
+    /// respective registries at agent-construction time; this constructor does
+    /// not validate them.
+    pub fn new(lang_model_provider: impl Into<String>, tool_provider: impl Into<String>) -> Self {
         Self {
-            models: Default::default(),
-            tools: Default::default(),
+            lang_model_provider: lang_model_provider.into(),
+            tool_provider: tool_provider.into(),
         }
     }
 }
 
 impl Default for AgentProvider {
+    /// Returns the canonical bundle `{ "default", "default" }`, matching the
+    /// `"default"` entries auto-registered in the lang-model and tool
+    /// provider registries.
     fn default() -> Self {
-        Self::new()
+        Self::new("default", "default")
     }
 }
 
-static DEFAULT_PROVIDER: LazyLock<RwLock<AgentProvider>> =
-    LazyLock::new(|| RwLock::new(AgentProvider::new()));
-
-/// Borrow the process-wide default [`AgentProvider`] for reading.
+/// Process-wide named registry of [`AgentProvider`] bundles.
 ///
-/// Holds a [`std::sync::RwLockReadGuard`]; drop it before performing long
-/// operations to avoid blocking writers.  Use [`default_provider_owned`]
-/// when you need to release the lock immediately.
-pub fn default_provider() -> RwLockReadGuard<'static, AgentProvider> {
-    DEFAULT_PROVIDER
+/// Pre-populated with a single `"default"` entry equal to
+/// [`AgentProvider::default`].  Look up additional named bundles via
+/// [`get_agent_providers`]; register new ones via [`get_agent_providers_mut`].
+static AGENT_PROVIDERS: LazyLock<RwLock<HashMap<String, AgentProvider>>> = LazyLock::new(|| {
+    let mut map = HashMap::new();
+    map.insert("default".to_string(), AgentProvider::default());
+    RwLock::new(map)
+});
+
+/// Borrow the process-wide [`AgentProvider`] registry for reading.
+pub fn get_agent_providers() -> RwLockReadGuard<'static, HashMap<String, AgentProvider>> {
+    AGENT_PROVIDERS
         .read()
-        .expect("default_provider lock poisoned")
+        .expect("agent_providers lock poisoned")
 }
 
-/// Borrow the process-wide default [`AgentProvider`] for writing.
-pub fn default_provider_mut() -> RwLockWriteGuard<'static, AgentProvider> {
-    DEFAULT_PROVIDER
+/// Borrow the process-wide [`AgentProvider`] registry for writing.
+pub fn get_agent_providers_mut() -> RwLockWriteGuard<'static, HashMap<String, AgentProvider>> {
+    AGENT_PROVIDERS
         .write()
-        .expect("default_provider lock poisoned")
+        .expect("agent_providers lock poisoned")
 }

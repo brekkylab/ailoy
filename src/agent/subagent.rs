@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use futures::StreamExt as _;
+use tokio::sync::Mutex;
 
 use crate::{
-    agent::{Agent, AgentCard, AgentProvider, AgentSpec},
+    agent::{Agent, AgentCard, AgentSpec, AgentState},
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role},
-    runenv::{RunEnv, RunEnvHandle},
+    runenv::MachineDyn,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
 };
 
@@ -53,12 +54,11 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
 /// supplied [`AgentSpec`] every time the tool is invoked, runs it for one turn,
 /// then drops it.
 ///
-/// The closure captures `spec`, `provider`, and `runenv` by clone, so the
-/// produced [`ToolFunc`] is independent of any parent [`Agent`]: the parent
-/// keeps it in its `tools` map alongside ordinary tools, with no special
-/// dispatch needed.  The sub-spec is taken as-is — its
-/// [`AgentSpec::skills`] paths are respected verbatim, so a sub-spec is
-/// portable across parents.
+/// The closure captures only owned, cheaply-cloneable values: the spec, the
+/// agent-provider name (a [`String`]), the shared machine, and the card name.
+/// The provider name is re-resolved against [`get_agent_providers`] on every
+/// invocation via [`Agent::try_with_provider_and_state`], so the registry
+/// entry must stay live for the parent agent's lifetime.
 ///
 /// The returned function:
 /// 1. Streams every [`MessageOutput`](crate::message::MessageOutput) produced by
@@ -68,16 +68,16 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
 ///    last assistant answer, also tagged with `source_agent`.
 pub fn get_subagent_tool_func(
     spec: AgentSpec,
-    provider: AgentProvider,
-    runenv: RunEnv,
+    provider: String,
+    machine: Arc<Mutex<dyn MachineDyn>>,
 ) -> ToolFunc {
     // Capture the card name once; it's needed on every synthesised MessageOutput.
     let card_name = spec.card.as_ref().map(|c| c.name.clone());
 
-    ToolFunc::new(move |args: Value, id: String, _: Arc<RunEnvHandle>| {
+    ToolFunc::new(move |args: Value, id: String| {
         let spec = spec.clone();
         let provider = provider.clone();
-        let runenv = runenv.clone();
+        let machine = machine.clone();
         let card_name = card_name.clone();
 
         async_stream::stream! {
@@ -101,12 +101,16 @@ pub fn get_subagent_tool_func(
                 }
             };
 
-            let mut agent = match Agent::try_with_provider_and_runenv(spec, &provider, runenv) {
+            // Build a fresh Agent for this invocation; the parent's machine is
+            // shared so filesystem state stays consistent across the call.
+            let mut state = AgentState::new();
+            state.runenv = machine;
+            let mut agent = match Agent::try_with_provider_and_state(spec, &provider, state) {
                 Ok(a) => a,
                 Err(e) => {
                     yield MessageOutput {
                         message: Message::new(Role::Tool)
-                            .with_contents([Part::value(Value::string(format!("Error building subagent: {e}")))])
+                            .with_contents([Part::value(Value::string(format!("Error: {e}")))])
                             .with_id(id),
                         finish_reason: FinishReason::Stop {},
                         usage: None,

@@ -142,13 +142,13 @@ fn marshal_messages(messages: &[Message]) -> Value {
 }
 
 impl Marshal<Message> for AnthropicMarshal {
-    fn marshal(&mut self, item: &Message) -> Value {
+    fn marshal(&self, item: &Message) -> Value {
         marshal_message(item, true)
     }
 }
 
 impl Marshal<ToolDesc> for AnthropicMarshal {
-    fn marshal(&mut self, item: &ToolDesc) -> Value {
+    fn marshal(&self, item: &ToolDesc) -> Value {
         if let Some(desc) = &item.description {
             to_value!({
                 "name": &item.name,
@@ -165,7 +165,9 @@ impl Marshal<ToolDesc> for AnthropicMarshal {
 }
 
 impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
-    fn marshal(&mut self, req: &LangModelRequest<'_>) -> Value {
+    fn marshal(&self, req: &LangModelRequest<'_>) -> Value {
+        let LangModelProviderElem::API { url, api_key, .. } = req.provider;
+        let options = req.options;
         let model = Value::from(req.model);
 
         // Extract system message text if present
@@ -190,13 +192,13 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
             Value::Null
         };
 
-        let url = req.url.to_string();
+        let url = url.to_string();
 
         let mut header = to_value!({
             "content-type": "application/json",
             "anthropic-version": "2023-06-01",
         });
-        if let Some(api_key) = req.api_key.as_ref() {
+        if let Some(api_key) = api_key.as_ref() {
             header
                 .as_object_mut()
                 .unwrap()
@@ -210,7 +212,7 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
         );
 
         // Anthropic requires an explicit max_tokens value, so we set it as 8192
-        let max_tokens = req.max_tokens.unwrap_or(8192) as i64;
+        let max_tokens = options.max_tokens.unwrap_or(8192) as i64;
         let mut body = to_value!({
             "model": model,
             "max_tokens": max_tokens,
@@ -229,22 +231,22 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
                 .unwrap()
                 .insert("tools".to_owned(), tools);
         }
-        if let Some(temperature) = req.temperature {
+        if let Some(temperature) = options.temperature {
             body.as_object_mut()
                 .unwrap()
                 .insert("temperature".to_owned(), temperature.into());
         }
-        if let Some(top_p) = req.top_p {
+        if let Some(top_p) = options.top_p {
             body.as_object_mut()
                 .unwrap()
                 .insert("top_p".to_owned(), top_p.into());
         }
-        if let Some(top_k) = req.top_k {
+        if let Some(top_k) = options.top_k {
             body.as_object_mut()
                 .unwrap()
                 .insert("top_k".to_owned(), (top_k as i64).into());
         }
-        if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+        if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
             let wire_schema = self.marshal_response_schema(schema);
             body.as_object_mut().unwrap().insert(
                 "output_config".into(),
@@ -263,11 +265,8 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
 #[derive(Clone, Debug, Default)]
 pub struct AnthropicUnmarshal;
 
-// 429 is always transient; billing exhaustion is reported as 402, outside this path.
-impl super::QuotaClassifier for AnthropicUnmarshal {}
-
 impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
-    fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
+    fn unmarshal(&self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let root = val
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("Root should be an object"))?;
@@ -413,10 +412,28 @@ mod tests {
     use super::*;
     use crate::{
         datatype::Bytes,
-        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
+        lang_model::{
+            LangModel, LangModelAPISchema, LangModelOptions, LangModelProvider,
+            LangModelProviderElem, get_lm_providers_mut,
+        },
         message::{FinishReason, Message, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    /// Register a one-off [`LangModelProvider`] under `provider_name` in the
+    /// global registry and build the [`LangModel`] via
+    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    fn build_anthropic_model(provider_name: &str, model: &str, api_key: String) -> LangModel {
+        let elem = LangModelProviderElem::API {
+            schema: LangModelAPISchema::Anthropic,
+            url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
+            api_key: Some(api_key),
+        };
+        let mut lmp = LangModelProvider::new();
+        lmp.insert(model.into(), elem);
+        get_lm_providers_mut().insert(provider_name.into(), lmp);
+        LangModel::try_from_provider(model.to_string(), provider_name).unwrap()
+    }
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
     where
@@ -424,19 +441,21 @@ mod tests {
     {
         let messages: Vec<Message> = vec![];
         let tools: Vec<ToolDesc> = vec![];
-        let url = Url::parse("https://api.anthropic.com/v1/messages").unwrap();
-        let api_key: Option<String> = None;
+        let provider = LangModelProviderElem::API {
+            schema: LangModelAPISchema::Anthropic,
+            url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
+            api_key: None,
+        };
+        let options = LangModelOptions {
+            max_tokens,
+            ..Default::default()
+        };
         let req = LangModelRequest {
             model,
             messages: &messages,
             tools: &tools,
-            url: &url,
-            api_key: &api_key,
-            max_tokens,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            response_format: None,
+            provider: &provider,
+            options: &options,
         };
         f(&req)
     }
@@ -645,19 +664,21 @@ mod tests {
         let fmt = ResponseFormat::json_schema(schema.clone().into()).unwrap();
         let messages: Vec<Message> = vec![];
         let tools: Vec<ToolDesc> = vec![];
-        let url = Url::parse("https://api.anthropic.com/v1/messages").unwrap();
-        let api_key: Option<String> = None;
+        let provider = LangModelProviderElem::API {
+            schema: LangModelAPISchema::Anthropic,
+            url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
+            api_key: None,
+        };
+        let options = LangModelOptions {
+            response_format: Some(fmt),
+            ..Default::default()
+        };
         let req = LangModelRequest {
             model: "claude-haiku-4-5",
             messages: &messages,
             tools: &tools,
-            url: &url,
-            api_key: &api_key,
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            response_format: Some(&fmt),
+            provider: &provider,
+            options: &options,
         };
         let val = AnthropicMarshal::default().marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();
@@ -690,13 +711,10 @@ mod tests {
             "required": ["country", "capital"]
         });
 
-        let model = LangModel::new(
-            "claude-haiku-4-5".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::Anthropic,
-                url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
-                api_key: Some(api_key),
-            },
+        let model = build_anthropic_model(
+            "test_run_response_format_json_schema",
+            "claude-haiku-4-5",
+            api_key,
         );
         let messages = vec![Message::new(Role::User).with_contents([Part::text(
             "Return France's country name and capital city in the requested format.",
@@ -734,14 +752,7 @@ mod tests {
         let api_key =
             std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set in .env");
 
-        let model = LangModel::new(
-            "claude-haiku-4-5".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::Anthropic,
-                url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
-                api_key: Some(api_key),
-            },
-        );
+        let model = build_anthropic_model("test_run_max_tokens", "claude-haiku-4-5", api_key);
         let messages = vec![
             Message::new(Role::User)
                 .with_contents([Part::text("Tell me a long story about a dragon.")]),
@@ -781,14 +792,8 @@ mod tests {
         .unwrap()
         .to_vec();
 
-        let model = LangModel::new(
-            "claude-haiku-4-5".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::Anthropic,
-                url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
-                api_key: Some(api_key),
-            },
-        );
+        let model =
+            build_anthropic_model("test_tool_result_with_image", "claude-haiku-4-5", api_key);
 
         let messages = vec![
             Message::new(Role::User).with_contents([Part::text(

@@ -137,13 +137,13 @@ fn marshal_messages(msgs: &[Message]) -> Value {
 }
 
 impl Marshal<Message> for OpenAIMarshal {
-    fn marshal(&mut self, msg: &Message) -> Value {
+    fn marshal(&self, msg: &Message) -> Value {
         to_value!(marshal_message(msg, true))
     }
 }
 
 impl Marshal<ToolDesc> for OpenAIMarshal {
-    fn marshal(&mut self, item: &ToolDesc) -> Value {
+    fn marshal(&self, item: &ToolDesc) -> Value {
         if let Some(desc) = &item.description {
             to_value!({
                 "type": "function",
@@ -162,7 +162,10 @@ impl Marshal<ToolDesc> for OpenAIMarshal {
 }
 
 impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
-    fn marshal(&mut self, req: &LangModelRequest<'_>) -> Value {
+    fn marshal(&self, req: &LangModelRequest<'_>) -> Value {
+        let LangModelProviderElem::API { url, api_key, .. } = req.provider;
+        let options = req.options;
+
         // Extract system instruction from system message if present
         let instructions = req
             .messages
@@ -185,12 +188,12 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
             Value::Null
         };
 
-        let url = req.url.to_string();
+        let url = url.to_string();
 
         let mut header = to_value!({
             "content-type": "application/json",
         });
-        if let Some(api_key) = req.api_key.as_ref() {
+        if let Some(api_key) = api_key.as_ref() {
             header
                 .as_object_mut()
                 .unwrap()
@@ -212,20 +215,20 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
                 .insert("tool_choice".into(), to_value!("auto"));
             body.as_object_mut().unwrap().insert("tools".into(), tools);
         }
-        if let Some(max_tokens) = req.max_tokens {
+        if let Some(max_tokens) = options.max_tokens {
             body.as_object_mut()
                 .unwrap()
                 .insert("max_output_tokens".into(), (max_tokens as i64).into());
         }
         // OpenAI reasoning models (o-series, gpt-5) reject temperature/top_p; drop them silently.
-        if let Some(temperature) = req.temperature
+        if let Some(temperature) = options.temperature
             && !is_openai_reasoning_model(req.model)
         {
             body.as_object_mut()
                 .unwrap()
                 .insert("temperature".into(), temperature.into());
         }
-        if let Some(top_p) = req.top_p
+        if let Some(top_p) = options.top_p
             && !is_openai_reasoning_model(req.model)
         {
             body.as_object_mut()
@@ -233,7 +236,7 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
                 .insert("top_p".into(), top_p.into());
         }
         // top_k is not part of the OpenAI Responses spec; intentionally ignored.
-        if let Some(ResponseFormat::JsonSchema(schema)) = req.response_format {
+        if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
             let wire_schema = self.marshal_response_schema(schema);
             body.as_object_mut().unwrap().insert(
                 "text".into(),
@@ -259,18 +262,8 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
 #[derive(Clone, Debug, Default)]
 pub struct OpenAIUnmarshal;
 
-impl super::QuotaClassifier for OpenAIUnmarshal {
-    fn is_permanent_quota_error(&self, body: &str) -> bool {
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(body) else {
-            return false;
-        };
-        let error = &json["error"];
-        error["type"] == "insufficient_quota" || error["code"] == "insufficient_quota"
-    }
-}
-
 impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
-    fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
+    fn unmarshal(&self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let root = val
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("Root should be an object"))?;
@@ -426,14 +419,31 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
 mod tests {
     use url::Url;
 
-    use super::super::QuotaClassifier;
     use super::*;
     use crate::{
         datatype::Bytes,
-        lang_model::{LangModel, LangModelAPISchema, LangModelOptions, LangModelProviderElem},
+        lang_model::{
+            LangModel, LangModelAPISchema, LangModelOptions, LangModelProvider,
+            LangModelProviderElem, get_lm_providers_mut,
+        },
         message::{FinishReason, Message, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    /// Register a one-off [`LangModelProvider`] under `provider_name` in the
+    /// global registry and build the [`LangModel`] via
+    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    fn build_openai_model(provider_name: &str, model: &str, api_key: String) -> LangModel {
+        let elem = LangModelProviderElem::API {
+            schema: LangModelAPISchema::OpenAI,
+            url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
+            api_key: Some(api_key),
+        };
+        let mut lmp = LangModelProvider::new();
+        lmp.insert(model.into(), elem);
+        get_lm_providers_mut().insert(provider_name.into(), lmp);
+        LangModel::try_from_provider(model.to_string(), provider_name).unwrap()
+    }
 
     fn with_req<F, R>(model: &str, max_tokens: Option<u64>, f: F) -> R
     where
@@ -441,19 +451,21 @@ mod tests {
     {
         let messages: Vec<Message> = vec![];
         let tools: Vec<ToolDesc> = vec![];
-        let url = Url::parse("https://api.openai.com/v1/responses").unwrap();
-        let api_key: Option<String> = None;
+        let provider = LangModelProviderElem::API {
+            schema: LangModelAPISchema::OpenAI,
+            url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
+            api_key: None,
+        };
+        let options = LangModelOptions {
+            max_tokens,
+            ..Default::default()
+        };
         let req = LangModelRequest {
             model,
             messages: &messages,
             tools: &tools,
-            url: &url,
-            api_key: &api_key,
-            max_tokens,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            response_format: None,
+            provider: &provider,
+            options: &options,
         };
         f(&req)
     }
@@ -482,19 +494,21 @@ mod tests {
 
         let messages: Vec<Message> = vec![];
         let tools: Vec<ToolDesc> = vec![];
-        let url = Url::parse("https://api.openai.com/v1/responses").unwrap();
-        let api_key: Option<String> = None;
+        let provider = LangModelProviderElem::API {
+            schema: LangModelAPISchema::OpenAI,
+            url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
+            api_key: None,
+        };
+        let options = LangModelOptions {
+            response_format: Some(fmt),
+            ..Default::default()
+        };
         let req = LangModelRequest {
             model: "gpt-4o",
             messages: &messages,
             tools: &tools,
-            url: &url,
-            api_key: &api_key,
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            response_format: Some(&fmt),
+            provider: &provider,
+            options: &options,
         };
 
         let val = OpenAIMarshal::default().marshal(&req);
@@ -676,14 +690,7 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set in .env");
 
-        let model = LangModel::new(
-            "gpt-5.4-mini".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::OpenAI,
-                url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
-                api_key: Some(api_key),
-            },
-        );
+        let model = build_openai_model("openai_test_run_max_tokens", "gpt-5.4-mini", api_key);
         let messages = vec![
             Message::new(Role::User)
                 .with_contents([Part::text("Tell me a long story about a dragon.")]),
@@ -721,13 +728,10 @@ mod tests {
             "additionalProperties": false
         });
 
-        let model = LangModel::new(
-            "gpt-4.1-mini".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::OpenAI,
-                url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
-                api_key: Some(api_key),
-            },
+        let model = build_openai_model(
+            "openai_test_run_response_format_json_schema",
+            "gpt-4.1-mini",
+            api_key,
         );
         let messages = vec![Message::new(Role::User).with_contents([Part::text(
             "Return France's country name and capital city in the requested format.",
@@ -776,14 +780,8 @@ mod tests {
         .unwrap()
         .to_vec();
 
-        let model = LangModel::new(
-            "gpt-5.4-mini".to_string(),
-            LangModelProviderElem::API {
-                schema: LangModelAPISchema::OpenAI,
-                url: Url::parse("https://api.openai.com/v1/responses").unwrap(),
-                api_key: Some(api_key),
-            },
-        );
+        let model =
+            build_openai_model("openai_test_tool_result_with_image", "gpt-5.4-mini", api_key);
 
         let messages = vec![
             Message::new(Role::User).with_contents([Part::text(
@@ -819,17 +817,6 @@ mod tests {
             resp.message.contents.iter().any(|p| p.as_text().is_some()),
             "Expected text response after image tool result"
         );
-    }
-
-    #[test]
-    fn test_is_permanent_quota_error() {
-        let u = OpenAIUnmarshal;
-        let quota = r#"{"error":{"type":"insufficient_quota","code":"insufficient_quota"}}"#;
-        let rate = r#"{"error":{"type":"rate_limit_exceeded","code":"rate_limit_exceeded"}}"#;
-        assert!(u.is_permanent_quota_error(quota));
-        assert!(!u.is_permanent_quota_error(rate));
-        // Unparseable body is treated as transient (don't suppress retries).
-        assert!(!u.is_permanent_quota_error("not json"));
     }
 }
 

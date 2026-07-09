@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::{
     datatype::Value,
-    runenv::RunEnvHandle,
+    runenv::Console,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
 };
@@ -106,14 +106,14 @@ fn parse_patch(text: &str) -> anyhow::Result<Vec<PatchOp>> {
     Ok(ops)
 }
 
-async fn apply_op(op: &PatchOp, runenv: &RunEnvHandle) -> anyhow::Result<String> {
+async fn apply_op(op: &PatchOp, console: &dyn Console) -> anyhow::Result<String> {
     match op {
         PatchOp::Add { path, content } => {
-            runenv.write(Path::new(path), content.as_bytes()).await?;
+            console.write(Path::new(path), content.as_bytes()).await?;
             Ok(format!("added {path}"))
         }
         PatchOp::Delete { path } => {
-            let result = runenv
+            let result = console
                 .exec("rm".into(), vec!["-f".into(), path.clone()], None)
                 .await?;
             if result.exit_code != 0 {
@@ -122,7 +122,7 @@ async fn apply_op(op: &PatchOp, runenv: &RunEnvHandle) -> anyhow::Result<String>
             Ok(format!("deleted {path}"))
         }
         PatchOp::Update { path, hunks } => {
-            let bytes = runenv.read(Path::new(path)).await?;
+            let bytes = console.read(Path::new(path)).await?;
             let mut content = String::from_utf8(bytes)
                 .map_err(|_| anyhow::anyhow!("file {path} is not valid UTF-8"))?;
             for (i, hunk) in hunks.iter().enumerate() {
@@ -142,7 +142,7 @@ async fn apply_op(op: &PatchOp, runenv: &RunEnvHandle) -> anyhow::Result<String>
                 }
                 content = content.replacen(&hunk.before, &hunk.after, 1);
             }
-            runenv.write(Path::new(path), content.as_bytes()).await?;
+            console.write(Path::new(path), content.as_bytes()).await?;
             Ok(format!("updated {path}"))
         }
     }
@@ -192,7 +192,7 @@ pub fn get_apply_patch_tool_desc() -> ToolDesc {
 }
 
 pub fn get_apply_patch_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, runenv: Arc<RunEnvHandle>| -> Value {
+    tool_func!(async |args: Value, console: &dyn Console| -> Value {
         let Some(patch_text) = args.pointer("/patch").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: patch",
@@ -212,7 +212,7 @@ pub fn get_apply_patch_tool_func() -> ToolFunc {
 
         let mut summary: Vec<Value> = Vec::new();
         for op in &ops {
-            match apply_op(op, &runenv).await {
+            match apply_op(op, console).await {
                 Ok(msg) => summary.push(Value::from(msg)),
                 Err(e) => {
                     return crate::to_value!({
@@ -235,7 +235,12 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{message::Message, runenv::RunEnv, to_value, tool::ToolProvider};
+    use crate::{
+        message::Message,
+        runenv::{Local, Machine},
+        to_value,
+        tool::ToolProvider,
+    };
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -247,8 +252,9 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_apply_patch_tool_desc()]).unwrap();
         let f = funcs.get("apply_patch").unwrap();
-        let runenv = RunEnv::local().get().await.unwrap();
-        f.call(args, "1", runenv).next().await.unwrap().message
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
+        f.call(args, "1", console).next().await.unwrap().message
     }
 
     #[tokio::test]
