@@ -9,7 +9,7 @@ use anyhow::Context as _;
 use async_trait::async_trait;
 use microsandbox::{
     ExecOutput, MicrosandboxError, Sandbox as MsbSandbox, SandboxConfig, Snapshot,
-    sandbox::{ExecOptionsBuilder, IntoImage, MountBuilder, PullPolicy},
+    sandbox::{ExecOptionsBuilder, IntoImage, MountBuilder, PullPolicy, validate_sandbox_name},
     snapshot::ExportOpts,
 };
 use schemars::JsonSchema;
@@ -45,13 +45,21 @@ pub enum VolumeMount {
     /// or `$MSB_HOME/volumes/<name>/`). The volume persists across sandbox
     /// restarts and can be shared between sandboxes.
     Named {
-        /// Name of the pre-existing microsandbox volume.
+        /// Name of the microsandbox volume.
         name: String,
         /// Absolute guest path.
         guest: String,
         /// When `true`, the guest cannot write to this mount.
         #[serde(default)]
         readonly: bool,
+        /// Create the volume if missing (reusing a compatible existing one)
+        /// instead of requiring it to already exist. Default: `false`.
+        #[serde(default)]
+        create_if_missing: bool,
+        /// Labels applied when creating the volume; must match the existing
+        /// volume's labels when reused.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        labels: Vec<(String, String)>,
     },
     /// Memory-backed temporary filesystem. Disappears when the sandbox stops.
     Tmpfs {
@@ -225,8 +233,20 @@ impl SandboxBuilder {
                 name,
                 guest,
                 readonly,
+                create_if_missing,
+                labels,
             } => {
-                let b = MountBuilder::new(guest).named(name);
+                let b = if create_if_missing {
+                    MountBuilder::new(guest).named_with(name, move |mut n| {
+                        n = n.ensure_exists();
+                        for (k, v) in labels {
+                            n = n.label(k, v);
+                        }
+                        n
+                    })
+                } else {
+                    MountBuilder::new(guest).named(name)
+                };
                 if readonly { b.readonly() } else { b }
             }
             VolumeMount::Tmpfs { guest, size_mib } => {
@@ -266,6 +286,9 @@ impl SandboxBuilder {
             max_output_chars,
             ..
         } = self;
+
+        validate_sandbox_name(&config.spec.name)
+            .map_err(|e| anyhow::anyhow!("sandbox name '{}': {e}", config.spec.name))?;
 
         Sandbox::try_new(config, default_timeout_secs, max_output_chars).await
     }
@@ -687,6 +710,44 @@ mod tests {
             MsbSandbox::get(&name).await.is_err(),
             "vm record should be gone after Drop",
         );
+    }
+
+    // ── exists / remove_persisted ─────────────────────────────────────────────
+
+    /// A name that was never registered reports `false` without touching state.
+    #[tokio::test]
+    async fn test_exists_returns_false_for_unknown_name() {
+        let name = format!("ailoy-nx-{}", hex::encode(&Uuid::new_v4().as_bytes()[..6]));
+        assert!(
+            !Sandbox::exists(&name).await,
+            "a never-registered name must not exist"
+        );
+    }
+
+    /// `exists()` tracks the lifecycle: `true` after build, `false` after the
+    /// VM is removed on `Drop`.
+    #[tokio::test]
+    async fn test_exists_true_after_build_false_after_drop() {
+        let sandbox = SandboxBuilder::new().build().await.expect("build");
+        let name = sandbox.get_name().to_string();
+
+        assert!(Sandbox::exists(&name).await, "must exist after build");
+
+        drop(sandbox);
+
+        assert!(
+            !Sandbox::exists(&name).await,
+            "must not exist after Drop removes the VM"
+        );
+    }
+
+    /// `remove_persisted` on an unknown name is a no-op that returns `Ok`.
+    #[tokio::test]
+    async fn test_remove_persisted_unknown_is_ok() {
+        let name = format!("ailoy-nx-{}", hex::encode(&Uuid::new_v4().as_bytes()[..6]));
+        Sandbox::remove_persisted(&name)
+            .await
+            .expect("remove_persisted on unknown name should be Ok");
     }
 
     /// Round-trip: build → write files → archive → restore → read files.
