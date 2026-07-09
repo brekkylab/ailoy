@@ -25,7 +25,7 @@
 //! ```
 //!
 //! For an isolated environment, use the `sandbox` feature and build a
-//! [`Sandbox`] with [`SandboxBuilder`]:
+//! `Sandbox` with `SandboxBuilder`:
 //!
 //! ```ignore
 //! # async fn run() -> anyhow::Result<()> {
@@ -153,7 +153,7 @@ pub trait Machine: Send + Sync + 'static {
     /// No-op if already stopped.
     ///
     /// Note that this is not essential op.
-    /// Using [`start`] alone is enough to use the machine.
+    /// Using [`Machine::start`] alone is enough to use the machine.
     /// However, calling `stop` when idle helps keep resource use low.
     /// When (or whether) to call it is up to the caller.
     async fn stop(&mut self) -> anyhow::Result<()> {
