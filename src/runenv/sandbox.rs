@@ -151,6 +151,50 @@ fn network_policy_value(policy: NetworkPolicy) -> serde_json::Value {
     serde_json::to_value(policy).expect("NetworkPolicy serializes to JSON")
 }
 
+/// Guest network reachability. The sandbox host
+/// (`host.microsandbox.internal`, e.g. an ailoy VFS forward server) is
+/// reachable in **every** variant; they differ only in outside reach. There is
+/// no fully-offline variant. All map to a [`NetworkPolicy`] with
+/// `default_ingress: Allow` (published-port behavior).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxNetwork {
+    /// Host only — no public internet, LAN, loopback, or metadata.
+    /// Least-privilege for VFS-in-sandbox.
+    HostOnly,
+    /// Host + public internet, but not private LAN, loopback, link-local,
+    /// cloud-metadata, or multicast. The default.
+    #[default]
+    Public,
+    /// Unrestricted egress/ingress — `Public` plus LAN, loopback, link-local,
+    /// cloud-metadata, and multicast. Grant deliberately (reopens SSRF).
+    Full,
+}
+
+impl SandboxNetwork {
+    /// The microsandbox policy for this variant.
+    fn policy(self) -> NetworkPolicy {
+        use microsandbox_network::policy::{Action, Destination, DestinationGroup, Rule};
+        // `allow_egress(Host)` permits any port to the host — including :53, so
+        // the guest's `host.microsandbox.internal` DNS lookup works.
+        let host = || Rule::allow_egress(Destination::Group(DestinationGroup::Host));
+        let public = || Rule::allow_egress(Destination::Group(DestinationGroup::Public));
+        match self {
+            SandboxNetwork::HostOnly => NetworkPolicy {
+                default_egress: Action::Deny,
+                default_ingress: Action::Allow,
+                rules: vec![host()],
+            },
+            SandboxNetwork::Public => NetworkPolicy {
+                default_egress: Action::Deny,
+                default_ingress: Action::Allow,
+                rules: vec![public(), host()],
+            },
+            SandboxNetwork::Full => NetworkPolicy::allow_all(),
+        }
+    }
+}
+
 impl Default for SandboxBuilder {
     fn default() -> Self {
         let mut config = SandboxConfig::default();
@@ -165,6 +209,9 @@ impl Default for SandboxBuilder {
         config.spec.resources.memory_mib = 2048;
         config.spec.runtime.workdir = Some("/root".to_string());
         config.spec.pull_policy = PullPolicy::IfMissing;
+        // Default network posture: host + public internet (see SandboxNetwork).
+        config.spec.network.enabled = true;
+        config.spec.network.policy = Some(network_policy_value(SandboxNetwork::default().policy()));
         Self {
             config,
             default_timeout_secs: 60,
@@ -216,26 +263,11 @@ impl SandboxBuilder {
         self
     }
 
-    pub fn disable_network(mut self, disable: bool) -> Self {
-        if disable {
-            self.config.spec.network.enabled = false;
-            self.config.spec.network.policy = None;
-        }
-        self
-    }
-
-    /// Apply a permissive egress policy so the guest can reach host services
-    /// (e.g. an agent-k VFS forward server) via `host.microsandbox.internal`.
-    /// Ignored when the network is disabled.
-    ///
-    /// NOTE: `allow_all` also opens public/LAN/loopback/metadata egress;
-    /// tighten to host-only once least-privilege policy types are wired.
-    pub fn allow_host_egress(mut self, allow: bool) -> Self {
-        if allow {
-            self.config.spec.network.enabled = true;
-            self.config.spec.network.policy =
-                Some(network_policy_value(NetworkPolicy::allow_all()));
-        }
+    /// Set the guest network posture. The host is reachable in every variant;
+    /// see [`SandboxNetwork`]. Defaults to [`SandboxNetwork::Public`].
+    pub fn network(mut self, network: SandboxNetwork) -> Self {
+        self.config.spec.network.enabled = true;
+        self.config.spec.network.policy = Some(network_policy_value(network.policy()));
         self
     }
 
@@ -365,21 +397,22 @@ impl Sandbox {
     /// snapshot directory unpacked by this call is cleaned up before
     /// returning (success or failure).
     pub async fn try_from_archive(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        Self::try_from_archive_inner(path, false).await
+        Self::try_from_archive_inner(path, SandboxNetwork::default()).await
     }
 
-    /// Like [`try_from_archive`](Self::try_from_archive) but re-applies a
-    /// host-egress policy on restore — an archive is only a filesystem
-    /// snapshot and doesn't carry the network policy, so it must be re-supplied.
-    pub async fn try_from_archive_with_host_egress(
+    /// Like [`try_from_archive`](Self::try_from_archive) but with an explicit
+    /// [`SandboxNetwork`]. An archive is only a filesystem snapshot and doesn't
+    /// carry the network policy, so the desired posture is re-applied here.
+    pub async fn try_from_archive_with_network(
         path: impl AsRef<Path>,
+        network: SandboxNetwork,
     ) -> anyhow::Result<Self> {
-        Self::try_from_archive_inner(path, true).await
+        Self::try_from_archive_inner(path, network).await
     }
 
     async fn try_from_archive_inner(
         path: impl AsRef<Path>,
-        allow_host_egress: bool,
+        network: SandboxNetwork,
     ) -> anyhow::Result<Self> {
         ensure_msb().await?;
 
@@ -399,16 +432,14 @@ impl Sandbox {
             .clone()
             .unwrap_or_else(|| format!("ailoy-{}", hex::encode(&Uuid::new_v4().as_bytes()[..8])));
 
-        let builder = microsandbox::Sandbox::builder(&name)
+        let result = microsandbox::Sandbox::builder(&name)
             .from_snapshot(snap_path.to_string_lossy().into_owned())
             .pull_policy(PullPolicy::IfMissing)
-            .replace();
-        let builder = if allow_host_egress {
-            builder.network(|n| n.policy(NetworkPolicy::allow_all()))
-        } else {
-            builder
-        };
-        let result = builder.create().await.context("create sandbox from snapshot");
+            .replace()
+            .network(|n| n.policy(network.policy()))
+            .create()
+            .await
+            .context("create sandbox from snapshot");
 
         cleanup_snapshot_dir(&snap_path);
 
@@ -794,6 +825,49 @@ mod tests {
         Sandbox::remove_persisted(&name)
             .await
             .expect("remove_persisted on unknown name should be Ok");
+    }
+
+    // ── network policy ─────────────────────────────────────────────────────────
+
+    /// Probe a raw public IP on :443 from inside the guest. Uses `alpine`
+    /// (busybox `nc`) and a non-DNS port — microsandbox intercepts :53 with its
+    /// own resolver, so only a raw-IP connect actually exercises egress policy.
+    /// Returns the shell exit code (0 = connected).
+    async fn public_egress_exit_code(network: SandboxNetwork) -> i32 {
+        let mut sandbox = SandboxBuilder::new()
+            .image("alpine:latest")
+            .network(network)
+            .build()
+            .await
+            .expect("build");
+        let console = sandbox.start().await.expect("start");
+        console
+            .exec_shell("nc -zw5 1.1.1.1 443 2>/dev/null".to_string(), Some(10))
+            .await
+            .expect("exec")
+            .exit_code
+    }
+
+    /// `SandboxNetwork::HostOnly` grants egress to the sandbox host only —
+    /// public egress stays blocked (the least-privilege VFS posture).
+    #[tokio::test]
+    async fn test_host_only_blocks_public_egress() {
+        assert_ne!(
+            public_egress_exit_code(SandboxNetwork::HostOnly).await,
+            0,
+            "public TCP connect (1.1.1.1:443) must be blocked under HostOnly"
+        );
+    }
+
+    /// Contrast: `SandboxNetwork::Public` (the default) allows public egress,
+    /// confirming HostOnly's block is the policy — not a broken network.
+    #[tokio::test]
+    async fn test_public_allows_public_egress() {
+        assert_eq!(
+            public_egress_exit_code(SandboxNetwork::Public).await,
+            0,
+            "public TCP connect (1.1.1.1:443) must succeed under Public"
+        );
     }
 
     /// Round-trip: build → write files → archive → restore → read files.
