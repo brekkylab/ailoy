@@ -551,7 +551,7 @@ impl Drop for Sandbox {
                 }
                 let _ = tx.send(());
             });
-            let _ = rx.recv();
+            let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
         }
         if let Err(e) = run_msb_cli(["remove", "-f", self.name.as_str()]) {
             log::warn!("cleanup sandbox `{}`: {e}", self.name);
