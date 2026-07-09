@@ -251,6 +251,16 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
             );
         }
 
+        if req.stream {
+            body.as_object_mut()
+                .unwrap()
+                .insert("stream".into(), true.into());
+            header
+                .as_object_mut()
+                .unwrap()
+                .insert("accept".into(), "text/event-stream".into());
+        }
+
         to_value!({
             "url": url,
             "header": header,
@@ -262,8 +272,126 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
 #[derive(Clone, Debug, Default)]
 pub struct OpenAIUnmarshal;
 
+impl super::QuotaClassifier for OpenAIUnmarshal {
+    fn is_permanent_quota_error(&self, body: &str) -> bool {
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(body) else {
+            return false;
+        };
+        let error = &json["error"];
+        error["type"] == "insufficient_quota" || error["code"] == "insufficient_quota"
+    }
+}
+
+/// Parses one Responses API SSE event (`response.*`) into a delta: incremental
+/// text (`output_text.delta`), reasoning (`reasoning_summary_text.delta`), and
+/// whole function calls (`output_item.done`); `response.completed` reuses the
+/// full-response `Unmarshal` for finish_reason + usage. Other events: no delta.
 impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
-    fn unmarshal(&self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
+    fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
+        let val: Value = serde_json::from_str(data)?;
+        let ty = val.pointer("/type").and_then(|v| v.as_str()).unwrap_or("");
+
+        let mut delta = MessageDelta::new();
+        match ty {
+            // A message output item begins: establish the assistant role.
+            "response.output_item.added"
+                if val.pointer("/item/type").and_then(|v| v.as_str()) == Some("message") =>
+            {
+                delta = delta.with_role(Role::Assistant);
+            }
+            // Incremental assistant text.
+            "response.output_text.delta" => {
+                let Some(text) = val.pointer("/delta").and_then(|v| v.as_str()) else {
+                    return Ok(None);
+                };
+                delta = delta
+                    .with_role(Role::Assistant)
+                    .with_contents([PartDelta::Text {
+                        text: text.to_owned(),
+                    }]);
+            }
+            // Incremental reasoning summary -> thinking. Set the role too (like
+            // output_text.delta): a reasoning model truncated mid-reasoning emits
+            // only reasoning before the terminal event, and without a role the
+            // accumulated message makes finish() bail with "Role not specified".
+            "response.reasoning_summary_text.delta" => {
+                let Some(text) = val.pointer("/delta").and_then(|v| v.as_str()) else {
+                    return Ok(None);
+                };
+                delta = delta.with_role(Role::Assistant);
+                delta.thinking = Some(text.to_owned());
+            }
+            // A finalized function call (carries call_id + name + full arguments).
+            "response.output_item.done"
+                if val.pointer("/item/type").and_then(|v| v.as_str()) == Some("function_call") =>
+            {
+                let id = val
+                    .pointer("/item/call_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_owned());
+                let name = val
+                    .pointer("/item/name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                let arguments = val
+                    .pointer("/item/arguments")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                delta = delta
+                    .with_role(Role::Assistant)
+                    .with_tool_calls([PartDelta::Function {
+                        id,
+                        function: PartDeltaFunction::WithStringArgs { name, arguments },
+                    }]);
+            }
+            // Terminal success/partial: reuse the full-response parser for
+            // finish_reason + usage; streamed content is dropped (already sent).
+            "response.completed" | "response.incomplete" => {
+                let Some(resp) = val.pointer("/response") else {
+                    return Ok(None);
+                };
+                let parsed = OpenAIUnmarshal.unmarshal(resp.clone())?;
+                return Ok(Some(MessageDeltaOutput {
+                    delta: MessageDelta::new(),
+                    finish_reason: parsed.finish_reason,
+                    usage: parsed.usage,
+                    depth: None,
+                    source_agent: None,
+                }));
+            }
+            // A failed response carries its reason in `response.error`; surface
+            // it instead of silently finishing with no finish_reason.
+            "response.failed" => {
+                let msg = val
+                    .pointer("/response/error/message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("response failed");
+                anyhow::bail!("OpenAI Responses failed: {msg}");
+            }
+            "error" => {
+                let msg = val
+                    .pointer("/message")
+                    .or_else(|| val.pointer("/error/message"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown error");
+                anyhow::bail!("OpenAI Responses stream error: {msg}");
+            }
+            // Lifecycle / no-delta events (created, in_progress, content_part.*,
+            // *_text.done, output_item.added for non-message items, ...).
+            _ => return Ok(None),
+        }
+        Ok(Some(MessageDeltaOutput {
+            delta,
+            finish_reason: None,
+            usage: None,
+            depth: None,
+            source_agent: None,
+        }))
+    }
+
+    fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let root = val
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("Root should be an object"))?;
@@ -411,6 +539,8 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             delta,
             finish_reason,
             usage,
+            depth: None,
+            source_agent: None,
         })
     }
 }
@@ -426,9 +556,124 @@ mod tests {
             LangModel, LangModelAPISchema, LangModelOptions, LangModelProvider,
             LangModelProviderElem, get_lm_providers_mut,
         },
-        message::{FinishReason, Message, Part, Role, TokenUsage},
+        message::{Delta, FinishReason, Message, MessageDeltaOutput, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    /// Feeds Responses SSE event payloads through `unmarshal_event`,
+    /// accumulating to a final `MessageDeltaOutput`.
+    fn accumulate_stream(inputs: &[&str]) -> MessageDeltaOutput {
+        let mut u = OpenAIUnmarshal;
+        let mut acc = MessageDeltaOutput::new();
+        for input in inputs {
+            if let Some(out) = u.unmarshal_event(input).unwrap() {
+                acc = acc.accumulate(out).unwrap();
+            }
+        }
+        acc
+    }
+
+    #[test]
+    fn test_unmarshal_event_text_stream() {
+        let inputs = [
+            r#"{"type":"response.created","response":{"status":"in_progress"}}"#,
+            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_1","role":"assistant","content":[]}}"#,
+            r#"{"type":"response.content_part.added","item_id":"msg_1","output_index":0,"content_index":0,"part":{"type":"output_text","text":""}}"#,
+            r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"Hello"}"#,
+            r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":" world!"}"#,
+            r#"{"type":"response.output_text.done","item_id":"msg_1","output_index":0,"content_index":0,"text":"Hello world!"}"#,
+            r#"{"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello world!"}]}],"usage":{"input_tokens":9,"output_tokens":3}}}"#,
+        ];
+        let result = accumulate_stream(&inputs).finish().unwrap();
+        assert_eq!(result.finish_reason, FinishReason::Stop {});
+        let usage = result.usage.expect("expected usage");
+        assert_eq!(usage.input_tokens, 9);
+        assert_eq!(usage.output_tokens, 3);
+        assert_eq!(result.message.role, Role::Assistant);
+        assert_eq!(result.message.contents.len(), 1);
+        assert_eq!(result.message.contents[0].as_text(), Some("Hello world!"));
+    }
+
+    #[test]
+    fn test_unmarshal_event_tool_call_stream() {
+        let inputs = [
+            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"get_weather","arguments":""}}"#,
+            r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"location"}"#,
+            r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"\":\"Paris\"}"}"#,
+            r#"{"type":"response.function_call_arguments.done","item_id":"fc_1","output_index":0,"arguments":"{\"location\":\"Paris\"}"}"#,
+            r#"{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"get_weather","arguments":"{\"location\":\"Paris\"}"}}"#,
+            r#"{"type":"response.completed","response":{"status":"completed","output":[{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"location\":\"Paris\"}"}],"usage":{"input_tokens":20,"output_tokens":8}}}"#,
+        ];
+        let out = accumulate_stream(&inputs);
+        assert_eq!(out.finish_reason, Some(FinishReason::ToolCall {}));
+        let msg = out.finish().unwrap().message;
+        let tool_calls = msg.tool_calls.expect("expected tool_calls");
+        assert_eq!(tool_calls.len(), 1);
+        let (id, name, args) = tool_calls[0]
+            .as_function()
+            .expect("expected a function call");
+        assert_eq!(id, "call_1");
+        assert_eq!(name, "get_weather");
+        assert_eq!(
+            args.pointer("/location").and_then(|v| v.as_str()),
+            Some("Paris")
+        );
+    }
+
+    #[test]
+    fn test_unmarshal_event_reasoning_only_sets_role() {
+        // A reasoning model truncated mid-reasoning (max_output_tokens) emits only
+        // reasoning before the terminal event, with no message item. The role
+        // must still be set so finish() doesn't bail with "Role not specified".
+        let inputs = [
+            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_1"}}"#,
+            r#"{"type":"response.reasoning_summary_text.delta","delta":"thinking hard..."}"#,
+            r#"{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":5,"output_tokens":50}}}"#,
+        ];
+        let result = accumulate_stream(&inputs).finish().unwrap();
+        assert_eq!(result.message.role, Role::Assistant);
+        assert_eq!(result.message.thinking.as_deref(), Some("thinking hard..."));
+        assert_eq!(result.finish_reason, FinishReason::Length {});
+    }
+
+    /// End-to-end: `run_stream` over the OpenAI Responses API yields multiple
+    /// deltas that accumulate into a complete message.
+    #[test_with::env(OPENAI_API_KEY)]
+    #[tokio::test]
+    async fn test_run_stream_text() {
+        use futures::StreamExt as _;
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set");
+
+        let model = build_openai_model("openai_test_run_stream_text", "gpt-4.1-mini", api_key);
+        let messages = vec![
+            Message::new(Role::User).with_contents([Part::text("Reply with a short greeting.")]),
+        ];
+
+        let mut stream = model.run_stream(&messages, &[], &LangModelOptions::default());
+        let mut acc = MessageDeltaOutput::new();
+        let mut chunks = 0usize;
+        while let Some(item) = stream.next().await {
+            acc = acc.accumulate(item.unwrap()).unwrap();
+            chunks += 1;
+        }
+
+        assert!(
+            chunks > 1,
+            "expected multiple streamed deltas, got {chunks}"
+        );
+        let result = acc.finish().unwrap();
+        assert_eq!(result.finish_reason, FinishReason::Stop {});
+        assert!(
+            result
+                .message
+                .contents
+                .iter()
+                .any(|p| p.as_text().is_some_and(|t| !t.is_empty())),
+            "expected non-empty text in the streamed message"
+        );
+    }
 
     /// Register a one-off [`LangModelProvider`] under `provider_name` in the
     /// global registry and build the [`LangModel`] via
@@ -466,6 +711,7 @@ mod tests {
             tools: &tools,
             provider: &provider,
             options: &options,
+            stream: false,
         };
         f(&req)
     }
@@ -509,6 +755,7 @@ mod tests {
             tools: &tools,
             provider: &provider,
             options: &options,
+            stream: false,
         };
 
         let val = OpenAIMarshal::default().marshal(&req);

@@ -260,7 +260,13 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
             Value::Null
         };
 
-        let url = format!("{}{}:generateContent", url, req.model);
+        // Gemini selects streaming via the endpoint, not a body flag:
+        // `:streamGenerateContent?alt=sse` emits SSE; `:generateContent` returns one JSON.
+        let url = if req.stream {
+            format!("{}{}:streamGenerateContent?alt=sse", url, req.model)
+        } else {
+            format!("{}{}:generateContent", url, req.model)
+        };
 
         let mut header = to_value!({
             "content-type": "application/json",
@@ -270,6 +276,12 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
                 .as_object_mut()
                 .unwrap()
                 .insert("x-goog-api-key".into(), api_key.into());
+        }
+        if req.stream {
+            header
+                .as_object_mut()
+                .unwrap()
+                .insert("accept".into(), "text/event-stream".into());
         }
 
         let mut body = to_value!({
@@ -335,8 +347,102 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
 #[derive(Clone, Debug, Default)]
 pub struct GeminiUnmarshal;
 
+impl super::QuotaClassifier for GeminiUnmarshal {
+    fn is_permanent_quota_error(&self, body: &str) -> bool {
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(body) else {
+            return false;
+        };
+        let error = &json["error"];
+        // RESOURCE_EXHAUSTED covers both; a RetryInfo detail marks the transient case.
+        error["status"] == "RESOURCE_EXHAUSTED"
+            && !error["details"].as_array().into_iter().flatten().any(|d| {
+                d["@type"]
+                    .as_str()
+                    .is_some_and(|t| t.ends_with("google.rpc.RetryInfo"))
+            })
+    }
+}
+
+impl GeminiUnmarshal {
+    /// Maps a Gemini `finishReason` to a [`FinishReason`].
+    fn parse_finish_reason(reason: &str) -> FinishReason {
+        match reason {
+            "STOP" => FinishReason::Stop {},
+            "MAX_TOKENS" => FinishReason::Length {},
+            other => FinishReason::Refusal {
+                reason: other.to_owned(),
+            },
+        }
+    }
+
+    /// Parses Gemini `usageMetadata` (`promptTokenCount` / `candidatesTokenCount`).
+    /// `promptTokenCount` includes any cached-content tokens (folded into `input_tokens`).
+    fn parse_usage(root: &Value) -> Option<TokenUsage> {
+        let u = root
+            .pointer("/usageMetadata")
+            .filter(|u| !u.is_null())?
+            .as_object()?;
+        Some(TokenUsage {
+            input_tokens: u
+                .get("promptTokenCount")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0) as u64,
+            output_tokens: u
+                .get("candidatesTokenCount")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0) as u64,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        })
+    }
+}
+
+/// Parses one Gemini SSE chunk (`?alt=sse`) into a delta. Each chunk is a
+/// partial `GenerateContentResponse` of the same shape as the final response
+/// and carries incremental text, so it reuses `parse_candidate_content` and
+/// accumulates. A chunk without a candidate yields no delta; `finishReason` and
+/// `usageMetadata` arrive on the final chunk (alongside the function call, if
+/// any — Gemini sends `STOP` even for tool calls, adjusted to `ToolCall`).
 impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
-    fn unmarshal(&self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
+    fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
+        let val: Value = serde_json::from_str(data)?;
+        let Some(candidate) = val.pointer("/candidates/0").map(|c| c.to_owned()) else {
+            return Ok(None);
+        };
+
+        let finish_reason = candidate
+            .pointer("/finishReason")
+            .and_then(|v| v.as_str())
+            .map(Self::parse_finish_reason);
+
+        let delta = match (&finish_reason, candidate.pointer("/content")) {
+            // A finish-only or refusal chunk may omit content. Still set the role
+            // (candidates are always model output) so a stream whose only/first
+            // chunk is finish-only doesn't accumulate to a role-less message that
+            // makes `finish()` bail.
+            (Some(FinishReason::Refusal { .. }), _) | (_, None) => {
+                MessageDelta::new().with_role(Role::Assistant)
+            }
+            _ => parse_candidate_content(&candidate)?,
+        };
+
+        // NOTE: Gemini reports "STOP" even for tool calls, and can split the
+        // functionCall part and the terminal STOP across separate SSE chunks
+        // (2.5 Pro / 3.x), so neither chunk alone carries both. The
+        // STOP→ToolCall promotion therefore can't be done per chunk — it lives
+        // in `MessageDeltaOutput::finish()`, on the fully accumulated message.
+        let usage = Self::parse_usage(&val);
+
+        Ok(Some(MessageDeltaOutput {
+            delta,
+            finish_reason,
+            usage,
+            depth: None,
+            source_agent: None,
+        }))
+    }
+
+    fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let candidate = val
             .pointer("/candidates/0")
             .ok_or_else(|| anyhow::anyhow!("Missing candidates[0] in response"))?
@@ -345,13 +451,7 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
         let mut finish_reason = candidate
             .pointer("/finishReason")
             .and_then(|v| v.as_str())
-            .map(|reason| match reason {
-                "STOP" => FinishReason::Stop {},
-                "MAX_TOKENS" => FinishReason::Length {},
-                reason => FinishReason::Refusal {
-                    reason: reason.to_owned(),
-                },
-            });
+            .map(Self::parse_finish_reason);
 
         let delta = match &finish_reason {
             Some(FinishReason::Refusal { .. }) => MessageDelta::default(),
@@ -369,27 +469,14 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
         }
 
         // Parse usage (Gemini: usageMetadata.promptTokenCount / candidatesTokenCount)
-        let usage = val
-            .as_object()
-            .and_then(|r| r.get("usageMetadata"))
-            .and_then(|u| u.as_object())
-            .map(|u| TokenUsage {
-                input_tokens: u
-                    .get("promptTokenCount")
-                    .and_then(|v| v.as_integer())
-                    .unwrap_or(0) as u64,
-                output_tokens: u
-                    .get("candidatesTokenCount")
-                    .and_then(|v| v.as_integer())
-                    .unwrap_or(0) as u64,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-            });
+        let usage = Self::parse_usage(&val);
 
         Ok(MessageDeltaOutput {
             delta,
             finish_reason,
             usage,
+            depth: None,
+            source_agent: None,
         })
     }
 }
@@ -437,7 +524,13 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
                         bail!("Invalid content part")
                     };
                     if thought {
-                        rv.thinking = Some(text.into());
+                        // Append rather than overwrite: a candidate may carry
+                        // multiple thought parts, and thinking concatenates
+                        // across chunks anyway.
+                        match &mut rv.thinking {
+                            Some(existing) => existing.push_str(text),
+                            None => rv.thinking = Some(text.into()),
+                        }
                         if let Some(sig) = part.get("thoughtSignature").and_then(|v| v.as_str()) {
                             rv.signature = Some(sig.to_owned());
                         }
@@ -494,9 +587,138 @@ mod tests {
             LangModel, LangModelAPISchema, LangModelOptions, LangModelProvider,
             LangModelProviderElem, get_lm_providers_mut,
         },
-        message::{FinishReason, Message, Part, Role, TokenUsage},
+        message::{Delta, FinishReason, Message, MessageDeltaOutput, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    /// Feeds Gemini SSE chunk payloads through `unmarshal_event`, accumulating
+    /// to a final `MessageDeltaOutput`.
+    fn accumulate_stream(inputs: &[&str]) -> MessageDeltaOutput {
+        let mut u = GeminiUnmarshal;
+        let mut acc = MessageDeltaOutput::new();
+        for input in inputs {
+            if let Some(out) = u.unmarshal_event(input).unwrap() {
+                acc = acc.accumulate(out).unwrap();
+            }
+        }
+        acc
+    }
+
+    #[test]
+    fn test_unmarshal_event_text_stream() {
+        // Incremental text across chunks; the final chunk carries finishReason +
+        // usageMetadata with no content (exercises the content-optional path).
+        let inputs = [
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"Hello"}]}}]}"#,
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"text":" world!"}]}}]}"#,
+            r#"{"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3}}"#,
+        ];
+        let result = accumulate_stream(&inputs).finish().unwrap();
+        assert_eq!(result.finish_reason, FinishReason::Stop {});
+        let usage = result.usage.expect("expected usage");
+        assert_eq!(usage.input_tokens, 7);
+        assert_eq!(usage.output_tokens, 3);
+        assert_eq!(result.message.role, Role::Assistant);
+        assert_eq!(result.message.contents.len(), 1);
+        assert_eq!(result.message.contents[0].as_text(), Some("Hello world!"));
+    }
+
+    #[test]
+    fn test_unmarshal_event_multiple_thought_parts_concatenate() {
+        // A single chunk carrying more than one thought part must concatenate
+        // them, not overwrite (thinking accumulates across chunks anyway).
+        let inputs = [
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"one ","thought":true},{"text":"two","thought":true}]}}]}"#,
+        ];
+        let out = accumulate_stream(&inputs);
+        assert_eq!(out.delta.thinking.as_deref(), Some("one two"));
+    }
+
+    #[test]
+    fn test_unmarshal_event_tool_call_stream() {
+        // Gemini sends the whole functionCall and finishReason in one chunk.
+        let inputs = [
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"location":"Paris"}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":6}}"#,
+        ];
+        // STOP is promoted to ToolCall on the finished message, not per chunk.
+        let finished = accumulate_stream(&inputs).finish().unwrap();
+        assert_eq!(finished.finish_reason, FinishReason::ToolCall {});
+        let tool_calls = finished.message.tool_calls.expect("expected tool_calls");
+        assert_eq!(tool_calls.len(), 1);
+        let (id, name, args) = tool_calls[0]
+            .as_function()
+            .expect("expected a function call");
+        assert!(id.starts_with("get_weather/"), "got id {id}");
+        assert_eq!(name, "get_weather");
+        assert_eq!(
+            args.pointer("/location").and_then(|v| v.as_str()),
+            Some("Paris")
+        );
+    }
+
+    #[test]
+    fn test_unmarshal_event_tool_call_split_stream() {
+        // Gemini 2.5 Pro / 3.x can deliver the functionCall part and the
+        // terminal `finishReason: STOP` in *separate* SSE chunks. Neither chunk
+        // alone carries both, so the STOP→ToolCall promotion must happen on the
+        // accumulated message (in finish()), not per chunk — otherwise the turn
+        // looks like a plain Stop and the tool call is silently dropped.
+        let inputs = [
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"location":"Paris"}}}]}}]}"#,
+            r#"{"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":6}}"#,
+        ];
+        let finished = accumulate_stream(&inputs).finish().unwrap();
+        assert_eq!(finished.finish_reason, FinishReason::ToolCall {});
+        let tool_calls = finished.message.tool_calls.expect("expected tool_calls");
+        assert_eq!(tool_calls.len(), 1);
+        let (_, name, _) = tool_calls[0]
+            .as_function()
+            .expect("expected a function call");
+        assert_eq!(name, "get_weather");
+    }
+
+    /// End-to-end: `run_stream` over Gemini `:streamGenerateContent?alt=sse`
+    /// yields multiple deltas that accumulate into a complete message.
+    #[test_with::env(GEMINI_API_KEY)]
+    #[tokio::test]
+    async fn test_run_stream_text() {
+        use futures::StreamExt as _;
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set");
+
+        let model = build_gemini_model(
+            "gemini_test_run_stream_text",
+            "gemini-2.5-flash-lite",
+            api_key,
+        );
+        let messages = vec![
+            Message::new(Role::User).with_contents([Part::text("Reply with a short greeting.")]),
+        ];
+
+        let mut stream = model.run_stream(&messages, &[], &LangModelOptions::default());
+        let mut acc = MessageDeltaOutput::new();
+        let mut chunks = 0usize;
+        while let Some(item) = stream.next().await {
+            acc = acc.accumulate(item.unwrap()).unwrap();
+            chunks += 1;
+        }
+
+        assert!(
+            chunks >= 1,
+            "expected at least one streamed delta, got {chunks}"
+        );
+        let result = acc.finish().unwrap();
+        assert_eq!(result.finish_reason, FinishReason::Stop {});
+        assert!(
+            result
+                .message
+                .contents
+                .iter()
+                .any(|p| p.as_text().is_some_and(|t| !t.is_empty())),
+            "expected non-empty text in the streamed message"
+        );
+    }
 
     /// Register a one-off [`LangModelProvider`] under `provider_name` in the
     /// global registry and build the [`LangModel`] via
@@ -534,8 +756,50 @@ mod tests {
             tools: &tools,
             provider: &provider,
             options: &options,
+            stream: false,
         };
         f(&req)
+    }
+
+    #[test]
+    fn test_marshal_stream_endpoint() {
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let provider = LangModelProviderElem::API {
+            schema: LangModelAPISchema::Gemini,
+            url: Url::parse("https://generativelanguage.googleapis.com/v1beta/models/").unwrap(),
+            api_key: None,
+        };
+        let options = LangModelOptions::default();
+        let mut req = LangModelRequest {
+            model: "gemini-2.5-flash",
+            messages: &messages,
+            tools: &tools,
+            provider: &provider,
+            options: &options,
+            stream: false,
+        };
+
+        // stream: false → non-streaming endpoint, no accept header.
+        let val = GeminiMarshal::default().marshal(&req);
+        let endpoint = val.pointer("/url").and_then(|v| v.as_str()).unwrap();
+        assert!(endpoint.ends_with(":generateContent"), "got {endpoint}");
+        assert!(val.pointer("/header/accept").is_none());
+
+        // stream: true → SSE streaming endpoint (the `?alt=sse` endpoint is the
+        // streaming trigger), plus an `Accept: text/event-stream` header so
+        // intermediaries don't buffer.
+        req.stream = true;
+        let val = GeminiMarshal::default().marshal(&req);
+        let endpoint = val.pointer("/url").and_then(|v| v.as_str()).unwrap();
+        assert!(
+            endpoint.ends_with(":streamGenerateContent?alt=sse"),
+            "got {endpoint}"
+        );
+        assert_eq!(
+            val.pointer("/header/accept").and_then(|v| v.as_str()),
+            Some("text/event-stream")
+        );
     }
 
     #[test]
@@ -745,6 +1009,7 @@ mod tests {
             tools: &tools,
             provider: &provider,
             options: &options,
+            stream: false,
         };
         let val = GeminiMarshal::default().marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();

@@ -254,6 +254,16 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
             );
         }
 
+        if req.stream {
+            body.as_object_mut()
+                .unwrap()
+                .insert("stream".into(), true.into());
+            header
+                .as_object_mut()
+                .unwrap()
+                .insert("accept".into(), "text/event-stream".into());
+        }
+
         to_value!({
             "url": url,
             "header": header,
@@ -265,8 +275,170 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
 #[derive(Clone, Debug, Default)]
 pub struct AnthropicUnmarshal;
 
+// 429 is always transient; billing exhaustion is reported as 402, outside this path.
+impl super::QuotaClassifier for AnthropicUnmarshal {}
+
+impl AnthropicUnmarshal {
+    /// Maps an Anthropic `stop_reason` to a [`FinishReason`].
+    fn parse_finish_reason(reason: &str) -> FinishReason {
+        match reason {
+            "end_turn" | "pause_turn" => FinishReason::Stop {},
+            "max_tokens" => FinishReason::Length {},
+            "tool_use" => FinishReason::ToolCall {},
+            other => FinishReason::Refusal {
+                reason: format!("reason: {}", other),
+            },
+        }
+    }
+
+    /// Maps an Anthropic role string to a [`Role`], defaulting to assistant.
+    fn parse_role(s: &str) -> Role {
+        match s {
+            "system" => Role::System,
+            "user" => Role::User,
+            "assistant" => Role::Assistant,
+            "tool" => Role::Tool,
+            _ => Role::Assistant,
+        }
+    }
+
+    /// Parses an Anthropic `usage` object into [`TokenUsage`]. Returns `None`
+    /// when `usage` is absent or not an object.
+    fn parse_usage(usage: &Value) -> Option<TokenUsage> {
+        let u = usage.as_object()?;
+        Some(TokenUsage {
+            input_tokens: u
+                .get("input_tokens")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0) as u64,
+            output_tokens: u
+                .get("output_tokens")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0) as u64,
+            cache_creation_input_tokens: u
+                .get("cache_creation_input_tokens")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as u64),
+            cache_read_input_tokens: u
+                .get("cache_read_input_tokens")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as u64),
+        })
+    }
+}
+
+/// Parses one Anthropic SSE stream event into an incremental delta.
+///
+/// Each event type contributes a fragment that [`MessageDelta::accumulate`]
+/// stitches together:
+/// - `message_start`: role + initial usage (input / cache tokens)
+/// - `content_block_start`: begins a `tool_use` function call (id + name)
+/// - `content_block_delta`: a text / thinking / signature / tool-args fragment
+/// - `message_delta`: `stop_reason` + final usage (output tokens)
+/// - `ping` / `content_block_stop` / `message_stop`: no delta → `Ok(None)`
+/// - `error`: fails with the server-reported error type + message
+/// - any other (future) type: ignored → `Ok(None)`
 impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
-    fn unmarshal(&self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
+    fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
+        let val: Value = serde_json::from_str(data)?;
+        let ty = val.pointer("/type").and_then(|v| v.as_str()).unwrap_or("");
+
+        let mut delta = MessageDelta::new();
+        let mut finish_reason = None;
+        let mut usage = None;
+
+        match ty {
+            "message_start" => {
+                if let Some(role) = val.pointer("/message/role").and_then(|v| v.as_str()) {
+                    delta = delta.with_role(Self::parse_role(role));
+                }
+                if let Some(u) = val.pointer("/message/usage") {
+                    usage = Self::parse_usage(u);
+                }
+            }
+            "content_block_start" => {
+                if val.pointer("/content_block/type").and_then(|v| v.as_str()) == Some("tool_use") {
+                    let id = val
+                        .pointer("/content_block/id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_owned());
+                    let name = val
+                        .pointer("/content_block/name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_owned();
+                    delta = delta.with_tool_calls([PartDelta::Function {
+                        id,
+                        function: PartDeltaFunction::WithStringArgs {
+                            name,
+                            arguments: String::new(),
+                        },
+                    }]);
+                }
+            }
+            "content_block_delta" => {
+                if let Some(text) = val.pointer("/delta/text").and_then(|v| v.as_str()) {
+                    delta = delta.with_contents([PartDelta::Text {
+                        text: text.to_owned(),
+                    }]);
+                }
+                if let Some(t) = val.pointer("/delta/thinking").and_then(|v| v.as_str()) {
+                    delta.thinking = Some(t.to_owned());
+                }
+                if let Some(s) = val.pointer("/delta/signature").and_then(|v| v.as_str()) {
+                    delta.signature = Some(s.to_owned());
+                }
+                if let Some(args) = val.pointer("/delta/partial_json").and_then(|v| v.as_str()) {
+                    delta = delta.with_tool_calls([PartDelta::Function {
+                        id: None,
+                        function: PartDeltaFunction::WithStringArgs {
+                            name: String::new(),
+                            arguments: args.to_owned(),
+                        },
+                    }]);
+                }
+            }
+            "message_delta" => {
+                if let Some(reason) = val.pointer("/delta/stop_reason").and_then(|v| v.as_str()) {
+                    finish_reason = Some(Self::parse_finish_reason(reason));
+                }
+                if let Some(u) = val.pointer("/usage") {
+                    usage = Self::parse_usage(u);
+                }
+            }
+            // Control events carry no delta.
+            "ping" | "content_block_stop" | "message_stop" => return Ok(None),
+            // Mid-stream error (e.g. `overloaded_error`, rate limit). Surface the
+            // server's own type + message rather than a generic "unknown event".
+            "error" => {
+                let err_type = val
+                    .pointer("/error/type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let message = val
+                    .pointer("/error/message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(no message)");
+                bail!("Anthropic stream error ({err_type}): {message}");
+            }
+            // Unknown / future event types carry no delta we understand; skip
+            // them rather than aborting an otherwise-complete stream.
+            other => {
+                log::debug!("ignoring unknown Anthropic stream event type: {other}");
+                return Ok(None);
+            }
+        }
+
+        Ok(Some(MessageDeltaOutput {
+            delta,
+            finish_reason,
+            usage,
+            depth: None,
+            source_agent: None,
+        }))
+    }
+
+    fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
         let root = val
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("Root should be an object"))?;
@@ -275,27 +447,13 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
         let finish_reason = root
             .get("stop_reason")
             .and_then(|v| v.as_str())
-            .map(|reason| match reason {
-                "end_turn" => FinishReason::Stop {},
-                "pause_turn" => FinishReason::Stop {},
-                "max_tokens" => FinishReason::Length {},
-                "tool_use" => FinishReason::ToolCall {},
-                reason => FinishReason::Refusal {
-                    reason: format!("reason: {}", reason),
-                },
-            });
+            .map(Self::parse_finish_reason);
 
         // Parse role
         let role = root
             .get("role")
             .and_then(|v| v.as_str())
-            .map(|s| match s {
-                "system" => Role::System,
-                "user" => Role::User,
-                "assistant" => Role::Assistant,
-                "tool" => Role::Tool,
-                _ => Role::Assistant,
-            })
+            .map(Self::parse_role)
             .unwrap_or(Role::Assistant);
 
         let mut delta = MessageDelta::new().with_role(role);
@@ -375,32 +533,14 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
         }
 
         // Parse usage
-        let usage = root
-            .get("usage")
-            .and_then(|u| u.as_object())
-            .map(|u| TokenUsage {
-                input_tokens: u
-                    .get("input_tokens")
-                    .and_then(|v| v.as_integer())
-                    .unwrap_or(0) as u64,
-                output_tokens: u
-                    .get("output_tokens")
-                    .and_then(|v| v.as_integer())
-                    .unwrap_or(0) as u64,
-                cache_creation_input_tokens: u
-                    .get("cache_creation_input_tokens")
-                    .and_then(|v| v.as_integer())
-                    .map(|v| v as u64),
-                cache_read_input_tokens: u
-                    .get("cache_read_input_tokens")
-                    .and_then(|v| v.as_integer())
-                    .map(|v| v as u64),
-            });
+        let usage = root.get("usage").and_then(Self::parse_usage);
 
         Ok(MessageDeltaOutput {
             delta,
             finish_reason,
             usage,
+            depth: None,
+            source_agent: None,
         })
     }
 }
@@ -416,7 +556,7 @@ mod tests {
             LangModel, LangModelAPISchema, LangModelOptions, LangModelProvider,
             LangModelProviderElem, get_lm_providers_mut,
         },
-        message::{FinishReason, Message, Part, Role, TokenUsage},
+        message::{Delta, FinishReason, Message, MessageDeltaOutput, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
 
@@ -456,6 +596,7 @@ mod tests {
             tools: &tools,
             provider: &provider,
             options: &options,
+            stream: false,
         };
         f(&req)
     }
@@ -479,6 +620,212 @@ mod tests {
             // Falls back to 8192 when not configured
             assert_eq!(max_tokens.as_integer().unwrap(), 8192);
         });
+    }
+
+    #[test]
+    fn test_marshal_stream_flag() {
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let provider = LangModelProviderElem::API {
+            schema: LangModelAPISchema::Anthropic,
+            url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
+            api_key: None,
+        };
+        let options = LangModelOptions::default();
+        let mut req = LangModelRequest {
+            model: "claude-haiku-4-5",
+            messages: &messages,
+            tools: &tools,
+            provider: &provider,
+            options: &options,
+            stream: false,
+        };
+
+        // stream: false → no "stream" body key, no accept header.
+        let val = AnthropicMarshal::default().marshal(&req);
+        assert!(val.pointer("/body/stream").is_none());
+        assert!(val.pointer("/header/accept").is_none());
+
+        // stream: true → body "stream": true (the SSE trigger), plus an
+        // `Accept: text/event-stream` header so intermediaries don't buffer.
+        req.stream = true;
+        let val = AnthropicMarshal::default().marshal(&req);
+        assert_eq!(
+            val.pointer("/body/stream").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            val.pointer("/header/accept").and_then(|v| v.as_str()),
+            Some("text/event-stream")
+        );
+    }
+
+    /// Feeds a sequence of SSE event payloads through `unmarshal_event`,
+    /// accumulating into a final `MessageDeltaOutput`.
+    fn accumulate_stream(inputs: &[&str]) -> MessageDeltaOutput {
+        let mut u = AnthropicUnmarshal;
+        let mut acc = MessageDeltaOutput::new();
+        for input in inputs {
+            if let Some(out) = u.unmarshal_event(input).unwrap() {
+                acc = acc.accumulate(out).unwrap();
+            }
+        }
+        acc
+    }
+
+    #[test]
+    fn test_unmarshal_event_text_stream() {
+        let inputs = [
+            r#"{"type":"message_start","message":{"type":"message","role":"assistant","content":[]}}"#,
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world!"}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
+            r#"{"type":"message_stop"}"#,
+        ];
+        let out = accumulate_stream(&inputs);
+        assert_eq!(out.finish_reason, Some(FinishReason::Stop {}));
+        let msg = out.finish().unwrap().message;
+        assert_eq!(msg.role, Role::Assistant);
+        assert_eq!(msg.contents.len(), 1);
+        assert_eq!(msg.contents[0].as_text(), Some("Hello world!"));
+    }
+
+    #[test]
+    fn test_unmarshal_event_error_surfaces_message() {
+        // A mid-stream `error` event must fail with the server's own type +
+        // message, not a generic "unknown event type".
+        let mut u = AnthropicUnmarshal;
+        let event = r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
+        let err = u.unmarshal_event(event).unwrap_err().to_string();
+        assert!(err.contains("overloaded_error"), "got: {err}");
+        assert!(err.contains("Overloaded"), "got: {err}");
+    }
+
+    #[test]
+    fn test_unmarshal_event_unknown_type_is_ignored() {
+        // An unknown / future event type is skipped (no delta), not fatal.
+        let mut u = AnthropicUnmarshal;
+        let event = r#"{"type":"some_future_event","foo":"bar"}"#;
+        assert!(u.unmarshal_event(event).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_unmarshal_event_thinking_stream() {
+        let inputs = [
+            r#"{"type":"message_start","message":{"type":"message","role":"assistant","content":[]}}"#,
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"**Answering**\n\n"}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"User is saying hello."}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"Ev4MCkYIBxgCKkDl5A"}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+            r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+            r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hello"}}"#,
+            r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" world!"}}"#,
+            r#"{"type":"content_block_stop","index":1}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
+            r#"{"type":"message_stop"}"#,
+        ];
+        let out = accumulate_stream(&inputs);
+        let msg = out.finish().unwrap().message;
+        assert_eq!(
+            msg.thinking.as_deref(),
+            Some("**Answering**\n\nUser is saying hello.")
+        );
+        assert_eq!(msg.signature.as_deref(), Some("Ev4MCkYIBxgCKkDl5A"));
+        assert_eq!(msg.contents.len(), 1);
+        assert_eq!(msg.contents[0].as_text(), Some("Hello world!"));
+    }
+
+    #[test]
+    fn test_unmarshal_event_tool_call_stream() {
+        let inputs = [
+            r#"{"type":"message_start","message":{"type":"message","role":"assistant","content":[]}}"#,
+            r#"{"type":"content_block_start","content_block":{"type":"tool_use","id":"toolu_01","name":"get_weather","input":{}}}"#,
+            r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\""}}"#,
+            r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"location"}}"#,
+            r#"{"type":"ping"}"#,
+            r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"\":\""}}"#,
+            r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"Paris"}}"#,
+            r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":", France"}}"#,
+            r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"\"}"}}"#,
+            r#"{"type":"content_block_stop"}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null}}"#,
+            r#"{"type":"message_stop"}"#,
+        ];
+        let out = accumulate_stream(&inputs);
+        assert_eq!(out.finish_reason, Some(FinishReason::ToolCall {}));
+        let msg = out.finish().unwrap().message;
+        let tool_calls = msg.tool_calls.expect("expected tool_calls");
+        assert_eq!(tool_calls.len(), 1);
+        let (id, name, args) = tool_calls[0]
+            .as_function()
+            .expect("expected a function call");
+        assert_eq!(id, "toolu_01");
+        assert_eq!(name, "get_weather");
+        assert_eq!(
+            args.pointer("/location").and_then(|v| v.as_str()),
+            Some("Paris, France")
+        );
+    }
+
+    #[test]
+    fn test_unmarshal_event_usage_merge() {
+        // input_tokens/cache arrive in `message_start`; final output_tokens in
+        // `message_delta`. Field-wise merge must keep both.
+        let inputs = [
+            r#"{"type":"message_start","message":{"type":"message","role":"assistant","content":[],"usage":{"input_tokens":100,"output_tokens":2,"cache_read_input_tokens":10}}}"#,
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":57}}"#,
+            r#"{"type":"message_stop"}"#,
+        ];
+        let out = accumulate_stream(&inputs);
+        let usage = out.usage.expect("expected usage");
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 57);
+        assert_eq!(usage.cache_read_input_tokens, Some(10));
+    }
+
+    /// End-to-end: `run_stream` against the real API yields multiple deltas that
+    /// accumulate into a complete message terminated by a `finish_reason`.
+    #[test_with::env(ANTHROPIC_API_KEY)]
+    #[tokio::test]
+    async fn test_run_stream_text() {
+        use futures::StreamExt as _;
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set");
+
+        let model = build_anthropic_model("test_run_stream_text", "claude-haiku-4-5", api_key);
+        let messages =
+            vec![Message::new(Role::User).with_contents([Part::text("Reply with a short greeting.")])];
+
+        let mut stream = model.run_stream(&messages, &[], &LangModelOptions::default());
+        let mut acc = MessageDeltaOutput::new();
+        let mut chunks = 0usize;
+        while let Some(item) = stream.next().await {
+            acc = acc.accumulate(item.unwrap()).unwrap();
+            chunks += 1;
+        }
+
+        assert!(chunks > 1, "expected multiple streamed deltas, got {chunks}");
+        let out = acc.finish().unwrap();
+        assert_eq!(out.finish_reason, FinishReason::Stop {});
+        assert!(
+            out.message
+                .contents
+                .iter()
+                .any(|p| p.as_text().is_some_and(|t| !t.is_empty())),
+            "expected non-empty text in the streamed message"
+        );
+        // usage is split across message_start (input) and message_delta (output);
+        // the field-wise merge must surface both.
+        let usage = out.usage.expect("expected usage from the stream");
+        assert!(usage.input_tokens > 0, "input_tokens should be > 0");
+        assert!(usage.output_tokens > 0, "output_tokens should be > 0");
     }
 
     #[test]
@@ -679,6 +1026,7 @@ mod tests {
             tools: &tools,
             provider: &provider,
             options: &options,
+            stream: false,
         };
         let val = AnthropicMarshal::default().marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();
