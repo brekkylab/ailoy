@@ -342,7 +342,7 @@ mod tests {
         );
     }
 
-    // ── integration tests (end-to-end through RunEnv) ────────────────────────
+    // ── integration tests (end-to-end through a Machine console) ─────────────
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();

@@ -1,62 +1,63 @@
 //! Running environment abstractions.
 //!
-//! A `RunEnv` represents a computing environment that an LLM can interact
-//! with — a uniform abstraction over the local machine, a sandboxed
-//! container, or any other backend that implements the traits below.
+//! A [`Machine`] represents a computing environment that an LLM can interact
+//! with — a uniform abstraction over the local host, a sandboxed VM, or any
+//! other backend that implements the traits below. Starting a machine yields
+//! a [`Console`], through which commands and file I/O are performed.
 //!
 //! This module is designed primarily as the execution substrate for agents.
 //!
 //! # Usage
 //!
-//! Construct a `RunEnv` for the desired backend, then call [`RunEnv::get`]
-//! to obtain a handle and drive the environment through it:
+//! Construct a machine for the desired backend, then call [`Machine::start`]
+//! to obtain its [`Console`] and drive the environment through it:
 //!
 //! ```ignore
 //! # async fn run() -> anyhow::Result<()> {
-//! use ailoy::runenv::RunEnv;
+//! use ailoy::runenv::{Local, Machine};
 //!
-//! let env = RunEnv::local();
-//! let handle = env.get().await?;
+//! let mut env = Local::new();
+//! let console = env.start().await?;
 //!
-//! let result = handle.exec_shell("echo hello".to_string(), None).await?;
+//! let result = console.exec_shell("echo hello".to_string(), None).await?;
 //! println!("{}", result.stdout);
 //! # Ok(()) }
 //! ```
 //!
-//! For an isolated environment, use the `sandbox` feature and pass a
-//! [`SandboxConfig`]:
+//! For an isolated environment, use the `sandbox` feature and build a
+//! [`Sandbox`] with [`SandboxBuilder`]:
 //!
 //! ```ignore
 //! # async fn run() -> anyhow::Result<()> {
-//! use ailoy::runenv::{RunEnv, SandboxConfig};
+//! use ailoy::runenv::{Machine, SandboxBuilder};
 //!
-//! let env = RunEnv::sandbox(SandboxConfig::default()).await?;
-//! let handle = env.get().await?;
+//! let mut env = SandboxBuilder::new().build().await?;
+//! let console = env.start().await?;
 //!
-//! let result = handle.exec_shell("uname -a".to_string(), None).await?;
+//! let result = console.exec_shell("uname -a".to_string(), None).await?;
 //! println!("{}", result.stdout);
 //! # Ok(()) }
 //! ```
 //!
 //! # Lifecycle
 //!
-//! A `RunEnv` is cheap to construct and starts out idle. The underlying
-//! machine is only started on demand: callers obtain a [`RunEnvHandle`] via
-//! [`RunEnv::get`], which lazily starts the container on the first call and
-//! reuses the same started handle for subsequent callers. When the last
-//! outstanding `RunEnvHandle` is dropped, the container is stopped
-//! automatically and the `RunEnv` returns to the idle state, ready to be
-//! started again on the next `get()`.
+//! [`Machine::start`] starts the backend on the first call and returns a
+//! borrow of its [`Console`]; subsequent calls return the already-started
+//! console. [`Machine::stop`] releases the backend's resources — it is
+//! optional (`start` alone is enough to use the machine) but calling it when
+//! idle keeps resource use low. [`Machine::is_running`] reports the current
+//! state.
 //!
-//! All operations against the environment go through the handle, which
-//! derefs to [`Console`].
+//! To share one machine between several agents, store it type-erased behind
+//! [`MachineDyn`], e.g. `Arc<Mutex<dyn MachineDyn>>`; each holder locks it and
+//! calls `start`/`stop` on the same underlying backend.
 //!
-//! # Extending with a new runenv
+//! # Extending with a new backend
 //!
 //! To add a new kind of running environment, implement two traits:
 //!
-//! - [`Machine`]: describes how to start and stop the underlying
-//!   machine. `start` returns a handle type that implements [`Console`].
+//! - [`Machine`]: describes how to start and stop the underlying backend.
+//!   `start` caches and returns a `&Console`.
 //! - [`Console`]: the started handle. At minimum, implement
 //!   [`Console::get_os`] and [`Console::exec`]; the other methods
 //!   (`exec_shell`, `get_cwd`, `read`, `write`) have default implementations
@@ -67,22 +68,31 @@
 //!
 //! ```ignore
 //! use async_trait::async_trait;
-//! use ailoy::runenv::{Console, Machine, ExecResult, RunEnv};
+//! use ailoy::runenv::{Console, ExecResult, Machine};
 //!
-//! struct MyMachine { /* connection state, config, ... */ }
+//! struct MyMachine { console: Option<MyConsole> /* + connection state */ }
 //! struct MyConsole { /* started session, e.g. an SSH channel */ }
 //!
 //! #[async_trait]
 //! impl Machine for MyMachine {
-//!     type Handle = MyConsole;
+//!     type Console = MyConsole;
 //!
-//!     async fn start(&mut self) -> anyhow::Result<Self::Handle> {
-//!         // open connection, spawn shell, etc.
-//!         Ok(MyConsole { /* ... */ })
+//!     fn is_running(&self) -> bool {
+//!         self.console.is_some()
 //!     }
 //!
-//!     async fn stop(&mut self) {
+//!     async fn start(&mut self) -> anyhow::Result<&Self::Console> {
+//!         if self.console.is_none() {
+//!             // open connection, spawn shell, etc.
+//!             self.console = Some(MyConsole { /* ... */ });
+//!         }
+//!         Ok(self.console.as_ref().expect("just set"))
+//!     }
+//!
+//!     async fn stop(&mut self) -> anyhow::Result<()> {
 //!         // close connection, kill process, etc.
+//!         self.console = None;
+//!         Ok(())
 //!     }
 //! }
 //!
@@ -102,9 +112,9 @@
 //! }
 //!
 //! # async fn run() -> anyhow::Result<()> {
-//! let env = RunEnv::new(MyMachine { /* ... */ });
-//! let handle = env.get().await?;
-//! let result = handle.exec_shell("echo hi".to_string(), None).await?;
+//! let mut env = MyMachine { console: None };
+//! let console = env.start().await?;
+//! let result = console.exec_shell("echo hi".to_string(), None).await?;
 //! println!("{}", result.stdout);
 //! # Ok(()) }
 //! ```
@@ -202,8 +212,8 @@ pub trait Console: Send + Sync {
     /// Run `program` with `args`. `timeout` is in seconds; when elapsed the
     /// resulting [`ExecResult`] has `timed_out = true`.
     ///
-    /// Takes `&self` so a single started handle can be shared by multiple
-    /// `RunEnvHandle` clones. Implementations are responsible for their own
+    /// Takes `&self` so a single started [`Console`] can be shared by
+    /// concurrent callers. Implementations are responsible for their own
     /// internal synchronization (e.g. a Mutex around the stdin/stdout pipe).
     async fn exec(
         &self,
