@@ -339,8 +339,10 @@ impl Sandbox {
     /// Restore a sandbox from a `.tar.zst` (or `.tar`) archive previously
     /// produced by [`archive`](Self::archive). The restored sandbox is
     /// created in the stopped state, reusing the embedded snapshot name.
-    /// The intermediate microsandbox snapshot directory unpacked by this
-    /// call is cleaned up before returning (success or failure).
+    /// Any existing sandbox with that name is replaced (stopped and removed
+    /// first), so restore is idempotent. The intermediate microsandbox
+    /// snapshot directory unpacked by this call is cleaned up before
+    /// returning (success or failure).
     pub async fn try_from_archive(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         ensure_msb().await?;
 
@@ -350,17 +352,20 @@ impl Sandbox {
         let snap = handle.open().await.context("open imported snapshot")?;
         let snap_path = snap.path().to_path_buf();
 
-        let name = snap_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| {
-                anyhow::anyhow!("snapshot path has no file name: {}", snap_path.display())
-            })?
-            .to_string();
+        // The imported artifact directory is content-addressed (`sha256-…`),
+        // so its file name is not the original sandbox name. The manifest's
+        // `source_sandbox` records the name the snapshot was taken from; reuse
+        // that. Fall back to a fresh generated name for name-less snapshots.
+        let name = snap
+            .manifest()
+            .source_sandbox
+            .clone()
+            .unwrap_or_else(|| format!("ailoy-{}", hex::encode(&Uuid::new_v4().as_bytes()[..8])));
 
         let result = microsandbox::Sandbox::builder(&name)
             .from_snapshot(snap_path.to_string_lossy().into_owned())
             .pull_policy(PullPolicy::IfMissing)
+            .replace()
             .create()
             .await
             .context("create sandbox from snapshot");
@@ -516,9 +521,10 @@ impl Machine for Sandbox {
     }
 
     async fn stop(&mut self) -> anyhow::Result<()> {
-        if let Some(console) = self.console.take() {
+        if let Some(console) = self.console.as_ref() {
             console.inner.stop_and_wait().await?;
         }
+        self.console = None;
         Ok(())
     }
 }
@@ -545,7 +551,7 @@ impl Drop for Sandbox {
                 }
                 let _ = tx.send(());
             });
-            let _ = rx.recv();
+            let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
         }
         if let Err(e) = run_msb_cli(["remove", "-f", self.name.as_str()]) {
             log::warn!("cleanup sandbox `{}`: {e}", self.name);
