@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{datatype::Value, message::Delta};
 
 pub trait Marshal<T: ?Sized>: Default {
-    fn marshal(&mut self, item: &T) -> Value;
+    fn marshal(&self, item: &T) -> Value;
 }
 
 pub trait Unmarshal<T: Delta>: Default {
@@ -27,13 +27,13 @@ pub trait Unmarshal<T: Delta>: Default {
 }
 
 impl<T, M: Marshal<T>> Marshal<[T]> for M {
-    fn marshal(&mut self, item: &[T]) -> Value {
+    fn marshal(&self, item: &[T]) -> Value {
         Value::Array(item.iter().map(|elem| self.marshal(elem)).collect())
     }
 }
 
 impl<T, M: Marshal<T>> Marshal<Vec<T>> for M {
-    fn marshal(&mut self, item: &Vec<T>) -> Value {
+    fn marshal(&self, item: &Vec<T>) -> Value {
         Value::Array(item.iter().map(|elem| self.marshal(elem)).collect())
     }
 }
@@ -57,8 +57,7 @@ impl<'d, D: ?Sized, M: Marshal<D>> Serialize for Marshaled<'d, D, M> {
     where
         S: serde::Serializer,
     {
-        let mut m = M::default();
-        let v = m.marshal(self.data);
+        let v = M::default().marshal(self.data);
         v.serialize(serializer)
     }
 }
@@ -86,8 +85,7 @@ impl<'de, D: Delta, U: Unmarshal<D>> Deserialize<'de> for Unmarshaled<D, U> {
         De: serde::Deserializer<'de>,
     {
         let v = Value::deserialize(deserializer)?;
-        let mut u = U::default();
-        let delta = u
+        let delta = U::default()
             .unmarshal(v)
             .map_err(|_| serde::de::Error::custom("Unable to decode"))?;
         Ok(Unmarshaled {

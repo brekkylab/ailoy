@@ -4,28 +4,39 @@ use async_trait::async_trait;
 
 use super::{Console, ExecResult, Machine};
 
-/// `Machine` that runs commands directly on the host. Start/stop are
-/// no-ops because there is no underlying VM to spin up.
-#[derive(Debug, Clone, Default)]
-pub struct Local {}
+/// `Machine` that runs commands directly on the host. There is no underlying
+/// VM to spin up, so `is_running` is always `true` and `stop` is a no-op.
+#[derive(Debug, Default)]
+pub struct Local {
+    console: LocalConsole,
+}
 
 impl Local {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            console: LocalConsole {},
+        }
     }
 }
 
 #[async_trait]
 impl Machine for Local {
-    type Handle = LocalConsole;
+    type Console = LocalConsole;
 
-    async fn start(&mut self) -> anyhow::Result<LocalConsole> {
-        Ok(LocalConsole {})
+    fn is_running(&self) -> bool {
+        true
     }
 
-    async fn stop(&mut self) {}
+    async fn start<'a>(&'a mut self) -> anyhow::Result<&'a Self::Console> {
+        Ok(&self.console)
+    }
+
+    async fn stop(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
+#[derive(Debug, Default)]
 pub struct LocalConsole {}
 
 #[async_trait]
@@ -96,7 +107,6 @@ impl Console for LocalConsole {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runenv::RunEnv;
 
     fn sh(cmd: &str) -> (String, Vec<String>) {
         ("sh".to_string(), vec!["-c".to_string(), cmd.to_string()])
@@ -104,48 +114,48 @@ mod tests {
 
     #[tokio::test]
     async fn test_exec_stdout() {
-        let env = RunEnv::new(Local::new());
-        let handle = env.get().await.unwrap();
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
         let (prog, args) = sh("echo hello");
-        let result = handle.exec(prog, args, None).await.unwrap();
+        let result = console.exec(prog, args, None).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("hello"));
     }
 
     #[tokio::test]
     async fn test_exec_exit_code() {
-        let env = RunEnv::new(Local::new());
-        let handle = env.get().await.unwrap();
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
         let (prog, args) = sh("exit 42");
-        let result = handle.exec(prog, args, None).await.unwrap();
+        let result = console.exec(prog, args, None).await.unwrap();
         assert_eq!(result.exit_code, 42);
     }
 
     #[tokio::test]
     async fn test_exec_stderr() {
-        let env = RunEnv::new(Local::new());
-        let handle = env.get().await.unwrap();
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
         let (prog, args) = sh("echo err >&2");
-        let result = handle.exec(prog, args, None).await.unwrap();
+        let result = console.exec(prog, args, None).await.unwrap();
         assert!(result.stderr.contains("err"));
     }
 
     #[tokio::test]
     async fn test_exec_timeout() {
-        let env = RunEnv::new(Local::new());
-        let handle = env.get().await.unwrap();
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
         let (prog, args) = sh("sleep 10");
-        let result = handle.exec(prog, args, Some(1)).await.unwrap();
+        let result = console.exec(prog, args, Some(1)).await.unwrap();
         assert!(result.timed_out);
     }
 
     #[tokio::test]
-    async fn test_handle_shared_across_get_calls() {
-        let env = RunEnv::new(Local::new());
-        let h1 = env.get().await.unwrap();
-        let h2 = env.get().await.unwrap();
-        // While at least one handle is alive, `get()` must return the same
-        // booted instance rather than reboot.
-        assert!(std::sync::Arc::ptr_eq(&h1, &h2));
+    async fn test_is_running_and_stop() {
+        let mut local = Local::new();
+        assert!(local.is_running());
+        let _ = local.start().await.unwrap();
+        assert!(local.is_running());
+        local.stop().await.unwrap();
+        assert!(local.is_running());
     }
 }

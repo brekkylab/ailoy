@@ -109,14 +109,10 @@
 //! # Ok(()) }
 //! ```
 
-use std::{
-    path::{Path, PathBuf},
-    sync::{Arc, Weak},
-};
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use tokio::sync::Mutex;
 
 mod file_entry;
 mod local;
@@ -134,31 +130,55 @@ pub use sandbox::*;
 /// See the [module-level documentation](self) for the overall design.
 #[async_trait]
 pub trait Machine: Send + Sync + 'static {
-    type Handle: Console;
+    type Console: Console;
 
-    async fn start(&mut self) -> anyhow::Result<Self::Handle>;
+    /// Whether the machine is currently running.
+    fn is_running(&self) -> bool;
 
-    async fn stop(&mut self);
+    /// Start the machine and return its console.
+    /// Returns the existing console if already running.
+    async fn start<'a>(&'a mut self) -> anyhow::Result<&'a Self::Console>;
+
+    /// Stop the machine and release its resources.
+    /// No-op if already stopped.
+    ///
+    /// Note that this is not essential op.
+    /// Using [`start`] alone is enough to use the machine.
+    /// However, calling `stop` when idle helps keep resource use low.
+    /// When (or whether) to call it is up to the caller.
+    async fn stop(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// Object-safe erased view of `Machine`. The blanket impl below adapts any
-/// concrete `Machine` by boxing the handle into `Arc<dyn Console>`.
+/// concrete `Machine` by erasing the handle to `&dyn Console`.
+///
+/// Use this when you need to store a heterogeneous machine behind a single
+/// type, e.g. `Arc<Mutex<dyn MachineDyn>>` shared across agents.
 #[async_trait]
-trait MachineDyn: Send + Sync + 'static {
-    async fn start(&mut self) -> anyhow::Result<Arc<dyn Console>>;
+pub trait MachineDyn: Send + Sync + 'static {
+    fn is_running(&self) -> bool;
 
-    async fn stop(&mut self);
+    async fn start<'a>(&'a mut self) -> anyhow::Result<&'a dyn Console>;
+
+    async fn stop(&mut self) -> anyhow::Result<()>;
 }
 
 #[async_trait]
 impl<B: Machine> MachineDyn for B {
-    async fn start(&mut self) -> anyhow::Result<Arc<dyn Console>> {
-        // UFCS so this doesn't recurse into the MachineDyn impl we're in.
-        Ok(Arc::new(Machine::start(self).await?))
+    fn is_running(&self) -> bool {
+        Machine::is_running(self)
     }
 
-    async fn stop(&mut self) {
-        Machine::stop(self).await;
+    async fn start<'a>(&'a mut self) -> anyhow::Result<&'a dyn Console> {
+        // UFCS so this doesn't recurse into the MachineDyn impl we're in.
+        // `&B::Console` unsizes to `&dyn Console` via coercion.
+        Ok(Machine::start(self).await?)
+    }
+
+    async fn stop(&mut self) -> anyhow::Result<()> {
+        Machine::stop(self).await
     }
 }
 
@@ -324,117 +344,5 @@ pub trait Console: Send + Sync {
             );
         }
         Ok(())
-    }
-}
-
-enum RunEnvState {
-    Idle,
-
-    /// Holds a `Weak` so that when the last user-visible `RunEnvHandle` drops,
-    /// the inner `Arc` count reaches zero and `RunenvInner::drop` fires.
-    Running(Weak<RunEnvHandle>),
-}
-
-/// A running environment. Wraps a [`Machine`] backend and hands out shared
-/// [`RunEnvHandle`]s through [`RunEnv::get`]; the backend is started on the
-/// first `get` and shut down when the last handle is dropped.
-///
-/// See the [module-level documentation](self) for the overall design.
-#[derive(Clone)]
-pub struct RunEnv {
-    machine: Arc<Mutex<dyn MachineDyn>>,
-    state: Arc<Mutex<RunEnvState>>,
-}
-
-impl RunEnv {
-    pub fn new<B: Machine>(machine: B) -> Self {
-        Self {
-            machine: Arc::new(Mutex::new(machine)),
-            state: Arc::new(Mutex::new(RunEnvState::Idle)),
-        }
-    }
-
-    pub fn local() -> Self {
-        Self::new(Local::new())
-    }
-
-    #[cfg(feature = "sandbox")]
-    pub async fn sandbox(config: SandboxConfig) -> anyhow::Result<Self> {
-        Ok(Self::new(Sandbox::new(config).await?))
-    }
-
-    pub async fn get(&self) -> anyhow::Result<Arc<RunEnvHandle>> {
-        loop {
-            let mut s = self.state.lock().await;
-            match &*s {
-                RunEnvState::Idle => {
-                    // Hold the state lock through start; other callers block on
-                    // `state.lock().await` and observe `Running` once we finish.
-                    let console = self.machine.lock().await.start().await?;
-                    let handle = Arc::new(RunEnvHandle {
-                        machine: self.machine.clone(),
-                        console,
-                        state: self.state.clone(),
-                    });
-                    *s = RunEnvState::Running(Arc::downgrade(&handle));
-                    return Ok(handle);
-                }
-                RunEnvState::Running(weak) => {
-                    if let Some(inner) = weak.upgrade() {
-                        return Ok(inner);
-                    }
-                    // Last user handle just dropped but the `Drop`-spawned
-                    // stop hasn't acquired the state lock yet. Release the
-                    // state lock so it can make progress, then retry.
-                    drop(s);
-                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-                }
-            }
-        }
-    }
-}
-
-/// Shared handle to a started [`RunEnv`]. Derefs to [`Console`] so callers can
-/// invoke `exec`, `read`, `write`, etc. directly on the handle.
-///
-/// See the [module-level documentation](self) for the overall design.
-pub struct RunEnvHandle {
-    machine: Arc<Mutex<dyn MachineDyn>>,
-
-    console: Arc<dyn Console>,
-
-    state: Arc<Mutex<RunEnvState>>,
-}
-
-impl std::ops::Deref for RunEnvHandle {
-    type Target = dyn Console;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.console
-    }
-}
-
-impl Drop for RunEnvHandle {
-    fn drop(&mut self) {
-        let machine = self.machine.clone();
-        let state = self.state.clone();
-        let (tx, rx) = std::sync::mpsc::channel::<()>();
-        std::thread::spawn(move || {
-            if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                rt.block_on(async move {
-                    // Hold the state lock through stop so concurrent `get()` calls
-                    // block until we transition back to `Idle`.
-                    let mut s = state.lock().await;
-                    machine.lock().await.stop().await;
-                    *s = RunEnvState::Idle;
-                });
-            }
-            let _ = tx.send(());
-        });
-        // let _ = rx.recv_timeout(std::time::Duration::from_secs(30));
-        let _ = rx;
     }
 }

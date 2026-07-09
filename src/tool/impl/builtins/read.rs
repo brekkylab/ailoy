@@ -98,13 +98,13 @@ pub fn get_read_tool_desc() -> ToolDesc {
 
 pub fn get_read_tool_func() -> ToolFunc {
     tool_func!(
-        async |args: Value, id: String, runenv: Arc<RunEnvHandle>| -> Message {
+        async |args: Value, id: String, console: &dyn Console| -> Message {
             let Some(path_str) = args.pointer("/path").and_then(|v| v.as_str()) else {
                 return error_message(id, "missing required parameter: path", "validation");
             };
             let path = Path::new(path_str);
 
-            let bytes = match runenv.read(path).await {
+            let bytes = match console.read(path).await {
                 Ok(b) => b,
                 Err(e) => return error_message(id, format!("read {path_str}: {e}"), "io"),
             };
@@ -173,7 +173,12 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, runenv::RunEnv, to_value, tool::ToolProvider};
+    use crate::{
+        datatype::Value,
+        runenv::{Local, Machine},
+        to_value,
+        tool::ToolProvider,
+    };
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -185,8 +190,9 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_read_tool_desc()]).unwrap();
         let f = funcs.get("read").unwrap();
-        let runenv = RunEnv::local().get().await.unwrap();
-        f.call(args, "1", runenv).next().await.unwrap().message
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
+        f.call(args, "1", console).next().await.unwrap().message
     }
 
     #[tokio::test]

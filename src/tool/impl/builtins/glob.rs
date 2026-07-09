@@ -110,7 +110,7 @@ pub fn get_glob_tool_desc() -> ToolDesc {
 }
 
 pub fn get_glob_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, runenv: Arc<RunEnvHandle>| -> Value {
+    tool_func!(async |args: Value, console: &dyn Console| -> Value {
         let Some(pattern_str) = args.pointer("/pattern").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: pattern",
@@ -137,7 +137,7 @@ pub fn get_glob_tool_func() -> ToolFunc {
             .map(|n| n.max(1) as usize)
             .unwrap_or(DEFAULT_LIMIT);
 
-        let os = runenv.get_os();
+        let os = console.get_os();
         if os != "linux" && os != "macos" {
             return crate::to_value!({
                 "error": format!("glob: unsupported OS '{os}'"),
@@ -169,7 +169,7 @@ find . -type f 2>/dev/null | grep -E '^\./{regex_q}$' | while IFS= read -r f; do
 done"#,
         );
 
-        let result = match runenv.exec_shell(script, None).await {
+        let result = match console.exec_shell(script, None).await {
             Ok(r) => r,
             Err(e) => {
                 return crate::to_value!({
@@ -210,7 +210,13 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, message::Message, runenv::RunEnv, to_value, tool::ToolProvider};
+    use crate::{
+        datatype::Value,
+        message::Message,
+        runenv::{Local, Machine},
+        to_value,
+        tool::ToolProvider,
+    };
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -348,8 +354,9 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_glob_tool_desc()]).unwrap();
         let f = funcs.get("glob").unwrap();
-        let runenv = RunEnv::local().get().await.unwrap();
-        f.call(args, "1", runenv).next().await.unwrap().message
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
+        f.call(args, "1", console).next().await.unwrap().message
     }
 
     fn paths(msg: &Message) -> Vec<String> {

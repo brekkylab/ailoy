@@ -239,11 +239,11 @@ mod tests {
         use futures::StreamExt as _;
 
         use crate::{
-            agent::{AgentBuilder, AgentProvider},
-            lang_model::LangModelProvider,
+            agent::{AgentBuilder, AgentProvider, get_agent_providers_mut},
+            lang_model::{LangModelProvider, get_lm_providers_mut},
             message::{FinishReason, Message, Part, Role},
-            runenv::SandboxConfig,
-            tool::ToolProvider,
+            runenv::SandboxBuilder,
+            tool::{ToolProvider, get_tool_providers_mut},
         };
 
         let skill_md = r#"---
@@ -382,24 +382,31 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
              To activate a skill, read its SKILL.md using the shell tool \
              (`cat <path>`), then follow the instructions inside.";
 
-        let mut provider = AgentProvider::new();
-        provider.models.insert(
-            "anthropic/*".into(),
-            LangModelProvider::anthropic(std::env::var("ANTHROPIC_API_KEY").unwrap()),
-        );
-        provider.tools = ToolProvider::new();
+        const SKILL_TEST_PROVIDER: &str = "skill_benchmark_python_snippet";
+        {
+            let mut lmp = LangModelProvider::new();
+            lmp.insert(
+                "anthropic/*".into(),
+                LangModelProvider::anthropic(std::env::var("ANTHROPIC_API_KEY").unwrap()),
+            );
+            get_lm_providers_mut().insert(SKILL_TEST_PROVIDER.into(), lmp);
+            get_tool_providers_mut().insert(SKILL_TEST_PROVIDER.into(), ToolProvider::new());
+            get_agent_providers_mut().insert(
+                SKILL_TEST_PROVIDER.into(),
+                AgentProvider::new(SKILL_TEST_PROVIDER, SKILL_TEST_PROVIDER),
+            );
+        }
 
-        let sandbox = crate::runenv::RunEnv::sandbox(SandboxConfig {
-            image: "python:3.12-slim".into(),
-            ..SandboxConfig::default()
-        })
-        .await
-        .expect("sandbox creation failed");
+        let sandbox = SandboxBuilder::new()
+            .image("python:3.12-slim")
+            .build()
+            .await
+            .expect("sandbox creation failed");
 
         let skill_dir = PathBuf::from("/workspace/skills/benchmark_python_snippet");
         let mut agent = AgentBuilder::new("anthropic/claude-sonnet-4-6")
-            .provider(provider)
-            .runenv(sandbox)
+            .agent_provider(SKILL_TEST_PROVIDER)
+            .machine(sandbox)
             .tools([
                 crate::tool::r#impl::get_shell_tool_desc(),
                 crate::tool::r#impl::get_python_repl_tool_desc(),
@@ -440,15 +447,14 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
         }
 
         // Sanity: the SKILL.md was materialised into the sandbox.
-        let skill_md_on_disk = agent
-            .state
-            .runenv
-            .get()
-            .await
-            .expect("runenv boot failed")
-            .read(&skill_dir.join("SKILL.md"))
-            .await
-            .expect("SKILL.md should have been materialised");
+        let skill_md_on_disk = {
+            let mut guard = agent.state.runenv.lock().await;
+            let console = guard.start().await.expect("machine start failed");
+            console
+                .read(&skill_dir.join("SKILL.md"))
+                .await
+                .expect("SKILL.md should have been materialised")
+        };
         let head = std::str::from_utf8(&skill_md_on_disk[..50]).unwrap_or("");
         assert!(
             head.starts_with("---\nname: benchmark_python_snippet"),

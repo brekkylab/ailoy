@@ -42,7 +42,7 @@ pub fn get_edit_tool_desc() -> ToolDesc {
 }
 
 pub fn get_edit_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, runenv: Arc<RunEnvHandle>| -> Value {
+    tool_func!(async |args: Value, console: &dyn Console| -> Value {
         let Some(path) = args.pointer("/path").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: path",
@@ -72,7 +72,7 @@ pub fn get_edit_tool_func() -> ToolFunc {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let bytes = match runenv.read(Path::new(path)).await {
+        let bytes = match console.read(Path::new(path)).await {
             Ok(b) => b,
             Err(e) => {
                 return crate::to_value!({
@@ -115,7 +115,7 @@ pub fn get_edit_tool_func() -> ToolFunc {
         };
         let replacements = if replace_all { count } else { 1 };
 
-        match runenv.write(Path::new(path), updated.as_bytes()).await {
+        match console.write(Path::new(path), updated.as_bytes()).await {
             Ok(()) => crate::to_value!({
                 "ok": true,
                 "replacements": replacements as i64,
@@ -133,7 +133,13 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, message::Message, runenv::RunEnv, to_value, tool::ToolProvider};
+    use crate::{
+        datatype::Value,
+        message::Message,
+        runenv::{Local, Machine},
+        to_value,
+        tool::ToolProvider,
+    };
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -145,8 +151,9 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_edit_tool_desc()]).unwrap();
         let f = funcs.get("edit").unwrap();
-        let runenv = RunEnv::local().get().await.unwrap();
-        f.call(args, "1", runenv).next().await.unwrap().message
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
+        f.call(args, "1", console).next().await.unwrap().message
     }
 
     #[tokio::test]

@@ -8,11 +8,37 @@ pub use chat_completion::{ChatCompletionMarshal, ChatCompletionUnmarshal};
 pub use gemini::{GeminiMarshal, GeminiUnmarshal};
 pub use openai::{OpenAIMarshal, OpenAIUnmarshal};
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 use crate::{
     datatype::Value,
-    lang_model::LangModelAPISchema,
     message::{MessageDeltaOutput, Unmarshal},
 };
+
+/// Wire protocol used when calling a language model API.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LangModelAPISchema {
+    /// OpenAI-compatible `/v1/chat/completions` format
+    ChatCompletion,
+
+    /// Anthropic Messages API format
+    Anthropic,
+
+    /// Google Gemini API format
+    Gemini,
+
+    /// OpenAI Responses API format
+    #[serde(rename = "openai")]
+    OpenAI,
+}
+
+impl Default for LangModelAPISchema {
+    fn default() -> Self {
+        LangModelAPISchema::ChatCompletion
+    }
+}
 
 /// Classifies a 429 body as permanent quota exhaustion (don't retry) vs a
 /// transient rate limit. Defaults to transient.

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::{
-    runenv::RunEnvHandle,
+    runenv::Console,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
     util::truncate::middle_truncate,
@@ -16,8 +16,8 @@ fn sh_quote(s: &str) -> String {
 }
 
 /// Probe for ripgrep by asking the shell to locate it. Exit 0 means available.
-async fn has_ripgrep(runenv: &RunEnvHandle) -> bool {
-    runenv
+async fn has_ripgrep(console: &dyn Console) -> bool {
+    console
         .exec_shell("command -v rg >/dev/null 2>&1".to_string(), Some(5))
         .await
         .map(|r| r.exit_code == 0)
@@ -85,7 +85,7 @@ pub fn get_grep_tool_desc() -> ToolDesc {
 }
 
 pub fn get_grep_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, runenv: Arc<RunEnvHandle>| -> Value {
+    tool_func!(async |args: Value, console: &dyn Console| -> Value {
         let Some(pattern_str) = args.pointer("/pattern").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: pattern",
@@ -145,7 +145,7 @@ pub fn get_grep_tool_func() -> ToolFunc {
             });
         }
 
-        let os = runenv.get_os();
+        let os = console.get_os();
         if os != "linux" && os != "macos" {
             return crate::to_value!({
                 "error": format!("grep: unsupported OS '{os}'"),
@@ -153,7 +153,7 @@ pub fn get_grep_tool_func() -> ToolFunc {
             });
         }
 
-        let use_rg = has_ripgrep(&runenv).await;
+        let use_rg = has_ripgrep(console).await;
 
         // Build a per-tool arg list. The shared shape is roughly:
         //   <flags> [-B N] [-A N] [include-glob] -e PATTERN -- PATH
@@ -236,7 +236,7 @@ pub fn get_grep_tool_func() -> ToolFunc {
             cmd.push_str(&sh_quote(arg));
         }
 
-        let result = match runenv.exec_shell(cmd, None).await {
+        let result = match console.exec_shell(cmd, None).await {
             Ok(r) => r,
             Err(e) => {
                 return crate::to_value!({
@@ -284,7 +284,13 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, message::Message, runenv::RunEnv, to_value, tool::ToolProvider};
+    use crate::{
+        datatype::Value,
+        message::Message,
+        runenv::{Local, Machine},
+        to_value,
+        tool::ToolProvider,
+    };
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -296,8 +302,9 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_grep_tool_desc()]).unwrap();
         let f = funcs.get("grep").unwrap();
-        let runenv = RunEnv::local().get().await.unwrap();
-        f.call(args, "1", runenv).next().await.unwrap().message
+        let mut local = Local::new();
+        let console = local.start().await.unwrap();
+        f.call(args, "1", console).next().await.unwrap().message
     }
 
     fn output(msg: &Message) -> String {

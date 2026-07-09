@@ -1,28 +1,13 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::{LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard},
+};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use super::LangModel;
-
-/// Wire protocol used when calling a language model API.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum LangModelAPISchema {
-    /// OpenAI-compatible `/v1/chat/completions` format
-    ChatCompletion,
-
-    /// Anthropic Messages API format
-    Anthropic,
-
-    /// Google Gemini API format
-    Gemini,
-
-    /// OpenAI Responses API format
-    #[serde(rename = "openai")]
-    OpenAI,
-}
+use crate::lang_model::LangModelAPISchema;
 
 /// Describes the runtime endpoint used to invoke a language model.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -49,15 +34,18 @@ pub enum LangModelProviderElem {
 /// [`anthropic`](Self::anthropic), [`gemini`](Self::gemini),
 /// [`chat_completion`](Self::chat_completion), …) which return
 /// [`LangModelProviderElem`] values, then [`insert`](Self::insert) them under
-/// the chosen pattern. At agent construction the registry is consulted via
-/// [`make_runtime`](Self::make_runtime) to build a [`LangModel`].
+/// the chosen pattern.  At agent construction time the runtime calls
+/// [`get`](Self::get) to verify that the spec's `model` matches an entry, then
+/// hands the resolved provider-name and model id to
+/// [`LangModel::try_from_provider`](crate::lang_model::LangModel::try_from_provider).
 ///
-/// [`Default::default`] (and therefore [`AgentProvider::new`]) returns a
-/// registry pre-populated from the environment:  registers `openai/*`,
-/// `anthropic/*`, `google/*`, `x-ai/*`, `deepseek/*`, and/or `moonshotai/kimi-*` for every
-/// `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `XAI_API_KEY` / `DEEPSEEK_API_KEY`
-/// / `KIMI_API_KEY` that is set.
-/// Use [`new`](Self::new) for an empty registry.
+/// [`Default::default`] returns a registry pre-populated from the environment:
+/// registers `openai/*`, `anthropic/*`, `google/*`, `x-ai/*`, `deepseek/*`,
+/// and/or `moonshotai/kimi-*` for every `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
+/// / `GEMINI_API_KEY` / `XAI_API_KEY` / `DEEPSEEK_API_KEY` / `KIMI_API_KEY`
+/// that is set.  The default is what the global [`lang_model_providers`]
+/// registry stores under the `"default"` key.  Use [`new`](Self::new) for an
+/// empty registry.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 #[schemars(transparent)]
@@ -141,23 +129,51 @@ impl LangModelProvider {
             .map(|(_, elem)| elem)
     }
 
-    /// Build a runtime [`LangModel`] for `spec_model`.
-    ///
-    /// Looks up `spec_model` (with glob fallback), strips any `provider/` prefix
-    /// to recover the API-side model id (e.g. `"openai/gpt-4o"` → `"gpt-4o"`),
-    /// and hands the resolved endpoint to [`LangModel::new`].
-    pub fn provide(&self, spec_model: impl AsRef<str>) -> anyhow::Result<LangModel> {
+    /// Verify that `spec_model` matches a registered pattern and return the
+    /// API-side model id with any `provider/` prefix stripped (e.g.
+    /// `"openai/gpt-4o"` → `"gpt-4o"`).  Returns an error if no pattern
+    /// matches.
+    pub fn resolve_model_id(&self, spec_model: impl AsRef<str>) -> anyhow::Result<String> {
         let spec_model = spec_model.as_ref();
-        let elem = self
+        let _ = self
             .get(spec_model)
-            .ok_or_else(|| anyhow::anyhow!("No provider found for model '{}'", spec_model))?
-            .clone();
+            .ok_or_else(|| anyhow::anyhow!("No provider found for model '{}'", spec_model))?;
         let model_id = spec_model
             .split_once('/')
             .map(|(_, id)| id.to_string())
             .unwrap_or_else(|| spec_model.to_string());
-        Ok(LangModel::new(model_id, elem))
+        Ok(model_id)
     }
+}
+
+/// Process-wide named registry of [`LangModelProvider`] instances.
+///
+/// Populated at first access with a single `"default"` entry built from
+/// [`LangModelProvider::default`] (i.e. the env-variable seeded provider).
+/// Additional named providers can be registered via [`lang_model_providers_mut`],
+/// and looked up via [`lang_model_providers`].
+static LANG_MODEL_PROVIDERS: LazyLock<RwLock<HashMap<String, LangModelProvider>>> =
+    LazyLock::new(|| {
+        let mut map = HashMap::new();
+        map.insert("default".to_string(), LangModelProvider::default());
+        RwLock::new(map)
+    });
+
+/// Borrow the process-wide [`LangModelProvider`] registry for reading.
+///
+/// Holds a [`std::sync::RwLockReadGuard`]; drop it before performing long
+/// operations to avoid blocking writers.
+pub fn get_lm_providers() -> RwLockReadGuard<'static, HashMap<String, LangModelProvider>> {
+    LANG_MODEL_PROVIDERS
+        .read()
+        .expect("lang_model_providers lock poisoned")
+}
+
+/// Borrow the process-wide [`LangModelProvider`] registry for writing.
+pub fn get_lm_providers_mut() -> RwLockWriteGuard<'static, HashMap<String, LangModelProvider>> {
+    LANG_MODEL_PROVIDERS
+        .write()
+        .expect("lang_model_providers lock poisoned")
 }
 
 fn glob_match(pattern: &str, text: &str) -> bool {
@@ -225,10 +241,9 @@ mod tests {
     }
 
     #[test]
-    fn make_runtime_strips_prefix() {
+    fn resolve_model_id_strips_prefix() {
         let mut p = LangModelProvider::new();
         p.insert("openai/*".into(), dummy());
-        let m = p.provide("openai/gpt-4o").unwrap();
-        assert_eq!(m.model_id(), "gpt-4o");
+        assert_eq!(p.resolve_model_id("openai/gpt-4o").unwrap(), "gpt-4o");
     }
 }

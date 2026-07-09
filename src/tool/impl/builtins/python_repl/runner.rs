@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use anyhow::Context as _;
 use tokio::sync::Notify;
 
-use crate::runenv::{ExecResult, RunEnvHandle};
+use crate::runenv::{Console, ExecResult};
 
 /// All ailoy-managed files live under `$XDG_CACHE_HOME/ailoy` (default `~/.cache/ailoy`):
 ///   - uv binary : `$AILOY_CACHE/bin/uv`  (symlink if system uv exists, else downloaded)
@@ -65,9 +65,9 @@ fn sh(cmd: &str) -> (String, Vec<String>) {
     ("sh".to_string(), vec!["-c".to_string(), cmd.to_string()])
 }
 
-async fn run_setup(runenv: &RunEnvHandle) -> anyhow::Result<()> {
+async fn run_setup(console: &dyn Console) -> anyhow::Result<()> {
     let (prog, args) = sh(SETUP_CMD);
-    let r = runenv
+    let r = console
         .exec(prog, args, Some(SETUP_TIMEOUT_SECS))
         .await
         .context("Python runtime setup failed")?;
@@ -105,7 +105,7 @@ impl PythonReplRunner {
         }
     }
 
-    async fn ensure_ready(&self, runenv: &RunEnvHandle) -> anyhow::Result<()> {
+    async fn ensure_ready(&self, console: &dyn Console) -> anyhow::Result<()> {
         loop {
             // Create notified future before the CAS to avoid missing a wakeup.
             let notified = self.notify.notified();
@@ -116,7 +116,7 @@ impl PythonReplRunner {
                 Ordering::Acquire,
             ) {
                 Ok(_) => {
-                    let result = run_setup(runenv).await;
+                    let result = run_setup(console).await;
                     self.state.store(
                         if result.is_ok() {
                             INITIALIZED
@@ -138,7 +138,7 @@ impl PythonReplRunner {
     /// Install pip packages into the ailoy venv via uv.
     pub async fn install_packages(
         &self,
-        runenv: &RunEnvHandle,
+        console: &dyn Console,
         packages: &[&str],
     ) -> anyhow::Result<ExecResult> {
         if packages.is_empty() {
@@ -149,36 +149,36 @@ impl PythonReplRunner {
                 timed_out: false,
             });
         }
-        self.ensure_ready(runenv).await?;
+        self.ensure_ready(console).await?;
         let quoted: Vec<String> = packages.iter().map(|p| format!("'{p}'")).collect();
         let cmd = format!("{AILOY_PIP_INSTALL} {}", quoted.join(" "));
         let (prog, args) = sh(&cmd);
-        runenv.exec(prog, args, None).await
+        console.exec(prog, args, None).await
     }
 
     /// Execute a Python script with optional env vars.
     pub async fn run(
         &self,
-        runenv: &RunEnvHandle,
+        console: &dyn Console,
         source: &str,
         env: &[(&str, &str)],
     ) -> anyhow::Result<ExecResult> {
-        self.run_with_timeout(runenv, source, env, 0).await
+        self.run_with_timeout(console, source, env, 0).await
     }
 
     /// Like [`run`] but with a per-execution timeout (`0` = no timeout).
     pub async fn run_with_timeout(
         &self,
-        runenv: &RunEnvHandle,
+        console: &dyn Console,
         source: &str,
         env: &[(&str, &str)],
         timeout_secs: u64,
     ) -> anyhow::Result<ExecResult> {
-        self.ensure_ready(runenv).await?;
+        self.ensure_ready(console).await?;
 
         let script_path = format!("/tmp/__ailoy_{}.py", uuid::Uuid::new_v4());
 
-        runenv
+        console
             .write(std::path::Path::new(&script_path), source.as_bytes())
             .await
             .context("failed to write script")?;
@@ -196,10 +196,10 @@ impl PythonReplRunner {
 
         let timeout = (timeout_secs > 0).then_some(timeout_secs);
         let (prog, args) = sh(&cmd);
-        let result = runenv.exec(prog, args, timeout).await;
+        let result = console.exec(prog, args, timeout).await;
 
         let (cleanup_prog, cleanup_args) = sh(&format!("rm -f {script_path}"));
-        let _ = runenv.exec(cleanup_prog, cleanup_args, None).await;
+        let _ = console.exec(cleanup_prog, cleanup_args, None).await;
 
         result.context("script execution error")
     }
