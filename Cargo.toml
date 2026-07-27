@@ -25,7 +25,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
-sandbox = ["dep:microsandbox", "dep:microsandbox-network"]
+sandbox = ["dep:microsandbox", "dep:microsandbox-network", "dep:microsandbox-types"]
 
 [dependencies]
 anyhow = "1"
@@ -42,10 +42,13 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 indexmap = { version = "2", features = ["serde"] }
 infer = "0.22"
 log = "0.4"
-microsandbox = { version = "0.6.1", optional = true }
+microsandbox = { version = "0.6.7", optional = true }
 # `microsandbox` facade does not re-export the network policy builder types;
 # used directly to build per-variant SandboxNetwork egress policies.
-microsandbox-network = { version = "0.6.1", optional = true }
+microsandbox-network = { version = "0.6.7", optional = true }
+# The wire-format `NetworkPolicy` that `SandboxSpec` stores also lacks a
+# facade re-export (the facade's `NetworkPolicy` is the engine-side type).
+microsandbox-types = { version = "0.6.7", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 parking_lot = "0.12.4"
 png = "0.18"

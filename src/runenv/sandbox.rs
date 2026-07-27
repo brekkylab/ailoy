@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use microsandbox::{
     ExecOutput, MicrosandboxError, NetworkPolicy, Sandbox as MsbSandbox, SandboxConfig, Snapshot,
     sandbox::{ExecOptionsBuilder, IntoImage, MountBuilder, PullPolicy, validate_sandbox_name},
-    snapshot::ExportOpts,
+    snapshot::SaveOpts,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -145,10 +145,13 @@ pub struct SandboxBuilder {
     build_error: Option<String>,
 }
 
-/// Serialize a [`NetworkPolicy`] into the `Option<Value>` form the 0.6.x
-/// `SandboxConfig` network spec stores (round-trips via serde; infallible).
-fn network_policy_value(policy: NetworkPolicy) -> serde_json::Value {
-    serde_json::to_value(policy).expect("NetworkPolicy serializes to JSON")
+/// Convert an engine-side [`NetworkPolicy`] into the wire-format policy the
+/// `SandboxSpec` stores. The two types share one JSON schema (microsandbox
+/// converts its engine config into the spec through the same serde
+/// round-trip), so the conversion is infallible.
+fn wire_network_policy(policy: NetworkPolicy) -> microsandbox_types::NetworkPolicy {
+    let value = serde_json::to_value(policy).expect("NetworkPolicy serializes to JSON");
+    serde_json::from_value(value).expect("engine and wire NetworkPolicy share one JSON schema")
 }
 
 /// Guest network reachability. The sandbox host
@@ -211,7 +214,7 @@ impl Default for SandboxBuilder {
         config.spec.pull_policy = PullPolicy::IfMissing;
         // Default network posture: host + public internet (see SandboxNetwork).
         config.spec.network.enabled = true;
-        config.spec.network.policy = Some(network_policy_value(SandboxNetwork::default().policy()));
+        config.spec.network.policy = Some(wire_network_policy(SandboxNetwork::default().policy()));
         Self {
             config,
             default_timeout_secs: 60,
@@ -267,7 +270,7 @@ impl SandboxBuilder {
     /// see [`SandboxNetwork`]. Defaults to [`SandboxNetwork::Public`].
     pub fn network(mut self, network: SandboxNetwork) -> Self {
         self.config.spec.network.enabled = true;
-        self.config.spec.network.policy = Some(network_policy_value(network.policy()));
+        self.config.spec.network.policy = Some(wire_network_policy(network.policy()));
         self
     }
 
@@ -416,10 +419,10 @@ impl Sandbox {
     ) -> anyhow::Result<Self> {
         ensure_msb().await?;
 
-        let handle = Snapshot::import(path.as_ref(), None)
+        let handle = Snapshot::load(path.as_ref(), None)
             .await
-            .context("import snapshot archive")?;
-        let snap = handle.open().await.context("open imported snapshot")?;
+            .context("load snapshot archive")?;
+        let snap = handle.open().await.context("open loaded snapshot")?;
         let snap_path = snap.path().to_path_buf();
 
         // The imported artifact directory is content-addressed (`sha256-…`),
@@ -467,19 +470,19 @@ impl Sandbox {
     /// call is cleaned up before returning (success or failure).
     pub async fn archive(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
         let snap = Snapshot::builder(&self.name)
-            .name(&self.name)
+            .from_sandbox(&self.name)
             .create()
             .await
             .context("create snapshot")?;
         let snap_path = snap.path().to_path_buf();
 
-        let result = Snapshot::export(
+        let result = Snapshot::save(
             snap_path.to_string_lossy().as_ref(),
             path.as_ref(),
-            ExportOpts::default(),
+            SaveOpts::default(),
         )
         .await
-        .context("export snapshot archive");
+        .context("save snapshot archive");
 
         cleanup_snapshot_dir(&snap_path);
 
