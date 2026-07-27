@@ -81,3 +81,17 @@ axum = "0.8"
 dotenvy = "0.15"
 test-with = { version = "0.16.1", default-features = false, features = ["executable"] }
 tokio = { version = "1.0", features = ["net"] }
+
+# microsandbox 0.6.7 computes a sparse-sha256 integrity digest over the upper
+# layer's full logical size (default 4 GiB) on snapshot create, save, and load,
+# so sandbox snapshot tests hash ~12 GiB per round trip. Unoptimized sha2 runs
+# at ~130 MB/s, which turns that into ~32 s per pass under the dev profile.
+# Optimizing just the hash crates restores hardware-speed hashing (~2.6 GB/s).
+# Applies only when this workspace is built directly; release builds and
+# crates depending on ailoy are unaffected.
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.digest]
+opt-level = 3
+[profile.dev.package.block-buffer]
+opt-level = 3
