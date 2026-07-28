@@ -9,6 +9,7 @@ exclude = [
 [workspace.package]
 version = "0.3.0"
 edition = "2024"
+rust-version = "1.95.0"
 license = "Apache-2.0"
 repository = "https://github.com/brekkylab/ailoy"
 
@@ -16,6 +17,7 @@ repository = "https://github.com/brekkylab/ailoy"
 name = "ailoy"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [lib]
