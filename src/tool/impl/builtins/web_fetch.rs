@@ -75,7 +75,7 @@ async fn download(
         .await
         .map_err(|e| format!("request failed: {e}"))?;
     let status = resp.status().as_u16();
-    let final_url = resp.url().to_string();
+    let final_url = resp.uri().to_string();
     let content_type = resp
         .headers()
         .get(wreq::header::CONTENT_TYPE)

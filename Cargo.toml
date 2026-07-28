@@ -73,8 +73,8 @@ unicode-segmentation = "1.12.0"
 url = { version = "2.5", features = ["serde"] }
 urlencoding = "2.1"
 uuid = { version = "1.18.0", features = ["v4"] }
-wreq = { version = "5.3.0", features = ["stream"] }
-wreq-util = "2.2.6"
+wreq = { version = "=6.0.0-rc.29", features = ["brotli", "charset", "deflate", "gzip", "stream", "zstd"] }
+wreq-util = { version = "=3.0.0-rc.14", features = ["emulation-compression"] }
 
 [dev-dependencies]
 axum = "0.8"
