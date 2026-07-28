@@ -31,7 +31,7 @@ sandbox = ["dep:microsandbox", "dep:microsandbox-network", "dep:microsandbox-typ
 anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"
-base64 = "0.22"
+base64 = "0.23"
 dedent = "0.1.1"
 derive_builder = "0.20.2"
 fancy-regex = "0.18"
@@ -54,7 +54,7 @@ parking_lot = "0.12.4"
 png = "0.18"
 reqwest = { version = "0.13", features = ["form", "json", "stream"] }
 scraper = "0.27"
-jsonschema = { version = "0.48", default-features = false }
+jsonschema = { version = "0.49", default-features = false }
 schemars = { version = "0.9", features = ["preserve_order", "url2"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"
@@ -79,7 +79,7 @@ wreq-util = "2.2.6"
 [dev-dependencies]
 axum = "0.8"
 dotenvy = "0.15"
-test-with = { version = "0.16.1", default-features = false, features = ["executable"] }
+test-with = { version = "0.17", default-features = false, features = ["executable"] }
 tokio = { version = "1.0", features = ["net"] }
 
 # microsandbox 0.6.7 computes a sparse-sha256 integrity digest over the upper
