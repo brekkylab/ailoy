@@ -719,7 +719,7 @@ mod tests {
     #[test]
     fn test_marshal_response_format_absent() {
         with_req("gpt-4o", None, |req| {
-            let val = OpenAIMarshal::default().marshal(req);
+            let val = OpenAIMarshal.marshal(req);
             let body = val.as_object().unwrap().get("body").unwrap();
             assert!(
                 body.as_object().unwrap().get("text").is_none(),
@@ -758,7 +758,7 @@ mod tests {
             stream: false,
         };
 
-        let val = OpenAIMarshal::default().marshal(&req);
+        let val = OpenAIMarshal.marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();
 
         assert_eq!(
@@ -787,10 +787,7 @@ mod tests {
             "output": [],
             "usage": {"input_tokens": 200, "output_tokens": 75}
         });
-        let usage = OpenAIUnmarshal::default()
-            .unmarshal(response)
-            .unwrap()
-            .usage;
+        let usage = OpenAIUnmarshal.unmarshal(response).unwrap().usage;
         assert_eq!(
             usage,
             Some(TokenUsage {
@@ -913,7 +910,7 @@ mod tests {
     #[test]
     fn test_marshal_max_output_tokens_set() {
         with_req("gpt-5.4-mini", Some(1024), |req| {
-            let val = OpenAIMarshal::default().marshal(req);
+            let val = OpenAIMarshal.marshal(req);
             let body = val.as_object().unwrap().get("body").unwrap();
             let max_tokens = body.as_object().unwrap().get("max_output_tokens").unwrap();
             assert_eq!(max_tokens.as_integer().unwrap(), 1024);
@@ -923,7 +920,7 @@ mod tests {
     #[test]
     fn test_marshal_max_output_tokens_absent_when_none() {
         with_req("gpt-5.4-mini", None, |req| {
-            let val = OpenAIMarshal::default().marshal(req);
+            let val = OpenAIMarshal.marshal(req);
             let body = val.as_object().unwrap().get("body").unwrap();
             assert!(body.as_object().unwrap().get("max_output_tokens").is_none());
         });
@@ -1027,8 +1024,11 @@ mod tests {
         .unwrap()
         .to_vec();
 
-        let model =
-            build_openai_model("openai_test_tool_result_with_image", "gpt-5.4-mini", api_key);
+        let model = build_openai_model(
+            "openai_test_tool_result_with_image",
+            "gpt-5.4-mini",
+            api_key,
+        );
 
         let messages = vec![
             Message::new(Role::User).with_contents([Part::text(

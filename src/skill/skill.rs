@@ -178,7 +178,7 @@ mod tests {
             "/workspace/skills/greet_dir_name/SKILL.md",
             b"---\nname: greet\ndescription: say hello\n---\nbody\n".to_vec(),
         )];
-        let metas = scan_declared_skills(&files, &[dir.clone()]).unwrap();
+        let metas = scan_declared_skills(&files, std::slice::from_ref(&dir)).unwrap();
         assert_eq!(metas.len(), 1);
         assert_eq!(metas[0].name, "greet");
         assert_eq!(metas[0].description, "say hello");

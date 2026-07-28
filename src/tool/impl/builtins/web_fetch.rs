@@ -1,6 +1,8 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use html_to_markdown_rs::{ConversionOptions, OutputFormat};
 use parking_lot::Mutex;
@@ -554,7 +556,7 @@ mod tests {
         assert!(
             body.to_ascii_lowercase().contains("accuweather") || body.contains("분당구"),
             "body should mention AccuWeather or 분당구, got first 200 chars: {:?}",
-            &body.chars().take(200).collect::<String>()
+            body.chars().take(200).collect::<String>()
         );
         assert!(retrieved_at.ends_with('Z'), "retrieved_at: {retrieved_at}");
     }
@@ -580,7 +582,7 @@ mod tests {
         assert!(
             body.contains("<html") || body.contains("<HTML"),
             "html format should preserve markup, got first 200 chars: {:?}",
-            &body.chars().take(200).collect::<String>()
+            body.chars().take(200).collect::<String>()
         );
     }
 }

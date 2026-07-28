@@ -604,7 +604,7 @@ mod tests {
     #[test]
     fn test_marshal_max_tokens_set() {
         with_req("claude-haiku-4-5", Some(512), |req| {
-            let val = AnthropicMarshal::default().marshal(req);
+            let val = AnthropicMarshal.marshal(req);
             let body = val.as_object().unwrap().get("body").unwrap();
             let max_tokens = body.as_object().unwrap().get("max_tokens").unwrap();
             assert_eq!(max_tokens.as_integer().unwrap(), 512);
@@ -614,7 +614,7 @@ mod tests {
     #[test]
     fn test_marshal_max_tokens_default() {
         with_req("claude-haiku-4-5", None, |req| {
-            let val = AnthropicMarshal::default().marshal(req);
+            let val = AnthropicMarshal.marshal(req);
             let body = val.as_object().unwrap().get("body").unwrap();
             let max_tokens = body.as_object().unwrap().get("max_tokens").unwrap();
             // Falls back to 8192 when not configured
@@ -642,14 +642,14 @@ mod tests {
         };
 
         // stream: false → no "stream" body key, no accept header.
-        let val = AnthropicMarshal::default().marshal(&req);
+        let val = AnthropicMarshal.marshal(&req);
         assert!(val.pointer("/body/stream").is_none());
         assert!(val.pointer("/header/accept").is_none());
 
         // stream: true → body "stream": true (the SSE trigger), plus an
         // `Accept: text/event-stream` header so intermediaries don't buffer.
         req.stream = true;
-        let val = AnthropicMarshal::default().marshal(&req);
+        let val = AnthropicMarshal.marshal(&req);
         assert_eq!(
             val.pointer("/body/stream").and_then(|v| v.as_bool()),
             Some(true)
@@ -697,7 +697,8 @@ mod tests {
         // A mid-stream `error` event must fail with the server's own type +
         // message, not a generic "unknown event type".
         let mut u = AnthropicUnmarshal;
-        let event = r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
+        let event =
+            r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
         let err = u.unmarshal_event(event).unwrap_err().to_string();
         assert!(err.contains("overloaded_error"), "got: {err}");
         assert!(err.contains("Overloaded"), "got: {err}");
@@ -800,8 +801,9 @@ mod tests {
         let api_key = std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set");
 
         let model = build_anthropic_model("test_run_stream_text", "claude-haiku-4-5", api_key);
-        let messages =
-            vec![Message::new(Role::User).with_contents([Part::text("Reply with a short greeting.")])];
+        let messages = vec![
+            Message::new(Role::User).with_contents([Part::text("Reply with a short greeting.")]),
+        ];
 
         let mut stream = model.run_stream(&messages, &[], &LangModelOptions::default());
         let mut acc = MessageDeltaOutput::new();
@@ -811,7 +813,10 @@ mod tests {
             chunks += 1;
         }
 
-        assert!(chunks > 1, "expected multiple streamed deltas, got {chunks}");
+        assert!(
+            chunks > 1,
+            "expected multiple streamed deltas, got {chunks}"
+        );
         let out = acc.finish().unwrap();
         assert_eq!(out.finish_reason, FinishReason::Stop {});
         assert!(
@@ -842,10 +847,7 @@ mod tests {
                 "cache_read_input_tokens": 10
             }
         });
-        let usage = AnthropicUnmarshal::default()
-            .unmarshal(response)
-            .unwrap()
-            .usage;
+        let usage = AnthropicUnmarshal.unmarshal(response).unwrap().usage;
         assert_eq!(
             usage,
             Some(TokenUsage {
@@ -863,10 +865,7 @@ mod tests {
             "content": [],
             "usage": {"input_tokens": 30, "output_tokens": 15}
         });
-        let usage = AnthropicUnmarshal::default()
-            .unmarshal(response)
-            .unwrap()
-            .usage;
+        let usage = AnthropicUnmarshal.unmarshal(response).unwrap().usage;
         assert_eq!(
             usage,
             Some(TokenUsage {
@@ -999,7 +998,7 @@ mod tests {
     #[test]
     fn test_marshal_response_format_absent() {
         with_req("claude-haiku-4-5", None, |req| {
-            let val = AnthropicMarshal::default().marshal(req);
+            let val = AnthropicMarshal.marshal(req);
             let body = val.as_object().unwrap().get("body").unwrap();
             assert!(body.as_object().unwrap().get("output_config").is_none());
         });
@@ -1008,7 +1007,7 @@ mod tests {
     #[test]
     fn test_marshal_response_format_json_schema() {
         let schema = to_value!({"type": "object", "properties": {"name": {"type": "string"}}});
-        let fmt = ResponseFormat::json_schema(schema.clone().into()).unwrap();
+        let fmt = ResponseFormat::json_schema(schema.clone()).unwrap();
         let messages: Vec<Message> = vec![];
         let tools: Vec<ToolDesc> = vec![];
         let provider = LangModelProviderElem::API {
@@ -1028,7 +1027,7 @@ mod tests {
             options: &options,
             stream: false,
         };
-        let val = AnthropicMarshal::default().marshal(&req);
+        let val = AnthropicMarshal.marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();
         let fmt_type = body
             .pointer("/output_config/format/type")

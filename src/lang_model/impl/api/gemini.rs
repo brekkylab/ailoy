@@ -781,7 +781,7 @@ mod tests {
         };
 
         // stream: false → non-streaming endpoint, no accept header.
-        let val = GeminiMarshal::default().marshal(&req);
+        let val = GeminiMarshal.marshal(&req);
         let endpoint = val.pointer("/url").and_then(|v| v.as_str()).unwrap();
         assert!(endpoint.ends_with(":generateContent"), "got {endpoint}");
         assert!(val.pointer("/header/accept").is_none());
@@ -790,7 +790,7 @@ mod tests {
         // streaming trigger), plus an `Accept: text/event-stream` header so
         // intermediaries don't buffer.
         req.stream = true;
-        let val = GeminiMarshal::default().marshal(&req);
+        let val = GeminiMarshal.marshal(&req);
         let endpoint = val.pointer("/url").and_then(|v| v.as_str()).unwrap();
         assert!(
             endpoint.ends_with(":streamGenerateContent?alt=sse"),
@@ -814,10 +814,7 @@ mod tests {
                 "candidatesTokenCount": 60
             }
         });
-        let usage = GeminiUnmarshal::default()
-            .unmarshal(response)
-            .unwrap()
-            .usage;
+        let usage = GeminiUnmarshal.unmarshal(response).unwrap().usage;
         assert_eq!(
             usage,
             Some(TokenUsage {
@@ -958,7 +955,7 @@ mod tests {
     #[test]
     fn test_marshal_max_output_tokens_set() {
         with_req("gemini-2.5-flash-lite", Some(2048), |req| {
-            let val = GeminiMarshal::default().marshal(req);
+            let val = GeminiMarshal.marshal(req);
             let body = val.as_object().unwrap().get("body").unwrap();
             let gen_config = body.as_object().unwrap().get("generationConfig").unwrap();
             let max_tokens = gen_config
@@ -973,7 +970,7 @@ mod tests {
     #[test]
     fn test_marshal_max_output_tokens_absent_when_none() {
         with_req("gemini-2.5-flash-lite", None, |req| {
-            let val = GeminiMarshal::default().marshal(req);
+            let val = GeminiMarshal.marshal(req);
             let body = val.as_object().unwrap().get("body").unwrap();
             assert!(body.as_object().unwrap().get("generationConfig").is_none());
         });
@@ -982,7 +979,7 @@ mod tests {
     #[test]
     fn test_marshal_response_format_absent() {
         with_req("gemini-2.5-flash-lite", None, |req| {
-            let val = GeminiMarshal::default().marshal(req);
+            let val = GeminiMarshal.marshal(req);
             let body = val.as_object().unwrap().get("body").unwrap();
             assert!(body.as_object().unwrap().get("generationConfig").is_none());
         });
@@ -991,7 +988,7 @@ mod tests {
     #[test]
     fn test_marshal_response_format_json_schema() {
         let schema = to_value!({"type": "object", "properties": {"city": {"type": "string"}}});
-        let fmt = ResponseFormat::json_schema(schema.clone().into()).unwrap();
+        let fmt = ResponseFormat::json_schema(schema.clone()).unwrap();
         let messages: Vec<Message> = vec![];
         let tools: Vec<ToolDesc> = vec![];
         let provider = LangModelProviderElem::API {
@@ -1011,7 +1008,7 @@ mod tests {
             options: &options,
             stream: false,
         };
-        let val = GeminiMarshal::default().marshal(&req);
+        let val = GeminiMarshal.marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();
         let gen_cfg = body.as_object().unwrap().get("generationConfig").unwrap();
         assert_eq!(
@@ -1084,8 +1081,11 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set in .env");
 
-        let model =
-            build_gemini_model("gemini_test_run_max_tokens", "gemini-2.5-flash-lite", api_key);
+        let model = build_gemini_model(
+            "gemini_test_run_max_tokens",
+            "gemini-2.5-flash-lite",
+            api_key,
+        );
         let messages = vec![
             Message::new(Role::User)
                 .with_contents([Part::text("Tell me a long story about a dragon.")]),

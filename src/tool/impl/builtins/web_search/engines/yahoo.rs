@@ -102,7 +102,13 @@ mod tests {
     fn test_build_sb_cookie_includes_all_pairs() {
         let c = build_sb_cookie();
         for required in [
-            "v=1", "vm=p", "fl=1", "vl=lang_en", "pn=10", "rw=new", "userset=1",
+            "v=1",
+            "vm=p",
+            "fl=1",
+            "vl=lang_en",
+            "pn=10",
+            "rw=new",
+            "userset=1",
         ] {
             assert!(
                 c.contains(required),
@@ -154,7 +160,7 @@ mod tests {
             el.select(&engine.parser.result_url)
                 .next()
                 .and_then(|a| a.value().attr("href"))
-                .map(|href| Yahoo::extract_redirect_url(href))
+                .map(Yahoo::extract_redirect_url)
                 .filter(|url| !url.is_empty())
         });
 

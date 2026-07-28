@@ -74,11 +74,7 @@ impl SearchEngine for Brave {
         let cookie_header = if server_cookies.is_empty() {
             brave_default_cookies().to_string()
         } else {
-            format!(
-                "{}; {}",
-                server_cookies.join("; "),
-                brave_default_cookies()
-            )
+            format!("{}; {}", server_cookies.join("; "), brave_default_cookies())
         };
 
         // spellcheck=0 prevents silent query rewrites (e.g. "ailoy" → "alloy").
@@ -185,9 +181,7 @@ mod tests {
                     .select(&engine.result_link)
                     .find_map(|a| a.value().attr("href").map(str::to_owned))?;
                 let parsed = url::Url::parse(&href).ok()?;
-                if parsed.host().is_none() {
-                    return None;
-                }
+                parsed.host()?;
                 let title = snippet
                     .select(&engine.result_title)
                     .next()
