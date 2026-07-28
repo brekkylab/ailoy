@@ -75,7 +75,13 @@ unicode-segmentation = "1.12.0"
 url = { version = "2.5", features = ["serde"] }
 urlencoding = "2.1"
 uuid = { version = "1.18.0", features = ["v4"] }
-wreq = { version = "=6.0.0-rc.29", features = ["brotli", "charset", "deflate", "gzip", "stream", "zstd"] }
+# wreq 6 trimmed its default feature set down to webpki-roots and tokio-rt, so
+# everything else this crate relies on has to be requested by name. charset and
+# system-proxy were in wreq 5's defaults; the decompression features and stream
+# were already explicit; emulation-compression restores the content-encoding
+# profile that wreq-util 2.x applied on its own. Re-check this list whenever the
+# pin moves, since a feature leaving default is a silent behavior change.
+wreq = { version = "=6.0.0-rc.29", features = ["brotli", "charset", "deflate", "gzip", "stream", "system-proxy", "zstd"] }
 wreq-util = { version = "=3.0.0-rc.14", features = ["emulation-compression"] }
 
 [dev-dependencies]

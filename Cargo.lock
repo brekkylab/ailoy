@@ -7038,6 +7038,7 @@ dependencies = [
  "pin-project-lite",
  "socket2",
  "sync_wrapper",
+ "system-configuration",
  "tokio",
  "tokio-btls",
  "tokio-util",
@@ -7045,6 +7046,7 @@ dependencies = [
  "tower-http",
  "url",
  "webpki-root-certs",
+ "windows-registry",
  "wreq-proto",
  "wreq-rt",
 ]
