@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -74,20 +76,35 @@ impl ResponseFormat {
 }
 
 impl schemars::JsonSchema for ResponseFormat {
-    fn schema_name() -> String {
+    fn schema_name() -> Cow<'static, str> {
         "ResponseFormat".into()
     }
 
-    fn json_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-        use schemars::schema::{InstanceType, ObjectValidation, SchemaObject, SingleOrVec};
-        SchemaObject {
-            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
-            object: Some(Box::new(ObjectValidation {
-                required: ["type".to_owned()].into(),
-                ..Default::default()
-            })),
-            ..Default::default()
-        }
-        .into()
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "object",
+            "required": ["type"]
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use schemars::JsonSchema;
+
+    use super::ResponseFormat;
+
+    #[test]
+    fn json_schema_preserves_tagged_object_contract() {
+        let schema =
+            <ResponseFormat as JsonSchema>::json_schema(&mut schemars::SchemaGenerator::default());
+
+        assert_eq!(
+            serde_json::to_value(schema).unwrap(),
+            serde_json::json!({
+                "type": "object",
+                "required": ["type"]
+            })
+        );
     }
 }

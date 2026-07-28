@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use indexmap::IndexMap;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
@@ -42,15 +44,15 @@ pub enum Value {
 }
 
 impl schemars::JsonSchema for Value {
-    fn schema_name() -> String {
+    fn schema_name() -> Cow<'static, str> {
         "Value".into()
     }
 
-    fn json_schema(_gen: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-        // Empty SchemaObject produces `{}`, which in JSON Schema accepts any value.
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // An empty schema (`{}`) accepts any value.
         // This is intentional: `Value` is a free-form type that can hold any JSON-
         // compatible value (null, bool, number, string, array, or object).
-        schemars::schema::SchemaObject::default().into()
+        schemars::json_schema!({})
     }
 }
 
@@ -849,4 +851,18 @@ pub enum ValueError {
     InvalidType,
     InvalidValue,
     MissingField,
+}
+
+#[cfg(test)]
+mod tests {
+    use schemars::JsonSchema;
+
+    use super::Value;
+
+    #[test]
+    fn json_schema_accepts_any_value() {
+        let schema = Value::json_schema(&mut schemars::SchemaGenerator::default());
+
+        assert_eq!(serde_json::to_value(schema).unwrap(), serde_json::json!({}));
+    }
 }
