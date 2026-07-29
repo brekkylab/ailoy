@@ -232,8 +232,7 @@ mod tests {
         // `#links .web-result` selector naturally skips them.
         let engine = DuckDuckGo::new().expect("Failed to create DuckDuckGo engine");
         // Ad lives outside #links
-        let html = format!(
-            r#"<html><body>
+        let html = r#"<html><body>
               <div class="result result--ad">
                 <h2 class="result__title">
                   <a class="result__a" href="https://ads.example.com">Sponsored Result</a>
@@ -248,8 +247,7 @@ mod tests {
                   <a class="result__snippet" href="https://legit.com/">Real description</a>
                 </div>
               </div>
-            </body></html>"#
-        );
+            </body></html>"#.to_string();
         let document = Html::parse_document(&html);
 
         let results = engine

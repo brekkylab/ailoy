@@ -226,13 +226,11 @@ impl Agent {
                         *value = crate::datatype::Value::string(truncated);
                     }
                 }
-                Part::Text { text } => {
-                    if text.len() > Self::MAX_TOOL_RESULT_CHARS {
-                        *text = crate::util::truncate::middle_truncate(
-                            std::mem::take(text),
-                            Self::MAX_TOOL_RESULT_CHARS,
-                        );
-                    }
+                Part::Text { text } if text.len() > Self::MAX_TOOL_RESULT_CHARS => {
+                    *text = crate::util::truncate::middle_truncate(
+                        std::mem::take(text),
+                        Self::MAX_TOOL_RESULT_CHARS,
+                    );
                 }
                 _ => {}
             }
@@ -358,7 +356,7 @@ impl Agent {
                             // against the parent's tool batch.
                             let dummy = Local::default();
                             let mut stream =
-                                tool.call(call_args, call_id_for_call, dummy.into_dummy_console());
+                                tool.call(call_args, call_id_for_call, dummy.dummy_console());
                             let mut last: Option<MessageOutput> = None;
                             while let Some(item) = stream.next().await {
                                 if let Some(mut prev) = last.replace(item) {
@@ -658,12 +656,12 @@ impl Agent {
 /// Test-only extension: produce a `&dyn Console` cheaply from a default `Local`
 /// without going through `Machine::start`. This dummy is only passed to Pure
 /// `ToolFunc`s — they never actually use it.
-trait IntoDummyConsole {
-    fn into_dummy_console(&self) -> &dyn Console;
+trait DummyConsoleExt {
+    fn dummy_console(&self) -> &dyn Console;
 }
 
-impl IntoDummyConsole for Local {
-    fn into_dummy_console(&self) -> &dyn Console {
+impl DummyConsoleExt for Local {
+    fn dummy_console(&self) -> &dyn Console {
         // `Local` always holds a `LocalConsole`; expose it as a trait object.
         // SAFETY: This relies on `Local`'s public `start()` returning the same
         // console after `&mut self` is released — we just read through `&self`.
@@ -917,7 +915,7 @@ mod tests {
             )
             .subagent(sub_spec);
 
-        let mut main_agent = Agent::try_with_provider(main_spec, &provider).unwrap();
+        let mut main_agent = Agent::try_with_provider(main_spec, provider).unwrap();
 
         let query =
             Message::new(Role::User).with_contents([Part::text("What is 123 multiplied by 7?")]);
@@ -967,7 +965,7 @@ mod tests {
 
         let main_spec = AgentSpec::new("openai/gpt-4o-mini").subagent(sub_spec);
 
-        let mut main_agent = Agent::try_with_provider(main_spec, &provider).unwrap();
+        let mut main_agent = Agent::try_with_provider(main_spec, provider).unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text("What is 99 plus 1?")]);
 

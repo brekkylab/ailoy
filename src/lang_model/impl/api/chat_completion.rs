@@ -582,13 +582,13 @@ mod tests {
         };
 
         // stream: false → no stream / stream_options.
-        let val = ChatCompletionMarshal::default().marshal(&req);
+        let val = ChatCompletionMarshal.marshal(&req);
         assert!(val.pointer("/body/stream").is_none());
         assert!(val.pointer("/body/stream_options").is_none());
 
         // stream: true → stream + stream_options.include_usage so usage is reported.
         req.stream = true;
-        let val = ChatCompletionMarshal::default().marshal(&req);
+        let val = ChatCompletionMarshal.marshal(&req);
         assert_eq!(
             val.pointer("/body/stream").and_then(|v| v.as_bool()),
             Some(true)
@@ -708,11 +708,7 @@ mod tests {
     /// Register a one-off [`LangModelProvider`] under `provider_name` in the
     /// global registry and build the [`LangModel`] via
     /// [`LangModel::try_from_provider`].  Test fixtures only.
-    fn build_chat_completion_model(
-        provider_name: &str,
-        model: &str,
-        api_key: String,
-    ) -> LangModel {
+    fn build_chat_completion_model(provider_name: &str, model: &str, api_key: String) -> LangModel {
         let elem = LangModelProviderElem::API {
             schema: LangModelAPISchema::ChatCompletion,
             url: Url::parse("https://api.openai.com/v1/chat/completions").unwrap(),
@@ -753,7 +749,7 @@ mod tests {
     #[test]
     fn test_marshal_max_tokens_set() {
         with_req("gpt-4.1-mini", Some(256), |req| {
-            let val = ChatCompletionMarshal::default().marshal(req);
+            let val = ChatCompletionMarshal.marshal(req);
             let body = val.as_object().unwrap().get("body").unwrap();
             let max_tokens = body
                 .as_object()
@@ -767,7 +763,7 @@ mod tests {
     #[test]
     fn test_marshal_max_tokens_absent_when_none() {
         with_req("gpt-4.1-mini", None, |req| {
-            let val = ChatCompletionMarshal::default().marshal(req);
+            let val = ChatCompletionMarshal.marshal(req);
             let body = val.as_object().unwrap().get("body").unwrap();
             assert!(
                 body.as_object()
@@ -781,7 +777,7 @@ mod tests {
     #[test]
     fn test_marshal_response_format_absent() {
         with_req("gpt-4.1-mini", None, |req| {
-            let val = ChatCompletionMarshal::default().marshal(req);
+            let val = ChatCompletionMarshal.marshal(req);
             let body = val.as_object().unwrap().get("body").unwrap();
             assert!(body.as_object().unwrap().get("response_format").is_none());
         });
@@ -790,7 +786,7 @@ mod tests {
     #[test]
     fn test_marshal_response_format_json_schema() {
         let schema = to_value!({"type": "object", "properties": {"score": {"type": "integer"}}});
-        let fmt = ResponseFormat::json_schema(schema.clone().into()).unwrap();
+        let fmt = ResponseFormat::json_schema(schema.clone()).unwrap();
         let messages: Vec<Message> = vec![];
         let tools: Vec<ToolDesc> = vec![];
         let provider = LangModelProviderElem::API {
@@ -810,7 +806,7 @@ mod tests {
             options: &options,
             stream: false,
         };
-        let val = ChatCompletionMarshal::default().marshal(&req);
+        let val = ChatCompletionMarshal.marshal(&req);
         let body = val.as_object().unwrap().get("body").unwrap();
         let rf = body.as_object().unwrap().get("response_format").unwrap();
         assert_eq!(

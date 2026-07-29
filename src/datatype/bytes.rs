@@ -1,8 +1,6 @@
-use schemars::{
-    JsonSchema,
-    r#gen::SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject},
-};
+use std::borrow::Cow;
+
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -10,17 +8,15 @@ use serde_bytes::ByteBuf;
 pub struct Bytes(ByteBuf);
 
 impl JsonSchema for Bytes {
-    fn schema_name() -> String {
+    fn schema_name() -> Cow<'static, str> {
         "Bytes".into()
     }
 
     fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
-        SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            format: Some("base64".into()),
-            ..Default::default()
-        }
-        .into()
+        schemars::json_schema!({
+            "type": "string",
+            "format": "base64"
+        })
     }
 }
 
@@ -46,5 +42,25 @@ impl AsRef<[u8]> for Bytes {
 impl std::fmt::Debug for Bytes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Bytes(({} bytes total))", self.0.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use schemars::JsonSchema;
+
+    use super::Bytes;
+
+    #[test]
+    fn json_schema_preserves_base64_string_contract() {
+        let schema = Bytes::json_schema(&mut schemars::SchemaGenerator::default());
+
+        assert_eq!(
+            serde_json::to_value(schema).unwrap(),
+            serde_json::json!({
+                "type": "string",
+                "format": "base64"
+            })
+        );
     }
 }

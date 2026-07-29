@@ -7,7 +7,6 @@ pub use anthropic::{AnthropicMarshal, AnthropicUnmarshal};
 pub use chat_completion::{ChatCompletionMarshal, ChatCompletionUnmarshal};
 pub use gemini::{GeminiMarshal, GeminiUnmarshal};
 pub use openai::{OpenAIMarshal, OpenAIUnmarshal};
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -19,8 +18,10 @@ use crate::{
 /// Wire protocol used when calling a language model API.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum LangModelAPISchema {
     /// OpenAI-compatible `/v1/chat/completions` format
+    #[default]
     ChatCompletion,
 
     /// Anthropic Messages API format
@@ -32,12 +33,6 @@ pub enum LangModelAPISchema {
     /// OpenAI Responses API format
     #[serde(rename = "openai")]
     OpenAI,
-}
-
-impl Default for LangModelAPISchema {
-    fn default() -> Self {
-        LangModelAPISchema::ChatCompletion
-    }
 }
 
 /// Classifies a 429 body as permanent quota exhaustion (don't retry) vs a
