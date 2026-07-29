@@ -299,12 +299,12 @@ impl SandboxBuilder {
         // and ride the SDK's separate fs-backend channel into the launch config.
         if let VolumeMount::FsBackend {
             tag,
-            guest: _,
+            guest,
             backend_type,
             params,
         } = mount
         {
-            self.config.add_fs_backend(tag, backend_type, params);
+            self.config.add_fs_backend(tag, guest, backend_type, params);
             return self;
         }
         let builder = match mount {
@@ -432,7 +432,7 @@ impl Sandbox {
     /// snapshot directory unpacked by this call is cleaned up before
     /// returning (success or failure).
     pub async fn try_from_archive(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        Self::try_from_archive_inner(path, SandboxNetwork::default()).await
+        Self::try_from_archive_inner(path, SandboxNetwork::default(), &[]).await
     }
 
     /// Like [`try_from_archive`](Self::try_from_archive) but with an explicit
@@ -442,12 +442,25 @@ impl Sandbox {
         path: impl AsRef<Path>,
         network: SandboxNetwork,
     ) -> anyhow::Result<Self> {
-        Self::try_from_archive_inner(path, network).await
+        Self::try_from_archive_inner(path, network, &[]).await
+    }
+
+    /// Like [`try_from_archive_with_network`](Self::try_from_archive_with_network)
+    /// but also attaches `mounts` at boot. Only [`VolumeMount::FsBackend`] is
+    /// applied here (custom virtio-fs backends resolved on the sandbox side);
+    /// other mount kinds are ignored on the restore path.
+    pub async fn try_from_archive_with_network_and_mounts(
+        path: impl AsRef<Path>,
+        network: SandboxNetwork,
+        mounts: &[VolumeMount],
+    ) -> anyhow::Result<Self> {
+        Self::try_from_archive_inner(path, network, mounts).await
     }
 
     async fn try_from_archive_inner(
         path: impl AsRef<Path>,
         network: SandboxNetwork,
+        mounts: &[VolumeMount],
     ) -> anyhow::Result<Self> {
         ensure_msb().await?;
 
@@ -467,14 +480,29 @@ impl Sandbox {
             .clone()
             .unwrap_or_else(|| format!("ailoy-{}", hex::encode(&Uuid::new_v4().as_bytes()[..8])));
 
-        let result = microsandbox::Sandbox::builder(&name)
+        let mut builder = microsandbox::Sandbox::builder(&name)
             .from_snapshot(snap_path.to_string_lossy().into_owned())
             .pull_policy(PullPolicy::IfMissing)
             .replace()
-            .network(|n| n.policy(network.policy()))
-            .create()
-            .await
-            .context("create sandbox from snapshot");
+            .network(|n| n.policy(network.policy()));
+        // Attach custom virtio-fs backends at boot (auto-mounted in the guest).
+        for m in mounts {
+            if let VolumeMount::FsBackend {
+                tag,
+                guest,
+                backend_type,
+                params,
+            } = m
+            {
+                builder = builder.fs_backend(
+                    tag.clone(),
+                    guest.clone(),
+                    backend_type.clone(),
+                    params.clone(),
+                );
+            }
+        }
+        let result = builder.create().await.context("create sandbox from snapshot");
 
         cleanup_snapshot_dir(&snap_path);
 

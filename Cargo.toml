@@ -52,7 +52,7 @@ microsandbox-types = { version = "0.6.7", optional = true }
 # cortex provides the virtio-fs backends (e.g. S3) registered into the sandbox
 # process via the fs-backend registry. Pinned to a rev built against the same
 # microsandbox rev patched above.
-cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "228b543d6106f26affb554d7df34dce8e9fe7707", features = ["msb"], optional = true }
+cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "7a0adc373b9a161b764e79f8cfa88a1c81fbdefd", features = ["msb"], optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 parking_lot = "0.12.4"
 png = "0.18"
@@ -105,6 +105,6 @@ opt-level = 3
 # rev cortex builds against so the whole graph unifies on one microsandbox.
 # Remove once these changes land in a published microsandbox release.
 [patch.crates-io]
-microsandbox = { git = "https://github.com/brekkylab/microsandbox.git", rev = "012235d869aaeca096270c7225e3215a751b64b6" }
-microsandbox-network = { git = "https://github.com/brekkylab/microsandbox.git", rev = "012235d869aaeca096270c7225e3215a751b64b6" }
-microsandbox-types = { git = "https://github.com/brekkylab/microsandbox.git", rev = "012235d869aaeca096270c7225e3215a751b64b6" }
+microsandbox = { git = "https://github.com/brekkylab/microsandbox.git", rev = "835d9afef58ee2b89da31f6c563974387d7ae0a2" }
+microsandbox-network = { git = "https://github.com/brekkylab/microsandbox.git", rev = "835d9afef58ee2b89da31f6c563974387d7ae0a2" }
+microsandbox-types = { git = "https://github.com/brekkylab/microsandbox.git", rev = "835d9afef58ee2b89da31f6c563974387d7ae0a2" }
