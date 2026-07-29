@@ -25,7 +25,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
-sandbox = ["dep:microsandbox", "dep:microsandbox-network", "dep:microsandbox-types"]
+sandbox = ["dep:microsandbox", "dep:microsandbox-network", "dep:microsandbox-types", "dep:cortex"]
 
 [dependencies]
 anyhow = "1"
@@ -49,6 +49,10 @@ microsandbox-network = { version = "0.6.7", optional = true }
 # The wire-format `NetworkPolicy` that `SandboxSpec` stores also lacks a
 # facade re-export (the facade's `NetworkPolicy` is the engine-side type).
 microsandbox-types = { version = "0.6.7", optional = true }
+# cortex provides the virtio-fs backends (e.g. S3) registered into the sandbox
+# process via the fs-backend registry. Pinned to a rev built against the same
+# microsandbox rev patched above.
+cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "228b543d6106f26affb554d7df34dce8e9fe7707", features = ["msb"], optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 parking_lot = "0.12.4"
 png = "0.18"
@@ -95,3 +99,12 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.block-buffer]
 opt-level = 3
+
+# microsandbox branch carrying the pluggable fs-backend registry (custom
+# virtio-fs backends via `SandboxConfig::add_fs_backend`). Pinned to the same
+# rev cortex builds against so the whole graph unifies on one microsandbox.
+# Remove once these changes land in a published microsandbox release.
+[patch.crates-io]
+microsandbox = { git = "https://github.com/brekkylab/microsandbox.git", rev = "012235d869aaeca096270c7225e3215a751b64b6" }
+microsandbox-network = { git = "https://github.com/brekkylab/microsandbox.git", rev = "012235d869aaeca096270c7225e3215a751b64b6" }
+microsandbox-types = { git = "https://github.com/brekkylab/microsandbox.git", rev = "012235d869aaeca096270c7225e3215a751b64b6" }

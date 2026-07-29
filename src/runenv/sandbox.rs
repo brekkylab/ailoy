@@ -68,6 +68,24 @@ pub enum VolumeMount {
         /// Size limit in MiB. `None` means no limit.
         size_mib: Option<u32>,
     },
+    /// Attach a custom virtio-fs backend (e.g. an S3-backed workspace) resolved
+    /// on the sandbox side by a registered factory.
+    ///
+    /// Requires the sandbox process (`MSB_PATH`) to be a binary that registered
+    /// `backend_type` — e.g. cortex's `msb_cortex`, which registers
+    /// `"cortex-s3"`. The backend is attached under `tag`; guest-side mounting
+    /// of that tag at `guest` is not yet wired through agentd, so a tool-call
+    /// script must `mount -t virtiofs <tag> <guest>` for now.
+    FsBackend {
+        /// virtio-fs device tag the guest mounts.
+        tag: String,
+        /// Absolute guest path the tag is intended to be mounted at.
+        guest: String,
+        /// Registered factory name (e.g. `"cortex-s3"`).
+        backend_type: String,
+        /// Opaque, factory-specific parameters (typically JSON).
+        params: String,
+    },
 }
 
 impl VolumeMount {
@@ -76,7 +94,8 @@ impl VolumeMount {
         match self {
             VolumeMount::Bind { guest, .. }
             | VolumeMount::Named { guest, .. }
-            | VolumeMount::Tmpfs { guest, .. } => guest,
+            | VolumeMount::Tmpfs { guest, .. }
+            | VolumeMount::FsBackend { guest, .. } => guest,
         }
     }
 }
@@ -276,6 +295,18 @@ impl SandboxBuilder {
 
     /// Append a volume mount.
     pub fn mount(mut self, mount: VolumeMount) -> Self {
+        // Custom fs-backends have no host path, so they bypass `MountBuilder`
+        // and ride the SDK's separate fs-backend channel into the launch config.
+        if let VolumeMount::FsBackend {
+            tag,
+            guest: _,
+            backend_type,
+            params,
+        } = mount
+        {
+            self.config.add_fs_backend(tag, backend_type, params);
+            return self;
+        }
         let builder = match mount {
             VolumeMount::Bind {
                 host,
@@ -309,6 +340,7 @@ impl SandboxBuilder {
                 let b = MountBuilder::new(guest).tmpfs();
                 if let Some(s) = size_mib { b.size(s) } else { b }
             }
+            VolumeMount::FsBackend { .. } => unreachable!("handled before the builder match"),
         };
         match builder.build() {
             Ok(vm) => self.config.spec.mounts.push(vm),
