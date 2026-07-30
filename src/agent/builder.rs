@@ -136,8 +136,8 @@ impl AgentBuilder {
     }
 
     /// Seed the agent's [`AgentState::history`] (e.g. for resuming a prior session).
-    /// A system message here overrides the one the spec's instruction would produce;
-    /// otherwise the instruction is still seeded, at the front of this history.
+    /// A leading system message here overrides the one the spec's instruction would
+    /// produce; otherwise the instruction is still seeded, at the front of this history.
     pub fn history(mut self, history: impl IntoIterator<Item = Message>) -> Self {
         self.history = history.into_iter().collect();
         self
