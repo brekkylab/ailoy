@@ -2,42 +2,17 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
-use super::{Console, ExecResult, Machine};
+use super::{Console, ExecResult};
 
-/// `Machine` that runs commands directly on the host. There is no underlying
-/// VM to spin up, so `is_running` is always `true` and `stop` is a no-op.
-#[derive(Debug, Default)]
-pub struct Local {
-    console: LocalConsole,
-}
-
-impl Local {
-    pub fn new() -> Self {
-        Self {
-            console: LocalConsole {},
-        }
-    }
-}
-
-#[async_trait]
-impl Machine for Local {
-    type Console = LocalConsole;
-
-    fn is_running(&self) -> bool {
-        true
-    }
-
-    async fn start<'a>(&'a mut self) -> anyhow::Result<&'a Self::Console> {
-        Ok(&self.console)
-    }
-
-    async fn stop(&mut self) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
+/// `Console` that runs commands directly on the host — the default exec backend.
 #[derive(Debug, Default)]
 pub struct LocalConsole {}
+
+impl LocalConsole {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
 
 #[async_trait]
 impl Console for LocalConsole {
@@ -114,8 +89,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_exec_stdout() {
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let local = LocalConsole::new();
+        let console = &local;
         let (prog, args) = sh("echo hello");
         let result = console.exec(prog, args, None).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -124,8 +99,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_exec_exit_code() {
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let local = LocalConsole::new();
+        let console = &local;
         let (prog, args) = sh("exit 42");
         let result = console.exec(prog, args, None).await.unwrap();
         assert_eq!(result.exit_code, 42);
@@ -133,8 +108,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_exec_stderr() {
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let local = LocalConsole::new();
+        let console = &local;
         let (prog, args) = sh("echo err >&2");
         let result = console.exec(prog, args, None).await.unwrap();
         assert!(result.stderr.contains("err"));
@@ -142,20 +117,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_exec_timeout() {
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let local = LocalConsole::new();
+        let console = &local;
         let (prog, args) = sh("sleep 10");
         let result = console.exec(prog, args, Some(1)).await.unwrap();
         assert!(result.timed_out);
     }
 
-    #[tokio::test]
-    async fn test_is_running_and_stop() {
-        let mut local = Local::new();
-        assert!(local.is_running());
-        let _ = local.start().await.unwrap();
-        assert!(local.is_running());
-        local.stop().await.unwrap();
-        assert!(local.is_running());
-    }
 }

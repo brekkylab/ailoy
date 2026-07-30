@@ -1,6 +1,6 @@
 //! Running environment abstractions.
 //!
-//! A [`Machine`] represents a computing environment that an LLM can interact
+//! A `Machine` represents a computing environment that an LLM can interact
 //! with — a uniform abstraction over the local host, a sandboxed VM, or any
 //! other backend that implements the traits below. Starting a machine yields
 //! a [`Console`], through which commands and file I/O are performed.
@@ -9,15 +9,15 @@
 //!
 //! # Usage
 //!
-//! Construct a machine for the desired backend, then call [`Machine::start`]
+//! Construct a machine for the desired backend, then call `start`
 //! to obtain its [`Console`] and drive the environment through it:
 //!
 //! ```ignore
 //! # async fn run() -> anyhow::Result<()> {
-//! use ailoy::runenv::{Local, Machine};
+//! use ailoy::runenv::LocalConsole;
 //!
-//! let mut env = Local::new();
-//! let console = env.start().await?;
+//! let console = LocalConsole::new();
+//! 
 //!
 //! let result = console.exec_shell("echo hello".to_string(), None).await?;
 //! println!("{}", result.stdout);
@@ -32,7 +32,7 @@
 //! use ailoy::runenv::{Machine, SandboxBuilder};
 //!
 //! let mut env = SandboxBuilder::new().build().await?;
-//! let console = env.start().await?;
+//! 
 //!
 //! let result = console.exec_shell("uname -a".to_string(), None).await?;
 //! println!("{}", result.stdout);
@@ -41,22 +41,22 @@
 //!
 //! # Lifecycle
 //!
-//! [`Machine::start`] starts the backend on the first call and returns a
+//! `start` starts the backend on the first call and returns a
 //! borrow of its [`Console`]; subsequent calls return the already-started
-//! console. [`Machine::stop`] releases the backend's resources — it is
+//! console. `stop` releases the backend's resources — it is
 //! optional (`start` alone is enough to use the machine) but calling it when
-//! idle keeps resource use low. [`Machine::is_running`] reports the current
+//! idle keeps resource use low. `is_running` reports the current
 //! state.
 //!
 //! To share one machine between several agents, store it type-erased behind
-//! [`MachineDyn`], e.g. `Arc<Mutex<dyn MachineDyn>>`; each holder locks it and
+//! `MachineDyn`, e.g. `Arc<Mutex<dyn MachineDyn>>`; each holder locks it and
 //! calls `start`/`stop` on the same underlying backend.
 //!
 //! # Extending with a new backend
 //!
 //! To add a new kind of running environment, implement two traits:
 //!
-//! - [`Machine`]: describes how to start and stop the underlying backend.
+//! - `Machine`: describes how to start and stop the underlying backend.
 //!   `start` caches and returns a `&Console`.
 //! - [`Console`]: the started handle. At minimum, implement
 //!   [`Console::get_os`] and [`Console::exec`]; the other methods
@@ -113,7 +113,7 @@
 //!
 //! # async fn run() -> anyhow::Result<()> {
 //! let mut env = MyMachine { console: None };
-//! let console = env.start().await?;
+//! 
 //! let result = console.exec_shell("echo hi".to_string(), None).await?;
 //! println!("{}", result.stdout);
 //! # Ok(()) }
@@ -134,63 +134,10 @@ pub use local::*;
 #[cfg(feature = "sandbox")]
 pub use sandbox::*;
 
-/// Backend that knows how to start and stop a running environment,
-/// yielding a [`Console`] handle for the started instance.
-///
-/// See the [module-level documentation](self) for the overall design.
-#[async_trait]
-pub trait Machine: Send + Sync + 'static {
-    type Console: Console;
-
-    /// Whether the machine is currently running.
-    fn is_running(&self) -> bool;
-
-    /// Start the machine and return its console.
-    /// Returns the existing console if already running.
-    async fn start<'a>(&'a mut self) -> anyhow::Result<&'a Self::Console>;
-
-    /// Stop the machine and release its resources.
-    /// No-op if already stopped.
-    ///
-    /// Note that this is not essential op.
-    /// Using [`Machine::start`] alone is enough to use the machine.
-    /// However, calling `stop` when idle helps keep resource use low.
-    /// When (or whether) to call it is up to the caller.
-    async fn stop(&mut self) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
-/// Object-safe erased view of `Machine`. The blanket impl below adapts any
-/// concrete `Machine` by erasing the handle to `&dyn Console`.
-///
-/// Use this when you need to store a heterogeneous machine behind a single
-/// type, e.g. `Arc<Mutex<dyn MachineDyn>>` shared across agents.
-#[async_trait]
-pub trait MachineDyn: Send + Sync + 'static {
-    fn is_running(&self) -> bool;
-
-    async fn start<'a>(&'a mut self) -> anyhow::Result<&'a dyn Console>;
-
-    async fn stop(&mut self) -> anyhow::Result<()>;
-}
-
-#[async_trait]
-impl<B: Machine> MachineDyn for B {
-    fn is_running(&self) -> bool {
-        Machine::is_running(self)
-    }
-
-    async fn start<'a>(&'a mut self) -> anyhow::Result<&'a dyn Console> {
-        // UFCS so this doesn't recurse into the MachineDyn impl we're in.
-        // `&B::Console` unsizes to `&dyn Console` via coercion.
-        Ok(Machine::start(self).await?)
-    }
-
-    async fn stop(&mut self) -> anyhow::Result<()> {
-        Machine::stop(self).await
-    }
-}
+// The exec backend is a plain `Arc<dyn Console>` the agent holds directly — no
+// Machine/start/stop/Mutex ceremony. `LocalConsole` (host) is the default;
+// under the `sandbox` feature `Sandbox` (an ephemeral msb_krun microVM with a
+// cortex VFS) is a `Console` too.
 
 /// Execution result from a shell command.
 #[derive(Debug, Clone)]

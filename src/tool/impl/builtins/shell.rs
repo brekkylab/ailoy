@@ -65,7 +65,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        runenv::{Local, Machine},
+        runenv::LocalConsole,
         to_value,
         tool::ToolProvider,
     };
@@ -81,8 +81,8 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
         let f = funcs.get("shell").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let local = LocalConsole::new();
+        let console = &local;
         let msg = f
             .call(to_value!({}), "", console)
             .next()
@@ -103,8 +103,8 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
         let f = funcs.get("shell").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let local = LocalConsole::new();
+        let console = &local;
         let msg = f
             .call(to_value!({ "cmd": "echo ailoy" }), "", console)
             .next()
@@ -125,8 +125,8 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
         let f = funcs.get("shell").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let local = LocalConsole::new();
+        let console = &local;
         let msg = f
             .call(to_value!({ "cmd": "exit 42" }), "", console)
             .next()
@@ -149,8 +149,8 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
         let f = funcs.get("shell").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let local = LocalConsole::new();
+        let console = &local;
 
         let r1 = f
             .call(

@@ -237,7 +237,7 @@ mod tests {
     use super::*;
     use crate::{
         message::Message,
-        runenv::{Local, Machine},
+        runenv::LocalConsole,
         to_value,
         tool::ToolProvider,
     };
@@ -252,8 +252,8 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_apply_patch_tool_desc()]).unwrap();
         let f = funcs.get("apply_patch").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let local = LocalConsole::new();
+        let console = &local;
         f.call(args, "1", console).next().await.unwrap().message
     }
 

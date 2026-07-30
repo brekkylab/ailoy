@@ -1,5 +1,5 @@
 //! File-based skill abstractions: portable markdown playbooks materialised
-//! into a [`Machine`](crate::runenv::Machine) from per-agent specs.
+//! into a [`Console`](crate::runenv::Console) from per-agent specs.
 //!
 //! Each agent declares a list of skill directories in
 //! [`AgentSpec::skills`](crate::agent::AgentSpec::skills) with their

@@ -25,7 +25,7 @@ use crate::{
 /// changes the fundamental nature of the agent.
 ///
 /// Runtime concerns — credentials, tool sources, and the
-/// [`Machine`](crate::runenv::Machine) — live on
+/// [`Console`](crate::runenv::Console) — live on
 /// [`AgentProvider`](crate::agent::AgentProvider) and the constructors in
 /// [`Agent`](crate::agent::Agent), not here.
 ///

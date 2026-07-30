@@ -13,7 +13,7 @@
 
 use std::path::PathBuf;
 
-use ailoy::krun::{S3Vfs, Sandbox, boot_if_requested};
+use ailoy::runenv::{S3Vfs, Sandbox, boot_if_requested};
 
 fn env(k: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| panic!("missing env {k}"))
