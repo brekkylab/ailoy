@@ -45,8 +45,12 @@ fn main() {
         key_prefix: std::env::var("AWS_S3_KEY_PREFIX").ok(),
     });
 
-    let sb = Sandbox::new(&rootfs, &upper, &kernel)
+    // ailoy resolves/provisions rootfs + kernel itself; the example overrides
+    // them explicitly for a deterministic local run.
+    let sb = Sandbox::new(&upper)
         .expect("build sandbox")
+        .with_rootfs(&rootfs)
+        .with_kernel(&kernel)
         .mount("/workspace", volume);
 
     let r1 = sb.exec("echo hello; uname -sm").expect("exec1");

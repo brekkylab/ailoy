@@ -15,7 +15,7 @@
 //! binaries must call first in `main`.
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
@@ -31,6 +31,84 @@ const BOOT_ENV: &str = "AILOY_KRUN_BOOT";
 const MOUNTS_ENV: &str = "AILOY_KRUN_MOUNTS";
 const OUT_MARKER: &str = "__AILOY_OUT__";
 const RC_MARKER: &str = "__AILOY_RC__";
+
+const ALPINE_URL: &str = "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/alpine-minirootfs-3.24.1-aarch64.tar.gz";
+const ALPINE_SHA256: &str = "f55a90f69052c5bd6f92cb09a8f47065970830b194c917a006fb94028e721259";
+
+/// Base dir for ailoy's krun assets — `AILOY_KRUN_HOME`, else `$HOME/.ailoy/krun`.
+fn krun_home() -> io::Result<PathBuf> {
+    std::env::var_os("AILOY_KRUN_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".ailoy/krun")))
+        .ok_or_else(|| io::Error::other("AILOY_KRUN_HOME and HOME both unset"))
+}
+
+/// Resolve the libkrunfw kernel: `AILOY_KRUN_KERNEL`, else standard installs.
+fn resolve_kernel() -> io::Result<PathBuf> {
+    if let Some(k) = std::env::var_os("AILOY_KRUN_KERNEL") {
+        return Ok(PathBuf::from(k));
+    }
+    let mut candidates = Vec::new();
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(PathBuf::from(home).join(".microsandbox/lib/libkrunfw.dylib"));
+    }
+    candidates.push(PathBuf::from("/opt/homebrew/lib/libkrunfw.dylib"));
+    candidates.push(PathBuf::from("/usr/local/lib/libkrunfw.dylib"));
+    candidates.push(PathBuf::from("/usr/lib/libkrunfw.so"));
+    candidates
+        .into_iter()
+        .find(|p| p.exists())
+        .ok_or_else(|| io::Error::other("libkrunfw not found; set AILOY_KRUN_KERNEL"))
+}
+
+/// Provision (once) and return the base rootfs — `AILOY_KRUN_ROOTFS` overrides.
+/// TODO: richer per-agent image; today a minimal Alpine minirootfs.
+fn ensure_rootfs() -> io::Result<PathBuf> {
+    if let Some(r) = std::env::var_os("AILOY_KRUN_ROOTFS") {
+        return Ok(PathBuf::from(r));
+    }
+    let home = krun_home()?;
+    let rootfs = home.join("rootfs");
+    if !rootfs.join("etc/alpine-release").exists() {
+        std::fs::create_dir_all(&rootfs)?;
+        let tarball = home.join("alpine-minirootfs.tar.gz");
+        if !tarball.exists() {
+            run_cmd(Command::new("curl").args(["-fsSL", ALPINE_URL, "-o"]).arg(&tarball))?;
+        }
+        verify_sha256(&tarball, ALPINE_SHA256);
+        run_cmd(Command::new("tar").arg("-xzf").arg(&tarball).arg("-C").arg(&rootfs))?;
+    }
+    std::fs::create_dir_all(rootfs.join("mnt"))?;
+    Ok(rootfs)
+}
+
+fn run_cmd(cmd: &mut Command) -> io::Result<()> {
+    let status = cmd.status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!("{cmd:?} failed: {status}")))
+    }
+}
+
+/// Best-effort integrity check (skips if no hashing tool is available).
+fn verify_sha256(file: &Path, expected: &str) {
+    for tool in ["shasum", "sha256sum"] {
+        let mut cmd = Command::new(tool);
+        if tool == "shasum" {
+            cmd.arg("-a").arg("256");
+        }
+        if let Ok(out) = cmd.arg(file).output() {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if let Some(got) = stdout.split_whitespace().next() {
+                if got != expected {
+                    eprintln!("ailoy krun: WARNING sha256 mismatch for {}", file.display());
+                }
+                return;
+            }
+        }
+    }
+}
 
 /// One volume mounted into the sandbox: a cortex volume at a guest path.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -63,26 +141,37 @@ pub struct Sandbox {
 }
 
 impl Sandbox {
-    /// `rootfs`: base directory served read-mostly over virtio-fs. `upper`: a
-    /// host disk image (created sparse, 2 GiB logical, if missing) mounted at
-    /// `/data` for persistent state.
-    pub fn new(
-        rootfs: impl Into<PathBuf>,
-        upper: impl Into<PathBuf>,
-        kernel: impl Into<PathBuf>,
-    ) -> io::Result<Self> {
+    /// Create a sandbox whose per-session state lives in `upper` (a host disk
+    /// image, created sparse at 2 GiB logical if missing, mounted at `/data`).
+    ///
+    /// ailoy owns the base rootfs and kernel: both are resolved (and the rootfs
+    /// provisioned if absent) by [`ensure_rootfs`]/[`resolve_kernel`], so callers
+    /// only choose where per-session writes go.
+    pub fn new(upper: impl Into<PathBuf>) -> io::Result<Self> {
         let upper = upper.into();
         if !upper.exists() {
             let f = std::fs::File::create(&upper)?;
             f.set_len(2 << 30)?;
         }
         Ok(Self {
-            kernel: kernel.into(),
-            rootfs: rootfs.into(),
+            kernel: resolve_kernel()?,
+            rootfs: ensure_rootfs()?,
             upper,
             volumes: Vec::new(),
             exec_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
+    }
+
+    /// Override the base rootfs (a directory served read-mostly over virtio-fs).
+    pub fn with_rootfs(mut self, rootfs: impl Into<PathBuf>) -> Self {
+        self.rootfs = rootfs.into();
+        self
+    }
+
+    /// Override the libkrunfw kernel path.
+    pub fn with_kernel(mut self, kernel: impl Into<PathBuf>) -> Self {
+        self.kernel = kernel.into();
+        self
     }
 
     /// Mount a cortex volume at `guest_path`. Any [`cortex::VolumeSpec`] works —
