@@ -28,8 +28,15 @@ path = "src/lib.rs"
 [features]
 default = []
 sandbox = ["dep:microsandbox", "dep:microsandbox-network", "dep:microsandbox-types"]
+# Raw-msb_krun ephemeral sandbox that mounts a cortex VFS (no microsandbox).
+krun = ["dep:cortex", "dep:msb_krun"]
 
 [dependencies]
+# cortex provides the VFS (Mountable/S3Volume + PosixAdapter -> DynFileSystem);
+# ailoy's `krun` module boots the VM and mounts it. Pinned to cortex's VFS-only
+# (raw-krun) rev.
+cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "77742ced42bb74b4479d5275441154c4944a8e34", features = ["krun", "s3"], optional = true }
+msb_krun = { version = "=0.1.25", features = ["blk"], optional = true }
 anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"
