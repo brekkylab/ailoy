@@ -167,8 +167,8 @@ impl Agent {
         }
 
         // Build the system message: instruction + (optionally) skills table.
-        // `any`, not `history[0]`: a system message anywhere means the caller
-        // manages it, and the providers resolve theirs by first match.
+        // `any`, not `history[0]`: a system message anywhere means the caller manages
+        // it, and seeding a second one would either shadow theirs or ship both.
         if !state.history.iter().any(|m| m.role == Role::System) {
             let declared_skills = scan_declared_skills(&spec.files, &spec.skills)?;
             let skills_block = render_skills_table(&declared_skills);
@@ -179,8 +179,8 @@ impl Agent {
                 (None, None) => None,
             };
             if let Some(text) = system_text {
-                // Front: the providers read the first system message, and
-                // `ContextManager` only pins `history[0]` against eviction.
+                // Front: that is where every schema expects a system message, whether
+                // it extracts the first one or sends them in place.
                 state.history.insert(
                     0,
                     Message::new(Role::System).with_contents([Part::text(text)]),
