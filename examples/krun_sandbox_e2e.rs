@@ -13,7 +13,8 @@
 
 use std::path::PathBuf;
 
-use ailoy::runenv::{S3Vfs, Sandbox, boot_if_requested};
+use ailoy::cortex::{S3Config, VolumeSpec};
+use ailoy::runenv::{Sandbox, boot_if_requested};
 
 fn env(k: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| panic!("missing env {k}"))
@@ -34,19 +35,19 @@ fn main() {
     let upper = std::env::temp_dir().join("ailoy_krun_e2e.img");
     let _ = std::fs::remove_file(&upper);
 
-    let s3 = S3Vfs {
+    // A cortex volume, described declaratively — ailoy just carries it.
+    let volume = VolumeSpec::S3(S3Config {
         bucket: env("AWS_S3_BUCKET"),
         region: std::env::var("AWS_DEFAULT_REGION").unwrap_or_else(|_| "us-east-1".into()),
         access_key_id: env("AWS_ACCESS_KEY_ID"),
         secret_access_key: env("AWS_SECRET_ACCESS_KEY"),
         endpoint: std::env::var("AWS_S3_ENDPOINT").ok(),
         key_prefix: std::env::var("AWS_S3_KEY_PREFIX").ok(),
-        guest_path: "/workspace".to_string(),
-    };
+    });
 
     let sb = Sandbox::new(&rootfs, &upper, &kernel)
         .expect("build sandbox")
-        .with_s3(s3);
+        .mount("/workspace", volume);
 
     let r1 = sb.exec("echo hello; uname -sm").expect("exec1");
     println!("[1 capture] rc={}\n{}\n", r1.exit_code, r1.stdout);

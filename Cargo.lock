@@ -631,11 +631,12 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 [[package]]
 name = "cortex"
 version = "0.1.0"
-source = "git+https://github.com/brekkylab/cortex.git?rev=77742ced42bb74b4479d5275441154c4944a8e34#77742ced42bb74b4479d5275441154c4944a8e34"
+source = "git+https://github.com/brekkylab/cortex.git?rev=93e5e8d5d91d7db62eedb2c7ee7c8186e2d83ccf#93e5e8d5d91d7db62eedb2c7ee7c8186e2d83ccf"
 dependencies = [
  "libc",
  "msb_krun",
  "object_store",
+ "serde",
  "tempfile",
  "tokio",
 ]

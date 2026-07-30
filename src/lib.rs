@@ -1,6 +1,12 @@
 // Allow proc-macros to use `ailoy::` prefix when invoked from within this crate.
 extern crate self as ailoy;
 
+// Re-export cortex so callers construct volumes (`ailoy::cortex::VolumeSpec`,
+// `ailoy::cortex::S3Config`, …) without depending on cortex directly. New cortex
+// volume kinds surface here automatically — ailoy needs no per-volume wrapper.
+#[cfg(feature = "sandbox")]
+pub use cortex;
+
 pub mod agent;
 pub mod datatype;
 pub mod lang_model;

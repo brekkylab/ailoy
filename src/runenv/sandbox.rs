@@ -1,16 +1,18 @@
-//! A minimal ephemeral sandbox on raw `msb_krun` that mounts a cortex VFS.
+//! A minimal ephemeral sandbox on raw `msb_krun` that mounts cortex volumes.
 //!
-//! Separation of concerns: **cortex provides the filesystem** (a `Mountable`
-//! adapted to `msb_krun::DynFileSystem` via `cortex::PosixAdapter`); **ailoy
-//! owns the sandbox** — booting the microVM, capturing output, persisting
-//! state, and mounting the cortex VFS into the guest.
+//! Separation of concerns: **cortex owns the filesystems** — a caller mounts
+//! them by passing [`cortex::VolumeSpec`]s, which cortex realizes into virtio-fs
+//! backends via [`cortex::VolumeSpec::build`]. ailoy never names a specific
+//! volume kind, so new cortex volumes need no change here. **ailoy owns the
+//! sandbox**: booting the microVM, capturing output, persisting state, and
+//! mounting each volume at its guest path.
 //!
-//! Each [`Sandbox::exec`] boots a fresh microVM (base rootfs over virtio-fs +
-//! a persistent virtio-blk upper at `/data`), optionally mounts a cortex VFS
-//! (e.g. S3) at a guest path, runs one command, and captures its output.
-//! `msb_krun::enter()` never returns (it `_exit`s on guest shutdown), so the
-//! boot runs in a **child process** — the same binary re-invoked, gated by
-//! [`boot_if_requested`], which consuming binaries must call first in `main`.
+//! Each [`Sandbox::exec`] boots a fresh microVM (base rootfs over virtio-fs + a
+//! persistent virtio-blk upper at `/data`), mounts every configured volume,
+//! runs one command, and captures its output. `msb_krun::enter()` never returns
+//! (it `_exit`s on guest shutdown), so the boot runs in a **child process** —
+//! the same binary re-invoked, gated by [`boot_if_requested`], which consuming
+//! binaries must call first in `main`.
 
 use std::io;
 use std::path::PathBuf;
@@ -19,41 +21,26 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use cortex::{PosixAdapter, S3Config, S3Volume};
+use cortex::VolumeSpec;
 use msb_krun::{DiskImageFormat, VmBuilder};
+use serde::{Deserialize, Serialize};
 
 use super::{Console, ExecResult};
 
 const BOOT_ENV: &str = "AILOY_KRUN_BOOT";
+const MOUNTS_ENV: &str = "AILOY_KRUN_MOUNTS";
 const OUT_MARKER: &str = "__AILOY_OUT__";
 const RC_MARKER: &str = "__AILOY_RC__";
-/// virtio-fs tag the cortex VFS is attached under.
-const VFS_TAG: &str = "wsvfs";
 
-/// A cortex S3 VFS to mount into the sandbox at `guest_path`.
-#[derive(Clone, Debug)]
-pub struct S3Vfs {
-    pub bucket: String,
-    pub region: String,
-    pub access_key_id: String,
-    pub secret_access_key: String,
-    pub endpoint: Option<String>,
-    pub key_prefix: Option<String>,
-    /// Absolute guest path to mount the VFS at (e.g. `/workspace`).
-    pub guest_path: String,
-}
-
-impl S3Vfs {
-    fn to_config(&self) -> S3Config {
-        S3Config {
-            bucket: self.bucket.clone(),
-            region: self.region.clone(),
-            access_key_id: self.access_key_id.clone(),
-            secret_access_key: self.secret_access_key.clone(),
-            endpoint: self.endpoint.clone(),
-            key_prefix: self.key_prefix.clone(),
-        }
-    }
+/// One volume mounted into the sandbox: a cortex volume at a guest path.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MountWire {
+    /// virtio-fs device tag (assigned by ailoy).
+    tag: String,
+    /// Absolute guest path to mount at.
+    guest_path: String,
+    /// The cortex volume to realize on the sandbox side (opaque to ailoy).
+    spec: VolumeSpec,
 }
 
 /// Result of running one command in the sandbox.
@@ -69,7 +56,8 @@ pub struct Sandbox {
     kernel: PathBuf,
     rootfs: PathBuf,
     upper: PathBuf,
-    s3: Option<S3Vfs>,
+    /// Cortex volumes to mount, as `(guest_path, spec)`.
+    volumes: Vec<(String, VolumeSpec)>,
     /// Serializes boots so concurrent execs don't write the shared upper at once.
     exec_lock: Arc<tokio::sync::Mutex<()>>,
 }
@@ -92,51 +80,53 @@ impl Sandbox {
             kernel: kernel.into(),
             rootfs: rootfs.into(),
             upper,
-            s3: None,
+            volumes: Vec::new(),
             exec_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 
-    /// Mount a cortex S3 VFS into the guest at `s3.guest_path`.
-    pub fn with_s3(mut self, s3: S3Vfs) -> Self {
-        self.s3 = Some(s3);
+    /// Mount a cortex volume at `guest_path`. Any [`cortex::VolumeSpec`] works —
+    /// ailoy stays agnostic to the volume kind.
+    pub fn mount(mut self, guest_path: impl Into<String>, spec: VolumeSpec) -> Self {
+        self.volumes.push((guest_path.into(), spec));
         self
     }
 
+    /// Assign virtio-fs tags and produce the wire mounts.
+    fn wire_mounts(&self) -> Vec<MountWire> {
+        self.volumes
+            .iter()
+            .enumerate()
+            .map(|(i, (guest_path, spec))| MountWire {
+                tag: format!("vol{i}"),
+                guest_path: guest_path.clone(),
+                spec: spec.clone(),
+            })
+            .collect()
+    }
+
     /// Boot a fresh microVM, run `cmd`, and capture its output. `/data` is the
-    /// persistent upper; the cortex VFS (if any) is mounted at its guest path.
+    /// persistent upper; each configured volume is mounted at its guest path.
     pub fn exec(&self, cmd: &str) -> io::Result<ExecOutput> {
         let console = tempfile::NamedTempFile::new()?;
         let console_path = console.path().to_path_buf();
         let exe = std::env::current_exe()?;
-        let vfs_guest = self.s3.as_ref().map(|s| s.guest_path.clone());
-        let payload = build_payload(cmd, vfs_guest.as_deref());
+        let mounts = self.wire_mounts();
+        let payload = build_payload(cmd, &mounts);
         let b64 = base64::engine::general_purpose::STANDARD.encode(payload);
+        let mounts_json = serde_json::to_string(&mounts)
+            .map_err(|e| io::Error::other(format!("serialize mounts: {e}")))?;
 
-        let mut child = Command::new(exe);
-        child
+        let status = Command::new(exe)
             .env(BOOT_ENV, "1")
             .env("AILOY_KRUN_KERNEL", &self.kernel)
             .env("AILOY_KRUN_ROOTFS", &self.rootfs)
             .env("AILOY_KRUN_UPPER", &self.upper)
             .env("AILOY_KRUN_CONSOLE", &console_path)
-            .env("AILOY_KRUN_B64", &b64);
-        if let Some(s3) = &self.s3 {
-            child
-                .env("AILOY_KRUN_S3_BUCKET", &s3.bucket)
-                .env("AILOY_KRUN_S3_REGION", &s3.region)
-                .env("AILOY_KRUN_S3_KEY", &s3.access_key_id)
-                .env("AILOY_KRUN_S3_SECRET", &s3.secret_access_key)
-                .env("AILOY_KRUN_S3_GUEST", &s3.guest_path);
-            if let Some(ep) = &s3.endpoint {
-                child.env("AILOY_KRUN_S3_ENDPOINT", ep);
-            }
-            if let Some(p) = &s3.key_prefix {
-                child.env("AILOY_KRUN_S3_PREFIX", p);
-            }
-        }
+            .env("AILOY_KRUN_B64", &b64)
+            .env(MOUNTS_ENV, &mounts_json)
+            .status()?;
 
-        let status = child.status()?;
         let raw = std::fs::read_to_string(&console_path).unwrap_or_default();
         Ok(parse_output(&raw, status.code()))
     }
@@ -147,7 +137,6 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Build a shell command line from a program + args.
 fn shell_join(program: &str, args: &[String]) -> String {
     let mut cmd = shell_quote(program);
     for a in args {
@@ -158,9 +147,7 @@ fn shell_join(program: &str, args: &[String]) -> String {
 }
 
 /// The krun sandbox as an ailoy exec backend: each `exec` boots a fresh microVM
-/// (with the cortex VFS mounted) and captures the command's output. No
-/// persistent VM, no agentd — just `get_os` + `exec`; `Console`'s `read`/`write`/
-/// `exec_shell` defaults ride on top.
+/// (with the cortex volumes mounted) and captures the command's output.
 #[async_trait]
 impl Console for Sandbox {
     fn get_os(&self) -> &str {
@@ -173,14 +160,11 @@ impl Console for Sandbox {
         args: Vec<String>,
         _timeout: Option<u64>,
     ) -> anyhow::Result<ExecResult> {
-        // `exec_shell` (and thus read/write) arrive as ("sh", ["-c", script]);
-        // pass the script through verbatim. Direct exec shell-escapes its argv.
         let cmd = if program == "sh" && args.len() == 2 && args[0] == "-c" {
             args[1].clone()
         } else {
             shell_join(&program, &args)
         };
-        // Serialize boots — they share one upper disk.
         let _guard = self.exec_lock.lock().await;
         let sb = self.clone();
         let out = tokio::task::spawn_blocking(move || sb.exec(&cmd))
@@ -195,18 +179,22 @@ impl Console for Sandbox {
     }
 }
 
-/// Guest program: mount the upper at `/data` (formatting on first use) and the
-/// cortex VFS (if present) at `vfs_guest`, then run the command between markers,
+/// Guest program: mount the upper at `/data` (formatting on first use) and each
+/// cortex volume at its guest path, then run the command between markers,
 /// syncing before shutdown so upper writes persist.
-fn build_payload(cmd: &str, vfs_guest: Option<&str>) -> String {
-    let vfs_mount = match vfs_guest {
-        Some(g) => format!("mkdir -p {g}\nmount -t virtiofs {VFS_TAG} {g} 2>/dev/null\n"),
-        None => String::new(),
-    };
+fn build_payload(cmd: &str, mounts: &[MountWire]) -> String {
+    let mut vol_mounts = String::new();
+    for m in mounts {
+        vol_mounts.push_str(&format!(
+            "mkdir -p {g}\nmount -t virtiofs {tag} {g} 2>/dev/null\n",
+            g = m.guest_path,
+            tag = m.tag
+        ));
+    }
     format!(
         "mkdir -p /data\n\
          mount /dev/vda /data 2>/dev/null || ( (mkfs.ext4 -F -q /dev/vda || mkfs.vfat /dev/vda) >/dev/null 2>&1; sync; mount /dev/vda /data 2>/dev/null )\n\
-         {vfs_mount}\
+         {vol_mounts}\
          echo {OUT_MARKER}\n\
          {cmd}\n\
          __ailoy_rc=$?\n\
@@ -216,9 +204,9 @@ fn build_payload(cmd: &str, vfs_guest: Option<&str>) -> String {
     )
 }
 
-/// Child entry point. If [`BOOT_ENV`] is set, boot the configured VM (mounting
-/// the cortex VFS if S3 env is present) and never return. Consuming binaries
-/// must call this at the top of `main()`.
+/// Child entry point. If [`BOOT_ENV`] is set, boot the configured VM — mounting
+/// each cortex volume (realized via [`cortex::VolumeSpec::build`]) — and never
+/// return. Consuming binaries must call this at the top of `main()`.
 pub fn boot_if_requested() {
     if std::env::var(BOOT_ENV).is_err() {
         return;
@@ -229,6 +217,9 @@ pub fn boot_if_requested() {
     let upper = PathBuf::from(get("AILOY_KRUN_UPPER"));
     let console = PathBuf::from(get("AILOY_KRUN_CONSOLE"));
     let b64 = get("AILOY_KRUN_B64");
+    let mounts: Vec<MountWire> =
+        serde_json::from_str(&get(MOUNTS_ENV)).unwrap_or_else(|e| panic!("parse {MOUNTS_ENV}: {e}"));
+
     let script = format!("echo {b64} | base64 -d > /run.sh; sh /run.sh");
 
     let mut builder = VmBuilder::new()
@@ -238,27 +229,15 @@ pub fn boot_if_requested() {
         .disk(|d| d.path(&upper).format(DiskImageFormat::Raw))
         .console(|c| c.output(&console));
 
-    // Mount the cortex VFS as a second virtio-fs device if S3 config was passed.
-    if let Ok(bucket) = std::env::var("AILOY_KRUN_S3_BUCKET") {
-        let cfg = S3Config {
-            bucket,
-            region: std::env::var("AILOY_KRUN_S3_REGION").unwrap_or_else(|_| "us-east-1".into()),
-            access_key_id: get("AILOY_KRUN_S3_KEY"),
-            secret_access_key: get("AILOY_KRUN_S3_SECRET"),
-            endpoint: std::env::var("AILOY_KRUN_S3_ENDPOINT").ok(),
-            key_prefix: std::env::var("AILOY_KRUN_S3_PREFIX").ok(),
-        };
-        match S3Volume::new(&cfg) {
-            Ok(vol) => {
-                let adapter = PosixAdapter::new(vol);
-                builder =
-                    builder.fs(move |fs| fs.tag(VFS_TAG).custom(Box::new(adapter)));
-            }
-            Err(e) => {
-                eprintln!("ailoy krun: S3 VFS connect failed: {e}");
-                std::process::exit(1);
-            }
-        }
+    // Realize each cortex volume and attach it as a virtio-fs device. cortex
+    // maps the spec to a concrete backend — ailoy stays volume-agnostic.
+    for m in mounts {
+        let backend = m.spec.build().unwrap_or_else(|e| {
+            eprintln!("ailoy krun: build volume {:?}: {e}", m.tag);
+            std::process::exit(1);
+        });
+        let tag = m.tag.clone();
+        builder = builder.fs(move |fs| fs.tag(&tag).custom(backend));
     }
 
     let result = builder
