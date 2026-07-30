@@ -154,46 +154,149 @@ fn wire_network_policy(policy: NetworkPolicy) -> microsandbox_types::NetworkPoli
     serde_json::from_value(value).expect("engine and wire NetworkPolicy share one JSON schema")
 }
 
-/// Guest network reachability. The sandbox host
-/// (`host.microsandbox.internal`, e.g. an ailoy VFS forward server) is
-/// reachable in **every** variant; they differ only in outside reach. There is
-/// no fully-offline variant. All map to a [`NetworkPolicy`] with
-/// `default_ingress: Allow` (published-port behavior).
+/// How far outside itself the guest can reach. There is no fully-offline
+/// variant; every variant permits DNS to the sandbox gateway so the guest can
+/// resolve names at all.
+///
+/// Reaching a service on the host is a separate grant, expressed per port
+/// through [`NetworkPosture::host_ports`]. That split is deliberate: a posture
+/// on its own says nothing about which host services are exposed, so widening
+/// the outside reach cannot silently widen host reach too.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxNetwork {
-    /// Host only — no public internet, LAN, loopback, or metadata.
-    /// Least-privilege for VFS-in-sandbox.
-    HostOnly,
-    /// Host + public internet, but not private LAN, loopback, link-local,
-    /// cloud-metadata, or multicast. The default.
+    /// Nothing but the host ports explicitly granted, plus gateway DNS. The
+    /// default, and the least-privilege posture for VFS-in-sandbox.
     #[default]
+    HostOnly,
+    /// The public internet, but not private LAN, loopback, link-local,
+    /// cloud-metadata, or multicast.
     Public,
-    /// Unrestricted egress/ingress — `Public` plus LAN, loopback, link-local,
-    /// cloud-metadata, and multicast. Grant deliberately (reopens SSRF).
+    /// Unrestricted egress *and* ingress — `Public` plus LAN, loopback,
+    /// link-local, cloud-metadata, multicast, and every host port regardless of
+    /// [`NetworkPosture::host_ports`]. Grant deliberately; it reopens SSRF.
     Full,
 }
 
 impl SandboxNetwork {
-    /// The microsandbox policy for this variant.
-    fn policy(self) -> NetworkPolicy {
-        use microsandbox_network::policy::{Action, Destination, DestinationGroup, Rule};
-        // `allow_egress(Host)` permits any port to the host — including :53, so
-        // the guest's `host.microsandbox.internal` DNS lookup works.
-        let host = || Rule::allow_egress(Destination::Group(DestinationGroup::Host));
-        let public = || Rule::allow_egress(Destination::Group(DestinationGroup::Public));
-        match self {
-            SandboxNetwork::HostOnly => NetworkPolicy {
-                default_egress: Action::Deny,
-                default_ingress: Action::Allow,
-                rules: vec![host()],
-            },
-            SandboxNetwork::Public => NetworkPolicy {
-                default_egress: Action::Deny,
-                default_ingress: Action::Allow,
-                rules: vec![public(), host()],
-            },
-            SandboxNetwork::Full => NetworkPolicy::allow_all(),
+    /// This posture plus egress to the listed host TCP ports.
+    pub fn with_host_ports(self, ports: impl IntoIterator<Item = u16>) -> NetworkPosture {
+        NetworkPosture::from(self).with_host_ports(ports)
+    }
+
+    /// This posture plus egress to the listed domain suffixes.
+    pub fn with_domain_suffixes(
+        self,
+        suffixes: impl IntoIterator<Item = impl Into<String>>,
+    ) -> NetworkPosture {
+        NetworkPosture::from(self).with_domain_suffixes(suffixes)
+    }
+}
+
+/// A guest network posture: how far out the guest can reach, and which host TCP
+/// ports it may open.
+///
+/// `host_ports` has to be named explicitly because the convenience constructor
+/// for a host rule (`Rule::allow_egress(Group(Host))`) leaves the port set
+/// empty, and an empty port set means every port. A guest that needs one host
+/// service would otherwise be handed the whole host: SSH, a database, a
+/// container daemon, anything bound to `0.0.0.0`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct NetworkPosture {
+    /// Outside reach.
+    pub network: SandboxNetwork,
+    /// Host TCP ports the guest may connect to. Gateway DNS is always allowed
+    /// and does not need to be listed.
+    #[serde(default)]
+    pub host_ports: Vec<u16>,
+    /// Domain suffixes the guest may reach, matching the apex and any
+    /// subdomain. Lets a session that has to install packages name its
+    /// registries instead of taking [`SandboxNetwork::Public`] and the whole
+    /// internet with it.
+    ///
+    /// Matching works through the gateway resolver's hostname cache, so it
+    /// covers names the guest looked up there — which is every name it can
+    /// resolve under these postures.
+    #[serde(default)]
+    pub domain_suffixes: Vec<String>,
+}
+
+impl From<SandboxNetwork> for NetworkPosture {
+    fn from(network: SandboxNetwork) -> Self {
+        Self {
+            network,
+            host_ports: Vec::new(),
+            domain_suffixes: Vec::new(),
+        }
+    }
+}
+
+impl NetworkPosture {
+    /// Grant egress to these host TCP ports, replacing any already set.
+    pub fn with_host_ports(mut self, ports: impl IntoIterator<Item = u16>) -> Self {
+        self.host_ports = ports.into_iter().collect();
+        self
+    }
+
+    /// Grant egress to these domain suffixes, replacing any already set.
+    pub fn with_domain_suffixes(
+        mut self,
+        suffixes: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.domain_suffixes = suffixes.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// The microsandbox policy for this posture.
+    fn policy(&self) -> NetworkPolicy {
+        use std::str::FromStr as _;
+
+        use microsandbox_network::policy::{
+            Action, Destination, DestinationGroup, Direction, DomainName, PortRange, Protocol, Rule,
+        };
+
+        if matches!(self.network, SandboxNetwork::Full) {
+            return NetworkPolicy::allow_all();
+        }
+
+        // `Rule::allow_dns()` is narrow: UDP/TCP :53 to the gateway addresses
+        // only, not to arbitrary resolvers the guest might aim at. It has to
+        // come first, because under deny-by-default a policy without it refuses
+        // every DNS query, including the one for `host.microsandbox.internal`.
+        let mut rules = vec![Rule::allow_dns()];
+        if matches!(self.network, SandboxNetwork::Public) {
+            rules.push(Rule::allow_egress(Destination::Group(
+                DestinationGroup::Public,
+            )));
+        }
+        rules.extend(self.host_ports.iter().map(|&port| Rule {
+            direction: Direction::Egress,
+            destination: Destination::Group(DestinationGroup::Host),
+            protocols: vec![Protocol::Tcp],
+            ports: vec![PortRange::single(port)],
+            action: Action::Allow,
+        }));
+        rules.extend(self.domain_suffixes.iter().filter_map(|suffix| {
+            match DomainName::from_str(suffix) {
+                Ok(name) => Some(Rule::allow_egress(Destination::DomainSuffix(name))),
+                // Dropping the entry means the domain simply is not reachable,
+                // so a typo costs a failed install rather than an unintended
+                // grant. Logged loudly because the failure is otherwise opaque.
+                Err(e) => {
+                    log::warn!("sandbox network: ignoring invalid domain suffix '{suffix}': {e}");
+                    None
+                }
+            }
+        }));
+
+        NetworkPolicy {
+            default_egress: Action::Deny,
+            // microsandbox's own serde default. It only governs connections
+            // inbound to a published guest port, and nothing here publishes
+            // one, so this is fail-closed for a capability that does not exist
+            // yet rather than a restriction on anything in use.
+            default_ingress: Action::Deny,
+            rules,
         }
     }
 }
@@ -212,9 +315,11 @@ impl Default for SandboxBuilder {
         config.spec.resources.memory_mib = 2048;
         config.spec.runtime.workdir = Some("/root".to_string());
         config.spec.pull_policy = PullPolicy::IfMissing;
-        // Default network posture: host + public internet (see SandboxNetwork).
+        // Default posture: gateway DNS and nothing else (see SandboxNetwork).
+        // Anything wider is opt-in, so a caller that never thinks about the
+        // network does not get outbound reach by accident.
         config.spec.network.enabled = true;
-        config.spec.network.policy = Some(wire_network_policy(SandboxNetwork::default().policy()));
+        config.spec.network.policy = Some(wire_network_policy(NetworkPosture::default().policy()));
         Self {
             config,
             default_timeout_secs: 60,
@@ -266,11 +371,14 @@ impl SandboxBuilder {
         self
     }
 
-    /// Set the guest network posture. The host is reachable in every variant;
-    /// see [`SandboxNetwork`]. Defaults to [`SandboxNetwork::Public`].
-    pub fn network(mut self, network: SandboxNetwork) -> Self {
+    /// Set the guest network posture. Accepts a bare [`SandboxNetwork`] for
+    /// outside reach alone, or [`SandboxNetwork::with_host_ports`] to also grant
+    /// specific host TCP ports. Defaults to [`SandboxNetwork::HostOnly`] with no
+    /// host ports.
+    pub fn network(mut self, posture: impl Into<NetworkPosture>) -> Self {
+        let posture = posture.into();
         self.config.spec.network.enabled = true;
-        self.config.spec.network.policy = Some(wire_network_policy(network.policy()));
+        self.config.spec.network.policy = Some(wire_network_policy(posture.policy()));
         self
     }
 
@@ -400,22 +508,23 @@ impl Sandbox {
     /// snapshot directory unpacked by this call is cleaned up before
     /// returning (success or failure).
     pub async fn try_from_archive(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        Self::try_from_archive_inner(path, SandboxNetwork::default()).await
+        Self::try_from_archive_inner(path, NetworkPosture::default()).await
     }
 
     /// Like [`try_from_archive`](Self::try_from_archive) but with an explicit
-    /// [`SandboxNetwork`]. An archive is only a filesystem snapshot and doesn't
-    /// carry the network policy, so the desired posture is re-applied here.
+    /// posture. An archive is only a filesystem snapshot and doesn't carry the
+    /// network policy, so the desired posture is re-applied here — including its
+    /// host ports, which are otherwise lost across the round trip.
     pub async fn try_from_archive_with_network(
         path: impl AsRef<Path>,
-        network: SandboxNetwork,
+        posture: impl Into<NetworkPosture>,
     ) -> anyhow::Result<Self> {
-        Self::try_from_archive_inner(path, network).await
+        Self::try_from_archive_inner(path, posture.into()).await
     }
 
     async fn try_from_archive_inner(
         path: impl AsRef<Path>,
-        network: SandboxNetwork,
+        posture: NetworkPosture,
     ) -> anyhow::Result<Self> {
         ensure_msb().await?;
 
@@ -429,17 +538,16 @@ impl Sandbox {
         // so its file name is not the original sandbox name. The manifest's
         // `source_sandbox` records the name the snapshot was taken from; reuse
         // that. Fall back to a fresh generated name for name-less snapshots.
-        let name = snap
-            .manifest()
-            .source_sandbox
-            .clone()
-            .unwrap_or_else(|| format!("ailoy-{}", hex::encode(&Uuid::new_v4().as_bytes()[..8])));
+        let name =
+            snap.manifest().source_sandbox.clone().unwrap_or_else(|| {
+                format!("ailoy-{}", hex::encode(&Uuid::new_v4().as_bytes()[..8]))
+            });
 
         let result = microsandbox::Sandbox::builder(&name)
             .from_snapshot(snap_path.to_string_lossy().into_owned())
             .pull_policy(PullPolicy::IfMissing)
             .replace()
-            .network(|n| n.policy(network.policy()))
+            .network(|n| n.policy(posture.policy()))
             .create()
             .await
             .context("create sandbox from snapshot");
@@ -851,8 +959,8 @@ mod tests {
             .exit_code
     }
 
-    /// `SandboxNetwork::HostOnly` grants egress to the sandbox host only —
-    /// public egress stays blocked (the least-privilege VFS posture).
+    /// `SandboxNetwork::HostOnly` grants gateway DNS and whatever host ports
+    /// were asked for, nothing else — public egress stays blocked.
     #[tokio::test]
     async fn test_host_only_blocks_public_egress() {
         assert_ne!(
@@ -862,14 +970,288 @@ mod tests {
         );
     }
 
-    /// Contrast: `SandboxNetwork::Public` (the default) allows public egress,
-    /// confirming HostOnly's block is the policy — not a broken network.
+    /// Contrast: `SandboxNetwork::Public` allows public egress, confirming
+    /// HostOnly's block is the policy — not a broken network.
     #[tokio::test]
     async fn test_public_allows_public_egress() {
         assert_eq!(
             public_egress_exit_code(SandboxNetwork::Public).await,
             0,
             "public TCP connect (1.1.1.1:443) must succeed under Public"
+        );
+    }
+
+    /// The port set has to be enforced by microsandbox, not merely recorded in
+    /// the spec. Two host listeners, one port granted and one not: the guest
+    /// must reach exactly one of them. This is the grant a host-side forward
+    /// server depends on, so it is worth proving against a real VM rather than
+    /// only against the evaluator.
+    #[tokio::test]
+    async fn test_host_ports_are_enforced_from_inside_the_guest() {
+        // Bound on all interfaces because the guest arrives via the gateway
+        // address, not loopback.
+        let granted = tokio::net::TcpListener::bind("0.0.0.0:0")
+            .await
+            .expect("bind granted port");
+        let ungranted = tokio::net::TcpListener::bind("0.0.0.0:0")
+            .await
+            .expect("bind ungranted port");
+        let granted_port = granted.local_addr().expect("granted addr").port();
+        let ungranted_port = ungranted.local_addr().expect("ungranted addr").port();
+        // Keep accepting, so a connect the policy permits actually completes.
+        tokio::spawn(async move { while granted.accept().await.is_ok() {} });
+        tokio::spawn(async move { while ungranted.accept().await.is_ok() {} });
+
+        let mut sandbox = SandboxBuilder::new()
+            .image("alpine:latest")
+            .network(SandboxNetwork::HostOnly.with_host_ports([granted_port]))
+            .build()
+            .await
+            .expect("build");
+        let console = sandbox.start().await.expect("start");
+        let probe = |port: u16| format!("nc -zw5 host.microsandbox.internal {port} 2>/dev/null");
+
+        let allowed = console
+            .exec_shell(probe(granted_port), Some(15))
+            .await
+            .expect("exec granted probe")
+            .exit_code;
+        let blocked = console
+            .exec_shell(probe(ungranted_port), Some(15))
+            .await
+            .expect("exec ungranted probe")
+            .exit_code;
+
+        assert_eq!(
+            allowed, 0,
+            "host port {granted_port} was granted and must be reachable"
+        );
+        assert_ne!(
+            blocked, 0,
+            "host port {ungranted_port} was not granted and must be unreachable"
+        );
+    }
+
+    // ── network policy, evaluated directly ─────────────────────────────────────
+    //
+    // The tests above boot a VM to observe the policy's effect, which is slow
+    // and can only probe one destination per run. These ask microsandbox's own
+    // evaluator what a posture decides, so a rule that is wider than intended
+    // shows up as a failing assertion rather than as an open port nobody looked
+    // at.
+
+    /// Shared state carrying a gateway IP, which is what `DestinationGroup::Host`
+    /// rules match against.
+    fn policy_test_state() -> microsandbox_network::shared::SharedState {
+        let shared = microsandbox_network::shared::SharedState::new(8);
+        shared.set_gateway_ips(Some(std::net::Ipv4Addr::new(10, 0, 2, 2)), None);
+        shared
+    }
+
+    /// Decide one guest → host TCP connect under `posture`.
+    fn host_port_action(
+        posture: &NetworkPosture,
+        port: u16,
+    ) -> microsandbox_network::policy::Action {
+        use microsandbox_network::policy::Protocol;
+
+        let shared = policy_test_state();
+        posture.policy().evaluate_egress(
+            std::net::SocketAddr::from((std::net::Ipv4Addr::new(10, 0, 2, 2), port)),
+            Protocol::Tcp,
+            &shared,
+        )
+    }
+
+    /// A posture that grants one host port must grant only that port. Every
+    /// other host service — SSH, a database, a container daemon — has to stay
+    /// out of reach, which is what an empty port set in a host rule would give
+    /// away.
+    #[test]
+    fn host_ports_grant_only_the_listed_port() {
+        use microsandbox_network::policy::Action;
+
+        let posture = SandboxNetwork::HostOnly.with_host_ports([9000]);
+        assert_eq!(host_port_action(&posture, 9000), Action::Allow);
+        for port in [22, 2375, 5432, 9200, 11434] {
+            assert_eq!(
+                host_port_action(&posture, port),
+                Action::Deny,
+                "host port {port} must not be reachable"
+            );
+        }
+    }
+
+    /// No posture reaches a host port that was not asked for, `Public` included
+    /// — widening outside reach must not widen host reach.
+    #[test]
+    fn no_posture_reaches_unlisted_host_ports() {
+        use microsandbox_network::policy::Action;
+
+        for network in [SandboxNetwork::HostOnly, SandboxNetwork::Public] {
+            let posture = NetworkPosture::from(network);
+            for port in [22, 2375, 5432, 9200, 11434] {
+                assert_eq!(
+                    host_port_action(&posture, port),
+                    Action::Deny,
+                    "{network:?} must not reach host port {port}"
+                );
+            }
+        }
+    }
+
+    /// Gateway DNS survives the narrowing. Without it a deny-by-default policy
+    /// refuses every lookup, including the one for `host.microsandbox.internal`,
+    /// and the guest has no working network at all.
+    #[test]
+    fn every_posture_allows_gateway_dns() {
+        use microsandbox_network::policy::{Action, Protocol};
+
+        for network in [SandboxNetwork::HostOnly, SandboxNetwork::Public] {
+            let policy = NetworkPosture::from(network).policy();
+            let shared = policy_test_state();
+            for protocol in [Protocol::Udp, Protocol::Tcp] {
+                assert_eq!(
+                    policy.evaluate_egress(
+                        std::net::SocketAddr::from((std::net::Ipv4Addr::new(10, 0, 2, 2), 53)),
+                        protocol,
+                        &shared,
+                    ),
+                    Action::Allow,
+                    "{network:?} must allow gateway DNS over {protocol:?}"
+                );
+            }
+        }
+    }
+
+    /// Inbound connections are refused unless a rule says otherwise. Nothing
+    /// publishes a guest port today; this keeps the first one that does from
+    /// being reachable by every peer on the LAN by default.
+    #[test]
+    fn unmatched_ingress_is_denied() {
+        use microsandbox_network::policy::{Action, Protocol};
+
+        for network in [SandboxNetwork::HostOnly, SandboxNetwork::Public] {
+            let policy = NetworkPosture::from(network).policy();
+            let shared = policy_test_state();
+            assert_eq!(
+                policy.evaluate_ingress(
+                    std::net::SocketAddr::from((std::net::Ipv4Addr::new(192, 168, 0, 14), 54321)),
+                    8080,
+                    Protocol::Tcp,
+                    &shared,
+                ),
+                Action::Deny,
+                "{network:?} must refuse an unmatched inbound connection"
+            );
+        }
+    }
+
+    /// The default posture is the narrow one, so a caller that never mentions
+    /// the network gets no outbound reach beyond DNS.
+    #[test]
+    fn default_posture_is_host_only_with_no_host_ports() {
+        use microsandbox_network::policy::Action;
+
+        let posture = NetworkPosture::default();
+        assert_eq!(posture.network, SandboxNetwork::HostOnly);
+        assert!(posture.host_ports.is_empty());
+
+        let shared = policy_test_state();
+        assert_eq!(
+            posture.policy().evaluate_egress(
+                "1.1.1.1:443".parse().expect("literal socket address"),
+                microsandbox_network::policy::Protocol::Tcp,
+                &shared,
+            ),
+            Action::Deny,
+            "the default posture must not reach the public internet"
+        );
+    }
+
+    /// A domain allowlist reaches the named registry and its subdomains without
+    /// opening the rest of the internet. The evaluator matches these through the
+    /// resolver's hostname cache, so the test seeds the cache the way a guest
+    /// lookup would.
+    #[test]
+    fn domain_suffixes_allow_only_the_named_domains() {
+        use std::{net::IpAddr, time::Duration};
+
+        use microsandbox_network::{
+            policy::{Action, Protocol},
+            shared::ResolvedHostnameFamily,
+        };
+
+        let posture = SandboxNetwork::HostOnly.with_domain_suffixes(["pypi.org"]);
+        let policy = posture.policy();
+        let shared = policy_test_state();
+
+        let allowed: IpAddr = "151.101.0.223".parse().expect("literal address");
+        let denied: IpAddr = "203.0.114.5".parse().expect("literal address");
+        shared.cache_resolved_hostname(
+            "files.pythonhosted.pypi.org",
+            ResolvedHostnameFamily::Ipv4,
+            [allowed],
+            Duration::from_secs(60),
+        );
+        shared.cache_resolved_hostname(
+            "registry.evil.example",
+            ResolvedHostnameFamily::Ipv4,
+            [denied],
+            Duration::from_secs(60),
+        );
+
+        assert_eq!(
+            policy.evaluate_egress(
+                std::net::SocketAddr::from((allowed, 443)),
+                Protocol::Tcp,
+                &shared
+            ),
+            Action::Allow,
+            "a subdomain of an allowlisted suffix must be reachable"
+        );
+        assert_eq!(
+            policy.evaluate_egress(
+                std::net::SocketAddr::from((denied, 443)),
+                Protocol::Tcp,
+                &shared
+            ),
+            Action::Deny,
+            "a domain outside the allowlist must stay blocked"
+        );
+    }
+
+    /// An unparseable suffix must not become a wider grant. It is dropped, so
+    /// the posture behaves as if it had never been listed.
+    #[test]
+    fn invalid_domain_suffix_is_dropped_rather_than_widening_the_policy() {
+        let bad = SandboxNetwork::HostOnly.with_domain_suffixes(["not a domain"]);
+        assert_eq!(
+            bad.policy().rules.len(),
+            NetworkPosture::from(SandboxNetwork::HostOnly)
+                .policy()
+                .rules
+                .len(),
+            "an invalid suffix must add no rule"
+        );
+    }
+
+    /// `Full` stays the deliberate escape hatch: everything allowed, in both
+    /// directions, host ports included.
+    #[test]
+    fn full_allows_everything() {
+        use microsandbox_network::policy::Action;
+
+        let posture = NetworkPosture::from(SandboxNetwork::Full);
+        assert_eq!(host_port_action(&posture, 22), Action::Allow);
+        let shared = policy_test_state();
+        assert_eq!(
+            posture.policy().evaluate_egress(
+                "1.1.1.1:443".parse().expect("literal socket address"),
+                microsandbox_network::policy::Protocol::Tcp,
+                &shared,
+            ),
+            Action::Allow
         );
     }
 
