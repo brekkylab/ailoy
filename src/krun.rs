@@ -15,10 +15,14 @@
 use std::io;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 
+use async_trait::async_trait;
 use base64::Engine as _;
 use cortex::{PosixAdapter, S3Config, S3Volume};
 use msb_krun::{DiskImageFormat, VmBuilder};
+
+use crate::runenv::{Console, ExecResult};
 
 const BOOT_ENV: &str = "AILOY_KRUN_BOOT";
 const OUT_MARKER: &str = "__AILOY_OUT__";
@@ -60,11 +64,14 @@ pub struct ExecOutput {
 }
 
 /// An ephemeral sandbox recipe: booted fresh per [`exec`](Sandbox::exec).
+#[derive(Clone)]
 pub struct Sandbox {
     kernel: PathBuf,
     rootfs: PathBuf,
     upper: PathBuf,
     s3: Option<S3Vfs>,
+    /// Serializes boots so concurrent execs don't write the shared upper at once.
+    exec_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Sandbox {
@@ -86,6 +93,7 @@ impl Sandbox {
             rootfs: rootfs.into(),
             upper,
             s3: None,
+            exec_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 
@@ -131,6 +139,59 @@ impl Sandbox {
         let status = child.status()?;
         let raw = std::fs::read_to_string(&console_path).unwrap_or_default();
         Ok(parse_output(&raw, status.code()))
+    }
+}
+
+/// Single-quote a shell word so arbitrary characters survive.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Build a shell command line from a program + args.
+fn shell_join(program: &str, args: &[String]) -> String {
+    let mut cmd = shell_quote(program);
+    for a in args {
+        cmd.push(' ');
+        cmd.push_str(&shell_quote(a));
+    }
+    cmd
+}
+
+/// The krun sandbox as an ailoy exec backend: each `exec` boots a fresh microVM
+/// (with the cortex VFS mounted) and captures the command's output. No
+/// persistent VM, no agentd — just `get_os` + `exec`; `Console`'s `read`/`write`/
+/// `exec_shell` defaults ride on top.
+#[async_trait]
+impl Console for Sandbox {
+    fn get_os(&self) -> &str {
+        "linux"
+    }
+
+    async fn exec(
+        &self,
+        program: String,
+        args: Vec<String>,
+        _timeout: Option<u64>,
+    ) -> anyhow::Result<ExecResult> {
+        // `exec_shell` (and thus read/write) arrive as ("sh", ["-c", script]);
+        // pass the script through verbatim. Direct exec shell-escapes its argv.
+        let cmd = if program == "sh" && args.len() == 2 && args[0] == "-c" {
+            args[1].clone()
+        } else {
+            shell_join(&program, &args)
+        };
+        // Serialize boots — they share one upper disk.
+        let _guard = self.exec_lock.lock().await;
+        let sb = self.clone();
+        let out = tokio::task::spawn_blocking(move || sb.exec(&cmd))
+            .await
+            .map_err(|e| anyhow::anyhow!("krun exec join: {e}"))??;
+        Ok(ExecResult {
+            stdout: out.stdout,
+            stderr: String::new(),
+            exit_code: out.exit_code,
+            timed_out: false,
+        })
     }
 }
 
