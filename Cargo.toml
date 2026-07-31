@@ -35,10 +35,10 @@ sandbox = [
 ]
 
 [dependencies]
-# cortex provides the VFS (Mountable/S3Volume + PosixAdapter -> DynFileSystem);
-# ailoy's `krun` module boots the VM and mounts it. Pinned to cortex's VFS-only
-# (raw-krun) rev.
-cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "d884272013abcaa4c48f1cda5f66a9f9752d0403", features = ["krun", "s3"], optional = true }
+# cortex provides the VFS (Mountable/S3Volume/NotionVolume + PosixFs ->
+# DynFileSystem); ailoy's `krun` module boots the VM and mounts it. Pinned to the
+# adapter-restructure merge (PosixFs + krun/fuse/fuse-t bindings, VolumeSpec).
+cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "da4ee5b663c69b715d4ade5f7740f45912811110", features = ["krun", "s3"], optional = true }
 msb_krun = { version = "=0.1.25", features = ["blk", "net"], optional = true }
 # Guest outbound networking: an in-process smoltcp userspace TCP/IP stack that
 # NATs guest egress to the host (no external passt/gvproxy). Attached to the VM
