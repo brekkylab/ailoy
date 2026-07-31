@@ -154,6 +154,13 @@ fn wire_network_policy(policy: NetworkPolicy) -> microsandbox_types::NetworkPoli
     serde_json::from_value(value).expect("engine and wire NetworkPolicy share one JSON schema")
 }
 
+/// The inverse of [`wire_network_policy`]: read a stored wire-format policy back
+/// as the engine-side one. Same shared schema, so also infallible.
+fn engine_network_policy(policy: &microsandbox_types::NetworkPolicy) -> NetworkPolicy {
+    let value = serde_json::to_value(policy).expect("NetworkPolicy serializes to JSON");
+    serde_json::from_value(value).expect("engine and wire NetworkPolicy share one JSON schema")
+}
+
 /// How far outside itself the guest can reach. There is no fully-offline
 /// variant; every variant permits DNS to the sandbox gateway so the guest can
 /// resolve names at all.
@@ -478,6 +485,15 @@ pub struct Sandbox {
     name: String,
     default_timeout_secs: u64,
     max_output_chars: usize,
+    /// The network policy this sandbox was created with, kept so [`fork`] can
+    /// put the child under the same one. A snapshot carries a filesystem and
+    /// nothing else, so a child built from one starts with microsandbox's own
+    /// default — which is `Public` egress and `default_ingress: Allow` — unless
+    /// the policy is re-applied. `None` means the config named no policy, in
+    /// which case the child inherits that same default the parent ran under.
+    ///
+    /// [`fork`]: Self::fork
+    network_policy: Option<NetworkPolicy>,
     console: Option<SandboxConsole>,
 }
 
@@ -488,6 +504,14 @@ impl Sandbox {
         max_output_chars: usize,
     ) -> anyhow::Result<Sandbox> {
         let name = config.spec.name.clone();
+        // Read off the config before it is consumed: whatever policy this
+        // sandbox runs under is what a fork of it has to run under too.
+        let network_policy = config
+            .spec
+            .network
+            .policy
+            .as_ref()
+            .map(engine_network_policy);
         let inner = microsandbox::Sandbox::create(config)
             .await
             .context("sandbox create")?;
@@ -495,6 +519,7 @@ impl Sandbox {
             name,
             default_timeout_secs,
             max_output_chars,
+            network_policy,
             console: Some(SandboxConsole {
                 inner,
                 default_timeout_secs,
@@ -562,6 +587,7 @@ impl Sandbox {
             name,
             default_timeout_secs: 60,
             max_output_chars: 30_000,
+            network_policy: Some(posture.policy()),
             console: Some(SandboxConsole {
                 inner,
                 default_timeout_secs: 60,
@@ -625,12 +651,15 @@ impl Sandbox {
             .map_err(|e| anyhow::anyhow!("fork: snapshot failed: {e}"))?;
         let snap_path = snap.path().to_path_buf();
 
-        let result = microsandbox::Sandbox::builder(&new_name)
+        let mut builder = microsandbox::Sandbox::builder(&new_name)
             .from_snapshot(snap_path.to_string_lossy().into_owned())
-            .pull_policy(PullPolicy::IfMissing)
-            .create()
-            .await
-            .context("fork: create from snapshot");
+            .pull_policy(PullPolicy::IfMissing);
+        // Without this the child falls back to microsandbox's default policy,
+        // so forking a narrow sandbox would silently widen it.
+        if let Some(policy) = self.network_policy.clone() {
+            builder = builder.network(|n| n.policy(policy));
+        }
+        let result = builder.create().await.context("fork: create from snapshot");
 
         // Clean up the temp snapshot regardless of outcome.
         if let Err(e) = Snapshot::remove(&snap_name, true).await {
@@ -650,6 +679,7 @@ impl Sandbox {
             name: new_name,
             default_timeout_secs: self.default_timeout_secs,
             max_output_chars: self.max_output_chars,
+            network_policy: self.network_policy.clone(),
             console: Some(SandboxConsole {
                 inner,
                 default_timeout_secs: self.default_timeout_secs,
@@ -1169,6 +1199,66 @@ mod tests {
             ),
             Action::Deny,
             "the default posture must not reach the public internet"
+        );
+    }
+
+    /// A snapshot carries a filesystem and no policy, so a child built from one
+    /// starts under microsandbox's default — `Public` egress and
+    /// `default_ingress: Allow` — unless the parent's policy is put back. That
+    /// would quietly undo both halves of the narrowing for anyone who forks, so
+    /// the child is probed the same way `test_host_only_blocks_public_egress`
+    /// probes a fresh one.
+    ///
+    /// `alpine` for busybox `nc`, and a raw IP rather than a name because
+    /// microsandbox answers :53 itself, so only a raw-IP connect reaches egress
+    /// policy at all.
+    #[tokio::test]
+    async fn fork_keeps_the_parent_network_posture() {
+        let mut parent = SandboxBuilder::new()
+            .image("alpine:latest")
+            .network(SandboxNetwork::HostOnly)
+            .build()
+            .await
+            .expect("build parent");
+        parent.stop().await.expect("stop parent");
+
+        let mut child = parent.fork().await.expect("fork");
+        let console = child.start().await.expect("start fork");
+        let exit_code = console
+            .exec_shell("nc -zw5 1.1.1.1 443 2>/dev/null".to_string(), Some(10))
+            .await
+            .expect("exec probe")
+            .exit_code;
+
+        assert_ne!(
+            exit_code, 0,
+            "a fork of a HostOnly sandbox must not reach the public internet"
+        );
+    }
+
+    /// The other direction, so the test above cannot pass on a fork whose
+    /// network is simply broken: a fork of a `Public` parent still gets out.
+    #[tokio::test]
+    async fn fork_of_a_public_parent_still_reaches_the_internet() {
+        let mut parent = SandboxBuilder::new()
+            .image("alpine:latest")
+            .network(SandboxNetwork::Public)
+            .build()
+            .await
+            .expect("build parent");
+        parent.stop().await.expect("stop parent");
+
+        let mut child = parent.fork().await.expect("fork");
+        let console = child.start().await.expect("start fork");
+        let exit_code = console
+            .exec_shell("nc -zw5 1.1.1.1 443 2>/dev/null".to_string(), Some(10))
+            .await
+            .expect("exec probe")
+            .exit_code;
+
+        assert_eq!(
+            exit_code, 0,
+            "a fork of a Public sandbox must still reach the public internet"
         );
     }
 
