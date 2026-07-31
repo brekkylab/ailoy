@@ -203,7 +203,10 @@ impl SandboxNetwork {
 /// container daemon, anything bound to `0.0.0.0`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NetworkPosture {
-    /// Outside reach.
+    /// Outside reach. Defaulted so a config that names only the fields it
+    /// cares about — `{"host_ports": [8080]}`, or `{}` — deserializes to the
+    /// narrow posture instead of failing on a missing field.
+    #[serde(default)]
     pub network: SandboxNetwork,
     /// Host TCP ports the guest may connect to. Gateway DNS is always allowed
     /// and does not need to be listed.
@@ -1167,6 +1170,27 @@ mod tests {
             Action::Deny,
             "the default posture must not reach the public internet"
         );
+    }
+
+    /// A stored posture that omits a field falls back to the narrow default
+    /// rather than failing to parse. `network` is the field worth pinning: it
+    /// is the one that decides outside reach, so a config which only lists
+    /// host ports must still come back as `HostOnly`.
+    #[test]
+    fn omitted_posture_fields_deserialize_to_the_narrow_default() {
+        let empty: NetworkPosture = serde_json::from_str("{}").expect("`{}` must deserialize");
+        assert_eq!(empty, NetworkPosture::default());
+
+        let ports_only: NetworkPosture =
+            serde_json::from_str(r#"{"host_ports":[8080]}"#).expect("host_ports alone must parse");
+        assert_eq!(ports_only.network, SandboxNetwork::HostOnly);
+        assert_eq!(ports_only.host_ports, vec![8080]);
+        assert!(ports_only.domain_suffixes.is_empty());
+
+        // An explicit value still wins over the default.
+        let explicit: NetworkPosture =
+            serde_json::from_str(r#"{"network":"public"}"#).expect("explicit network must parse");
+        assert_eq!(explicit.network, SandboxNetwork::Public);
     }
 
     /// A domain allowlist reaches the named registry and its subdomains without
