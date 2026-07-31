@@ -4,7 +4,7 @@ extern crate self as ailoy;
 // Re-export cortex so callers construct volumes (`ailoy::cortex::VolumeSpec`,
 // `ailoy::cortex::S3Config`, …) without depending on cortex directly. New cortex
 // volume kinds surface here automatically — ailoy needs no per-volume wrapper.
-#[cfg(feature = "sandbox")]
+#[cfg(any(feature = "sandbox", feature = "local-fuse"))]
 pub use cortex;
 
 pub mod agent;
