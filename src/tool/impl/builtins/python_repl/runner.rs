@@ -13,6 +13,34 @@ use crate::runenv::{Console, ExecResult};
 ///   1. Ensure python3 + ca-certificates (apt-get fallback for bare ubuntu images).
 ///   2. Resolve uv: symlink from PATH, or download the platform binary via Python urllib.
 ///   3. Create the venv via uv.
+///
+/// # Network reach this needs
+///
+/// Every step above fetches something, so on a [`Console`] backed by a sandbox
+/// this setup runs under the guest network policy. The default posture
+/// (`SandboxNetwork::HostOnly` with no host ports) permits only gateway DNS, and
+/// setup fails there on its first step — `apt-get` cannot reach a mirror, so
+/// `python3` never installs.
+///
+/// A caller that binds `python_repl` to a sandbox has to widen the posture. The
+/// narrow way is to name the destinations rather than take the whole internet:
+///
+/// ```ignore
+/// SandboxNetwork::HostOnly.with_domain_suffixes([
+///     "ubuntu.com",             // apt mirrors, for images without python3
+///     "github.com",             // the uv release
+///     "githubusercontent.com",  // where that release redirects to
+///     "pypi.org",               // uv pip install
+///     "pythonhosted.org",       // where the wheels themselves live
+/// ])
+/// ```
+///
+/// The redirect host and the wheel host are separate entries because a suffix
+/// matches the name actually connected to, not the one first requested. An image
+/// that already ships `python3` and `uv` needs only the last two.
+/// `SandboxNetwork::Public` also works and is the blunt version of the same
+/// grant. `sandbox_setup_under_domain_allowlist`, in the parent module's tests,
+/// runs this script against a real VM under exactly the posture above.
 const SETUP_CMD: &str = r#"set -e
 AILOY_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/ailoy"
 mkdir -p "$AILOY_CACHE/bin"
