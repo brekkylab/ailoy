@@ -7,18 +7,23 @@ use super::{Console, ExecResult};
 /// `Console` that runs commands directly on the host — the default exec backend.
 ///
 /// With the `local-fuse` feature it can instead run *inside* a cortex
-/// [`Workspace`](cortex::Workspace) host-mounted over FUSE (see
-/// [`mounting`](Self::mounting)): every command, read, and write then sees the
-/// same unified tree a sandboxed agent would, without a VM.
+/// [`Workspace`](cortex::Workspace): like the sandbox, it holds a
+/// [`WorkspaceSpec`](cortex::WorkspaceSpec) (see [`with_workspace`](Self::with_workspace))
+/// rather than an already-open mount, and realizes it — a host-FUSE mount — lazily
+/// on first use. Every command, read, and write then sees the same unified tree a
+/// sandboxed agent would, without a VM.
 pub struct LocalConsole {
-    /// Base directory exec/read/write resolve relative paths under. `None` means
-    /// the process's own working directory (the plain host console).
-    root: Option<PathBuf>,
-
-    /// A host-FUSE mount of a cortex workspace, held so it stays mounted for the
-    /// console's lifetime (it unmounts on drop). `root` points at its mountpoint.
+    /// The workspace to run in, held declaratively as `(mountpoint, spec)` — the
+    /// same shape the sandbox keeps. `None` is the plain host console (process
+    /// cwd). The mount below is realized from this on first use.
     #[cfg(feature = "local-fuse")]
-    _mount: Option<cortex::CortexMount>,
+    workspace: Option<(PathBuf, cortex::WorkspaceSpec)>,
+
+    /// The realized host-FUSE mount, built from `workspace` on first use and held
+    /// for the console's lifetime (unmounts on drop). Interior-mutable because the
+    /// `Console` methods take `&self`.
+    #[cfg(feature = "local-fuse")]
+    mount: std::sync::Mutex<Option<cortex::CortexMount>>,
 }
 
 impl Default for LocalConsole {
@@ -30,47 +35,75 @@ impl Default for LocalConsole {
 impl LocalConsole {
     pub fn new() -> Self {
         Self {
-            root: None,
             #[cfg(feature = "local-fuse")]
-            _mount: None,
+            workspace: None,
+            #[cfg(feature = "local-fuse")]
+            mount: std::sync::Mutex::new(None),
         }
     }
 
+    /// The directory exec/read/write resolve relative paths under: the workspace
+    /// mountpoint when one is configured, else `None` (the process cwd).
+    fn root(&self) -> Option<&Path> {
+        #[cfg(feature = "local-fuse")]
+        {
+            return self.workspace.as_ref().map(|(mp, _)| mp.as_path());
+        }
+        #[cfg(not(feature = "local-fuse"))]
+        None
+    }
+
     /// Resolve a request path: relative paths are taken under [`root`](Self::root)
-    /// (the mount) when one is set; absolute paths and the unmounted case pass
-    /// through unchanged.
+    /// when one is set; absolute paths and the unmounted case pass through.
     fn resolve(&self, path: &Path) -> PathBuf {
-        match &self.root {
+        match self.root() {
             Some(root) if path.is_relative() => root.join(path),
             _ => path.to_path_buf(),
         }
+    }
+
+    /// Realize the configured workspace as a host-FUSE mount, once. A no-op when
+    /// there is no workspace or it is already mounted. Every `Console` op calls
+    /// this first, so the mount comes up on the first command/read/write.
+    fn ensure_mounted(&self) -> anyhow::Result<()> {
+        #[cfg(feature = "local-fuse")]
+        {
+            let Some((mp, spec)) = &self.workspace else {
+                return Ok(());
+            };
+            let mut guard = self.mount.lock().unwrap();
+            if guard.is_some() {
+                return Ok(());
+            }
+            std::fs::create_dir_all(mp)
+                .map_err(|e| anyhow::anyhow!("create mountpoint {}: {e}", mp.display()))?;
+            let ws = cortex::Workspace::from_spec(spec)
+                .map_err(|e| anyhow::anyhow!("build workspace: {e}"))?;
+            let m = cortex::CortexMount::spawn(cortex::PosixFs::new(ws), mp)
+                .map_err(|e| anyhow::anyhow!("host-mount workspace at {}: {e}", mp.display()))?;
+            *guard = Some(m);
+        }
+        Ok(())
     }
 }
 
 #[cfg(feature = "local-fuse")]
 impl LocalConsole {
-    /// Build a cortex [`Workspace`](cortex::Workspace) from `spec`, host-mount it
-    /// over FUSE at `mountpoint`, and run every command/read/write under it. The
-    /// mount is torn down when the returned console is dropped.
+    /// Run inside a cortex [`WorkspaceSpec`](cortex::WorkspaceSpec), host-mounted
+    /// over FUSE at `mountpoint`. Mirrors the sandbox's
+    /// [`with_workspace`](super::Sandbox::with_workspace): the console *holds the
+    /// spec* and realizes the mount lazily (on the first command/read/write),
+    /// tearing it down when dropped.
     ///
-    /// `mountpoint` is created if absent. Needs a libfuse provider (macFUSE /
-    /// FUSE-T on macOS, `/dev/fuse` on Linux) — the `local-fuse` feature's
-    /// build-time requirement.
-    pub fn mounting(
-        spec: &cortex::WorkspaceSpec,
+    /// The mount needs a libfuse provider (macFUSE / FUSE-T on macOS, `/dev/fuse`
+    /// on Linux) — the `local-fuse` feature's build-time requirement.
+    pub fn with_workspace(
+        mut self,
         mountpoint: impl Into<PathBuf>,
-    ) -> anyhow::Result<Self> {
-        let mp = mountpoint.into();
-        std::fs::create_dir_all(&mp)
-            .map_err(|e| anyhow::anyhow!("create mountpoint {}: {e}", mp.display()))?;
-        let ws = cortex::Workspace::from_spec(spec)
-            .map_err(|e| anyhow::anyhow!("build workspace: {e}"))?;
-        let mount = cortex::CortexMount::spawn(cortex::PosixFs::new(ws), &mp)
-            .map_err(|e| anyhow::anyhow!("host-mount workspace at {}: {e}", mp.display()))?;
-        Ok(Self {
-            root: Some(mp),
-            _mount: Some(mount),
-        })
+        spec: cortex::WorkspaceSpec,
+    ) -> Self {
+        self.workspace = Some((mountpoint.into(), spec));
+        self
     }
 }
 
@@ -86,11 +119,12 @@ impl Console for LocalConsole {
         args: Vec<String>,
         timeout: Option<u64>,
     ) -> anyhow::Result<ExecResult> {
+        self.ensure_mounted()?;
         let mut command = tokio::process::Command::new(program);
         command.args(args).kill_on_drop(true);
         // Run inside the mounted workspace when there is one, so relative paths
         // and a bare `pwd` resolve to the same tree read/write see.
-        if let Some(root) = &self.root {
+        if let Some(root) = self.root() {
             command.current_dir(root);
         }
         let result = if let Some(secs) = timeout {
@@ -121,13 +155,14 @@ impl Console for LocalConsole {
     }
 
     async fn get_cwd(&self) -> anyhow::Result<PathBuf> {
-        if let Some(root) = &self.root {
-            return Ok(root.clone());
+        if let Some(root) = self.root() {
+            return Ok(root.to_path_buf());
         }
         std::env::current_dir().map_err(|e| anyhow::anyhow!("get_cwd: {e}"))
     }
 
     async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>> {
+        self.ensure_mounted()?;
         let real = self.resolve(path);
         tokio::fs::read(&real)
             .await
@@ -135,6 +170,7 @@ impl Console for LocalConsole {
     }
 
     async fn write(&self, path: &Path, content: &[u8]) -> anyhow::Result<()> {
+        self.ensure_mounted()?;
         let real = self.resolve(path);
         if let Some(parent) = real.parent()
             && !parent.as_os_str().is_empty()
@@ -219,7 +255,8 @@ mod fuse_tests {
 
         let spec =
             WorkspaceSpec::default().mount("files", VolumeSpec::Local { host: src.clone() });
-        let console = LocalConsole::mounting(&spec, &mp).expect("host-mount workspace");
+        // Holds the spec; the mount comes up lazily on the first command below.
+        let console = LocalConsole::new().with_workspace(&mp, spec);
 
         // The shell sees the workspace file through the mount.
         let out = console
