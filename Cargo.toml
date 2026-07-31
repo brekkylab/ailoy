@@ -27,14 +27,26 @@ path = "src/lib.rs"
 
 [features]
 default = []
-sandbox = ["dep:cortex", "dep:msb_krun"]
+sandbox = [
+    "dep:cortex",
+    "dep:msb_krun",
+    "dep:microsandbox-network",
+    "dep:rustls",
+]
 
 [dependencies]
 # cortex provides the VFS (Mountable/S3Volume + PosixAdapter -> DynFileSystem);
 # ailoy's `krun` module boots the VM and mounts it. Pinned to cortex's VFS-only
 # (raw-krun) rev.
-cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "93e5e8d5d91d7db62eedb2c7ee7c8186e2d83ccf", features = ["krun", "s3"], optional = true }
-msb_krun = { version = "=0.1.25", features = ["blk"], optional = true }
+cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "d884272013abcaa4c48f1cda5f66a9f9752d0403", features = ["krun", "s3"], optional = true }
+msb_krun = { version = "=0.1.25", features = ["blk", "net"], optional = true }
+# Guest outbound networking: an in-process smoltcp userspace TCP/IP stack that
+# NATs guest egress to the host (no external passt/gvproxy). Attached to the VM
+# via msb_krun's `.net().custom()`. Same `msb_krun =0.1.25 [net]` pin, so the
+# `NetBackend` type unifies.
+microsandbox-network = { version = "=0.6.7", optional = true }
+# The smoltcp stack installs a rustls (ring) crypto provider on start.
+rustls = { version = "0.23", features = ["ring"], optional = true }
 anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"

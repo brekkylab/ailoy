@@ -53,19 +53,23 @@ fn main() {
         .with_kernel(&kernel)
         .mount("/workspace", volume);
 
-    let r1 = sb.exec("echo hello; uname -sm").expect("exec1");
+    let r1 = sb.exec("echo hello; uname -sm", None).expect("exec1");
     println!("[1 capture] rc={}\n{}\n", r1.exit_code, r1.stdout);
 
     let key = std::env::var("S3_BENCH_KEY").unwrap_or_default();
     let r2 = sb
-        .exec(&format!(
-            "echo '[ls /workspace]'; ls /workspace; echo '[read S3 object]'; wc -c /workspace/{key}"
-        ))
+        .exec(
+            &format!(
+                "echo '[ls /workspace]'; ls /workspace; echo '[read S3 object]'; wc -c /workspace/{key}"
+            ),
+            None,
+        )
         .expect("exec2");
     println!("[2 cortex S3 VFS] rc={}\n{}\n", r2.exit_code, r2.stdout);
 
-    sb.exec("echo persist-9 > /data/m").expect("exec3 write");
-    let r4 = sb.exec("cat /data/m").expect("exec4 read");
+    sb.exec("echo persist-9 > /data/m", None)
+        .expect("exec3 write");
+    let r4 = sb.exec("cat /data/m", None).expect("exec4 read");
     println!("[4 upper persistence, fresh vm] rc={}\n{}\n", r4.exit_code, r4.stdout);
 
     let ok_vfs = r2.stdout.contains("/workspace/");

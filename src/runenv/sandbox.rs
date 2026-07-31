@@ -126,7 +126,153 @@ struct MountWire {
 pub struct ExecOutput {
     pub stdout: String,
     pub exit_code: i32,
+    /// The command exceeded its timeout and the VM was killed.
+    pub timed_out: bool,
 }
+
+/// Guest outbound-reach posture. The guest reaches the network through an
+/// in-process smoltcp userspace stack ([`microsandbox_network`]) that NATs to
+/// the host — no external proxy.
+///
+/// This names *outside* reach only. Reachable host TCP ports are a separate,
+/// explicit grant via [`NetworkPosture::host_ports`]: the convenience host rule
+/// (`Group(Host)`) leaves its port set empty, which matches *every* port, so
+/// widening outside reach must never silently widen host reach too (see
+/// brekkylab/ailoy#443).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxNetwork {
+    /// No network device at all; the guest is fully offline.
+    Disabled,
+    /// Gateway DNS plus whatever host ports are granted, and nothing else — no
+    /// public internet. The default: a caller that never thinks about the
+    /// network gets no outbound reach by accident.
+    #[default]
+    HostOnly,
+    /// `HostOnly` plus public-internet egress; private LAN, loopback,
+    /// link-local, and metadata stay denied.
+    Public,
+    /// Unrestricted egress (`allow_all`). The deliberate escape hatch.
+    Full,
+}
+
+impl SandboxNetwork {
+    /// Pair this reach with the host TCP ports the guest may open.
+    pub fn with_host_ports(self, ports: impl IntoIterator<Item = u16>) -> NetworkPosture {
+        NetworkPosture::from(self).with_host_ports(ports)
+    }
+
+    /// Pair this reach with allowed outbound domain suffixes (e.g. a package
+    /// registry) instead of taking all of `Public`.
+    pub fn with_domain_suffixes(
+        self,
+        suffixes: impl IntoIterator<Item = impl Into<String>>,
+    ) -> NetworkPosture {
+        NetworkPosture::from(self).with_domain_suffixes(suffixes)
+    }
+}
+
+/// A full network posture: outside [`reach`](Self::reach) plus the explicit host
+/// TCP ports and domain suffixes the guest may reach. `host_ports` has to be
+/// named explicitly — the host convenience rule leaves its port set empty,
+/// which matches every port, so a bare posture grants no host reach beyond DNS.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct NetworkPosture {
+    /// Outside-reach posture.
+    pub reach: SandboxNetwork,
+    /// Host TCP ports the guest may open (beyond gateway DNS). Each reopens a
+    /// path to a host service, so grant deliberately.
+    pub host_ports: Vec<u16>,
+    /// Outbound domain suffixes to allow without taking all of `Public`.
+    pub domain_suffixes: Vec<String>,
+}
+
+impl From<SandboxNetwork> for NetworkPosture {
+    fn from(reach: SandboxNetwork) -> Self {
+        NetworkPosture {
+            reach,
+            host_ports: Vec::new(),
+            domain_suffixes: Vec::new(),
+        }
+    }
+}
+
+impl NetworkPosture {
+    /// Set the host TCP ports the guest may open.
+    pub fn with_host_ports(mut self, ports: impl IntoIterator<Item = u16>) -> Self {
+        self.host_ports = ports.into_iter().collect();
+        self
+    }
+
+    /// Set the allowed outbound domain suffixes.
+    pub fn with_domain_suffixes(
+        mut self,
+        suffixes: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.domain_suffixes = suffixes.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Realize this posture as a smoltcp egress policy. Never called for
+    /// [`SandboxNetwork::Disabled`] (which attaches no device at all).
+    #[cfg(feature = "sandbox")]
+    fn policy(&self) -> microsandbox_network::policy::NetworkPolicy {
+        use microsandbox_network::policy::{
+            Action, Destination, DestinationGroup, Direction, DomainName, NetworkPolicy, PortRange,
+            Protocol, Rule,
+        };
+
+        if matches!(self.reach, SandboxNetwork::Full) {
+            return NetworkPolicy::allow_all();
+        }
+
+        // `Rule::allow_dns()` is narrow — UDP/TCP :53 to the gateway only — and
+        // MUST come first: under deny-by-default a policy without it refuses
+        // every DNS query, including the one for `host.microsandbox.internal`.
+        let mut rules = vec![Rule::allow_dns()];
+        if matches!(self.reach, SandboxNetwork::Public) {
+            rules.push(Rule::allow_egress(Destination::Group(
+                DestinationGroup::Public,
+            )));
+        }
+        rules.extend(self.host_ports.iter().map(|&port| Rule {
+            direction: Direction::Egress,
+            destination: Destination::Group(DestinationGroup::Host),
+            protocols: vec![Protocol::Tcp],
+            ports: vec![PortRange::single(port)],
+            action: Action::Allow,
+        }));
+        rules.extend(self.domain_suffixes.iter().filter_map(|suffix| {
+            match suffix.parse::<DomainName>() {
+                Ok(name) => Some(Rule::allow_egress(Destination::DomainSuffix(name))),
+                // A dropped entry just isn't reachable, so a typo costs a failed
+                // install rather than an unintended grant.
+                Err(e) => {
+                    eprintln!("ailoy krun: ignoring invalid domain suffix '{suffix}': {e:?}");
+                    None
+                }
+            }
+        }));
+
+        NetworkPolicy {
+            default_egress: Action::Deny,
+            // Fail-closed for a capability that does not exist yet: nothing here
+            // publishes an inbound guest port.
+            default_ingress: Action::Deny,
+            rules,
+        }
+    }
+}
+
+/// Guest vCPU count when the caller doesn't override it. Matches the old
+/// microsandbox-engine default; the agents run Python/pandas workloads that a
+/// single vCPU starves.
+const DEFAULT_VCPUS: u8 = 2;
+/// Guest memory (MiB) default. `pip install` + data tooling OOMs well under this.
+const DEFAULT_MEMORY_MIB: u32 = 2048;
+/// Per-exec wall-clock cap (seconds) when the caller passes no timeout. Mirrors
+/// the old engine's `default_timeout_secs`.
+const DEFAULT_TIMEOUT_SECS: u64 = 60;
 
 /// An ephemeral sandbox recipe: booted fresh per [`exec`](Sandbox::exec).
 #[derive(Clone)]
@@ -136,6 +282,12 @@ pub struct Sandbox {
     upper: PathBuf,
     /// Cortex volumes to mount, as `(guest_path, spec)`.
     volumes: Vec<(String, VolumeSpec)>,
+    /// Guest vCPU count.
+    vcpus: u8,
+    /// Guest memory in MiB.
+    memory_mib: u32,
+    /// Guest network posture (outside reach + host ports + domain suffixes).
+    network: NetworkPosture,
     /// Serializes boots so concurrent execs don't write the shared upper at once.
     exec_lock: Arc<tokio::sync::Mutex<()>>,
 }
@@ -158,8 +310,32 @@ impl Sandbox {
             rootfs: ensure_rootfs()?,
             upper,
             volumes: Vec::new(),
+            vcpus: DEFAULT_VCPUS,
+            memory_mib: DEFAULT_MEMORY_MIB,
+            network: NetworkPosture::default(),
             exec_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
+    }
+
+    /// Set the guest network posture. Accepts a bare [`SandboxNetwork`] (outside
+    /// reach only) or a [`NetworkPosture`] (`SandboxNetwork::Public
+    /// .with_host_ports([..])`). Defaults to [`SandboxNetwork::HostOnly`] with no
+    /// host ports — anything wider is opt-in.
+    pub fn with_network(mut self, network: impl Into<NetworkPosture>) -> Self {
+        self.network = network.into();
+        self
+    }
+
+    /// Override the guest vCPU count (default [`DEFAULT_VCPUS`]).
+    pub fn with_vcpus(mut self, vcpus: u8) -> Self {
+        self.vcpus = vcpus;
+        self
+    }
+
+    /// Override the guest memory in MiB (default [`DEFAULT_MEMORY_MIB`]).
+    pub fn with_memory_mib(mut self, memory_mib: u32) -> Self {
+        self.memory_mib = memory_mib;
+        self
     }
 
     /// Override the base rootfs (a directory served read-mostly over virtio-fs).
@@ -196,7 +372,7 @@ impl Sandbox {
 
     /// Boot a fresh microVM, run `cmd`, and capture its output. `/data` is the
     /// persistent upper; each configured volume is mounted at its guest path.
-    pub fn exec(&self, cmd: &str) -> io::Result<ExecOutput> {
+    pub fn exec(&self, cmd: &str, timeout: Option<u64>) -> io::Result<ExecOutput> {
         let console = tempfile::NamedTempFile::new()?;
         let console_path = console.path().to_path_buf();
         let exe = std::env::current_exe()?;
@@ -205,19 +381,42 @@ impl Sandbox {
         let b64 = base64::engine::general_purpose::STANDARD.encode(payload);
         let mounts_json = serde_json::to_string(&mounts)
             .map_err(|e| io::Error::other(format!("serialize mounts: {e}")))?;
+        let network_json = serde_json::to_string(&self.network)
+            .map_err(|e| io::Error::other(format!("serialize network: {e}")))?;
 
-        let status = Command::new(exe)
+        let mut child = Command::new(exe)
             .env(BOOT_ENV, "1")
             .env("AILOY_KRUN_KERNEL", &self.kernel)
             .env("AILOY_KRUN_ROOTFS", &self.rootfs)
             .env("AILOY_KRUN_UPPER", &self.upper)
             .env("AILOY_KRUN_CONSOLE", &console_path)
             .env("AILOY_KRUN_B64", &b64)
+            .env("AILOY_KRUN_VCPUS", self.vcpus.to_string())
+            .env("AILOY_KRUN_MEMORY_MIB", self.memory_mib.to_string())
+            .env("AILOY_KRUN_NETWORK", &network_json)
             .env(MOUNTS_ENV, &mounts_json)
-            .status()?;
+            .spawn()?;
+
+        // Bound the boot child by wall-clock: a runaway guest command otherwise
+        // hangs the whole exec forever. Poll `try_wait` to a deadline, then kill.
+        let secs = timeout.unwrap_or(DEFAULT_TIMEOUT_SECS);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        let (status, timed_out) = loop {
+            if let Some(status) = child.try_wait()? {
+                break (status, false);
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let status = child.wait()?;
+                break (status, true);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
 
         let raw = std::fs::read_to_string(&console_path).unwrap_or_default();
-        Ok(parse_output(&raw, status.code()))
+        let mut out = parse_output(&raw, status.code());
+        out.timed_out = timed_out;
+        Ok(out)
     }
 }
 
@@ -247,7 +446,7 @@ impl Console for Sandbox {
         &self,
         program: String,
         args: Vec<String>,
-        _timeout: Option<u64>,
+        timeout: Option<u64>,
     ) -> anyhow::Result<ExecResult> {
         let cmd = if program == "sh" && args.len() == 2 && args[0] == "-c" {
             args[1].clone()
@@ -256,14 +455,14 @@ impl Console for Sandbox {
         };
         let _guard = self.exec_lock.lock().await;
         let sb = self.clone();
-        let out = tokio::task::spawn_blocking(move || sb.exec(&cmd))
+        let out = tokio::task::spawn_blocking(move || sb.exec(&cmd, timeout))
             .await
             .map_err(|e| anyhow::anyhow!("krun exec join: {e}"))??;
         Ok(ExecResult {
             stdout: out.stdout,
             stderr: String::new(),
             exit_code: out.exit_code,
-            timed_out: false,
+            timed_out: out.timed_out,
         })
     }
 }
@@ -309,12 +508,39 @@ pub fn boot_if_requested() {
     let mounts: Vec<MountWire> =
         serde_json::from_str(&get(MOUNTS_ENV)).unwrap_or_else(|e| panic!("parse {MOUNTS_ENV}: {e}"));
 
-    let script = format!("echo {b64} | base64 -d > /run.sh; sh /run.sh");
+    // The payload can be large (e.g. a `write` embedding base64 file bytes), so
+    // it CANNOT ride in the exec argv — msb_krun places exec args in the kernel
+    // cmdline, which has a hard size limit (`TooLarge`). Instead, decode it to a
+    // host file and carry it in over a dedicated virtio-fs control mount; the
+    // exec argv then stays a tiny fixed bootstrap.
+    let payload = base64::engine::general_purpose::STANDARD
+        .decode(&b64)
+        .unwrap_or_else(|e| panic!("decode AILOY_KRUN_B64: {e}"));
+    let ctrl_dir = std::env::temp_dir().join(format!("ailoy-ctrl-{}", std::process::id()));
+    std::fs::create_dir_all(&ctrl_dir).unwrap_or_else(|e| panic!("create ctrl dir: {e}"));
+    std::fs::write(ctrl_dir.join("run.sh"), &payload)
+        .unwrap_or_else(|e| panic!("write ctrl run.sh: {e}"));
+    let ctrl_backend = VolumeSpec::Local { host: ctrl_dir }
+        .build()
+        .unwrap_or_else(|e| panic!("build ctrl volume: {e}"));
+
+    let bootstrap = "mkdir -p /.ailoyctrl; mount -t virtiofs ailoyctrl /.ailoyctrl; sh /.ailoyctrl/run.sh";
+
+    // Resource sizing travels from the parent's `Sandbox` via env.
+    let vcpus: u8 = std::env::var("AILOY_KRUN_VCPUS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_VCPUS);
+    let memory_mib: u32 = std::env::var("AILOY_KRUN_MEMORY_MIB")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_MEMORY_MIB);
 
     let mut builder = VmBuilder::new()
-        .machine(|m| m.vcpus(1).memory_mib(512))
+        .machine(|m| m.vcpus(vcpus).memory_mib(memory_mib as usize))
         .kernel(|k| k.krunfw_path(&kernel))
         .fs(|fs| fs.root(&rootfs))
+        .fs(move |fs| fs.tag("ailoyctrl").custom(ctrl_backend))
         .disk(|d| d.path(&upper).format(DiskImageFormat::Raw))
         .console(|c| c.output(&console));
 
@@ -329,6 +555,39 @@ pub fn boot_if_requested() {
         builder = builder.fs(move |fs| fs.tag(&tag).custom(backend));
     }
 
+    // Guest networking. An in-process smoltcp userspace stack NATs guest egress
+    // to the host under the posture's policy; it is driven by a tokio runtime
+    // that must outlive the VM. `enter()` below diverges (never unwinds,
+    // `_exit`s on guest shutdown), so these guards live for the VM's lifetime.
+    let posture: NetworkPosture = serde_json::from_str(
+        &std::env::var("AILOY_KRUN_NETWORK").unwrap_or_default(),
+    )
+    .unwrap_or_default();
+    let mut net_prelude = String::new();
+    let _net_guard: Option<(tokio::runtime::Runtime, microsandbox_network::network::SmoltcpNetwork)>;
+    if posture.reach == SandboxNetwork::Disabled {
+        _net_guard = None;
+    } else {
+        // The smoltcp stack's TLS/DNS machinery expects a rustls crypto provider.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let mut netcfg = microsandbox_network::config::NetworkConfig::default();
+        netcfg.policy = posture.policy();
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap_or_else(|e| panic!("ailoy krun: net runtime: {e}"));
+        let mut stack = microsandbox_network::network::SmoltcpNetwork::new(netcfg, 0);
+        stack.start(rt.handle().clone());
+        let guest_mac = stack.guest_mac();
+        let backend = stack.take_backend();
+        net_prelude = guest_net_setup(&stack.guest_env_vars());
+        builder = builder.net(move |n| n.mac(guest_mac).custom(backend));
+        _net_guard = Some((rt, stack));
+    }
+
+    // The guest configures eth0 (if networking is on) before running the payload.
+    let script = format!("{net_prelude}{bootstrap}");
+
     let result = builder
         .exec(|e| e.path("/bin/sh").args(["-c", script.as_str()]))
         .build()
@@ -340,6 +599,39 @@ pub fn boot_if_requested() {
             std::process::exit(1);
         }
     }
+}
+
+/// Emit the guest shell commands that bring up `eth0` with the static IPv4
+/// address, gateway, and DNS the smoltcp stack assigned (carried in the stack's
+/// guest env vars as `addr=<ip>/30,gw=<gw>,dns=<gw>`). The base rootfs has no
+/// network agent, so the guest must configure the interface itself.
+fn guest_net_setup(env_vars: &[(String, String)]) -> String {
+    for (_key, val) in env_vars {
+        // The IPv4 entry is the one carrying both `addr=` and `gw=`.
+        if !(val.contains("addr=") && val.contains("gw=")) {
+            continue;
+        }
+        let mut addr = None;
+        let mut gw = None;
+        for part in val.split(',') {
+            if let Some(a) = part.strip_prefix("addr=") {
+                addr = Some(a);
+            } else if let Some(g) = part.strip_prefix("gw=") {
+                gw = Some(g);
+            }
+        }
+        if let (Some(addr), Some(gw)) = (addr, gw) {
+            // Must be a single line: this is spliced into the exec argv, which
+            // msb_krun writes to the kernel cmdline (newlines → `InvalidAscii`).
+            return format!(
+                "ip link set eth0 up 2>/dev/null; \
+                 ip addr add {addr} dev eth0 2>/dev/null; \
+                 ip route add default via {gw} dev eth0 2>/dev/null; \
+                 printf 'nameserver {gw}\\n' > /etc/resolv.conf 2>/dev/null; "
+            );
+        }
+    }
+    String::new()
 }
 
 fn strip_ansi(s: &str) -> String {
@@ -373,11 +665,16 @@ fn parse_output(raw: &str, child_exit: Option<i32>) -> ExecOutput {
                 .and_then(|t| t.trim().lines().next())
                 .and_then(|n| n.trim().parse::<i32>().ok())
                 .unwrap_or(-1);
-            ExecOutput { stdout, exit_code }
+            ExecOutput {
+                stdout,
+                exit_code,
+                timed_out: false,
+            }
         }
         None => ExecOutput {
             stdout: clean.trim().to_string(),
             exit_code: child_exit.unwrap_or(-1),
+            timed_out: false,
         },
     }
 }
