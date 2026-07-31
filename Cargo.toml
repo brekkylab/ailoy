@@ -27,25 +27,30 @@ path = "src/lib.rs"
 
 [features]
 default = []
+# The sandbox runenv adds cortex's krun binding (attach the workspace to a guest
+# over virtio-fs) plus the in-process VM machinery. cortex itself and its VFS
+# providers are always on (see the dependency below), so only the binding and
+# VM crates are gated here.
 sandbox = [
-    "dep:cortex",
     "cortex/krun",
-    "cortex/s3",
     "dep:msb_krun",
     "dep:microsandbox-network",
     "dep:rustls",
 ]
-# Run the local (no-VM) runenv against a cortex `Workspace` mounted on the host
-# over FUSE, so an agent's shell sees the same tree a sandboxed one would. Needs
-# a libfuse provider at build time (macFUSE / FUSE-T on macOS, /dev/fuse on
-# Linux); see cortex's `fuse` feature.
-local-fuse = ["dep:cortex", "cortex/fuse", "cortex/s3"]
+# The local (no-VM) runenv adds cortex's host-FUSE binding, so an agent's shell
+# sees the same tree a sandboxed one would. Needs a libfuse provider at build
+# time (macFUSE / FUSE-T on macOS, /dev/fuse on Linux); see cortex's `fuse`.
+local-fuse = ["cortex/fuse"]
 
 [dependencies]
 # cortex provides the VFS (Mountable/S3Volume/NotionVolume + PosixFs ->
 # DynFileSystem); ailoy's `krun` module boots the VM and mounts it. Pinned to the
 # adapter-restructure merge (PosixFs + krun/fuse/fuse-t bindings, VolumeSpec).
-cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "d32c0d6ef54873f0f9420a0d974810487339ecfb", optional = true }
+# Always on: every runenv (sandbox or local) is built on cortex's
+# `Workspace`/`VolumeSpec`, and every VFS provider must be constructible whatever
+# the runenv, so `s3`/`notion` are default features. The heavy *interface
+# bindings* (krun/fuse/fuse-t) stay gated behind the runenv features above.
+cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "d32c0d6ef54873f0f9420a0d974810487339ecfb", features = ["s3", "notion"] }
 msb_krun = { version = "=0.1.25", features = ["blk", "net"], optional = true }
 # Guest outbound networking: an in-process smoltcp userspace TCP/IP stack that
 # NATs guest egress to the host (no external passt/gvproxy). Attached to the VM
