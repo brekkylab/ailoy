@@ -40,7 +40,14 @@ use crate::runenv::{Console, ExecResult};
 /// that already ships `python3` and `uv` needs only the last two.
 /// `SandboxNetwork::Public` also works and is the blunt version of the same
 /// grant. `sandbox_setup_under_domain_allowlist`, in the parent module's tests,
-/// runs this script against a real VM under exactly the posture above.
+/// runs this script against a real VM under exactly the posture above. It is
+/// `#[ignore]`d because it installs from three services this repo does not
+/// control, so changing either the posture above or the script below means
+/// running it by hand:
+///
+/// ```text
+/// cargo test --features sandbox --lib -- --ignored sandbox_setup_under_domain_allowlist
+/// ```
 const SETUP_CMD: &str = r#"set -e
 AILOY_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/ailoy"
 mkdir -p "$AILOY_CACHE/bin"

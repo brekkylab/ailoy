@@ -278,8 +278,19 @@ mod tests {
     /// reach, or this would pass just as well against an accidentally-open
     /// policy. `test_host_only_blocks_public_egress` covers the other baseline:
     /// that `HostOnly` on its own reaches nothing outward.
+    ///
+    /// Ignored for the same reason the web_search tests are: it leans on three
+    /// services this repo does not control, and one of them is a moving target
+    /// — the setup script asks GitHub for the *latest* uv release, so a change
+    /// to that release breaks this test without anything here changing. Run it
+    /// when the posture or the setup script moves:
+    ///
+    /// ```text
+    /// cargo test --features sandbox --lib -- --ignored sandbox_setup_under_domain_allowlist
+    /// ```
     #[cfg(feature = "sandbox")]
     #[tokio::test]
+    #[ignore = "slow: boots a VM and installs from apt, GitHub, and PyPI"]
     async fn sandbox_setup_under_domain_allowlist() {
         use crate::runenv::{SandboxBuilder, SandboxNetwork};
 
