@@ -21,8 +21,9 @@ use wreq::dns::{Addrs, GaiResolver, Name, Resolve, Resolving};
 /// gated later by [`PublicOnlyResolver`], which is the only place its actual
 /// addresses are known.
 ///
-/// Accepts both spellings of an IPv6 literal: `http::Uri::host` keeps the
-/// brackets (`[::1]`), `url::Url::host_str` strips them.
+/// Strips the brackets an IPv6 literal is written with. Both callers hand them
+/// over — `url::Url::host_str` and `http::Uri::host` each return `[::1]` rather
+/// than `::1` — and `IpAddr` parses neither spelling with them attached.
 pub fn check_host(host: &str) -> Result<(), String> {
     let bare = host
         .strip_prefix('[')
@@ -162,6 +163,12 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
     // documentation; 2001::/23 IETF protocol assignments; and 2002::/16 6to4.
     // The last two are worth blocking because Teredo and 6to4 each embed an
     // IPv4 address, so an internal target can ride inside one.
+    //
+    // 64:ff9b:1::/48 is here for the same embedding reason but is refused
+    // outright rather than unwrapped. RFC 8215 reserves it for network-specific
+    // NAT64 prefixes of any length up to /96, so the embedded address does not
+    // sit at a fixed offset the way it does under the well-known prefix, and
+    // there is no address in the range worth reaching anyway.
     let s = ip.segments();
     !((s[0] == 0 && s[1] == 0 && s[2] == 0 && s[3] == 0)
         || (s[0] & 0xfe00) == 0xfc00
@@ -169,7 +176,8 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
         || (s[0] & 0xffc0) == 0xfec0
         || (s[0] == 0x2001 && s[1] == 0x0db8)
         || (s[0] == 0x2001 && s[1] < 0x0200)
-        || s[0] == 0x2002)
+        || s[0] == 0x2002
+        || (s[0] == 0x0064 && s[1] == 0xff9b && s[2] == 0x0001))
 }
 
 /// The IPv4 address embedded in a NAT64 well-known-prefix address
@@ -215,6 +223,11 @@ mod tests {
             "[2001::1]",        // Teredo
             "[2002:7f00:1::1]", // 6to4-wrapped 127.0.0.1
             "[::7f00:1]",       // IPv4-compatible loopback
+            // RFC 8215 network-specific NAT64. The prefix may be anywhere up to
+            // /96, so the embedded address moves; the whole /48 is refused
+            // rather than unwrapped, which these two spellings pin.
+            "[64:ff9b:1::7f00:1]",
+            "[64:ff9b:1:ffff::a9fe:a9fe]",
         ] {
             assert!(
                 check_host(host).is_err(),
@@ -318,8 +331,12 @@ mod tests {
     }
 
     /// The NAT64 unwrap must not turn a public embedded address into a block.
+    /// Only the well-known prefix unwraps, so this stays scoped to it: the
+    /// neighbouring `64:ff9b:1::/48` is refused wholesale, and `64:ff9c::/32`
+    /// is an ordinary public range that must not be caught by either rule.
     #[test]
     fn nat64_wrapping_a_public_address_stays_allowed() {
         assert!(check_host("[64:ff9b::808:808]").is_ok());
+        assert!(check_host("[64:ff9c::1]").is_ok());
     }
 }
