@@ -21,14 +21,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use cortex::VolumeSpec;
+use cortex::{PosixFs, VolumeSpec, Workspace, WorkspaceSpec};
 use msb_krun::{DiskImageFormat, VmBuilder};
 use serde::{Deserialize, Serialize};
 
 use super::{Console, ExecResult};
 
 const BOOT_ENV: &str = "AILOY_KRUN_BOOT";
-const MOUNTS_ENV: &str = "AILOY_KRUN_MOUNTS";
+const WORKSPACE_ENV: &str = "AILOY_KRUN_WORKSPACE";
 const OUT_MARKER: &str = "__AILOY_OUT__";
 const RC_MARKER: &str = "__AILOY_RC__";
 
@@ -110,15 +110,18 @@ fn verify_sha256(file: &Path, expected: &str) {
     }
 }
 
-/// One volume mounted into the sandbox: a cortex volume at a guest path.
+/// The cortex workspace mounted into the sandbox: one unified tree served as a
+/// single virtio-fs device at `guest_root`. Its sub-mounts (`WorkspaceSpec`)
+/// appear under that root, routed internally by cortex — ailoy carries the spec
+/// opaquely across the process boundary.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct MountWire {
+struct WorkspaceWire {
     /// virtio-fs device tag (assigned by ailoy).
     tag: String,
-    /// Absolute guest path to mount at.
-    guest_path: String,
-    /// The cortex volume to realize on the sandbox side (opaque to ailoy).
-    spec: VolumeSpec,
+    /// Absolute guest path the unified tree mounts at.
+    guest_root: String,
+    /// The workspace to realize on the sandbox side.
+    spec: WorkspaceSpec,
 }
 
 /// Result of running one command in the sandbox.
@@ -280,8 +283,9 @@ pub struct Sandbox {
     kernel: PathBuf,
     rootfs: PathBuf,
     upper: PathBuf,
-    /// Cortex volumes to mount, as `(guest_path, spec)`.
-    volumes: Vec<(String, VolumeSpec)>,
+    /// The cortex workspace to mount, as `(guest_root, spec)`. The whole tree is
+    /// served as one virtio-fs device; sub-mounts appear under `guest_root`.
+    workspace: Option<(String, WorkspaceSpec)>,
     /// Guest vCPU count.
     vcpus: u8,
     /// Guest memory in MiB.
@@ -309,7 +313,7 @@ impl Sandbox {
             kernel: resolve_kernel()?,
             rootfs: ensure_rootfs()?,
             upper,
-            volumes: Vec::new(),
+            workspace: None,
             vcpus: DEFAULT_VCPUS,
             memory_mib: DEFAULT_MEMORY_MIB,
             network: NetworkPosture::default(),
@@ -350,24 +354,26 @@ impl Sandbox {
         self
     }
 
-    /// Mount a cortex volume at `guest_path`. Any [`cortex::VolumeSpec`] works —
-    /// ailoy stays agnostic to the volume kind.
-    pub fn mount(mut self, guest_path: impl Into<String>, spec: VolumeSpec) -> Self {
-        self.volumes.push((guest_path.into(), spec));
+    /// Mount a cortex [`WorkspaceSpec`] as one unified tree at `guest_root`. The
+    /// workspace's sub-mounts appear under that root (routed internally by
+    /// cortex), served as a single virtio-fs device — the same tree a WebDAV or
+    /// host-FUSE frontend built from the same spec would show.
+    pub fn with_workspace(
+        mut self,
+        guest_root: impl Into<String>,
+        spec: WorkspaceSpec,
+    ) -> Self {
+        self.workspace = Some((guest_root.into(), spec));
         self
     }
 
-    /// Assign virtio-fs tags and produce the wire mounts.
-    fn wire_mounts(&self) -> Vec<MountWire> {
-        self.volumes
-            .iter()
-            .enumerate()
-            .map(|(i, (guest_path, spec))| MountWire {
-                tag: format!("vol{i}"),
-                guest_path: guest_path.clone(),
-                spec: spec.clone(),
-            })
-            .collect()
+    /// The workspace mount as wire data (a fixed device tag), if any.
+    fn wire_workspace(&self) -> Option<WorkspaceWire> {
+        self.workspace.as_ref().map(|(guest_root, spec)| WorkspaceWire {
+            tag: "ailoyws".to_string(),
+            guest_root: guest_root.clone(),
+            spec: spec.clone(),
+        })
     }
 
     /// Boot a fresh microVM, run `cmd`, and capture its output. `/data` is the
@@ -376,11 +382,11 @@ impl Sandbox {
         let console = tempfile::NamedTempFile::new()?;
         let console_path = console.path().to_path_buf();
         let exe = std::env::current_exe()?;
-        let mounts = self.wire_mounts();
-        let payload = build_payload(cmd, &mounts);
+        let ws = self.wire_workspace();
+        let payload = build_payload(cmd, ws.as_ref());
         let b64 = base64::engine::general_purpose::STANDARD.encode(payload);
-        let mounts_json = serde_json::to_string(&mounts)
-            .map_err(|e| io::Error::other(format!("serialize mounts: {e}")))?;
+        let workspace_json = serde_json::to_string(&ws)
+            .map_err(|e| io::Error::other(format!("serialize workspace: {e}")))?;
         let network_json = serde_json::to_string(&self.network)
             .map_err(|e| io::Error::other(format!("serialize network: {e}")))?;
 
@@ -394,7 +400,7 @@ impl Sandbox {
             .env("AILOY_KRUN_VCPUS", self.vcpus.to_string())
             .env("AILOY_KRUN_MEMORY_MIB", self.memory_mib.to_string())
             .env("AILOY_KRUN_NETWORK", &network_json)
-            .env(MOUNTS_ENV, &mounts_json)
+            .env(WORKSPACE_ENV, &workspace_json)
             .spawn()?;
 
         // Bound the boot child by wall-clock: a runaway guest command otherwise
@@ -467,18 +473,18 @@ impl Console for Sandbox {
     }
 }
 
-/// Guest program: mount the upper at `/data` (formatting on first use) and each
-/// cortex volume at its guest path, then run the command between markers,
+/// Guest program: mount the upper at `/data` (formatting on first use) and the
+/// cortex workspace at its guest root, then run the command between markers,
 /// syncing before shutdown so upper writes persist.
-fn build_payload(cmd: &str, mounts: &[MountWire]) -> String {
-    let mut vol_mounts = String::new();
-    for m in mounts {
-        vol_mounts.push_str(&format!(
+fn build_payload(cmd: &str, workspace: Option<&WorkspaceWire>) -> String {
+    let vol_mounts = match workspace {
+        Some(w) => format!(
             "mkdir -p {g}\nmount -t virtiofs {tag} {g} 2>/dev/null\n",
-            g = m.guest_path,
-            tag = m.tag
-        ));
-    }
+            g = w.guest_root,
+            tag = w.tag
+        ),
+        None => String::new(),
+    };
     format!(
         "mkdir -p /data\n\
          mount /dev/vda /data 2>/dev/null || ( (mkfs.ext4 -F -q /dev/vda || mkfs.vfat /dev/vda) >/dev/null 2>&1; sync; mount /dev/vda /data 2>/dev/null )\n\
@@ -505,8 +511,8 @@ pub fn boot_if_requested() {
     let upper = PathBuf::from(get("AILOY_KRUN_UPPER"));
     let console = PathBuf::from(get("AILOY_KRUN_CONSOLE"));
     let b64 = get("AILOY_KRUN_B64");
-    let mounts: Vec<MountWire> =
-        serde_json::from_str(&get(MOUNTS_ENV)).unwrap_or_else(|e| panic!("parse {MOUNTS_ENV}: {e}"));
+    let workspace: Option<WorkspaceWire> = serde_json::from_str(&get(WORKSPACE_ENV))
+        .unwrap_or_else(|e| panic!("parse {WORKSPACE_ENV}: {e}"));
 
     // The payload can be large (e.g. a `write` embedding base64 file bytes), so
     // it CANNOT ride in the exec argv — msb_krun places exec args in the kernel
@@ -544,14 +550,17 @@ pub fn boot_if_requested() {
         .disk(|d| d.path(&upper).format(DiskImageFormat::Raw))
         .console(|c| c.output(&console));
 
-    // Realize each cortex volume and attach it as a virtio-fs device. cortex
-    // maps the spec to a concrete backend — ailoy stays volume-agnostic.
-    for m in mounts {
-        let backend = m.spec.build().unwrap_or_else(|e| {
-            eprintln!("ailoy krun: build volume {:?}: {e}", m.tag);
+    // Realize the whole cortex workspace as one virtio-fs device: `from_spec`
+    // rebuilds the unified tree, `PosixFs` binds it to msb_krun's `DynFileSystem`.
+    // The guest's single mount at `guest_root` sees every sub-mount, routed
+    // internally by cortex.
+    if let Some(w) = workspace {
+        let ws = Workspace::from_spec(&w.spec).unwrap_or_else(|e| {
+            eprintln!("ailoy krun: build workspace: {e}");
             std::process::exit(1);
         });
-        let tag = m.tag.clone();
+        let backend: Box<dyn msb_krun::DynFileSystem + Send + Sync> = Box::new(PosixFs::new(ws));
+        let tag = w.tag.clone();
         builder = builder.fs(move |fs| fs.tag(&tag).custom(backend));
     }
 
