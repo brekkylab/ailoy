@@ -722,7 +722,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 [[package]]
 name = "cortex"
 version = "0.1.0"
-source = "git+https://github.com/brekkylab/cortex.git?rev=d32c0d6ef54873f0f9420a0d974810487339ecfb#d32c0d6ef54873f0f9420a0d974810487339ecfb"
+source = "git+https://github.com/brekkylab/cortex.git?rev=60b6477bbbd405b22d3ebc332019f6b9be12d30b#60b6477bbbd405b22d3ebc332019f6b9be12d30b"
 dependencies = [
  "cc",
  "chrono",
