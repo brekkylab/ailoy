@@ -101,7 +101,13 @@ async fn download(
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("request failed: {e}"))?;
+        // A refusal from the resolver arrives wrapped in a connect error whose
+        // `Display` drops it, so it has to be recovered rather than formatted.
+        // Without this a blocked name reports a plain connection failure and is
+        // indistinguishable from a target that is merely down.
+        .map_err(|e| {
+            net_guard::blocked_reason(&e).unwrap_or_else(|| format!("request failed: {e}"))
+        })?;
     let status = resp.status().as_u16();
     let final_url = resp.uri().to_string();
     let content_type = resp
@@ -352,7 +358,7 @@ async fn fetch_one(
     // parsing, so `http://2130706433/` arrives here as `127.0.0.1`.
     if let Err(e) = net_guard::check_host(&host) {
         log::warn!("web_fetch: refused {url_str}: {e}");
-        return crate::to_value!({"url": url_str, "error": e});
+        return crate::to_value!({"url": url_str, "error": e.to_string()});
     }
     log::debug!("web_fetch: fetching {url_str}");
 
@@ -615,6 +621,61 @@ mod tests {
         );
     }
 
+    /// The same refusal reached by name instead of by literal. It travels a
+    /// different path — the resolver rather than the up-front check — and the
+    /// connector wraps it in an error whose `Display` drops it, so without the
+    /// recovery in `download` this reports a bare connect failure. The two must
+    /// read alike: a model retries a connection that failed and gives up on one
+    /// that policy refused, and this refusal will never succeed.
+    #[tokio::test]
+    async fn fetch_one_refuses_a_name_resolving_inward_with_the_same_error() {
+        use std::sync::{Arc, Mutex};
+
+        use axum::{Router, routing::get};
+
+        let hits = Arc::new(Mutex::new(0u32));
+        let count = hits.clone();
+        let app = Router::new().route(
+            "/admin",
+            get(move || {
+                let count = count.clone();
+                async move {
+                    *count.lock().unwrap() += 1;
+                    "INTERNAL-ONLY db_password=hunter2"
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+
+        // `localhost` clears the literal check and is refused by the resolver,
+        // which is the whole point of routing it by name.
+        let result = fetch_one(
+            WebFetchState::new(),
+            format!("http://localhost:{port}/admin"),
+            0,
+            DEFAULT_BODY_CHARS,
+            BodyFormat::Text,
+        )
+        .await;
+
+        let error = result
+            .pointer("/error")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(
+            error.starts_with("blocked: "),
+            "a name refused by the resolver must report like a refused literal, \
+             got {result:?}"
+        );
+        assert_eq!(
+            *hits.lock().unwrap(),
+            0,
+            "the request must never reach the service"
+        );
+    }
+
     /// A public-looking start URL that redirects inward must fail at the hop.
     /// The start host is a name so it clears the literal check, and the resolve
     /// override aims it at the local server — the only way to exercise the
@@ -678,9 +739,14 @@ mod tests {
             1,
             "the first hop must be served, otherwise this test proves nothing"
         );
+        let error = result
+            .pointer("/error")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
         assert!(
-            result.pointer("/error").is_some(),
-            "following the hop must fail, got {result:?}"
+            error.starts_with("blocked: "),
+            "following the hop must fail as a refusal, not as a bare transport \
+             error, got {result:?}"
         );
         assert_eq!(
             *meta_hits.lock().unwrap(),

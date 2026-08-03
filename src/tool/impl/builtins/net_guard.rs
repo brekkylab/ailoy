@@ -16,6 +16,44 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use wreq::dns::{Addrs, GaiResolver, Name, Resolve, Resolving};
 
+/// A destination this module refused.
+///
+/// A concrete type rather than a string because a refusal raised inside the
+/// resolver has to be recognized again after the connector has wrapped it,
+/// which [`blocked_reason`] does by downcast. Matching on the message text
+/// would work today and break the moment someone rewords it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Blocked(String);
+
+impl std::fmt::Display for Blocked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "blocked: {}", self.0)
+    }
+}
+
+impl std::error::Error for Blocked {}
+
+/// Find a [`Blocked`] in an error's source chain.
+///
+/// `Display` on a client error stops one level in, while a refusal from
+/// [`PublicOnlyResolver`] sits three deep — under the connect error and the
+/// DNS error the connector wraps it in. Formatting the outer error therefore
+/// reports a plain connection failure, which reads as a target that happens to
+/// be down rather than one that will never be reachable. A model told the first
+/// retries; told the second it stops. Walking the chain is what keeps a name
+/// refused by the resolver reporting the same way as an IP literal refused
+/// before the connection.
+pub fn blocked_reason(err: &(dyn std::error::Error + 'static)) -> Option<String> {
+    let mut source = Some(err);
+    while let Some(e) = source {
+        if let Some(blocked) = e.downcast_ref::<Blocked>() {
+            return Some(blocked.to_string());
+        }
+        source = e.source();
+    }
+    None
+}
+
 /// Reject a host that is written as an IP literal pointing anywhere other than
 /// the public internet. A host written as a name returns `Ok` here and is
 /// gated later by [`PublicOnlyResolver`], which is the only place its actual
@@ -24,13 +62,13 @@ use wreq::dns::{Addrs, GaiResolver, Name, Resolve, Resolving};
 /// Strips the brackets an IPv6 literal is written with. Both callers hand them
 /// over — `url::Url::host_str` and `http::Uri::host` each return `[::1]` rather
 /// than `::1` — and `IpAddr` parses neither spelling with them attached.
-pub fn check_host(host: &str) -> Result<(), String> {
+pub fn check_host(host: &str) -> Result<(), Blocked> {
     let bare = host
         .strip_prefix('[')
         .and_then(|h| h.strip_suffix(']'))
         .unwrap_or(host);
     match bare.parse::<IpAddr>() {
-        Ok(ip) if !is_public(ip) => Err(format!("blocked: {ip} is not a public address")),
+        Ok(ip) if !is_public(ip) => Err(Blocked(format!("{ip} is not a public address"))),
         _ => Ok(()),
     }
 }
@@ -38,34 +76,35 @@ pub fn check_host(host: &str) -> Result<(), String> {
 /// Reject a redirect hop by scheme and host. Separate from [`check_host`] so
 /// the per-hop rule — including the scheme, which a `Location` header controls
 /// just as freely as the host — is one testable function.
-pub fn check_redirect_target(scheme: Option<&str>, host: Option<&str>) -> Result<(), String> {
+pub fn check_redirect_target(scheme: Option<&str>, host: Option<&str>) -> Result<(), Blocked> {
     match scheme {
         Some("http") | Some("https") => {}
-        Some(other) => return Err(format!("blocked: unsupported redirect scheme: {other}")),
-        None => return Err("blocked: redirect target has no scheme".to_string()),
+        Some(other) => return Err(Blocked(format!("unsupported redirect scheme: {other}"))),
+        None => return Err(Blocked("redirect target has no scheme".to_string())),
     }
     match host {
         Some(h) => check_host(h),
-        None => Err("blocked: redirect target has no host".to_string()),
+        None => Err(Blocked("redirect target has no host".to_string())),
     }
 }
 
 /// Keep only the globally routable addresses in `addrs`. Returns `Err` when
-/// nothing survives, so the caller reports a blocked host rather than an
-/// opaque connection failure.
+/// nothing survives, which the connector buries under two layers of its own
+/// error; [`blocked_reason`] is what digs it back out so the caller reports a
+/// blocked host rather than an opaque connection failure.
 fn filter_public(
     host: &str,
     addrs: impl Iterator<Item = SocketAddr>,
-) -> Result<Vec<SocketAddr>, String> {
+) -> Result<Vec<SocketAddr>, Blocked> {
     let (kept, dropped): (Vec<_>, Vec<_>) = addrs.partition(|addr| is_public(addr.ip()));
     if !dropped.is_empty() {
         let ips: Vec<IpAddr> = dropped.iter().map(|addr| addr.ip()).collect();
         log::warn!("net_guard: dropped non-public address(es) for '{host}': {ips:?}");
     }
     if kept.is_empty() {
-        return Err(format!(
-            "blocked: '{host}' resolves only to non-public addresses"
-        ));
+        return Err(Blocked(format!(
+            "'{host}' resolves only to non-public addresses"
+        )));
     }
     Ok(kept)
 }
@@ -316,7 +355,46 @@ mod tests {
         ];
         let err = filter_public("rebind.example", addrs.into_iter())
             .expect_err("all-internal answer must be refused");
-        assert!(err.contains("rebind.example"), "error text: {err}");
+        let text = err.to_string();
+        assert!(text.contains("rebind.example"), "error text: {text}");
+    }
+
+    /// The recovery `web_fetch` depends on: a refusal wrapped by layers that do
+    /// not print their source has to stay findable. Two synthetic wrappers stand
+    /// in for the connector's connect-and-DNS pair, so this holds the contract
+    /// even if wreq restructures its errors.
+    #[test]
+    fn blocked_reason_digs_a_refusal_out_of_a_source_chain() {
+        #[derive(Debug)]
+        struct Opaque(Box<dyn std::error::Error + Send + Sync>);
+        impl std::fmt::Display for Opaque {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                // Deliberately drops the source, which is what hides the
+                // refusal in the real chain.
+                write!(f, "client error (Connect)")
+            }
+        }
+        impl std::error::Error for Opaque {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(self.0.as_ref())
+            }
+        }
+
+        let refusal = check_host("127.0.0.1").expect_err("loopback must be refused");
+        let wrapped = Opaque(Box::new(Opaque(Box::new(refusal))));
+        assert_eq!(
+            blocked_reason(&wrapped).as_deref(),
+            Some("blocked: 127.0.0.1 is not a public address")
+        );
+        assert_eq!(wrapped.to_string(), "client error (Connect)");
+    }
+
+    /// An unrelated failure must not be reported as a policy refusal — a target
+    /// that is genuinely down is worth retrying, and a blocked one is not.
+    #[test]
+    fn blocked_reason_ignores_an_ordinary_error() {
+        let err = std::io::Error::other("connection reset");
+        assert_eq!(blocked_reason(&err), None);
     }
 
     #[test]
