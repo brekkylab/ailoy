@@ -242,7 +242,7 @@ mod tests {
             agent::{AgentBuilder, AgentProvider, get_agent_providers_mut},
             lang_model::{LangModelProvider, get_lm_providers_mut},
             message::{FinishReason, Message, Part, Role},
-            runenv::SandboxBuilder,
+            runenv::{SandboxBuilder, SandboxNetwork},
             tool::{ToolProvider, get_tool_providers_mut},
         };
 
@@ -397,8 +397,21 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
             );
         }
 
+        // `python_repl` is one of the tools below, and its setup fetches uv and
+        // any wheel it installs, so the guest needs those destinations named.
+        // The image already ships python3, so the apt step is skipped and
+        // `ubuntu.com` is not among them. Which tool the model reaches for is
+        // its own choice -- today it follows the skill to `python -m timeit` in
+        // the shell -- so this is what keeps the other choice from failing on a
+        // posture the test never mentioned.
         let sandbox = SandboxBuilder::new()
             .image("python:3.12-slim")
+            .network(SandboxNetwork::HostOnly.with_domain_suffixes([
+                "github.com",            // the uv release
+                "githubusercontent.com", // where that release redirects to
+                "pypi.org",              // uv pip install
+                "pythonhosted.org",      // where the wheels live
+            ]))
             .build()
             .await
             .expect("sandbox creation failed");
