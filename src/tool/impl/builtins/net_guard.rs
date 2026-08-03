@@ -208,6 +208,15 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
     // NAT64 prefixes of any length up to /96, so the embedded address does not
     // sit at a fixed offset the way it does under the well-known prefix, and
     // there is no address in the range worth reaching anyway.
+    //
+    // Then three ranges that carry no embedded address and reach no service:
+    // 100::/64 discards whatever is sent to it, and 3fff::/20 and 5f00::/16 are
+    // reserved for documentation and for SRv6 segment identifiers. None is
+    // routable, so none belongs on the allowed side of a predicate that answers
+    // "is this on the public internet".
+    //
+    // 2001:20::/28 (ORCHIDv2) and 2001:30::/28 (DRIP) need no entry of their
+    // own — both sit inside 2001::/23 above.
     let s = ip.segments();
     !((s[0] == 0 && s[1] == 0 && s[2] == 0 && s[3] == 0)
         || (s[0] & 0xfe00) == 0xfc00
@@ -216,7 +225,10 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
         || (s[0] == 0x2001 && s[1] == 0x0db8)
         || (s[0] == 0x2001 && s[1] < 0x0200)
         || s[0] == 0x2002
-        || (s[0] == 0x0064 && s[1] == 0xff9b && s[2] == 0x0001))
+        || (s[0] == 0x0064 && s[1] == 0xff9b && s[2] == 0x0001)
+        || (s[0] == 0x0100 && s[1] == 0 && s[2] == 0 && s[3] == 0)
+        || (s[0] == 0x3fff && (s[1] & 0xf000) == 0)
+        || s[0] == 0x5f00)
 }
 
 /// The IPv4 address embedded in a NAT64 well-known-prefix address
@@ -267,6 +279,11 @@ mod tests {
             // rather than unwrapped, which these two spellings pin.
             "[64:ff9b:1::7f00:1]",
             "[64:ff9b:1:ffff::a9fe:a9fe]",
+            "[100::1]",           // RFC 6666 discard-only
+            "[3fff::1]",          // RFC 9637 documentation
+            "[3fff:fff:ffff::1]", // top of that /20
+            "[5f00::1]",          // RFC 9602 SRv6 SIDs
+            "[2001:20::1]",       // ORCHIDv2, covered by 2001::/23
         ] {
             assert!(
                 check_host(host).is_err(),
@@ -275,9 +292,19 @@ mod tests {
         }
     }
 
+    /// The addresses just outside the narrower reserved ranges are included so
+    /// a mask that is one bit too wide fails here rather than silently refusing
+    /// traffic that should have gone out.
     #[test]
     fn check_host_allows_public_literals() {
-        for host in ["1.1.1.1", "8.8.8.8", "[2606:4700:4700::1111]"] {
+        for host in [
+            "1.1.1.1",
+            "8.8.8.8",
+            "[2606:4700:4700::1111]",
+            "[100:0:0:1::1]", // outside 100::/64
+            "[3fff:1000::1]", // outside 3fff::/20
+            "[5f01::1]",      // outside 5f00::/16
+        ] {
             assert!(check_host(host).is_ok(), "{host} must be allowed");
         }
     }
