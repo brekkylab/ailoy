@@ -127,10 +127,14 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 mod file_entry;
 mod local;
 #[cfg(feature = "sandbox")]
+mod oci;
+#[cfg(feature = "sandbox")]
 mod sandbox;
 
 pub use file_entry::*;
 pub use local::*;
+#[cfg(feature = "sandbox")]
+pub use oci::pull as pull_image;
 #[cfg(feature = "sandbox")]
 pub use sandbox::*;
 
