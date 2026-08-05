@@ -144,22 +144,63 @@ fn krun_home() -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::other("AILOY_KRUN_HOME and HOME both unset"))
 }
 
-/// Resolve the libkrunfw kernel: `AILOY_KRUN_KERNEL`, else standard installs.
+/// Resolve the libkrunfw kernel: `AILOY_KRUN_KERNEL`, else a known install, else
+/// download the pinned build to `<krun_home>/lib`.
+///
+/// Search order mirrors microsandbox (its own home, then Homebrew/system), by
+/// both the ABI-versioned name it ships (`libkrunfw.5.dylib`) and the plain name
+/// a package manager installs (`libkrunfw.dylib`). Our managed copy is checked
+/// first so a download is reused.
 fn resolve_kernel() -> io::Result<PathBuf> {
     if let Some(k) = std::env::var_os("AILOY_KRUN_KERNEL") {
         return Ok(PathBuf::from(k));
     }
-    let mut candidates = Vec::new();
+
+    let os = std::env::consts::OS;
+    let versioned = microsandbox_utils::libkrunfw_filename(os);
+    let plain = match os {
+        "macos" => "libkrunfw.dylib",
+        "windows" => "libkrunfw.dll",
+        _ => "libkrunfw.so",
+    };
+    let managed = krun_home()?.join("lib").join(&versioned);
+
+    let mut candidates = vec![managed.clone()];
     if let Some(home) = std::env::var_os("HOME") {
-        candidates.push(PathBuf::from(home).join(".microsandbox/lib/libkrunfw.dylib"));
+        let msb_lib = PathBuf::from(home).join(".microsandbox/lib");
+        candidates.push(msb_lib.join(&versioned));
+        candidates.push(msb_lib.join(plain));
     }
-    candidates.push(PathBuf::from("/opt/homebrew/lib/libkrunfw.dylib"));
-    candidates.push(PathBuf::from("/usr/local/lib/libkrunfw.dylib"));
-    candidates.push(PathBuf::from("/usr/lib/libkrunfw.so"));
-    candidates
-        .into_iter()
-        .find(|p| p.exists())
-        .ok_or_else(|| io::Error::other("libkrunfw not found; set AILOY_KRUN_KERNEL"))
+    for dir in ["/opt/homebrew/lib", "/usr/local/lib", "/usr/lib"] {
+        candidates.push(PathBuf::from(dir).join(&versioned));
+        candidates.push(PathBuf::from(dir).join(plain));
+    }
+    if let Some(p) = candidates.into_iter().find(|p| p.exists()) {
+        return Ok(p);
+    }
+
+    download_libkrunfw(&managed)?;
+    Ok(managed)
+}
+
+/// Download libkrunfw for the host arch/OS to `dest` (temp-then-rename so a
+/// partial download is never used). curl-downloaded, so no macOS quarantine to
+/// block `dlopen`. The release is tagged by the microsandbox version
+/// ([`microsandbox_utils::PREBUILT_VERSION`]) — the libkrunfw it bundles matches
+/// the `microsandbox-*` crates we pin.
+fn download_libkrunfw(dest: &Path) -> io::Result<()> {
+    let url = microsandbox_utils::libkrunfw_download_url(
+        microsandbox_utils::PREBUILT_VERSION,
+        std::env::consts::ARCH,
+        std::env::consts::OS,
+    );
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = dest.with_extension("download.tmp");
+    run_cmd(Command::new("curl").args(["-fsSL", &url, "-o"]).arg(&tmp))?;
+    std::fs::rename(&tmp, dest)?;
+    Ok(())
 }
 
 /// Provision (once) and return the base rootfs as a read-only **EROFS** image —
