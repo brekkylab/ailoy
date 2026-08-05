@@ -106,10 +106,10 @@ impl Agent {
     /// skill paths are **not** rewritten, so sub-agent skills are portable
     /// across parents.
     ///
-    /// If `state.history` is empty, a system message synthesised from
-    /// `spec.instruction` and the declared skills table is seeded as the first
-    /// entry.  When `state.history` is non-empty (e.g. resuming a prior
-    /// session) it is taken as-is and no system message is synthesised.
+    /// Unless `state.history` already leads with a [`Role::System`] message, one
+    /// synthesised from `spec.instruction` and the declared skills table is inserted
+    /// at the front; a history that leads with one is taken as-is, so the caller's
+    /// own system message wins.
     pub fn try_with_provider_and_state(
         spec: AgentSpec,
         provider: impl AsRef<str>,
@@ -167,8 +167,9 @@ impl Agent {
         }
 
         // Build the system message: instruction + (optionally) skills table.
-        // Only seeded when the caller didn't supply a pre-existing history.
-        if state.history.is_empty() {
+        // A system message is expected only at index 0; `any` covers a stray one too,
+        // since seeding a second would either shadow theirs or ship both.
+        if !state.history.iter().any(|m| m.role == Role::System) {
             let declared_skills = scan_declared_skills(&spec.files, &spec.skills)?;
             let skills_block = render_skills_table(&declared_skills);
             let system_text = match (spec.instruction.as_deref(), skills_block) {
@@ -178,9 +179,12 @@ impl Agent {
                 (None, None) => None,
             };
             if let Some(text) = system_text {
-                state
-                    .history
-                    .push(Message::new(Role::System).with_contents([Part::text(text)]));
+                // Front: that is where every schema expects a system message, whether
+                // it extracts the first one or sends them in place.
+                state.history.insert(
+                    0,
+                    Message::new(Role::System).with_contents([Part::text(text)]),
+                );
             }
         }
 

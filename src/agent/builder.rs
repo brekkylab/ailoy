@@ -136,8 +136,8 @@ impl AgentBuilder {
     }
 
     /// Seed the agent's [`AgentState::history`] (e.g. for resuming a prior session).
-    /// When non-empty, this overrides the system message that the spec's instruction
-    /// would otherwise produce.
+    /// A leading system message here overrides the one the spec's instruction would
+    /// produce; otherwise the instruction is still seeded, at the front of this history.
     pub fn history(mut self, history: impl IntoIterator<Item = Message>) -> Self {
         self.history = history.into_iter().collect();
         self
@@ -495,5 +495,47 @@ mod tests {
             .build()
             .unwrap();
         assert!(agent.get_context_manager().is_some());
+    }
+
+    fn msg(role: Role, text: &str) -> Message {
+        Message::new(role).with_contents([crate::message::Part::text(text)])
+    }
+
+    #[tokio::test]
+    async fn test_instruction_seeded_into_history_without_system_message() {
+        ensure_dummy_provider();
+        let agent = AgentBuilder::new(TEST_MODEL)
+            .agent_provider(TEST_PROVIDER_NAME)
+            .instruction("You are a test agent.")
+            .history([msg(Role::User, "hello"), msg(Role::Assistant, "hi")])
+            .build()
+            .unwrap();
+
+        let history = agent.get_history();
+        assert_eq!(history.len(), 3);
+        assert_eq!(
+            system_text(&agent).as_deref(),
+            Some("You are a test agent.")
+        );
+        assert_eq!(history[1].role, Role::User);
+        assert_eq!(history[2].role, Role::Assistant);
+    }
+
+    #[tokio::test]
+    async fn test_existing_system_message_is_not_replaced() {
+        ensure_dummy_provider();
+        let agent = AgentBuilder::new(TEST_MODEL)
+            .agent_provider(TEST_PROVIDER_NAME)
+            .instruction("spec instruction")
+            .history([
+                msg(Role::System, "stored instruction"),
+                msg(Role::User, "hello"),
+            ])
+            .build()
+            .unwrap();
+
+        let history = agent.get_history();
+        assert_eq!(history.len(), 2);
+        assert_eq!(system_text(&agent).as_deref(), Some("stored instruction"));
     }
 }
