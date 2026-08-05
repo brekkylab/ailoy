@@ -419,8 +419,8 @@ impl NetworkPosture {
         }
 
         // `Rule::allow_dns()` is narrow — UDP/TCP :53 to the gateway only — and
-        // MUST come first: under deny-by-default a policy without it refuses
-        // every DNS query, including the one for `host.microsandbox.internal`.
+        // MUST come first: under deny-by-default a policy without it refuses every
+        // DNS query, so even an otherwise-allowed egress domain never resolves.
         let mut rules = vec![Rule::allow_dns()];
         if matches!(self.reach, SandboxNetwork::Public) {
             rules.push(Rule::allow_egress(Destination::Group(
