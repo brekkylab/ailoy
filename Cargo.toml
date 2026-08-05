@@ -50,7 +50,7 @@ local-fuse = ["cortex/fuse"]
 # `Workspace`/`VolumeSpec`, and every VFS provider must be constructible whatever
 # the runenv, so `s3`/`notion` are default features. The heavy *interface
 # bindings* (krun/fuse/fuse-t) stay gated behind the runenv features above.
-cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "470d434d005e4d674d7dc56576e79ceb08f9fe36", features = ["s3", "notion"] }
+cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "733ec113828921f78f09e39b71171c69444d8160", features = ["s3", "notion"] }
 msb_krun = { version = "=0.1.25", features = ["blk", "net"], optional = true }
 # Guest outbound networking: an in-process smoltcp userspace TCP/IP stack that
 # NATs guest egress to the host (no external passt/gvproxy). Attached to the VM

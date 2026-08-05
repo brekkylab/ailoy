@@ -62,7 +62,7 @@ dependencies = [
  "ordered-float",
  "parking_lot",
  "png",
- "reqwest 0.13.4",
+ "reqwest",
  "rustls",
  "schemars",
  "scraper",
@@ -722,8 +722,9 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 [[package]]
 name = "cortex"
 version = "0.1.0"
-source = "git+https://github.com/brekkylab/cortex.git?rev=60b6477bbbd405b22d3ebc332019f6b9be12d30b#60b6477bbbd405b22d3ebc332019f6b9be12d30b"
+source = "git+https://github.com/brekkylab/cortex.git?rev=733ec113828921f78f09e39b71171c69444d8160#733ec113828921f78f09e39b71171c69444d8160"
 dependencies = [
+ "async-trait",
  "cc",
  "chrono",
  "fuser",
@@ -731,7 +732,7 @@ dependencies = [
  "msb_krun",
  "object_store",
  "pkg-config",
- "reqwest 0.12.28",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
@@ -1287,7 +1288,7 @@ dependencies = [
  "libc",
  "log",
  "memchr",
- "nix 0.30.1",
+ "nix",
  "num_enum",
  "page_size",
  "parking_lot",
@@ -1736,7 +1737,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots",
 ]
 
 [[package]]
@@ -2396,7 +2396,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "miniz_oxide",
- "nix 0.30.1",
+ "nix",
  "page_size",
  "rustc_version",
  "tokio",
@@ -2478,7 +2478,7 @@ dependencies = [
  "msb_krun_hvf",
  "msb_krun_polly",
  "msb_krun_utils",
- "nix 0.30.1",
+ "nix",
  "rand 0.9.5",
  "tokio",
  "virtio-bindings",
@@ -2539,7 +2539,7 @@ dependencies = [
  "kvm-bindings",
  "libc",
  "log",
- "nix 0.30.1",
+ "nix",
  "vmm-sys-util",
  "windows-sys 0.61.2",
 ]
@@ -2566,7 +2566,7 @@ dependencies = [
  "msb_krun_kernel",
  "msb_krun_polly",
  "msb_krun_utils",
- "nix 0.30.1",
+ "nix",
  "vm-memory",
  "windows-sys 0.61.2",
  "zstd",
@@ -2589,18 +2589,6 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "memoffset",
-]
-
-[[package]]
-name = "nix"
-version = "0.31.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
-dependencies = [
- "bitflags 2.13.1",
- "cfg-if",
- "cfg_aliases",
- "libc",
 ]
 
 [[package]]
@@ -2741,12 +2729,11 @@ dependencies = [
  "hyper",
  "itertools 0.15.0",
  "md-5",
- "nix 0.31.3",
  "parking_lot",
  "percent-encoding",
  "quick-xml",
  "rand 0.10.2",
- "reqwest 0.13.4",
+ "reqwest",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -2755,10 +2742,8 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "walkdir",
  "wasm-bindgen-futures",
  "web-time",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3329,44 +3314,6 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
-
-[[package]]
-name = "reqwest"
-version = "0.12.28"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "futures-core",
- "http",
- "http-body",
- "http-body-util",
- "hyper",
- "hyper-rustls",
- "hyper-util",
- "js-sys",
- "log",
- "percent-encoding",
- "pin-project-lite",
- "quinn",
- "rustls",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "sync_wrapper",
- "tokio",
- "tokio-rustls",
- "tower",
- "tower-http",
- "tower-service",
- "url",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "webpki-roots",
-]
 
 [[package]]
 name = "reqwest"
@@ -4634,15 +4581,6 @@ name = "webpki-root-certs"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
-dependencies = [
- "rustls-pki-types",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "1.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
 dependencies = [
  "rustls-pki-types",
 ]
