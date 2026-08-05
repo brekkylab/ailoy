@@ -54,7 +54,9 @@ fn main() {
         .expect("exec2");
     println!("[2 cortex S3 VFS] rc={}\n{}\n", r2.exit_code, r2.stdout);
 
-    sb.exec("echo persist-9 > /data/m", None)
+    // The whole filesystem is overlay-backed by the persistent upper, so a write
+    // anywhere (here a fresh dir) survives into the next, freshly-booted VM.
+    sb.exec("mkdir -p /data && echo persist-9 > /data/m", None)
         .expect("exec3 write");
     let r4 = sb.exec("cat /data/m", None).expect("exec4 read");
     println!("[4 upper persistence, fresh vm] rc={}\n{}\n", r4.exit_code, r4.stdout);

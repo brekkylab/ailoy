@@ -1,18 +1,19 @@
 //! Minimal OCI Distribution v2 image pull: an image reference (`python:3.12-slim`)
-//! becomes an unpacked rootfs *directory*, which the sandbox later serves over
-//! virtio-fs exactly like the provisioned Alpine tree.
+//! becomes a read-only **EROFS image** the sandbox mounts as the overlay lower.
 //!
-//! Deliberately small — passthrough means there is no block image, overlay, or
-//! content-addressed store to build, only "fetch the layers and stack them".
-//! Scope of this spike: public registries (anonymous or Docker Hub token auth),
-//! gzip layers, the host architecture picked out of a manifest list. zstd layers
-//! and authenticated/private registries are explicit `Unsupported` errors rather
-//! than silent wrong behaviour.
+//! We handle the registry protocol (Docker Hub token auth, manifest-list host-arch
+//! selection); the heavy lifting — decompressing each layer tar, applying OCI
+//! whiteouts, merging the layers, and encoding the result as EROFS — is reused
+//! from `microsandbox-image` (`ingest_compressed_tar` + `FileTree::merge_layer` +
+//! `write_erofs`), the same crate that formats the ext4 upper. Non-Hub registries
+//! are still an explicit error.
 
-use std::io::{self, Cursor};
+use std::io;
 use std::path::Path;
 
-use flate2::read::GzDecoder;
+use microsandbox_image::erofs::write_erofs;
+use microsandbox_image::tar::{Compression, ingest_compressed_tar};
+use microsandbox_image::tree::{FileTree, ResourceLimits};
 use serde_json::Value;
 
 const DOCKER_REGISTRY: &str = "registry-1.docker.io";
@@ -158,18 +159,25 @@ async fn resolve_image_manifest(
     Ok(manifest)
 }
 
-/// Download one layer blob and stack it onto `dest`, honouring OCI whiteouts.
-async fn apply_layer(
+/// Download one layer blob and merge its tar into `tree`. `ingest_compressed_tar`
+/// decompresses (gzip/zstd), applies OCI whiteouts, and skips unsupported nodes.
+async fn merge_layer(
     client: &reqwest::Client,
     img: &ImageRef,
     token: &str,
     layer: &Value,
-    dest: &Path,
+    tree: &mut FileTree,
+    limits: &ResourceLimits,
 ) -> io::Result<()> {
     let media = layer.get("mediaType").and_then(|m| m.as_str()).unwrap_or("");
-    if media.contains("zstd") {
-        return Err(other("zstd layers are not supported by this spike yet"));
-    }
+    let compression = if media.contains("zstd") {
+        Compression::Zstd
+    } else if media.contains("gzip") {
+        Compression::Gzip
+    } else {
+        // Bare `application/vnd.oci.image.layer.v1.tar` (uncompressed).
+        Compression::None
+    };
     let digest = layer
         .get("digest")
         .and_then(|d| d.as_str())
@@ -188,95 +196,31 @@ async fn apply_layer(
         .await
         .map_err(other)?;
 
-    // Unpack synchronously: gunzip + tar over an in-memory blob (layers are tens
-    // of MB — fine for a spike; stream later if it matters).
-    let dest = dest.to_path_buf();
-    tokio::task::spawn_blocking(move || unpack_tar_gz(&bytes, &dest))
+    let res = ingest_compressed_tar(&bytes[..], compression, limits, None)
         .await
-        .map_err(other)?
-}
-
-/// Stack a gzipped tar onto `dest`, applying `.wh.` whiteouts and skipping device
-/// nodes (which would need privileges we do not have).
-fn unpack_tar_gz(blob: &[u8], dest: &Path) -> io::Result<()> {
-    let mut archive = tar::Archive::new(GzDecoder::new(Cursor::new(blob)));
-    archive.set_preserve_permissions(true);
-    archive.set_overwrite(true);
-
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let path = entry.path()?.into_owned();
-
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            // `.wh..wh..opq`: everything already in this directory from lower
-            // layers is hidden.
-            if name == ".wh..wh..opq" {
-                if let Some(parent) = path.parent() {
-                    clear_dir(&dest.join(parent));
-                }
-                continue;
-            }
-            // `.wh.<name>`: delete `<name>` from the merged tree.
-            if let Some(victim) = name.strip_prefix(".wh.") {
-                let target = match path.parent() {
-                    Some(p) => dest.join(p).join(victim),
-                    None => dest.join(victim),
-                };
-                remove_any(&target);
-                continue;
-            }
-        }
-
-        let kind = entry.header().entry_type();
-        if kind.is_character_special() || kind.is_block_special() || kind.is_fifo() {
-            continue;
-        }
-        entry.unpack_in(dest)?;
-    }
+        .map_err(|e| other(format!("ingest layer {digest}: {e:?}")))?;
+    tree.merge_layer(res.tree);
     Ok(())
 }
 
-/// Remove a path whether it is a file, symlink, or directory (best-effort).
-fn remove_any(p: &Path) {
-    if p.is_dir() && !p.is_symlink() {
-        let _ = std::fs::remove_dir_all(p);
-    } else {
-        let _ = std::fs::remove_file(p);
-    }
-}
-
-/// Empty a directory's contents without removing the directory itself.
-fn clear_dir(dir: &Path) {
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for e in rd.flatten() {
-            remove_any(&e.path());
-        }
-    }
-}
-
-/// Pull `reference` into `dest`, leaving an unpacked rootfs tree there.
-///
-/// Idempotent by directory: if `dest` already holds an unpacked image (marked by
-/// a `.ailoy-oci-done` sentinel) it is reused, so a caller can point this at a
-/// cache path keyed by digest/reference.
-pub async fn pull(reference: &str, dest: &Path) -> io::Result<()> {
-    let done = dest.join(".ailoy-oci-done");
-    if done.exists() {
+/// Pull `reference` and write its merged rootfs as a read-only EROFS image at
+/// `dest`. Idempotent: an existing `dest` is reused, so a caller can key it by
+/// reference/digest as a cache.
+pub async fn pull_erofs(reference: &str, dest: &Path) -> io::Result<()> {
+    if dest.exists() {
         return Ok(());
     }
 
     let img = parse_ref(reference);
     if img.registry != DOCKER_REGISTRY {
-        // Anonymous non-Hub pulls sometimes work, but the token flow here is
-        // Hub-specific; keep the spike honest about it.
         return Err(other(format!(
-            "only Docker Hub is supported by this spike (got registry {})",
+            "only Docker Hub is supported for now (got registry {})",
             img.registry
         )));
     }
 
     let client = reqwest::Client::builder()
-        .user_agent("ailoy-oci-spike")
+        .user_agent("ailoy-oci")
         .build()
         .map_err(other)?;
 
@@ -289,12 +233,23 @@ pub async fn pull(reference: &str, dest: &Path) -> io::Result<()> {
         .ok_or_else(|| other("image manifest had no layers"))?
         .clone();
 
-    std::fs::create_dir_all(dest)?;
+    let limits = ResourceLimits::default();
+    let mut tree = FileTree::new();
     for layer in &layers {
-        apply_layer(&client, &img, &token, layer, dest).await?;
+        merge_layer(&client, &img, &token, layer, &mut tree, &limits).await?;
     }
 
-    std::fs::write(&done, reference.as_bytes())?;
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    // Write to a temp path then rename, so a concurrent puller never sees a
+    // half-written EROFS at `dest`. `write_erofs` is sync and writes MBs.
+    let tmp = dest.with_extension("erofs.tmp");
+    let tmp2 = tmp.clone();
+    tokio::task::spawn_blocking(move || write_erofs(&tree, &tmp2).map_err(|e| other(format!("{e:?}"))))
+        .await
+        .map_err(other)??;
+    std::fs::rename(&tmp, dest)?;
     Ok(())
 }
 
@@ -325,20 +280,17 @@ mod tests {
         assert_eq!(r.reference, "sha256:abcd");
     }
 
-    /// The spike's proof: pull a real public image into a temp dir and confirm we
-    /// got a usable Python rootfs. Ignored (network + tens of MB).
+    /// Pull a real public image and confirm we produced a non-trivial EROFS.
+    /// Ignored (network + tens of MB).
     #[tokio::test]
     #[ignore = "network: pulls python:3.12-slim from Docker Hub"]
     async fn pulls_python_rootfs() {
         let dir = tempfile::tempdir().unwrap();
-        pull("python:3.12-slim", dir.path())
+        let erofs = dir.path().join("python.erofs");
+        pull_erofs("python:3.12-slim", &erofs)
             .await
             .expect("pull python:3.12-slim");
-        let py = dir.path().join("usr/local/bin/python3.12");
-        assert!(
-            py.exists(),
-            "expected python3.12 in the pulled rootfs at {}",
-            py.display()
-        );
+        let size = std::fs::metadata(&erofs).map(|m| m.len()).unwrap_or(0);
+        assert!(size > 4 << 20, "expected a multi-MB EROFS, got {size} bytes");
     }
 }

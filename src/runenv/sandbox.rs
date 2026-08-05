@@ -162,25 +162,63 @@ fn resolve_kernel() -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::other("libkrunfw not found; set AILOY_KRUN_KERNEL"))
 }
 
-/// Provision (once) and return the base rootfs — `AILOY_KRUN_ROOTFS` overrides.
-/// TODO: richer per-agent image; today a minimal Alpine minirootfs.
-fn ensure_rootfs() -> io::Result<PathBuf> {
-    if let Some(r) = std::env::var_os("AILOY_KRUN_ROOTFS") {
+/// Provision (once) and return the base rootfs as a read-only **EROFS** image —
+/// the overlay lower the guest mounts as a block device. A minimal Alpine
+/// minirootfs today; `AILOY_KRUN_ROOTFS_EROFS` overrides with a prebuilt image.
+fn ensure_base_erofs() -> io::Result<PathBuf> {
+    if let Some(r) = std::env::var_os("AILOY_KRUN_ROOTFS_EROFS") {
         return Ok(PathBuf::from(r));
     }
     let home = krun_home()?;
-    let rootfs = home.join("rootfs");
-    if !rootfs.join("etc/alpine-release").exists() {
-        std::fs::create_dir_all(&rootfs)?;
+    let erofs = home.join("alpine.erofs");
+    if !erofs.exists() {
         let tarball = home.join("alpine-minirootfs.tar.gz");
         if !tarball.exists() {
             run_cmd(Command::new("curl").args(["-fsSL", ALPINE_URL, "-o"]).arg(&tarball))?;
         }
         verify_sha256(&tarball, ALPINE_SHA256);
-        run_cmd(Command::new("tar").arg("-xzf").arg(&tarball).arg("-C").arg(&rootfs))?;
+        erofs_from_tarball(&tarball, &erofs)?;
     }
-    std::fs::create_dir_all(rootfs.join("mnt"))?;
-    Ok(rootfs)
+    Ok(erofs)
+}
+
+/// Encode a gzipped rootfs tarball as an EROFS image, reusing microsandbox-image
+/// (`ingest_compressed_tar` + `write_erofs`). The ingest is async; drive it on a
+/// throwaway runtime on a fresh thread so this stays callable from sync code even
+/// when a Tokio runtime is already running on the caller's thread.
+fn erofs_from_tarball(tarball: &Path, out: &Path) -> io::Result<()> {
+    use microsandbox_image::erofs::write_erofs;
+    use microsandbox_image::tar::{Compression, ingest_compressed_tar};
+    use microsandbox_image::tree::ResourceLimits;
+
+    let (tarball, out) = (tarball.to_path_buf(), out.to_path_buf());
+    std::thread::spawn(move || -> io::Result<()> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(async {
+            let f = tokio::fs::File::open(&tarball).await?;
+            let res = ingest_compressed_tar(f, Compression::Gzip, &ResourceLimits::default(), None)
+                .await
+                .map_err(|e| io::Error::other(format!("ingest {}: {e:?}", tarball.display())))?;
+            let tmp = out.with_extension("erofs.tmp");
+            write_erofs(&res.tree, &tmp).map_err(|e| io::Error::other(format!("{e:?}")))?;
+            std::fs::rename(&tmp, &out)?;
+            Ok(())
+        })
+    })
+    .join()
+    .map_err(|_| io::Error::other("erofs build thread panicked"))?
+}
+
+/// The minimal virtio-fs root the VM boots into: it holds only the guest init at
+/// [`GUEST_INIT_PATH`], which then overlays the EROFS lower + ext4 upper and
+/// `pivot_root`s into the real image. Shared across sandboxes (content is fixed).
+fn ensure_init_root() -> io::Result<PathBuf> {
+    let dir = krun_home()?.join("init-root");
+    std::fs::create_dir_all(&dir)?;
+    ensure_guest_init(&dir)?;
+    Ok(dir)
 }
 
 fn run_cmd(cmd: &mut Command) -> io::Result<()> {
@@ -382,7 +420,8 @@ const DEFAULT_TIMEOUT_SECS: u64 = 60;
 #[derive(Clone)]
 pub struct Sandbox {
     kernel: PathBuf,
-    rootfs: PathBuf,
+    /// Read-only base image as an EROFS block device — the overlay lower.
+    rootfs_erofs: PathBuf,
     upper: PathBuf,
     /// The cortex workspace to mount, as `(guest_root, spec)`. The whole tree is
     /// served as one virtio-fs device; sub-mounts appear under `guest_root`.
@@ -398,21 +437,29 @@ pub struct Sandbox {
 }
 
 impl Sandbox {
-    /// Create a sandbox whose per-session state lives in `upper` (a host disk
-    /// image, created sparse at 2 GiB logical if missing, mounted at `/data`).
+    /// Create a sandbox whose per-session writes live in `upper` — a host ext4
+    /// image the guest overlays over the (read-only) base rootfs, so writes
+    /// anywhere in the guest persist across the ephemeral per-exec VMs.
     ///
-    /// ailoy owns the base rootfs and kernel: both are resolved (and the rootfs
-    /// provisioned if absent) by [`ensure_rootfs`]/[`resolve_kernel`], so callers
-    /// only choose where per-session writes go.
+    /// A missing `upper` is freshly formatted (pure-Rust ext4, no `mkfs`); an
+    /// existing one is reused, so a caller can seed it from a snapshot. ailoy
+    /// owns the base rootfs (a provisioned Alpine EROFS, or an image via
+    /// [`with_image`](Self::with_image)) and the kernel.
     pub fn new(upper: impl Into<PathBuf>) -> io::Result<Self> {
         let upper = upper.into();
         if !upper.exists() {
-            let f = std::fs::File::create(&upper)?;
-            f.set_len(2 << 30)?;
+            microsandbox_image::ext4::format_ext4(
+                &upper,
+                &microsandbox_image::ext4::Ext4FormatOptions {
+                    size_bytes: 2 << 30,
+                    journal_blocks: 4096,
+                },
+            )
+            .map_err(|e| io::Error::other(format!("format upper ext4: {e}")))?;
         }
         Ok(Self {
             kernel: resolve_kernel()?,
-            rootfs: ensure_rootfs()?,
+            rootfs_erofs: ensure_base_erofs()?,
             upper,
             workspace: None,
             vcpus: DEFAULT_VCPUS,
@@ -443,18 +490,17 @@ impl Sandbox {
         self
     }
 
-    /// Override the base rootfs (a directory served read-mostly over virtio-fs).
-    pub fn with_rootfs(mut self, rootfs: impl Into<PathBuf>) -> Self {
-        self.rootfs = rootfs.into();
+    /// Override the base rootfs with a prebuilt read-only EROFS image.
+    pub fn with_rootfs_erofs(mut self, erofs: impl Into<PathBuf>) -> Self {
+        self.rootfs_erofs = erofs.into();
         self
     }
 
-    /// Use the rootfs of an OCI image (e.g. `python:3.12-slim`) as the base,
-    /// pulling and unpacking it (once) under `<krun_home>/images/<ref>`.
+    /// Use an OCI image (e.g. `python:3.12-slim`) as the base rootfs, pulling it
+    /// (once) as a read-only EROFS under `<krun_home>/images/<ref>.erofs`. The
+    /// guest overlays a writable ext4 upper over it, so the image stays pristine.
     ///
-    /// Public Docker Hub images only for now — see [`super::oci`]. The unpacked
-    /// tree is served read-mostly over virtio-fs like any other rootfs; until a
-    /// COW overlay lands, a write-heavy image mutates its shared cache directory.
+    /// Public Docker Hub images only for now — see [`super::oci`].
     pub async fn with_image(self, reference: &str) -> io::Result<Self> {
         let sanitized: String = reference
             .chars()
@@ -466,9 +512,11 @@ impl Sandbox {
                 }
             })
             .collect();
-        let dir = krun_home()?.join("images").join(sanitized);
-        super::oci::pull(reference, &dir).await?;
-        Ok(self.with_rootfs(dir))
+        let erofs = krun_home()?
+            .join("images")
+            .join(format!("{sanitized}.erofs"));
+        super::oci::pull_erofs(reference, &erofs).await?;
+        Ok(self.with_rootfs_erofs(erofs))
     }
 
     /// Override the libkrunfw kernel path.
@@ -506,7 +554,7 @@ impl Sandbox {
         let console_path = console.path().to_path_buf();
         let exe = boot_helper_exe()?;
         let ws = self.wire_workspace();
-        let payload = build_payload(cmd, ws.as_ref());
+        let payload = build_payload(cmd);
         let b64 = base64::engine::general_purpose::STANDARD.encode(payload);
         let workspace_json = serde_json::to_string(&ws)
             .map_err(|e| io::Error::other(format!("serialize workspace: {e}")))?;
@@ -516,7 +564,7 @@ impl Sandbox {
         let mut child = Command::new(exe)
             .env(BOOT_ENV, "1")
             .env("AILOY_KRUN_KERNEL", &self.kernel)
-            .env("AILOY_KRUN_ROOTFS", &self.rootfs)
+            .env("AILOY_KRUN_ROOTFS_EROFS", &self.rootfs_erofs)
             .env("AILOY_KRUN_UPPER", &self.upper)
             .env("AILOY_KRUN_CONSOLE", &console_path)
             .env("AILOY_KRUN_B64", &b64)
@@ -596,27 +644,15 @@ impl Console for Sandbox {
     }
 }
 
-/// Guest program: mount the upper at `/data` (formatting on first use) and the
-/// cortex workspace at its guest root, then run the command between markers,
-/// syncing before shutdown so upper writes persist.
-fn build_payload(cmd: &str, workspace: Option<&WorkspaceWire>) -> String {
-    let vol_mounts = match workspace {
-        Some(w) => format!(
-            "mkdir -p {g}\nmount -t virtiofs {tag} {g} 2>/dev/null\n",
-            g = w.guest_root,
-            tag = w.tag
-        ),
-        None => String::new(),
-    };
+/// Guest program: run the command between markers, syncing before shutdown so
+/// the overlay upper's writes flush to the host image. The filesystem is already
+/// set up by the guest init (overlay root + virtio-fs shares) before this runs.
+fn build_payload(cmd: &str) -> String {
     format!(
-        "mkdir -p /data\n\
-         mount /dev/vda /data 2>/dev/null || ( (mkfs.ext4 -F -q /dev/vda || mkfs.vfat /dev/vda) >/dev/null 2>&1; sync; mount /dev/vda /data 2>/dev/null )\n\
-         {vol_mounts}\
-         echo {OUT_MARKER}\n\
+        "echo {OUT_MARKER}\n\
          {cmd}\n\
          __ailoy_rc=$?\n\
          sync\n\
-         umount /data 2>/dev/null\n\
          echo {RC_MARKER}$__ailoy_rc\n"
     )
 }
@@ -635,7 +671,7 @@ pub fn boot_if_requested() {
     }
     let get = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("missing {k}"));
     let kernel = PathBuf::from(get("AILOY_KRUN_KERNEL"));
-    let rootfs = PathBuf::from(get("AILOY_KRUN_ROOTFS"));
+    let rootfs_erofs = PathBuf::from(get("AILOY_KRUN_ROOTFS_EROFS"));
     let upper = PathBuf::from(get("AILOY_KRUN_UPPER"));
     let console = PathBuf::from(get("AILOY_KRUN_CONSOLE"));
     let b64 = get("AILOY_KRUN_B64");
@@ -658,10 +694,10 @@ pub fn boot_if_requested() {
         .build()
         .unwrap_or_else(|e| panic!("build ctrl volume: {e}"));
 
-    // The guest init (exec'd below) mounts every virtio-fs/block device with the
-    // classic mount(2) syscall, so drop it into the rootfs first. The shell then
-    // only has to run the payload — the ctrl share is already mounted.
-    ensure_guest_init(&rootfs).unwrap_or_else(|e| panic!("place guest init: {e}"));
+    // The VM boots into a minimal virtio-fs root holding only the guest init; the
+    // init overlays the EROFS lower + ext4 upper (via mount(2)) and pivots into
+    // the real image before the shell runs the payload.
+    let init_root = ensure_init_root().unwrap_or_else(|e| panic!("prepare init root: {e}"));
     let bootstrap = "sh /.ailoyctrl/run.sh";
 
     // Resource sizing travels from the parent's `Sandbox` via env.
@@ -677,9 +713,16 @@ pub fn boot_if_requested() {
     let mut builder = VmBuilder::new()
         .machine(|m| m.vcpus(vcpus).memory_mib(memory_mib as usize))
         .kernel(|k| k.krunfw_path(&kernel))
-        .fs(|fs| fs.root(&rootfs))
+        .fs(|fs| fs.root(&init_root))
         .fs(move |fs| fs.tag("ailoyctrl").custom(ctrl_backend))
+        // vda: the writable ext4 upper. vdb: the read-only base image (EROFS).
+        // Attach order fixes the guest device names.
         .disk(|d| d.path(&upper).format(DiskImageFormat::Raw))
+        .disk(|d| {
+            d.path(&rootfs_erofs)
+                .read_only(true)
+                .format(DiskImageFormat::Raw)
+        })
         .console(|c| c.output(&console));
 
     // The mount spec the guest init needs for the workspace share (tag:guest_root),
@@ -741,12 +784,13 @@ pub fn boot_if_requested() {
     // stays on the ctrl share the init mounts.
     let result = builder
         .exec(|e| {
-            // `/data` is deliberately left to the payload: it needs first-boot
-            // formatting (mkfs) the init can't do, and having the init also mount
-            // it races the payload's `mount || mkfs -F` into reformatting a live
-            // device. The init only owns the virtio-fs shares.
+            // The init overlays the ext4 upper (/dev/vda) over the read-only image
+            // root, then mounts the ctrl/workspace virtio-fs shares, before the
+            // shell runs the payload.
             let mut e = e
                 .path(GUEST_INIT_PATH)
+                .env("AILOY_INIT_LOWER", "/dev/vdb")
+                .env("AILOY_INIT_UPPER", "/dev/vda")
                 .env("AILOY_INIT_CTRL", "ailoyctrl:/.ailoyctrl");
             if let Some(ws) = &init_ws_env {
                 e = e.env("AILOY_INIT_WS", ws);

@@ -134,7 +134,7 @@ mod sandbox;
 pub use file_entry::*;
 pub use local::*;
 #[cfg(feature = "sandbox")]
-pub use oci::pull as pull_image;
+pub use oci::pull_erofs;
 #[cfg(feature = "sandbox")]
 pub use sandbox::*;
 

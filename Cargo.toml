@@ -35,6 +35,7 @@ sandbox = [
     "cortex/krun",
     "dep:msb_krun",
     "dep:microsandbox-network",
+    "dep:microsandbox-image",
     "dep:rustls",
     "dep:ctor",
 ]
@@ -58,6 +59,10 @@ msb_krun = { version = "=0.1.25", features = ["blk", "net"], optional = true }
 # via msb_krun's `.net().custom()`. Same `msb_krun =0.1.25 [net]` pin, so the
 # `NetBackend` type unifies.
 microsandbox-network = { version = "=0.6.7", optional = true }
+# Pure-Rust ext4 formatter (`format_ext4`): create the per-sandbox writable upper
+# on the host with no `mkfs` dependency and no committed image blob. Reused from
+# microsandbox like the network stack above — the runtime crate is not pulled in.
+microsandbox-image = { version = "=0.6.7", optional = true }
 # The smoltcp stack installs a rustls (ring) crypto provider on start.
 rustls = { version = "0.23", features = ["ring"], optional = true }
 # Boots the VM from a link-time constructor when this process is a re-invoked
