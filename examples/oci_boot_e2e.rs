@@ -2,20 +2,15 @@
 //! Python inside — proving `Sandbox::with_image` yields a bootable guest.
 //!
 //! ```text
-//! export CORTEX_TEST_KERNEL=/opt/homebrew/lib/libkrunfw.dylib
 //! cargo run --example oci_boot_e2e --features sandbox
 //! ```
-//! No manual codesign: `Sandbox::exec` boots an ad-hoc-signed copy on macOS.
-
-use std::path::PathBuf;
+//! The kernel and rootfs are resolved by `Sandbox`. No manual codesign:
+//! `Sandbox::exec` boots an ad-hoc-signed copy on macOS.
 
 use ailoy::cortex::{VolumeSpec, WorkspaceSpec};
 use ailoy::runenv::Sandbox;
 
 fn main() {
-    let kernel = std::env::var("CORTEX_TEST_KERNEL")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/opt/homebrew/lib/libkrunfw.dylib"));
     let upper = std::env::temp_dir().join("ailoy_oci_boot_e2e.img");
     let _ = std::fs::remove_file(&upper);
 
@@ -35,7 +30,6 @@ fn main() {
     let sandbox = rt.block_on(async {
         Sandbox::new(&upper)
             .expect("build sandbox")
-            .with_kernel(&kernel)
             .with_image(&image)
             .await
             .expect("pull image rootfs")

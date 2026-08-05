@@ -5,15 +5,11 @@
 //!
 //! ```text
 //! set -a; . ../agent-k/.env; set +a
-//! export CORTEX_TEST_KERNEL=$HOME/.microsandbox/lib/libkrunfw.dylib
-//! export CORTEX_TEST_ROOTFS=../cortex/data/rootfs
 //! export S3_BENCH_KEY=FinanceBench/3M_2023Q2_10Q.pdf
 //! cargo run --example krun_sandbox_e2e --features sandbox
 //! ```
-//! No manual codesign: `Sandbox::exec` boots an ad-hoc-signed copy of this
-//! binary on macOS.
-
-use std::path::PathBuf;
+//! The kernel and rootfs are resolved/provisioned by `Sandbox`. No manual
+//! codesign: `Sandbox::exec` boots an ad-hoc-signed copy of this binary on macOS.
 
 use ailoy::cortex::{S3Config, VolumeSpec, WorkspaceSpec};
 use ailoy::runenv::Sandbox;
@@ -23,14 +19,6 @@ fn env(k: &str) -> String {
 }
 
 fn main() {
-    let rootfs = std::env::var("CORTEX_TEST_ROOTFS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("../cortex/data/rootfs"));
-    let kernel = std::env::var("CORTEX_TEST_KERNEL")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            PathBuf::from(std::env::var("HOME").unwrap()).join(".microsandbox/lib/libkrunfw.dylib")
-        });
     let upper = std::env::temp_dir().join("ailoy_krun_e2e.img");
     let _ = std::fs::remove_file(&upper);
 
@@ -46,13 +34,10 @@ fn main() {
     });
     let workspace = WorkspaceSpec::default().mount("", volume);
 
-    // ailoy resolves/provisions rootfs + kernel itself; the example overrides
-    // them explicitly for a deterministic local run. The whole workspace mounts
-    // at `/workspace` as one virtio-fs device.
+    // ailoy resolves the kernel and provisions the base (Alpine) rootfs itself.
+    // The whole workspace mounts at `/workspace` as one virtio-fs device.
     let sb = Sandbox::new(&upper)
         .expect("build sandbox")
-        .with_rootfs(&rootfs)
-        .with_kernel(&kernel)
         .with_workspace("/workspace", workspace);
 
     let r1 = sb.exec("echo hello; uname -sm", None).expect("exec1");

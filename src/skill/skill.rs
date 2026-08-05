@@ -216,13 +216,14 @@ mod tests {
     /// End-to-end verification with a small, fast-running skill: a Python
     /// micro-benchmark helper. An agent activates `benchmark_python_snippet`
     /// inside a `python:3.12-slim` sandbox, materialises its SKILL.md into the
-    /// workspace share, then follows the skill's `python -m timeit` protocol and
-    /// emits the documented comparison table.
+    /// sandbox, then follows the skill's `python -m timeit` protocol and emits
+    /// the documented comparison table.
     ///
     /// `#[ignore]` — boots a real microVM and calls the Anthropic API. Run with:
-    /// `ANTHROPIC_API_KEY=… CORTEX_TEST_KERNEL=… cargo test --features sandbox -- --ignored`.
-    /// No manual codesign: `Sandbox::exec` boots an ad-hoc-signed copy on macOS,
-    /// and the VM boots from ailoy's link-time constructor — no `boot_if_requested`.
+    /// `ANTHROPIC_API_KEY=… cargo test --features sandbox -- --ignored`. The
+    /// kernel and rootfs are resolved by `Sandbox` itself; no manual codesign
+    /// (`Sandbox::exec` boots an ad-hoc-signed copy on macOS), and the VM boots
+    /// from ailoy's link-time constructor — no `boot_if_requested`.
     #[cfg(feature = "sandbox")]
     #[tokio::test]
     #[ignore = "boots a real microVM and calls the Anthropic API"]
@@ -233,7 +234,6 @@ mod tests {
 
         use crate::{
             agent::{AgentBuilder, AgentProvider, get_agent_providers_mut},
-            cortex::{VolumeSpec, WorkspaceSpec},
             lang_model::{LangModelProvider, get_lm_providers_mut},
             message::{FinishReason, Message, Part, Role},
             runenv::{Console, Sandbox},
@@ -383,20 +383,11 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
   ```
 "#;
 
-        let kernel = std::env::var("CORTEX_TEST_KERNEL")
-            .unwrap_or_else(|_| "/opt/homebrew/lib/libkrunfw.dylib".into());
         let model = std::env::var("SKILL_TEST_MODEL")
             .unwrap_or_else(|_| "anthropic/claude-sonnet-4-6".into());
 
         let upper = std::env::temp_dir().join("ailoy_skill_bench.img");
         let _ = std::fs::remove_file(&upper);
-
-        // A writable cortex workspace at /workspace, so the materialised SKILL.md
-        // survives each ephemeral VM the agent boots per tool call.
-        let ws_host = std::env::temp_dir().join("ailoy_skill_ws");
-        let _ = std::fs::remove_dir_all(&ws_host);
-        std::fs::create_dir_all(&ws_host).unwrap();
-        let workspace = WorkspaceSpec::default().mount("", VolumeSpec::Local { host: ws_host });
 
         const PROVIDER: &str = "skill_benchmark_python_snippet";
         {
@@ -408,19 +399,20 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
                 .insert(PROVIDER.into(), AgentProvider::new(PROVIDER, PROVIDER));
         }
 
+        // No workspace: the kernel and rootfs are resolved by `Sandbox`, and the
+        // agent materialises SKILL.md straight into the sandbox filesystem, which
+        // persists across the ephemeral per-exec VMs.
         let sandbox = Sandbox::new(&upper)
             .expect("build sandbox")
-            .with_kernel(&kernel)
             .with_image("python:3.12-slim")
             .await
-            .expect("pull image rootfs")
-            .with_workspace("/workspace", workspace);
+            .expect("pull image rootfs");
         let console: Arc<dyn Console> = Arc::new(sandbox);
 
         let instruction = "You are a helpful assistant with access to skills. \
              To activate a skill, read its SKILL.md using the shell tool \
              (`cat <path>`), then follow the instructions inside.";
-        let skill_dir = PathBuf::from("/workspace/skills/benchmark_python_snippet");
+        let skill_dir = PathBuf::from("/root/skills/benchmark_python_snippet");
 
         let mut agent = AgentBuilder::new(&model)
             .agent_provider(PROVIDER)
@@ -472,10 +464,12 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
             "SKILL.md frontmatter should be preserved, got: {head:?}"
         );
 
-        // The final answer followed the skill's template (per-loop unit column)
-        // and named both requested expressions.
+        // The final answer followed the skill's template (per-loop microsecond
+        // unit) and named both requested expressions. Ignore whitespace so both
+        // "µs / loop" and "µs/loop" pass — the model varies the spacing.
+        let compact: String = final_text.chars().filter(|c| !c.is_whitespace()).collect();
         assert!(
-            final_text.contains("µs / loop") || final_text.contains("us / loop"),
+            compact.contains("µs/loop") || compact.contains("us/loop"),
             "expected the benchmark template's per-loop unit column:\n{final_text}"
         );
         assert!(
