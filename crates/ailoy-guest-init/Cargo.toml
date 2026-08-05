@@ -1,0 +1,27 @@
+# Its own workspace root: a guest-side static binary cross-compiled to
+# *-unknown-linux-musl, deliberately kept out of the host ailoy workspace so a
+# normal `cargo build` never tries to build it for darwin.
+[workspace]
+
+[package]
+name = "ailoy-guest-init"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "ailoy-guest-init"
+path = "src/main.rs"
+
+[dependencies]
+# The whole point: call the classic mount(2) syscall directly, instead of the
+# guest image's `mount` binary (util-linux uses the new fsopen API that libkrun
+# rejects; busybox does not, which is why Alpine worked and debian did not).
+libc = "0.2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
+codegen-units = 1
