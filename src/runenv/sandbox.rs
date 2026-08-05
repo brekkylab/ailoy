@@ -147,10 +147,10 @@ fn krun_home() -> io::Result<PathBuf> {
 /// Resolve the libkrunfw kernel: `AILOY_KRUN_KERNEL`, else a known install, else
 /// download the pinned build to `<krun_home>/lib`.
 ///
-/// Search order mirrors microsandbox (its own home, then Homebrew/system), by
-/// both the ABI-versioned name it ships (`libkrunfw.5.dylib`) and the plain name
-/// a package manager installs (`libkrunfw.dylib`). Our managed copy is checked
-/// first so a download is reused.
+/// Checks our managed copy first (so a download is reused), then Homebrew/system
+/// lib dirs — by both the ABI-versioned name the release ships
+/// (`libkrunfw.5.dylib`) and the plain name a package manager installs
+/// (`libkrunfw.dylib`).
 fn resolve_kernel() -> io::Result<PathBuf> {
     if let Some(k) = std::env::var_os("AILOY_KRUN_KERNEL") {
         return Ok(PathBuf::from(k));
@@ -166,11 +166,6 @@ fn resolve_kernel() -> io::Result<PathBuf> {
     let managed = krun_home()?.join("lib").join(&versioned);
 
     let mut candidates = vec![managed.clone()];
-    if let Some(home) = std::env::var_os("HOME") {
-        let msb_lib = PathBuf::from(home).join(".microsandbox/lib");
-        candidates.push(msb_lib.join(&versioned));
-        candidates.push(msb_lib.join(plain));
-    }
     for dir in ["/opt/homebrew/lib", "/usr/local/lib", "/usr/lib"] {
         candidates.push(PathBuf::from(dir).join(&versioned));
         candidates.push(PathBuf::from(dir).join(plain));
