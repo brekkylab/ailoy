@@ -60,6 +60,7 @@ dependencies = [
  "log",
  "microsandbox-image",
  "microsandbox-network",
+ "microsandbox-utils",
  "msb_krun",
  "ordered-float",
  "parking_lot",

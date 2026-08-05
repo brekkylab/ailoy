@@ -427,12 +427,17 @@ impl Drop for TempUpper {
     }
 }
 
-/// A fresh, empty ext4 upper at a unique temp path (formatted in pure Rust).
-fn fresh_upper() -> io::Result<PathBuf> {
+/// A unique temp path for a per-sandbox upper image.
+fn fresh_upper_path() -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let n = SEQ.fetch_add(1, Ordering::Relaxed);
-    let upper = std::env::temp_dir().join(format!("ailoy-upper-{}-{n}.ext4", std::process::id()));
+    std::env::temp_dir().join(format!("ailoy-upper-{}-{n}.ext4", std::process::id()))
+}
+
+/// A fresh, empty ext4 upper at a unique temp path (formatted in pure Rust).
+fn fresh_upper() -> io::Result<PathBuf> {
+    let upper = fresh_upper_path();
     microsandbox_image::ext4::format_ext4(
         &upper,
         &microsandbox_image::ext4::Ext4FormatOptions {
@@ -442,6 +447,90 @@ fn fresh_upper() -> io::Result<PathBuf> {
     )
     .map_err(|e| io::Error::other(format!("format upper ext4: {e}")))?;
     Ok(upper)
+}
+
+/// Snapshot container magic (`AILOYSN` + format version).
+const SNAP_MAGIC: &[u8; 8] = b"AILOYSN1";
+
+/// Write `src` (a sparse ext4 upper) to `dest` as a gzip snapshot holding only
+/// the allocated extents — O(data written), not O(logical size) (cf.
+/// microsandbox PR #1150). Layout (all little-endian, gzip-compressed):
+/// `MAGIC | logical_len u64 | n_extents u64 | (offset u64, len u64, bytes)*`.
+fn write_snapshot(src: &Path, dest: &Path) -> io::Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let mut f = std::fs::File::open(src)?;
+    let logical = f.metadata()?.len();
+    let extents = match microsandbox_utils::extent::ExtentMap::scan_file(&f)? {
+        Some(m) => m.extents,
+        // Filesystem can't report holes — fall back to one dense extent.
+        None => vec![(0, logical)],
+    };
+
+    let mut enc = flate2::write::GzEncoder::new(
+        std::fs::File::create(dest)?,
+        flate2::Compression::default(),
+    );
+    enc.write_all(SNAP_MAGIC)?;
+    enc.write_all(&logical.to_le_bytes())?;
+    enc.write_all(&(extents.len() as u64).to_le_bytes())?;
+
+    let mut buf = vec![0u8; 1 << 20];
+    for (off, len) in extents {
+        enc.write_all(&off.to_le_bytes())?;
+        enc.write_all(&len.to_le_bytes())?;
+        f.seek(SeekFrom::Start(off))?;
+        let mut left = len;
+        while left > 0 {
+            let want = left.min(buf.len() as u64) as usize;
+            let n = f.read(&mut buf[..want])?;
+            if n == 0 {
+                return Err(io::Error::other("snapshot: short read in extent"));
+            }
+            enc.write_all(&buf[..n])?;
+            left -= n as u64;
+        }
+    }
+    enc.finish()?;
+    Ok(())
+}
+
+/// Rebuild a sparse ext4 upper at `dest` from a [`write_snapshot`] archive:
+/// truncate to the logical size (all holes) then write back each extent, so the
+/// holes stay unallocated.
+fn read_snapshot(src: &Path, dest: &Path) -> io::Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let mut dec = flate2::read::GzDecoder::new(std::fs::File::open(src)?);
+    let mut magic = [0u8; 8];
+    dec.read_exact(&mut magic)?;
+    if &magic != SNAP_MAGIC {
+        return Err(io::Error::other("not an ailoy snapshot"));
+    }
+    let mut u64buf = [0u8; 8];
+    dec.read_exact(&mut u64buf)?;
+    let logical = u64::from_le_bytes(u64buf);
+    dec.read_exact(&mut u64buf)?;
+    let n_extents = u64::from_le_bytes(u64buf);
+
+    let mut out = std::fs::File::create(dest)?;
+    out.set_len(logical)?;
+    let mut buf = vec![0u8; 1 << 20];
+    for _ in 0..n_extents {
+        dec.read_exact(&mut u64buf)?;
+        let off = u64::from_le_bytes(u64buf);
+        dec.read_exact(&mut u64buf)?;
+        let len = u64::from_le_bytes(u64buf);
+        out.seek(SeekFrom::Start(off))?;
+        let mut left = len;
+        while left > 0 {
+            let want = left.min(buf.len() as u64) as usize;
+            dec.read_exact(&mut buf[..want])?;
+            out.write_all(&buf[..want])?;
+            left -= want as u64;
+        }
+    }
+    Ok(())
 }
 
 /// An ephemeral sandbox recipe: booted fresh per [`exec`](Sandbox::exec).
@@ -485,12 +574,8 @@ impl Sandbox {
     /// resuming that captured filesystem state. The caller must pair it with the
     /// same base image the snapshot was taken over.
     pub fn from_snapshot(snapshot: impl AsRef<Path>) -> io::Result<Self> {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static SEQ: AtomicU64 = AtomicU64::new(0);
-        let n = SEQ.fetch_add(1, Ordering::Relaxed);
-        let upper =
-            std::env::temp_dir().join(format!("ailoy-upper-r{}-{n}.ext4", std::process::id()));
-        std::fs::copy(snapshot.as_ref(), &upper)?;
+        let upper = fresh_upper_path();
+        read_snapshot(snapshot.as_ref(), &upper)?;
         Self::assemble(upper.clone(), Some(Arc::new(TempUpper(upper))))
     }
 
@@ -513,8 +598,10 @@ impl Sandbox {
     /// in-flight exec so the image is captured consistently.
     pub async fn snapshot(&self, dest: impl AsRef<Path>) -> io::Result<()> {
         let _guard = self.exec_lock.lock().await;
-        std::fs::copy(&self.upper, dest.as_ref())?;
-        Ok(())
+        let (src, dest) = (self.upper.clone(), dest.as_ref().to_path_buf());
+        tokio::task::spawn_blocking(move || write_snapshot(&src, &dest))
+            .await
+            .map_err(|e| io::Error::other(format!("snapshot join: {e}")))?
     }
 
     /// Set the guest network posture. Accepts a bare [`SandboxNetwork`] (outside

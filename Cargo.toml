@@ -36,6 +36,7 @@ sandbox = [
     "dep:msb_krun",
     "dep:microsandbox-network",
     "dep:microsandbox-image",
+    "dep:microsandbox-utils",
     "dep:rustls",
     "dep:ctor",
 ]
@@ -63,6 +64,10 @@ microsandbox-network = { version = "=0.6.7", optional = true }
 # on the host with no `mkfs` dependency and no committed image blob. Reused from
 # microsandbox like the network stack above — the runtime crate is not pulled in.
 microsandbox-image = { version = "=0.6.7", optional = true }
+# Sparse-extent scanning (`ExtentMap::scan`, SEEK_DATA/SEEK_HOLE on both macOS and
+# Linux): lets snapshots read only the upper's allocated ranges, so save/restore
+# is O(data written), not O(logical size). (Same fix as microsandbox PR #1150.)
+microsandbox-utils = { version = "=0.6.7", optional = true }
 # The smoltcp stack installs a rustls (ring) crypto provider on start.
 rustls = { version = "0.23", features = ["ring"], optional = true }
 # Boots the VM from a link-time constructor when this process is a re-invoked
@@ -120,17 +125,3 @@ axum = "0.8"
 dotenvy = "0.15"
 test-with = { version = "0.17", default-features = false, features = ["executable"] }
 tokio = { version = "1.0", features = ["net"] }
-
-# microsandbox 0.6.7 computes a sparse-sha256 integrity digest over the upper
-# layer's full logical size (default 4 GiB) on snapshot create, save, and load,
-# so sandbox snapshot tests hash ~12 GiB per round trip. Unoptimized sha2 runs
-# at ~130 MB/s, which turns that into ~32 s per pass under the dev profile.
-# Optimizing just the hash crates restores hardware-speed hashing (~2.6 GB/s).
-# Applies only when this workspace is built directly; release builds and
-# crates depending on ailoy are unaffected.
-[profile.dev.package.sha2]
-opt-level = 3
-[profile.dev.package.digest]
-opt-level = 3
-[profile.dev.package.block-buffer]
-opt-level = 3
