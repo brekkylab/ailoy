@@ -35,6 +35,29 @@ const RC_MARKER: &str = "__AILOY_RC__";
 const ALPINE_URL: &str = "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/alpine-minirootfs-3.24.1-aarch64.tar.gz";
 const ALPINE_SHA256: &str = "f55a90f69052c5bd6f92cb09a8f47065970830b194c917a006fb94028e721259";
 
+/// Guest path the init binary is placed and exec'd at.
+const GUEST_INIT_PATH: &str = "/.ailoy-init";
+
+/// The prebuilt static guest init (see `crates/ailoy-guest-init`): mounts the
+/// virtio-fs/block devices via `mount(2)` so glibc images (whose util-linux
+/// `mount` the libkrun kernel rejects) work like busybox ones. Cross-compiled to
+/// the guest arch — aarch64 for now; x86_64 hosts are a follow-up.
+#[cfg(target_arch = "aarch64")]
+const GUEST_INIT_BIN: &[u8] = include_bytes!("assets/ailoy-guest-init-aarch64");
+
+/// Write the guest init into `rootfs` at [`GUEST_INIT_PATH`] (executable),
+/// rewriting only when the bytes differ so a shared/cached rootfs is not churned.
+fn ensure_guest_init(rootfs: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let dest = rootfs.join(GUEST_INIT_PATH.trim_start_matches('/'));
+    let up_to_date = std::fs::read(&dest).map(|b| b == GUEST_INIT_BIN).unwrap_or(false);
+    if !up_to_date {
+        std::fs::write(&dest, GUEST_INIT_BIN)?;
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))?;
+    }
+    Ok(())
+}
+
 /// Base dir for ailoy's krun assets — `AILOY_KRUN_HOME`, else `$HOME/.ailoy/krun`.
 fn krun_home() -> io::Result<PathBuf> {
     std::env::var_os("AILOY_KRUN_HOME")
@@ -348,6 +371,28 @@ impl Sandbox {
         self
     }
 
+    /// Use the rootfs of an OCI image (e.g. `python:3.12-slim`) as the base,
+    /// pulling and unpacking it (once) under `<krun_home>/images/<ref>`.
+    ///
+    /// Public Docker Hub images only for now — see [`super::oci`]. The unpacked
+    /// tree is served read-mostly over virtio-fs like any other rootfs; until a
+    /// COW overlay lands, a write-heavy image mutates its shared cache directory.
+    pub async fn with_image(self, reference: &str) -> io::Result<Self> {
+        let sanitized: String = reference
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let dir = krun_home()?.join("images").join(sanitized);
+        super::oci::pull(reference, &dir).await?;
+        Ok(self.with_rootfs(dir))
+    }
+
     /// Override the libkrunfw kernel path.
     pub fn with_kernel(mut self, kernel: impl Into<PathBuf>) -> Self {
         self.kernel = kernel.into();
@@ -530,7 +575,11 @@ pub fn boot_if_requested() {
         .build()
         .unwrap_or_else(|e| panic!("build ctrl volume: {e}"));
 
-    let bootstrap = "mkdir -p /.ailoyctrl; mount -t virtiofs ailoyctrl /.ailoyctrl; sh /.ailoyctrl/run.sh";
+    // The guest init (exec'd below) mounts every virtio-fs/block device with the
+    // classic mount(2) syscall, so drop it into the rootfs first. The shell then
+    // only has to run the payload — the ctrl share is already mounted.
+    ensure_guest_init(&rootfs).unwrap_or_else(|e| panic!("place guest init: {e}"));
+    let bootstrap = "sh /.ailoyctrl/run.sh";
 
     // Resource sizing travels from the parent's `Sandbox` via env.
     let vcpus: u8 = std::env::var("AILOY_KRUN_VCPUS")
@@ -549,6 +598,12 @@ pub fn boot_if_requested() {
         .fs(move |fs| fs.tag("ailoyctrl").custom(ctrl_backend))
         .disk(|d| d.path(&upper).format(DiskImageFormat::Raw))
         .console(|c| c.output(&console));
+
+    // The mount spec the guest init needs for the workspace share (tag:guest_root),
+    // captured before `workspace` is consumed below.
+    let init_ws_env = workspace
+        .as_ref()
+        .map(|w| format!("{}:{}", w.tag, w.guest_root));
 
     // Realize the whole cortex workspace as one virtio-fs device: `from_spec`
     // rebuilds the unified tree, `PosixFs` binds it to msb_krun's `DynFileSystem`.
@@ -597,8 +652,24 @@ pub fn boot_if_requested() {
     // The guest configures eth0 (if networking is on) before running the payload.
     let script = format!("{net_prelude}{bootstrap}");
 
+    // Exec the guest init, not the shell directly: it mounts the ctrl/workspace
+    // shares and the upper via mount(2), then hands off to `/bin/sh -c <script>`.
+    // Mount targets travel in the environment (small, fixed); the large payload
+    // stays on the ctrl share the init mounts.
     let result = builder
-        .exec(|e| e.path("/bin/sh").args(["-c", script.as_str()]))
+        .exec(|e| {
+            // `/data` is deliberately left to the payload: it needs first-boot
+            // formatting (mkfs) the init can't do, and having the init also mount
+            // it races the payload's `mount || mkfs -F` into reformatting a live
+            // device. The init only owns the virtio-fs shares.
+            let mut e = e
+                .path(GUEST_INIT_PATH)
+                .env("AILOY_INIT_CTRL", "ailoyctrl:/.ailoyctrl");
+            if let Some(ws) = &init_ws_env {
+                e = e.env("AILOY_INIT_WS", ws);
+            }
+            e.args(["/bin/sh", "-c", script.as_str()])
+        })
         .build()
         .and_then(|vm| vm.enter());
     match result {
