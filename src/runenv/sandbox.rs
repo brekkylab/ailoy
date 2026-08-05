@@ -194,13 +194,7 @@ fn download_libkrunfw(dest: &Path) -> io::Result<()> {
         std::env::consts::ARCH,
         std::env::consts::OS,
     );
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = dest.with_extension("download.tmp");
-    run_cmd(Command::new("curl").args(["-fsSL", &url, "-o"]).arg(&tmp))?;
-    std::fs::rename(&tmp, dest)?;
-    Ok(())
+    download_file(&url, dest)
 }
 
 /// Provision (once) and return the base rootfs as a read-only **EROFS** image —
@@ -215,7 +209,7 @@ fn ensure_base_erofs() -> io::Result<PathBuf> {
     if !erofs.exists() {
         let tarball = home.join("alpine-minirootfs.tar.gz");
         if !tarball.exists() {
-            run_cmd(Command::new("curl").args(["-fsSL", ALPINE_URL, "-o"]).arg(&tarball))?;
+            download_file(ALPINE_URL, &tarball)?;
         }
         verify_sha256(&tarball, ALPINE_SHA256);
         erofs_from_tarball(&tarball, &erofs)?;
@@ -262,13 +256,33 @@ fn ensure_init_root() -> io::Result<PathBuf> {
     Ok(dir)
 }
 
-fn run_cmd(cmd: &mut Command) -> io::Result<()> {
-    let status = cmd.status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!("{cmd:?} failed: {status}")))
+/// Download `url` to `dest` with reqwest, driven on a throwaway runtime on a
+/// fresh thread so it is safe to call from sync code even under an ambient Tokio
+/// runtime. Temp-then-rename so a partial download is never used.
+fn download_file(url: &str, dest: &Path) -> io::Result<()> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
     }
+    let tmp = dest.with_extension("download.tmp");
+    let (url, tmp2) = (url.to_string(), tmp.clone());
+    std::thread::spawn(move || -> io::Result<()> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(async {
+            let resp = reqwest::get(&url)
+                .await
+                .map_err(io::Error::other)?
+                .error_for_status()
+                .map_err(io::Error::other)?;
+            let bytes = resp.bytes().await.map_err(io::Error::other)?;
+            std::fs::write(&tmp2, &bytes)
+        })
+    })
+    .join()
+    .map_err(|_| io::Error::other("download thread panicked"))??;
+    std::fs::rename(&tmp, dest)?;
+    Ok(())
 }
 
 /// Best-effort integrity check (skips if no hashing tool is available).
