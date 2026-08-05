@@ -38,12 +38,12 @@ const ALPINE_SHA256: &str = "f55a90f69052c5bd6f92cb09a8f47065970830b194c917a006f
 /// Guest path the init binary is placed and exec'd at.
 const GUEST_INIT_PATH: &str = "/.ailoy-init";
 
-/// The prebuilt static guest init (see `crates/ailoy-guest-init`): mounts the
-/// virtio-fs/block devices via `mount(2)` so glibc images (whose util-linux
-/// `mount` the libkrun kernel rejects) work like busybox ones. Cross-compiled to
-/// the guest arch — aarch64 for now; x86_64 hosts are a follow-up.
-#[cfg(target_arch = "aarch64")]
-const GUEST_INIT_BIN: &[u8] = include_bytes!("assets/ailoy-guest-init-aarch64");
+/// The static guest init (see `crates/ailoy-guest-init`): mounts the block/
+/// virtio-fs devices via `mount(2)` so glibc images (whose util-linux `mount`
+/// the libkrun kernel rejects) work like busybox ones, and builds the overlay
+/// root. Cross-compiled to the guest-arch musl target by `build.rs` and embedded
+/// from `OUT_DIR` — no committed binary asset.
+const GUEST_INIT_BIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ailoy-guest-init"));
 
 /// Write the guest init into `rootfs` at [`GUEST_INIT_PATH`] (executable),
 /// rewriting only when the bytes differ so a shared/cached rootfs is not churned.
