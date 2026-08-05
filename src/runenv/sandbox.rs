@@ -416,13 +416,45 @@ const DEFAULT_MEMORY_MIB: u32 = 2048;
 /// the old engine's `default_timeout_secs`.
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 
+/// A per-sandbox ext4 upper image, deleted from the host when the last clone of
+/// its owning [`Sandbox`] drops. [`Sandbox::snapshot`] copies it out beforehand
+/// to persist the session.
+struct TempUpper(PathBuf);
+
+impl Drop for TempUpper {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// A fresh, empty ext4 upper at a unique temp path (formatted in pure Rust).
+fn fresh_upper() -> io::Result<PathBuf> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    let upper = std::env::temp_dir().join(format!("ailoy-upper-{}-{n}.ext4", std::process::id()));
+    microsandbox_image::ext4::format_ext4(
+        &upper,
+        &microsandbox_image::ext4::Ext4FormatOptions {
+            size_bytes: 2 << 30,
+            journal_blocks: 4096,
+        },
+    )
+    .map_err(|e| io::Error::other(format!("format upper ext4: {e}")))?;
+    Ok(upper)
+}
+
 /// An ephemeral sandbox recipe: booted fresh per [`exec`](Sandbox::exec).
 #[derive(Clone)]
 pub struct Sandbox {
     kernel: PathBuf,
     /// Read-only base image as an EROFS block device — the overlay lower.
     rootfs_erofs: PathBuf,
+    /// The writable ext4 overlay upper (the session's filesystem delta).
     upper: PathBuf,
+    /// Held only for its `Drop`: deletes the temp upper on last clone drop
+    /// (`Some` for a `Sandbox`-owned upper, `None` never happens today).
+    _upper_guard: Option<Arc<TempUpper>>,
     /// The cortex workspace to mount, as `(guest_root, spec)`. The whole tree is
     /// served as one virtio-fs device; sub-mounts appear under `guest_root`.
     workspace: Option<(String, WorkspaceSpec)>,
@@ -437,36 +469,52 @@ pub struct Sandbox {
 }
 
 impl Sandbox {
-    /// Create a sandbox whose per-session writes live in `upper` — a host ext4
-    /// image the guest overlays over the (read-only) base rootfs, so writes
-    /// anywhere in the guest persist across the ephemeral per-exec VMs.
+    /// A fresh sandbox with an empty, ephemeral writable upper — an ext4 overlay
+    /// over the (read-only) base rootfs. Writes anywhere in the guest persist
+    /// across the per-exec VMs, but the upper is discarded when the sandbox (and
+    /// all its clones) drop; persist it first with [`snapshot`](Self::snapshot).
     ///
-    /// A missing `upper` is freshly formatted (pure-Rust ext4, no `mkfs`); an
-    /// existing one is reused, so a caller can seed it from a snapshot. ailoy
-    /// owns the base rootfs (a provisioned Alpine EROFS, or an image via
+    /// ailoy owns the base rootfs (a provisioned Alpine EROFS, or an image via
     /// [`with_image`](Self::with_image)) and the kernel.
-    pub fn new(upper: impl Into<PathBuf>) -> io::Result<Self> {
-        let upper = upper.into();
-        if !upper.exists() {
-            microsandbox_image::ext4::format_ext4(
-                &upper,
-                &microsandbox_image::ext4::Ext4FormatOptions {
-                    size_bytes: 2 << 30,
-                    journal_blocks: 4096,
-                },
-            )
-            .map_err(|e| io::Error::other(format!("format upper ext4: {e}")))?;
-        }
+    pub fn new() -> io::Result<Self> {
+        let upper = fresh_upper()?;
+        Self::assemble(upper.clone(), Some(Arc::new(TempUpper(upper))))
+    }
+
+    /// Restore a sandbox whose upper is seeded from a [`snapshot`](Self::snapshot),
+    /// resuming that captured filesystem state. The caller must pair it with the
+    /// same base image the snapshot was taken over.
+    pub fn from_snapshot(snapshot: impl AsRef<Path>) -> io::Result<Self> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let upper =
+            std::env::temp_dir().join(format!("ailoy-upper-r{}-{n}.ext4", std::process::id()));
+        std::fs::copy(snapshot.as_ref(), &upper)?;
+        Self::assemble(upper.clone(), Some(Arc::new(TempUpper(upper))))
+    }
+
+    fn assemble(upper: PathBuf, upper_guard: Option<Arc<TempUpper>>) -> io::Result<Self> {
         Ok(Self {
             kernel: resolve_kernel()?,
             rootfs_erofs: ensure_base_erofs()?,
             upper,
+            _upper_guard: upper_guard,
             workspace: None,
             vcpus: DEFAULT_VCPUS,
             memory_mib: DEFAULT_MEMORY_MIB,
             network: NetworkPosture::default(),
             exec_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
+    }
+
+    /// Persist the current upper (the session's filesystem delta) to `dest` so a
+    /// later [`from_snapshot`](Self::from_snapshot) can resume it. Waits for any
+    /// in-flight exec so the image is captured consistently.
+    pub async fn snapshot(&self, dest: impl AsRef<Path>) -> io::Result<()> {
+        let _guard = self.exec_lock.lock().await;
+        std::fs::copy(&self.upper, dest.as_ref())?;
+        Ok(())
     }
 
     /// Set the guest network posture. Accepts a bare [`SandboxNetwork`] (outside

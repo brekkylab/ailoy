@@ -386,9 +386,6 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
         let model = std::env::var("SKILL_TEST_MODEL")
             .unwrap_or_else(|_| "anthropic/claude-sonnet-4-6".into());
 
-        let upper = std::env::temp_dir().join("ailoy_skill_bench.img");
-        let _ = std::fs::remove_file(&upper);
-
         const PROVIDER: &str = "skill_benchmark_python_snippet";
         {
             let mut lmp = LangModelProvider::new();
@@ -402,7 +399,7 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
         // No workspace: the kernel and rootfs are resolved by `Sandbox`, and the
         // agent materialises SKILL.md straight into the sandbox filesystem, which
         // persists across the ephemeral per-exec VMs.
-        let sandbox = Sandbox::new(&upper)
+        let sandbox = Sandbox::new()
             .expect("build sandbox")
             .with_image("python:3.12-slim")
             .await

@@ -19,9 +19,6 @@ fn env(k: &str) -> String {
 }
 
 fn main() {
-    let upper = std::env::temp_dir().join("ailoy_krun_e2e.img");
-    let _ = std::fs::remove_file(&upper);
-
     // A cortex workspace with one S3 mount at its root, described declaratively —
     // ailoy just carries the spec across to the VM helper.
     let volume = VolumeSpec::S3(S3Config {
@@ -36,7 +33,7 @@ fn main() {
 
     // ailoy resolves the kernel and provisions the base (Alpine) rootfs itself.
     // The whole workspace mounts at `/workspace` as one virtio-fs device.
-    let sb = Sandbox::new(&upper)
+    let sb = Sandbox::new()
         .expect("build sandbox")
         .with_workspace("/workspace", workspace);
 

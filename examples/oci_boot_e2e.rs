@@ -11,9 +11,6 @@ use ailoy::cortex::{VolumeSpec, WorkspaceSpec};
 use ailoy::runenv::Sandbox;
 
 fn main() {
-    let upper = std::env::temp_dir().join("ailoy_oci_boot_e2e.img");
-    let _ = std::fs::remove_file(&upper);
-
     let image = std::env::var("OCI_TEST_IMAGE").unwrap_or_else(|_| "python:3.12-slim".into());
 
     // A cortex Local workspace with a known file, to prove the *workspace*
@@ -28,7 +25,7 @@ fn main() {
     // pull on a throwaway runtime, then run.
     let rt = tokio::runtime::Runtime::new().unwrap();
     let sandbox = rt.block_on(async {
-        Sandbox::new(&upper)
+        Sandbox::new()
             .expect("build sandbox")
             .with_image(&image)
             .await
