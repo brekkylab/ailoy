@@ -3,18 +3,16 @@
 //!
 //! ```text
 //! export CORTEX_TEST_KERNEL=/opt/homebrew/lib/libkrunfw.dylib
-//! cargo build --example oci_boot_e2e --features sandbox   # then codesign + run
+//! cargo run --example oci_boot_e2e --features sandbox
 //! ```
+//! No manual codesign: `Sandbox::exec` boots an ad-hoc-signed copy on macOS.
 
 use std::path::PathBuf;
 
 use ailoy::cortex::{VolumeSpec, WorkspaceSpec};
-use ailoy::runenv::{Sandbox, boot_if_requested};
+use ailoy::runenv::Sandbox;
 
 fn main() {
-    // MUST be first: a re-invoked child boots the VM here and never returns.
-    boot_if_requested();
-
     let kernel = std::env::var("CORTEX_TEST_KERNEL")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/opt/homebrew/lib/libkrunfw.dylib"));

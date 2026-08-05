@@ -8,22 +8,21 @@
 //! export CORTEX_TEST_KERNEL=$HOME/.microsandbox/lib/libkrunfw.dylib
 //! export CORTEX_TEST_ROOTFS=../cortex/data/rootfs
 //! export S3_BENCH_KEY=FinanceBench/3M_2023Q2_10Q.pdf
-//! cargo run --example krun_sandbox_e2e --features krun   # then codesign + run
+//! cargo run --example krun_sandbox_e2e --features sandbox
 //! ```
+//! No manual codesign: `Sandbox::exec` boots an ad-hoc-signed copy of this
+//! binary on macOS.
 
 use std::path::PathBuf;
 
 use ailoy::cortex::{S3Config, VolumeSpec, WorkspaceSpec};
-use ailoy::runenv::{Sandbox, boot_if_requested};
+use ailoy::runenv::Sandbox;
 
 fn env(k: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| panic!("missing env {k}"))
 }
 
 fn main() {
-    // MUST be first: a re-invoked child boots the VM here and never returns.
-    boot_if_requested();
-
     let rootfs = std::env::var("CORTEX_TEST_ROOTFS")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("../cortex/data/rootfs"));

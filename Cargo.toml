@@ -36,6 +36,7 @@ sandbox = [
     "dep:msb_krun",
     "dep:microsandbox-network",
     "dep:rustls",
+    "dep:ctor",
 ]
 # The local (no-VM) runenv adds cortex's host-FUSE binding, so an agent's shell
 # sees the same tree a sandboxed one would. Needs a libfuse provider at build
@@ -59,6 +60,9 @@ msb_krun = { version = "=0.1.25", features = ["blk", "net"], optional = true }
 microsandbox-network = { version = "=0.6.7", optional = true }
 # The smoltcp stack installs a rustls (ring) crypto provider on start.
 rustls = { version = "0.23", features = ["ring"], optional = true }
+# Boots the VM from a link-time constructor when this process is a re-invoked
+# boot child, so no consumer (or test harness) has to call `boot_if_requested`.
+ctor = { version = "0.2", optional = true }
 anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"

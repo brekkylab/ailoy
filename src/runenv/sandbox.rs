@@ -58,6 +58,84 @@ fn ensure_guest_init(rootfs: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Entitlements the boot process needs on macOS: create a VM via
+/// Hypervisor.framework, and load libkrunfw (a differently-signed dylib).
+#[cfg(target_os = "macos")]
+const MACOS_ENTITLEMENTS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.hypervisor</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>
+"#;
+
+/// The executable [`Sandbox::exec`] re-invokes to boot the VM.
+///
+/// Elsewhere the running binary boots as-is. On macOS it usually lacks the
+/// hypervisor entitlement — a plain `cargo run`/`cargo test` binary is unsigned —
+/// so boot an ad-hoc-signed *copy* instead, cached by the source's path, mtime,
+/// and size so the sign happens once per build. The consumer's own binary never
+/// has to be signed.
+#[cfg(not(target_os = "macos"))]
+fn boot_helper_exe() -> io::Result<PathBuf> {
+    std::env::current_exe()
+}
+
+#[cfg(target_os = "macos")]
+fn boot_helper_exe() -> io::Result<PathBuf> {
+    use std::hash::{Hash, Hasher};
+
+    let src = std::env::current_exe()?;
+    let meta = std::fs::metadata(&src)?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    src.hash(&mut hasher);
+    let key = format!("{:016x}-{mtime}-{}", hasher.finish(), meta.len());
+
+    let cache = krun_home()?.join("boot-helper");
+    std::fs::create_dir_all(&cache)?;
+    let dest = cache.join(format!("boot-{key}"));
+    if dest.exists() {
+        return Ok(dest);
+    }
+
+    // Copy to a temp path in the same dir, sign it, then rename into place so a
+    // concurrent exec never sees a half-signed helper.
+    let tmp = cache.join(format!("boot-{key}.{}.tmp", std::process::id()));
+    std::fs::copy(&src, &tmp)?;
+    let plist = cache.join("entitlements.plist");
+    std::fs::write(&plist, MACOS_ENTITLEMENTS)?;
+    let status = Command::new("codesign")
+        .args(["-s", "-", "--force", "--entitlements"])
+        .arg(&plist)
+        .arg(&tmp)
+        .status()?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(io::Error::other("codesign of boot helper failed"));
+    }
+    std::fs::rename(&tmp, &dest)?;
+    Ok(dest)
+}
+
+/// Boot the VM when this process is a re-invoked boot child, from a link-time
+/// constructor that runs before `main` — so no consumer, and no test harness,
+/// has to call [`boot_if_requested`]. A normal process (no [`BOOT_ENV`]) pays
+/// only a single `getenv` here and continues to its own `main`.
+#[ctor::ctor]
+fn boot_on_start() {
+    boot_if_requested();
+}
+
 /// Base dir for ailoy's krun assets — `AILOY_KRUN_HOME`, else `$HOME/.ailoy/krun`.
 fn krun_home() -> io::Result<PathBuf> {
     std::env::var_os("AILOY_KRUN_HOME")
@@ -426,7 +504,7 @@ impl Sandbox {
     pub fn exec(&self, cmd: &str, timeout: Option<u64>) -> io::Result<ExecOutput> {
         let console = tempfile::NamedTempFile::new()?;
         let console_path = console.path().to_path_buf();
-        let exe = std::env::current_exe()?;
+        let exe = boot_helper_exe()?;
         let ws = self.wire_workspace();
         let payload = build_payload(cmd, ws.as_ref());
         let b64 = base64::engine::general_purpose::STANDARD.encode(payload);
@@ -543,9 +621,14 @@ fn build_payload(cmd: &str, workspace: Option<&WorkspaceWire>) -> String {
     )
 }
 
-/// Child entry point. If [`BOOT_ENV`] is set, boot the configured VM — mounting
-/// each cortex volume (realized via [`cortex::VolumeSpec::build`]) — and never
-/// return. Consuming binaries must call this at the top of `main()`.
+/// Boot the configured VM (mounting each cortex volume via
+/// [`cortex::VolumeSpec::build`]) and never return, when [`BOOT_ENV`] is set;
+/// otherwise return immediately.
+///
+/// A link-time constructor calls this before `main` (see `boot_on_start`), so
+/// consumers no longer need to call it themselves — it is kept public only for
+/// explicit/embedded use. `Sandbox::exec` is the code that spawns a boot child
+/// with `BOOT_ENV` set.
 pub fn boot_if_requested() {
     if std::env::var(BOOT_ENV).is_err() {
         return;
