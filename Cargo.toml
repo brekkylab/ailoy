@@ -27,9 +27,39 @@ path = "src/lib.rs"
 
 [features]
 default = []
-sandbox = ["dep:microsandbox", "dep:microsandbox-network", "dep:microsandbox-types"]
+# The sandbox runenv builds the per-sandbox ext4 upper / base EROFS on the host
+# and manages boots. The VM itself (libkrun + cortex virtio-fs serving + the
+# smoltcp net stack) lives in the separate `crates/ailoy-krun-boot` helper that
+# build.rs compiles and embeds — so those heavy deps are NOT linked into the ailoy
+# library; only the host-side image tooling is gated here.
+sandbox = [
+    "dep:microsandbox-image",
+    "dep:microsandbox-utils",
+]
+# The local (no-VM) runenv adds cortex's host-FUSE binding, so an agent's shell
+# sees the same tree a sandboxed one would. Needs a libfuse provider at build
+# time (macFUSE / FUSE-T on macOS, /dev/fuse on Linux); see cortex's `fuse`.
+local-fuse = ["cortex/fuse"]
 
 [dependencies]
+# cortex provides the VFS (Mountable/S3Volume/NotionVolume + PosixFs ->
+# DynFileSystem); ailoy's `krun` module boots the VM and mounts it. Pinned to the
+# adapter-restructure merge (PosixFs + krun/fuse/fuse-t bindings, VolumeSpec).
+# Always on: every runenv (sandbox or local) is built on cortex's
+# `Workspace`/`VolumeSpec`, and every VFS provider must be constructible whatever
+# the runenv, so `s3`/`notion` are default features. The heavy *interface
+# bindings* (krun/fuse/fuse-t) stay gated behind the runenv features above.
+cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "0406283d03b29cf64fb2112bc7439a3e37cfb473", features = ["s3", "notion"] }
+# Pure-Rust ext4 formatter (`format_ext4`): create the per-sandbox writable upper
+# on the host with no `mkfs` dependency and no committed image blob. (The VM-side
+# crates — msb_krun, microsandbox-network, rustls — live in the ailoy-krun-boot
+# helper, not here.)
+microsandbox-image = { version = "=0.6.7", optional = true }
+# Sparse-extent scanning (`ExtentMap::scan`, SEEK_DATA/SEEK_HOLE on both macOS and
+# Linux): lets snapshots read only the upper's allocated ranges, so save/restore
+# is O(data written), not O(logical size). (Same fix as microsandbox PR #1150.)
+# Also carries the libkrunfw download URL/filename helpers used by resolve_kernel.
+microsandbox-utils = { version = "=0.6.7", optional = true }
 anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"
@@ -44,13 +74,6 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 indexmap = { version = "2", features = ["serde"] }
 infer = "0.22"
 log = "0.4"
-microsandbox = { version = "0.6.7", optional = true }
-# `microsandbox` facade does not re-export the network policy builder types;
-# used directly to build per-variant SandboxNetwork egress policies.
-microsandbox-network = { version = "0.6.7", optional = true }
-# The wire-format `NetworkPolicy` that `SandboxSpec` stores also lacks a
-# facade re-export (the facade's `NetworkPolicy` is the engine-side type).
-microsandbox-types = { version = "0.6.7", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 parking_lot = "0.12.4"
 png = "0.18"
@@ -89,17 +112,3 @@ axum = "0.8"
 dotenvy = "0.15"
 test-with = { version = "0.17", default-features = false, features = ["executable"] }
 tokio = { version = "1.0", features = ["net"] }
-
-# microsandbox 0.6.7 computes a sparse-sha256 integrity digest over the upper
-# layer's full logical size (default 4 GiB) on snapshot create, save, and load,
-# so sandbox snapshot tests hash ~12 GiB per round trip. Unoptimized sha2 runs
-# at ~130 MB/s, which turns that into ~32 s per pass under the dev profile.
-# Optimizing just the hash crates restores hardware-speed hashing (~2.6 GB/s).
-# Applies only when this workspace is built directly; release builds and
-# crates depending on ailoy are unaffected.
-[profile.dev.package.sha2]
-opt-level = 3
-[profile.dev.package.digest]
-opt-level = 3
-[profile.dev.package.block-buffer]
-opt-level = 3

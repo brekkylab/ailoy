@@ -1,646 +1,749 @@
-//! Microsandbox-backed [`Machine`] implementation.
+//! A minimal ephemeral sandbox on raw `msb_krun` that mounts cortex volumes.
+//!
+//! Separation of concerns: **cortex owns the filesystems** — a caller mounts
+//! them by passing [`cortex::VolumeSpec`]s, which cortex realizes into virtio-fs
+//! backends via [`cortex::VolumeSpec::build`]. ailoy never names a specific
+//! volume kind, so new cortex volumes need no change here. **ailoy owns the
+//! sandbox**: booting the microVM, capturing output, persisting state, and
+//! mounting each volume at its guest path.
+//!
+//! Each [`Sandbox::exec`] boots a fresh microVM (base rootfs over virtio-fs + a
+//! persistent virtio-blk upper), mounts every configured volume, runs one
+//! command, and captures its output. `msb_krun::enter()` never returns (it
+//! `_exit`s on guest shutdown), so the boot runs in a **child process**: a small
+//! dedicated helper binary (`crates/ailoy-krun-boot`, embedded and ad-hoc-signed
+//! by [`boot_helper_exe`]) that `exec` invokes with the VM config in its env.
 
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Arc;
 
-use anyhow::Context as _;
 use async_trait::async_trait;
-use microsandbox::{
-    ExecOutput, MicrosandboxError, NetworkPolicy, Sandbox as MsbSandbox, SandboxConfig, Snapshot,
-    sandbox::{ExecOptionsBuilder, IntoImage, MountBuilder, PullPolicy, validate_sandbox_name},
-    snapshot::SaveOpts,
-};
-use schemars::JsonSchema;
+use base64::Engine as _;
+use cortex::WorkspaceSpec;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-use crate::{
-    runenv::{Console, ExecResult, Machine},
-    util::truncate::middle_truncate,
-};
+use super::{Console, ExecResult};
 
-/// A volume mount attached to a sandbox at creation time.
-///
-/// Narrow surface over microsandbox's mount model: only the three variants
-/// agents need (`Bind`, `Named`, `Tmpfs`), with `readonly` as the only policy
-/// knob. Lower-level options (stat virtualization, host permission
-/// propagation, disk-image mounts) stay inside the sandbox module.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum VolumeMount {
-    /// Bind-mount a host directory into the guest.
-    Bind {
-        /// Absolute or relative host path.
-        host: PathBuf,
-        /// Absolute guest path (e.g. `/data`).
-        guest: String,
-        /// When `true`, the guest cannot write to this mount.
-        #[serde(default)]
-        readonly: bool,
-    },
-    /// Mount a microsandbox named volume, stored under the resolved
-    /// microsandbox home directory (e.g. `~/.microsandbox/volumes/<name>/`
-    /// or `$MSB_HOME/volumes/<name>/`). The volume persists across sandbox
-    /// restarts and can be shared between sandboxes.
-    Named {
-        /// Name of the microsandbox volume.
-        name: String,
-        /// Absolute guest path.
-        guest: String,
-        /// When `true`, the guest cannot write to this mount.
-        #[serde(default)]
-        readonly: bool,
-        /// Create the volume if missing (reusing a compatible existing one)
-        /// instead of requiring it to already exist. Default: `false`.
-        #[serde(default)]
-        create_if_missing: bool,
-        /// Labels applied when creating the volume; must match the existing
-        /// volume's labels when reused.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        labels: Vec<(String, String)>,
-    },
-    /// Memory-backed temporary filesystem. Disappears when the sandbox stops.
-    Tmpfs {
-        /// Absolute guest path.
-        guest: String,
-        /// Size limit in MiB. `None` means no limit.
-        size_mib: Option<u32>,
-    },
-}
+const WORKSPACE_ENV: &str = "AILOY_KRUN_WORKSPACE";
+const OUT_MARKER: &str = "__AILOY_OUT__";
+const RC_MARKER: &str = "__AILOY_RC__";
 
-impl VolumeMount {
-    /// Guest mount path. Matches the `guest` field across all variants.
-    pub fn guest_path(&self) -> &str {
-        match self {
-            VolumeMount::Bind { guest, .. }
-            | VolumeMount::Named { guest, .. }
-            | VolumeMount::Tmpfs { guest, .. } => guest,
-        }
-    }
-}
+/// Default base rootfs when no [`with_image`](Sandbox::with_image) /
+/// `AILOY_KRUN_ROOTFS_EROFS` is given: the `alpine` OCI image, pulled through
+/// the same path as any other image.
+const DEFAULT_BASE_IMAGE: &str = "alpine:3.24.1";
 
-/// Resolve `MSB_HOME` (or `$HOME/.microsandbox` if unset). Sync so `Drop`
-/// can reuse it without spinning up a runtime.
-fn msb_home() -> anyhow::Result<PathBuf> {
-    std::env::var_os("MSB_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".microsandbox")))
-        .ok_or_else(|| anyhow::anyhow!("MSB_HOME and HOME both unset"))
-}
+/// Guest path the init binary is placed and exec'd at.
+const GUEST_INIT_PATH: &str = "/.ailoy-init";
 
-/// Run `msb <args>...` synchronously, silencing stdout/stderr.
-/// Returns `Err` on spawn failure or non-zero exit. Used from Drop impls.
-fn run_msb_cli<I, S>(args: I) -> anyhow::Result<()>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<std::ffi::OsStr>,
-{
-    let bin = msb_home()?.join("bin").join("msb");
-    let status = std::process::Command::new(&bin)
-        .args(args)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .with_context(|| format!("spawn {}", bin.display()))?;
-    if !status.success() {
-        anyhow::bail!("`msb` exited with {status}");
+/// The static guest init (see `crates/ailoy-guest-init`): mounts the block/
+/// virtio-fs devices via `mount(2)` so glibc images (whose util-linux `mount`
+/// the libkrun kernel rejects) work like busybox ones, and builds the overlay
+/// root. Cross-compiled to the guest-arch musl target by `build.rs` and embedded
+/// from `OUT_DIR` — no committed binary asset.
+const GUEST_INIT_BIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ailoy-guest-init"));
+
+/// The host-side VM boot helper (see `crates/ailoy-krun-boot`), built release+LTO
+/// for the host by `build.rs` and embedded from `OUT_DIR`. `boot_helper_exe`
+/// materializes + ad-hoc-signs a copy of these bytes and `Sandbox::exec` invokes
+/// it to boot the microVM — so the signed helper is this small dedicated binary,
+/// not a copy of the (much larger) consumer binary.
+const BOOT_BIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ailoy-krun-boot"));
+
+/// Write the guest init into `rootfs` at [`GUEST_INIT_PATH`] (executable),
+/// rewriting only when the bytes differ so a shared/cached rootfs is not churned.
+fn ensure_guest_init(rootfs: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let dest = rootfs.join(GUEST_INIT_PATH.trim_start_matches('/'));
+    let up_to_date = std::fs::read(&dest).map(|b| b == GUEST_INIT_BIN).unwrap_or(false);
+    if !up_to_date {
+        std::fs::write(&dest, GUEST_INIT_BIN)?;
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))?;
     }
     Ok(())
 }
 
-async fn ensure_msb() -> anyhow::Result<PathBuf> {
-    let home = msb_home()?;
-    if !microsandbox::setup::is_installed() {
-        log::warn!(
-            "microsandbox runtime not found — downloading to {}, \
-             this may take a moment",
-            home.display(),
-        );
-        microsandbox::setup::install()
-            .await
-            .context("microsandbox install")?;
-        log::info!("microsandbox runtime installed");
+/// Entitlements the boot process needs on macOS: create a VM via
+/// Hypervisor.framework, and load libkrunfw (a differently-signed dylib).
+#[cfg(target_os = "macos")]
+const MACOS_ENTITLEMENTS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.hypervisor</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>
+"#;
+
+/// A stable cache key for the embedded [`BOOT_BIN`] — its content hash, computed
+/// once per process (a new build produces new bytes → a new key → a fresh copy).
+fn boot_bin_key() -> &'static str {
+    use std::hash::{Hash, Hasher};
+    use std::sync::OnceLock;
+    static KEY: OnceLock<String> = OnceLock::new();
+    KEY.get_or_init(|| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        BOOT_BIN.hash(&mut h);
+        format!("{:016x}-{}", h.finish(), BOOT_BIN.len())
+    })
+}
+
+/// The executable [`Sandbox::exec`] invokes to boot the VM: the embedded
+/// [`BOOT_BIN`] materialized to a cached file under `<krun_home>/boot-helper`,
+/// keyed by content so the write (and, on macOS, the sign) happens once per build.
+///
+/// On macOS the boot process needs the hypervisor entitlement, so the copy is
+/// ad-hoc-signed with [`MACOS_ENTITLEMENTS`]. The consumer's own binary is never
+/// copied or signed — only this small dedicated helper is.
+fn boot_helper_exe() -> io::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let cache = krun_home()?.join("boot-helper");
+    std::fs::create_dir_all(&cache)?;
+    let dest = cache.join(format!("boot-{}", boot_bin_key()));
+    if dest.exists() {
+        return Ok(dest);
     }
-    Ok(home)
+
+    // Write to a per-call-unique temp path, make it executable, sign it (macOS),
+    // then rename into place so a concurrent exec never sees a half-written helper
+    // — and two boots in the same process (same key) don't clobber one shared tmp.
+    // The final `dest` is identical for both, so the atomic rename just wins once.
+    let uniq = {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    };
+    let tmp = cache.join(format!("boot-{}.{}.{uniq}.tmp", boot_bin_key(), std::process::id()));
+    std::fs::write(&tmp, BOOT_BIN)?;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let plist = cache.join("entitlements.plist");
+        std::fs::write(&plist, MACOS_ENTITLEMENTS)?;
+        let status = Command::new("codesign")
+            .args(["-s", "-", "--force", "--entitlements"])
+            .arg(&plist)
+            .arg(&tmp)
+            .status()?;
+        if !status.success() {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(io::Error::other("codesign of boot helper failed"));
+        }
+    }
+
+    std::fs::rename(&tmp, &dest)?;
+    Ok(dest)
 }
 
+/// Base dir for ailoy's krun assets — `AILOY_KRUN_HOME`, else `$HOME/.ailoy/krun`.
+fn krun_home() -> io::Result<PathBuf> {
+    std::env::var_os("AILOY_KRUN_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".ailoy/krun")))
+        .ok_or_else(|| io::Error::other("AILOY_KRUN_HOME and HOME both unset"))
+}
+
+/// Resolve the libkrunfw kernel: `AILOY_KRUN_KERNEL`, else a known install, else
+/// download the pinned build to `<krun_home>/lib`.
+///
+/// Checks our managed copy first (so a download is reused), then Homebrew/system
+/// lib dirs — by both the ABI-versioned name the release ships
+/// (`libkrunfw.5.dylib`) and the plain name a package manager installs
+/// (`libkrunfw.dylib`).
+fn resolve_kernel() -> io::Result<PathBuf> {
+    if let Some(k) = std::env::var_os("AILOY_KRUN_KERNEL") {
+        return Ok(PathBuf::from(k));
+    }
+
+    let os = std::env::consts::OS;
+    let versioned = microsandbox_utils::libkrunfw_filename(os);
+    let plain = match os {
+        "macos" => "libkrunfw.dylib",
+        "windows" => "libkrunfw.dll",
+        _ => "libkrunfw.so",
+    };
+    let managed = krun_home()?.join("lib").join(&versioned);
+
+    let mut candidates = vec![managed.clone()];
+    for dir in ["/opt/homebrew/lib", "/usr/local/lib", "/usr/lib"] {
+        candidates.push(PathBuf::from(dir).join(&versioned));
+        candidates.push(PathBuf::from(dir).join(plain));
+    }
+    if let Some(p) = candidates.into_iter().find(|p| p.exists()) {
+        return Ok(p);
+    }
+
+    download_libkrunfw(&managed)?;
+    Ok(managed)
+}
+
+/// Download libkrunfw for the host arch/OS to `dest` (temp-then-rename so a
+/// partial download is never used). curl-downloaded, so no macOS quarantine to
+/// block `dlopen`. The release is tagged by the microsandbox version
+/// ([`microsandbox_utils::PREBUILT_VERSION`]) — the libkrunfw it bundles matches
+/// the `microsandbox-*` crates we pin.
+fn download_libkrunfw(dest: &Path) -> io::Result<()> {
+    let url = microsandbox_utils::libkrunfw_download_url(
+        microsandbox_utils::PREBUILT_VERSION,
+        std::env::consts::ARCH,
+        std::env::consts::OS,
+    );
+    download_file(&url, dest)
+}
+
+/// Provision (once) and return the base rootfs as a read-only **EROFS** image —
+/// the overlay lower the guest mounts as a block device. Defaults to the
+/// [`DEFAULT_BASE_IMAGE`] OCI image, pulled through the same path as
+/// [`with_image`](Sandbox::with_image); `AILOY_KRUN_ROOTFS_EROFS` overrides with
+/// a prebuilt image.
+fn ensure_base_erofs() -> io::Result<PathBuf> {
+    if let Some(r) = std::env::var_os("AILOY_KRUN_ROOTFS_EROFS") {
+        return Ok(PathBuf::from(r));
+    }
+    pull_image_erofs(DEFAULT_BASE_IMAGE)
+}
+
+/// The on-disk EROFS cache path for an image reference, under `<krun_home>/images`.
+fn image_erofs_path(reference: &str) -> io::Result<PathBuf> {
+    let sanitized: String = reference
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    Ok(krun_home()?.join("images").join(format!("{sanitized}.erofs")))
+}
+
+/// Pull an OCI image to its cached EROFS (once) and return the path. Drives the
+/// async pull on a throwaway runtime on a fresh thread so it stays callable from
+/// sync code even when a Tokio runtime is already running on the caller's thread.
+fn pull_image_erofs(reference: &str) -> io::Result<PathBuf> {
+    let dest = image_erofs_path(reference)?;
+    if dest.exists() {
+        return Ok(dest);
+    }
+    let (reference, dest2) = (reference.to_string(), dest.clone());
+    std::thread::spawn(move || -> io::Result<()> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(super::oci::pull_erofs(&reference, &dest2))
+    })
+    .join()
+    .map_err(|_| io::Error::other("image pull thread panicked"))??;
+    Ok(dest)
+}
+
+/// Download `url` to `dest` with reqwest, driven on a throwaway runtime on a
+/// fresh thread so it is safe to call from sync code even under an ambient Tokio
+/// runtime. Temp-then-rename so a partial download is never used.
+fn download_file(url: &str, dest: &Path) -> io::Result<()> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = dest.with_extension("download.tmp");
+    let (url, tmp2) = (url.to_string(), tmp.clone());
+    std::thread::spawn(move || -> io::Result<()> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(async {
+            let resp = reqwest::get(&url)
+                .await
+                .map_err(io::Error::other)?
+                .error_for_status()
+                .map_err(io::Error::other)?;
+            let bytes = resp.bytes().await.map_err(io::Error::other)?;
+            std::fs::write(&tmp2, &bytes)
+        })
+    })
+    .join()
+    .map_err(|_| io::Error::other("download thread panicked"))??;
+    std::fs::rename(&tmp, dest)?;
+    Ok(())
+}
+
+/// The cortex workspace mounted into the sandbox: one unified tree served as a
+/// single virtio-fs device at `guest_root`. Its sub-mounts (`WorkspaceSpec`)
+/// appear under that root, routed internally by cortex — ailoy carries the spec
+/// opaquely across the process boundary.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WorkspaceWire {
+    /// virtio-fs device tag (assigned by ailoy).
+    tag: String,
+    /// Absolute guest path the unified tree mounts at.
+    guest_root: String,
+    /// The workspace to realize on the sandbox side.
+    spec: WorkspaceSpec,
+}
+
+/// Result of running one command in the sandbox.
 #[derive(Debug, Clone)]
-pub struct SandboxBuilder {
-    /// All microsandbox-native settings (name, image, cpus, memory, workdir,
-    /// env, mounts, network, pull policy, ...) live here directly.
-    config: SandboxConfig,
-
-    /// Per-exec timeout in seconds. Default: `60`.
-    default_timeout_secs: u64,
-
-    /// Maximum characters to keep from stdout/stderr. Default: `30_000`.
-    max_output_chars: usize,
-
-    /// First error captured by a setter (currently only `image()`), surfaced
-    /// at `build()` time. Mirrors microsandbox::SandboxBuilder's pattern so
-    /// the setters can stay infallible and chainable. Stored as `String` so
-    /// the builder remains `Clone`.
-    build_error: Option<String>,
+pub struct ExecOutput {
+    pub stdout: String,
+    pub exit_code: i32,
+    /// The command exceeded its timeout and the VM was killed.
+    pub timed_out: bool,
 }
 
-/// Convert an engine-side [`NetworkPolicy`] into the wire-format policy the
-/// `SandboxSpec` stores. The two types share one JSON schema (microsandbox
-/// converts its engine config into the spec through the same serde
-/// round-trip), so the conversion is infallible.
-fn wire_network_policy(policy: NetworkPolicy) -> microsandbox_types::NetworkPolicy {
-    let value = serde_json::to_value(policy).expect("NetworkPolicy serializes to JSON");
-    serde_json::from_value(value).expect("engine and wire NetworkPolicy share one JSON schema")
-}
-
-/// Guest network reachability. The sandbox host
-/// (`host.microsandbox.internal`, e.g. an ailoy VFS forward server) is
-/// reachable in **every** variant; they differ only in outside reach. There is
-/// no fully-offline variant. All map to a [`NetworkPolicy`] with
-/// `default_ingress: Allow` (published-port behavior).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// Guest outbound-reach posture. The guest reaches the network through an
+/// in-process smoltcp userspace stack ([`microsandbox_network`]) that NATs to
+/// the host — no external proxy.
+///
+/// This names *outside* reach only. Reachable host TCP ports are a separate,
+/// explicit grant via [`NetworkPosture::host_ports`]: the convenience host rule
+/// (`Group(Host)`) leaves its port set empty, which matches *every* port, so
+/// widening outside reach must never silently widen host reach too (see
+/// brekkylab/ailoy#443).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxNetwork {
-    /// Host only — no public internet, LAN, loopback, or metadata.
-    /// Least-privilege for VFS-in-sandbox.
-    HostOnly,
-    /// Host + public internet, but not private LAN, loopback, link-local,
-    /// cloud-metadata, or multicast. The default.
+    /// No network device at all; the guest is fully offline.
+    Disabled,
+    /// Gateway DNS plus whatever host ports are granted, and nothing else — no
+    /// public internet. The default: a caller that never thinks about the
+    /// network gets no outbound reach by accident.
     #[default]
+    HostOnly,
+    /// `HostOnly` plus public-internet egress; private LAN, loopback,
+    /// link-local, and metadata stay denied.
     Public,
-    /// Unrestricted egress/ingress — `Public` plus LAN, loopback, link-local,
-    /// cloud-metadata, and multicast. Grant deliberately (reopens SSRF).
+    /// Unrestricted egress (`allow_all`). The deliberate escape hatch.
     Full,
 }
 
 impl SandboxNetwork {
-    /// The microsandbox policy for this variant.
-    fn policy(self) -> NetworkPolicy {
-        use microsandbox_network::policy::{Action, Destination, DestinationGroup, Rule};
-        // `allow_egress(Host)` permits any port to the host — including :53, so
-        // the guest's `host.microsandbox.internal` DNS lookup works.
-        let host = || Rule::allow_egress(Destination::Group(DestinationGroup::Host));
-        let public = || Rule::allow_egress(Destination::Group(DestinationGroup::Public));
-        match self {
-            SandboxNetwork::HostOnly => NetworkPolicy {
-                default_egress: Action::Deny,
-                default_ingress: Action::Allow,
-                rules: vec![host()],
-            },
-            SandboxNetwork::Public => NetworkPolicy {
-                default_egress: Action::Deny,
-                default_ingress: Action::Allow,
-                rules: vec![public(), host()],
-            },
-            SandboxNetwork::Full => NetworkPolicy::allow_all(),
+    /// Pair this reach with the host TCP ports the guest may open.
+    pub fn with_host_ports(self, ports: impl IntoIterator<Item = u16>) -> NetworkPosture {
+        NetworkPosture::from(self).with_host_ports(ports)
+    }
+
+    /// Pair this reach with allowed outbound domain suffixes (e.g. a package
+    /// registry) instead of taking all of `Public`.
+    pub fn with_domain_suffixes(
+        self,
+        suffixes: impl IntoIterator<Item = impl Into<String>>,
+    ) -> NetworkPosture {
+        NetworkPosture::from(self).with_domain_suffixes(suffixes)
+    }
+}
+
+/// A full network posture: outside [`reach`](Self::reach) plus the explicit host
+/// TCP ports and domain suffixes the guest may reach. `host_ports` has to be
+/// named explicitly — the host convenience rule leaves its port set empty,
+/// which matches every port, so a bare posture grants no host reach beyond DNS.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct NetworkPosture {
+    /// Outside-reach posture.
+    pub reach: SandboxNetwork,
+    /// Host TCP ports the guest may open (beyond gateway DNS). Each reopens a
+    /// path to a host service, so grant deliberately.
+    pub host_ports: Vec<u16>,
+    /// Outbound domain suffixes to allow without taking all of `Public`.
+    pub domain_suffixes: Vec<String>,
+}
+
+impl From<SandboxNetwork> for NetworkPosture {
+    fn from(reach: SandboxNetwork) -> Self {
+        NetworkPosture {
+            reach,
+            host_ports: Vec::new(),
+            domain_suffixes: Vec::new(),
         }
     }
 }
 
-impl Default for SandboxBuilder {
-    fn default() -> Self {
-        let mut config = SandboxConfig::default();
-        // 8 random bytes hex-encoded = 16 hex chars, ~64 bits of entropy. Short
-        // enough to fit any reasonable socket-path budget.
-        config.spec.name = format!("ailoy-{}", hex::encode(&Uuid::new_v4().as_bytes()[..8]));
-        // `"ubuntu:latest"` is a stable OCI reference; conversion never fails.
-        config.spec.image = "ubuntu:latest"
-            .into_rootfs_source()
-            .expect("'ubuntu:latest' parses as an OCI image reference");
-        config.spec.resources.cpus = 2;
-        config.spec.resources.memory_mib = 2048;
-        config.spec.runtime.workdir = Some("/root".to_string());
-        config.spec.pull_policy = PullPolicy::IfMissing;
-        // Default network posture: host + public internet (see SandboxNetwork).
-        config.spec.network.enabled = true;
-        config.spec.network.policy = Some(wire_network_policy(SandboxNetwork::default().policy()));
-        Self {
-            config,
-            default_timeout_secs: 60,
-            max_output_chars: 30_000,
-            build_error: None,
-        }
+impl NetworkPosture {
+    /// Set the host TCP ports the guest may open.
+    pub fn with_host_ports(mut self, ports: impl IntoIterator<Item = u16>) -> Self {
+        self.host_ports = ports.into_iter().collect();
+        self
+    }
+
+    /// Set the allowed outbound domain suffixes.
+    pub fn with_domain_suffixes(
+        mut self,
+        suffixes: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.domain_suffixes = suffixes.into_iter().map(Into::into).collect();
+        self
     }
 }
 
-impl SandboxBuilder {
-    pub fn new() -> Self {
-        Self::default()
-    }
+/// Guest vCPU count when the caller doesn't override it. Matches the old
+/// microsandbox-engine default; the agents run Python/pandas workloads that a
+/// single vCPU starves.
+const DEFAULT_VCPUS: u8 = 2;
+/// Guest memory (MiB) default. `pip install` + data tooling OOMs well under this.
+const DEFAULT_MEMORY_MIB: u32 = 2048;
+/// Per-exec wall-clock cap (seconds) when the caller passes no timeout. Mirrors
+/// the old engine's `default_timeout_secs`.
+const DEFAULT_TIMEOUT_SECS: u64 = 60;
 
-    pub fn name(mut self, name: impl Into<String>) -> Self {
-        self.config.spec.name = name.into();
-        self
-    }
+/// A per-sandbox ext4 upper image, deleted from the host when the last clone of
+/// its owning [`Sandbox`] drops. [`Sandbox::snapshot`] copies it out beforehand
+/// to persist the session.
+struct TempUpper(PathBuf);
 
-    pub fn image(mut self, image: impl IntoImage) -> Self {
-        match image.into_rootfs_source() {
-            Ok(rfs) => self.config.spec.image = rfs,
-            Err(e) => {
-                if self.build_error.is_none() {
-                    self.build_error = Some(format!("invalid image: {e}"));
-                }
-            }
-        }
-        self
-    }
-
-    pub fn cpus(mut self, cpus: u8) -> Self {
-        self.config.spec.resources.cpus = cpus;
-        self
-    }
-
-    pub fn memory_mib(mut self, memory_mib: u32) -> Self {
-        self.config.spec.resources.memory_mib = memory_mib;
-        self
-    }
-
-    pub fn workdir(mut self, workdir: impl Into<String>) -> Self {
-        self.config.spec.runtime.workdir = Some(workdir.into());
-        self
-    }
-
-    pub fn env(mut self, env: impl IntoIterator<Item = (String, String)>) -> Self {
-        self.config.spec.env = env.into_iter().map(Into::into).collect();
-        self
-    }
-
-    /// Set the guest network posture. The host is reachable in every variant;
-    /// see [`SandboxNetwork`]. Defaults to [`SandboxNetwork::Public`].
-    pub fn network(mut self, network: SandboxNetwork) -> Self {
-        self.config.spec.network.enabled = true;
-        self.config.spec.network.policy = Some(wire_network_policy(network.policy()));
-        self
-    }
-
-    /// Append a volume mount.
-    pub fn mount(mut self, mount: VolumeMount) -> Self {
-        let builder = match mount {
-            VolumeMount::Bind {
-                host,
-                guest,
-                readonly,
-            } => {
-                let b = MountBuilder::new(guest).bind(host);
-                if readonly { b.readonly() } else { b }
-            }
-            VolumeMount::Named {
-                name,
-                guest,
-                readonly,
-                create_if_missing,
-                labels,
-            } => {
-                let b = if create_if_missing {
-                    MountBuilder::new(guest).named_with(name, move |mut n| {
-                        n = n.ensure_exists();
-                        for (k, v) in labels {
-                            n = n.label(k, v);
-                        }
-                        n
-                    })
-                } else {
-                    MountBuilder::new(guest).named(name)
-                };
-                if readonly { b.readonly() } else { b }
-            }
-            VolumeMount::Tmpfs { guest, size_mib } => {
-                let b = MountBuilder::new(guest).tmpfs();
-                if let Some(s) = size_mib { b.size(s) } else { b }
-            }
-        };
-        match builder.build() {
-            Ok(vm) => self.config.spec.mounts.push(vm),
-            Err(e) => {
-                if self.build_error.is_none() {
-                    self.build_error = Some(format!("invalid mount: {e}"));
-                }
-            }
-        }
-        self
-    }
-
-    pub fn default_timeout_secs(mut self, secs: u64) -> Self {
-        self.default_timeout_secs = secs;
-        self
-    }
-
-    pub fn max_output_chars(mut self, chars: usize) -> Self {
-        self.max_output_chars = chars;
-        self
-    }
-
-    pub async fn build(self) -> anyhow::Result<Sandbox> {
-        if let Some(e) = self.build_error {
-            anyhow::bail!(e);
-        }
-        ensure_msb().await?;
-        let Self {
-            config,
-            default_timeout_secs,
-            max_output_chars,
-            ..
-        } = self;
-
-        validate_sandbox_name(&config.spec.name)
-            .map_err(|e| anyhow::anyhow!("sandbox name '{}': {e}", config.spec.name))?;
-
-        Sandbox::try_new(config, default_timeout_secs, max_output_chars).await
+impl Drop for TempUpper {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
     }
 }
 
-/// Remove a microsandbox snapshot directory by path. Best-effort: any
-/// failure is logged at `warn!` and swallowed so callers can continue.
-fn cleanup_snapshot_dir(path: &Path) {
-    if let Err(e) = run_msb_cli([
-        std::ffi::OsStr::new("snapshot"),
-        std::ffi::OsStr::new("remove"),
-        std::ffi::OsStr::new("-f"),
-        path.as_os_str(),
-    ]) {
-        log::warn!("cleanup snapshot {}: {e}", path.display());
+/// A unique temp path for a per-sandbox upper image.
+fn fresh_upper_path() -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("ailoy-upper-{}-{n}.ext4", std::process::id()))
+}
+
+/// A per-sandbox virtio-fs boot root (holds only the guest init). Created and
+/// populated on the host per [`Sandbox`], removed when the last clone drops — so
+/// concurrent boots never share one writable root (each boots into its own).
+struct TempInitRoot(PathBuf);
+
+impl Drop for TempInitRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
+/// A fresh boot root at a unique temp dir, populated with the guest init. Owned
+/// by the parent `Sandbox`; the boot child receives only its path (by env).
+fn fresh_init_root() -> io::Result<PathBuf> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("ailoy-initroot-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    ensure_guest_init(&dir)?;
+    Ok(dir)
+}
+
+/// A fresh, empty ext4 upper at a unique temp path (formatted in pure Rust).
+fn fresh_upper() -> io::Result<PathBuf> {
+    let upper = fresh_upper_path();
+    microsandbox_image::ext4::format_ext4(
+        &upper,
+        &microsandbox_image::ext4::Ext4FormatOptions {
+            size_bytes: 2 << 30,
+            journal_blocks: 4096,
+        },
+    )
+    .map_err(|e| io::Error::other(format!("format upper ext4: {e}")))?;
+    Ok(upper)
+}
+
+/// Snapshot container magic (`AILOYSN` + format version).
+const SNAP_MAGIC: &[u8; 8] = b"AILOYSN1";
+
+/// Write `src` (a sparse ext4 upper) to `dest` as a gzip snapshot holding only
+/// the allocated extents — O(data written), not O(logical size) (cf.
+/// microsandbox PR #1150). Layout (all little-endian, gzip-compressed):
+/// `MAGIC | logical_len u64 | n_extents u64 | (offset u64, len u64, bytes)*`.
+fn write_snapshot(src: &Path, dest: &Path) -> io::Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let mut f = std::fs::File::open(src)?;
+    let logical = f.metadata()?.len();
+    let extents = match microsandbox_utils::extent::ExtentMap::scan_file(&f)? {
+        Some(m) => m.extents,
+        // Filesystem can't report holes — fall back to one dense extent.
+        None => vec![(0, logical)],
+    };
+
+    let mut enc = flate2::write::GzEncoder::new(
+        std::fs::File::create(dest)?,
+        flate2::Compression::default(),
+    );
+    enc.write_all(SNAP_MAGIC)?;
+    enc.write_all(&logical.to_le_bytes())?;
+    enc.write_all(&(extents.len() as u64).to_le_bytes())?;
+
+    let mut buf = vec![0u8; 1 << 20];
+    for (off, len) in extents {
+        enc.write_all(&off.to_le_bytes())?;
+        enc.write_all(&len.to_le_bytes())?;
+        f.seek(SeekFrom::Start(off))?;
+        let mut left = len;
+        while left > 0 {
+            let want = left.min(buf.len() as u64) as usize;
+            let n = f.read(&mut buf[..want])?;
+            if n == 0 {
+                return Err(io::Error::other("snapshot: short read in extent"));
+            }
+            enc.write_all(&buf[..n])?;
+            left -= n as u64;
+        }
+    }
+    enc.finish()?;
+    Ok(())
+}
+
+/// Rebuild a sparse ext4 upper at `dest` from a [`write_snapshot`] archive:
+/// truncate to the logical size (all holes) then write back each extent, so the
+/// holes stay unallocated.
+fn read_snapshot(src: &Path, dest: &Path) -> io::Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let mut dec = flate2::read::GzDecoder::new(std::fs::File::open(src)?);
+    let mut magic = [0u8; 8];
+    dec.read_exact(&mut magic)?;
+    if &magic != SNAP_MAGIC {
+        return Err(io::Error::other("not an ailoy snapshot"));
+    }
+    let mut u64buf = [0u8; 8];
+    dec.read_exact(&mut u64buf)?;
+    let logical = u64::from_le_bytes(u64buf);
+    dec.read_exact(&mut u64buf)?;
+    let n_extents = u64::from_le_bytes(u64buf);
+
+    let mut out = std::fs::File::create(dest)?;
+    out.set_len(logical)?;
+    let mut buf = vec![0u8; 1 << 20];
+    for _ in 0..n_extents {
+        dec.read_exact(&mut u64buf)?;
+        let off = u64::from_le_bytes(u64buf);
+        dec.read_exact(&mut u64buf)?;
+        let len = u64::from_le_bytes(u64buf);
+        out.seek(SeekFrom::Start(off))?;
+        let mut left = len;
+        while left > 0 {
+            let want = left.min(buf.len() as u64) as usize;
+            dec.read_exact(&mut buf[..want])?;
+            out.write_all(&buf[..want])?;
+            left -= want as u64;
+        }
+    }
+    Ok(())
+}
+
+/// An ephemeral sandbox recipe: booted fresh per [`exec`](Sandbox::exec).
+#[derive(Clone)]
 pub struct Sandbox {
-    name: String,
-    default_timeout_secs: u64,
-    max_output_chars: usize,
-    console: Option<SandboxConsole>,
+    kernel: PathBuf,
+    /// Read-only base image as an EROFS block device — the overlay lower.
+    rootfs_erofs: PathBuf,
+    /// The writable ext4 overlay upper (the session's filesystem delta).
+    upper: PathBuf,
+    /// Held only for its `Drop`: deletes the temp upper on last clone drop
+    /// (`Some` for a `Sandbox`-owned upper, `None` never happens today).
+    _upper_guard: Option<Arc<TempUpper>>,
+    /// The per-sandbox virtio-fs boot root (guest init only), handed to the boot
+    /// child by path. Unique per sandbox, so concurrent boots share no root.
+    init_root: PathBuf,
+    /// Held only for its `Drop`: removes the temp init root on last clone drop.
+    _init_root_guard: Option<Arc<TempInitRoot>>,
+    /// The cortex workspace to mount, as `(guest_root, spec)`. The whole tree is
+    /// served as one virtio-fs device; sub-mounts appear under `guest_root`.
+    workspace: Option<(String, WorkspaceSpec)>,
+    /// Guest vCPU count.
+    vcpus: u8,
+    /// Guest memory in MiB.
+    memory_mib: u32,
+    /// Guest network posture (outside reach + host ports + domain suffixes).
+    network: NetworkPosture,
+    /// Serializes boots so concurrent execs don't write the shared upper at once.
+    exec_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Sandbox {
-    pub async fn try_new(
-        config: SandboxConfig,
-        default_timeout_secs: u64,
-        max_output_chars: usize,
-    ) -> anyhow::Result<Sandbox> {
-        let name = config.spec.name.clone();
-        let inner = microsandbox::Sandbox::create(config)
-            .await
-            .context("sandbox create")?;
-        Ok(Self {
-            name,
-            default_timeout_secs,
-            max_output_chars,
-            console: Some(SandboxConsole {
-                inner,
-                default_timeout_secs,
-                max_output_chars,
-            }),
-        })
-    }
-
-    /// Restore a sandbox from a `.tar.zst` (or `.tar`) archive previously
-    /// produced by [`archive`](Self::archive). The restored sandbox is
-    /// created in the stopped state, reusing the embedded snapshot name.
-    /// Any existing sandbox with that name is replaced (stopped and removed
-    /// first), so restore is idempotent. The intermediate microsandbox
-    /// snapshot directory unpacked by this call is cleaned up before
-    /// returning (success or failure).
-    pub async fn try_from_archive(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        Self::try_from_archive_inner(path, SandboxNetwork::default()).await
-    }
-
-    /// Like [`try_from_archive`](Self::try_from_archive) but with an explicit
-    /// [`SandboxNetwork`]. An archive is only a filesystem snapshot and doesn't
-    /// carry the network policy, so the desired posture is re-applied here.
-    pub async fn try_from_archive_with_network(
-        path: impl AsRef<Path>,
-        network: SandboxNetwork,
-    ) -> anyhow::Result<Self> {
-        Self::try_from_archive_inner(path, network).await
-    }
-
-    async fn try_from_archive_inner(
-        path: impl AsRef<Path>,
-        network: SandboxNetwork,
-    ) -> anyhow::Result<Self> {
-        ensure_msb().await?;
-
-        let handle = Snapshot::load(path.as_ref(), None)
-            .await
-            .context("load snapshot archive")?;
-        let snap = handle.open().await.context("open loaded snapshot")?;
-        let snap_path = snap.path().to_path_buf();
-
-        // The imported artifact directory is content-addressed (`sha256-…`),
-        // so its file name is not the original sandbox name. The manifest's
-        // `source_sandbox` records the name the snapshot was taken from; reuse
-        // that. Fall back to a fresh generated name for name-less snapshots.
-        let name = snap
-            .manifest()
-            .source_sandbox
-            .clone()
-            .unwrap_or_else(|| format!("ailoy-{}", hex::encode(&Uuid::new_v4().as_bytes()[..8])));
-
-        let result = microsandbox::Sandbox::builder(&name)
-            .from_snapshot(snap_path.to_string_lossy().into_owned())
-            .pull_policy(PullPolicy::IfMissing)
-            .replace()
-            .network(|n| n.policy(network.policy()))
-            .create()
-            .await
-            .context("create sandbox from snapshot");
-
-        cleanup_snapshot_dir(&snap_path);
-
-        let inner = result?;
-        Ok(Self {
-            name,
-            default_timeout_secs: 60,
-            max_output_chars: 30_000,
-            console: Some(SandboxConsole {
-                inner,
-                default_timeout_secs: 60,
-                max_output_chars: 30_000,
-            }),
-        })
-    }
-
-    pub fn get_name(&self) -> &str {
-        &self.name
-    }
-
-    /// Snapshot this sandbox and bundle the result into a `.tar.zst` archive
-    /// at `path`. The sandbox must be stopped — call [`Machine::stop`] first,
-    /// or rely on the stopped state that [`SandboxBuilder::build`] leaves it
-    /// in. The intermediate microsandbox snapshot directory created by this
-    /// call is cleaned up before returning (success or failure).
-    pub async fn archive(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
-        let snap = Snapshot::builder(&self.name)
-            .from_sandbox(&self.name)
-            .create()
-            .await
-            .context("create snapshot")?;
-        let snap_path = snap.path().to_path_buf();
-
-        let result = Snapshot::save(
-            snap_path.to_string_lossy().as_ref(),
-            path.as_ref(),
-            SaveOpts::default(),
-        )
-        .await
-        .context("save snapshot archive");
-
-        cleanup_snapshot_dir(&snap_path);
-
-        result?;
-        Ok(())
-    }
-
-    /// Fork this sandbox into a new one initialized from a filesystem
-    /// snapshot of `self`. The new sandbox inherits `default_timeout_secs`
-    /// and `max_output_chars` from `self`; the name is auto-generated.
-    /// Returns the new sandbox in the running state.
+    /// A fresh sandbox with an empty, ephemeral writable upper — an ext4 overlay
+    /// over the (read-only) base rootfs. Writes anywhere in the guest persist
+    /// across the per-exec VMs, but the upper is discarded when the sandbox (and
+    /// all its clones) drop; persist it first with [`snapshot`](Self::snapshot).
     ///
-    /// `self` must be stopped — call [`Machine::stop`] first if needed.
-    pub async fn fork(&self) -> anyhow::Result<Sandbox> {
-        if self.is_running() {
-            anyhow::bail!("cannot fork running sandbox '{}'; stop it first", self.name);
-        }
+    /// ailoy owns the base rootfs (a provisioned Alpine EROFS, or an image via
+    /// [`with_image`](Self::with_image)) and the kernel.
+    pub fn new() -> io::Result<Self> {
+        let upper = fresh_upper()?;
+        Self::assemble(upper.clone(), Some(Arc::new(TempUpper(upper))))
+    }
 
-        let new_name = format!("ailoy-{}", hex::encode(&Uuid::new_v4().as_bytes()[..8]));
-        let snap_name = format!("fork-{new_name}");
+    /// Restore a sandbox whose upper is seeded from a [`snapshot`](Self::snapshot),
+    /// resuming that captured filesystem state. The caller must pair it with the
+    /// same base image the snapshot was taken over.
+    pub fn from_snapshot(snapshot: impl AsRef<Path>) -> io::Result<Self> {
+        let upper = fresh_upper_path();
+        read_snapshot(snapshot.as_ref(), &upper)?;
+        Self::assemble(upper.clone(), Some(Arc::new(TempUpper(upper))))
+    }
 
-        let handle = MsbSandbox::get(&self.name)
+    fn assemble(upper: PathBuf, upper_guard: Option<Arc<TempUpper>>) -> io::Result<Self> {
+        let init_root = fresh_init_root()?;
+        Ok(Self {
+            kernel: resolve_kernel()?,
+            rootfs_erofs: ensure_base_erofs()?,
+            upper,
+            _upper_guard: upper_guard,
+            init_root: init_root.clone(),
+            _init_root_guard: Some(Arc::new(TempInitRoot(init_root))),
+            workspace: None,
+            vcpus: DEFAULT_VCPUS,
+            memory_mib: DEFAULT_MEMORY_MIB,
+            network: NetworkPosture::default(),
+            exec_lock: Arc::new(tokio::sync::Mutex::new(())),
+        })
+    }
+
+    /// Persist the current upper (the session's filesystem delta) to `dest` so a
+    /// later [`from_snapshot`](Self::from_snapshot) can resume it. Waits for any
+    /// in-flight exec so the image is captured consistently.
+    pub async fn snapshot(&self, dest: impl AsRef<Path>) -> io::Result<()> {
+        let _guard = self.exec_lock.lock().await;
+        let (src, dest) = (self.upper.clone(), dest.as_ref().to_path_buf());
+        tokio::task::spawn_blocking(move || write_snapshot(&src, &dest))
             .await
-            .map_err(|e| anyhow::anyhow!("fork: source sandbox not found: {e}"))?;
+            .map_err(|e| io::Error::other(format!("snapshot join: {e}")))?
+    }
 
-        let snap = handle
-            .snapshot(&snap_name)
-            .await
-            .map_err(|e| anyhow::anyhow!("fork: snapshot failed: {e}"))?;
-        let snap_path = snap.path().to_path_buf();
+    /// Set the guest network posture. Accepts a bare [`SandboxNetwork`] (outside
+    /// reach only) or a [`NetworkPosture`] (`SandboxNetwork::Public
+    /// .with_host_ports([..])`). Defaults to [`SandboxNetwork::HostOnly`] with no
+    /// host ports — anything wider is opt-in.
+    pub fn with_network(mut self, network: impl Into<NetworkPosture>) -> Self {
+        self.network = network.into();
+        self
+    }
 
-        let result = microsandbox::Sandbox::builder(&new_name)
-            .from_snapshot(snap_path.to_string_lossy().into_owned())
-            .pull_policy(PullPolicy::IfMissing)
-            .create()
-            .await
-            .context("fork: create from snapshot");
+    /// Override the guest vCPU count (default [`DEFAULT_VCPUS`]).
+    pub fn with_vcpus(mut self, vcpus: u8) -> Self {
+        self.vcpus = vcpus;
+        self
+    }
 
-        // Clean up the temp snapshot regardless of outcome.
-        if let Err(e) = Snapshot::remove(&snap_name, true).await {
-            log::warn!("fork: failed to clean up snapshot '{snap_name}': {e}");
-        }
+    /// Override the guest memory in MiB (default [`DEFAULT_MEMORY_MIB`]).
+    pub fn with_memory_mib(mut self, memory_mib: u32) -> Self {
+        self.memory_mib = memory_mib;
+        self
+    }
 
-        let inner = match result {
-            Ok(inner) => inner,
-            Err(e) => {
-                // Best-effort: clean up any partially-created sandbox record.
-                let _ = MsbSandbox::remove(&new_name).await;
-                return Err(e);
+    /// Override the base rootfs with a prebuilt read-only EROFS image.
+    pub fn with_rootfs_erofs(mut self, erofs: impl Into<PathBuf>) -> Self {
+        self.rootfs_erofs = erofs.into();
+        self
+    }
+
+    /// Use an OCI image (e.g. `python:3.12-slim`) as the base rootfs, pulling it
+    /// (once) as a read-only EROFS under `<krun_home>/images/<ref>.erofs`. The
+    /// guest overlays a writable ext4 upper over it, so the image stays pristine.
+    ///
+    /// Public Docker Hub images only for now — see [`super::oci`].
+    pub async fn with_image(self, reference: &str) -> io::Result<Self> {
+        let erofs = image_erofs_path(reference)?;
+        super::oci::pull_erofs(reference, &erofs).await?;
+        Ok(self.with_rootfs_erofs(erofs))
+    }
+
+    /// Override the libkrunfw kernel path.
+    pub fn with_kernel(mut self, kernel: impl Into<PathBuf>) -> Self {
+        self.kernel = kernel.into();
+        self
+    }
+
+    /// Mount a cortex [`WorkspaceSpec`] as one unified tree at `guest_root`. The
+    /// workspace's sub-mounts appear under that root (routed internally by
+    /// cortex), served as a single virtio-fs device — the same tree a WebDAV or
+    /// host-FUSE frontend built from the same spec would show.
+    pub fn with_workspace(
+        mut self,
+        guest_root: impl Into<String>,
+        spec: WorkspaceSpec,
+    ) -> Self {
+        self.workspace = Some((guest_root.into(), spec));
+        self
+    }
+
+    /// The workspace mount as wire data (a fixed device tag), if any.
+    fn wire_workspace(&self) -> Option<WorkspaceWire> {
+        self.workspace.as_ref().map(|(guest_root, spec)| WorkspaceWire {
+            tag: "ailoyws".to_string(),
+            guest_root: guest_root.clone(),
+            spec: spec.clone(),
+        })
+    }
+
+    /// Boot a fresh microVM, run `cmd`, and capture its output. `/data` is the
+    /// persistent upper; each configured volume is mounted at its guest path.
+    pub fn exec(&self, cmd: &str, timeout: Option<u64>) -> io::Result<ExecOutput> {
+        let console = tempfile::NamedTempFile::new()?;
+        let console_path = console.path().to_path_buf();
+        let exe = boot_helper_exe()?;
+        let ws = self.wire_workspace();
+        let payload = build_payload(cmd);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(payload);
+        let workspace_json = serde_json::to_string(&ws)
+            .map_err(|e| io::Error::other(format!("serialize workspace: {e}")))?;
+        let network_json = serde_json::to_string(&self.network)
+            .map_err(|e| io::Error::other(format!("serialize network: {e}")))?;
+
+        let mut child = Command::new(exe)
+            .env("AILOY_KRUN_KERNEL", &self.kernel)
+            .env("AILOY_KRUN_ROOTFS_EROFS", &self.rootfs_erofs)
+            .env("AILOY_KRUN_INIT_ROOT", &self.init_root)
+            .env("AILOY_KRUN_UPPER", &self.upper)
+            .env("AILOY_KRUN_CONSOLE", &console_path)
+            .env("AILOY_KRUN_B64", &b64)
+            .env("AILOY_KRUN_VCPUS", self.vcpus.to_string())
+            .env("AILOY_KRUN_MEMORY_MIB", self.memory_mib.to_string())
+            .env("AILOY_KRUN_NETWORK", &network_json)
+            .env(WORKSPACE_ENV, &workspace_json)
+            .spawn()?;
+
+        // Bound the boot child by wall-clock: a runaway guest command otherwise
+        // hangs the whole exec forever. Poll `try_wait` to a deadline, then kill.
+        let secs = timeout.unwrap_or(DEFAULT_TIMEOUT_SECS);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        let (status, timed_out) = loop {
+            if let Some(status) = child.try_wait()? {
+                break (status, false);
             }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let status = child.wait()?;
+                break (status, true);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
         };
 
-        Ok(Sandbox {
-            name: new_name,
-            default_timeout_secs: self.default_timeout_secs,
-            max_output_chars: self.max_output_chars,
-            console: Some(SandboxConsole {
-                inner,
-                default_timeout_secs: self.default_timeout_secs,
-                max_output_chars: self.max_output_chars,
-            }),
-        })
-    }
-
-    /// Returns `true` if a sandbox with the given name already exists, without
-    /// creating or starting it.
-    ///
-    /// Lightweight existence probe — never modifies sandbox state. Returns
-    /// `false` on any error (e.g. the microsandbox runtime is not installed).
-    pub async fn exists(name: &str) -> bool {
-        MsbSandbox::get(name).await.is_ok()
-    }
-
-    /// Remove a sandbox by name without holding a [`Sandbox`] instance.
-    ///
-    /// Intended for explicit cleanup when the [`Sandbox`] object is no longer
-    /// available (e.g. after a process restart). Force-removes via the `msb`
-    /// CLI in a fresh process, matching how [`Drop`] removes the VM (the
-    /// in-process microsandbox DB pool is bound to the parent runtime).
-    ///
-    /// Idempotent: if the named sandbox does not exist, returns `Ok(())`.
-    pub async fn remove_persisted(name: &str) -> anyhow::Result<()> {
-        if MsbSandbox::get(name).await.is_err() {
-            return Ok(());
-        }
-        run_msb_cli(["remove", "-f", name])
+        let raw = std::fs::read_to_string(&console_path).unwrap_or_default();
+        let mut out = parse_output(&raw, status.code());
+        out.timed_out = timed_out;
+        Ok(out)
     }
 }
 
+/// Single-quote a shell word so arbitrary characters survive.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn shell_join(program: &str, args: &[String]) -> String {
+    let mut cmd = shell_quote(program);
+    for a in args {
+        cmd.push(' ');
+        cmd.push_str(&shell_quote(a));
+    }
+    cmd
+}
+
+/// The krun sandbox as an ailoy exec backend: each `exec` boots a fresh microVM
+/// (with the cortex volumes mounted) and captures the command's output.
 #[async_trait]
-impl Machine for Sandbox {
-    type Console = SandboxConsole;
-
-    fn is_running(&self) -> bool {
-        self.console.is_some()
-    }
-
-    async fn start<'a>(&'a mut self) -> anyhow::Result<&'a Self::Console> {
-        if self.console.is_none() {
-            let inner = microsandbox::Sandbox::start(&self.name)
-                .await
-                .context("sandbox start")?;
-            self.console = Some(SandboxConsole {
-                inner,
-                default_timeout_secs: self.default_timeout_secs,
-                max_output_chars: self.max_output_chars,
-            });
-        }
-        Ok(self.console.as_ref().expect("just set"))
-    }
-
-    async fn stop(&mut self) -> anyhow::Result<()> {
-        if let Some(console) = self.console.as_ref() {
-            console.inner.stop_and_wait().await?;
-        }
-        self.console = None;
-        Ok(())
-    }
-}
-
-impl Drop for Sandbox {
-    fn drop(&mut self) {
-        // If the VM is still running, gracefully stop it through agentd via
-        // the in-process handle before the field drops — otherwise the
-        // safety-net SIGTERM costs ~5s of libkrun shutdown. Awaits aren't
-        // allowed in Drop, so we hop to a worker thread with a fresh
-        // runtime. We can't reuse the in-process API for `remove` because
-        // microsandbox's DB pool is bound to the parent runtime; the CLI
-        // spawns a fresh process with its own pool.
-        if let Some(console) = self.console.take() {
-            let name = self.name.clone();
-            let (tx, rx) = std::sync::mpsc::channel::<()>();
-            std::thread::spawn(move || {
-                if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    && let Err(e) = rt.block_on(console.inner.stop_and_wait())
-                {
-                    log::warn!("Drop stop_and_wait `{name}`: {e}");
-                }
-                let _ = tx.send(());
-            });
-            let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
-        }
-        if let Err(e) = run_msb_cli(["remove", "-f", self.name.as_str()]) {
-            log::warn!("cleanup sandbox `{}`: {e}", self.name);
-        }
-    }
-}
-
-pub struct SandboxConsole {
-    inner: MsbSandbox,
-    default_timeout_secs: u64,
-    max_output_chars: usize,
-}
-
-#[async_trait]
-impl Console for SandboxConsole {
+impl Console for Sandbox {
     fn get_os(&self) -> &str {
         "linux"
     }
@@ -651,343 +754,79 @@ impl Console for SandboxConsole {
         args: Vec<String>,
         timeout: Option<u64>,
     ) -> anyhow::Result<ExecResult> {
-        let timeout_secs = timeout.unwrap_or(self.default_timeout_secs);
-        let raw = self
-            .inner
-            .exec_with(&program, |b: ExecOptionsBuilder| {
-                b.args(args.iter().map(|s| s.as_str()))
-                    .timeout(Duration::from_secs(timeout_secs))
-            })
-            .await;
-        handle_exec_result(raw, self.max_output_chars)
-    }
-
-    async fn read(&self, path: &Path) -> anyhow::Result<Vec<u8>> {
-        let path_s = path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("read: path {} is not valid UTF-8", path.display()))?;
-        let bytes = self
-            .inner
-            .fs()
-            .read(path_s)
+        let cmd = if program == "sh" && args.len() == 2 && args[0] == "-c" {
+            args[1].clone()
+        } else {
+            shell_join(&program, &args)
+        };
+        let _guard = self.exec_lock.lock().await;
+        let sb = self.clone();
+        let out = tokio::task::spawn_blocking(move || sb.exec(&cmd, timeout))
             .await
-            .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
-        Ok(bytes.to_vec())
-    }
-
-    async fn write(&self, path: &Path, content: &[u8]) -> anyhow::Result<()> {
-        let path_s = path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("write: path {} is not valid UTF-8", path.display()))?;
-        if let Some(parent) = path.parent()
-            && !parent.as_os_str().is_empty()
-        {
-            let parent_s = parent.to_str().ok_or_else(|| {
-                anyhow::anyhow!("write: parent {} is not valid UTF-8", parent.display())
-            })?;
-            // microsandbox's fs().write() does not create parents; mkdir -p first.
-            let _ = self
-                .inner
-                .shell(&format!("mkdir -p '{}'", parent_s.replace('\'', "'\\''")))
-                .await;
-        }
-        self.inner
-            .fs()
-            .write(path_s, content)
-            .await
-            .map_err(|e| anyhow::anyhow!("write {}: {e}", path.display()))
-    }
-}
-
-fn handle_exec_result(
-    result: Result<ExecOutput, MicrosandboxError>,
-    max_output_chars: usize,
-) -> anyhow::Result<ExecResult> {
-    match result {
-        Ok(output) => {
-            let stdout = middle_truncate(output.stdout().unwrap_or_default(), max_output_chars);
-            let stderr = middle_truncate(output.stderr().unwrap_or_default(), max_output_chars);
-            Ok(ExecResult {
-                stdout,
-                stderr,
-                exit_code: output.status().code,
-                timed_out: false,
-            })
-        }
-        Err(MicrosandboxError::ExecTimeout(_)) => Ok(ExecResult {
-            stdout: String::new(),
+            .map_err(|e| anyhow::anyhow!("krun exec join: {e}"))??;
+        Ok(ExecResult {
+            stdout: out.stdout,
             stderr: String::new(),
-            exit_code: -1,
-            timed_out: true,
-        }),
-        Err(e) => Err(e.into()),
+            exit_code: out.exit_code,
+            timed_out: out.timed_out,
+        })
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use microsandbox::sandbox::SandboxStatus;
+/// Guest program: run the command between markers, syncing before shutdown so
+/// the overlay upper's writes flush to the host image. The filesystem is already
+/// set up by the guest init (overlay root + virtio-fs shares) before this runs.
+fn build_payload(cmd: &str) -> String {
+    format!(
+        "echo {OUT_MARKER}\n\
+         {cmd}\n\
+         __ailoy_rc=$?\n\
+         sync\n\
+         echo {RC_MARKER}$__ailoy_rc\n"
+    )
+}
 
-    use super::*;
-
-    /// Smoke test: a fresh sandbox can run a shell command and return its
-    /// stdout/exit code.
-    #[tokio::test]
-    async fn test_exec() {
-        let mut sandbox = SandboxBuilder::new().build().await.expect("build");
-        let console = sandbox.start().await.expect("start");
-        let r = console
-            .exec_shell("echo hello".to_string(), None)
-            .await
-            .expect("exec");
-        assert_eq!(r.exit_code, 0, "non-zero exit: stderr={}", r.stderr);
-        assert_eq!(r.stdout.trim(), "hello");
-    }
-
-    /// `Machine::stop` should actually transition the underlying microsandbox
-    /// VM to the `Stopped` state, not just clear our internal handle.
-    #[tokio::test]
-    async fn test_stop() {
-        let mut sandbox = SandboxBuilder::new().build().await.expect("build");
-        let name = sandbox.get_name().to_string();
-
-        let handle = MsbSandbox::get(&name)
-            .await
-            .expect("vm record should exist after build");
-        assert_eq!(
-            handle.status_snapshot(),
-            SandboxStatus::Running,
-            "vm should be Running right after build",
-        );
-
-        sandbox.stop().await.expect("stop");
-
-        let handle = MsbSandbox::get(&name)
-            .await
-            .expect("vm record should still exist after stop");
-        assert_eq!(
-            handle.status_snapshot(),
-            SandboxStatus::Stopped,
-            "vm should be Stopped after Machine::stop",
-        );
-    }
-
-    /// Dropping `Sandbox` should leave nothing behind in microsandbox —
-    /// the VM record must be gone so the name can be reused.
-    #[tokio::test]
-    async fn test_clean_drop() {
-        let sandbox = SandboxBuilder::new().build().await.expect("build");
-        let name = sandbox.get_name().to_string();
-
-        assert!(
-            MsbSandbox::get(&name).await.is_ok(),
-            "vm record should exist before drop",
-        );
-
-        drop(sandbox);
-
-        assert!(
-            MsbSandbox::get(&name).await.is_err(),
-            "vm record should be gone after Drop",
-        );
-    }
-
-    // ── exists / remove_persisted ─────────────────────────────────────────────
-
-    /// A name that was never registered reports `false` without touching state.
-    #[tokio::test]
-    async fn test_exists_returns_false_for_unknown_name() {
-        let name = format!("ailoy-nx-{}", hex::encode(&Uuid::new_v4().as_bytes()[..6]));
-        assert!(
-            !Sandbox::exists(&name).await,
-            "a never-registered name must not exist"
-        );
-    }
-
-    /// `exists()` tracks the lifecycle: `true` after build, `false` after the
-    /// VM is removed on `Drop`.
-    #[tokio::test]
-    async fn test_exists_true_after_build_false_after_drop() {
-        let sandbox = SandboxBuilder::new().build().await.expect("build");
-        let name = sandbox.get_name().to_string();
-
-        assert!(Sandbox::exists(&name).await, "must exist after build");
-
-        drop(sandbox);
-
-        assert!(
-            !Sandbox::exists(&name).await,
-            "must not exist after Drop removes the VM"
-        );
-    }
-
-    /// `remove_persisted` on an unknown name is a no-op that returns `Ok`.
-    #[tokio::test]
-    async fn test_remove_persisted_unknown_is_ok() {
-        let name = format!("ailoy-nx-{}", hex::encode(&Uuid::new_v4().as_bytes()[..6]));
-        Sandbox::remove_persisted(&name)
-            .await
-            .expect("remove_persisted on unknown name should be Ok");
-    }
-
-    // ── network policy ─────────────────────────────────────────────────────────
-
-    /// Probe a raw public IP on :443 from inside the guest. Uses `alpine`
-    /// (busybox `nc`) and a non-DNS port — microsandbox intercepts :53 with its
-    /// own resolver, so only a raw-IP connect actually exercises egress policy.
-    /// Returns the shell exit code (0 = connected).
-    async fn public_egress_exit_code(network: SandboxNetwork) -> i32 {
-        let mut sandbox = SandboxBuilder::new()
-            .image("alpine:latest")
-            .network(network)
-            .build()
-            .await
-            .expect("build");
-        let console = sandbox.start().await.expect("start");
-        console
-            .exec_shell("nc -zw5 1.1.1.1 443 2>/dev/null".to_string(), Some(10))
-            .await
-            .expect("exec")
-            .exit_code
-    }
-
-    /// `SandboxNetwork::HostOnly` grants egress to the sandbox host only —
-    /// public egress stays blocked (the least-privilege VFS posture).
-    #[tokio::test]
-    async fn test_host_only_blocks_public_egress() {
-        assert_ne!(
-            public_egress_exit_code(SandboxNetwork::HostOnly).await,
-            0,
-            "public TCP connect (1.1.1.1:443) must be blocked under HostOnly"
-        );
-    }
-
-    /// Contrast: `SandboxNetwork::Public` (the default) allows public egress,
-    /// confirming HostOnly's block is the policy — not a broken network.
-    #[tokio::test]
-    async fn test_public_allows_public_egress() {
-        assert_eq!(
-            public_egress_exit_code(SandboxNetwork::Public).await,
-            0,
-            "public TCP connect (1.1.1.1:443) must succeed under Public"
-        );
-    }
-
-    /// Round-trip: build → write files → archive → restore → read files.
-    /// Confirms the snapshot artifact is produced, `from_archive` restores
-    /// under the same name, and files written before archiving survive.
-    #[tokio::test]
-    async fn test_archive_and_restore() {
-        let mut sandbox = SandboxBuilder::new().build().await.expect("build sandbox");
-        let original_name = sandbox.get_name().to_string();
-
-        // Write a couple of files into the rootfs so we can verify they
-        // survive the snapshot round-trip.
-        {
-            let console = sandbox.start().await.expect("start sandbox");
-            let r = console
-                .exec_shell(
-                    "echo hello > /root/file1.txt && echo world > /root/file2.txt".to_string(),
-                    None,
-                )
-                .await
-                .expect("write files");
-            assert_eq!(r.exit_code, 0, "write failed: {}", r.stderr);
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for d in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&d) {
+                        break;
+                    }
+                }
+            }
+        } else {
+            out.push(c);
         }
-
-        // Snapshot needs a quiesced VM.
-        sandbox.stop().await.expect("stop before archive");
-
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let archive_path = tmp.path().join("sandbox.tar.zst");
-        sandbox
-            .archive(&archive_path)
-            .await
-            .expect("archive sandbox");
-        assert!(
-            archive_path.is_file(),
-            "archive file is missing: {}",
-            archive_path.display()
-        );
-
-        let mut restored = Sandbox::try_from_archive(&archive_path)
-            .await
-            .expect("restore from archive");
-        assert_eq!(
-            restored.get_name(),
-            original_name,
-            "restored sandbox should reuse the archive's embedded name"
-        );
-
-        // Files written before archiving should still be present.
-        let console = restored.start().await.expect("start restored");
-        let r1 = console
-            .exec_shell("cat /root/file1.txt".to_string(), None)
-            .await
-            .expect("read file1");
-        assert_eq!(r1.exit_code, 0, "cat file1 failed: {}", r1.stderr);
-        assert_eq!(r1.stdout.trim(), "hello");
-
-        let r2 = console
-            .exec_shell("cat /root/file2.txt".to_string(), None)
-            .await
-            .expect("read file2");
-        assert_eq!(r2.exit_code, 0, "cat file2 failed: {}", r2.stderr);
-        assert_eq!(r2.stdout.trim(), "world");
     }
+    out
+}
 
-    // 1. fork has a distinct name from source
-    // 2. fork starts with source's files (/root/marker.txt: from-source)
-    // 3. overwriting in the fork doesn't bleed back into source — isolation
-    #[tokio::test]
-    async fn test_fork() {
-        let mut src = SandboxBuilder::new().build().await.expect("build src");
-
-        // Plant a file in the source, then stop so we can fork.
-        {
-            let console = src.start().await.expect("start src");
-            let r = console
-                .exec_shell("echo from-source > /root/marker.txt".to_string(), None)
-                .await
-                .expect("write marker");
-            assert_eq!(r.exit_code, 0, "write failed: {}", r.stderr);
+fn parse_output(raw: &str, child_exit: Option<i32>) -> ExecOutput {
+    let clean = strip_ansi(raw);
+    match clean.split(OUT_MARKER).nth(1) {
+        Some(rest) => {
+            let stdout = rest.split(RC_MARKER).next().unwrap_or("").trim().to_string();
+            let exit_code = rest
+                .split(RC_MARKER)
+                .nth(1)
+                .and_then(|t| t.trim().lines().next())
+                .and_then(|n| n.trim().parse::<i32>().ok())
+                .unwrap_or(-1);
+            ExecOutput {
+                stdout,
+                exit_code,
+                timed_out: false,
+            }
         }
-        src.stop().await.expect("stop src");
-
-        let mut fork = src.fork().await.expect("fork");
-        assert_ne!(
-            fork.get_name(),
-            src.get_name(),
-            "fork must have a distinct name",
-        );
-
-        // The marker written in the source should be visible in the fork.
-        let console = fork.start().await.expect("start fork");
-        let r = console
-            .exec_shell("cat /root/marker.txt".to_string(), None)
-            .await
-            .expect("read marker in fork");
-        assert_eq!(r.exit_code, 0, "cat failed: {}", r.stderr);
-        assert_eq!(r.stdout.trim(), "from-source");
-
-        // Mutating the fork must not affect the source.
-        let r = console
-            .exec_shell("echo from-fork > /root/marker.txt".to_string(), None)
-            .await
-            .expect("overwrite in fork");
-        assert_eq!(r.exit_code, 0, "overwrite failed: {}", r.stderr);
-        fork.stop().await.expect("stop fork");
-
-        let console = src.start().await.expect("restart src");
-        let r = console
-            .exec_shell("cat /root/marker.txt".to_string(), None)
-            .await
-            .expect("read marker in src");
-        assert_eq!(r.exit_code, 0, "cat failed: {}", r.stderr);
-        assert_eq!(
-            r.stdout.trim(),
-            "from-source",
-            "source must be unaffected by writes in the fork",
-        );
+        None => ExecOutput {
+            stdout: clean.trim().to_string(),
+            exit_code: child_exit.unwrap_or(-1),
+            timed_out: false,
+        },
     }
 }

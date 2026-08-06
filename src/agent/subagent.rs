@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
 use futures::StreamExt as _;
-use tokio::sync::Mutex;
 
 use crate::{
     agent::{Agent, AgentCard, AgentSpec, AgentState},
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role},
-    runenv::MachineDyn,
+    runenv::Console,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
 };
 
@@ -69,7 +68,7 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
 pub fn get_subagent_tool_func(
     spec: AgentSpec,
     provider: String,
-    machine: Arc<Mutex<dyn MachineDyn>>,
+    machine: Arc<dyn Console>,
 ) -> ToolFunc {
     // Capture the card name once; it's needed on every synthesised MessageOutput.
     let card_name = spec.card.as_ref().map(|c| c.name.clone());

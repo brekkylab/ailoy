@@ -214,36 +214,41 @@ mod tests {
     }
 
     /// End-to-end verification with a small, fast-running skill: a Python
-    /// micro-benchmark helper.  Only requires `python3` inside the sandbox.
+    /// micro-benchmark helper. An agent activates `benchmark_python_snippet`
+    /// inside a `python:3.12-slim` sandbox, materialises its SKILL.md into the
+    /// sandbox, then follows the skill's `python -m timeit` protocol and emits
+    /// the documented comparison table.
     ///
-    /// Flow:
-    /// 1. `AgentBuilder` declares `benchmark_python_snippet` at
-    ///    `/workspace/skills/benchmark_python_snippet/` and seeds its
-    ///    SKILL.md (with a YAML frontmatter naming the skill).
-    /// 2. The auto-rendered "Available Skills" table in the system
-    ///    instruction surfaces the skill to the model.
-    /// 3. The user asks to compare two Python expressions — this query
-    ///    matches the skill's `description` so the model should `cat` the
-    ///    SKILL.md, follow its `python -m timeit -v` protocol once per
-    ///    expression, and emit a comparison table in the documented
-    ///    format.
-    ///
-    /// Requires `ANTHROPIC_API_KEY` and the `sandbox` feature.  Marked
-    /// `#[ignore]` because it still spawns a real sandbox and calls the
-    /// Anthropic API.
+    /// `#[ignore]` — boots a real microVM and calls the Anthropic API. Run with:
+    /// `ANTHROPIC_API_KEY=… cargo test --features sandbox -- --ignored`. The
+    /// kernel and rootfs are resolved by `Sandbox` itself; no manual codesign
+    /// (`Sandbox::exec` boots an ad-hoc-signed copy on macOS), and the VM boots
+    /// from ailoy's link-time constructor — no `boot_if_requested`.
     #[cfg(feature = "sandbox")]
-    #[test_with::env(ANTHROPIC_API_KEY)]
     #[tokio::test]
-    #[ignore = "slow: spawns a real sandbox and calls the Anthropic API"]
+    #[ignore = "boots a real microVM and calls the Anthropic API"]
     async fn test_benchmark_python_snippet_skill() {
+        use std::sync::Arc;
+
         use futures::StreamExt as _;
 
         use crate::{
             agent::{AgentBuilder, AgentProvider, get_agent_providers_mut},
             lang_model::{LangModelProvider, get_lm_providers_mut},
             message::{FinishReason, Message, Part, Role},
-            runenv::SandboxBuilder,
-            tool::{ToolProvider, get_tool_providers_mut},
+            runenv::{Console, Sandbox},
+            tool::{
+                ToolProvider, get_tool_providers_mut,
+                r#impl::{get_python_repl_tool_desc, get_shell_tool_desc},
+            },
+        };
+
+        let api_key = match std::env::var("ANTHROPIC_API_KEY") {
+            Ok(k) => k,
+            Err(_) => {
+                eprintln!("skipped: ANTHROPIC_API_KEY unset");
+                return;
+            }
         };
 
         let skill_md = r#"---
@@ -378,39 +383,38 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
   ```
 "#;
 
+        let model = std::env::var("SKILL_TEST_MODEL")
+            .unwrap_or_else(|_| "anthropic/claude-sonnet-4-6".into());
+
+        const PROVIDER: &str = "skill_benchmark_python_snippet";
+        {
+            let mut lmp = LangModelProvider::new();
+            lmp.insert("anthropic/*".into(), LangModelProvider::anthropic(api_key));
+            get_lm_providers_mut().insert(PROVIDER.into(), lmp);
+            get_tool_providers_mut().insert(PROVIDER.into(), ToolProvider::new());
+            get_agent_providers_mut()
+                .insert(PROVIDER.into(), AgentProvider::new(PROVIDER, PROVIDER));
+        }
+
+        // No workspace: the kernel and rootfs are resolved by `Sandbox`, and the
+        // agent materialises SKILL.md straight into the sandbox filesystem, which
+        // persists across the ephemeral per-exec VMs.
+        let sandbox = Sandbox::new()
+            .expect("build sandbox")
+            .with_image("python:3.12-slim")
+            .await
+            .expect("pull image rootfs");
+        let console: Arc<dyn Console> = Arc::new(sandbox);
+
         let instruction = "You are a helpful assistant with access to skills. \
              To activate a skill, read its SKILL.md using the shell tool \
              (`cat <path>`), then follow the instructions inside.";
+        let skill_dir = PathBuf::from("/root/skills/benchmark_python_snippet");
 
-        const SKILL_TEST_PROVIDER: &str = "skill_benchmark_python_snippet";
-        {
-            let mut lmp = LangModelProvider::new();
-            lmp.insert(
-                "anthropic/*".into(),
-                LangModelProvider::anthropic(std::env::var("ANTHROPIC_API_KEY").unwrap()),
-            );
-            get_lm_providers_mut().insert(SKILL_TEST_PROVIDER.into(), lmp);
-            get_tool_providers_mut().insert(SKILL_TEST_PROVIDER.into(), ToolProvider::new());
-            get_agent_providers_mut().insert(
-                SKILL_TEST_PROVIDER.into(),
-                AgentProvider::new(SKILL_TEST_PROVIDER, SKILL_TEST_PROVIDER),
-            );
-        }
-
-        let sandbox = SandboxBuilder::new()
-            .image("python:3.12-slim")
-            .build()
-            .await
-            .expect("sandbox creation failed");
-
-        let skill_dir = PathBuf::from("/workspace/skills/benchmark_python_snippet");
-        let mut agent = AgentBuilder::new("anthropic/claude-sonnet-4-6")
-            .agent_provider(SKILL_TEST_PROVIDER)
-            .machine(sandbox)
-            .tools([
-                crate::tool::r#impl::get_shell_tool_desc(),
-                crate::tool::r#impl::get_python_repl_tool_desc(),
-            ])
+        let mut agent = AgentBuilder::new(&model)
+            .agent_provider(PROVIDER)
+            .console(console.clone())
+            .tools([get_shell_tool_desc(), get_python_repl_tool_desc()])
             .instruction(instruction)
             .skill(
                 &skill_dir,
@@ -446,39 +450,32 @@ Render numbers to **3 significant figures** (e.g. `0.142`, `12.3`,
             }
         }
 
-        // Sanity: the SKILL.md was materialised into the sandbox.
-        let skill_md_on_disk = {
-            let mut guard = agent.state.runenv.lock().await;
-            let console = guard.start().await.expect("machine start failed");
-            console
-                .read(&skill_dir.join("SKILL.md"))
-                .await
-                .expect("SKILL.md should have been materialised")
-        };
-        let head = std::str::from_utf8(&skill_md_on_disk[..50]).unwrap_or("");
+        // The skill was materialised into the sandbox workspace.
+        let on_disk = console
+            .read(&skill_dir.join("SKILL.md"))
+            .await
+            .expect("SKILL.md should have been materialised");
+        let head = std::str::from_utf8(&on_disk[..on_disk.len().min(50)]).unwrap_or("");
         assert!(
             head.starts_with("---\nname: benchmark_python_snippet"),
-            "SKILL.md frontmatter should be preserved, got prefix: {head:?}"
+            "SKILL.md frontmatter should be preserved, got: {head:?}"
         );
 
-        // The final assistant text should contain the documented benchmark
-        // template — at minimum the per-loop unit column and both
-        // expressions naming.  This is a soft check: it allows the model
-        // some leeway in formatting but enforces that it (a) actually
-        // followed the skill's output template and (b) benchmarked both
-        // requested expressions.
+        // The final answer followed the skill's template (per-loop microsecond
+        // unit) and named both requested expressions. Ignore whitespace so both
+        // "µs / loop" and "µs/loop" pass — the model varies the spacing.
+        let compact: String = final_text.chars().filter(|c| !c.is_whitespace()).collect();
         assert!(
-            final_text.contains("µs / loop") || final_text.contains("us / loop"),
-            "expected the benchmark template's per-loop unit column in the \
-             final answer:\n{final_text}"
+            compact.contains("µs/loop") || compact.contains("us/loop"),
+            "expected the benchmark template's per-loop unit column:\n{final_text}"
         );
         assert!(
             final_text.contains("sum(range(10000))"),
-            "expected first expression to appear in result:\n{final_text}"
+            "expected first expression in result:\n{final_text}"
         );
         assert!(
             final_text.contains("sum(i for i in range(10000))"),
-            "expected second expression to appear in result:\n{final_text}"
+            "expected second expression in result:\n{final_text}"
         );
     }
 }

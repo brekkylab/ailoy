@@ -1,11 +1,10 @@
 use std::{path::PathBuf, sync::Arc};
 
-use tokio::sync::Mutex;
 
 use crate::{
     agent::{Agent, AgentSpec, AgentState, ContextManager},
     message::Message,
-    runenv::{FileEntry, Machine, MachineDyn},
+    runenv::{Console, FileEntry},
     tool::{ToolDesc, WebSearchEngineKind},
 };
 
@@ -53,7 +52,7 @@ pub struct AgentBuilder {
 
     history: Vec<Message>,
 
-    machine: Option<Arc<Mutex<dyn MachineDyn>>>,
+    machine: Option<Arc<dyn Console>>,
 
     context_manager: Option<ContextManager>,
 }
@@ -143,19 +142,10 @@ impl AgentBuilder {
         self
     }
 
-    /// Use this [`Machine`] for tool execution instead of a default [`Local`].
-    /// Wraps the machine in `Arc<Mutex<>>` so sub-agents inherit the same VM.
-    pub fn machine<M: Machine>(mut self, m: M) -> Self {
-        let m: Arc<Mutex<dyn MachineDyn>> = Arc::new(Mutex::new(m));
-        self.machine = Some(m);
-        self
-    }
-
-    /// Use this pre-shared machine handle. Useful when the same VM should be
-    /// shared with another `Agent` built elsewhere.
-    pub fn shared_machine<M: Machine>(mut self, m: Arc<Mutex<M>>) -> Self {
-        let m: Arc<Mutex<dyn MachineDyn>> = m;
-        self.machine = Some(m);
+    /// Use this [`Console`] as the exec backend instead of the default host
+    /// [`LocalConsole`]. Shared via `Arc` so sub-agents inherit the same backend.
+    pub fn console(mut self, c: Arc<dyn Console>) -> Self {
+        self.machine = Some(c);
         self
     }
 
@@ -242,7 +232,6 @@ mod tests {
         agent::{AgentCard, AgentProvider, get_agent_providers_mut},
         lang_model::{LangModelProvider, get_lm_providers_mut},
         message::Role,
-        runenv::Local,
     };
 
     const TEST_MODEL: &str = "openai/gpt-4o-mini";
@@ -305,12 +294,11 @@ mod tests {
         ensure_dummy_provider();
         let agent = AgentBuilder::new(TEST_MODEL)
             .agent_provider(TEST_PROVIDER_NAME)
-            .machine(Local::new())
+            .console(std::sync::Arc::new(crate::runenv::LocalConsole::new()))
             .build()
             .unwrap();
         // Smoke check: machine is plugged in and usable.
-        let mut guard = agent.state.runenv.lock().await;
-        let console = guard.start().await.expect("machine start failed");
+        let console = &*agent.state.runenv;
         let result = console
             .exec("sh".into(), vec!["-c".into(), "echo ok".into()], None)
             .await
@@ -330,7 +318,7 @@ mod tests {
         let skill_path = greet_dir.join("SKILL.md");
         let agent = AgentBuilder::new(TEST_MODEL)
             .agent_provider(TEST_PROVIDER_NAME)
-            .machine(Local::new())
+            .console(std::sync::Arc::new(crate::runenv::LocalConsole::new()))
             .skill(
                 &greet_dir,
                 [FileEntry::new(
@@ -385,7 +373,7 @@ mod tests {
 
         let parent = AgentBuilder::new(TEST_MODEL)
             .agent_provider(TEST_PROVIDER_NAME)
-            .machine(Local::new())
+            .console(std::sync::Arc::new(crate::runenv::LocalConsole::new()))
             .skill(
                 &parent_skill_dir,
                 [FileEntry::new(
@@ -430,7 +418,7 @@ mod tests {
 
         let parent = AgentBuilder::new(TEST_MODEL)
             .agent_provider(TEST_PROVIDER_NAME)
-            .machine(Local::new())
+            .console(std::sync::Arc::new(crate::runenv::LocalConsole::new()))
             .skill(
                 &parent_foo_dir,
                 [FileEntry::new(

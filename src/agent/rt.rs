@@ -9,7 +9,7 @@ use crate::{
     },
     lang_model::{LangModel, LangModelOptions},
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
-    runenv::{Console, FileEntry, Local},
+    runenv::{Console, FileEntry, LocalConsole},
     skill::{render_skills_table, scan_declared_skills},
     tool::{ToolDesc, ToolFunc, get_tool_providers, r#impl::get_web_search_tool_factory},
 };
@@ -255,8 +255,7 @@ impl Agent {
         if self.files_materialised {
             return Ok(());
         }
-        let mut guard = self.state.runenv.lock().await;
-        let console = guard.start().await?;
+        let console = &*self.state.runenv;
         for f in &self.files {
             // Write-once: skip if the file already exists.
             if console.read(&f.path).await.is_ok() {
@@ -329,10 +328,10 @@ impl Agent {
                 let outcome: Result<anyhow::Result<bool>, _> =
                     std::panic::AssertUnwindSafe(async move {
                         if tool.needs_console() {
-                            // Lock the machine for the duration of the tool's stream:
-                            // the returned BoxStream borrows the started console.
-                            let mut guard = runenv.lock().await;
-                            let console = guard.start().await?;
+                            // The tool's stream borrows the console; `runenv` (an
+                            // Arc<dyn Console>) is owned by this task, so the
+                            // borrow lives long enough.
+                            let console = &*runenv;
                             let mut stream = tool.call(call_args, call_id_for_call, console);
                             let mut last: Option<MessageOutput> = None;
                             while let Some(item) = stream.next().await {
@@ -358,9 +357,9 @@ impl Agent {
                             // sub-agent ToolFunc invoke its own nested `run()` (which
                             // re-locks the same Arc<Mutex<>>) without deadlocking
                             // against the parent's tool batch.
-                            let dummy = Local::default();
+                            let dummy = LocalConsole::default();
                             let mut stream =
-                                tool.call(call_args, call_id_for_call, dummy.dummy_console());
+                                tool.call(call_args, call_id_for_call, &dummy);
                             let mut last: Option<MessageOutput> = None;
                             while let Some(item) = stream.next().await {
                                 if let Some(mut prev) = last.replace(item) {
@@ -654,26 +653,6 @@ impl Agent {
                 }
             }
         })
-    }
-}
-
-/// Test-only extension: produce a `&dyn Console` cheaply from a default `Local`
-/// without going through `Machine::start`. This dummy is only passed to Pure
-/// `ToolFunc`s — they never actually use it.
-trait DummyConsoleExt {
-    fn dummy_console(&self) -> &dyn Console;
-}
-
-impl DummyConsoleExt for Local {
-    fn dummy_console(&self) -> &dyn Console {
-        // `Local` always holds a `LocalConsole`; expose it as a trait object.
-        // SAFETY: This relies on `Local`'s public `start()` returning the same
-        // console after `&mut self` is released — we just read through `&self`.
-        // We avoid `&mut self` here because we're inside a `&self` context.
-        // `LocalConsole` has no state and `Console`'s methods take `&self`.
-        // We achieve this by going through a static stand-in.
-        static C: crate::runenv::LocalConsole = crate::runenv::LocalConsole {};
-        &C
     }
 }
 

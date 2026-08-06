@@ -410,12 +410,12 @@ macro_rules! tool_func {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runenv::{Local, Machine};
+    use crate::runenv::LocalConsole;
 
     #[tokio::test]
     async fn test_sync_value() {
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let local = LocalConsole::new();
+        let console = &local;
         let f = tool_func!(|_args: Value| -> Value { Value::string("ok") });
         let out = f
             .call(Value::object_empty(), "call-1", console)
@@ -431,8 +431,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_sync_value_with_console() {
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let local = LocalConsole::new();
+        let console = &local;
         let f = tool_func!(|_args: Value, _console: &dyn Console| -> Value { Value::string("ok") });
         let out = f
             .call(Value::object_empty(), "call-1", console)
@@ -447,8 +447,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_async_value() {
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let local = LocalConsole::new();
+        let console = &local;
         let f = tool_func!(async |_args: Value| -> Value { Value::bool(true) });
         let out = f
             .call(Value::object_empty(), "call-1", console)
@@ -460,8 +460,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_async_value_with_console() {
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let local = LocalConsole::new();
+        let console = &local;
         let f = tool_func!(async |_args: Value, console: &dyn Console| -> Value {
             let r = console
                 .exec_shell("echo hi".to_string(), None)
@@ -482,8 +482,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_stream_value() {
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let local = LocalConsole::new();
+        let console = &local;
         let f = tool_func!(stream |_args: Value| -> Value {
             stream::iter(vec![Value::integer(1), Value::integer(2), Value::integer(3)])
         });

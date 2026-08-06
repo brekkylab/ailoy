@@ -1,0 +1,7 @@
+# Cross-linking a Linux/musl static binary from a macOS host: use the bundled
+# rust-lld (an ELF-capable linker), since the system `cc` targets Mach-O.
+[target.aarch64-unknown-linux-musl]
+rustflags = ["-C", "linker-flavor=ld.lld"]
+
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "linker-flavor=ld.lld"]
