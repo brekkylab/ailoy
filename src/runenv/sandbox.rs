@@ -110,9 +110,16 @@ fn boot_helper_exe() -> io::Result<PathBuf> {
         return Ok(dest);
     }
 
-    // Copy to a temp path in the same dir, sign it, then rename into place so a
-    // concurrent exec never sees a half-signed helper.
-    let tmp = cache.join(format!("boot-{key}.{}.tmp", std::process::id()));
+    // Copy to a per-call-unique temp path in the same dir, sign it, then rename
+    // into place so a concurrent exec never sees a half-signed helper — and two
+    // boots in the *same* process (same pid, same key) don't sign one shared tmp.
+    // The final `dest` is identical for both, so the atomic rename just wins once.
+    let uniq = {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    };
+    let tmp = cache.join(format!("boot-{key}.{}.{uniq}.tmp", std::process::id()));
     std::fs::copy(&src, &tmp)?;
     let plist = cache.join("entitlements.plist");
     std::fs::write(&plist, MACOS_ENTITLEMENTS)?;
@@ -466,6 +473,29 @@ fn fresh_upper_path() -> PathBuf {
     std::env::temp_dir().join(format!("ailoy-upper-{}-{n}.ext4", std::process::id()))
 }
 
+/// A per-sandbox virtio-fs boot root (holds only the guest init). Created and
+/// populated on the host per [`Sandbox`], removed when the last clone drops — so
+/// concurrent boots never share one writable root (each boots into its own).
+struct TempInitRoot(PathBuf);
+
+impl Drop for TempInitRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A fresh boot root at a unique temp dir, populated with the guest init. Owned
+/// by the parent `Sandbox`; the boot child receives only its path (by env).
+fn fresh_init_root() -> io::Result<PathBuf> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("ailoy-initroot-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    ensure_guest_init(&dir)?;
+    Ok(dir)
+}
+
 /// A fresh, empty ext4 upper at a unique temp path (formatted in pure Rust).
 fn fresh_upper() -> io::Result<PathBuf> {
     let upper = fresh_upper_path();
@@ -575,6 +605,11 @@ pub struct Sandbox {
     /// Held only for its `Drop`: deletes the temp upper on last clone drop
     /// (`Some` for a `Sandbox`-owned upper, `None` never happens today).
     _upper_guard: Option<Arc<TempUpper>>,
+    /// The per-sandbox virtio-fs boot root (guest init only), handed to the boot
+    /// child by path. Unique per sandbox, so concurrent boots share no root.
+    init_root: PathBuf,
+    /// Held only for its `Drop`: removes the temp init root on last clone drop.
+    _init_root_guard: Option<Arc<TempInitRoot>>,
     /// The cortex workspace to mount, as `(guest_root, spec)`. The whole tree is
     /// served as one virtio-fs device; sub-mounts appear under `guest_root`.
     workspace: Option<(String, WorkspaceSpec)>,
@@ -611,11 +646,14 @@ impl Sandbox {
     }
 
     fn assemble(upper: PathBuf, upper_guard: Option<Arc<TempUpper>>) -> io::Result<Self> {
+        let init_root = fresh_init_root()?;
         Ok(Self {
             kernel: resolve_kernel()?,
             rootfs_erofs: ensure_base_erofs()?,
             upper,
             _upper_guard: upper_guard,
+            init_root: init_root.clone(),
+            _init_root_guard: Some(Arc::new(TempInitRoot(init_root))),
             workspace: None,
             vcpus: DEFAULT_VCPUS,
             memory_mib: DEFAULT_MEMORY_MIB,
@@ -719,6 +757,7 @@ impl Sandbox {
             .env(BOOT_ENV, "1")
             .env("AILOY_KRUN_KERNEL", &self.kernel)
             .env("AILOY_KRUN_ROOTFS_EROFS", &self.rootfs_erofs)
+            .env("AILOY_KRUN_INIT_ROOT", &self.init_root)
             .env("AILOY_KRUN_UPPER", &self.upper)
             .env("AILOY_KRUN_CONSOLE", &console_path)
             .env("AILOY_KRUN_B64", &b64)
@@ -851,7 +890,13 @@ pub fn boot_if_requested() {
     // The VM boots into a minimal virtio-fs root holding only the guest init; the
     // init overlays the EROFS lower + ext4 upper (via mount(2)) and pivots into
     // the real image before the shell runs the payload.
-    let init_root = ensure_init_root().unwrap_or_else(|e| panic!("prepare init root: {e}"));
+    // The parent `Sandbox` creates and owns a unique boot root per sandbox and
+    // passes its path here; fall back to the shared root only for a boot not
+    // launched through `Sandbox::exec`.
+    let init_root = match std::env::var_os("AILOY_KRUN_INIT_ROOT") {
+        Some(p) => PathBuf::from(p),
+        None => ensure_init_root().unwrap_or_else(|e| panic!("prepare init root: {e}")),
+    };
     let bootstrap = "sh /.ailoyctrl/run.sh";
 
     // Resource sizing travels from the parent's `Sandbox` via env.
