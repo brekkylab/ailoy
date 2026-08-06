@@ -32,8 +32,10 @@ const WORKSPACE_ENV: &str = "AILOY_KRUN_WORKSPACE";
 const OUT_MARKER: &str = "__AILOY_OUT__";
 const RC_MARKER: &str = "__AILOY_RC__";
 
-const ALPINE_URL: &str = "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/alpine-minirootfs-3.24.1-aarch64.tar.gz";
-const ALPINE_SHA256: &str = "f55a90f69052c5bd6f92cb09a8f47065970830b194c917a006fb94028e721259";
+/// Default base rootfs when no [`with_image`](Sandbox::with_image) /
+/// `AILOY_KRUN_ROOTFS_EROFS` is given: the `alpine` OCI image, pulled through
+/// the same path as any other image.
+const DEFAULT_BASE_IMAGE: &str = "alpine:3.24.1";
 
 /// Guest path the init binary is placed and exec'd at.
 const GUEST_INIT_PATH: &str = "/.ailoy-init";
@@ -193,52 +195,50 @@ fn download_libkrunfw(dest: &Path) -> io::Result<()> {
 }
 
 /// Provision (once) and return the base rootfs as a read-only **EROFS** image —
-/// the overlay lower the guest mounts as a block device. A minimal Alpine
-/// minirootfs today; `AILOY_KRUN_ROOTFS_EROFS` overrides with a prebuilt image.
+/// the overlay lower the guest mounts as a block device. Defaults to the
+/// [`DEFAULT_BASE_IMAGE`] OCI image, pulled through the same path as
+/// [`with_image`](Sandbox::with_image); `AILOY_KRUN_ROOTFS_EROFS` overrides with
+/// a prebuilt image.
 fn ensure_base_erofs() -> io::Result<PathBuf> {
     if let Some(r) = std::env::var_os("AILOY_KRUN_ROOTFS_EROFS") {
         return Ok(PathBuf::from(r));
     }
-    let home = krun_home()?;
-    let erofs = home.join("alpine.erofs");
-    if !erofs.exists() {
-        let tarball = home.join("alpine-minirootfs.tar.gz");
-        if !tarball.exists() {
-            download_file(ALPINE_URL, &tarball)?;
-        }
-        verify_sha256(&tarball, ALPINE_SHA256);
-        erofs_from_tarball(&tarball, &erofs)?;
-    }
-    Ok(erofs)
+    pull_image_erofs(DEFAULT_BASE_IMAGE)
 }
 
-/// Encode a gzipped rootfs tarball as an EROFS image, reusing microsandbox-image
-/// (`ingest_compressed_tar` + `write_erofs`). The ingest is async; drive it on a
-/// throwaway runtime on a fresh thread so this stays callable from sync code even
-/// when a Tokio runtime is already running on the caller's thread.
-fn erofs_from_tarball(tarball: &Path, out: &Path) -> io::Result<()> {
-    use microsandbox_image::erofs::write_erofs;
-    use microsandbox_image::tar::{Compression, ingest_compressed_tar};
-    use microsandbox_image::tree::ResourceLimits;
+/// The on-disk EROFS cache path for an image reference, under `<krun_home>/images`.
+fn image_erofs_path(reference: &str) -> io::Result<PathBuf> {
+    let sanitized: String = reference
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    Ok(krun_home()?.join("images").join(format!("{sanitized}.erofs")))
+}
 
-    let (tarball, out) = (tarball.to_path_buf(), out.to_path_buf());
+/// Pull an OCI image to its cached EROFS (once) and return the path. Drives the
+/// async pull on a throwaway runtime on a fresh thread so it stays callable from
+/// sync code even when a Tokio runtime is already running on the caller's thread.
+fn pull_image_erofs(reference: &str) -> io::Result<PathBuf> {
+    let dest = image_erofs_path(reference)?;
+    if dest.exists() {
+        return Ok(dest);
+    }
+    let (reference, dest2) = (reference.to_string(), dest.clone());
     std::thread::spawn(move || -> io::Result<()> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        rt.block_on(async {
-            let f = tokio::fs::File::open(&tarball).await?;
-            let res = ingest_compressed_tar(f, Compression::Gzip, &ResourceLimits::default(), None)
-                .await
-                .map_err(|e| io::Error::other(format!("ingest {}: {e:?}", tarball.display())))?;
-            let tmp = out.with_extension("erofs.tmp");
-            write_erofs(&res.tree, &tmp).map_err(|e| io::Error::other(format!("{e:?}")))?;
-            std::fs::rename(&tmp, &out)?;
-            Ok(())
-        })
+        rt.block_on(super::oci::pull_erofs(&reference, &dest2))
     })
     .join()
-    .map_err(|_| io::Error::other("erofs build thread panicked"))?
+    .map_err(|_| io::Error::other("image pull thread panicked"))??;
+    Ok(dest)
 }
 
 /// The minimal virtio-fs root the VM boots into: it holds only the guest init at
@@ -278,25 +278,6 @@ fn download_file(url: &str, dest: &Path) -> io::Result<()> {
     .map_err(|_| io::Error::other("download thread panicked"))??;
     std::fs::rename(&tmp, dest)?;
     Ok(())
-}
-
-/// Best-effort integrity check (skips if no hashing tool is available).
-fn verify_sha256(file: &Path, expected: &str) {
-    for tool in ["shasum", "sha256sum"] {
-        let mut cmd = Command::new(tool);
-        if tool == "shasum" {
-            cmd.arg("-a").arg("256");
-        }
-        if let Ok(out) = cmd.arg(file).output() {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            if let Some(got) = stdout.split_whitespace().next() {
-                if got != expected {
-                    eprintln!("ailoy krun: WARNING sha256 mismatch for {}", file.display());
-                }
-                return;
-            }
-        }
-    }
 }
 
 /// The cortex workspace mounted into the sandbox: one unified tree served as a
@@ -687,19 +668,7 @@ impl Sandbox {
     ///
     /// Public Docker Hub images only for now — see [`super::oci`].
     pub async fn with_image(self, reference: &str) -> io::Result<Self> {
-        let sanitized: String = reference
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        let erofs = krun_home()?
-            .join("images")
-            .join(format!("{sanitized}.erofs"));
+        let erofs = image_erofs_path(reference)?;
         super::oci::pull_erofs(reference, &erofs).await?;
         Ok(self.with_rootfs_erofs(erofs))
     }
