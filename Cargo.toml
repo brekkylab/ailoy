@@ -27,18 +27,14 @@ path = "src/lib.rs"
 
 [features]
 default = []
-# The sandbox runenv adds cortex's krun binding (attach the workspace to a guest
-# over virtio-fs) plus the in-process VM machinery. cortex itself and its VFS
-# providers are always on (see the dependency below), so only the binding and
-# VM crates are gated here.
+# The sandbox runenv builds the per-sandbox ext4 upper / base EROFS on the host
+# and manages boots. The VM itself (libkrun + cortex virtio-fs serving + the
+# smoltcp net stack) lives in the separate `crates/ailoy-krun-boot` helper that
+# build.rs compiles and embeds — so those heavy deps are NOT linked into the ailoy
+# library; only the host-side image tooling is gated here.
 sandbox = [
-    "cortex/krun",
-    "dep:msb_krun",
-    "dep:microsandbox-network",
     "dep:microsandbox-image",
     "dep:microsandbox-utils",
-    "dep:rustls",
-    "dep:ctor",
 ]
 # The local (no-VM) runenv adds cortex's host-FUSE binding, so an agent's shell
 # sees the same tree a sandboxed one would. Needs a libfuse provider at build
@@ -54,25 +50,16 @@ local-fuse = ["cortex/fuse"]
 # the runenv, so `s3`/`notion` are default features. The heavy *interface
 # bindings* (krun/fuse/fuse-t) stay gated behind the runenv features above.
 cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "0406283d03b29cf64fb2112bc7439a3e37cfb473", features = ["s3", "notion"] }
-msb_krun = { version = "=0.1.25", features = ["blk", "net"], optional = true }
-# Guest outbound networking: an in-process smoltcp userspace TCP/IP stack that
-# NATs guest egress to the host (no external passt/gvproxy). Attached to the VM
-# via msb_krun's `.net().custom()`. Same `msb_krun =0.1.25 [net]` pin, so the
-# `NetBackend` type unifies.
-microsandbox-network = { version = "=0.6.7", optional = true }
 # Pure-Rust ext4 formatter (`format_ext4`): create the per-sandbox writable upper
-# on the host with no `mkfs` dependency and no committed image blob. Reused from
-# microsandbox like the network stack above — the runtime crate is not pulled in.
+# on the host with no `mkfs` dependency and no committed image blob. (The VM-side
+# crates — msb_krun, microsandbox-network, rustls — live in the ailoy-krun-boot
+# helper, not here.)
 microsandbox-image = { version = "=0.6.7", optional = true }
 # Sparse-extent scanning (`ExtentMap::scan`, SEEK_DATA/SEEK_HOLE on both macOS and
 # Linux): lets snapshots read only the upper's allocated ranges, so save/restore
 # is O(data written), not O(logical size). (Same fix as microsandbox PR #1150.)
+# Also carries the libkrunfw download URL/filename helpers used by resolve_kernel.
 microsandbox-utils = { version = "=0.6.7", optional = true }
-# The smoltcp stack installs a rustls (ring) crypto provider on start.
-rustls = { version = "0.23", features = ["ring"], optional = true }
-# Boots the VM from a link-time constructor when this process is a re-invoked
-# boot child, so no consumer (or test harness) has to call `boot_if_requested`.
-ctor = { version = "0.2", optional = true }
 anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"

@@ -1,0 +1,42 @@
+# Its own workspace root: the host-side VM boot helper, deliberately kept out of
+# the ailoy workspace so a normal `cargo build` of ailoy never builds it. ailoy's
+# build.rs compiles it (release + LTO) for the host and embeds the result, then
+# `Sandbox::exec` materializes + ad-hoc-signs it and invokes it as the boot child.
+#
+# It links only what booting a VM needs — msb_krun (libkrun), cortex (to serve the
+# workspace over virtio-fs), and the smoltcp net stack — NOT ailoy's LLM/agent/http
+# stack. That is the whole point: the signed helper stays small.
+#
+# INVARIANT: the cortex / msb_krun / microsandbox-network pins here MUST match
+# ailoy's. The parent and this child exchange serialized `cortex::WorkspaceSpec`
+# and the network posture over env, so a version drift would corrupt that wire
+# contract. (Kept in sync by hand, like ailoy<->agent-k.)
+[workspace]
+
+[package]
+name = "ailoy-krun-boot"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "ailoy-krun-boot"
+path = "src/main.rs"
+
+[dependencies]
+cortex = { git = "https://github.com/brekkylab/cortex.git", rev = "0406283d03b29cf64fb2112bc7439a3e37cfb473", features = ["s3", "notion", "krun"] }
+msb_krun = { version = "=0.1.25", features = ["blk", "net"] }
+microsandbox-network = { version = "=0.6.7" }
+rustls = { version = "0.23", features = ["ring"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+base64 = "0.23"
+tokio = { version = "1.0", default-features = false, features = ["rt-multi-thread"] }
+
+# Small, self-contained signed helper: optimize hard for size.
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
+codegen-units = 1

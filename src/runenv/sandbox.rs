@@ -8,11 +8,11 @@
 //! mounting each volume at its guest path.
 //!
 //! Each [`Sandbox::exec`] boots a fresh microVM (base rootfs over virtio-fs + a
-//! persistent virtio-blk upper at `/data`), mounts every configured volume,
-//! runs one command, and captures its output. `msb_krun::enter()` never returns
-//! (it `_exit`s on guest shutdown), so the boot runs in a **child process** —
-//! the same binary re-invoked, gated by [`boot_if_requested`], which consuming
-//! binaries must call first in `main`.
+//! persistent virtio-blk upper), mounts every configured volume, runs one
+//! command, and captures its output. `msb_krun::enter()` never returns (it
+//! `_exit`s on guest shutdown), so the boot runs in a **child process**: a small
+//! dedicated helper binary (`crates/ailoy-krun-boot`, embedded and ad-hoc-signed
+//! by [`boot_helper_exe`]) that `exec` invokes with the VM config in its env.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -21,13 +21,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use cortex::{PosixFs, VolumeSpec, Workspace, WorkspaceSpec};
-use msb_krun::{DiskImageFormat, VmBuilder};
+use cortex::WorkspaceSpec;
 use serde::{Deserialize, Serialize};
 
 use super::{Console, ExecResult};
 
-const BOOT_ENV: &str = "AILOY_KRUN_BOOT";
 const WORKSPACE_ENV: &str = "AILOY_KRUN_WORKSPACE";
 const OUT_MARKER: &str = "__AILOY_OUT__";
 const RC_MARKER: &str = "__AILOY_RC__";
@@ -46,6 +44,13 @@ const GUEST_INIT_PATH: &str = "/.ailoy-init";
 /// root. Cross-compiled to the guest-arch musl target by `build.rs` and embedded
 /// from `OUT_DIR` — no committed binary asset.
 const GUEST_INIT_BIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ailoy-guest-init"));
+
+/// The host-side VM boot helper (see `crates/ailoy-krun-boot`), built release+LTO
+/// for the host by `build.rs` and embedded from `OUT_DIR`. `boot_helper_exe`
+/// materializes + ad-hoc-signs a copy of these bytes and `Sandbox::exec` invokes
+/// it to boot the microVM — so the signed helper is this small dedicated binary,
+/// not a copy of the (much larger) consumer binary.
+const BOOT_BIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ailoy-krun-boot"));
 
 /// Write the guest init into `rootfs` at [`GUEST_INIT_PATH`] (executable),
 /// rewriting only when the bytes differ so a shared/cached rootfs is not churned.
@@ -75,74 +80,66 @@ const MACOS_ENTITLEMENTS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 "#;
 
-/// The executable [`Sandbox::exec`] re-invokes to boot the VM.
-///
-/// Elsewhere the running binary boots as-is. On macOS it usually lacks the
-/// hypervisor entitlement — a plain `cargo run`/`cargo test` binary is unsigned —
-/// so boot an ad-hoc-signed *copy* instead, cached by the source's path, mtime,
-/// and size so the sign happens once per build. The consumer's own binary never
-/// has to be signed.
-#[cfg(not(target_os = "macos"))]
-fn boot_helper_exe() -> io::Result<PathBuf> {
-    std::env::current_exe()
+/// A stable cache key for the embedded [`BOOT_BIN`] — its content hash, computed
+/// once per process (a new build produces new bytes → a new key → a fresh copy).
+fn boot_bin_key() -> &'static str {
+    use std::hash::{Hash, Hasher};
+    use std::sync::OnceLock;
+    static KEY: OnceLock<String> = OnceLock::new();
+    KEY.get_or_init(|| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        BOOT_BIN.hash(&mut h);
+        format!("{:016x}-{}", h.finish(), BOOT_BIN.len())
+    })
 }
 
-#[cfg(target_os = "macos")]
+/// The executable [`Sandbox::exec`] invokes to boot the VM: the embedded
+/// [`BOOT_BIN`] materialized to a cached file under `<krun_home>/boot-helper`,
+/// keyed by content so the write (and, on macOS, the sign) happens once per build.
+///
+/// On macOS the boot process needs the hypervisor entitlement, so the copy is
+/// ad-hoc-signed with [`MACOS_ENTITLEMENTS`]. The consumer's own binary is never
+/// copied or signed — only this small dedicated helper is.
 fn boot_helper_exe() -> io::Result<PathBuf> {
-    use std::hash::{Hash, Hasher};
-
-    let src = std::env::current_exe()?;
-    let meta = std::fs::metadata(&src)?;
-    let mtime = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    src.hash(&mut hasher);
-    let key = format!("{:016x}-{mtime}-{}", hasher.finish(), meta.len());
+    use std::os::unix::fs::PermissionsExt;
 
     let cache = krun_home()?.join("boot-helper");
     std::fs::create_dir_all(&cache)?;
-    let dest = cache.join(format!("boot-{key}"));
+    let dest = cache.join(format!("boot-{}", boot_bin_key()));
     if dest.exists() {
         return Ok(dest);
     }
 
-    // Copy to a per-call-unique temp path in the same dir, sign it, then rename
-    // into place so a concurrent exec never sees a half-signed helper — and two
-    // boots in the *same* process (same pid, same key) don't sign one shared tmp.
+    // Write to a per-call-unique temp path, make it executable, sign it (macOS),
+    // then rename into place so a concurrent exec never sees a half-written helper
+    // — and two boots in the same process (same key) don't clobber one shared tmp.
     // The final `dest` is identical for both, so the atomic rename just wins once.
     let uniq = {
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
         SEQ.fetch_add(1, Ordering::Relaxed)
     };
-    let tmp = cache.join(format!("boot-{key}.{}.{uniq}.tmp", std::process::id()));
-    std::fs::copy(&src, &tmp)?;
-    let plist = cache.join("entitlements.plist");
-    std::fs::write(&plist, MACOS_ENTITLEMENTS)?;
-    let status = Command::new("codesign")
-        .args(["-s", "-", "--force", "--entitlements"])
-        .arg(&plist)
-        .arg(&tmp)
-        .status()?;
-    if !status.success() {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(io::Error::other("codesign of boot helper failed"));
+    let tmp = cache.join(format!("boot-{}.{}.{uniq}.tmp", boot_bin_key(), std::process::id()));
+    std::fs::write(&tmp, BOOT_BIN)?;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let plist = cache.join("entitlements.plist");
+        std::fs::write(&plist, MACOS_ENTITLEMENTS)?;
+        let status = Command::new("codesign")
+            .args(["-s", "-", "--force", "--entitlements"])
+            .arg(&plist)
+            .arg(&tmp)
+            .status()?;
+        if !status.success() {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(io::Error::other("codesign of boot helper failed"));
+        }
     }
+
     std::fs::rename(&tmp, &dest)?;
     Ok(dest)
-}
-
-/// Boot the VM when this process is a re-invoked boot child, from a link-time
-/// constructor that runs before `main` — so no consumer, and no test harness,
-/// has to call [`boot_if_requested`]. A normal process (no [`BOOT_ENV`]) pays
-/// only a single `getenv` here and continues to its own `main`.
-#[ctor::ctor]
-fn boot_on_start() {
-    boot_if_requested();
 }
 
 /// Base dir for ailoy's krun assets — `AILOY_KRUN_HOME`, else `$HOME/.ailoy/krun`.
@@ -246,16 +243,6 @@ fn pull_image_erofs(reference: &str) -> io::Result<PathBuf> {
     .join()
     .map_err(|_| io::Error::other("image pull thread panicked"))??;
     Ok(dest)
-}
-
-/// The minimal virtio-fs root the VM boots into: it holds only the guest init at
-/// [`GUEST_INIT_PATH`], which then overlays the EROFS lower + ext4 upper and
-/// `pivot_root`s into the real image. Shared across sandboxes (content is fixed).
-fn ensure_init_root() -> io::Result<PathBuf> {
-    let dir = krun_home()?.join("init-root");
-    std::fs::create_dir_all(&dir)?;
-    ensure_guest_init(&dir)?;
-    Ok(dir)
 }
 
 /// Download `url` to `dest` with reqwest, driven on a throwaway runtime on a
@@ -391,56 +378,6 @@ impl NetworkPosture {
     ) -> Self {
         self.domain_suffixes = suffixes.into_iter().map(Into::into).collect();
         self
-    }
-
-    /// Realize this posture as a smoltcp egress policy. Never called for
-    /// [`SandboxNetwork::Disabled`] (which attaches no device at all).
-    #[cfg(feature = "sandbox")]
-    fn policy(&self) -> microsandbox_network::policy::NetworkPolicy {
-        use microsandbox_network::policy::{
-            Action, Destination, DestinationGroup, Direction, DomainName, NetworkPolicy, PortRange,
-            Protocol, Rule,
-        };
-
-        if matches!(self.reach, SandboxNetwork::Full) {
-            return NetworkPolicy::allow_all();
-        }
-
-        // `Rule::allow_dns()` is narrow — UDP/TCP :53 to the gateway only — and
-        // MUST come first: under deny-by-default a policy without it refuses every
-        // DNS query, so even an otherwise-allowed egress domain never resolves.
-        let mut rules = vec![Rule::allow_dns()];
-        if matches!(self.reach, SandboxNetwork::Public) {
-            rules.push(Rule::allow_egress(Destination::Group(
-                DestinationGroup::Public,
-            )));
-        }
-        rules.extend(self.host_ports.iter().map(|&port| Rule {
-            direction: Direction::Egress,
-            destination: Destination::Group(DestinationGroup::Host),
-            protocols: vec![Protocol::Tcp],
-            ports: vec![PortRange::single(port)],
-            action: Action::Allow,
-        }));
-        rules.extend(self.domain_suffixes.iter().filter_map(|suffix| {
-            match suffix.parse::<DomainName>() {
-                Ok(name) => Some(Rule::allow_egress(Destination::DomainSuffix(name))),
-                // A dropped entry just isn't reachable, so a typo costs a failed
-                // install rather than an unintended grant.
-                Err(e) => {
-                    eprintln!("ailoy krun: ignoring invalid domain suffix '{suffix}': {e:?}");
-                    None
-                }
-            }
-        }));
-
-        NetworkPolicy {
-            default_egress: Action::Deny,
-            // Fail-closed for a capability that does not exist yet: nothing here
-            // publishes an inbound guest port.
-            default_ingress: Action::Deny,
-            rules,
-        }
     }
 }
 
@@ -754,7 +691,6 @@ impl Sandbox {
             .map_err(|e| io::Error::other(format!("serialize network: {e}")))?;
 
         let mut child = Command::new(exe)
-            .env(BOOT_ENV, "1")
             .env("AILOY_KRUN_KERNEL", &self.kernel)
             .env("AILOY_KRUN_ROOTFS_EROFS", &self.rootfs_erofs)
             .env("AILOY_KRUN_INIT_ROOT", &self.init_root)
@@ -848,196 +784,6 @@ fn build_payload(cmd: &str) -> String {
          sync\n\
          echo {RC_MARKER}$__ailoy_rc\n"
     )
-}
-
-/// Boot the configured VM (mounting each cortex volume via
-/// [`cortex::VolumeSpec::build`]) and never return, when [`BOOT_ENV`] is set;
-/// otherwise return immediately.
-///
-/// A link-time constructor calls this before `main` (see `boot_on_start`), so
-/// consumers no longer need to call it themselves — it is kept public only for
-/// explicit/embedded use. `Sandbox::exec` is the code that spawns a boot child
-/// with `BOOT_ENV` set.
-pub fn boot_if_requested() {
-    if std::env::var(BOOT_ENV).is_err() {
-        return;
-    }
-    let get = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("missing {k}"));
-    let kernel = PathBuf::from(get("AILOY_KRUN_KERNEL"));
-    let rootfs_erofs = PathBuf::from(get("AILOY_KRUN_ROOTFS_EROFS"));
-    let upper = PathBuf::from(get("AILOY_KRUN_UPPER"));
-    let console = PathBuf::from(get("AILOY_KRUN_CONSOLE"));
-    let b64 = get("AILOY_KRUN_B64");
-    let workspace: Option<WorkspaceWire> = serde_json::from_str(&get(WORKSPACE_ENV))
-        .unwrap_or_else(|e| panic!("parse {WORKSPACE_ENV}: {e}"));
-
-    // The payload can be large (e.g. a `write` embedding base64 file bytes), so
-    // it CANNOT ride in the exec argv — msb_krun places exec args in the kernel
-    // cmdline, which has a hard size limit (`TooLarge`). Instead, decode it to a
-    // host file and carry it in over a dedicated virtio-fs control mount; the
-    // exec argv then stays a tiny fixed bootstrap.
-    let payload = base64::engine::general_purpose::STANDARD
-        .decode(&b64)
-        .unwrap_or_else(|e| panic!("decode AILOY_KRUN_B64: {e}"));
-    let ctrl_dir = std::env::temp_dir().join(format!("ailoy-ctrl-{}", std::process::id()));
-    std::fs::create_dir_all(&ctrl_dir).unwrap_or_else(|e| panic!("create ctrl dir: {e}"));
-    std::fs::write(ctrl_dir.join("run.sh"), &payload)
-        .unwrap_or_else(|e| panic!("write ctrl run.sh: {e}"));
-    let ctrl_backend = VolumeSpec::Local { host: ctrl_dir }
-        .build()
-        .unwrap_or_else(|e| panic!("build ctrl volume: {e}"));
-
-    // The VM boots into a minimal virtio-fs root holding only the guest init; the
-    // init overlays the EROFS lower + ext4 upper (via mount(2)) and pivots into
-    // the real image before the shell runs the payload.
-    // The parent `Sandbox` creates and owns a unique boot root per sandbox and
-    // passes its path here; fall back to the shared root only for a boot not
-    // launched through `Sandbox::exec`.
-    let init_root = match std::env::var_os("AILOY_KRUN_INIT_ROOT") {
-        Some(p) => PathBuf::from(p),
-        None => ensure_init_root().unwrap_or_else(|e| panic!("prepare init root: {e}")),
-    };
-    let bootstrap = "sh /.ailoyctrl/run.sh";
-
-    // Resource sizing travels from the parent's `Sandbox` via env.
-    let vcpus: u8 = std::env::var("AILOY_KRUN_VCPUS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_VCPUS);
-    let memory_mib: u32 = std::env::var("AILOY_KRUN_MEMORY_MIB")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_MEMORY_MIB);
-
-    let mut builder = VmBuilder::new()
-        .machine(|m| m.vcpus(vcpus).memory_mib(memory_mib as usize))
-        .kernel(|k| k.krunfw_path(&kernel))
-        .fs(|fs| fs.root(&init_root))
-        .fs(move |fs| fs.tag("ailoyctrl").custom(ctrl_backend))
-        // vda: the writable ext4 upper. vdb: the read-only base image (EROFS).
-        // Attach order fixes the guest device names.
-        .disk(|d| d.path(&upper).format(DiskImageFormat::Raw))
-        .disk(|d| {
-            d.path(&rootfs_erofs)
-                .read_only(true)
-                .format(DiskImageFormat::Raw)
-        })
-        .console(|c| c.output(&console));
-
-    // The mount spec the guest init needs for the workspace share (tag:guest_root),
-    // captured before `workspace` is consumed below.
-    let init_ws_env = workspace
-        .as_ref()
-        .map(|w| format!("{}:{}", w.tag, w.guest_root));
-
-    // Realize the whole cortex workspace as one virtio-fs device: `from_spec`
-    // rebuilds the unified tree, `PosixFs` binds it to msb_krun's `DynFileSystem`.
-    // The guest's single mount at `guest_root` sees every sub-mount, routed
-    // internally by cortex.
-    if let Some(w) = workspace {
-        let ws = Workspace::from_spec(&w.spec).unwrap_or_else(|e| {
-            eprintln!("ailoy krun: build workspace: {e}");
-            std::process::exit(1);
-        });
-        let backend: Box<dyn msb_krun::DynFileSystem + Send + Sync> = Box::new(PosixFs::new(ws));
-        let tag = w.tag.clone();
-        builder = builder.fs(move |fs| fs.tag(&tag).custom(backend));
-    }
-
-    // Guest networking. An in-process smoltcp userspace stack NATs guest egress
-    // to the host under the posture's policy; it is driven by a tokio runtime
-    // that must outlive the VM. `enter()` below diverges (never unwinds,
-    // `_exit`s on guest shutdown), so these guards live for the VM's lifetime.
-    let posture: NetworkPosture = serde_json::from_str(
-        &std::env::var("AILOY_KRUN_NETWORK").unwrap_or_default(),
-    )
-    .unwrap_or_default();
-    let mut net_prelude = String::new();
-    let _net_guard: Option<(tokio::runtime::Runtime, microsandbox_network::network::SmoltcpNetwork)>;
-    if posture.reach == SandboxNetwork::Disabled {
-        _net_guard = None;
-    } else {
-        // The smoltcp stack's TLS/DNS machinery expects a rustls crypto provider.
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let mut netcfg = microsandbox_network::config::NetworkConfig::default();
-        netcfg.policy = posture.policy();
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap_or_else(|e| panic!("ailoy krun: net runtime: {e}"));
-        let mut stack = microsandbox_network::network::SmoltcpNetwork::new(netcfg, 0);
-        stack.start(rt.handle().clone());
-        let guest_mac = stack.guest_mac();
-        let backend = stack.take_backend();
-        net_prelude = guest_net_setup(&stack.guest_env_vars());
-        builder = builder.net(move |n| n.mac(guest_mac).custom(backend));
-        _net_guard = Some((rt, stack));
-    }
-
-    // The guest configures eth0 (if networking is on) before running the payload.
-    let script = format!("{net_prelude}{bootstrap}");
-
-    // Exec the guest init, not the shell directly: it mounts the ctrl/workspace
-    // shares and the upper via mount(2), then hands off to `/bin/sh -c <script>`.
-    // Mount targets travel in the environment (small, fixed); the large payload
-    // stays on the ctrl share the init mounts.
-    let result = builder
-        .exec(|e| {
-            // The init overlays the ext4 upper (/dev/vda) over the read-only image
-            // root, then mounts the ctrl/workspace virtio-fs shares, before the
-            // shell runs the payload.
-            let mut e = e
-                .path(GUEST_INIT_PATH)
-                .env("AILOY_INIT_LOWER", "/dev/vdb")
-                .env("AILOY_INIT_UPPER", "/dev/vda")
-                .env("AILOY_INIT_CTRL", "ailoyctrl:/.ailoyctrl");
-            if let Some(ws) = &init_ws_env {
-                e = e.env("AILOY_INIT_WS", ws);
-            }
-            e.args(["/bin/sh", "-c", script.as_str()])
-        })
-        .build()
-        .and_then(|vm| vm.enter());
-    match result {
-        Ok(never) => match never {},
-        Err(e) => {
-            eprintln!("ailoy krun boot: {e}");
-            std::process::exit(1);
-        }
-    }
-}
-
-/// Emit the guest shell commands that bring up `eth0` with the static IPv4
-/// address, gateway, and DNS the smoltcp stack assigned (carried in the stack's
-/// guest env vars as `addr=<ip>/30,gw=<gw>,dns=<gw>`). The base rootfs has no
-/// network agent, so the guest must configure the interface itself.
-fn guest_net_setup(env_vars: &[(String, String)]) -> String {
-    for (_key, val) in env_vars {
-        // The IPv4 entry is the one carrying both `addr=` and `gw=`.
-        if !(val.contains("addr=") && val.contains("gw=")) {
-            continue;
-        }
-        let mut addr = None;
-        let mut gw = None;
-        for part in val.split(',') {
-            if let Some(a) = part.strip_prefix("addr=") {
-                addr = Some(a);
-            } else if let Some(g) = part.strip_prefix("gw=") {
-                gw = Some(g);
-            }
-        }
-        if let (Some(addr), Some(gw)) = (addr, gw) {
-            // Must be a single line: this is spliced into the exec argv, which
-            // msb_krun writes to the kernel cmdline (newlines → `InvalidAscii`).
-            return format!(
-                "ip link set eth0 up 2>/dev/null; \
-                 ip addr add {addr} dev eth0 2>/dev/null; \
-                 ip route add default via {gw} dev eth0 2>/dev/null; \
-                 printf 'nameserver {gw}\\n' > /etc/resolv.conf 2>/dev/null; "
-            );
-        }
-    }
-    String::new()
 }
 
 fn strip_ansi(s: &str) -> String {
