@@ -39,6 +39,12 @@
 //! # Ok(()) }
 //! ```
 //!
+//! A sandbox built that way reaches nothing outside itself: the default
+//! posture is `SandboxNetwork::HostOnly` with no host ports, so the guest gets
+//! gateway DNS and no more. Outbound reach is opt-in through
+//! `SandboxBuilder::network` — `SandboxNetwork::Public` for the whole
+//! internet, or `with_domain_suffixes` to name only the hosts needed.
+//!
 //! # Lifecycle
 //!
 //! [`Machine::start`] starts the backend on the first call and returns a

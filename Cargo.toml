@@ -46,7 +46,7 @@ infer = "0.22"
 log = "0.4"
 microsandbox = { version = "0.6.7", optional = true }
 # `microsandbox` facade does not re-export the network policy builder types;
-# used directly to build per-variant SandboxNetwork egress policies.
+# used directly to build the per-posture egress rules in `runenv::sandbox`.
 microsandbox-network = { version = "0.6.7", optional = true }
 # The wire-format `NetworkPolicy` that `SandboxSpec` stores also lacks a
 # facade re-export (the facade's `NetworkPolicy` is the engine-side type).

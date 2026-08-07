@@ -267,4 +267,103 @@ mod tests {
         );
         let _ = std::fs::remove_file(&plot_path);
     }
+
+    /// The domain allowlist documented on `SETUP_CMD` is the narrow posture that
+    /// actually gets `python_repl` running inside a sandbox. Proving it needs a
+    /// real VM: the setup script fetches over both plain HTTP (apt, matched from
+    /// the gateway resolver's cache) and TLS (the uv release and PyPI, matched by
+    /// SNI), and only the runtime exercises those two paths.
+    ///
+    /// The control is the second half — a domain nobody listed has to stay out of
+    /// reach, or this would pass just as well against an accidentally-open
+    /// policy. `test_host_only_blocks_public_egress` covers the other baseline:
+    /// that `HostOnly` on its own reaches nothing outward.
+    ///
+    /// Ignored for the same reason the web_search tests are: it leans on three
+    /// services this repo does not control, and one of them is a moving target
+    /// — the setup script asks GitHub for the *latest* uv release, so a change
+    /// to that release breaks this test without anything here changing. Run it
+    /// when the posture or the setup script moves:
+    ///
+    /// ```text
+    /// cargo test --features sandbox --lib -- --ignored sandbox_setup_under_domain_allowlist
+    /// ```
+    #[cfg(feature = "sandbox")]
+    #[tokio::test]
+    #[ignore = "slow: boots a VM and installs from apt, GitHub, and PyPI"]
+    async fn sandbox_setup_under_domain_allowlist() {
+        use crate::runenv::{SandboxBuilder, SandboxNetwork};
+
+        let mut sandbox = SandboxBuilder::new()
+            .network(SandboxNetwork::HostOnly.with_domain_suffixes([
+                "ubuntu.com",
+                "github.com",
+                "githubusercontent.com",
+                "pypi.org",
+                "pythonhosted.org",
+            ]))
+            .build()
+            .await
+            .expect("build sandbox");
+        let console = sandbox.start().await.expect("start sandbox");
+
+        let provider = provider();
+        let funcs = provider.provide(&[get_python_repl_tool_desc()]).unwrap();
+        let f = funcs.get("python_repl").unwrap();
+
+        // Bootstrap (apt -> uv release -> venv) plus a real wheel download.
+        let msg = f
+            .call(
+                crate::to_value!({
+                    "code": "import idna; print('idna', idna.__name__)",
+                    "pip_install": ["idna"]
+                }),
+                "1",
+                console,
+            )
+            .next()
+            .await
+            .unwrap()
+            .message;
+        let result = msg.contents[0].as_value().unwrap();
+        assert_eq!(
+            result.pointer("/exit_code").and_then(|v| v.as_integer()),
+            Some(0),
+            "setup and pip install must succeed under the documented posture: {result:?}"
+        );
+
+        // Control: a destination outside the allowlist stays unreachable, over
+        // the same TLS path the allowed ones just used.
+        let blocked = f
+            .call(
+                crate::to_value!({
+                    "code": "import urllib.request; \
+                             urllib.request.urlopen('https://example.com', timeout=15)"
+                }),
+                "2",
+                console,
+            )
+            .next()
+            .await
+            .unwrap()
+            .message;
+        let blocked = blocked.contents[0].as_value().unwrap();
+        assert_ne!(
+            blocked.pointer("/exit_code").and_then(|v| v.as_integer()),
+            Some(0),
+            "an unlisted domain must not be reachable: {blocked:?}"
+        );
+        // Checked by kind, not just by exit code: a syntax error in the probe
+        // would also exit non-zero and would look like a block. `urlopen` wraps
+        // every connection-level OSError -- refusal, reset, timeout -- in
+        // URLError, so this holds regardless of how the runtime drops it.
+        let stderr = blocked
+            .pointer("/stderr")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(
+            stderr.contains("URLError"),
+            "the probe must fail on the connection, not on the script: {stderr}"
+        );
+    }
 }

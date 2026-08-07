@@ -7,9 +7,10 @@ use std::{
 use html_to_markdown_rs::{ConversionOptions, OutputFormat};
 use parking_lot::Mutex;
 use url::Url;
-use wreq::Client;
+use wreq::{Client, ClientBuilder};
 use wreq_util::Emulation;
 
+use super::net_guard;
 use crate::{
     datatype::Value,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
@@ -22,6 +23,7 @@ const MAX_DOWNLOAD_BYTES: usize = 2 * 1024 * 1024;
 const MAX_URL_CHARS: usize = 2048;
 const REQUEST_TIMEOUT_SECS: u64 = 10;
 const PER_HOST_MIN_INTERVAL: Duration = Duration::from_millis(1000);
+const MAX_REDIRECTS: usize = 10;
 
 #[derive(Clone)]
 struct WebFetchState {
@@ -31,10 +33,36 @@ struct WebFetchState {
 
 impl WebFetchState {
     fn new() -> Self {
-        let client = Client::builder()
+        Self::from_builder(Self::client_builder())
+    }
+
+    /// Client configuration shared by production and tests. `web_fetch` runs in
+    /// the host process, so the two settings that keep it inside the same
+    /// network boundary the sandbox enforces live here:
+    ///
+    /// - the DNS resolver drops every non-public answer, which covers both a
+    ///   name that points inward and one that re-resolves inward mid-request;
+    /// - the redirect policy re-checks each hop, because a public start URL can
+    ///   `302` to an internal address and a `Location` holding an IP literal
+    ///   never reaches the resolver at all.
+    fn client_builder() -> ClientBuilder {
+        Client::builder()
             .emulation(Emulation::Firefox135)
-            .redirect(wreq::redirect::Policy::limited(10))
+            .dns_resolver(net_guard::PublicOnlyResolver::default())
+            .redirect(wreq::redirect::Policy::custom(|attempt| {
+                let target = attempt.uri.clone();
+                if let Err(e) = net_guard::check_redirect_target(target.scheme_str(), target.host())
+                {
+                    log::warn!("web_fetch: refused redirect to {target}: {e}");
+                    return attempt.error(e);
+                }
+                wreq::redirect::Policy::limited(MAX_REDIRECTS).redirect(attempt)
+            }))
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+    }
+
+    fn from_builder(builder: ClientBuilder) -> Self {
+        let client = builder
             .build()
             .expect("wreq::Client builder cannot fail with these settings");
         Self {
@@ -73,7 +101,13 @@ async fn download(
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("request failed: {e}"))?;
+        // A refusal from the resolver arrives wrapped in a connect error whose
+        // `Display` drops it, so it has to be recovered rather than formatted.
+        // Without this a blocked name reports a plain connection failure and is
+        // indistinguishable from a target that is merely down.
+        .map_err(|e| {
+            net_guard::blocked_reason(&e).unwrap_or_else(|| format!("request failed: {e}"))
+        })?;
     let status = resp.status().as_u16();
     let final_url = resp.uri().to_string();
     let content_type = resp
@@ -319,6 +353,14 @@ async fn fetch_one(
         Some(h) => h.to_string(),
         None => return crate::to_value!({"url": url_str, "error": "url has no host"}),
     };
+    // Checked on the parsed host, not the raw input: `url` normalizes the
+    // decimal, octal, and hex spellings of an address into a dotted quad while
+    // parsing, so `http://2130706433/` arrives here as `127.0.0.1`.
+    if let Err(e) = net_guard::check_host(&host) {
+        log::warn!("web_fetch: refused {url_str}: {e}");
+        return crate::to_value!({"url": url_str, "error": e.to_string()});
+    }
+    log::debug!("web_fetch: fetching {url_str}");
 
     rate_limit_for(&state, &host).await;
 
@@ -524,6 +566,193 @@ mod tests {
         let desc = get_web_fetch_tool_desc();
         assert_eq!(desc.name, "web_fetch");
         assert!(desc.description.is_some());
+    }
+
+    /// A loopback target must be refused before a connection happens, not just
+    /// have its body withheld. The server here stands in for an internal
+    /// service: if it records a hit, the guard ran too late to matter.
+    #[tokio::test]
+    async fn fetch_one_refuses_loopback_before_connecting() {
+        use std::sync::{Arc, Mutex};
+
+        use axum::{Router, routing::get};
+
+        let hits = Arc::new(Mutex::new(0u32));
+        let count = hits.clone();
+        let app = Router::new().route(
+            "/admin",
+            get(move || {
+                let count = count.clone();
+                async move {
+                    *count.lock().unwrap() += 1;
+                    "INTERNAL-ONLY db_password=hunter2"
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+
+        let result = fetch_one(
+            WebFetchState::new(),
+            format!("http://{addr}/admin"),
+            0,
+            DEFAULT_BODY_CHARS,
+            BodyFormat::Text,
+        )
+        .await;
+
+        let error = result
+            .pointer("/error")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(
+            error.contains("blocked"),
+            "expected a blocked error, got {result:?}"
+        );
+        assert!(
+            result.pointer("/body").is_none(),
+            "no body may reach the model: {result:?}"
+        );
+        assert_eq!(
+            *hits.lock().unwrap(),
+            0,
+            "the request must never reach the service"
+        );
+    }
+
+    /// The same refusal reached by name instead of by literal. It travels a
+    /// different path — the resolver rather than the up-front check — and the
+    /// connector wraps it in an error whose `Display` drops it, so without the
+    /// recovery in `download` this reports a bare connect failure. The two must
+    /// read alike: a model retries a connection that failed and gives up on one
+    /// that policy refused, and this refusal will never succeed.
+    #[tokio::test]
+    async fn fetch_one_refuses_a_name_resolving_inward_with_the_same_error() {
+        use std::sync::{Arc, Mutex};
+
+        use axum::{Router, routing::get};
+
+        let hits = Arc::new(Mutex::new(0u32));
+        let count = hits.clone();
+        let app = Router::new().route(
+            "/admin",
+            get(move || {
+                let count = count.clone();
+                async move {
+                    *count.lock().unwrap() += 1;
+                    "INTERNAL-ONLY db_password=hunter2"
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+
+        // `localhost` clears the literal check and is refused by the resolver,
+        // which is the whole point of routing it by name.
+        let result = fetch_one(
+            WebFetchState::new(),
+            format!("http://localhost:{port}/admin"),
+            0,
+            DEFAULT_BODY_CHARS,
+            BodyFormat::Text,
+        )
+        .await;
+
+        let error = result
+            .pointer("/error")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(
+            error.starts_with("blocked: "),
+            "a name refused by the resolver must report like a refused literal, \
+             got {result:?}"
+        );
+        assert_eq!(
+            *hits.lock().unwrap(),
+            0,
+            "the request must never reach the service"
+        );
+    }
+
+    /// A public-looking start URL that redirects inward must fail at the hop.
+    /// The start host is a name so it clears the literal check, and the resolve
+    /// override aims it at the local server — the only way to exercise the
+    /// redirect path without leaving the machine.
+    #[tokio::test]
+    async fn fetch_one_refuses_redirect_into_loopback() {
+        use std::sync::{Arc, Mutex};
+
+        use axum::{Router, response::Redirect, routing::get};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let go_hits = Arc::new(Mutex::new(0u32));
+        let meta_hits = Arc::new(Mutex::new(0u32));
+
+        let count = meta_hits.clone();
+        let started = go_hits.clone();
+        let app = Router::new()
+            .route(
+                "/go",
+                get(move || {
+                    let started = started.clone();
+                    async move {
+                        *started.lock().unwrap() += 1;
+                        Redirect::temporary(&format!("http://127.0.0.1:{}/meta", addr.port()))
+                    }
+                }),
+            )
+            .route(
+                "/meta",
+                get(move || {
+                    let count = count.clone();
+                    async move {
+                        *count.lock().unwrap() += 1;
+                        "METADATA iam-role-cred=AKIA_EXAMPLE"
+                    }
+                }),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+
+        // A DNS override ignores the port in the address it is given, so the
+        // port has to be in the URL as well.
+        let state = WebFetchState::from_builder(
+            WebFetchState::client_builder()
+                .no_proxy()
+                .resolve_to_addrs("first-hop.test", [addr]),
+        );
+        let result = fetch_one(
+            state,
+            format!("http://first-hop.test:{}/go", addr.port()),
+            0,
+            DEFAULT_BODY_CHARS,
+            BodyFormat::Text,
+        )
+        .await;
+
+        // Without this the test could pass for the wrong reason: a failure to
+        // reach the first hop at all looks identical to a refused second hop.
+        assert_eq!(
+            *go_hits.lock().unwrap(),
+            1,
+            "the first hop must be served, otherwise this test proves nothing"
+        );
+        let error = result
+            .pointer("/error")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(
+            error.starts_with("blocked: "),
+            "following the hop must fail as a refusal, not as a bare transport \
+             error, got {result:?}"
+        );
+        assert_eq!(
+            *meta_hits.lock().unwrap(),
+            0,
+            "the redirect target must never be fetched"
+        );
     }
 
     /// Single-URL fetch against a stable public endpoint.
