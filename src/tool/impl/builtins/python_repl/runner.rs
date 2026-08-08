@@ -1,9 +1,10 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use anyhow::Context as _;
+use cortex::console::{Error, ExecResult};
 use tokio::sync::Notify;
 
-use crate::runenv::{Console, ExecResult};
+use crate::tool::Console;
 
 /// All ailoy-managed files live under `$XDG_CACHE_HOME/ailoy` (default `~/.cache/ailoy`):
 ///   - uv binary : `$AILOY_CACHE/bin/uv`  (symlink if system uv exists, else downloaded)
@@ -53,7 +54,7 @@ fi
 [ -d "$AILOY_CACHE/venv" ] \
     || "$AILOY_CACHE/bin/uv" venv "$AILOY_CACHE/venv""#;
 
-const SETUP_TIMEOUT_SECS: u64 = 300;
+const SETUP_TIMEOUT_MS: u64 = 300_000;
 
 /// Python interpreter inside the ailoy venv. Resolved by sh at runtime via XDG_CACHE_HOME.
 const AILOY_PYTHON: &str = r#""${XDG_CACHE_HOME:-$HOME/.cache}/ailoy/venv/bin/python3""#;
@@ -61,27 +62,37 @@ const AILOY_PYTHON: &str = r#""${XDG_CACHE_HOME:-$HOME/.cache}/ailoy/venv/bin/py
 /// uv pip install targeting the ailoy venv. Both paths resolved by sh at runtime.
 const AILOY_PIP_INSTALL: &str = r#""${XDG_CACHE_HOME:-$HOME/.cache}/ailoy/bin/uv" pip install --python "${XDG_CACHE_HOME:-$HOME/.cache}/ailoy/venv/bin/python3""#;
 
-fn sh(cmd: &str) -> (String, Vec<String>) {
-    ("sh".to_string(), vec!["-c".to_string(), cmd.to_string()])
+/// `sh -c cmd` as the argv cortex takes — it consults no shell of its own.
+fn sh(cmd: &str) -> [String; 3] {
+    ["sh".to_string(), "-c".to_string(), cmd.to_string()]
 }
 
-async fn run_setup(console: &dyn Console) -> anyhow::Result<()> {
-    let (prog, args) = sh(SETUP_CMD);
-    let r = console
-        .exec(prog, args, Some(SETUP_TIMEOUT_SECS))
-        .await
-        .context("Python runtime setup failed")?;
-    if r.timed_out {
-        anyhow::bail!("Python runtime setup timed out after {SETUP_TIMEOUT_SECS}s");
-    }
-    if r.exit_code != 0 {
+async fn run_setup(console: &mut Console) -> anyhow::Result<()> {
+    // Milliseconds: cortex counts in them, and this is the one call here long
+    // enough that the units are worth reading twice.
+    let r = match console.exec(sh(SETUP_CMD), Some(SETUP_TIMEOUT_MS)).await {
+        Ok(r) => r,
+        // A killed execution has no result to inspect, so it arrives as a refusal
+        // rather than as a flag on one.
+        Err(e) if e.code() == Some(Error::TIMED_OUT) => {
+            anyhow::bail!(
+                "Python runtime setup timed out after {}s",
+                SETUP_TIMEOUT_MS / 1000
+            );
+        }
+        Err(e) => return Err(e).context("Python runtime setup failed"),
+    };
+
+    if r.code != 0 {
+        let stdout = String::from_utf8_lossy(&r.stdout);
+        let stderr = String::from_utf8_lossy(&r.stderr);
         anyhow::bail!(
             "Python runtime setup failed (exit {}): {}",
-            r.exit_code,
-            if r.stderr.trim().is_empty() {
-                r.stdout.trim()
+            r.code,
+            if stderr.trim().is_empty() {
+                stdout.trim()
             } else {
-                r.stderr.trim()
+                stderr.trim()
             }
         );
     }
@@ -105,7 +116,7 @@ impl PythonReplRunner {
         }
     }
 
-    async fn ensure_ready(&self, console: &dyn Console) -> anyhow::Result<()> {
+    async fn ensure_ready(&self, console: &mut Console) -> anyhow::Result<()> {
         loop {
             // Create notified future before the CAS to avoid missing a wakeup.
             let notified = self.notify.notified();
@@ -138,28 +149,22 @@ impl PythonReplRunner {
     /// Install pip packages into the ailoy venv via uv.
     pub async fn install_packages(
         &self,
-        console: &dyn Console,
+        console: &mut Console,
         packages: &[&str],
     ) -> anyhow::Result<ExecResult> {
         if packages.is_empty() {
-            return Ok(ExecResult {
-                stdout: String::new(),
-                stderr: String::new(),
-                exit_code: 0,
-                timed_out: false,
-            });
+            return Ok(ExecResult::default());
         }
         self.ensure_ready(console).await?;
         let quoted: Vec<String> = packages.iter().map(|p| format!("'{p}'")).collect();
         let cmd = format!("{AILOY_PIP_INSTALL} {}", quoted.join(" "));
-        let (prog, args) = sh(&cmd);
-        console.exec(prog, args, None).await
+        Ok(console.exec(sh(&cmd), None).await?)
     }
 
     /// Execute a Python script with optional env vars.
     pub async fn run(
         &self,
-        console: &dyn Console,
+        console: &mut Console,
         source: &str,
         env: &[(&str, &str)],
     ) -> anyhow::Result<ExecResult> {
@@ -169,7 +174,7 @@ impl PythonReplRunner {
     /// Like [`run`] but with a per-execution timeout (`0` = no timeout).
     pub async fn run_with_timeout(
         &self,
-        console: &dyn Console,
+        console: &mut Console,
         source: &str,
         env: &[(&str, &str)],
         timeout_secs: u64,
@@ -178,8 +183,10 @@ impl PythonReplRunner {
 
         let script_path = format!("/tmp/__ailoy_{}.py", uuid::Uuid::new_v4());
 
+        // Under `/tmp`, so nothing above the file needs creating — cortex's `write`
+        // makes the file and not the path.
         console
-            .write(std::path::Path::new(&script_path), source.as_bytes())
+            .write(&script_path, source.as_bytes().to_vec(), None)
             .await
             .context("failed to write script")?;
 
@@ -194,12 +201,16 @@ impl PythonReplRunner {
             format!("{env_prefix} {AILOY_PYTHON} {script_path}")
         };
 
-        let timeout = (timeout_secs > 0).then_some(timeout_secs);
-        let (prog, args) = sh(&cmd);
-        let result = console.exec(prog, args, timeout).await;
+        // The tool's parameter is seconds; cortex's bound is milliseconds. `0` is
+        // "no timeout", which for cortex is `None`.
+        let timeout_ms = (timeout_secs > 0).then(|| timeout_secs.saturating_mul(1_000));
+        let result = console.exec(sh(&cmd), timeout_ms).await;
 
-        let (cleanup_prog, cleanup_args) = sh(&format!("rm -f {script_path}"));
-        let _ = console.exec(cleanup_prog, cleanup_args, None).await;
+        // Best effort, and deliberately after the result is in hand: the script is
+        // gone either way, and a cleanup failure should not mask what ran.
+        let _ = console
+            .exec(sh(&format!("rm -f {script_path}")), None)
+            .await;
 
         result.context("script execution error")
     }

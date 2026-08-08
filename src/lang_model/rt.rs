@@ -240,9 +240,10 @@ fn marshal_request(
     req: &LangModelRequest,
 ) -> anyhow::Result<(String, HeaderMap, serde_json::Value)> {
     let marshaled = match schema {
-        LangModelAPISchema::Anthropic => {
-            Value::from(Marshaled::<LangModelRequest, api::AnthropicMarshal>::new(req))
-        }
+        LangModelAPISchema::Anthropic => Value::from(Marshaled::<
+            LangModelRequest,
+            api::AnthropicMarshal,
+        >::new(req)),
         LangModelAPISchema::ChatCompletion => {
             Value::from(Marshaled::<LangModelRequest, api::ChatCompletionMarshal>::new(req))
         }
@@ -346,7 +347,11 @@ fn drain_next_event(buf: &mut Vec<u8>) -> Option<String> {
         .windows(2)
         .position(|w| w == b"\n\n")
         .map(|p| (p, 2))
-        .or_else(|| buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| (p, 4)))?;
+        .or_else(|| {
+            buf.windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .map(|p| (p, 4))
+        })?;
 
     let raw: Vec<u8> = buf.drain(..sep_pos + sep_len).collect();
     Some(extract_event_data(&raw))

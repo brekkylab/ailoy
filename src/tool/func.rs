@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use cortex::console::Console;
 use futures::{
     StreamExt,
     future::BoxFuture,
@@ -9,19 +10,18 @@ use futures::{
 use crate::{
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role},
-    runenv::Console,
 };
-
-/// Inner closure of a `ToolFunc`. Pure tools don't see the console at all;
-/// console tools receive `&dyn Console` and may borrow from it across awaits.
-type PureFn = dyn Fn(Value, String) -> BoxStream<'static, MessageOutput> + Send + Sync;
-type ConsoleFn =
-    dyn for<'a> Fn(Value, String, &'a dyn Console) -> BoxStream<'a, MessageOutput> + Send + Sync;
 
 #[derive(Clone)]
 enum ToolFuncInner {
-    Pure(Arc<PureFn>),
-    WithConsole(Arc<ConsoleFn>),
+    Pure(Arc<dyn Fn(Value, String) -> BoxStream<'static, MessageOutput> + Send + Sync>),
+    WithConsole(
+        Arc<
+            dyn for<'a> Fn(Value, String, &'a mut Console) -> BoxStream<'a, MessageOutput>
+                + Send
+                + Sync,
+        >,
+    ),
 }
 
 #[derive(Clone)]
@@ -43,14 +43,14 @@ impl ToolFunc {
         }
     }
 
-    /// Construct a [`ToolFunc`] from a closure that borrows a `&dyn Console`.
+    /// Construct a [`ToolFunc`] from a closure that borrows a `&mut Console`.
     /// The returned stream's lifetime is tied to the borrow.
     ///
     /// Prefer the [`crate::tool_func!`] macro; use `new_with_console` only
     /// for advanced cases the macro does not cover.
     pub fn new_with_console<F>(f: F) -> Self
     where
-        F: for<'a> Fn(Value, String, &'a dyn Console) -> BoxStream<'a, MessageOutput>
+        F: for<'a> Fn(Value, String, &'a mut Console) -> BoxStream<'a, MessageOutput>
             + Send
             + Sync
             + 'static,
@@ -60,19 +60,43 @@ impl ToolFunc {
         }
     }
 
-    /// Whether this tool's inner closure actually consumes the `&dyn Console`.
-    /// Callers may use this to skip starting a machine for pure tools.
+    /// Whether this tool's inner closure actually consumes the `&mut Console`.
+    /// Callers may use this to skip starting a console for pure tools.
     pub fn needs_console(&self) -> bool {
         matches!(self.inner, ToolFuncInner::WithConsole(_))
     }
 
+    /// Invoke the tool without a console, or `None` if it needs one.
+    ///
+    /// The stream is `'static`, which is the point: a pure tool is driven without
+    /// taking the console lock, so a sub-agent tool can run its own nested turn —
+    /// which locks the same console — without deadlocking against the batch it is
+    /// part of.
+    ///
+    /// A console tool cannot simply be handed a stand-in: a [`Console`] is a live
+    /// session with a server process behind it, so there is no fabricating one.
+    pub fn call_pure(
+        &self,
+        args: Value,
+        id: impl Into<String>,
+    ) -> Option<BoxStream<'static, MessageOutput>> {
+        match &self.inner {
+            ToolFuncInner::Pure(f) => Some(f(args, id.into())),
+            ToolFuncInner::WithConsole(_) => None,
+        }
+    }
+
     /// Invoke the tool. The `console` argument is always required for API
     /// uniformity; pure variants simply ignore it.
+    ///
+    /// A caller with no console to lend wants [`call_pure`](Self::call_pure): there
+    /// is no stand-in [`Console`] to pass here, because one is a live session with a
+    /// server on the other end.
     pub fn call<'a>(
         &self,
         args: Value,
         id: impl Into<String>,
-        console: &'a dyn Console,
+        console: &'a mut Console,
     ) -> BoxStream<'a, MessageOutput> {
         match &self.inner {
             ToolFuncInner::Pure(f) => f(args, id.into()),
@@ -182,27 +206,27 @@ pub mod __private {
 ///
 /// ```ignore
 /// tool_func!(|args: Value| -> Value { … })
-/// tool_func!(|args: Value, console: &dyn Console| -> Value { … })
+/// tool_func!(|args: Value, console: &mut Console| -> Value { … })
 /// tool_func!(|args: Value, id: String| -> Message { … })
-/// tool_func!(|args: Value, id: String, console: &dyn Console| -> Message { … })
+/// tool_func!(|args: Value, id: String, console: &mut Console| -> Message { … })
 /// ```
 ///
 /// Async — closure body is `async`-awaitable:
 ///
 /// ```ignore
 /// tool_func!(async |args: Value| -> Value { … })
-/// tool_func!(async |args: Value, console: &dyn Console| -> Value { … })
+/// tool_func!(async |args: Value, console: &mut Console| -> Value { … })
 /// tool_func!(async |args: Value, id: String| -> Message { … })
-/// tool_func!(async |args: Value, id: String, console: &dyn Console| -> Message { … })
+/// tool_func!(async |args: Value, id: String, console: &mut Console| -> Message { … })
 /// ```
 ///
 /// Stream — closure body produces a `Stream`/`BoxStream`:
 ///
 /// ```ignore
 /// tool_func!(stream |args: Value| -> Value { … })
-/// tool_func!(stream |args: Value, console: &dyn Console| -> Value { … })
+/// tool_func!(stream |args: Value, console: &mut Console| -> Value { … })
 /// tool_func!(stream |args: Value, id: String| -> Message { … })
-/// tool_func!(stream |args: Value, id: String, console: &dyn Console| -> Message { … })
+/// tool_func!(stream |args: Value, id: String, console: &mut Console| -> Message { … })
 /// ```
 ///
 /// Async/stream variants also accept a `with [name = expr, ...]` clause to lift
@@ -210,7 +234,7 @@ pub mod __private {
 /// `Fn` closure tries to move the same outer variable on every call):
 ///
 /// ```ignore
-/// tool_func!(async |args: Value, console: &dyn Console| -> Value
+/// tool_func!(async |args: Value, console: &mut Console| -> Value
 ///     with [runner = runner.clone()]
 ///     {
 ///         // body sees local `runner` (the per-call clone)
@@ -239,11 +263,11 @@ macro_rules! tool_func {
     };
 
     // ─── sync, with console ───────────────────────────────────────────────
-    (|$args:ident : Value, $console:ident : &dyn Console| -> Value $body:block) => {
+    (|$args:ident : Value, $console:ident : &mut Console| -> Value $body:block) => {
         $crate::tool::ToolFunc::new_with_console(
             move |$args: $crate::datatype::Value,
                   id: ::std::string::String,
-                  $console: &dyn $crate::runenv::Console|
+                  $console: &mut $crate::tool::Console|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 let value: $crate::datatype::Value = $body;
                 $crate::tool::__private::value_to_stream(id, value)
@@ -252,13 +276,13 @@ macro_rules! tool_func {
     };
 
     (
-        |$args:ident : Value, $id:ident : String, $console:ident : &dyn Console| -> Message
+        |$args:ident : Value, $id:ident : String, $console:ident : &mut Console| -> Message
             $body:block
     ) => {
         $crate::tool::ToolFunc::new_with_console(
             move |$args: $crate::datatype::Value,
                   $id: ::std::string::String,
-                  $console: &dyn $crate::runenv::Console|
+                  $console: &mut $crate::tool::Console|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 let message: $crate::message::Message = $body;
                 $crate::tool::__private::message_to_stream(message)
@@ -306,20 +330,20 @@ macro_rules! tool_func {
     };
 
     // ─── async, with console ──────────────────────────────────────────────
-    (async |$args:ident : Value, $console:ident : &dyn Console| -> Value $body:block) => {
+    (async |$args:ident : Value, $console:ident : &mut Console| -> Value $body:block) => {
         $crate::tool_func!(
-            async |$args: Value, $console: &dyn Console| -> Value with [] $body
+            async |$args: Value, $console: &mut Console| -> Value with [] $body
         )
     };
 
     (
-        async |$args:ident : Value, $console:ident : &dyn Console| -> Value
+        async |$args:ident : Value, $console:ident : &mut Console| -> Value
             with [$($cap:ident = $expr:expr),* $(,)?] $body:block
     ) => {
         $crate::tool::ToolFunc::new_with_console(
             move |$args: $crate::datatype::Value,
                   id: ::std::string::String,
-                  $console: &dyn $crate::runenv::Console|
+                  $console: &mut $crate::tool::Console|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 $(let $cap = $expr;)*
                 let fut: ::futures::future::BoxFuture<'_, $crate::datatype::Value> =
@@ -330,22 +354,22 @@ macro_rules! tool_func {
     };
 
     (
-        async |$args:ident : Value, $id:ident : String, $console:ident : &dyn Console|
+        async |$args:ident : Value, $id:ident : String, $console:ident : &mut Console|
             -> Message $body:block
     ) => {
         $crate::tool_func!(
-            async |$args: Value, $id: String, $console: &dyn Console| -> Message with [] $body
+            async |$args: Value, $id: String, $console: &mut Console| -> Message with [] $body
         )
     };
 
     (
-        async |$args:ident : Value, $id:ident : String, $console:ident : &dyn Console|
+        async |$args:ident : Value, $id:ident : String, $console:ident : &mut Console|
             -> Message with [$($cap:ident = $expr:expr),* $(,)?] $body:block
     ) => {
         $crate::tool::ToolFunc::new_with_console(
             move |$args: $crate::datatype::Value,
                   $id: ::std::string::String,
-                  $console: &dyn $crate::runenv::Console|
+                  $console: &mut $crate::tool::Console|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 $(let $cap = $expr;)*
                 let fut: ::futures::future::BoxFuture<'_, $crate::message::Message> =
@@ -377,11 +401,11 @@ macro_rules! tool_func {
     };
 
     // ─── stream, with console ─────────────────────────────────────────────
-    (stream |$args:ident : Value, $console:ident : &dyn Console| -> Value $body:block) => {
+    (stream |$args:ident : Value, $console:ident : &mut Console| -> Value $body:block) => {
         $crate::tool::ToolFunc::new_with_console(
             move |$args: $crate::datatype::Value,
                   id: ::std::string::String,
-                  $console: &dyn $crate::runenv::Console|
+                  $console: &mut $crate::tool::Console|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 let s: ::futures::stream::BoxStream<'_, $crate::datatype::Value> =
                     ::std::boxed::Box::pin($body);
@@ -391,13 +415,13 @@ macro_rules! tool_func {
     };
 
     (
-        stream |$args:ident : Value, $id:ident : String, $console:ident : &dyn Console|
+        stream |$args:ident : Value, $id:ident : String, $console:ident : &mut Console|
             -> Message $body:block
     ) => {
         $crate::tool::ToolFunc::new_with_console(
             move |$args: $crate::datatype::Value,
                   $id: ::std::string::String,
-                  $console: &dyn $crate::runenv::Console|
+                  $console: &mut $crate::tool::Console|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 let s: ::futures::stream::BoxStream<'_, $crate::message::Message> =
                     ::std::boxed::Box::pin($body);
@@ -410,15 +434,14 @@ macro_rules! tool_func {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runenv::{Local, Machine};
+    use crate::test_console;
 
     #[tokio::test]
     async fn test_sync_value() {
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let mut console = test_console().await;
         let f = tool_func!(|_args: Value| -> Value { Value::string("ok") });
         let out = f
-            .call(Value::object_empty(), "call-1", console)
+            .call(Value::object_empty(), "call-1", &mut console)
             .next()
             .await
             .unwrap();
@@ -431,11 +454,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_sync_value_with_console() {
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
-        let f = tool_func!(|_args: Value, _console: &dyn Console| -> Value { Value::string("ok") });
+        let mut console = test_console().await;
+        let f = tool_func!(|_args: Value, _console: &mut Console| -> Value { Value::string("ok") });
         let out = f
-            .call(Value::object_empty(), "call-1", console)
+            .call(Value::object_empty(), "call-1", &mut console)
             .next()
             .await
             .unwrap();
@@ -447,11 +469,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_async_value() {
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let mut console = test_console().await;
         let f = tool_func!(async |_args: Value| -> Value { Value::bool(true) });
         let out = f
-            .call(Value::object_empty(), "call-1", console)
+            .call(Value::object_empty(), "call-1", &mut console)
             .next()
             .await
             .unwrap();
@@ -460,17 +481,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_async_value_with_console() {
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
-        let f = tool_func!(async |_args: Value, console: &dyn Console| -> Value {
-            let r = console
-                .exec_shell("echo hi".to_string(), None)
-                .await
-                .unwrap();
-            Value::string(r.stdout.trim().to_string())
+        let mut console = test_console().await;
+        let f = tool_func!(async |_args: Value, console: &mut Console| -> Value {
+            // cortex as it is: an argv in, bytes out. A tool that wants a shell asks
+            // for one, and converts what came back itself.
+            let r = console.exec(["sh", "-c", "echo hi"], None).await.unwrap();
+            Value::string(String::from_utf8_lossy(&r.stdout).trim().to_string())
         });
         let out = f
-            .call(Value::object_empty(), "call-1", console)
+            .call(Value::object_empty(), "call-1", &mut console)
             .next()
             .await
             .unwrap();
@@ -482,13 +501,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_stream_value() {
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let mut console = test_console().await;
         let f = tool_func!(stream |_args: Value| -> Value {
             stream::iter(vec![Value::integer(1), Value::integer(2), Value::integer(3)])
         });
         let outputs: Vec<_> = f
-            .call(Value::object_empty(), "call-1", console)
+            .call(Value::object_empty(), "call-1", &mut console)
             .collect()
             .await;
         assert_eq!(outputs.len(), 3);
@@ -502,7 +520,7 @@ mod tests {
     async fn test_needs_console() {
         let pure = tool_func!(|_args: Value| -> Value { Value::bool(false) });
         let with_console =
-            tool_func!(|_args: Value, _console: &dyn Console| -> Value { Value::bool(true) });
+            tool_func!(|_args: Value, _console: &mut Console| -> Value { Value::bool(true) });
         assert!(!pure.needs_console());
         assert!(with_console.needs_console());
     }

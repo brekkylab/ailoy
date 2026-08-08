@@ -27,13 +27,17 @@ path = "src/lib.rs"
 
 [features]
 default = []
-sandbox = ["dep:microsandbox", "dep:microsandbox-network", "dep:microsandbox-types"]
 
 [dependencies]
 anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"
 base64 = "0.23"
+# The console library `runenv_v2` is built on. Still developed alongside this
+# crate in a sibling checkout, so it is a path dependency until it is published
+# — moving it to a version or git pin is what makes this crate buildable
+# elsewhere.
+cortex = { path = "../cortex/cortex" }
 dedent = "0.1.1"
 derive_builder = "0.20.2"
 fancy-regex = "0.18"
@@ -44,13 +48,6 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 indexmap = { version = "2", features = ["serde"] }
 infer = "0.22"
 log = "0.4"
-microsandbox = { version = "0.6.7", optional = true }
-# `microsandbox` facade does not re-export the network policy builder types;
-# used directly to build per-variant SandboxNetwork egress policies.
-microsandbox-network = { version = "0.6.7", optional = true }
-# The wire-format `NetworkPolicy` that `SandboxSpec` stores also lacks a
-# facade re-export (the facade's `NetworkPolicy` is the engine-side type).
-microsandbox-types = { version = "0.6.7", optional = true }
 ordered-float = { version = "5.0.0", features = ["serde"] }
 parking_lot = "0.12.4"
 png = "0.18"
@@ -90,16 +87,3 @@ dotenvy = "0.15"
 test-with = { version = "0.17", default-features = false, features = ["executable"] }
 tokio = { version = "1.0", features = ["net"] }
 
-# microsandbox 0.6.7 computes a sparse-sha256 integrity digest over the upper
-# layer's full logical size (default 4 GiB) on snapshot create, save, and load,
-# so sandbox snapshot tests hash ~12 GiB per round trip. Unoptimized sha2 runs
-# at ~130 MB/s, which turns that into ~32 s per pass under the dev profile.
-# Optimizing just the hash crates restores hardware-speed hashing (~2.6 GB/s).
-# Applies only when this workspace is built directly; release builds and
-# crates depending on ailoy are unaffected.
-[profile.dev.package.sha2]
-opt-level = 3
-[profile.dev.package.digest]
-opt-level = 3
-[profile.dev.package.block-buffer]
-opt-level = 3

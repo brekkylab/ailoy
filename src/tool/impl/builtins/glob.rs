@@ -110,7 +110,7 @@ pub fn get_glob_tool_desc() -> ToolDesc {
 }
 
 pub fn get_glob_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &dyn Console| -> Value {
+    tool_func!(async |args: Value, console: &mut Console| -> Value {
         let Some(pattern_str) = args.pointer("/pattern").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: pattern",
@@ -137,13 +137,10 @@ pub fn get_glob_tool_func() -> ToolFunc {
             .map(|n| n.max(1) as usize)
             .unwrap_or(DEFAULT_LIMIT);
 
-        let os = console.get_os();
-        if os != "linux" && os != "macos" {
-            return crate::to_value!({
-                "error": format!("glob: unsupported OS '{os}'"),
-                "phase": "validation",
-            });
-        }
+        // No OS guard: every console server cortex speaks to is a POSIX one, so the
+        // `sh` script below always applies. If a Windows server ever appears, that
+        // server is the end that knows, and the check belongs at the console rather
+        // than in each tool.
 
         let regex = match glob_to_ere(pattern_str) {
             Ok(r) => r,
@@ -157,7 +154,7 @@ pub fn get_glob_tool_func() -> ToolFunc {
         let base_q = sh_single_quote_inner(path_str);
         let regex_q = sh_single_quote_inner(&regex);
 
-        // Stay in POSIX `sh` (via `exec_shell`) so this works on any sandbox
+        // Stay in POSIX `sh` so this works on any sandbox
         // image, including ones without zsh or bash 4+. `find` walks the tree,
         // `grep -E` filters via a glob-to-ERE conversion (handles `**`), and a
         // shell read-loop prefixes the absolute base path.
@@ -169,7 +166,7 @@ find . -type f 2>/dev/null | grep -E '^\./{regex_q}$' | while IFS= read -r f; do
 done"#,
         );
 
-        let result = match console.exec_shell(script, None).await {
+        let result = match console.exec(["sh", "-c", &script], None).await {
             Ok(r) => r,
             Err(e) => {
                 return crate::to_value!({
@@ -178,15 +175,20 @@ done"#,
                 });
             }
         };
-        if result.exit_code != 0 {
+        if result.code != 0 {
             return crate::to_value!({
-                "error": format!("glob failed (exit {}): {}", result.exit_code, result.stderr),
+                "error": format!(
+                    "glob failed (exit {}): {}",
+                    result.code,
+                    String::from_utf8_lossy(&result.stderr)
+                ),
                 "phase": "io",
             });
         }
 
-        let mut paths: Vec<String> = result
-            .stdout
+        // Lossy: these are paths on their way to a model, which reads text.
+        let stdout = String::from_utf8_lossy(&result.stdout).into_owned();
+        let mut paths: Vec<String> = stdout
             .lines()
             .take(limit + 1)
             .map(|s| s.to_string())
@@ -210,13 +212,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{
-        datatype::Value,
-        message::Message,
-        runenv::{Local, Machine},
-        to_value,
-        tool::ToolProvider,
-    };
+    use crate::{datatype::Value, message::Message, test_console, to_value, tool::ToolProvider};
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -342,7 +338,7 @@ mod tests {
         );
     }
 
-    // ── integration tests (end-to-end through a Machine console) ─────────────
+    // ── integration tests (end-to-end through a cortex console) ──────────────
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -354,9 +350,12 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_glob_tool_desc()]).unwrap();
         let f = funcs.get("glob").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
-        f.call(args, "1", console).next().await.unwrap().message
+        let mut console = test_console().await;
+        f.call(args, "1", &mut console)
+            .next()
+            .await
+            .unwrap()
+            .message
     }
 
     fn paths(msg: &Message) -> Vec<String> {

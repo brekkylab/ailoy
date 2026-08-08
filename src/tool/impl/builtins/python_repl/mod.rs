@@ -2,6 +2,8 @@ mod runner;
 
 use std::sync::Arc;
 
+use cortex::console::{Error, Failure};
+
 use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
@@ -34,7 +36,7 @@ pub fn get_python_repl_tool_desc() -> ToolDesc {
 pub fn get_python_repl_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
     |_| {
         let runner = Arc::new(runner::PythonReplRunner::new());
-        tool_func!(async |args: Value, console: &dyn Console| -> Value
+        tool_func!(async |args: Value, console: &mut Console| -> Value
             with[runner = runner.clone()]
             {
             let code = match args.pointer("/code").and_then(|v| v.as_str()) {
@@ -62,11 +64,11 @@ pub fn get_python_repl_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
             if !pip_packages.is_empty() {
                 let pkg_refs: Vec<&str> = pip_packages.iter().map(String::as_str).collect();
                 match runner.install_packages(console, &pkg_refs).await {
-                    Ok(r) if r.exit_code != 0 => {
+                    Ok(r) if r.code != 0 => {
                         return crate::to_value!({
                             "stdout": "",
-                            "stderr": r.stderr.as_str(),
-                            "exit_code": r.exit_code as i64,
+                            "stderr": String::from_utf8_lossy(&r.stderr).into_owned(),
+                            "exit_code": r.code as i64,
                             "phase": "pip_install"
                         });
                     }
@@ -84,18 +86,31 @@ pub fn get_python_repl_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
 
             match runner.run(console, &code, &[]).await {
                 Ok(r) => crate::to_value!({
-                    "stdout": r.stdout.as_str(),
-                    "stderr": r.stderr.as_str(),
-                    "exit_code": r.exit_code as i64,
-                    "timed_out": r.timed_out
-                }),
-                Err(e) => crate::to_value!({
-                    "stdout": "",
-                    "stderr": format!("execution error: {e}").as_str(),
-                    "exit_code": -1,
+                    "stdout": String::from_utf8_lossy(&r.stdout).into_owned(),
+                    "stderr": String::from_utf8_lossy(&r.stderr).into_owned(),
+                    "exit_code": r.code as i64,
                     "timed_out": false,
-                    "phase": "execution"
+                    // The console cut the output rather than carry it all; a model
+                    // reading a partial result as if it were whole draws a wrong
+                    // conclusion from it.
+                    "truncated": r.truncated
                 }),
+                Err(e) => {
+                    // A timeout is a refusal, not a result — there is no exit code and
+                    // nothing the script wrote that this end can still see. It reaches
+                    // here inside the `anyhow` chain, so it is dug back out.
+                    let timed_out = e
+                        .chain()
+                        .filter_map(|c| c.downcast_ref::<Failure>())
+                        .any(|f| f.code() == Some(Error::TIMED_OUT));
+                    crate::to_value!({
+                        "stdout": "",
+                        "stderr": format!("execution error: {e}").as_str(),
+                        "exit_code": -1,
+                        "timed_out": timed_out,
+                        "phase": "execution"
+                    })
+                }
             }
         })
     }
@@ -106,12 +121,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{
-        datatype::Value,
-        message::Message,
-        runenv::{Local, Machine},
-        tool::ToolProvider,
-    };
+    use crate::{datatype::Value, message::Message, test_console, tool::ToolProvider};
 
     fn provider() -> ToolProvider {
         let mut provider = ToolProvider::new();
@@ -123,9 +133,12 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_python_repl_tool_desc()]).unwrap();
         let f = funcs.get("python_repl").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
-        f.call(args, "1", console).next().await.unwrap().message
+        let mut console = test_console().await;
+        f.call(args, "1", &mut console)
+            .next()
+            .await
+            .unwrap()
+            .message
     }
 
     #[test]

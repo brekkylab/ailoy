@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::{
     datatype::Bytes,
     message::{Message, Part, Role},
@@ -98,14 +96,26 @@ pub fn get_read_tool_desc() -> ToolDesc {
 
 pub fn get_read_tool_func() -> ToolFunc {
     tool_func!(
-        async |args: Value, id: String, console: &dyn Console| -> Message {
+        async |args: Value, id: String, console: &mut Console| -> Message {
             let Some(path_str) = args.pointer("/path").and_then(|v| v.as_str()) else {
                 return error_message(id, "missing required parameter: path", "validation");
             };
-            let path = Path::new(path_str);
 
-            let bytes = match console.read(path).await {
-                Ok(b) => b,
+            // One `read`. `size` is the whole file's, so a short answer means the
+            // file is bigger than one message — reported rather than returned as if
+            // it were the file, which is what `MAX_FILE_BYTES` below also guards.
+            let bytes = match console.read(path_str, None, None).await {
+                Ok(r) if (r.data.len() as u64) < r.size => {
+                    return error_message(
+                        id,
+                        format!(
+                            "read {path_str}: file is {} bytes, more than one message carries",
+                            r.size
+                        ),
+                        "io",
+                    );
+                }
+                Ok(r) => r.data,
                 Err(e) => return error_message(id, format!("read {path_str}: {e}"), "io"),
             };
 
@@ -173,12 +183,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{
-        datatype::Value,
-        runenv::{Local, Machine},
-        to_value,
-        tool::ToolProvider,
-    };
+    use crate::{datatype::Value, test_console, to_value, tool::ToolProvider};
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -190,9 +195,12 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_read_tool_desc()]).unwrap();
         let f = funcs.get("read").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
-        f.call(args, "1", console).next().await.unwrap().message
+        let mut console = test_console().await;
+        f.call(args, "1", &mut console)
+            .next()
+            .await
+            .unwrap()
+            .message
     }
 
     #[tokio::test]

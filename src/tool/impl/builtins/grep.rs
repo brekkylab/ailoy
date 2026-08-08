@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use crate::{
-    runenv::Console,
-    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
+    tool::{Console, ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
     util::truncate::middle_truncate,
 };
@@ -16,11 +15,12 @@ fn sh_quote(s: &str) -> String {
 }
 
 /// Probe for ripgrep by asking the shell to locate it. Exit 0 means available.
-async fn has_ripgrep(console: &dyn Console) -> bool {
+async fn has_ripgrep(console: &mut Console) -> bool {
     console
-        .exec_shell("command -v rg >/dev/null 2>&1".to_string(), Some(5))
+        // Milliseconds: cortex counts in them. Five seconds to answer "is rg here".
+        .exec(["sh", "-c", "command -v rg >/dev/null 2>&1"], Some(5_000))
         .await
-        .map(|r| r.exit_code == 0)
+        .map(|r| r.code == 0)
         .unwrap_or(false)
 }
 
@@ -85,7 +85,7 @@ pub fn get_grep_tool_desc() -> ToolDesc {
 }
 
 pub fn get_grep_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &dyn Console| -> Value {
+    tool_func!(async |args: Value, console: &mut Console| -> Value {
         let Some(pattern_str) = args.pointer("/pattern").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: pattern",
@@ -145,13 +145,8 @@ pub fn get_grep_tool_func() -> ToolFunc {
             });
         }
 
-        let os = console.get_os();
-        if os != "linux" && os != "macos" {
-            return crate::to_value!({
-                "error": format!("grep: unsupported OS '{os}'"),
-                "phase": "validation",
-            });
-        }
+        // No OS guard — see `glob` for why: the console is POSIX, and if that ever
+        // stops being true it is the server that should say so.
 
         let use_rg = has_ripgrep(console).await;
 
@@ -236,7 +231,7 @@ pub fn get_grep_tool_func() -> ToolFunc {
             cmd.push_str(&sh_quote(arg));
         }
 
-        let result = match console.exec_shell(cmd, None).await {
+        let result = match console.exec(["sh", "-c", &cmd], None).await {
             Ok(r) => r,
             Err(e) => {
                 return crate::to_value!({
@@ -247,19 +242,21 @@ pub fn get_grep_tool_func() -> ToolFunc {
         };
 
         // 0 = matches, 1 = no matches, 2+ = real error (invalid regex, missing
-        // path, etc.). Spawn failure surfaces as exit_code = -1.
-        if result.exit_code >= 2 || result.exit_code < 0 {
+        // path, etc.). A command that could not be started is a `NOT_EXECUTABLE`
+        // refusal rather than a code, and was handled above.
+        if result.code >= 2 || result.code < 0 {
             return crate::to_value!({
                 "error": format!(
                     "{tool_name} failed (exit {}): {}",
-                    result.exit_code,
-                    result.stderr.trim()
+                    result.code,
+                    String::from_utf8_lossy(&result.stderr).trim()
                 ),
                 "phase": "io",
             });
         }
 
-        let lines: Vec<&str> = result.stdout.lines().collect();
+        let stdout = String::from_utf8_lossy(&result.stdout).into_owned();
+        let lines: Vec<&str> = stdout.lines().collect();
         let total = lines.len();
         let truncated = total > limit;
         let kept = if truncated {
@@ -284,13 +281,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{
-        datatype::Value,
-        message::Message,
-        runenv::{Local, Machine},
-        to_value,
-        tool::ToolProvider,
-    };
+    use crate::{datatype::Value, message::Message, test_console, to_value, tool::ToolProvider};
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -302,9 +293,12 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_grep_tool_desc()]).unwrap();
         let f = funcs.get("grep").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
-        f.call(args, "1", console).next().await.unwrap().message
+        let mut console = test_console().await;
+        f.call(args, "1", &mut console)
+            .next()
+            .await
+            .unwrap()
+            .message
     }
 
     fn output(msg: &Message) -> String {

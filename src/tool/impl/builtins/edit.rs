@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
@@ -42,7 +40,7 @@ pub fn get_edit_tool_desc() -> ToolDesc {
 }
 
 pub fn get_edit_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &dyn Console| -> Value {
+    tool_func!(async |args: Value, console: &mut Console| -> Value {
         let Some(path) = args.pointer("/path").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: path",
@@ -72,8 +70,20 @@ pub fn get_edit_tool_func() -> ToolFunc {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let bytes = match console.read(Path::new(path)).await {
-            Ok(b) => b,
+        // One `read`, and it has to have reached the end: `size` is the file's, not
+        // the answer's, so a short answer means the file does not fit in one message.
+        // Editing the front of a file and writing it back would drop the rest.
+        let bytes = match console.read(path, None, None).await {
+            Ok(r) if (r.data.len() as u64) < r.size => {
+                return crate::to_value!({
+                    "error": format!(
+                        "read {path}: file is {} bytes, more than one message carries",
+                        r.size
+                    ),
+                    "phase": "io",
+                });
+            }
+            Ok(r) => r.data,
             Err(e) => {
                 return crate::to_value!({
                     "error": format!("read {path}: {e}"),
@@ -115,8 +125,11 @@ pub fn get_edit_tool_func() -> ToolFunc {
         };
         let replacements = if replace_all { count } else { 1 };
 
-        match console.write(Path::new(path), updated.as_bytes()).await {
-            Ok(()) => crate::to_value!({
+        // `None` offset: the file *becomes* these bytes, so a shorter replacement
+        // leaves no tail of the old one behind. No `mkdir` — `edit` just read this
+        // file, so everything above it is already there.
+        match console.write(path, updated.into_bytes(), None).await {
+            Ok(_) => crate::to_value!({
                 "ok": true,
                 "replacements": replacements as i64,
             }),
@@ -133,13 +146,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{
-        datatype::Value,
-        message::Message,
-        runenv::{Local, Machine},
-        to_value,
-        tool::ToolProvider,
-    };
+    use crate::{datatype::Value, message::Message, test_console, to_value, tool::ToolProvider};
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -151,9 +158,12 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_edit_tool_desc()]).unwrap();
         let f = funcs.get("edit").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
-        f.call(args, "1", console).next().await.unwrap().message
+        let mut console = test_console().await;
+        f.call(args, "1", &mut console)
+            .next()
+            .await
+            .unwrap()
+            .message
     }
 
     #[tokio::test]

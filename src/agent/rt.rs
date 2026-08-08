@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, pin::Pin};
+use std::{collections::HashMap, pin::Pin};
 
 use futures::{FutureExt as _, Stream, StreamExt as _, stream::FuturesUnordered};
 
@@ -9,18 +9,8 @@ use crate::{
     },
     lang_model::{LangModel, LangModelOptions},
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
-    runenv::{Console, FileEntry, Local},
-    skill::{render_skills_table, scan_declared_skills},
     tool::{ToolDesc, ToolFunc, get_tool_providers, r#impl::get_web_search_tool_factory},
 };
-
-/// Flatten `spec.files` plus every nested `sub_spec.files` into `out`.
-fn collect_files_recursive(spec: &AgentSpec, out: &mut Vec<FileEntry>) {
-    out.extend(spec.files.iter().cloned());
-    for sub in &spec.subagents {
-        collect_files_recursive(sub, out);
-    }
-}
 
 /// An agent that drives a language model through multi-turn, tool-augmented conversations.
 ///
@@ -52,23 +42,9 @@ pub struct Agent {
 
     context_manager: Option<ContextManager>,
 
-    /// Files this agent (and its declared sub-spec subtree) writes to the
-    /// machine on first run.  Pre-flattened at construction time so the
-    /// runtime no longer needs to keep the originating [`AgentSpec`] around.
-    files: Vec<FileEntry>,
-
-    /// Skill directories declared on the originating spec.  Surfaced by
-    /// [`Self::skills`].
-    skills: Vec<PathBuf>,
-
     /// Card name lifted from the originating spec.  Used by
     /// [`Self::stamp_source_agent`] to tag streamed events.
     card_name: Option<String>,
-
-    /// Lazy gate: whether the declared [`FileEntry`] list has been written
-    /// to the machine.  Toggled by `ensure_files_materialised` on the first
-    /// [`Self::run`].
-    files_materialised: bool,
 }
 
 impl Agent {
@@ -100,16 +76,9 @@ impl Agent {
     /// on every invocation — make sure the name stays registered for the
     /// lifetime of the agent.
     ///
-    /// Files declared in [`AgentSpec::files`] are materialised lazily on the
-    /// first [`Self::run`].  Each path in [`AgentSpec::skills`] is an absolute
-    /// directory containing a `SKILL.md`; the spec is taken as-is — sub-spec
-    /// skill paths are **not** rewritten, so sub-agent skills are portable
-    /// across parents.
-    ///
     /// Unless `state.history` already leads with a [`Role::System`] message, one
-    /// synthesised from `spec.instruction` and the declared skills table is inserted
-    /// at the front; a history that leads with one is taken as-is, so the caller's
-    /// own system message wins.
+    /// built from `spec.instruction` is inserted at the front; a history that leads
+    /// with one is taken as-is, so the caller's own system message wins.
     pub fn try_with_provider_and_state(
         spec: AgentSpec,
         provider: impl AsRef<str>,
@@ -160,25 +129,17 @@ impl Agent {
             let func = get_subagent_tool_func(
                 sub_spec.clone(),
                 provider_name.to_string(),
-                state.runenv.clone(),
+                state.console.clone(),
             );
             tool_descs.push(desc);
             tools.insert(tool_name, func);
         }
 
-        // Build the system message: instruction + (optionally) skills table.
+        // Build the system message from the instruction.
         // A system message is expected only at index 0; `any` covers a stray one too,
         // since seeding a second would either shadow theirs or ship both.
         if !state.history.iter().any(|m| m.role == Role::System) {
-            let declared_skills = scan_declared_skills(&spec.files, &spec.skills)?;
-            let skills_block = render_skills_table(&declared_skills);
-            let system_text = match (spec.instruction.as_deref(), skills_block) {
-                (Some(inst), Some(block)) => Some(format!("{inst}\n\n{block}")),
-                (Some(inst), None) => Some(inst.to_string()),
-                (None, Some(block)) => Some(block),
-                (None, None) => None,
-            };
-            if let Some(text) = system_text {
+            if let Some(text) = spec.instruction.as_deref() {
                 // Front: that is where every schema expects a system message, whether
                 // it extracts the first one or sends them in place.
                 state.history.insert(
@@ -188,9 +149,6 @@ impl Agent {
             }
         }
 
-        let mut files = Vec::new();
-        collect_files_recursive(&spec, &mut files);
-
         Ok(Self {
             model,
             model_options,
@@ -198,10 +156,7 @@ impl Agent {
             tools,
             state,
             context_manager: None,
-            files,
-            skills: spec.skills,
             card_name: spec.card.map(|c| c.name),
-            files_materialised: false,
         })
     }
 
@@ -242,41 +197,36 @@ impl Agent {
         msg
     }
 
-    pub(crate) fn set_context_manager(&mut self, cm: Option<ContextManager>) {
-        self.context_manager = cm;
-    }
-
-    /// Lazy gate: materialise this agent's declared files (this agent's plus
-    /// the sub-spec subtree's, pre-flattened by [`AgentParts::from_spec`]) into
-    /// the machine on first call.  Uses write-once semantics — files that
-    /// already exist are left untouched — so any runtime modifications survive
-    /// subsequent invocations.
-    async fn ensure_files_materialised(&mut self) -> anyhow::Result<()> {
-        if self.files_materialised {
-            return Ok(());
+    /// Boot the console's backend for a batch of tool calls.
+    ///
+    /// Paid per batch rather than once per agent, because the other half of a turn is
+    /// spent waiting on the model and a booted console is a backend sitting idle —
+    /// on a micro-VM one, a whole VM. `start`/`stop` is the pair cortex offers for
+    /// exactly that: `stop` releases what booting took and leaves the session open,
+    /// so the next batch starts again on the same console.
+    ///
+    /// An agent with no console has no backend to boot, and says nothing about it —
+    /// its pure tools run either way, and a console tool reports the absence itself.
+    async fn start_console(&self) -> anyhow::Result<()> {
+        if let Some(console) = self.state.console.lock().await.as_mut() {
+            console.start().await?;
         }
-        let mut guard = self.state.runenv.lock().await;
-        let console = guard.start().await?;
-        for f in &self.files {
-            // Write-once: skip if the file already exists.
-            if console.read(&f.path).await.is_ok() {
-                continue;
-            }
-            console.write(&f.path, f.content.as_ref()).await?;
-        }
-        self.files_materialised = true;
         Ok(())
     }
 
-    /// Read-only view of the agent's declared skill directories.
-    pub fn skills(&self) -> &[PathBuf] {
-        &self.skills
+    /// Release what [`start_console`](Self::start_console) booted.
+    ///
+    /// Not the end of the session — another `start` is allowed and is what the next
+    /// batch of tool calls does.
+    async fn stop_console(&self) -> anyhow::Result<()> {
+        if let Some(console) = self.state.console.lock().await.as_mut() {
+            console.stop().await?;
+        }
+        Ok(())
     }
 
-    /// Read-only view of the files materialised onto the machine on first
-    /// run (this agent's plus the sub-spec subtree's, pre-flattened).
-    pub fn files(&self) -> &[FileEntry] {
-        &self.files
+    pub(crate) fn set_context_manager(&mut self, cm: Option<ContextManager>) {
+        self.context_manager = cm;
     }
 
     /// Execute tool calls concurrently within the current task and return a
@@ -318,22 +268,26 @@ impl Agent {
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("No tool found for '{}'", tool_name))?;
 
-            let runenv = self.state.runenv.clone();
+            let console_slot = self.state.console.clone();
             let tx = tx.clone();
 
             futs.push(Box::pin(async move {
                 let tx_inner = tx.clone();
                 let tool_name_inner = tool_name.clone();
+                // A second clone: the error path below reports the name after the
+                // inner block has moved its own.
+                let tool_name_for_call = tool_name.clone();
                 let call_id_for_call = call_id.clone();
 
                 let outcome: Result<anyhow::Result<bool>, _> =
                     std::panic::AssertUnwindSafe(async move {
-                        if tool.needs_console() {
-                            // Lock the machine for the duration of the tool's stream:
-                            // the returned BoxStream borrows the started console.
-                            let mut guard = runenv.lock().await;
-                            let console = guard.start().await?;
-                            let mut stream = tool.call(call_args, call_id_for_call, console);
+                        if let Some(mut stream) =
+                            tool.call_pure(call_args.clone(), call_id_for_call.clone())
+                        {
+                            // Pure tool: the stream is `'static`, so it does not take
+                            // the console lock. Critically, this lets a sub-agent
+                            // ToolFunc drive its own nested `run()` without deadlocking
+                            // against the parent's tool batch.
                             let mut last: Option<MessageOutput> = None;
                             while let Some(item) = stream.next().await {
                                 if let Some(mut prev) = last.replace(item) {
@@ -353,14 +307,19 @@ impl Agent {
                                 None => anyhow::Ok(false),
                             }
                         } else {
-                            // Pure tool: the returned stream is `'static`, so it does
-                            // not need the machine lock. Critically, this lets a
-                            // sub-agent ToolFunc invoke its own nested `run()` (which
-                            // re-locks the same Arc<Mutex<>>) without deadlocking
-                            // against the parent's tool batch.
-                            let dummy = Local::default();
-                            let mut stream =
-                                tool.call(call_args, call_id_for_call, dummy.dummy_console());
+                            // Console tool: hold the lock for the whole stream, which
+                            // borrows the console exclusively. That serialises tool
+                            // calls against one console — which is the protocol, not a
+                            // choice: one outstanding request at a time.
+                            let mut guard = console_slot.lock().await;
+                            let console = guard.as_mut().ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "{tool_name_for_call} needs a console, and this agent \
+                                     has none — build one and pass it to \
+                                     `AgentBuilder::console`"
+                                )
+                            })?;
+                            let mut stream = tool.call(call_args, call_id_for_call, console);
                             let mut last: Option<MessageOutput> = None;
                             while let Some(item) = stream.next().await {
                                 if let Some(mut prev) = last.replace(item) {
@@ -471,10 +430,6 @@ impl Agent {
         query: Message,
     ) -> Pin<Box<impl Stream<Item = anyhow::Result<MessageOutput>> + Send + '_>> {
         Box::pin(async_stream::try_stream! {
-            // Lazy gate: write declared files (this agent + sub-spec subtree)
-            // to the machine on first call.  Write-once semantics preserve any
-            // runtime modifications across subsequent runs.
-            self.ensure_files_materialised().await?;
 
             self.state.history.push(query);
             // See run_stream: pop the dangling query if the turn fails before its
@@ -525,10 +480,19 @@ impl Agent {
                     }
                 };
 
+                self.start_console().await?;
+
+                // Drained to the end even on failure, so the console is released
+                // before the error leaves this scope — a `?` here would step over the
+                // `stop` and leave the backend booted with nobody driving it.
                 let mut tool_stream = self.execute_tool_calls(tool_calls)?;
+                let mut failure = None;
                 while let Some(event) = tool_stream.next().await {
                     match event {
-                        Err(e) => Err(e)?,
+                        Err(e) => {
+                            failure = Some(e);
+                            break;
+                        }
                         Ok(mut output) => {
                             if output.message.role == Role::Tool && output.depth == Some(0) {
                                 output.message = Self::cap_tool_result(output.message);
@@ -539,6 +503,15 @@ impl Agent {
                         }
                     }
                 }
+                drop(tool_stream);
+
+                let stopped = self.stop_console().await;
+                // The tools' failure first: it is what the caller asked about, and a
+                // console that would not stop is the less useful of the two.
+                if let Some(e) = failure {
+                    Err(e)?;
+                }
+                stopped?;
             }
         })
     }
@@ -554,7 +527,6 @@ impl Agent {
         query: Message,
     ) -> Pin<Box<impl Stream<Item = anyhow::Result<MessageDeltaOutput>> + Send + '_>> {
         Box::pin(async_stream::try_stream! {
-            self.ensure_files_materialised().await?;
 
             self.state.history.push(query);
             // If a turn fails before its assistant message commits, pop the
@@ -636,10 +608,18 @@ impl Agent {
                     _ => break,
                 };
 
+                self.start_console().await?;
+
+                // See `run`: drained to the end even on failure, so `stop` is not
+                // stepped over by an early `?`.
                 let mut tool_stream = self.execute_tool_calls(tool_calls)?;
+                let mut failure = None;
                 while let Some(event) = tool_stream.next().await {
                     match event {
-                        Err(e) => Err(e)?,
+                        Err(e) => {
+                            failure = Some(e);
+                            break;
+                        }
                         Ok(mut output) => {
                             // Tool results are complete MessageOutputs; commit to
                             // history, stamp, then re-emit on the delta stream.
@@ -652,30 +632,21 @@ impl Agent {
                         }
                     }
                 }
+                drop(tool_stream);
+
+                let stopped = self.stop_console().await;
+                if let Some(e) = failure {
+                    Err(e)?;
+                }
+                stopped?;
             }
         })
     }
 }
 
-/// Test-only extension: produce a `&dyn Console` cheaply from a default `Local`
-/// without going through `Machine::start`. This dummy is only passed to Pure
-/// `ToolFunc`s — they never actually use it.
-trait DummyConsoleExt {
-    fn dummy_console(&self) -> &dyn Console;
-}
-
-impl DummyConsoleExt for Local {
-    fn dummy_console(&self) -> &dyn Console {
-        // `Local` always holds a `LocalConsole`; expose it as a trait object.
-        // SAFETY: This relies on `Local`'s public `start()` returning the same
-        // console after `&mut self` is released — we just read through `&self`.
-        // We avoid `&mut self` here because we're inside a `&self` context.
-        // `LocalConsole` has no state and `Console`'s methods take `&self`.
-        // We achieve this by going through a static stand-in.
-        static C: crate::runenv::LocalConsole = crate::runenv::LocalConsole {};
-        &C
-    }
-}
+// The `DummyConsoleExt` stand-in that used to live here is gone: a pure tool is now
+// run through `ToolFunc::call_pure`, which asks for no console at all. There is no
+// fabricating a `cortex` one anyway — it is a live session with a server behind it.
 
 #[cfg(test)]
 mod tests {
@@ -1267,6 +1238,63 @@ mod tests {
             old_val.as_str(),
             Some("call_old_b_value"),
             "tool result must not be replaced when last_input_tokens is below max_input_tokens"
+        );
+    }
+
+    /// The cycle `run` performs once per batch of tool calls: boot, run, release,
+    /// and boot again for the next batch.
+    ///
+    /// What makes it safe is that `stop` releases the backend without ending the
+    /// session — so what a tool wrote in one batch is still there in the next. The
+    /// whole start/stop-per-batch design rests on that, which is why it is pinned
+    /// here rather than assumed.
+    #[tokio::test]
+    async fn a_console_survives_the_stop_start_cycle_between_tool_batches() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("across.txt").display().to_string();
+
+        let console = crate::test_console().await;
+        let agent_state = AgentState::new().with_console(console);
+
+        // First batch.
+        {
+            let mut guard = agent_state.console.lock().await;
+            let console = guard.as_mut().unwrap();
+            console.start().await.expect("first start");
+            console
+                .exec(["sh", "-c", &format!("echo batch-1 > {path}")], None)
+                .await
+                .expect("first batch");
+            console.stop().await.expect("release between batches");
+        }
+
+        // Second batch, on the same console: `stop` released the backend but not the
+        // session, so this is a fresh boot rather than a new conversation.
+        {
+            let mut guard = agent_state.console.lock().await;
+            let console = guard.as_mut().unwrap();
+            console.start().await.expect("second start");
+            let seen = console
+                .exec(["cat", &path], None)
+                .await
+                .expect("second batch");
+            assert_eq!(
+                String::from_utf8_lossy(&seen.stdout).trim(),
+                "batch-1",
+                "what the first batch wrote must outlive the stop between them"
+            );
+            console.stop().await.expect("release after the last batch");
+        }
+    }
+
+    /// An agent with no console runs its pure tools and says so plainly when a
+    /// console tool is called — nothing builds one on its behalf.
+    #[tokio::test]
+    async fn an_agent_without_a_console_says_so_rather_than_building_one() {
+        let state = AgentState::new();
+        assert!(
+            state.console.lock().await.is_none(),
+            "a fresh state has no console, and nothing fills it in"
         );
     }
 }

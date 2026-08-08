@@ -32,6 +32,22 @@ mod func;
 pub(crate) mod r#impl;
 mod provider;
 
+/// The console a tool runs commands in — `cortex`'s own type, re-exported rather
+/// than wrapped.
+///
+/// Re-exported here for two reasons. It is the path [`tool_func!`](crate::tool_func)
+/// writes into its expansion, and a `#[macro_export]`ed macro can only name types
+/// through `$crate` — spelling `::cortex::..` there would make every crate that
+/// writes a tool depend on `cortex` under that exact name. And it is where a tool
+/// author looks: the console is part of the tool-writing interface, so it should be
+/// reachable from the module that defines the rest of it.
+///
+/// Nothing is added to it. A tool calls [`Console::exec`], [`Console::read`] and
+/// [`Console::write`] as cortex defines them — argv in, bytes out, milliseconds, and
+/// a timeout that arrives as an error rather than a flag. ailoy ships no convenience
+/// layer over that on purpose: a helper here would become a second interface that
+/// tool authors have to learn and that has to be kept in step with cortex's.
+pub use cortex::console::Console;
 pub use desc::*;
 pub use func::*;
 pub use r#impl::WebSearchEngineKind;

@@ -1,9 +1,10 @@
 use std::path::Path;
 
+use cortex::console::Error;
+
 use crate::{
     datatype::Value,
-    runenv::Console,
-    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
+    tool::{Console, ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
 };
 
@@ -106,24 +107,56 @@ fn parse_patch(text: &str) -> anyhow::Result<Vec<PatchOp>> {
     Ok(ops)
 }
 
-async fn apply_op(op: &PatchOp, console: &dyn Console) -> anyhow::Result<String> {
+async fn apply_op(op: &PatchOp, console: &mut Console) -> anyhow::Result<String> {
     match op {
+        // `Add` is the one op that may name a path whose directories are not there
+        // yet, so it is the one that creates them — and only after cortex says the
+        // write missed, since `write` creates the file but nothing above it.
         PatchOp::Add { path, content } => {
-            console.write(Path::new(path), content.as_bytes()).await?;
+            let bytes = content.as_bytes().to_vec();
+            let mut wrote = console.write(path, bytes.clone(), None).await;
+
+            if wrote.as_ref().err().and_then(|e| e.code()) == Some(Error::NOT_FOUND)
+                && let Some(parent) = Path::new(path)
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+            {
+                let parent = parent.to_string_lossy().into_owned();
+                let mkdir = console.exec(["mkdir", "-p", &parent], None).await?;
+                if mkdir.code != 0 {
+                    anyhow::bail!(
+                        "add {path}: mkdir {parent} failed (exit {}): {}",
+                        mkdir.code,
+                        String::from_utf8_lossy(&mkdir.stderr).trim()
+                    );
+                }
+                wrote = console.write(path, bytes, None).await;
+            }
+            wrote?;
+
             Ok(format!("added {path}"))
         }
         PatchOp::Delete { path } => {
-            let result = console
-                .exec("rm".into(), vec!["-f".into(), path.clone()], None)
-                .await?;
-            if result.exit_code != 0 {
-                anyhow::bail!("rm {path}: {}", result.stderr.trim());
+            let result = console.exec(["rm", "-f", path], None).await?;
+            if result.code != 0 {
+                anyhow::bail!(
+                    "rm {path}: {}",
+                    String::from_utf8_lossy(&result.stderr).trim()
+                );
             }
             Ok(format!("deleted {path}"))
         }
         PatchOp::Update { path, hunks } => {
-            let bytes = console.read(Path::new(path)).await?;
-            let mut content = String::from_utf8(bytes)
+            // A hunk is matched against the whole file and the whole file is written
+            // back, so a partial read would silently drop everything past it.
+            let read = console.read(path, None, None).await?;
+            if (read.data.len() as u64) < read.size {
+                anyhow::bail!(
+                    "read {path}: file is {} bytes, more than one message carries",
+                    read.size
+                );
+            }
+            let mut content = String::from_utf8(read.data)
                 .map_err(|_| anyhow::anyhow!("file {path} is not valid UTF-8"))?;
             for (i, hunk) in hunks.iter().enumerate() {
                 let n = content.matches(&hunk.before).count();
@@ -142,7 +175,9 @@ async fn apply_op(op: &PatchOp, console: &dyn Console) -> anyhow::Result<String>
                 }
                 content = content.replacen(&hunk.before, &hunk.after, 1);
             }
-            console.write(Path::new(path), content.as_bytes()).await?;
+            // `None` offset, so the file becomes the patched text rather than being
+            // written into. Nothing to create: `Update` just read this file.
+            console.write(path, content.into_bytes(), None).await?;
             Ok(format!("updated {path}"))
         }
     }
@@ -192,7 +227,7 @@ pub fn get_apply_patch_tool_desc() -> ToolDesc {
 }
 
 pub fn get_apply_patch_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &dyn Console| -> Value {
+    tool_func!(async |args: Value, console: &mut Console| -> Value {
         let Some(patch_text) = args.pointer("/patch").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: patch",
@@ -235,12 +270,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{
-        message::Message,
-        runenv::{Local, Machine},
-        to_value,
-        tool::ToolProvider,
-    };
+    use crate::{message::Message, test_console, to_value, tool::ToolProvider};
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -252,9 +282,12 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_apply_patch_tool_desc()]).unwrap();
         let f = funcs.get("apply_patch").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
-        f.call(args, "1", console).next().await.unwrap().message
+        let mut console = test_console().await;
+        f.call(args, "1", &mut console)
+            .next()
+            .await
+            .unwrap()
+            .message
     }
 
     #[tokio::test]
