@@ -3,8 +3,9 @@ use std::path::Path;
 use cortex::console::Error;
 
 use crate::{
+    console::Console,
     datatype::Value,
-    tool::{Console, ToolDesc, ToolDescBuilder, ToolFunc},
+    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
 };
 

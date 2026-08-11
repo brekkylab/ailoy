@@ -574,7 +574,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bson",
+ "cc",
  "futures-core",
+ "pkg-config",
  "serde",
  "tokio",
 ]

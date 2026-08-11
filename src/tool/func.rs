@@ -267,7 +267,7 @@ macro_rules! tool_func {
         $crate::tool::ToolFunc::new_with_console(
             move |$args: $crate::datatype::Value,
                   id: ::std::string::String,
-                  $console: &mut $crate::tool::Console|
+                  $console: &mut $crate::console::Console|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 let value: $crate::datatype::Value = $body;
                 $crate::tool::__private::value_to_stream(id, value)
@@ -282,7 +282,7 @@ macro_rules! tool_func {
         $crate::tool::ToolFunc::new_with_console(
             move |$args: $crate::datatype::Value,
                   $id: ::std::string::String,
-                  $console: &mut $crate::tool::Console|
+                  $console: &mut $crate::console::Console|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 let message: $crate::message::Message = $body;
                 $crate::tool::__private::message_to_stream(message)
@@ -343,7 +343,7 @@ macro_rules! tool_func {
         $crate::tool::ToolFunc::new_with_console(
             move |$args: $crate::datatype::Value,
                   id: ::std::string::String,
-                  $console: &mut $crate::tool::Console|
+                  $console: &mut $crate::console::Console|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 $(let $cap = $expr;)*
                 let fut: ::futures::future::BoxFuture<'_, $crate::datatype::Value> =
@@ -369,7 +369,7 @@ macro_rules! tool_func {
         $crate::tool::ToolFunc::new_with_console(
             move |$args: $crate::datatype::Value,
                   $id: ::std::string::String,
-                  $console: &mut $crate::tool::Console|
+                  $console: &mut $crate::console::Console|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 $(let $cap = $expr;)*
                 let fut: ::futures::future::BoxFuture<'_, $crate::message::Message> =
@@ -405,7 +405,7 @@ macro_rules! tool_func {
         $crate::tool::ToolFunc::new_with_console(
             move |$args: $crate::datatype::Value,
                   id: ::std::string::String,
-                  $console: &mut $crate::tool::Console|
+                  $console: &mut $crate::console::Console|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 let s: ::futures::stream::BoxStream<'_, $crate::datatype::Value> =
                     ::std::boxed::Box::pin($body);
@@ -421,7 +421,7 @@ macro_rules! tool_func {
         $crate::tool::ToolFunc::new_with_console(
             move |$args: $crate::datatype::Value,
                   $id: ::std::string::String,
-                  $console: &mut $crate::tool::Console|
+                  $console: &mut $crate::console::Console|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 let s: ::futures::stream::BoxStream<'_, $crate::message::Message> =
                     ::std::boxed::Box::pin($body);

@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use crate::{
-    tool::{Console, ToolDesc, ToolDescBuilder, ToolFunc},
+    console::Console,
+    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
     util::truncate::middle_truncate,
 };

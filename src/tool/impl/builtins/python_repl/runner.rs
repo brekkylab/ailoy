@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use cortex::console::{Error, ExecResult};
 use tokio::sync::Notify;
 
-use crate::tool::Console;
+use crate::console::Console;
 
 /// All ailoy-managed files live under `$XDG_CACHE_HOME/ailoy` (default `~/.cache/ailoy`):
 ///   - uv binary : `$AILOY_CACHE/bin/uv`  (symlink if system uv exists, else downloaded)
