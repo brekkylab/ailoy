@@ -244,6 +244,9 @@ fn marshal_request(
             LangModelRequest,
             api::AnthropicMarshal,
         >::new(req)),
+        LangModelAPISchema::Bedrock => {
+            Value::from(Marshaled::<LangModelRequest, api::BedrockMarshal>::new(req))
+        }
         LangModelAPISchema::ChatCompletion => {
             Value::from(Marshaled::<LangModelRequest, api::ChatCompletionMarshal>::new(req))
         }

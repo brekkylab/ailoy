@@ -24,6 +24,26 @@ impl LangModelProvider {
             api_key: Some(api_key),
         }
     }
+
+    /// Amazon Bedrock, addressed with a Bedrock API key as a bearer token
+    /// (no SigV4 signing).
+    ///
+    /// `url` is the runtime **base**; the model id is appended as
+    /// `/model/{model}/invoke` at marshal time, so one registration serves every
+    /// model in the region. `model` must be an inference-profile id such as
+    /// `global.anthropic.claude-sonnet-5` — plain foundation-model ids are
+    /// rejected for on-demand throughput.
+    pub fn bedrock(region: impl AsRef<str>, api_key: String) -> LangModelProviderElem {
+        LangModelProviderElem::API {
+            schema: LangModelAPISchema::Bedrock,
+            url: Url::parse(&format!(
+                "https://bedrock-runtime.{}.amazonaws.com",
+                region.as_ref()
+            ))
+            .unwrap(),
+            api_key: Some(api_key),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -164,111 +184,201 @@ impl Marshal<ToolDesc> for AnthropicMarshal {
     }
 }
 
-impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
-    fn marshal(&self, req: &LangModelRequest<'_>) -> Value {
-        let LangModelProviderElem::API { url, api_key, .. } = req.provider;
-        let options = req.options;
-        let model = Value::from(req.model);
+/// Which endpoint the Anthropic Messages wire format is being sent to.
+///
+/// The message/tool encoding is identical; only the envelope differs — see
+/// [`marshal_anthropic_request`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Flavor {
+    /// `api.anthropic.com`
+    Direct,
+    /// `bedrock-runtime.<region>.amazonaws.com`
+    Bedrock,
+}
 
-        // Extract system message text if present
-        let system = req
-            .messages
-            .iter()
-            .find(|m| m.role == Role::System)
-            .and_then(|m| m.contents.first())
-            .and_then(|p| {
-                if let Part::Text { text } = p {
-                    Some(Value::from(text.as_str()))
-                } else {
-                    None
-                }
-            });
+/// Builds the `(url, header, body)` triple for both Anthropic endpoints.
+///
+/// Bedrock speaks the same Messages format but moves three things:
+/// the model id goes in the URL path rather than the body, the key is a bearer
+/// token rather than `x-api-key`, and the API version is a body field
+/// (`anthropic_version`) rather than a header. Bedrock rejects a `model` field
+/// in the body outright, so it must be omitted, not merely ignored.
+fn marshal_anthropic_request(
+    marshal: &AnthropicMarshal,
+    req: &LangModelRequest<'_>,
+    flavor: Flavor,
+) -> Value {
+    let LangModelProviderElem::API { url, api_key, .. } = req.provider;
+    let options = req.options;
+    let model = Value::from(req.model);
 
-        let messages = marshal_messages(req.messages);
-
-        let tools = if !req.tools.is_empty() {
-            self.marshal(req.tools)
-        } else {
-            Value::Null
-        };
-
-        let url = url.to_string();
-
-        let mut header = to_value!({
-            "content-type": "application/json",
-            "anthropic-version": "2023-06-01",
+    // Extract system message text if present
+    let system = req
+        .messages
+        .iter()
+        .find(|m| m.role == Role::System)
+        .and_then(|m| m.contents.first())
+        .and_then(|p| {
+            if let Part::Text { text } = p {
+                Some(Value::from(text.as_str()))
+            } else {
+                None
+            }
         });
-        if let Some(api_key) = api_key.as_ref() {
-            header
-                .as_object_mut()
-                .unwrap()
-                .insert("x-api-key".into(), api_key.into());
-        }
 
-        #[cfg(target_arch = "wasm32")]
-        header.as_object_mut().unwrap().insert(
-            "anthropic-dangerous-direct-browser-access".into(),
-            "true".into(),
-        );
+    let messages = marshal_messages(req.messages);
 
-        // Anthropic requires an explicit max_tokens value, so we set it as 8192
-        let max_tokens = options.max_tokens.unwrap_or(8192) as i64;
-        let mut body = to_value!({
+    let tools = if !req.tools.is_empty() {
+        marshal.marshal(req.tools)
+    } else {
+        Value::Null
+    };
+
+    let url = match flavor {
+        Flavor::Direct => url.to_string(),
+        // The registered URL is the runtime base; the model rides in the path.
+        Flavor::Bedrock => format!(
+            "{}/model/{}/invoke",
+            url.as_str().trim_end_matches('/'),
+            req.model
+        ),
+    };
+
+    let mut header = to_value!({
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01",
+    });
+    if let Some(api_key) = api_key.as_ref() {
+        let (name, value) = match flavor {
+            Flavor::Direct => ("x-api-key".to_string(), api_key.clone()),
+            Flavor::Bedrock => ("Authorization".to_string(), format!("Bearer {}", api_key)),
+        };
+        header
+            .as_object_mut()
+            .unwrap()
+            .insert(name, value.as_str().into());
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    header.as_object_mut().unwrap().insert(
+        "anthropic-dangerous-direct-browser-access".into(),
+        "true".into(),
+    );
+
+    // Anthropic requires an explicit max_tokens value, so we set it as 8192
+    let max_tokens = options.max_tokens.unwrap_or(8192) as i64;
+    let mut body = match flavor {
+        Flavor::Direct => to_value!({
             "model": model,
             "max_tokens": max_tokens,
             "messages": messages,
-        });
-        if let Some(system) = system {
-            body.as_object_mut()
-                .unwrap()
-                .insert("system".into(), system);
-        }
-        if !tools.is_null() {
-            body.as_object_mut()
-                .unwrap()
-                .insert("tool_choice".to_owned(), to_value!({"type": "auto"}));
-            body.as_object_mut()
-                .unwrap()
-                .insert("tools".to_owned(), tools);
-        }
-        if let Some(temperature) = options.temperature {
-            body.as_object_mut()
-                .unwrap()
-                .insert("temperature".to_owned(), temperature.into());
-        }
-        if let Some(top_p) = options.top_p {
-            body.as_object_mut()
-                .unwrap()
-                .insert("top_p".to_owned(), top_p.into());
-        }
-        if let Some(top_k) = options.top_k {
-            body.as_object_mut()
-                .unwrap()
-                .insert("top_k".to_owned(), (top_k as i64).into());
-        }
-        if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
-            let wire_schema = self.marshal_response_schema(schema);
-            body.as_object_mut().unwrap().insert(
-                "output_config".into(),
-                to_value!({"format": {"type": "json_schema", "schema": wire_schema}}),
-            );
-        }
+        }),
+        // Bedrock 400s on an unexpected `model` field and requires
+        // `anthropic_version` in the body.
+        Flavor::Bedrock => to_value!({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": max_tokens,
+            "messages": messages,
+        }),
+    };
+    if let Some(system) = system {
+        body.as_object_mut()
+            .unwrap()
+            .insert("system".into(), system);
+    }
+    if !tools.is_null() {
+        body.as_object_mut()
+            .unwrap()
+            .insert("tool_choice".to_owned(), to_value!({"type": "auto"}));
+        body.as_object_mut()
+            .unwrap()
+            .insert("tools".to_owned(), tools);
+    }
+    if let Some(temperature) = options.temperature {
+        body.as_object_mut()
+            .unwrap()
+            .insert("temperature".to_owned(), temperature.into());
+    }
+    if let Some(top_p) = options.top_p {
+        body.as_object_mut()
+            .unwrap()
+            .insert("top_p".to_owned(), top_p.into());
+    }
+    if let Some(top_k) = options.top_k {
+        body.as_object_mut()
+            .unwrap()
+            .insert("top_k".to_owned(), (top_k as i64).into());
+    }
+    if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
+        let wire_schema = marshal.marshal_response_schema(schema);
+        body.as_object_mut().unwrap().insert(
+            "output_config".into(),
+            to_value!({"format": {"type": "json_schema", "schema": wire_schema}}),
+        );
+    }
 
-        if req.stream {
-            body.as_object_mut()
-                .unwrap()
-                .insert("stream".into(), true.into());
-            header
-                .as_object_mut()
-                .unwrap()
-                .insert("accept".into(), "text/event-stream".into());
-        }
+    // Bedrock streams `application/vnd.amazon.eventstream` (binary framing)
+    // from a separate `/invoke-with-response-stream` path, which the SSE
+    // reader cannot parse. Leave the request non-streaming so the failure
+    // surfaces in `BedrockUnmarshal::unmarshal_event` instead of as a
+    // corrupt stream.
+    if req.stream && flavor == Flavor::Direct {
+        body.as_object_mut()
+            .unwrap()
+            .insert("stream".into(), true.into());
+        header
+            .as_object_mut()
+            .unwrap()
+            .insert("accept".into(), "text/event-stream".into());
+    }
 
-        to_value!({
-            "url": url,
-            "header": header,
-            "body": body,
-        })
+    to_value!({
+        "url": url,
+        "header": header,
+        "body": body,
+    })
+}
+
+impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
+    fn marshal(&self, req: &LangModelRequest<'_>) -> Value {
+        marshal_anthropic_request(self, req, Flavor::Direct)
+    }
+}
+
+/// Amazon Bedrock. Reuses the Anthropic message encoding; see [`Flavor`].
+#[derive(Clone, Debug, Default)]
+pub struct BedrockMarshal;
+
+impl Marshal<Message> for BedrockMarshal {
+    fn marshal(&self, item: &Message) -> Value {
+        AnthropicMarshal.marshal(item)
+    }
+}
+
+impl Marshal<ToolDesc> for BedrockMarshal {
+    fn marshal(&self, item: &ToolDesc) -> Value {
+        AnthropicMarshal.marshal(item)
+    }
+}
+
+impl Marshal<LangModelRequest<'_>> for BedrockMarshal {
+    fn marshal(&self, req: &LangModelRequest<'_>) -> Value {
+        marshal_anthropic_request(&AnthropicMarshal, req, Flavor::Bedrock)
+    }
+}
+
+/// Bedrock returns the same response body as the Anthropic Messages API, so
+/// whole-response parsing is delegated. `unmarshal_event` is deliberately left
+/// at the trait default (an error): Bedrock's stream is a binary event stream,
+/// not SSE.
+#[derive(Clone, Debug, Default)]
+pub struct BedrockUnmarshal;
+
+impl super::QuotaClassifier for BedrockUnmarshal {}
+
+impl Unmarshal<MessageDeltaOutput> for BedrockUnmarshal {
+    fn unmarshal(&mut self, val: Value) -> anyhow::Result<MessageDeltaOutput> {
+        AnthropicUnmarshal.unmarshal(val)
     }
 }
 
@@ -547,6 +657,61 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
 
 #[cfg(test)]
 mod tests {
+    /// Bedrock differs from the direct API in exactly three places; pin them so
+    /// a change to the shared marshal cannot silently break one flavor.
+    #[test]
+    fn bedrock_envelope_differs_from_direct() {
+        let provider = LangModelProvider::bedrock("ap-northeast-2", "KEY123".to_string());
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+        let options = LangModelOptions::default();
+        let req = LangModelRequest {
+            provider: &provider,
+            model: "global.anthropic.claude-sonnet-5",
+            messages: &messages,
+            tools: &[],
+            options: &options,
+            stream: false,
+        };
+        let v: serde_json::Value = Value::from(BedrockMarshal.marshal(&req)).into();
+
+        // 1. model id rides in the path, not the body
+        assert_eq!(
+            v["url"],
+            "https://bedrock-runtime.ap-northeast-2.amazonaws.com\
+             /model/global.anthropic.claude-sonnet-5/invoke"
+                .replace(char::is_whitespace, "")
+        );
+        assert!(v["body"].get("model").is_none(), "Bedrock 400s on `model`");
+
+        // 2. bearer token, not x-api-key
+        assert_eq!(v["header"]["Authorization"], "Bearer KEY123");
+        assert!(v["header"].get("x-api-key").is_none());
+
+        // 3. version is a body field
+        assert_eq!(v["body"]["anthropic_version"], "bedrock-2023-05-31");
+    }
+
+    /// The direct API must keep its original envelope.
+    #[test]
+    fn direct_envelope_unchanged() {
+        let provider = LangModelProvider::anthropic("KEY123".to_string());
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+        let options = LangModelOptions::default();
+        let req = LangModelRequest {
+            provider: &provider,
+            model: "claude-sonnet-4-6",
+            messages: &messages,
+            tools: &[],
+            options: &options,
+            stream: false,
+        };
+        let v: serde_json::Value = Value::from(AnthropicMarshal.marshal(&req)).into();
+        assert_eq!(v["url"], "https://api.anthropic.com/v1/messages");
+        assert_eq!(v["body"]["model"], "claude-sonnet-4-6");
+        assert_eq!(v["header"]["x-api-key"], "KEY123");
+        assert!(v["body"].get("anthropic_version").is_none());
+    }
+
     use url::Url;
 
     use super::*;

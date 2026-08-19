@@ -3,7 +3,7 @@ mod chat_completion;
 mod gemini;
 mod openai;
 
-pub use anthropic::{AnthropicMarshal, AnthropicUnmarshal};
+pub use anthropic::{AnthropicMarshal, AnthropicUnmarshal, BedrockMarshal, BedrockUnmarshal};
 pub use chat_completion::{ChatCompletionMarshal, ChatCompletionUnmarshal};
 pub use gemini::{GeminiMarshal, GeminiUnmarshal};
 pub use openai::{OpenAIMarshal, OpenAIUnmarshal};
@@ -26,6 +26,12 @@ pub enum LangModelAPISchema {
 
     /// Anthropic Messages API format
     Anthropic,
+
+    /// Amazon Bedrock `InvokeModel`, carrying the Anthropic Messages body.
+    /// Authenticated with a Bedrock API key as a bearer token, so no SigV4
+    /// signing is involved. Non-streaming only — Bedrock's stream is a binary
+    /// event stream rather than SSE.
+    Bedrock,
 
     /// Google Gemini API format
     Gemini,
@@ -73,6 +79,7 @@ where
 pub fn provider_api(schema: &LangModelAPISchema) -> Box<dyn ProviderApi + Send + Sync> {
     match schema {
         LangModelAPISchema::Anthropic => Box::new(AnthropicUnmarshal),
+        LangModelAPISchema::Bedrock => Box::new(BedrockUnmarshal),
         LangModelAPISchema::ChatCompletion => Box::new(ChatCompletionUnmarshal),
         LangModelAPISchema::Gemini => Box::new(GeminiUnmarshal),
         LangModelAPISchema::OpenAI => Box::new(OpenAIUnmarshal),
