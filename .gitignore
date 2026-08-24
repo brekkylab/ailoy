@@ -563,3 +563,10 @@ test_*
 
 # git worktrees
 .worktrees/
+
+# company_analysis example run state
+# artifacts/ and workspace/ are produced per run; live/ is the empty directory the
+# registries are mounted over, and what lands under it is API responses.
+examples/company_analysis/artifacts/
+examples/company_analysis/workspace/
+examples/company_analysis/live/
