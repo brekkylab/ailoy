@@ -25,7 +25,6 @@ by the registries' own APIs rather than by a copy of them.
 [fs]: https://github.com/brekkylab/cortex/blob/main/cortex/src/fs/filesystem/filesystem.rs
 [lei]: https://www.gleif.org/en/organizational-identity/lei-vlei/the-legal-entity-identifier-lei
 [cik]: https://www.sec.gov/search-filings/cik-lookup
-[tickers]: https://www.sec.gov/files/company_tickers.json
 [xbrl]: https://www.sec.gov/data-research/standard-taxonomies
 
 ---
@@ -42,7 +41,7 @@ tool.
 | | GLEIF | SEC EDGAR |
 | --- | --- | --- |
 | Covers | legal entities worldwide, and who owns whom | anyone required to file with the SEC |
-| How many | 3.4M LEI records | 8k registrants trade under a ticker; the rest are the majority |
+| How many | 3.4M LEI records | 982k filers — funds, foreign issuers, subsidiaries, insiders; about 8k of them trade |
 | Identifier | LEI | CIK |
 | A search returns | the whole record | a stub of three fields |
 | Auth | none | a `User-Agent` naming a contact |
@@ -71,9 +70,6 @@ GLEIF search page ends the trip; an EDGAR search only tells you where to look ne
 │           └── page-001.json
 └── edgar/
     ├── CATALOG.md
-    ├── by-ticker/
-    │   ├── _README.md
-    │   └── <TICKER>/             ~8,000 listed, every ticker addressable
     ├── by-cik/
     │   ├── _README.md
     │   └── <CIK>/
@@ -98,8 +94,7 @@ definitions belong to the registries and are linked rather than restated.
 | | | Where one comes from |
 | --- | --- | --- |
 | `<LEI>` | [Legal Entity Identifier][lei] | a `gleif/search` page, or `owns` / `ownedBy` on another record |
-| `<CIK>` | [Central Index Key][cik] | `by-ticker/<TICKER>/`, an `edgar/search` hit, or `submissions.json` naming its own |
-| `<TICKER>` | [the symbol a registrant trades under][tickers] | `ls by-ticker` — one per registrant, about eight thousand |
+| `<CIK>` | [Central Index Key][cik] | an `edgar/search` hit, or `submissions.json` naming its own |
 
 The LEI and the CIK are checked here rather than by the API: an LEI carries ISO 17442
 check digits and a CIK is at most ten digits, so a mistyped one is a directory that does
@@ -157,10 +152,11 @@ zero-padded numbers is a listing nobody can read a company out of, so it does no
 Either way, answering empty would read as "nothing here", so each holds a `_README.md`
 saying how to address one and where an identifier comes from.
 
-They are the exception, not the rule. Where a listing *can* be complete it simply is —
-`ls by-ticker` names every registrant that trades, and under an entity the listing is
-that record's own `relationships`, so a company with no parent shows a reporting
-exception where one with a parent shows a parent.
+They are not the exception here — no directory in this tree can be walked into. Where a
+listing *is* complete it is also small and fixed: the taxonomies under `concept`, the
+fields under `search`, and, under a GLEIF entity, that record's own `relationships`, so
+a company with no parent shows a reporting exception where one with a parent shows a
+parent.
 
 ### 2.5 Why `<name>/<name>.json` instead of `name.json`
 
@@ -170,12 +166,12 @@ followed by a `getattr` per entry, a document's size cannot be known without fet
 it, and so a document listed directly is fetched merely to be listed.
 
 Wrapped, `ls by-cik/<CIK>/` names `submissions/`, `facts/` and `concept/` for nothing,
-and the request waits until someone descends. Listed flat, anything that walks the tree
-spends one fetch per registrant — a single run was measured at 742, and `facts.json` is
-four megabytes each time.
+and the request waits until someone descends. Listed flat, that same `ls` costs both
+documents — `facts.json` is four megabytes of it — whether or not the caller wanted
+either.
 
 Nothing is hidden by this. The flat `submissions.json` beside the wrapper opens too, in
-the same way `page-002` and an unlisted share class do. Not listed is not unreachable.
+the same way `page-002` does. Not listed is not unreachable.
 
 ---
 
@@ -241,7 +237,7 @@ One directory per run, and the four files answer four different readers:
 of `{severity, statement, evidence, confidence}`.
 
 Because the source is live, a claim is only as good as the path behind it.
-`evidence.md` cites from the mount root down — `edgar/by-ticker/NVDA/…` — never the
+`evidence.md` cites from the mount root down — `edgar/by-cik/0001045810/…` — never the
 machine-local prefix, which would leave the citation unresolvable anywhere else.
 `findings.json` is what `--since` reads back in, so a later run can report what changed
 rather than restate what did not.
@@ -254,11 +250,11 @@ rather than restate what did not.
 turns 61 / tool calls 32
 tokens (29 calls): in 675,505 / out 20,540
   largest context 43,746 (the conversation at its last call)
-requests  gleif 5 / edgar 3
+requests  gleif 5 / edgar 2
   gleif   linked resource ×2, search page ×2, lei record ×1
           5 distinct paths; heaviest:
                1 × /by-lei/549300S4KLFTLO7GSQ80/record.json
-  edgar   facts ×1, submissions ×1, ticker index ×1
+  edgar   facts ×1, submissions ×1
 finish    Stop
 artifacts 5:
   ...

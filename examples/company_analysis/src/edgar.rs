@@ -1,7 +1,6 @@
 //! SEC EDGAR projected onto a read-only [`FileSystem`].
 //!
 //! ```text
-//! /by-ticker/<TICKER>/                 the same registrant, reached by what it trades as
 //! /by-cik/<CIK>/submissions.json       one registrant: identifiers, addresses, filings
 //! /by-cik/<CIK>/concept/<tax>/<tag>.json   one XBRL concept's history
 //! /search/<field>/<value>/…/pages/      full-text search over filings
@@ -13,17 +12,18 @@
 //! trip. EDGAR's list is a stub — cik, ticker, title — and everything else needs the
 //! registrant fetched by CIK.
 //!
-//! # Two ways in, and why both exist
+//! # One address, one way to find it
 //!
-//! `by-ticker` is listable: eight thousand names, one per registrant, so `ls` and
-//! `glob` find a company without anyone knowing its number. `by-cik` is not listable
-//! and cannot be — most of what files with the SEC has no ticker at all. In one
-//! full-text search, eleven of the twenty-three CIKs that came back were absent from
-//! the ticker file. Dropping `by-cik` would leave those results with nowhere to go.
+//! A registrant is addressed by CIK and nothing else. There is no door keyed by ticker
+//! because nothing needs one: `search/entityName/` takes a symbol and answers with the
+//! registrant — the SEC indexes a filer's display name with its ticker in it, so
+//! `entityName/NVDA` lands on NVIDIA CORP more squarely than `entityName/NVIDIA`, which
+//! returns individuals of that name first.
 //!
-//! So `by-ticker/<TICKER>/` serves what `by-cik/<CIK>/` serves, and the CIK form is
-//! the canonical one — it is what `search/ciks/` takes and what `submissions.json`
-//! reports about itself.
+//! A second door would also be a second listing, and a listing here is a place for a
+//! `find` or a glob to start walking. Every registrant a walk reaches costs a
+//! `submissions.json` and a four-megabyte `facts.json`, so an entry point that can be
+//! enumerated is an entry point that can spend thousands of requests nobody asked for.
 //!
 //! # What a listing costs
 //!
@@ -40,7 +40,6 @@
 //! it would spend four megabytes on an `ls` that wanted the filing history.
 
 use std::{
-    collections::{HashMap, HashSet},
     io,
     path::{Component, Path},
     sync::Arc,
@@ -54,7 +53,6 @@ use cortex::{
 use crate::apifs::{Fetcher, io_err, percent_decode, urlencode};
 
 const DATA: &str = "https://data.sec.gov";
-const WWW: &str = "https://www.sec.gov";
 const EFTS: &str = "https://efts.sec.gov/LATEST/search-index";
 
 /// Full-text search returns 100 hits a page and pages by offset, not by number.
@@ -78,10 +76,10 @@ Not because the set is unknowable — the SEC publishes every CIK it has — but
 listing of them would be a million zero-padded numbers. Knowing one already lets you
 address it; not knowing one, the numbers do not say which company is which.
 
-So there are two ways to get a number. `/by-ticker/` lists every registrant that trades
-under a symbol, so `ls` or a glob finds it. `/search/entityName/<name>/pages/` searches
-filings by company name and reports the CIKs behind each hit. Both start from a name,
-which is what you actually have.
+To get one, search. `/search/entityName/<name>/pages/` searches filings by company name
+and reports the CIK behind each hit. A ticker works there as well as a name, and often
+better: the SEC writes the symbol into the filer's display name, so `entityName/NVDA`
+lands on NVIDIA CORP while `entityName/NVIDIA` returns individuals of that name first.
 
     /by-cik/<CIK>/submissions.json          identifiers, addresses, filing history
     /by-cik/<CIK>/concept/<taxonomy>/<tag>.json   one concept over time
@@ -120,49 +118,18 @@ reliable key from here to the GLEIF store; crossing over means matching on name,
 name match is a candidate rather than a fact.
 "#;
 
-/// What `/by-ticker` says about itself.
-const BY_TICKER_README: &str = r#"# /by-ticker — one name per registrant
-
-    ls .            every registrant that trades under a symbol, ~8,000 of them
-    NVDA/           the same files as /by-cik/0001045810/
-
-A directory here serves exactly what the matching `by-cik` one serves. The CIK form is
-the canonical address — it is what `search/ciks/` takes — and `submissions.json` names
-its own CIK, so nothing is lost by arriving this way.
-
-## The listing is shorter than the ticker file
-
-A company with several share classes files once and trades several ways: Alphabet is
-GOOGL, GOOG, GOOGM and GOOGN, and all four are one registrant with one CIK. Listing all
-of them would say there are four companies.
-
-So the listing holds one ticker per registrant — the first the SEC's own file names,
-which orders them by size, so it is GOOGL rather than GOOG and BRK-B rather than BRK-A.
-
-**The others still open.** `GOOG/` works, it is simply not in the listing. A ticker
-that resolves to a registrant is a directory whether or not `ls` mentions it.
-
-## What is not here
-
-Filers without a ticker — subsidiaries, funds, foreign private issuers — and they are
-the majority. Use `/by-cik/` for those, and `/search/` to find their numbers.
-"#;
-
 /// The tree's entry point, served by the tree itself.
 const CATALOG: &str = r#"# SEC EDGAR, as a filesystem
 
 Every file here is one request to the SEC, answered live. Nothing is stored.
 
-    /by-ticker/<TICKER>/          a listed company, by the symbol it trades under
     /by-cik/<CIK>/                any filer, by its SEC number
     /search/<field>/<value>/…/    full-text search over filing documents
 
 ## Which way in
 
-If it trades, `by-ticker` is listable — `ls` it, or glob it, and the directory serves
-the same files as the `by-cik` one. If it does not trade, or you already hold a number,
-use `by-cik`. Most SEC filers have no ticker, so `by-cik` is the larger door even
-though it cannot be listed.
+A registrant is addressed by CIK. If you do not have one, `/search/entityName/` takes a
+company name or a ticker and reports the CIK behind each hit.
 
 Identifiers are worth confirming rather than recalling: a wrong CIK answers with
 somebody else's filings rather than with an error.
@@ -185,33 +152,20 @@ Results are capped at 10,000 by the search backend, so a `total` of exactly 1000
 `filings.recent` in `submissions.json` is column-oriented: parallel arrays, one per
 field, not a list of filings. Zip them by index before reading a row.
 
-The two files disagree about what a CIK is, and their names point the wrong way. The
-ticker index writes `"cik_str": 1652044` — an integer, under a name that says string.
-`submissions.json` answers `"cik": "0001652044"` — a zero-padded string, under a name
-that says neither. Compare them as numbers, or pad both, but do not compare them raw.
+A search hit carries the CIK twice, and only one of them is meant to be parsed.
+`ciks` is a list of zero-padded strings — `["0001045810"]` — and that is the one to use.
+`display_names` reads `NVIDIA CORP  (NVDA)  (CIK 0001045810)`, which is for a person to
+read; the spacing is not a contract.
 "#;
 
 pub struct EdgarFs {
     fetch: Fetcher,
-    index: std::sync::Mutex<Option<Arc<TickerIndex>>>,
-}
-
-/// Every ticker, and the subset worth listing.
-struct TickerIndex {
-    by_ticker: HashMap<String, String>,
-    /// One per registrant, in the order the SEC's file gives them.
-    listed: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum Node {
     Root,
     Catalog,
-    /// `/by-ticker`
-    ByTickerRoot,
-    ByTickerReadme,
-    /// `/by-ticker/<TICKER>/…` — resolved to a `by-cik` path once the index is in.
-    Ticker(String, Vec<String>),
     /// `/by-cik`
     ByCikRoot,
     ByCikReadme,
@@ -248,7 +202,6 @@ impl EdgarFs {
     pub fn new(user_agent: &str) -> Self {
         Self {
             fetch: Fetcher::new(user_agent),
-            index: std::sync::Mutex::new(None),
         }
     }
 
@@ -280,12 +233,6 @@ impl EdgarFs {
         match segs.as_slice() {
             [] => Some(Node::Root),
             ["CATALOG.md"] => Some(Node::Catalog),
-            ["by-ticker"] => Some(Node::ByTickerRoot),
-            ["by-ticker", "_README.md"] => Some(Node::ByTickerReadme),
-            ["by-ticker", t, rest @ ..] if is_ticker(t) => Some(Node::Ticker(
-                t.to_ascii_uppercase(),
-                rest.iter().map(|s| s.to_string()).collect(),
-            )),
             ["by-cik"] => Some(Node::ByCikRoot),
             ["by-cik", "_README.md"] => Some(Node::ByCikReadme),
             ["by-cik", cik, rest @ ..] => {
@@ -392,90 +339,6 @@ impl EdgarFs {
         url
     }
 
-    /// Ticker to CIK, plus the tickers worth listing.
-    ///
-    /// One fetch per run. The map holds every ticker so any of them opens; the list
-    /// holds one per registrant, because a registrant with four share classes is one
-    /// company and four directories would say otherwise.
-    ///
-    /// Which one is listed is the file's own answer, not ours: `company_tickers.json`
-    /// is ordered by size — NVDA, AAPL, GOOGL, MSFT — so the first row naming a CIK is
-    /// the class that file puts first. That gives GOOGL over GOOG and BRK-B over
-    /// BRK-A, which is also how they trade. Choosing differently would mean keeping a
-    /// list of exceptions, and an exception nobody can see is a judgement the data
-    /// does not support.
-    async fn index(&self) -> io::Result<Arc<TickerIndex>> {
-        if let Some(hit) = self.index.lock().unwrap().clone() {
-            return Ok(hit);
-        }
-        let bytes = self
-            .fetch
-            .get(
-                "ticker index",
-                "/companies.json",
-                &format!("{WWW}/files/company_tickers.json"),
-            )
-            .await?;
-        // A refusal arrives as an HTML page under a 4xx, and parsing it as JSON would
-        // report a syntax error at column 1 — true, and useless. Say what came back.
-        let doc: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| {
-            let head: String = String::from_utf8_lossy(&bytes)
-                .chars()
-                .take(120)
-                .collect();
-            io::Error::other(format!(
-                "SEC answered with something that is not JSON. A User-Agent naming no contact \
-                 gets 403 and an HTML page. Set SEC_USER_AGENT to something like \
-                 'name contact@example.com'. First bytes of the reply: {head}"
-            ))
-        })?;
-        let rows = doc.as_object().ok_or_else(|| io::Error::other("not an object"))?;
-
-        // The keys are the file's row numbers as strings, and string order is not
-        // numeric order — "10" sorts before "2". Sorting numerically is what keeps
-        // "first row" meaning first.
-        let mut ordered: Vec<(u64, &serde_json::Value)> = rows
-            .iter()
-            .filter_map(|(k, v)| Some((k.parse().ok()?, v)))
-            .collect();
-        ordered.sort_by_key(|(n, _)| *n);
-
-        let mut by_ticker = HashMap::new();
-        let mut listed = Vec::new();
-        let mut seen_cik = HashSet::new();
-        for (_, row) in ordered {
-            let (Some(t), Some(cik)) = (
-                row.get("ticker").and_then(|v| v.as_str()),
-                row.get("cik_str").and_then(|v| v.as_u64()),
-            ) else {
-                continue;
-            };
-            let cik = format!("{cik:0>10}");
-            if seen_cik.insert(cik.clone()) {
-                listed.push(t.to_ascii_uppercase());
-            }
-            by_ticker.insert(t.to_ascii_uppercase(), cik);
-        }
-        let idx = Arc::new(TickerIndex { by_ticker, listed });
-        *self.index.lock().unwrap() = Some(idx.clone());
-        Ok(idx)
-    }
-
-    /// A `by-ticker` path as the `by-cik` path it names.
-    async fn resolve(&self, ticker: &str, rest: &[String]) -> io::Result<Node> {
-        let idx = self.index().await?;
-        let cik = idx
-            .by_ticker
-            .get(ticker)
-            .ok_or(io::ErrorKind::NotFound)?;
-        let mut path = format!("/by-cik/{cik}");
-        for seg in rest {
-            path.push('/');
-            path.push_str(seg);
-        }
-        Self::parse(Path::new(&path)).ok_or_else(|| io::ErrorKind::NotFound.into())
-    }
-
     /// What a request bought. Taken from the node rather than parsed back out of the
     /// key, which is only a string that looks like a path.
     fn kind(node: &Node) -> &'static str {
@@ -520,7 +383,6 @@ impl EdgarFs {
         match node {
             Node::Catalog => Ok(Arc::new(CATALOG.as_bytes().to_vec())),
             Node::ByCikReadme => Ok(Arc::new(BY_CIK_README.as_bytes().to_vec())),
-            Node::ByTickerReadme => Ok(Arc::new(BY_TICKER_README.as_bytes().to_vec())),
             _ => {
                 let url = Self::url(node).ok_or(io::ErrorKind::IsADirectory)?;
                 self.fetch.get(Self::kind(node), &Self::key(node), &url).await
@@ -544,15 +406,9 @@ impl EdgarFs {
 impl FileSystem for EdgarFs {
     fn stat<'a>(&'a self, path: &'a Path) -> BoxFuture<'a, io::Result<Stat>> {
         Box::pin(async move {
-            let mut node = Self::parse(path).ok_or(io::ErrorKind::NotFound)?;
-            if let Node::Ticker(t, rest) = &node {
-                node = self.resolve(t, rest).await?;
-            }
+            let node = Self::parse(path).ok_or(io::ErrorKind::NotFound)?;
             Ok(match &node {
                 Node::Catalog => Stat::new(DirentKind::File, CATALOG.len() as u64),
-                Node::ByTickerReadme => {
-                    Stat::new(DirentKind::File, BY_TICKER_README.len() as u64)
-                }
                 Node::ByCikReadme => Stat::new(DirentKind::File, BY_CIK_README.len() as u64),
                 Node::Submissions(_)
                 | Node::Facts(_)
@@ -568,10 +424,7 @@ impl FileSystem for EdgarFs {
 
     fn list<'a>(&'a self, path: &'a Path) -> BoxFuture<'a, io::Result<Vec<Dirent>>> {
         Box::pin(async move {
-            let mut node = Self::parse(path).ok_or(io::ErrorKind::NotFound)?;
-            if let Node::Ticker(t, rest) = &node {
-                node = self.resolve(t, rest).await?;
-            }
+            let node = Self::parse(path).ok_or(io::ErrorKind::NotFound)?;
             let dir = |n: &str| Dirent::new(n, DirentKind::Dir);
             let note = |n: &str, s: &str| {
                 Dirent::with_stat(n, Stat::new(DirentKind::File, s.len() as u64))
@@ -579,21 +432,12 @@ impl FileSystem for EdgarFs {
             Ok(match node {
                 Node::Root => vec![
                     note("CATALOG.md", CATALOG),
-                    dir("by-ticker"),
                     dir("by-cik"),
                     dir("search"),
                 ],
-                // One entry per registrant, not per ticker. A directory here is free to
+                // A directory here is free to
                 // stat, so the kernel's getattr storm over eight thousand names costs
                 // nothing beyond the one fetch that built the index.
-                Node::ByTickerRoot => {
-                    let idx = self.index().await?;
-                    let mut out = vec![note("_README.md", BY_TICKER_README)];
-                    out.extend(idx.listed.iter().map(|t| {
-                        Dirent::with_stat(t.clone(), Stat::new(DirentKind::Dir, 0))
-                    }));
-                    out
-                }
                 Node::ByCikRoot => vec![note("_README.md", BY_CIK_README)],
                 // Every fetchable resource is wrapped in a directory, so this listing
                 // names what is available without asking for any of it. A directory
@@ -601,7 +445,7 @@ impl FileSystem for EdgarFs {
                 // and a document's is not knowable without fetching it, so a file here
                 // would be fetched just to be listed. It was, once: naming
                 // `submissions.json` cost 742 requests in a single run, because an
-                // ordinary recursive pass over the ticker listing turned into one fetch
+                // ordinary recursive pass over a listing turned into one fetch
                 // per registrant.
                 Node::Entity(_) => vec![dir("submissions"), dir("facts"), dir("concept")],
                 // The cost lands here instead, where a caller has asked for the thing.
@@ -656,10 +500,7 @@ impl FileSystem for EdgarFs {
         offset: u64,
     ) -> BoxFuture<'a, io::Result<usize>> {
         Box::pin(async move {
-            let mut node = Self::parse(path).ok_or(io::ErrorKind::NotFound)?;
-            if let Node::Ticker(t, rest) = &node {
-                node = self.resolve(t, rest).await?;
-            }
+            let node = Self::parse(path).ok_or(io::ErrorKind::NotFound)?;
             // A page past the end is not an error upstream — it answers with an empty
             // hit list — but as a file it should simply not be there.
             if let Node::Page(pairs, n) = &node {
@@ -683,13 +524,6 @@ impl FileSystem for EdgarFs {
 /// so a caller who read the list and formed a path from what it said would otherwise
 /// get nothing. Padding here costs a line; the alternative is a working identifier
 /// that does not work.
-fn is_ticker(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 12
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
-}
-
 fn normalize_cik(s: &str) -> Option<String> {
     let digits = s.strip_prefix("CIK").unwrap_or(s);
     if digits.is_empty() || digits.len() > 10 || !digits.bytes().all(|b| b.is_ascii_digit()) {
@@ -772,94 +606,13 @@ mod tests {
         assert_eq!(parse("/search/nosuchparam/x"), None);
     }
 
+    /// A ticker is not an address here. Nothing under `by-ticker` parses, so naming
+    /// one is a missing directory rather than a request that goes nowhere.
     #[test]
-    fn a_ticker_path_is_a_path_before_anything_is_resolved() {
-        // Resolution needs the index, so parsing only says "this is a ticker and this
-        // is the rest of it"; case is folded here because the index is upper-case.
-        assert_eq!(
-            parse("/by-ticker/nvda/submissions.json"),
-            Some(Node::Ticker("NVDA".into(), vec!["submissions.json".into()]))
-        );
-        assert_eq!(parse("/by-ticker/BRK-B"), Some(Node::Ticker("BRK-B".into(), vec![])));
-        assert_eq!(parse("/by-ticker/_README.md"), Some(Node::ByTickerReadme));
-        // Not a symbol.
-        assert_eq!(parse("/by-ticker/this-is-far-too-long"), None);
-        assert_eq!(parse("/by-ticker/NV DA"), None);
-    }
-
-    /// The listing holds one ticker per registrant and the rest still open. Pinned
-    /// because the alternative — dropping them — answers "no such company" for a
-    /// symbol that trades, which is worse than a listing that omits it.
-    #[test]
-    fn an_unlisted_share_class_is_still_a_path() {
-        for t in ["GOOG", "GOOGM", "BRK-A"] {
-            assert!(
-                matches!(parse(&format!("/by-ticker/{t}")), Some(Node::Ticker(..))),
-                "{t}"
-            );
+    fn a_ticker_is_not_a_path() {
+        for p in ["/by-ticker", "/by-ticker/NVDA", "/by-ticker/NVDA/submissions.json"] {
+            assert_eq!(parse(p), None, "{p}");
         }
-    }
-
-    /// `by-ticker` for real: mounted, listed through the kernel, and read.
-    ///
-    /// Ignored by default — it mounts a filesystem and talks to the SEC. Run with
-    /// `cargo test -p company_analysis --bins by_ticker_resolves -- --ignored --nocapture`.
-    #[test]
-    #[ignore = "needs a FUSE mount and network"]
-    fn by_ticker_resolves() {
-        use cortex::fs::{FuseTMount, Mount};
-        use std::fs;
-
-        // SEC refuses a `User-Agent` without a contact, so this test needs a real one
-        // rather than a placeholder that would fail for a reason unrelated to the tree.
-        let Ok(ua) = std::env::var("SEC_USER_AGENT") else {
-            eprintln!("SEC_USER_AGENT unset — skipping");
-            return;
-        };
-        let fs_arc = Arc::new(EdgarFs::new(&ua));
-        let dir = std::env::temp_dir().join("ailoy-edgar-mount-test");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("mountpoint");
-        let mount = FuseTMount::try_new(fs_arc.clone(), &dir).expect("mount");
-        let root = mount.mountpoint().to_path_buf();
-
-        let names: Vec<String> = fs::read_dir(root.join("by-ticker"))
-            .expect("read_dir by-ticker")
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        // One fetch built the whole listing.
-        assert_eq!(fs_arc.calls(), 1, "the index took more than one request");
-        assert!(names.contains(&"_README.md".to_string()));
-        assert!(names.len() > 7000, "the listing holds only {} entries", names.len());
-
-        // One per registrant: the class the SEC's own file names first, not all four.
-        assert!(names.contains(&"GOOGL".to_string()));
-        assert!(!names.contains(&"GOOG".to_string()), "a second share class of one registrant is listed");
-
-        // And the ones left out are still directories.
-        let goog = fs::read_to_string(root.join("by-ticker/GOOG/submissions/submissions.json"))
-            .expect("a ticker left out of the listing does not open");
-        let doc: serde_json::Value = serde_json::from_str(&goog).expect("json");
-        // `cik` here is a zero-padded *string*, whatever the name of `cik_str`
-        // elsewhere suggests.
-        assert_eq!(doc["cik"].as_str(), Some("0001652044"), "GOOG did not resolve to Alphabet");
-        assert_eq!(doc["name"].as_str(), Some("Alphabet Inc."));
-
-        // The two ways in name the same registrant.
-        let via_ticker =
-            fs::read_to_string(root.join("by-ticker/NVDA/submissions/submissions.json")).expect("NVDA");
-        let via_cik = fs::read_to_string(root.join("by-cik/1045810/submissions/submissions.json"))
-            .expect("by-cik");
-        assert_eq!(via_ticker, via_cik, "the two addresses serve different bytes");
-
-        println!(
-            "listed={} calls={} (index + GOOG + NVDA, by-cik was cached)",
-            names.len() - 1,
-            fs_arc.calls()
-        );
-
-        drop(mount);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// Listing a registrant must not fetch anything, and must still say what is there.
@@ -907,8 +660,7 @@ mod tests {
             "/search/q",
             "/search/q/lithium",
             "/search/q/lithium/forms/10-K",
-            // `by-ticker` is deliberately absent: listing it needs the index, which is
-            // one fetch. That is the exception, and it is why the tree keeps it to one.
+            "/by-cik",
         ] {
             fs.list(Path::new(p))
                 .await
@@ -922,7 +674,7 @@ mod tests {
         let fs = EdgarFs::new("test");
         for base in ["/", "/by-cik/1045810", "/search/q/lithium"] {
             for e in fs.list(Path::new(base)).await.expect("list") {
-                if e.name == "pages" || e.name == "companies.json" {
+                if e.name == "pages" {
                     continue; // those would ask the API
                 }
                 let child = format!("{}/{}", base.trim_end_matches('/'), e.name);

@@ -272,10 +272,10 @@ struct Live {
 /// mounts make about themselves, and the run summary says so.
 /// Where the registries are mounted, deliberately outside the working tree.
 ///
-/// A file here is a paid request and anything that walks a directory opens every file in
-/// it, so an editor or terminal indexing the project spends hundreds of requests that no
-/// command asked for. Not a flag: a mountpoint a caller could put back under a watched
-/// directory is that cost waiting to return.
+/// Not for the request cost — no directory in either store can be walked into, so an
+/// editor or an indexer finds only the two notes written here. For the mount itself: a
+/// signal does not run destructors, so a killed run leaves one behind, and a stale mount
+/// inside the repository stops anything that walks it. `git status` is one of those.
 fn mountpoint() -> PathBuf {
     std::env::temp_dir().join("ailoy-company-analysis")
 }

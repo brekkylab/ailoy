@@ -241,7 +241,7 @@ mod tests {
         // serve them and can keep them true. Repeating any of it here would make the
         // instruction a second source that drifts.
         for leak in [
-            "by-lei", "by-cik", "by-ticker", "pages/", "ownedBy", "entity.legalAddress",
+            "by-lei", "by-cik", "pages/", "ownedBy", "entity.legalAddress",
             "submissions.json", "cik_str", "facts.json",
         ] {
             assert!(!s.contains(leak), "instruction spells out the tree: {leak}");
