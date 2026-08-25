@@ -152,19 +152,13 @@ them would spend one request per page before anything had been read.
 
 ## How many pages there are
 
-Read `page-001.json` and look at `meta.pagination`:
+The line above this note says so. `page-001.json` carries the same in
+`meta.pagination` — `lastPage`, `total`, `perPage` (200 here, the API's ceiling) — and
+`links.next` as a URL, but reading a page to count them costs two hundred records in
+view. Either way, `page-002.json` is the path.
 
-    lastPage    how many pages this query has
-    total       how many records
-    perPage     how many per page (200 here, the API's ceiling)
-
-`links.next` carries the same thing as a URL. Either way, `page-002.json` is the path.
-
-## Before paging through everything
-
-A narrower query is cheaper than more pages. The directory above this one lists the
-fields still available, and each one is free to descend into — nothing is requested
-until a `pages` directory is opened.
+Paging is the expensive way to read a large result. The directory above this one still
+lists fields to narrow by, and descending into them costs nothing.
 "#;
 
 /// What `/by-lei` says about itself.
@@ -218,7 +212,7 @@ enum Node {
     /// `/by-lei/_README.md`
     ByLeiReadme,
     /// `…/pages/_README.md`
-    PagesReadme,
+    PagesReadme(Vec<(String, String)>),
     /// `/CATALOG.md`
     Catalog,
     /// `/by-lei/<LEI>`
@@ -310,7 +304,7 @@ impl GleifFs {
     /// field awaiting a value.
     fn parse_query(rest: &[&str]) -> Option<Node> {
         // Peel the results suffix off the end; what remains is the query itself.
-        let (pairs, tail) = match rest {
+        let (pairs, tail, readme) = match rest {
             [init @ .., "pages", page] if page.starts_with("page-") && page.ends_with(".json") => {
                 let n: usize = page
                     .trim_start_matches("page-")
@@ -320,11 +314,13 @@ impl GleifFs {
                 if n == 0 {
                     return None;
                 }
-                (init, Some(Some(n)))
+                (init, Some(Some(n)), false)
             }
-            [.., "pages", "_README.md"] => return Some(Node::PagesReadme),
-            [init @ .., "pages"] => (init, Some(None)),
-            _ => (rest, None),
+            // The note belongs to this query, not to `pages` in general: it reports the
+            // query's own size, which the listing has already paid for.
+            [init @ .., "pages", "_README.md"] => (init, Some(None), true),
+            [init @ .., "pages"] => (init, Some(None), false),
+            _ => (rest, None, false),
         };
 
         if pairs.is_empty() {
@@ -369,9 +365,33 @@ impl GleifFs {
 
         Some(match tail {
             Some(Some(n)) => Node::Page(out, n),
+            Some(None) if readme => Node::PagesReadme(out),
             Some(None) => Node::Pages(out),
             None => Node::Query(out),
         })
+    }
+
+    /// The note for one query's `pages`, with that query's own size in it.
+    ///
+    /// The count comes from page 1, which the listing has already fetched, so reading it
+    /// here is a cache hit. Without it the note can only say where the count is, and the
+    /// caller pulls two hundred records into view to read one number.
+    async fn pages_note(&self, pairs: &[(String, String)]) -> io::Result<Arc<Vec<u8>>> {
+        let first = self
+            .body(&Node::Page(pairs.to_vec(), 1), &page_key(pairs, 1))
+            .await?;
+        let doc: serde_json::Value = serde_json::from_slice(&first).map_err(io_err)?;
+        let at = |k: &str| {
+            doc.pointer(&format!("/meta/pagination/{k}"))
+                .and_then(|v| v.as_u64())
+        };
+        let head = match (at("lastPage"), at("total")) {
+            (Some(last), Some(total)) => {
+                format!("This query has {last} page(s), {total} record(s).\n\n")
+            }
+            _ => String::new(),
+        };
+        Ok(Arc::new(format!("{head}{PAGES_README}").into_bytes()))
     }
 
     /// The URL a query's page comes from. `page` is 1-based, as the API counts.
@@ -467,7 +487,10 @@ impl FileSystem for GleifFs {
             match &node {
                 // Written here, so their sizes cost nothing to report.
                 Node::ByLeiReadme => Ok(Stat::new(DirentKind::File, BY_LEI_README.len() as u64)),
-                Node::PagesReadme => Ok(Stat::new(DirentKind::File, PAGES_README.len() as u64)),
+                Node::PagesReadme(pairs) => {
+                    let note = self.pages_note(pairs).await?;
+                    Ok(Stat::new(DirentKind::File, note.len() as u64))
+                }
                 Node::Catalog => Ok(Stat::new(DirentKind::File, CATALOG.len() as u64)),
                 Node::EntityFile(..) | Node::Page(..) => {
                     let bytes = self.body(&node, &node_key(&node)).await?;
@@ -522,7 +545,7 @@ impl FileSystem for GleifFs {
                     )]
                 }
                 Node::ByLeiReadme
-                | Node::PagesReadme
+                | Node::PagesReadme(..)
                 | Node::Catalog
                 | Node::EntityFile(..)
                 | Node::Page(..) => {
@@ -561,7 +584,7 @@ impl FileSystem for GleifFs {
                         ),
                         Dirent::with_stat(
                             "_README.md",
-                            Stat::new(DirentKind::File, PAGES_README.len() as u64),
+                            Stat::new(DirentKind::File, self.pages_note(&pairs).await?.len() as u64),
                         ),
                     ]
                 }
@@ -579,7 +602,7 @@ impl FileSystem for GleifFs {
             let node = Self::parse(path).ok_or(io::ErrorKind::NotFound)?;
             let bytes: Arc<Vec<u8>> = match &node {
                 Node::ByLeiReadme => Arc::new(BY_LEI_README.as_bytes().to_vec()),
-                Node::PagesReadme => Arc::new(PAGES_README.as_bytes().to_vec()),
+                Node::PagesReadme(pairs) => self.pages_note(pairs).await?,
                 Node::Catalog => Arc::new(CATALOG.as_bytes().to_vec()),
                 Node::EntityFile(..) | Node::Page(..) => {
                     self.body(&node, &node_key(&node)).await?
@@ -725,6 +748,22 @@ mod tests {
     /// Whatever a query directory offers must be enterable. The two were allowed to
     /// disagree once, and a listing that advertises a dead end is worse than one that
     /// advertises nothing.
+    /// The note under `pages` belongs to its query, so it can report that query's own
+    /// size. Parsing has to keep the pairs for that; dropping them is how it silently
+    /// becomes the same note everywhere.
+    #[test]
+    fn the_pages_note_keeps_its_query() {
+        let Some(Node::PagesReadme(pairs)) = parse("/search/entity.legalName/NVIDIA/pages/_README.md") else {
+            panic!("the note did not parse as a query's own")
+        };
+        assert!(!pairs.is_empty(), "the note lost the query it belongs to");
+        // The same query with and without the note names one query, not two.
+        let Some(Node::Pages(same)) = parse("/search/entity.legalName/NVIDIA/pages") else {
+            panic!("pages")
+        };
+        assert_eq!(pairs, same);
+    }
+
     #[tokio::test]
     async fn every_advertised_directory_can_be_entered() {
         let fs = GleifFs::new();

@@ -67,6 +67,32 @@ const TAXONOMIES: &[&str] = &["us-gaap", "dei", "ifrs-full", "srt", "invest"];
 /// worse than a rejection because the count looks like an answer.
 const FILTERS: &[&str] = &["q", "forms", "ciks", "entityName", "startdt", "enddt"];
 
+/// What a query's `pages` says about itself.
+const PAGES_README: &str = r#"# pages — page 1 is listed, the rest are named
+
+    page-001.json   the first page of hits
+    page-002.json   the second, and so on — 1-based, three digits
+
+Only `page-001.json` appears in the listing. The others exist and are read the same way;
+they are left out because a directory read makes the kernel ask for every entry's size,
+and a page's size is not known until that page has been fetched. Listing them all would
+spend one request per page before anything had been read. A page past the last one is
+`No such file`, not an empty result.
+
+## A hit is a filing, not a company
+
+Each hit names the document and the filers behind it. `ciks` is the list to follow —
+zero-padded, so it drops straight into `/by-cik/<CIK>/`. `display_names` reads
+`NVIDIA CORP  (NVDA)  (CIK 0001045810)`, which is for a person; the spacing is not a
+contract.
+
+A search for a company therefore returns filings that *mention* it as well as its own —
+insiders, index funds, counterparties. Only rows carrying its CIK are the registrant.
+
+Paging is the expensive way to read a large result. The directory above this one still
+lists parameters to narrow by, and descending into them costs nothing.
+"#;
+
 /// What `/by-cik` says about itself.
 const BY_CIK_README: &str = r#"# /by-cik — addressed, not listed
 
@@ -170,6 +196,8 @@ enum Node {
     /// `/by-cik`
     ByCikRoot,
     ByCikReadme,
+    /// `/search/…/pages/_README.md` — generated per query, so it can say how large it is.
+    PagesReadme(Vec<(String, String)>),
     /// `/by-cik/<CIK>` — the CIK padded to the ten digits the SEC's URLs use.
     Entity(String),
     /// `/by-cik/<CIK>/submissions` — the wrapper, free to stat.
@@ -272,7 +300,10 @@ impl EdgarFs {
     /// Same grammar as the GLEIF store's, for the same reason: AND by descending, and
     /// a field and its value as separate segments so `/search` can list the fields.
     fn parse_query(rest: &[&str]) -> Option<Node> {
-        let (pairs, tail) = match rest {
+        let (pairs, tail, readme) = match rest {
+            // The note belongs to this query, not to `pages` in general: it reports the
+            // query's own size, which the listing has already paid for.
+            [init @ .., "pages", "_README.md"] => (init, Some(None), true),
             [init @ .., "pages", page] if page.starts_with("page-") && page.ends_with(".json") => {
                 let n: usize = page
                     .trim_start_matches("page-")
@@ -282,10 +313,10 @@ impl EdgarFs {
                 if n == 0 {
                     return None;
                 }
-                (init, Some(Some(n)))
+                (init, Some(Some(n)), false)
             }
-            [init @ .., "pages"] => (init, Some(None)),
-            _ => (rest, None),
+            [init @ .., "pages"] => (init, Some(None), false),
+            _ => (rest, None, false),
         };
 
         if pairs.is_empty() {
@@ -316,6 +347,7 @@ impl EdgarFs {
         }
         Some(match tail {
             Some(Some(n)) => Node::Page(out, n),
+            Some(None) if readme => Node::PagesReadme(out),
             Some(None) => Node::Pages(out),
             None => Node::Query(out),
         })
@@ -391,6 +423,19 @@ impl EdgarFs {
         }
     }
 
+    /// The note for one query's `pages`, with that query's own size in it.
+    ///
+    /// The count comes from page 1, which the listing has already fetched, so reading it
+    /// here is a cache hit. Without it the note can only say where the count is, and the
+    /// caller pulls a hundred hits into view to read one number.
+    async fn pages_note(&self, pairs: &[(String, String)]) -> io::Result<Arc<Vec<u8>>> {
+        let total = self.total_hits(pairs).await?;
+        let last = total.div_ceil(HITS_PER_PAGE).max(1);
+        Ok(Arc::new(
+            format!("This query has {last} page(s), {total} hit(s).\n\n{PAGES_README}").into_bytes(),
+        ))
+    }
+
     /// Whether a query has a page `n`, from the hit count the first page reports.
     ///
     /// Only page 1 is ever listed, so this answers about a page named directly.
@@ -411,6 +456,9 @@ impl FileSystem for EdgarFs {
             Ok(match &node {
                 Node::Catalog => Stat::new(DirentKind::File, CATALOG.len() as u64),
                 Node::ByCikReadme => Stat::new(DirentKind::File, BY_CIK_README.len() as u64),
+                Node::PagesReadme(pairs) => {
+                    Stat::new(DirentKind::File, self.pages_note(pairs).await?.len() as u64)
+                }
                 Node::Submissions(_)
                 | Node::Facts(_)
                 | Node::Concept(..)
@@ -484,10 +532,15 @@ impl FileSystem for EdgarFs {
                 // One request, and it names only the page it already holds.
                 Node::Pages(pairs) => {
                     let first = self.body(&Node::Page(pairs.clone(), 1)).await?;
-                    vec![Dirent::with_stat(
-                        "page-001.json",
-                        Stat::new(DirentKind::File, first.len() as u64),
-                    )]
+                    vec![
+                        Dirent::with_stat(
+                            "page-001.json",
+                            Stat::new(DirentKind::File, first.len() as u64),
+                        ),
+                        note("_README.md", &String::from_utf8_lossy(
+                            &self.pages_note(&pairs).await?,
+                        )),
+                    ]
                 }
                 _ => return Err(io::ErrorKind::NotADirectory.into()),
             })
@@ -510,7 +563,10 @@ impl FileSystem for EdgarFs {
                     return Err(io::ErrorKind::NotFound.into());
                 }
             }
-            let bytes = self.body(&node).await?;
+            let bytes = match &node {
+                Node::PagesReadme(pairs) => self.pages_note(pairs).await?,
+                _ => self.body(&node).await?,
+            };
             let start = (offset as usize).min(bytes.len());
             let n = buf.len().min(bytes.len() - start);
             buf[..n].copy_from_slice(&bytes[start..start + n]);
@@ -623,6 +679,22 @@ mod tests {
     /// size — so one ordinary recursive pass over the ticker listing spent 742
     /// requests. Hiding the file fixed the cost and lost the discovery; wrapping it in
     /// a directory keeps both.
+    /// The note under `pages` belongs to its query, so it can report that query's own
+    /// size. Parsing has to keep the pairs for that; dropping them is how it silently
+    /// becomes the same note everywhere.
+    #[test]
+    fn the_pages_note_keeps_its_query() {
+        let Some(Node::PagesReadme(pairs)) = parse("/search/entityName/NVDA/pages/_README.md") else {
+            panic!("the note did not parse as a query's own")
+        };
+        assert!(!pairs.is_empty(), "the note lost the query it belongs to");
+        // The same query with and without the note names one query, not two.
+        let Some(Node::Pages(same)) = parse("/search/entityName/NVDA/pages") else {
+            panic!("pages")
+        };
+        assert_eq!(pairs, same);
+    }
+
     #[tokio::test]
     async fn listing_a_registrant_names_everything_and_fetches_nothing() {
         let fs = EdgarFs::new("test");

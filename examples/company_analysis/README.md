@@ -66,7 +66,7 @@ GLEIF search page ends the trip; an EDGAR search only tells you where to look ne
 │   │       └── direct-parent/    or direct-parent-reporting-exception/
 │   └── search/<field>/<value>/…/
 │       └── pages/
-│           ├── _README.md
+│           ├── _README.md       how many pages this query has
 │           └── page-001.json
 └── edgar/
     ├── CATALOG.md
@@ -127,9 +127,11 @@ write those.
 
 None of this has asked the API anything. The first request happens when `pages` is
 opened, because only the API knows how many results there are. That listing then names
-one page: a directory read costs a `getattr` per entry and a page's size is unknowable
-without fetching it, so naming all thirteen would spend thirteen requests before
-anything was read. `page-002` onwards still open, unlisted.
+one page and a note: a directory read costs a `getattr` per entry and a page's size is
+unknowable without fetching it, so naming every page would spend a request each before
+anything was read. `page-002` onwards still open, unlisted — and the note says how many
+there are, taken from the page the listing has already fetched, so learning the count
+costs neither a request nor a screenful of records.
 
 ### 2.3 Concept coordinates
 
