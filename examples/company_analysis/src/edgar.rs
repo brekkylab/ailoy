@@ -128,8 +128,9 @@ Every file here is one request to the SEC, answered live. Nothing is stored.
 
 ## Which way in
 
-A registrant is addressed by CIK. If you do not have one, `/search/entityName/` takes a
-company name or a ticker and reports the CIK behind each hit.
+A registrant is addressed, not found by listing: `ls /by-cik` names nothing but its own
+note. If you do not have a CIK, `/search/entityName/` takes a company name or a ticker
+and reports the CIK behind each hit.
 
 Identifiers are worth confirming rather than recalling: a wrong CIK answers with
 somebody else's filings rather than with an error.

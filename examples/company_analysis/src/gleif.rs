@@ -97,6 +97,14 @@ stored; a listing is what the API would say now.
     /search/…/pages/              its results
     /by-lei/<LEI>/                one entity, addressed by its LEI
 
+## Which way in
+
+An entity is addressed, not found by listing: `ls /by-lei` names nothing but its own
+note. An LEI comes from a search page here, or from `owns`/`ownedBy` on another record.
+
+Identifiers are worth confirming rather than recalling: a wrong LEI answers with
+somebody else's entity rather than with an error.
+
 ## Two rules that are not obvious
 
 **AND is a directory, OR is a comma.** The API takes repeated filters as AND and reads
