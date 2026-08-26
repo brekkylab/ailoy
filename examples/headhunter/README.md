@@ -16,7 +16,15 @@ jd/<posting>.md ──▶ [ headhunter agent ] ──▶ <out>/<posting>/00-shor
                            │
                            ▼
                 data/headhunter.db  (read-only)
+                           ▲
+                     sql/load.py
+                           │
+                data/candidates.json  (committed)
 ```
+
+**The database is not in the repository — `python3 sql/load.py` builds it** from the
+committed JSON, and that is the first thing to run. A binary that large does not diff, and
+it is a second's work to regenerate, so what is kept is what it is built from.
 
 The pool is read-only, and the only place the agent writes is the run's own directory.
 A real run of all four postings is committed under `run_result/`, so the example can be
@@ -327,6 +335,7 @@ examples/headhunter/
   sql/                 # schema, views, loader
   jd/                  # the four postings
   data/                # candidates.json, ground_truth.json, narration.json
+                       #   headhunter.db is built from these, not committed
   run_result/          # a committed run of all four postings
     backend-rust/
       SCENARIO.md      # which axis of the pool this posting tests
