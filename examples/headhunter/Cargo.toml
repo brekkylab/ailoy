@@ -1,0 +1,29 @@
+[package]
+name = "headhunter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# Two binaries: the example app, and a CLI for calling the same commands by hand.
+default-run = "headhunter"
+
+[dependencies]
+ailoy = { path = "../.." }
+# A path outside this repo — `cortex` is a sibling checkout, the same assumption the
+# workspace root already makes.
+cortex = { path = "../../../cortex/cortex" }
+anyhow = "1"
+# `limits` is for `SQLITE_LIMIT_ATTACHED`; a read-only connection does not block `ATTACH`.
+rusqlite = { version = "0.40", features = ["bundled", "limits"] }
+futures-core = "0.3"
+# ailoy itself only loads `.env` under `#[cfg(test)]`, so the binary has to do it.
+dotenvy = "0.15"
+clap = { version = "4", features = ["derive", "env"] }
+futures = "0.3"
+# Not `std::process::Command` — `StdioClient` reads and writes the pipes on the runtime.
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
