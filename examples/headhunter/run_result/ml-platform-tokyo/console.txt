@@ -1,0 +1,47 @@
+  posting  eval/jd/ml-platform-tokyo.md
+  model    anthropic/claude-sonnet-5
+  console  ../../../cortex/target/debug/cortex-local-console
+  pool     data/headhunter.db
+  tree     run_result/ml-platform-tokyo
+  max      32000 tokens/response
+
+  search 16× · 3, 7, 14 rows
+  read 4× · 0, 0, 1 people
+  wrote 00-shortlist.md  6.5KB
+  shell 2×
+  read 2×
+
+Now writing the six cold-mail drafts, one per pick, in English (all six profiles are `en`).
+
+  wrote 01-iris-pemberton.md  1.1KB
+  wrote 02-ellis-norwood.md  1.1KB
+  wrote 03-piper-jessup.md  967B
+  wrote 04-lane-osgood.md  953B
+  wrote 05-lane-ashby.md  958B
+  wrote 06-kai-lockhart.md  951B
+
+I've completed the search and written the shortlist plus six cold-mail drafts. Summary of what I did:
+
+1. **Gated on must-haves only**: `--city Tokyo --skill Kubernetes --skill PyTorch --skill MLOps`, checking all three Kubernetes spellings (`Kubernetes`, `Kubernetes (K8s)`, `kubernetes-admin`) reported by the search's first line, giving 13 candidates.
+2. **Cross-checked with `--mentions`** instead of `--skill` to catch any headline/skills-surface mismatch — found one extra row that turned out to be a stale duplicate profile of an existing candidate (same company urn, same title, same start date).
+3. **Checked nice-to-haves within the 13** (`--mentions GPU`, `feature store`, `capacity`) for ranking only, never for narrowing.
+4. **Read all 13 side by side** to compare tenure math (years vs naive_years), `wants`, contact reachability, and whether headline claims held up in position descriptions.
+5. Rejected several people who would have looked strong on a naive sort: the highest-tenure candidate (CTO, sponsor not owner), a manager whose profile explicitly says he doesn't do the hands-on work and wants remote, a candidate with a near-verbatim JD match but no contact info, and others unreachable or too junior/thin on platform-ownership evidence.
+6. Picked 6 candidates (fewer than 12, since the qualified pool was genuinely smaller), each with a specific fact-based mail in English (all six are `en` profile_language), flagging real risks (hybrid-vs-onsite preference, contract-vs-fulltime mismatch, seniority level) rather than hiding them.
+
+Files written: `00-shortlist.md`, `01-iris-pemberton.md` through `06-kai-lockhart.md`.
+
+--- run summary ---
+37 turns · 10 pool calls · 0 failed · 21 tool calls · finish Stop
+tokens  input 524 · output 40.5K · cache write 32.3K · cache read 264.0K
+        effective input 67.3K (uncached it would be 296.8K)
+7 artifacts
+     6.5KB  00-shortlist.md
+     1.1KB  01-iris-pemberton.md
+     1.1KB  02-ellis-norwood.md
+      967B  03-piper-jessup.md
+      953B  04-lane-osgood.md
+      958B  05-lane-ashby.md
+      951B  06-kai-lockhart.md
+query log  run_result/ml-platform-tokyo/queries.log  (10 calls, untruncated)
+score     eval/run_eval.py --score run_result/ml-platform-tokyo

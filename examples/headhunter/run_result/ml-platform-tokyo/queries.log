@@ -1,0 +1,59 @@
+-- headhunter query log
+-- posting eval/jd/ml-platform-tokyo.md
+-- 10 calls holding 20 commands. The turn number is which assistant response made the call.
+
+-- turn 1
+cat in/jd.md | head -5; echo ---; headhunting search --help; echo ---; headhunting read --help
+
+-- turn 3
+echo "search Tokyo + Kubernetes variant 1 + PyTorch + MLOps"
+headhunting search --city Tokyo --skill "Kubernetes" --skill "PyTorch" --skill "MLOps" --columns name,years,naive_years,open,contact,headline --limit 200
+echo "---variant K8s---"
+headhunting search --city Tokyo --skill "Kubernetes (K8s)" --skill "PyTorch" --skill "MLOps" --columns name,years,naive_years,open,contact,headline --limit 200
+echo "---variant kubernetes-admin---"
+headhunting search --city Tokyo --skill "kubernetes-admin" --skill "PyTorch" --skill "MLOps" --columns name,years,naive_years,open,contact,headline --limit 200
+
+
+-- turn 4
+IDS="urn:li:person:l5nz8crt,urn:li:person:j8mq4dhr,urn:li:person:2vqtrqt9,urn:li:person:s9wk4bpr,urn:li:person:b6xr4tqm,urn:li:person:c7rv4bkt,urn:li:person:v6hd2ptq,urn:li:person:f5pq2mhb,urn:li:person:q3fw7bkp,urn:li:person:c5nq8jtv,urn:li:person:jvwogrmn,urn:li:person:x5w1f5gp,urn:li:person:8f2v0usn"
+echo "checking nice-to-have: GPU scheduling"
+headhunting search --id "$IDS" --mentions "GPU" --columns name,headline
+echo "---feature store---"
+headhunting search --id "$IDS" --mentions "feature store" --columns name,headline
+echo "---capacity planning---"
+headhunting search --id "$IDS" --mentions "capacity" --columns name,headline
+echo "---took over / legacy---"
+headhunting search --id "$IDS" --mentions "took over" --columns name,headline
+headhunting search --id "$IDS" --mentions "inherited" --columns name,headline
+
+-- turn 5
+headhunting read urn:li:person:l5nz8crt,urn:li:person:j8mq4dhr,urn:li:person:2vqtrqt9,urn:li:person:s9wk4bpr,urn:li:person:b6xr4tqm,urn:li:person:c7rv4bkt,urn:li:person:v6hd2ptq,urn:li:person:f5pq2mhb,urn:li:person:q3fw7bkp,urn:li:person:c5nq8jtv,urn:li:person:jvwogrmn,urn:li:person:x5w1f5gp,urn:li:person:8f2v0usn > /tmp/reads.txt
+wc -l /tmp/reads.txt
+
+-- turn 7
+headhunting read urn:li:person:l5nz8crt urn:li:person:j8mq4dhr urn:li:person:2vqtrqt9 urn:li:person:s9wk4bpr urn:li:person:b6xr4tqm urn:li:person:c7rv4bkt urn:li:person:v6hd2ptq urn:li:person:f5pq2mhb urn:li:person:q3fw7bkp urn:li:person:c5nq8jtv urn:li:person:jvwogrmn urn:li:person:x5w1f5gp urn:li:person:8f2v0usn > /tmp/reads.txt
+wc -l /tmp/reads.txt
+
+-- turn 9
+echo "Checking seniority field for the two most senior candidates to confirm the seniority-mismatch risk"
+headhunting search --id urn:li:person:l5nz8crt,urn:li:person:j8mq4dhr --columns name,seniority,job_function,company_size,title,company
+
+-- turn 10
+echo "Checking seniority/company_size for the six finalists to catch any level mismatch"
+headhunting search --id urn:li:person:j8mq4dhr,urn:li:person:c7rv4bkt,urn:li:person:v6hd2ptq,urn:li:person:c5nq8jtv,urn:li:person:b6xr4tqm,urn:li:person:q3fw7bkp --columns name,seniority,company_size,title,company,updated
+
+-- turn 11
+IDS="urn:li:person:l5nz8crt,urn:li:person:j8mq4dhr,urn:li:person:2vqtrqt9,urn:li:person:s9wk4bpr,urn:li:person:b6xr4tqm,urn:li:person:c7rv4bkt,urn:li:person:v6hd2ptq,urn:li:person:f5pq2mhb,urn:li:person:q3fw7bkp,urn:li:person:c5nq8jtv,urn:li:person:jvwogrmn,urn:li:person:x5w1f5gp,urn:li:person:8f2v0usn"
+echo "checking nice-to-have: taking over an existing/inherited system"
+headhunting search --id "$IDS" --mentions "hand-rolled" --columns name,headline
+headhunting search --id "$IDS" --mentions "existing" --columns name,headline
+headhunting search --id "$IDS" --mentions "replaced" --columns name,headline
+echo "---checking wants for Iris and Piper Jessup which lacked wants in the table view---"
+headhunting search --id urn:li:person:j8mq4dhr,urn:li:person:v6hd2ptq --columns name,title,company
+
+-- turn 12
+echo "Cross-check: does gating by --mentions instead of --skill surface any Tokyo candidates missed by the skill-based search (skills-without-evidence / headline-bait boundary)?"
+headhunting search --city Tokyo --mentions Kubernetes --mentions PyTorch --mentions MLOps --columns name,years,open,contact,headline --limit 200
+
+-- turn 13
+headhunting read urn:li:person:m9jd7vhs

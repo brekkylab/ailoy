@@ -1,0 +1,37 @@
+  posting  eval/jd/backend-seoul-ko.md
+  model    anthropic/claude-sonnet-5
+  console  ../../../cortex/target/debug/cortex-local-console
+  pool     data/headhunter.db
+  tree     run_result/backend-seoul-ko
+  max      32000 tokens/response
+
+  search 11× · 45, 1 rows
+  read 4× · 6, 10, 1 people
+  query 1× · 9 rows
+  shell 2×
+
+가장 강한 매치(이벤트 수집/전달 재작성, 멱등성·재처리 설계, Kafka, PostgreSQL 재설계)를 가진 후보 3인을 확인했습니다. 이제 최종 목록과 콜드메일을 작성하겠습니다.
+
+  wrote 00-shortlist.md  5.3KB
+  wrote 01-채원-노.md  1.2KB
+  wrote 02-지훈-류.md  1.1KB
+  wrote 03-dohyun-ban.md  940B
+
+Seoul, Rust, 4+ years 조건으로 게이트 검색을 한 뒤 우대사항(Kafka, 멱등성/재처리, 대용량)은 mentions/read로만 순위화에 사용했고, 여러 후보를 동시에 읽어 헤드라인만 있는 사람(Jordan Merrick)과 연락 불가능한 사람(예은 연 등)을 걸러냈습니다. 최종 3인을 뽑아 `00-shortlist.md`와 각 후보의 프로필 언어(ko, ko, en)에 맞춘 콜드메일 3건을 작성했습니다.
+
+- `00-shortlist.md` — Picks, 방법, 비교 근거, 거절 사유
+- `01-채원-노.md` (ko)
+- `02-지훈-류.md` (ko)
+- `03-dohyun-ban.md` (en, 프로필 언어가 en이므로)
+
+--- run summary ---
+31 turns · 9 pool calls · 0 failed · 15 tool calls · finish Stop
+tokens  input 623 · output 30.5K · cache write 49.6K · cache read 294.5K
+        effective input 92.1K (uncached it would be 344.7K)
+4 artifacts
+     5.3KB  00-shortlist.md
+     1.2KB  01-채원-노.md
+     1.1KB  02-지훈-류.md
+      940B  03-dohyun-ban.md
+query log  run_result/backend-seoul-ko/queries.log  (9 calls, untruncated)
+score     eval/run_eval.py --score run_result/backend-seoul-ko

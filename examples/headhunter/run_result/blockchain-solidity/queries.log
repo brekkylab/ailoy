@@ -1,0 +1,62 @@
+-- headhunter query log
+-- posting eval/jd/blockchain-solidity.md
+-- 10 calls holding 14 commands. The turn number is which assistant response made the call.
+
+-- turn 1
+headhunting search --help; echo ---; headhunting read --help; echo ---; headhunting distribution --help
+
+-- turn 4
+echo "No skill/title hits for blockchain vocabulary at all; check full-text mentions and companies before concluding the pool has no such candidates."
+headhunting search --mentions solidity --limit 10
+echo ---
+headhunting search --mentions blockchain --limit 10
+echo ---
+headhunting search --mentions "smart contract" --limit 10
+echo ---
+headhunting distribution company solidity
+headhunting distribution company chain
+headhunting distribution company labs
+
+-- turn 6
+echo "Double-checking for any residual blockchain-adjacent vocabulary (DeFi, token, wallet, gas, fuzzing, formal verification, audit) before concluding the pool has no fit."
+for t in defi token wallet gas fuzz "formal verification" audit vyper hardhat truffle openzeppelin ethers web3 nft dao; do
+  echo "== $t =="
+  headhunting search --mentions "$t" --limit 3
+done
+
+-- turn 7
+echo "Reading the few candidates whose mentions hits look blockchain-adjacent (dApp, web3) to confirm whether they actually did Solidity/production contract work, since must-have is proven experience not just buzzwords."
+headhunting read urn:li:person:l4wq9jkb urn:li:person:r7nk4qwj
+
+-- turn 8
+echo "Before concluding, checking a few more targeted terms and certifications in case blockchain vocabulary uses different words (proxy pattern, upgradeable, storage layout, EVM, migration safety)."
+for t in proxy upgradeable "storage layout" migration EVM ledger settlement; do
+  echo "== $t =="
+  headhunting search --mentions "$t" --limit 3
+done
+echo ---
+headhunting distribution certification | head -50
+
+-- turn 9
+echo "Checking industry and job_function values in case a blockchain-specific industry exists that mentions/skill missed (these aren't listed distribution axes but let's check via query as last resort only if needed). First check search columns for industry via a broad search sample."
+headhunting search --min-years 0 --columns industry,job_function --limit 100 | sort | uniq -c | sort -rn | head -40
+
+-- turn 10
+headhunting search --min-years 0 --columns job_function --limit 600 | tail -n +3 | sort | uniq -c | sort -rn
+echo ---
+headhunting query "select distinct industry from candidates" 2>&1 | head -50
+
+-- turn 11
+echo "Piper Voss's company Draftwell builds a 'protocol' with dApp interfaces; checking other people at the same company (by company urn) in case the actual contract-writing team is in this pool under generic titles."
+headhunting search --mentions "Draftwell" --columns name,title,company,years,contact --limit 30
+
+-- turn 12
+echo "Final sweep for any remaining blockchain-specific vocabulary (custody, on-chain, protocol, chain, mainnet, testnet, gwei, erc20, erc-20) before concluding the pool lacks Solidity/smart-contract engineers."
+for t in custody "on-chain" protocol mainnet testnet erc20 "erc-20" "erc721" cryptography validator consensus; do
+  echo "== $t =="
+  headhunting search --mentions "$t" --limit 3
+done
+
+-- turn 13
+echo "Reading the remaining blockchain-adjacent hits (validator ops, on-chain analytics) to fully rule out before concluding no-fit."
+headhunting read urn:li:person:x6vd3ntq urn:li:person:m3tb8vqd

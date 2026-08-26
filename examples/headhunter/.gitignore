@@ -1,0 +1,4 @@
+# The root .gitignore excludes `*.log`, and the query log is what this example commits as
+# the record of a run — every pool call, untruncated. Without this line it disappears from
+# `git add` without a word, which is how it was left out the first time.
+!run_result/**/*.log
