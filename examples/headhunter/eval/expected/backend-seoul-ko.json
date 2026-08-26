@@ -1,0 +1,91 @@
+{
+  "jd": "backend-seoul-ko",
+  "k": 3,
+  "_comment": [
+    "**What this posting tests is not ranking but the language of the cold mails.** The",
+    "qualified pool splits evenly — 28 Korean profiles and 28 English — so a shortlist",
+    "normally carries both, and each mail has to follow its own candidate.",
+    "",
+    "**The gate deliberately does not filter on `profile_language`.** The posting never",
+    "asks for it, and filtering on it would let an agent pass by writing Korean to",
+    "everyone because the posting is Korean. It would also make `korean-only-profile`'s",
+    "control impossible: a control differs from its trap on exactly one axis, and here",
+    "that axis *is* the profile language. See `must_haves.json` for the whole argument.",
+    "",
+    "The same-name pair is here too — the test that runs **opposite** to",
+    "duplicate-profile."
+  ],
+  "expected_fewer_than_k": false,
+  "acceptable_top_k": [
+    "urn:li:person:k6qb3nwd",
+    "urn:li:person:w9td4bmq",
+    "urn:li:person:b3tq9wmk",
+    "urn:li:person:h2wp6tdz",
+    "urn:li:person:n7kv4jsb"
+  ],
+  "_acceptable_note": [
+    "채원 노 and 시우 도 are clear fits; 하은 성, 예준 위 and 도윤 반 are controls but",
+    "qualified by definition. 3 out of 56 leaves room for other combinations — this list",
+    "says **the controls have to survive**, not that these are the only right answers."
+  ],
+  "must_not_appear": [
+    {
+      "id": "urn:li:person:s6dt2jkv",
+      "trap": "location-mismatch",
+      "why": "준서 함. The profile language is ko but they live in Berlin/DE. The posting requires working in Seoul, so this fails a must-have and is caught at the gate"
+    }
+  ],
+  "traps_that_must_be_caught": [
+    {
+      "trap": "same-name",
+      "id": "urn:li:person:k8vq3mrt",
+      "expected": "There are two 서연 강 (k8vq3mrt and z4hn7cwp). **They are different people and must not be merged** — the company_urn differs and so does the tenure, 7.4 years against 5.1. Where duplicate-profile tests 'two records, one person', this tests 'one name, two people'. Harden the rule either way and one of them is necessarily wrong"
+    },
+    {
+      "trap": "korean-only-profile",
+      "id": "urn:li:person:w3gm8rbq",
+      "expected": "지훈 류. The entire profile is Korean — headline, summary, position descriptions. **An English-only query does not find them.** If this person is not in the shortlist the search was never widened; if they are and the mail is English, the language rule was missed"
+    },
+    {
+      "trap": "no-contact",
+      "id": "urn:li:person:y5cf9pxn",
+      "expected": "민준 심. Near the top at 9.8 real years, but there is no row in contacts"
+    },
+    {
+      "trap": "language-overread",
+      "id": "urn:li:person:q8jw3rvh",
+      "expected": "예은 구. profile_language is ko while languages records English as NATIVE_OR_BILINGUAL. The instruction says a Korean profile gets a Korean mail whatever else the record says about the languages they speak. **Writing an English mail on the strength of that fluency entry means being drawn to a new field and abandoning the stated criterion** — the mail has to be Korean"
+    }
+  ],
+  "controls_that_must_not_be_rejected": [
+    {
+      "id": "urn:li:person:b3tq9wmk",
+      "control_for": "location-mismatch",
+      "why": "하은 성. Lives in Seoul and matches 준서 함 on every other axis"
+    },
+    {
+      "id": "urn:li:person:n7kv4jsb",
+      "control_for": "korean-only-profile",
+      "why": "도윤 반. The profile language is en and the rest matches 지훈 류"
+    },
+    {
+      "id": "urn:li:person:h2wp6tdz",
+      "control_for": "no-contact",
+      "why": "예준 위. Can be reached, and the rest matches 민준 심"
+    },
+    {
+      "id": "urn:li:person:w9td4bmq",
+      "control_for": "language-overread",
+      "why": "시우 도. The same ko profile with no English entry, so there is nothing to be swayed by. Writing to this person in Korean too means the criterion was applied consistently"
+    }
+  ],
+  "scoring_notes": [
+    "**Each cold mail has to be in its own candidate's `profile_language`**, and a",
+    "shortlist will usually mix the two. An agent that writes Korean throughout because",
+    "the posting is Korean is caught by its first `en` pick — which is the point, since",
+    "this test used to pass by accident when every qualified candidate was Korean.",
+    "Merging the two 서연 강 into one person is a failure.",
+    "Never seeing 지훈 류 (korean-only-profile) among the candidates at all means the",
+    "search was never widened into Korean."
+  ]
+}

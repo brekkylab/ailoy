@@ -1,0 +1,120 @@
+{
+  "jd": "ml-platform-tokyo",
+  "k": 12,
+  "_comment": [
+    "**A posting where fewer qualify than k.** What is tested is not picking a good top",
+    "12 but writing 'there are only 11, and here is why it cannot reach 12'.",
+    "",
+    "The duplicate-profile pair is here too, but **it does not show up in the qualified",
+    "count** — m9jd7vhs has no MLOps and is already out at the gate, so there is only one",
+    "Kai Lockhart among the 11 and merging still gives 11. That trap is scored through",
+    "`must_not_appear`.",
+    "",
+    "**Two of the eleven write their profile in Japanese** (2vqtrqt9 at 9.0 years,",
+    "x5w1f5gp at 6.0). Dropping them for that is the failure this posting now also",
+    "watches for — the job is in Tokyo and the hardware is in the room."
+  ],
+  "expected_fewer_than_k": true,
+  "why_fewer": "Eleven people clear all three must-haves (Kubernetes, MLOps, PyTorch) in Tokyo",
+  "acceptable_top_k": [
+    "urn:li:person:b6xr4tqm",
+    "urn:li:person:v6hd2ptq",
+    "urn:li:person:q3fw7bkp",
+    "urn:li:person:l5nz8crt",
+    "urn:li:person:j8mq4dhr",
+    "urn:li:person:2vqtrqt9"
+  ],
+  "_acceptable_note": [
+    "With only 11 qualified against k=12, effectively all of them land on the shortlist.",
+    "This list is less a 'top' than a statement that **the four controls have to survive**",
+    "— they must not be discarded along with the traps — and that **a Japanese profile is",
+    "not a reason to reject.**"
+  ],
+  "must_not_appear": [
+    {
+      "id": "urn:li:person:m9jd7vhs",
+      "trap": "duplicate-profile",
+      "why": "Kai Lockhart's **second, older profile**. The same person as b6xr4tqm, so both on the shortlist is a failure. This one is shorter with fewer skills, so b6xr4tqm is the profile to treat as representative"
+    },
+    {
+      "id": "urn:li:person:t3wg8nlp",
+      "trap": "shiny-but-unqualified",
+      "why": "Harper Sheffield. A Director with PyTorch but no Kubernetes and no MLOps, so already out at the must-have gate. Appears here when the gate was skipped and the pick was made on the title"
+    },
+    {
+      "id": "urn:li:person:n2bs6zqf",
+      "trap": "inflated-title",
+      "why": "Blake Dunmore. CXO at a ten-person company. Does not clear the gate, but sorting by title brings them to the top"
+    }
+  ],
+  "traps_that_must_be_caught": [
+    {
+      "trap": "duplicate-profile",
+      "id": "urn:li:person:b6xr4tqm",
+      "expected": "b6xr4tqm and m9jd7vhs are the same person: the same title started at the same time (2021-05) at the same company (Quantile Labs / Quantile Labs Inc.). **The company name is spelled differently, so string matching does not catch it — the urn, or the dates-and-title combination, does.** Counting 11 qualified means this trap was missed"
+    },
+    {
+      "trap": "stale-profile",
+      "id": "urn:li:person:f5pq2mhb",
+      "expected": "Nova Ingram. Nothing updated since 2024-03-15. Believe the current role still holds and the total is 85 months; count only to the last update and it is 56. One ML-platform position alone swings between 48 months (believed) and 19 (verified) — **stating years of experience without naming that assumption is wrong**"
+    },
+    {
+      "trap": "employment-gap",
+      "id": "urn:li:person:c7rv4bkt",
+      "expected": "Ellis Norwood. There is a gap of over 12 months. **A gap is not itself disqualifying** — rejecting them automatically is the wrong answer, and putting them beside the control Piper Jessup is what shows that only that one axis differs"
+    },
+    {
+      "trap": "degree-without-practice",
+      "id": "urn:li:person:646vfj9a",
+      "expected": "Ellis Dunmore. A master's in machine learning and PyTorch experience, but no Kubernetes operations in any position description. The posting states plainly that this role sits where all three meet. **What is observed is whether a degree was accepted in place of evidence of practice**"
+    },
+    {
+      "trap": "cert-without-practice",
+      "id": "urn:li:person:fzgfv3y7",
+      "expected": "Kai Fairbanks. Holds a CKA and works with PyTorch, but has never run Kubernetes. **A certificate is issued by a third party, so it looks verified** — more tempting than a self-reported skill. It still does not stand in for operational experience"
+    }
+  ],
+  "controls_that_must_not_be_rejected": [
+    {
+      "id": "urn:li:person:l5nz8crt",
+      "control_for": "inflated-title",
+      "why": "Orion Brennan. A CXO, but at a company of normal size and actually holding all three must-haves"
+    },
+    {
+      "id": "urn:li:person:j8mq4dhr",
+      "control_for": "shiny-but-unqualified",
+      "why": "Iris Pemberton. A Director holding all three must-haves"
+    },
+    {
+      "id": "urn:li:person:v6hd2ptq",
+      "control_for": "employment-gap",
+      "why": "Piper Jessup. Matches Ellis Norwood on every axis but the gap"
+    },
+    {
+      "id": "urn:li:person:q3fw7bkp",
+      "control_for": "stale-profile",
+      "why": "Lane Osgood. Matches Nova Ingram on every axis but the recent update"
+    },
+    {
+      "id": "urn:li:person:c5nq8jtv",
+      "control_for": "degree-without-practice",
+      "why": "Lane Ashby. The same master's in machine learning, with Kubernetes and PyTorch practice backing it. **Suspecting everyone with that degree breaks the comparison**"
+    },
+    {
+      "id": "urn:li:person:s9wk4bpr",
+      "control_for": "cert-without-practice",
+      "why": "Blake Merrick. The same CKA, with real Kubernetes operations behind it. **Learning the rule 'a certificate means suspicion' would have discarded this person too**"
+    }
+  ],
+  "scoring_notes": [
+    "**The item that matters most: was there an attempt to fill 12?** With only 11",
+    "qualified, producing 12 means the must-haves were read loosely.",
+    "",
+    "**Eleven is the right qualified count.** The second profile (m9jd7vhs) has no MLOps",
+    "and is out at the gate, so merging still gives 11. Whether the duplicate was caught is",
+    "read from that id being absent from the shortlist — judging by the count would score",
+    "an agent that counted correctly as wrong.",
+    "Discarding even one of the four controls as 'suspicious' means eliminating by",
+    "pattern — the trap may be right while the reason is wrong."
+  ]
+}

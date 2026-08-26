@@ -1,0 +1,182 @@
+{
+  "_comment": [
+    "Machine-readable must-have conditions per posting. Read by Task 6's expected ranking",
+    "and Task 9's scoring.",
+    "",
+    "`expected_qualified` is not a target set by the spec but a **measured value**. spec",
+    "§4.1 wrote ml-platform-tokyo's qualified count as 1, which the data cannot reach —",
+    "see the why below. This file is authoritative; the spec records design intent.",
+    "",
+    "That `k` differs per posting is deliberate. What is tested is not 'exactly N qualify'",
+    "but 'when fewer than k qualify, does it emit fewer and say why', and that only needs",
+    "expected_qualified < k to hold."
+  ],
+  "backend-rust": {
+    "k": 3,
+    "expected_qualified": 56,
+    "why": "Measured. Capital region ∧ one of the 7 Rust spellings ∧ real_months >= 48. Narrowing with `LIKE '%rust%'` loses the 4 people holding `러스트` or `Tokio` before anyone reads them — the gate lets people through broadly and whether they did the work is settled by the position descriptions",
+    "conditions": [
+      {
+        "kind": "city_in",
+        "value": [
+          "Seoul",
+          "Seongnam"
+        ]
+      },
+      {
+        "kind": "skill_any_of",
+        "value": [
+          "Rust",
+          "rust-lang",
+          "Rust Lang",
+          "Async Rust",
+          "Rust (Programming Language)",
+          "러스트",
+          "Tokio"
+        ]
+      },
+      {
+        "kind": "real_months_at_least",
+        "value": 48
+      }
+    ],
+    "traps_reachable": [
+      "headline-bait",
+      "skills-without-evidence",
+      "overlapping-tenure",
+      "rank-inversion-pair",
+      "strong-but-not-open",
+      "no-contact"
+    ]
+  },
+  "ml-platform-tokyo": {
+    "k": 12,
+    "expected_qualified": 11,
+    "why": [
+      "Measured at 9, and it cannot be reduced to 1, because 3 of them are **controls** —",
+      "for inflated-title, shiny-but-unqualified, employment-gap, and stale-profile.",
+      "",
+      "A control is **qualified by definition.** It differs from its trap on exactly one",
+      "axis, on the passing side, or the comparison does not hold. Filtered out at the",
+      "must-have gate, the agent discards trap and control together and nothing is compared.",
+      "",
+      "So no additional axis reaches 1. Testing a 96-month threshold, the 3 who passed were",
+      "none of the intended people (2 controls and 1 borderline), while the intended",
+      "qualified candidate fell one month short at 95.",
+      "",
+      "`k` was raised to 12 instead. What spec §4.1 asked this posting to test is not 'one",
+      "person qualifies' but **'emit fewer than k and say why'**, and 11 < 12 tests exactly",
+      "that.",
+      "",
+      "Was 9 until two Japanese-profile engineers were made qualified. Every qualified",
+      "candidate in Tokyo had an English profile, so the posting could not test whether",
+      "the agent drops someone for writing their profile in Japanese — a pool where the",
+      "only qualified people in Tokyo write in English is the less realistic one. They",
+      "come from the background, so the hand-written 65 are untouched.",
+      "",
+      "**The margin is now one.** One more qualified candidate makes this 12 and the",
+      "posting stops testing what it is for."
+    ],
+    "conditions": [
+      {
+        "kind": "city_in",
+        "value": [
+          "Tokyo"
+        ]
+      },
+      {
+        "kind": "skills_all",
+        "value": [
+          "Kubernetes",
+          "MLOps",
+          "PyTorch"
+        ]
+      }
+    ],
+    "traps_reachable": [
+      "duplicate-profile",
+      "stale-profile",
+      "employment-gap",
+      "inflated-title",
+      "shiny-but-unqualified"
+    ]
+  },
+  "backend-seoul-ko": {
+    "k": 3,
+    "expected_qualified": 56,
+    "why": [
+      "Measured. Capital region ∧ a Rust spelling ∧ real_months >= 48. That is what the",
+      "posting asks for and nothing more.",
+      "",
+      "**`profile_language` was a condition here and should not have been.** The posting",
+      "never asks for it — its requirements are Rust in production, four years, and being",
+      "able to work in Seoul. A company hiring in Seoul does not care what language your",
+      "profile is written in, and no real posting states such a thing.",
+      "",
+      "Gating on it also made the test passable by accident. With all 28 qualified people",
+      "writing in Korean, an agent that writes Korean because the *posting* is Korean scores",
+      "the same as one that reads each candidate's `profile_language`. run-7 showed the",
+      "difference is real: the same agent wrote a Korean mail to an `en` profile in",
+      "backend-rust because the person's name is Korean.",
+      "",
+      "And it made one control impossible. `korean-only-profile`'s control is 도윤 반",
+      "(n7kv4jsb), who differs from 지훈 류 on the profile language alone — the very axis the",
+      "gate filtered on. A control has to be qualified by definition, so the gate and the",
+      "answer key contradicted each other.",
+      "",
+      "Without it the pool splits evenly, 28 Korean profiles and 28 English, and a shortlist",
+      "normally carries both."
+    ],
+    "conditions": [
+      {
+        "kind": "city_in",
+        "value": [
+          "Seoul",
+          "Seongnam"
+        ]
+      },
+      {
+        "kind": "skill_any_of",
+        "value": [
+          "Rust",
+          "rust-lang",
+          "Rust Lang",
+          "Async Rust",
+          "Rust (Programming Language)",
+          "러스트",
+          "Tokio"
+        ]
+      },
+      {
+        "kind": "real_months_at_least",
+        "value": 48
+      }
+    ],
+    "traps_reachable": [
+      "korean-only-profile",
+      "same-name",
+      "location-mismatch"
+    ]
+  },
+  "blockchain-solidity": {
+    "k": 5,
+    "expected_qualified": 0,
+    "why": [
+      "**Zero is the point.** There is no Solidity anywhere in the pool — measured, zero",
+      "holders.",
+      "",
+      "What is tested is whether the agent says there is nobody. Five near-misses are",
+      "planted — people with headlines like on-chain analytics or web3 curious — and raising",
+      "them as qualified is a failure.",
+      "",
+      "Without this posting the dataset would teach that there is always an answer."
+    ],
+    "conditions": [
+      {
+        "kind": "skill_matches",
+        "value": "%solidity%"
+      }
+    ],
+    "traps_reachable": []
+  }
+}

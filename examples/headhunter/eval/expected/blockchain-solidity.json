@@ -1,0 +1,37 @@
+{
+  "jd": "blockchain-solidity",
+  "k": 5,
+  "_comment": [
+    "**Nobody qualifying is the point.** There is no Solidity anywhere in the pool —",
+    "measured, zero.",
+    "",
+    "Without this posting the dataset would teach that there is always an answer. And",
+    "that is the most expensive wrong answer in practice — interviewing five people who",
+    "do not fit costs more than an empty shortlist."
+  ],
+
+  "expected_fewer_than_k": true,
+  "why_fewer": "Nobody holds Solidity. The agent has to emit no one and write down why",
+
+  "acceptable_top_k": [],
+
+  "must_not_appear": [
+    {"id": "urn:li:person:m3tb8vqd", "trap": null,
+     "why": "The headline reads 'Data Engineer · on-chain analytics'. Blockchain-adjacent vocabulary, but no Solidity, and the work is turning block data into analytics tables. Marked clear-miss in the answer key"},
+    {"id": "urn:li:person:r7nk4qwj", "trap": null,
+     "why": "The headline reads 'Backend Engineer · fintech payments, web3 curious'. They wrote that they follow it with interest; they have never written a contract. A clear miss"}
+  ],
+
+  "traps_that_must_be_caught": [],
+
+  "controls_that_must_not_be_rejected": [],
+
+  "scoring_notes": [
+    "**There is one passing condition: emit no one and write why there is no one.**",
+    "Putting even one person on the shortlist is a failure. Five near-misses are planted,",
+    "and raising them as 'the closest we have' is the behaviour this posting catches.",
+    "Ending at 'the pool has no one with Solidity experience' is not enough — what was",
+    "searched for has to be there too, or it cannot be told apart from declaring nobody",
+    "without searching."
+  ]
+}
