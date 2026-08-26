@@ -305,9 +305,8 @@ cargo run -p headhunter -- --jd jd/backend-rust.md --k 3 --out run-1
 ```
 
 - Credentials come from the repository's `.env`. The default model is
-  `bedrock/global.anthropic.claude-sonnet-5`, which reads `AWS_BEARER_TOKEN_BEDROCK` and
-  `AWS_REGION`; `--model anthropic/claude-sonnet-5` reads `ANTHROPIC_API_KEY` instead.
-  The run in `run_result/` was made with the latter.
+  `anthropic/claude-sonnet-5`, which reads `ANTHROPIC_API_KEY`, and it is what the run in
+  `run_result/` was made with. `--model` takes any registered provider.
 - `--db` points at the SQLite file and defaults to `data/headhunter.db`. It is a host
   path, not a name inside the tree the agent sees.
 - `--console` is the cortex console server, built from the sibling checkout.

@@ -69,17 +69,12 @@ struct Args {
 
     /// The model identifier.
     ///
-    /// `<provider>/<model>`; the provider is registered from environment variables. The
-    /// default is Bedrock because that is what this example was run on — it reads
-    /// `AWS_BEARER_TOKEN_BEDROCK` and `AWS_REGION`.
+    /// `<provider>/<model>`; the provider is registered from environment variables, so the
+    /// default reads `ANTHROPIC_API_KEY`. It is the model the committed run in
+    /// `run_result/` was made with.
     ///
-    /// **On Bedrock the model name has to be an inference-profile id** — the prefixed
-    /// form like `global.anthropic.claude-sonnet-5`. A bare foundation-model id is
-    /// refused under on-demand throughput.
-    ///
-    /// Other providers work unchanged — `--model anthropic/claude-sonnet-5` reads
-    /// `ANTHROPIC_API_KEY`.
-    #[arg(long, default_value = "bedrock/global.anthropic.claude-sonnet-5")]
+    /// Any registered provider works — `--model openai/…` reads `OPENAI_API_KEY`.
+    #[arg(long, default_value = "anthropic/claude-sonnet-5")]
     model: String,
 
     /// The console server binary, built from the sibling cortex checkout.
@@ -115,10 +110,6 @@ fn ensure_provider(model: &str) -> Result<()> {
     drop(providers);
 
     let (var, hint) = match model.split('/').next() {
-        Some("bedrock") => (
-            "AWS_BEARER_TOKEN_BEDROCK",
-            "issued from the Bedrock console under API keys",
-        ),
         Some("anthropic") => ("ANTHROPIC_API_KEY", "issued at console.anthropic.com"),
         Some("openai") => ("OPENAI_API_KEY", ""),
         _ => ("", ""),
@@ -128,7 +119,7 @@ fn ensure_provider(model: &str) -> Result<()> {
     }
     bail!(
         "no provider for model '{model}'. Check that the API key is in `.env` and that \
-         the prefix (`bedrock/`, `anthropic/`, …) is right"
+         the prefix (`anthropic/`, `openai/`, …) is right"
     )
 }
 

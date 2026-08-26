@@ -152,9 +152,8 @@ $ python3 sql/load.py
 $ cargo run -p headhunter -- --jd jd/backend-rust.md --out run-2 --k 3
 ```
 
-The default model is `bedrock/global.anthropic.claude-sonnet-5`. Pass
-`--model anthropic/claude-sonnet-5` to use the Anthropic API instead. Credentials come
-from `.env` at the repository root.
+The default model is `anthropic/claude-sonnet-5`, which is what this run used.
+Credentials come from `.env` at the repository root.
 
 Three other postings live in `jd/`. One of them, `blockchain-solidity.md`, has no
 qualified candidate anywhere in the pool. Saying so is the correct answer.
