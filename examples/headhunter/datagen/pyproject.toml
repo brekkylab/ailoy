@@ -1,0 +1,18 @@
+[project]
+name = "headhunter-datagen"
+version = "0.1.0"
+description = "Generates the candidate dataset for the headhunter example"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+# For the prose layer only. The structure layer runs on the standard library.
+narrate = ["anthropic>=0.40"]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.setuptools]
+packages = ["common", "headhunter"]
