@@ -242,8 +242,6 @@ One shortlist, and one cold mail per pick, in a directory named after the postin
 
 ```
 run_result/backend-rust/
-  in/jd.md              the posting, as given
-  in/schema.sql         the table definitions
   00-shortlist.md       who was picked, how, and who was rejected
   01-하은-성.md          one mail per pick, in rank order
   02-채원-노.md
@@ -254,9 +252,11 @@ run_result/backend-rust/
 ```
 
 **`run_result/` holds a real run of all four postings**, kept so the example can be read
-without being run. It is what `cargo run` wrote, with only the paths rewritten: the two
-host paths in the header, which named the machine it ran on, and the posting and output
-directories, which were `eval/jd/` and `--out run-8` at the time.
+without being run. It is what `cargo run` wrote, less the `in/` directory the run is
+given: that is a copy of `jd/<posting>.md` and `sql/schema.sql`, made fresh on every run,
+so keeping it here would be the same bytes a second time. The paths are rewritten where
+they named the machine it ran on — the two host paths in the header, and the posting and
+output directories, which were `eval/jd/` and `--out run-8` at the time.
 
 | posting | k | picked | turns | pool calls | output |
 | --- | --- | --- | --- | --- | --- |
