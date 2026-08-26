@@ -1,4 +1,4 @@
-  posting  eval/jd/backend-rust.md
+  posting  jd/backend-rust.md
   model    anthropic/claude-sonnet-5
   console  ../../../cortex/target/debug/cortex-local-console
   pool     data/headhunter.db
@@ -39,4 +39,3 @@ tokens  input 730 · output 31.7K · cache write 44.0K · cache read 454.9K
      1.2KB  02-채원-노.md
      1.2KB  03-도윤-반.md
 query log  run_result/backend-rust/queries.log  (11 calls, untruncated)
-score     eval/run_eval.py --score run_result/backend-rust

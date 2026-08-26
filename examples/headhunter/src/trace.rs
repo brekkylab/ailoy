@@ -49,14 +49,12 @@ pub const QUERY_LOG: &str = "queries.log";
 /// A wall would need the console server to spawn the shell inside an isolated filesystem,
 /// and that is not this example's call.
 ///
-/// So what is checked is whether it happened. A run that read the answer key or the
-/// scoring criteria cannot be used to evaluate, and letting that pass quietly would leave
-/// it unknowable what a good score means.
+/// So what is checked is whether it happened. A run that read the answer key cannot be
+/// used to judge the agent, and letting that pass quietly would leave it unknowable
+/// whether the shortlist was reasoned to or looked up.
 const OFF_LIMITS: &[&str] = &[
-    // Holds trap labels and verdicts.
+    // Holds trap labels and verdicts — which of the 600 are planted, and what each tests.
     "ground_truth",
-    // Per-posting scoring criteria: who should be picked and who should be rejected.
-    "expected/",
     // The entire source pool — a way to read all of it without going through the command.
     "candidates.json",
     "narration.json",
@@ -756,7 +754,7 @@ mod tests {
             history += grew;
         }
 
-        println!("  posting  eval/jd/backend-rust.md");
+        println!("  posting  jd/backend-rust.md");
         println!("  model    anthropic/claude-sonnet-5");
         println!("  tree     /Users/…/ailoy/examples/headhunter");
         println!("  out      run-manual/backend-rust");
@@ -795,7 +793,6 @@ mod tests {
             "query log  run-manual/backend-rust/queries.log  ({} calls, untruncated)",
             t.queries().len()
         );
-        println!("score     eval/run_eval.py --score run-manual/backend-rust");
     }
 
     /// An assistant response carrying usage.
@@ -1038,20 +1035,6 @@ mod tests {
         ));
         assert_eq!(t.escapes().len(), 1, "{:?}", t.escapes());
         assert!(t.escapes()[0].contains("ground_truth"));
-    }
-
-    #[test]
-    fn the_scoring_criteria_are_off_limits_too() {
-        let mut t = Trace::default();
-        t.observe(&says(
-            "",
-            &[(
-                "c1",
-                "shell",
-                r#"{"cmd":"grep -r rust ../../eval/expected/"}"#,
-            )],
-        ));
-        assert_eq!(t.escapes().len(), 1);
     }
 
     /// Pool commands and ordinary shell tools must not trip it. A false alarm is what

@@ -3,8 +3,8 @@
 # Why Python
 
 This is a preparation step that runs once before the example does. Neither the agent nor
-ailoy calls it. Plan B's generator is already Python and `AS_OF` lives there, so keeping
-the same language lets that constant be imported rather than copied.
+ailoy calls it. It reads `data/candidates.json` — the pool as committed — and writes the
+database the `headhunting` command opens.
 
 # journal_mode is decided here
 
@@ -17,29 +17,29 @@ own", item 2). It is set to `DELETE` explicitly.
 import json
 import re
 import sqlite3
-import sys
 from pathlib import Path
 
 HERE = Path(__file__).parent
 DATA = HERE.parent / "data"
-# The generator sits beside this example. Defining `AS_OF` in one place means importing
-# it here rather than copying the number.
-sys.path.insert(0, str(HERE.parent / "datagen"))
-from common.dates import AS_OF  # noqa: E402
+
+# The month a run is taken to happen in. A position with no end date runs until here, so
+# this is what "still there" resolves to when tenure is totalled. The pool was generated
+# against this value, and `views.sql` carries it again as a SQL literal —
+# `assert_as_of_matches` below is what keeps those two from drifting apart in silence.
+AS_OF = (2026, 8)
 
 
 def assert_as_of_matches() -> None:
-    """Whether the literal in `views.sql` matches the generator's `AS_OF`.
+    """Whether the literal in `views.sql` matches `AS_OF` above.
 
     **This is a place that goes wrong quietly, with no error.** `views.sql` fills the end
-    of a current role with `2026*12+8` and the generator's `dates.py` uses the same value.
-    If they diverge, trap 3's answer key and the view's arithmetic disagree while neither
-    SQL nor Python complains.
+    of a current role with `2026*12+8`. If that diverges from `AS_OF`, the answer key's
+    tenure figures and the view's arithmetic disagree while neither SQL nor Python
+    complains — and overlapping tenure is one of the things this pool is built to test.
 
-    spec §2.2 asked for "the generator rendering it from a template so it is defined in one
-    place", but rendering would make `views.sql` a generated artifact rather than a file
-    people read and edit. Keeping the literal and checking it is better at this size: the
-    check guarantees what rendering would, and the file is still read by hand.
+    Rendering the SQL from a template would remove the second copy, but it would also make
+    `views.sql` a generated artifact rather than a file people read and edit. At this size
+    the check buys what rendering would, and the file stays readable by hand.
     """
     expected = f"{AS_OF[0]}*12+{AS_OF[1]}"
     raw = (HERE / "views.sql").read_text()
@@ -54,8 +54,8 @@ def assert_as_of_matches() -> None:
     if expected not in code:
         raise SystemExit(
             f"the SQL in views.sql does not contain {expected!r} — it diverges from the "
-            f"generator's AS_OF={AS_OF}. Trap 3's answer key and the view's arithmetic "
-            f"will disagree silently"
+            f"AS_OF={AS_OF} in this file. The answer key's tenure figures and the view's "
+            f"arithmetic will disagree silently"
         )
     # Also check it is in the place that fills the end of a current role. The same
     # arithmetic appearing incidentally elsewhere must not satisfy this.

@@ -103,8 +103,8 @@ The posting is `in/jd.md`. Write your artifacts into the current directory.
        …
 
    `<slug>` is the candidate's name lowercased with non-alphanumerics as `-`.
-   The scorer looks for `00-shortlist.md` by name; anything else and it reports no
-   shortlist at all.
+   The app counts what came out by these names, so anything else is not counted as an
+   artifact at all.
 
    **Bare filenames, with nothing in front of them.** The tree you can see is small and
    has no `/home`, no `/root`, and no absolute path that resolves anywhere. Four runs of
@@ -154,7 +154,8 @@ is settled only by reading the position descriptions.
 
       urn:li:person:xxxxxxxx
 
-  The scorer reads that line to check the mail against the candidate's `profile_language`.
+  A reader checking the mail against the right person starts there — the name in the
+  greeting does not identify anyone in this pool.
 - Write the cold mail in the candidate's `profile_language`, whatever else the record says
   about the languages they speak. A `ko` profile gets a Korean mail and a `ja` profile gets
   a Japanese one, even when that person is listed as fluent in English.

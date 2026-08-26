@@ -7,15 +7,15 @@ Given a job posting, the agent searches a pool of 600 candidates, picks the top 
 drafts a cold mail for each one.
 
 ```
-eval/jd/<posting>.md ──▶ [ headhunter agent ] ──▶ <out>/<posting>/00-shortlist.md
-                                │                 <out>/<posting>/01-<candidate>.md
-                                │                 <out>/<posting>/02-<candidate>.md
-                                ▼                 ...
-                     headhunting search / read
-                       distribution / query
-                                │
-                                ▼
-                     data/headhunter.db  (read-only)
+jd/<posting>.md ──▶ [ headhunter agent ] ──▶ <out>/<posting>/00-shortlist.md
+                           │                 <out>/<posting>/01-<candidate>.md
+                           │                 <out>/<posting>/02-<candidate>.md
+                           ▼                 ...
+                headhunting search / read
+                  distribution / query
+                           │
+                           ▼
+                data/headhunter.db  (read-only)
 ```
 
 The pool is read-only, and the only place the agent writes is the run's own directory.
@@ -90,7 +90,7 @@ they are computed from `positions`.
 ## The posting
 
 An ordinary markdown job posting. No front matter, no fixed headings — structuring it is
-the agent's job. Four ship with the example, under `eval/jd/`, and each one leans on a
+the agent's job. Four ship with the example, under `jd/`, and each one leans on a
 different part of the pool:
 
 | posting | k | what it asks for |
@@ -124,8 +124,8 @@ Instead of writing SQL, the agent asks in the vocabulary of recruiting.
 out when neither of the other two can express the question — sorting the 29 queries of a
 real run by kind, not one of them needed free-form SQL.
 
-What it actually looks like. The same command can be run by hand, with no console in
-front of it (`cargo build -p headhunter --bin headhunting`).
+What it actually looks like. Every call a run made is in that run's `queries.log`, with
+the command text untruncated.
 
 ```
 $ headhunting search --skill rust --city Seoul,Seongnam --min-years 4 --limit 3
@@ -180,8 +180,9 @@ directory** — the instruction does not constrain paths; there is nothing outsi
 axes. Across three runs, 87 free-form SQL statements touched a view five times, and all
 five asked for figures `read` already carries.
 
-`data/` is outside the tree. It holds the answer key (`ground_truth.json`, with trap
-labels and verdicts) and the full source pool (`candidates.json`); mount the whole
+`data/` is outside the tree. It holds the answer key (`ground_truth.json`, saying which
+of the 600 are planted and what each one tests) and the full source pool
+(`candidates.json`); mount the whole
 directory and one `read` call reaches all of it. The pool database is outside too, opened
 by the host path `headhunting` was given at registration. That is why the command line
 carries no db argument.
@@ -194,8 +195,9 @@ the agent wrote intermediate results to `/tmp` and those files stayed on the hos
 Narrowing the tree therefore narrows the *default* path; building a wall would require the
 console server to spawn the shell inside an isolated filesystem, which is not this
 example's call. So instead we **check whether it happened**: at the end of a run every
-shell command is scanned, and if any reached the answer key or the scoring criteria the run
-fails. Not knowing what a good score means is worse than a quiet pass.
+shell command is scanned, and if any reached the answer key or the full pool the run
+fails. Not knowing whether the shortlist was reasoned to or looked up is worse than a
+quiet pass.
 
 ### The loop
 
@@ -216,7 +218,7 @@ fails. Not knowing what a good score means is worse than a quiet pass.
 
 - Every candidate gets a **rationale**, citing only facts present in the profile
   (company, title, tenure, skills). No score — compressing the judgment into one number
-  hides what it was made of, and the scorer does not read it anyway.
+  hides what it was made of.
 - **Name the people who were rejected, and why**, especially anyone a naive query would
   have ranked highly. A shortlist without its rejections cannot be checked later.
 - Risks and mismatches are recorded too (location mismatch, insufficient tenure,
@@ -244,9 +246,9 @@ run_result/backend-rust/
 ```
 
 **`run_result/` holds a real run of all four postings**, kept so the example can be read
-without being run. It is what `cargo run` wrote, changed only where the paths would
-otherwise name the machine it ran on: the two host paths in the header, and the output
-directory, which was `--out run-8` at the time.
+without being run. It is what `cargo run` wrote, with only the paths rewritten: the two
+host paths in the header, which named the machine it ran on, and the posting and output
+directories, which were `eval/jd/` and `--out run-8` at the time.
 
 | posting | k | picked | turns | pool calls | output |
 | --- | --- | --- | --- | --- | --- |
@@ -256,8 +258,9 @@ directory, which was `--out run-8` at the time.
 | `blockchain-solidity` | 5 | **0** | 30 | 10 | 8.4K |
 
 The two bold figures are the point of those two postings. `ml-platform-tokyo` asks for 12
-and the pool holds 11 who qualify — one of whom is the same person twice under two
-spellings of one company name. `blockchain-solidity` asks for a skill nobody has, and its
+where fewer than 12 qualify — and among the near-misses is one person holding two
+accounts, under two spellings of one company name. The run emitted 6 and wrote down why
+it could not reach 12. `blockchain-solidity` asks for a skill nobody has, and its
 shortlist opens with `## Picks` / `(none — see below)` followed by what was searched for.
 Filling either number would be the failure.
 
@@ -267,7 +270,7 @@ Opens with a `## Picks` list, one line per selection, each carrying the full
 `urn:li:person:…` — 283 of the 600 share a name with someone else, so a name does not
 identify anyone. Below it: how the search was gated and widened, what was compared, and
 after a `<!-- rejected -->` line, the people who were passed over and why. That marker is
-what lets a reader — and the scorer — tell a pick from a rejection.
+what lets a reader tell a pick from a rejection.
 
 ### `NN-<slug>.md`
 
@@ -290,8 +293,7 @@ python3 sql/load.py            # writes data/headhunter.db
 Then, from `examples/headhunter`:
 
 ```sh
-cargo run -p headhunter -- --jd eval/jd/backend-rust.md --k 3 --out run-1
-python3 eval/run_eval.py --score run-1/backend-rust
+cargo run -p headhunter -- --jd jd/backend-rust.md --k 3 --out run-1
 ```
 
 - Credentials come from the repository's `.env`. The default model is
@@ -303,10 +305,11 @@ python3 eval/run_eval.py --score run-1/backend-rust
 - `--console` is the cortex console server, built from the sibling checkout.
 - Progress streams through that console; the artifact paths are printed on exit.
 
-`run_eval.py` prints what can be checked mechanically and then **a list of things for a
-person to check** — whether a personalized sentence reads naturally is not something to
-automate. Run `--check` before the agent: it verifies that the answer keys still match
-the data, and scoring means nothing if they have drifted.
+**Reading the result is a person's job.** Whether a personalized sentence is grounded in
+the profile or reads as filler is not something to automate. What the run leaves behind to
+judge it by is the shortlist's rejections, `queries.log`, and `data/ground_truth.json`,
+which says which of the 600 are planted and what each one tests. `run_result/` holds one
+such set to compare against.
 
 ---
 
@@ -320,13 +323,9 @@ examples/headhunter/
     main.rs            # CLI, agent assembly, the run
     prompt.rs          # the system instruction
     trace.rs           # the screen, the query log, bypass detection
-    lib.rs             # shared by both binaries
     executable/        # `headhunting` — the commands this app attaches
-    bin/
-      headhunting.rs   # the same commands by hand, with no console in front
   sql/                 # schema, views, loader
-  eval/                # the postings, the answer keys, the scorer
-  datagen/             # the generator that made the pool
+  jd/                  # the four postings
   data/                # candidates.json, ground_truth.json, narration.json
   run_result/          # a committed run of all four postings
     backend-rust/

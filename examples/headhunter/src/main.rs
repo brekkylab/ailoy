@@ -38,20 +38,17 @@ use futures::StreamExt;
 // so it takes the async one. Plan A's passing test carries the same note in the same place.
 use tokio::process::Command;
 
+mod executable;
 mod prompt;
 mod trace;
 
-use headhunter::executable::Headhunting;
+use executable::Headhunting;
 
 #[derive(Parser)]
 #[command(about = "Read a job posting, pick the top k from the pool, draft cold mails")]
 struct Args {
-    /// Path to the posting, as markdown.
-    ///
-    /// The default is one of the four in `eval/jd`, each of which has an answer key beside
-    /// it. A posting with no key runs to the end and writes artifacts that nothing can
-    /// grade, which reads as working.
-    #[arg(long, default_value = "eval/jd/backend-rust.md")]
+    /// Path to the posting, as markdown. Four ship with the example, under `jd/`.
+    #[arg(long, default_value = "jd/backend-rust.md")]
     jd: std::path::PathBuf,
 
     /// How many to shortlist. If fewer qualify, it emits fewer and says why.
@@ -371,7 +368,6 @@ async fn main() -> Result<()> {
         );
     }
 
-    println!("score     eval/run_eval.py --score {}", out_dir.display());
     Ok(())
 }
 
@@ -380,9 +376,9 @@ async fn main() -> Result<()> {
 /// # Why the current directory is not mounted whole
 ///
 /// The example directory holds things the agent must not see. `data/ground_truth.json`
-/// is the **answer key**, with trap labels and verdicts; `eval/expected/*.json` is the
-/// scoring criteria; `data/candidates.json` is the entire source pool. Mount the whole
-/// directory and one `read` call reaches all of it.
+/// is the **answer key**, saying which of the 600 are planted and what each one tests;
+/// `data/candidates.json` is the entire source pool. Mount the whole directory and one
+/// `read` call reaches all of it.
 ///
 /// So the tree holds only what this run needs.
 ///
@@ -403,7 +399,7 @@ async fn main() -> Result<()> {
 /// ```
 ///
 /// Inputs go under `in/` because of counting and scoring. On the same level as the
-/// artifacts, [`list_files`] would count them as artifacts and `run_eval.py`'s `*.md`
+/// artifacts, [`list_files`] would count them as artifacts and a reader's eye
 /// would pick up the posting.
 fn prepare(out_dir: &std::path::Path, jd: &std::path::Path) -> Result<std::path::PathBuf> {
     let inputs = out_dir.join("in");
@@ -445,7 +441,7 @@ fn prepare(out_dir: &std::path::Path, jd: &std::path::Path) -> Result<std::path:
 /// and the screen kept as `console.txt`), and so does prose written afterwards for a
 /// person — `SCENARIO.md`. Counted as artifacts they blur the one figure that says what
 /// came out. [`prompt`] fixes the filenames as `NN-<slug>.md`, so that shape is what
-/// identifies one. `run_eval.py` narrows the same way and for the same reason.
+/// identifies one.
 fn list_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut out: Vec<_> = std::fs::read_dir(dir)
         .into_iter()
@@ -479,21 +475,12 @@ mod tests {
 
     use super::{Args, list_files};
 
-    /// Running with no arguments has to produce something that can be scored.
-    ///
-    /// A default posting with no answer key beside it reads as working — the run finishes
-    /// and writes artifacts — and then `run_eval.py --score` has nothing to grade it by.
+    /// Running with no arguments has to find its posting.
     #[test]
-    fn the_default_posting_has_an_answer_key() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let jd = root.join(Args::parse_from(["headhunter"]).jd);
+    fn the_default_posting_is_in_the_example() {
+        let jd = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(Args::parse_from(["headhunter"]).jd);
         assert!(jd.is_file(), "no posting at {}", jd.display());
-
-        let key = root
-            .join("eval/expected")
-            .join(jd.file_stem().unwrap())
-            .with_extension("json");
-        assert!(key.is_file(), "no answer key at {}", key.display());
     }
 
     /// A run directory holds more than the run produced. `SCENARIO.md` is written after the

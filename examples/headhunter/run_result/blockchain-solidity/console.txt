@@ -1,4 +1,4 @@
-  posting  eval/jd/blockchain-solidity.md
+  posting  jd/blockchain-solidity.md
   model    anthropic/claude-sonnet-5
   console  ../../../cortex/target/debug/cortex-local-console
   pool     data/headhunter.db
@@ -34,4 +34,3 @@ tokens  input 446 · output 8.4K · cache write 38.3K · cache read 266.1K
 1 artifacts
      4.7KB  00-shortlist.md
 query log  run_result/blockchain-solidity/queries.log  (10 calls, untruncated)
-score     eval/run_eval.py --score run_result/blockchain-solidity

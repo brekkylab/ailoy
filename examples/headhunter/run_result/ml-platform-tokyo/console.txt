@@ -1,4 +1,4 @@
-  posting  eval/jd/ml-platform-tokyo.md
+  posting  jd/ml-platform-tokyo.md
   model    anthropic/claude-sonnet-5
   console  ../../../cortex/target/debug/cortex-local-console
   pool     data/headhunter.db
@@ -44,4 +44,3 @@ tokens  input 524 · output 40.5K · cache write 32.3K · cache read 264.0K
       958B  05-lane-ashby.md
       951B  06-kai-lockhart.md
 query log  run_result/ml-platform-tokyo/queries.log  (10 calls, untruncated)
-score     eval/run_eval.py --score run_result/ml-platform-tokyo

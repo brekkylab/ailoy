@@ -10,7 +10,7 @@
 -- aggregate (`misuse of window function MAX()`). Sparing the agent non-obvious
 -- constraints like that every turn is part of why the view exists.
 --
--- `2026*12+8` has to match `AS_OF` in the generator's `datagen/common/dates.py`.
+-- `2026*12+8` has to match `AS_OF` in `sql/load.py`, which checks it on every load.
 -- `assert_as_of_matches` in `load.py` checks it — a mismatch is silently wrong.
 CREATE VIEW candidate_tenure AS
 WITH span AS (

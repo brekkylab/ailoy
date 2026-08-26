@@ -4,7 +4,7 @@ Give the agent one job posting. It searches a pool of 600 people, picks three, a
 drafts a cold mail for each one.
 
 ```
-eval/jd/backend-rust.md ──▶ [ headhunter agent ] ──▶ 00-shortlist.md
+jd/backend-rust.md ──▶ [ headhunter agent ] ──▶ 00-shortlist.md
                                    │                 01-<name>.md
                                    │                 02-<name>.md
                                    ▼                 03-<name>.md
@@ -42,7 +42,7 @@ kill two traps at once.
 
 ## What happened in one run
 
-Run of 2026-08-21 against `eval/jd/backend-rust.md`, a Rust backend role on a payments
+Run of 2026-08-21 against `jd/backend-rust.md`, a Rust backend role on a payments
 settlement platform. Full capture in [`run-2.console`](run-2.console).
 
 The agent read `skill_distribution` before searching anything. Rust is spelled seven
@@ -118,8 +118,7 @@ Any agent that narrows a settlement posting by domain drops that person before r
 anyone. Two separate runs did exactly that.
 
 The trap works. This posting simply cannot reach it, which says something about the
-fixture and nothing about the agent. The scorer flags it for a human to check rather
-than passing it silently.
+fixture and nothing about the agent.
 
 ## Output
 
@@ -136,18 +135,13 @@ English, which the data decided, not a setting.
 
 The shortlist has to name rejections. A list of three names cannot be checked later:
 you cannot tell whether the agent filtered out the trap or never saw it. The
-instruction requires a `<!-- rejected -->` marker, and the scorer reads what follows it.
+instruction requires a `<!-- rejected -->` marker, and everything below it is who was
+passed over.
 
-## Scoring
-
-```console
-$ python3 eval/run_eval.py --score run-2/backend-rust
-```
-
-This run had no automatic failures and twelve items flagged for human review. The
-scorer does not try to settle those twelve. Whether a missing control is a ranking
-decision or an elimination depends on the reason the agent gave, and only reading the
-rejections answers it.
+Whether a control missing from the picks was a ranking decision or an elimination cannot
+be settled from the list of names. Only the reason the agent wrote answers it, which is
+why the rejections are the part worth reading. `data/ground_truth.json` says which of the
+600 are planted and what each one tests, for checking those reasons against.
 
 ## Running it
 
@@ -155,12 +149,12 @@ rejections answers it.
 $ export AILOY_CORTEX_CONSOLE=../../../cortex/target/debug/cortex-local-console
 $ cd examples/headhunter
 $ python3 sql/load.py
-$ cargo run -p headhunter -- --jd eval/jd/backend-rust.md --out run-2 --k 3
+$ cargo run -p headhunter -- --jd jd/backend-rust.md --out run-2 --k 3
 ```
 
 The default model is `bedrock/global.anthropic.claude-sonnet-5`. Pass
 `--model anthropic/claude-sonnet-5` to use the Anthropic API instead. Credentials come
 from `.env` at the repository root.
 
-Three other postings live in `eval/jd/`. One of them, `blockchain-solidity.md`, has no
+Three other postings live in `jd/`. One of them, `blockchain-solidity.md`, has no
 qualified candidate anywhere in the pool. Saying so is the correct answer.

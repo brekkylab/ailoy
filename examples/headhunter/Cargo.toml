@@ -4,9 +4,6 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-# Two binaries: the example app, and a CLI for calling the same commands by hand.
-default-run = "headhunter"
-
 [dependencies]
 ailoy = { path = "../.." }
 # A path outside this repo — `cortex` is a sibling checkout, the same assumption the

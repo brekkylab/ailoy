@@ -1,4 +1,4 @@
-  posting  eval/jd/backend-seoul-ko.md
+  posting  jd/backend-seoul-ko.md
   model    anthropic/claude-sonnet-5
   console  ../../../cortex/target/debug/cortex-local-console
   pool     data/headhunter.db
@@ -34,4 +34,3 @@ tokens  input 623 · output 30.5K · cache write 49.6K · cache read 294.5K
      1.1KB  02-지훈-류.md
       940B  03-dohyun-ban.md
 query log  run_result/backend-seoul-ko/queries.log  (9 calls, untruncated)
-score     eval/run_eval.py --score run_result/backend-seoul-ko
