@@ -147,13 +147,31 @@ impl Fetcher {
 }
 
 /// Percent-decoding for a path segment, so a value containing `/` can be named.
+/// The byte two hex digits spell, or nothing if they are not both hex.
+///
+/// Not [`u8::from_str_radix`], which takes a sign: it reads `+1` as 1, so `%+1` would
+/// decode where it should stay as written.
+fn hex_byte(hi: u8, lo: u8) -> Option<u8> {
+    let digit = |b: u8| match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    };
+    Some(digit(hi)? * 16 + digit(lo)?)
+}
+
 pub fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
+        // Read the two digits as bytes. Slicing the `&str` here would panic on
+        // `%` followed by a multi-byte character — `%가` cuts a char boundary — and this
+        // runs inside an `extern "C"` callback with nothing to catch it, so the panic
+        // aborts and the mount outlives the process that made it.
         if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+            if let Some(v) = hex_byte(b[i + 1], b[i + 2]) {
                 out.push(v);
                 i += 3;
                 continue;
@@ -204,5 +222,21 @@ mod tests {
         for s in ["A/B", "plain", "a b", "100%"] {
             assert_eq!(percent_decode(&urlencode(s)), s);
         }
+    }
+
+    /// A `%` that is not an escape must survive whatever follows it.
+    ///
+    /// Path segments are values a caller wrote — a legal name, a query — so a stray `%`
+    /// is ordinary input. Reading the two digits as anything but bytes panics when the
+    /// next character is multi-byte, and a panic here runs in an `extern "C"` callback:
+    /// it aborts, and the mount is still there afterwards.
+    #[test]
+    fn a_stray_percent_is_left_alone() {
+        for s in ["%가", "%a한", "%🙂", "50%가치", "%", "%4", "%zz", "100%!", "%+1", "%+f"] {
+            assert_eq!(percent_decode(s), s, "{s}");
+        }
+        // Real escapes still decode, including one before a multi-byte character.
+        assert_eq!(percent_decode("%41가"), "A가");
+        assert_eq!(percent_decode("%ea%b0%80"), "가");
     }
 }

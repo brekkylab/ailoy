@@ -369,18 +369,60 @@ fn build_task(args: &Args) -> Result<String> {
 
 fn list_files(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
+    walk(dir, &[], &mut out);
+    out.sort();
+    out
+}
+
+/// Every file under `dir`, except below anything in `skip`.
+///
+/// `skip` is not an optimisation. Two of its entries are the mountpoints, and walking
+/// one of those is a request per registrant — the boundary would pay the registries to
+/// tell it what it already knows, that they refuse writes.
+fn walk(dir: &Path, skip: &[PathBuf], out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return out;
+        return;
     };
     for e in entries.flatten() {
         let p = e.path();
+        if skip.iter().any(|s| p == *s) {
+            continue;
+        }
         if p.is_dir() {
-            out.extend(list_files(&p));
+            walk(&p, skip, out);
         } else {
             out.push(p);
         }
     }
+}
+
+/// Files the run wrote that the boundary does not allow.
+///
+/// Everything the session can reach and touched since `since`, minus what the boundary
+/// permits. Modification time is what separates a run's writes from the tree it was
+/// dropped into; without it every source file in the repository would read as a
+/// violation.
+fn writes_outside(
+    roots: &[PathBuf],
+    skip: &[PathBuf],
+    since: std::time::SystemTime,
+    boundary: &WriteBoundary,
+) -> Vec<PathBuf> {
+    let mut seen = Vec::new();
+    for r in roots {
+        walk(r, skip, &mut seen);
+    }
+    let mut out: Vec<PathBuf> = seen
+        .into_iter()
+        .filter(|p| !boundary.permits(p))
+        .filter(|p| {
+            std::fs::metadata(p)
+                .and_then(|m| m.modified())
+                .is_ok_and(|m| m >= since)
+        })
+        .collect();
     out.sort();
+    out.dedup();
     out
 }
 
@@ -396,7 +438,9 @@ async fn main() -> Result<()> {
     // [`mountpoint`].
     let tree = std::env::current_dir()?.canonicalize()?;
     for (label, path) in [("--out", &args.out), ("--workspace", &args.workspace)] {
-        if !tree.join(path).starts_with(&tree) {
+        // Folded first: `join` leaves `..` in place and `starts_with` compares
+        // components, so `../../etc` would otherwise read as inside the tree.
+        if !guard::normalize(&tree.join(path)).starts_with(&tree) {
             bail!(
                 "{label} {} is outside the session tree {}",
                 path.display(),
@@ -440,6 +484,10 @@ async fn main() -> Result<()> {
     println!("mounts   {}/{{gleif,edgar}}", mountpoint.display());
     println!("tree     {}", tree.display());
     println!("run      {slug}\n");
+
+    // Everything the boundary will judge is what appeared after this point. Taken after
+    // the mounts and the run's own directories, so neither reads as a violation.
+    let started = std::time::SystemTime::now();
 
     let mut turns = 0usize;
     let mut tool_calls = 0usize;
@@ -542,9 +590,20 @@ async fn main() -> Result<()> {
         println!("  {}", p.display());
     }
 
-    let escaped: Vec<_> = written.iter().filter(|p| !boundary.permits(p)).collect();
+    // Not `written`: those come from the artifacts directory, which the boundary allows
+    // by construction, so checking them could only ever pass. What is worth checking is
+    // the rest of what the session could reach.
+    let escaped = writes_outside(
+        &[tree.clone(), mountpoint.clone()],
+        &[mountpoint.join("gleif"), mountpoint.join("edgar")],
+        started,
+        &boundary,
+    );
     if !escaped.is_empty() {
-        println!("write boundary: **violated** {escaped:?}");
+        println!("write boundary: **violated**");
+        for p in &escaped {
+            println!("  {}", p.display());
+        }
         bail!("a write left the allowed directories");
     }
 
@@ -566,6 +625,50 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// `--out ../../etc` has to be refused. `join` leaves `..` in the path and
+    /// `starts_with` compares components, so without folding it reads as inside.
+    #[test]
+    fn a_relative_escape_is_outside_the_tree() {
+        let tree = PathBuf::from("/home/u/proj");
+        for p in ["../../etc", "./a/../../..", "a/../../b"] {
+            assert!(
+                !guard::normalize(&tree.join(p)).starts_with(&tree),
+                "{p} passed as inside"
+            );
+        }
+        for p in ["artifacts", "./artifacts/run-1", "a/../artifacts"] {
+            assert!(guard::normalize(&tree.join(p)).starts_with(&tree), "{p}");
+        }
+    }
+
+    /// A file written outside the allowed directories has to be reported. The check
+    /// used to run over the artifacts directory alone, which the boundary allows by
+    /// construction, so it could only ever pass.
+    #[test]
+    fn a_write_outside_the_allowed_directories_is_seen() {
+        let root = std::env::temp_dir().join(format!("ailoy-boundary-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let allowed = root.join("artifacts/run-1");
+        std::fs::create_dir_all(&allowed).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let boundary = WriteBoundary::new([allowed.clone()]);
+
+        let started = std::time::SystemTime::now();
+        std::fs::write(allowed.join("report.md"), "ok").unwrap();
+        std::fs::write(root.join("src/patched.rs"), "not ok").unwrap();
+
+        let escaped = writes_outside(&[root.clone()], &[], started, &boundary);
+        assert_eq!(escaped, vec![root.join("src/patched.rs")]);
+
+        // A file the run did not touch is not its doing.
+        let old = writes_outside(&[root.clone()], &[], std::time::SystemTime::now(), &boundary);
+        assert!(old.is_empty(), "{old:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     use super::*;
 
     #[test]

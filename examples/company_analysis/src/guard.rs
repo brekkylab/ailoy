@@ -50,7 +50,7 @@ impl WriteBoundary {
 /// it fails on a path that does not exist yet, and the paths being checked are mostly
 /// files a run is about to create. Resolving textually also means a `..` cannot escape
 /// by pointing through a symlink the check never sees.
-fn normalize(p: &Path) -> PathBuf {
+pub fn normalize(p: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for c in p.components() {
         match c {
