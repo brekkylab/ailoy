@@ -1,0 +1,23 @@
+[package]
+name = "company_analysis"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+ailoy = { path = "../.." }
+anyhow = "1"
+# `FileSystem` is cortex's trait, so implementing one means depending on cortex by
+# name. `fuse-t` is what turns the trait into a path a subprocess can open; it needs a
+# libfuse provider at build time — see this example's README.
+cortex = { path = "../../../cortex/cortex", features = ["fuse-t"] }
+dotenvy = "0.15"
+futures = "0.3"
+reqwest = { version = "0.13", features = ["json"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

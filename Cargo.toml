@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "./",
+    "examples/company_analysis",
 ]
 exclude = [
     ".worktrees",

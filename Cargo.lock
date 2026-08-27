@@ -503,6 +503,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "company_analysis"
+version = "0.3.0"
+dependencies = [
+ "ailoy",
+ "anyhow",
+ "cortex",
+ "dotenvy",
+ "futures",
+ "reqwest",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "compression-codecs"
 version = "0.4.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -576,6 +590,7 @@ dependencies = [
  "bson",
  "cc",
  "futures-core",
+ "libc",
  "pkg-config",
  "serde",
  "tokio",
