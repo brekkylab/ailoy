@@ -1,0 +1,47 @@
+-- headhunter query log
+-- posting jd/backend-seoul-ko.md
+-- 9 calls holding 16 commands. The turn number is which assistant response made the call.
+
+-- turn 1
+headhunting search --help; echo "-----"; headhunting read --help; echo "-----"; cat in/schema.sql
+
+-- turn 3
+headhunting search --city Seoul --skill Rust --min-years 4 --columns name,years,naive_years,open,contact,title,company | head -50
+
+-- turn 4
+headhunting search --city Seoul --skill Rust --min-years 4 --columns name --limit 200 | tail -n +3 | awk -F' ' '{print $1}' | grep '^urn' > /tmp/ids.txt; wc -l /tmp/ids.txt; cat /tmp/ids.txt | tr '\n' ',' 
+
+-- turn 5
+IDS=$(cat /tmp/ids.txt | tr '\n' ',' | sed 's/,$//')
+echo "checking kafka mentions within Rust+Seoul+4y candidates"
+headhunting search --id "$IDS" --mentions kafka --columns name,years,naive_years,open,contact,title,company
+echo "-----idempot-----"
+headhunting search --id "$IDS" --mentions 멱등성 --columns name,years,naive_years,open,contact,title,company
+echo "-----idempotency english-----"
+headhunting search --id "$IDS" --mentions idempotency --columns name,years,naive_years,open,contact,title,company
+
+
+-- turn 6
+IDS=$(cat /tmp/ids.txt | tr '\n' ',' | sed 's/,$//')
+headhunting search --id "$IDS" --mentions idempotent --columns name,title,company
+echo "---distributed---"
+headhunting search --id "$IDS" --mentions distributed --columns name,title,company
+echo "---분산---"
+headhunting search --id "$IDS" --mentions 분산 --columns name,title,company
+echo "---traffic 대용량---"
+headhunting search --id "$IDS" --mentions 대용량 --columns name,title,company
+headhunting search --id "$IDS" --mentions traffic --columns name,title,company
+
+
+-- turn 7
+headhunting read urn:li:person:k6qb3nwd urn:li:person:n7kv4jsb urn:li:person:w3gm8rbq urn:li:person:h4tb9wzr urn:li:person:k8vq3mrt urn:li:person:oobyp8gk 2>&1 | head -400
+
+-- turn 8
+headhunting read urn:li:person:b2pq7x72 urn:li:person:ebbl1eok urn:li:person:w9td4bmq urn:li:person:b3tq9wmk urn:li:person:q8jw3rvh urn:li:person:h2wp6tdz urn:li:person:y5cf9pxn urn:li:person:gyu50i73 urn:li:person:1hriea8p urn:li:person:bqsuo43r 2>&1
+
+-- turn 10
+headhunting read urn:li:person:k6qb3nwd urn:li:person:w3gm8rbq urn:li:person:n7kv4jsb --columns 2>&1 | head -5
+echo done
+
+-- turn 11
+headhunting query "select candidate_id, desired_title, location_type, desired_location, employment_type from open_to_work_prefs where candidate_id in ('urn:li:person:k6qb3nwd','urn:li:person:w3gm8rbq','urn:li:person:n7kv4jsb','urn:li:person:h2wp6tdz','urn:li:person:k8vq3mrt','urn:li:person:q8jw3rvh','urn:li:person:w9td4bmq')"

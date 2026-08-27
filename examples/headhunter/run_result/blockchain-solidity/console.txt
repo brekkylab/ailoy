@@ -1,0 +1,36 @@
+  posting  jd/blockchain-solidity.md
+  model    anthropic/claude-sonnet-5
+  console  ../../../cortex/target/debug/cortex-local-console
+  pool     data/headhunter.db
+  tree     run_result/blockchain-solidity
+  max      32000 tokens/response
+
+  search 10× · 0, 20, 0, 15, 0 rows
+  read 3× · 2, 2 people
+  query 1×
+  wrote 00-shortlist.md  4.7KB
+  shell 4×
+
+No candidates in the pool meet the must-have of production Solidity/smart-contract experience, so the shortlist is empty.
+
+## Summary of what I did
+
+1. **Split must-haves from nice-to-haves** in the JD: must-haves are Solidity-in-production (contracts holding funds), vulnerability-class familiarity, and 3+ years engineering experience. Nice-to-haves (formal verification/fuzzing, EVM internals, prior audit) were deliberately excluded from gating.
+
+2. **Checked vocabulary before gating**, per the instructions: `distribution skill` (full 49-value list), `distribution title`, and `distribution company` for solidity/blockchain/smart/contract/chain — all came back empty. This is the "widen before you conclude absence" step, and it showed the pool's skill vocabulary is entirely web/mobile/data/ML/infra (Python, Kubernetes, TypeScript, Rust, etc.), with nothing blockchain-related under any spelling.
+
+3. **Swept broadly with `--mentions`** (which covers headline+summary+titles+descriptions+skills, not just the skill list) across ~30 blockchain-domain terms (solidity, evm, defi, wallet, gas, fuzz, formal verification, audit, vyper, hardhat, openzeppelin, web3, proxy, upgradeable, storage layout, ledger, settlement, on-chain, mainnet, erc20, cryptography, validator, consensus, etc.) to make sure a differently-spelled or oddly-surfaced hit wasn't being missed.
+
+4. **Read in full** every profile that surfaced any blockchain-adjacent language (Piper Voss, Jade Grantham, Tatum Hollis, Alex Merrick) to check the claim against the actual position descriptions — each one explicitly disclaims writing/owning contracts (frontend above the RPC boundary, infra below the chain, analytics downstream of it, or merely "web3 curious" in a fintech job).
+
+5. Also checked `job_function` and `industry` axes across the whole pool — no blockchain-specific category exists there either.
+
+Given a clear, explicit absence of anyone who has written or audited Solidity contracts (let alone ones holding funds), and per the rule that a candidate clearly failing a must-have does not make the shortlist, I wrote `00-shortlist.md` with an empty pick list, full documentation of the search trail, and named rejections (including the ones a naive keyword search might have surfaced) explaining why each fails the bar. No cold-mail files were produced since there are no picks.
+
+--- run summary ---
+30 turns · 10 pool calls · 0 failed · 15 tool calls · finish Stop
+tokens  input 446 · output 8.4K · cache write 38.3K · cache read 266.1K
+        effective input 75.0K (uncached it would be 304.9K)
+1 artifacts
+     4.7KB  00-shortlist.md
+query log  run_result/blockchain-solidity/queries.log  (10 calls, untruncated)

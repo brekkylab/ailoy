@@ -2,6 +2,7 @@
 members = [
     "./",
     "examples/company_analysis",
+    "examples/headhunter",
 ]
 exclude = [
     ".worktrees",
