@@ -25,7 +25,11 @@
 //! [`trace`], which holds the tool traffic; bringing it here would put state in two
 //! places.
 
-use ailoy::{lang_model::get_lm_providers_mut, message::Role};
+use ailoy::{
+    agent::{Agent, AgentSpec, AgentState},
+    lang_model::get_lm_providers_mut,
+    message::Role,
+};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use cortex::{
@@ -87,10 +91,7 @@ struct Args {
 
     /// The most tokens the model may emit in one response.
     ///
-    /// **This example fails at the default (Anthropic's 8192).** The shortlist is written
-    /// through the `write` tool, so the file body rides in the tool-call arguments and
-    /// counts against response tokens. Measured: writing a 10KB shortlist ended in
-    /// `FinishReason::Length` with zero artifacts — 47 turns and nothing left behind.
+    /// **The provider default is not enough here** — see the note where the spec is built.
     #[arg(long, default_value_t = 32_000)]
     max_tokens: u64,
 }
@@ -218,12 +219,30 @@ async fn main() -> Result<()> {
     // `apply_patch`.
     //
     // Keeping those tools from seeing outside the tree is what [`prepare`] does.
-    let mut agent = ailoy::agent::AgentBuilder::new(&args.model)
-        .console(console)
+    //
+    // # Why the spec is assembled by hand
+    //
+    // `AgentBuilder` is the ordinary way in, and it forwards `temperature`, `top_p`, and
+    // the rest to the spec — but not `max_tokens`, so from the builder there is no way to
+    // raise the ceiling. **This example does not work at the provider default.** The
+    // shortlist is written through the `write` tool, so its whole body rides in the
+    // tool-call arguments and counts against the response. Measured at Anthropic's 8192:
+    // two of the four postings ended in `FinishReason::Length` with zero artifacts, after
+    // 31 and 37 turns of work that reached the right people and then had nowhere to put
+    // them.
+    //
+    // `AgentSpec` carries `max_tokens`, and `AgentState::with_console` is what the builder
+    // does with a console, so going straight to `Agent` costs two extra lines and removes
+    // the ceiling.
+    let spec = AgentSpec::new(&args.model)
         .system_tools()
-        .max_tokens(args.max_tokens)
         .instruction(prompt::system(args.k))
-        .build()?;
+        .max_tokens(args.max_tokens);
+    let mut agent = Agent::try_with_provider_and_state(
+        spec,
+        "default",
+        AgentState::new().with_console(console),
+    )?;
 
     println!("  posting  {}", args.jd.display());
     println!("  model    {}", args.model);
@@ -237,8 +256,9 @@ async fn main() -> Result<()> {
     // `run` returns a stream, not a single future. Turns advance as it is consumed.
     //
     // **The finish reason is held onto.** With no artifacts it is the only clue to why it
-    // stopped: `Stop` means it said it would write and ended the turn, `Length` means
-    // max_tokens.
+    // stopped: `Stop` means it said it would write and ended the turn, `Length` means the
+    // response hit the provider's ceiling — the shortlist rides in the `write` call's
+    // arguments, so a long one is a long response.
     //
     // What goes on screen is built by [`trace::Trace`]. Full command text goes to a file
     // rather than the screen; what flows here is the agent's words and the scale of what
@@ -352,8 +372,8 @@ async fn main() -> Result<()> {
         .any(|p| p.file_name().is_some_and(|n| n == "00-shortlist.md"))
     {
         bail!(
-            "no 00-shortlist.md ({} artifacts, finish reason {}). Length means it hit \
-             max_tokens; Stop means it said it would write and ended the turn",
+            "no 00-shortlist.md ({} artifacts, finish reason {}). Length means the \
+             response ran out of room; Stop means it said it would write and ended the turn",
             written.len(),
             last_finish.as_deref().unwrap_or("?")
         );
