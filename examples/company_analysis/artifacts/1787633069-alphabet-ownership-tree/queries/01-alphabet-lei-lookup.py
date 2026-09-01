@@ -2,15 +2,14 @@
 Find Alphabet Inc.'s LEI in GLEIF by legal name, and confirm the record
 against known facts (Delaware incorporation, Mountain View HQ).
 
-Path read (mount root down, prefix omitted):
+Path read:
   gleif/search/entity.legalName/Alphabet Inc/pages/page-001.json
 """
 import json
 
 PATH = "gleif/search/entity.legalName/Alphabet Inc/pages/page-001.json"
-FULL = "/var/folders/b1/n4bd3bq52gx_g1h4tfbr_s6m0000gn/T/ailoy-company-analysis/" + PATH
 
-with open(FULL) as f:
+with open(PATH) as f:
     d = json.load(f)
 
 print("total hits:", d["meta"]["pagination"]["total"])

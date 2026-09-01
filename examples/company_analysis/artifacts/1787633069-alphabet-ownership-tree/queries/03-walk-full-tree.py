@@ -13,8 +13,7 @@ Paths read (one per entity, all under gleif/by-lei/<LEI>/...):
 """
 import json, os
 
-ROOT = "/var/folders/b1/n4bd3bq52gx_g1h4tfbr_s6m0000gn/T/ailoy-company-analysis/"
-BASE = ROOT + "gleif/by-lei/"
+BASE = "gleif/by-lei/"
 
 owned_lei_names = {
 "98450066EDFC0Y6C2A54":"GOOGLE ARGENTINA S.R.L.",

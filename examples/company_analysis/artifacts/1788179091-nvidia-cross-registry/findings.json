@@ -1,0 +1,132 @@
+{
+  "run_id": "1788179091-nvidia-cross-registry",
+  "task": "Find NVIDIA in both registries (GLEIF, SEC EDGAR) and compare what each says: agreements, differences, match confidence.",
+  "entities": [
+    {
+      "registry": "edgar",
+      "id_type": "CIK",
+      "id": "0001045810",
+      "name": "NVIDIA CORP",
+      "ticker": "NVDA",
+      "exchange": "Nasdaq",
+      "ein": "943177549",
+      "sic": "3674",
+      "sic_description": "Semiconductors & Related Devices",
+      "state_of_incorporation": "DE",
+      "business_address": "2788 San Tomas Expressway, Santa Clara, CA 95051",
+      "former_names": [
+        {"name": "NVIDIA CORP/CA", "from": "1998-05-07", "to": "2002-06-04"}
+      ],
+      "source": "edgar/by-cik/0001045810/submissions/submissions.json"
+    },
+    {
+      "registry": "gleif",
+      "id_type": "LEI",
+      "id": "549300S4KLFTLO7GSQ80",
+      "name": "NVIDIA CORPORATION",
+      "jurisdiction": "US-DE",
+      "category": "GENERAL",
+      "status": "ACTIVE",
+      "legal_address": "C/O Corporation Service Company, 251 Little Falls Drive, Wilmington, DE 19808",
+      "headquarters_address": "2788 San Tomas Expressway, Santa Clara, CA 95051",
+      "registered_as": "2862596",
+      "creation_date": "1998-02-24",
+      "lei_initial_registration": "2013-04-09",
+      "lei_last_update": "2026-01-07",
+      "direct_children": [
+        {"name": "NVIDIA INTERNATIONAL, INC.", "lei": "549300EK80J3WR5TSA69", "jurisdiction": "US-DE"},
+        {"name": "NVIDIA GRAPHICS PRIVATE LIMITED", "lei": "335800TGZ6N1BWAN7Q35", "jurisdiction": "IN"},
+        {"name": "MELLANOX TECHNOLOGIES, LTD.", "lei": "5299007E0TX53VXVFJ97", "jurisdiction": "IL"}
+      ],
+      "source": "gleif/by-lei/549300S4KLFTLO7GSQ80/record/record.json"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "info",
+      "statement": "EDGAR CIK 0001045810 (NVIDIA CORP) and GLEIF LEI 549300S4KLFTLO7GSQ80 (NVIDIA CORPORATION) are a possible match — needs confirmation via ID, but strongly corroborated by an exact headquarters-address match and matching Delaware jurisdiction/state of incorporation.",
+      "evidence": [
+        "edgar/by-cik/0001045810/submissions/submissions.json",
+        "gleif/by-lei/549300S4KLFTLO7GSQ80/record/record.json"
+      ],
+      "confidence": "high"
+    },
+    {
+      "severity": "info",
+      "statement": "No shared identifier exists between the two records: EDGAR's own 'lei' field for CIK 0001045810 is null, so the join is by name plus address/jurisdiction corroboration, not by ID.",
+      "evidence": [
+        "edgar/by-cik/0001045810/submissions/submissions.json",
+        "CATALOG.md"
+      ],
+      "confidence": "high"
+    },
+    {
+      "severity": "info",
+      "statement": "Both registries agree the entity is headquartered at 2788 San Tomas Expressway, Santa Clara, CA 95051.",
+      "evidence": [
+        "edgar/by-cik/0001045810/submissions/submissions.json",
+        "gleif/by-lei/549300S4KLFTLO7GSQ80/record/record.json"
+      ],
+      "confidence": "high"
+    },
+    {
+      "severity": "info",
+      "statement": "Both registries agree the entity is incorporated/domiciled in Delaware (EDGAR: stateOfIncorporation=DE; GLEIF: jurisdiction=US-DE, legal address in Wilmington DE).",
+      "evidence": [
+        "edgar/by-cik/0001045810/submissions/submissions.json",
+        "gleif/by-lei/549300S4KLFTLO7GSQ80/record/record.json"
+      ],
+      "confidence": "high"
+    },
+    {
+      "severity": "info",
+      "statement": "Legal name differs by suffix style only: 'NVIDIA CORP' (EDGAR) vs 'NVIDIA CORPORATION' (GLEIF); not a disagreement about identity.",
+      "evidence": [
+        "edgar/by-cik/0001045810/submissions/submissions.json",
+        "gleif/by-lei/549300S4KLFTLO7GSQ80/record/record.json"
+      ],
+      "confidence": "high"
+    },
+    {
+      "severity": "info",
+      "statement": "EDGAR carries EIN (943177549), ticker (NVDA), SIC code (3674), former name history, and a full filing history that GLEIF does not carry at all.",
+      "evidence": [
+        "edgar/by-cik/0001045810/submissions/submissions.json"
+      ],
+      "confidence": "high"
+    },
+    {
+      "severity": "info",
+      "statement": "GLEIF carries a Delaware state registration number (registeredAs 2862596 / ocid us_de/2862596), a distinct registered-agent legal address, and a corporate family tree (3 direct subsidiaries) that EDGAR's submissions record does not carry.",
+      "evidence": [
+        "gleif/by-lei/549300S4KLFTLO7GSQ80/record/record.json",
+        "gleif/by-lei/549300S4KLFTLO7GSQ80/direct-children/direct-children.json"
+      ],
+      "confidence": "high"
+    },
+    {
+      "severity": "caution",
+      "statement": "A GLEIF name search on 'NVIDIA' surfaces non-company entities named after NVIDIA, e.g. 'Defiance Nvidia Ventures ETF' (LEI 529900YQV0X0R0T0AZ11) and 'NINEPOINT NVIDIA HIGHSHARES ETF' (LEI 894500UB1PEXN75HFT11), both category=FUND, plus the true subsidiary 'NVIDIA INTERNATIONAL, INC.' (LEI 549300EK80J3WR5TSA69). These were excluded as candidates for the parent operating company but are possible matches for other, narrower questions.",
+      "evidence": [
+        "gleif/search/entity.legalName/NVIDIA/pages/page-001.json"
+      ],
+      "confidence": "medium"
+    },
+    {
+      "severity": "caution",
+      "statement": "An EDGAR full-text search for 'NVIDIA' returns 2,417 hits, most of which are filings that merely mention NVIDIA (insider Form 3/4/5 filers, other companies' Schedule 13G naming NVIDIA) rather than filings by NVIDIA itself; only rows carrying CIK 0001045810 as registrant were used for this comparison.",
+      "evidence": [
+        "edgar/search/entityName/NVIDIA/pages/page-001.json",
+        "edgar/search/entityName/NVIDIA/pages/_README.md"
+      ],
+      "confidence": "high"
+    }
+  ],
+  "data_gaps": [
+    "Neither registry covers financial statements narrative, sanctions, or litigation (per ./CATALOG.md).",
+    "GLEIF record has no EIN field; EDGAR record has no LEI value populated (null), so no field-level EIN/LEI cross-check was possible.",
+    "GLEIF's subsidiary list (direct-children) was not cross-checked against EDGAR's Exhibit 21 subsidiary disclosures in this run.",
+    "GLEIF's ultimate-parent/ultimate-children relationships and isins relationship were not fetched in this run.",
+    "GLEIF full name-history (otherNames) is empty for this record, so no comparison was possible against EDGAR's formerNames array beyond noting the gap."
+  ]
+}

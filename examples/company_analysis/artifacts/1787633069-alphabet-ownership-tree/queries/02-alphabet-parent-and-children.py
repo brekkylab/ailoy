@@ -12,11 +12,10 @@ Paths read:
 """
 import json
 
-ROOT = "/var/folders/b1/n4bd3bq52gx_g1h4tfbr_s6m0000gn/T/ailoy-company-analysis/"
 LEI = "5493006MHB84DD0ZWV18"
 
-def load(rel):
-    with open(ROOT + rel) as f:
+def load(path):
+    with open(path) as f:
         return json.load(f)
 
 # 1. Does Alphabet report a parent?

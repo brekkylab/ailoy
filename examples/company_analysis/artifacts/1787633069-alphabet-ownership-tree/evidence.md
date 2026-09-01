@@ -1,7 +1,7 @@
 # Evidence
 
-All paths below are relative to the mount root and omit the
-`/var/folders/.../ailoy-company-analysis` prefix, per instructions.
+All paths below are relative to the mount root, which is the directory the console
+stands in.
 
 ## Identifying Alphabet Inc. in GLEIF
 
