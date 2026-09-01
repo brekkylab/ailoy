@@ -23,6 +23,7 @@ by the registries' own APIs rather than by a copy of them.
 [gleif]: https://www.gleif.org/en/lei-data/gleif-api
 [edgar]: https://www.sec.gov/edgar/sec-api-documentation
 [fs]: https://github.com/brekkylab/cortex/blob/main/cortex/src/fs/filesystem/filesystem.rs
+[workfs]: https://github.com/brekkylab/cortex/blob/main/cortex/src/fs/workfs.rs
 [lei]: https://www.gleif.org/en/organizational-identity/lei-vlei/the-legal-entity-identifier-lei
 [cik]: https://www.sec.gov/search-filings/cik-lookup
 [xbrl]: https://www.sec.gov/data-research/standard-taxonomies
@@ -33,8 +34,10 @@ by the registries' own APIs rather than by a copy of them.
 
 **Nothing here is stored.** Each registry is a cortex [`FileSystem`][fs]: every
 filesystem operation — listing a directory, checking whether a path exists, reading a
-file's bytes — is answered by the GLEIF or SEC EDGAR API. A path that looks like a file
-is a call going out, and a listing is what the registry says at that moment. Two runs a
+file's bytes — is answered by the GLEIF or SEC EDGAR API. The two are stitched into one
+tree with a [`WorkFs`][workfs], which is a mount table that is itself a `FileSystem`, so
+the kernel is handed one mount rather than one per registry. A path that looks like a
+file is a call going out, and a listing is what the registry says at that moment. Two runs a
 day apart can differ, and that is the registry disagreeing with itself rather than the
 tool.
 
@@ -53,9 +56,12 @@ GLEIF search page ends the trip; an EDGAR search only tells you where to look ne
 
 ## 2. Mounted directory structure
 
+The console is handed this mount and stands in it, so the paths an agent uses are
+relative to the root below and it never names a path on the host.
+
 ```
-<mountpoint>/
-├── CATALOG.md                    written here — the one path no store answers for
+./                                the console's working directory — the mount
+├── CATALOG.md                    the one path no store answers for
 ├── gleif/
 │   ├── CATALOG.md
 │   ├── by-lei/
@@ -68,17 +74,19 @@ GLEIF search page ends the trip; an EDGAR search only tells you where to look ne
 │       └── pages/
 │           ├── _README.md       how many pages this query has
 │           └── page-001.json
-└── edgar/
-    ├── CATALOG.md
-    ├── by-cik/
-    │   ├── _README.md
-    │   └── <CIK>/
-    │       ├── submissions/
-    │       │   └── submissions.json
-    │       ├── facts/
-    │       │   └── facts.json
-    │       └── concept/<taxonomy>/<tag>.json
-    └── search/<parameter>/<value>/…/pages/
+├── edgar/
+│   ├── CATALOG.md
+│   ├── by-cik/
+│   │   ├── _README.md
+│   │   └── <CIK>/
+│   │       ├── submissions/
+│   │       │   └── submissions.json
+│   │       ├── facts/
+│   │       │   └── facts.json
+│   │       └── concept/<taxonomy>/<tag>.json
+│   └── search/<parameter>/<value>/…/pages/
+├── artifacts/<run>/              the deliverables, kept on the project's disk
+└── workspace/<run>/              scratch, the same
 ```
 
 None of it exists until it is asked for. The shape is fixed and known here; the contents
@@ -297,7 +305,7 @@ examples/company_analysis/
   README.md
   Cargo.toml
   src/
-    main.rs      CLI, the two mounts, the run summary
+    main.rs      CLI, the mount, the run summary
     prompt.rs    system instruction and presets — policy, not the map
     apifs.rs     the client, cache and request count both stores share
     gleif.rs     GLEIF as a FileSystem
@@ -315,6 +323,7 @@ cargo test -p company_analysis
 SEC_USER_AGENT='...' cargo test -p company_analysis -- --ignored --test-threads=1
 ```
 
-`--test-threads=1` is not optional for the mounting ones. Each holds a mount for the
+`--test-threads=1` matters once more than one test mounts. Each holds a mount for the
 length of the test and unmounts by dropping it, and two of those overlapping deadlock —
-the tests report their results and then hang on the way out.
+the tests report their results and then hang on the way out. That is a cortex-side issue
+and a fix is in progress.

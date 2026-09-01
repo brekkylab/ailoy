@@ -24,6 +24,8 @@ use ailoy::{
     message::{Message, Part, Role, TokenUsage},
 };
 use anyhow::{Context, Result, bail};
+// The trait, for the two calls that write the catalogue into the root store.
+use cortex::fs::FileSystem;
 use futures::StreamExt;
 
 use crate::{
@@ -40,7 +42,7 @@ const DEFAULT_MODEL: &str = "anthropic/claude-sonnet-5";
 /// fact rather than before.
 const CONSOLE_PROGRAM: &str = "cortex-local-console";
 
-/// What the mountpoint says about itself, written beside the two mounts.
+/// What the mount says about itself, served at its root.
 ///
 /// Each store serves its own catalogue at its own root, but the instruction sends the
 /// agent to the catalogue above them, and that path is a plain directory — the one
@@ -258,35 +260,25 @@ fn thousands(n: u64) -> String {
 
 /// The guards and the stores behind them. Dropping this unmounts both.
 struct Live {
-    _mounts: (cortex::fs::FuseTMount, cortex::fs::FuseTMount),
+    mount: cortex::fs::FuseTMount,
     gleif: std::sync::Arc<GleifFs>,
     edgar: std::sync::Arc<EdgarFs>,
 }
 
-/// Mount the two registries under `at`.
+/// The whole tree a run works in, as one filesystem.
 ///
-/// Two mounts rather than one router: a mount point is what a kernel already uses to
-/// join trees, so dispatching on the first path segment would be code for something the
-/// OS does. The cost is that `at` itself stays an ordinary directory — writes there are
-/// caught by [`WriteBoundary`] rather than refused, which is a narrower claim than the
-/// mounts make about themselves, and the run summary says so.
-/// Where the registries are mounted, deliberately outside the working tree.
+/// [`WorkFs`](cortex::fs::WorkFs) is a mount table that is itself a `FileSystem`, so the
+/// registries, the note above them and the two directories a run writes into are stitched
+/// together in this process and the kernel is handed one tree.
 ///
-/// Not for the request cost — no directory in either store can be walked into, so an
-/// editor or an indexer finds only the two notes written here. For the mount itself: a
-/// signal does not run destructors, so a killed run leaves one behind, and a stale mount
-/// inside the repository stops anything that walks it. `git status` is one of those.
-fn mountpoint() -> PathBuf {
-    std::env::temp_dir().join("ailoy-company-analysis")
-}
-
-fn mount_live(at: &Path) -> Result<Live> {
-    let gleif_dir = at.join("gleif");
-    let edgar_dir = at.join("edgar");
-    std::fs::create_dir_all(&gleif_dir)?;
-    std::fs::create_dir_all(&edgar_dir)?;
-    std::fs::write(at.join("CATALOG.md"), LIVE_CATALOG)?;
-
+/// The writable pair are [`PassthroughFs`](cortex::fs::PassthroughFs) onto the project,
+/// because artifacts outlive the run: everything else here is answered by an API or held
+/// in memory, and would be gone when the mount is dropped.
+///
+/// What this buys is what the agent can see. The console is handed this mount and nothing
+/// else, so its session stands in a tree that holds the registries and the run's own two
+/// directories — not the host the process happens to be running on.
+fn mount_live(at: &Path, artifacts: &Path, workspace: &Path) -> Result<Live> {
     // Required rather than defaulted: SEC answers 403 with an HTML page to a
     // `User-Agent` that names no contact, and a default would only move the failure to
     // the first read — where it arrives as a JSON syntax error rather than as this.
@@ -299,17 +291,46 @@ fn mount_live(at: &Path) -> Result<Live> {
 
     let gleif = std::sync::Arc::new(GleifFs::new());
     let edgar = std::sync::Arc::new(EdgarFs::new(&ua));
-    let mounts = (
-        cortex::fs::FuseTMount::try_new(gleif.clone(), &gleif_dir)
-            .with_context(|| format!("mounting {}", gleif_dir.display()))?,
-        cortex::fs::FuseTMount::try_new(edgar.clone(), &edgar_dir)
-            .with_context(|| format!("mounting {}", edgar_dir.display()))?,
-    );
+
+    // The one path no store answers for, served by a store all the same: at the root of
+    // a mount there is no ordinary directory left to write it into.
+    let root = cortex::fs::InMemFs::new();
+    futures::executor::block_on(async {
+        root.create(Path::new("/CATALOG.md")).await?;
+        root.write_at(Path::new("/CATALOG.md"), LIVE_CATALOG.as_bytes(), 0)
+            .await
+            .map(|_| ())
+    })
+    .context("writing the catalogue")?;
+
+    let mut work = cortex::fs::WorkFs::new();
+    work.mount("", root).context("mounting the catalogue")?;
+    work.mount("gleif", gleif.clone()).context("mounting gleif")?;
+    work.mount("edgar", edgar.clone()).context("mounting edgar")?;
+    work.mount("artifacts", cortex::fs::PassthroughFs::new(artifacts))
+        .context("mounting artifacts")?;
+    work.mount("workspace", cortex::fs::PassthroughFs::new(workspace))
+        .context("mounting workspace")?;
+
+    std::fs::create_dir_all(at)?;
+    let mount = cortex::fs::FuseTMount::try_new(work, at)
+        .with_context(|| format!("mounting {}", at.display()))?;
+
     Ok(Live {
-        _mounts: mounts,
+        mount,
         gleif,
         edgar,
     })
+}
+
+/// Where the registries are mounted, deliberately outside the working tree.
+///
+/// Not for the request cost — no directory in either store can be walked into, so an
+/// editor or an indexer finds only the two notes written here. For the mount itself: a
+/// signal does not run destructors, so a killed run leaves one behind, and a stale mount
+/// inside the repository stops anything that walks it. `git status` is one of those.
+fn mountpoint() -> PathBuf {
+    std::env::temp_dir().join("ailoy-company-analysis")
 }
 
 /// Built-in tools do not run without a console server.
@@ -317,11 +338,12 @@ fn mount_live(at: &Path) -> Result<Live> {
 /// The binary lives in the `cortex` checkout rather than on `PATH`, so its location can
 /// be named. No mount is declared here: this server takes its own working directory as
 /// the session's, and that is already the tree.
-async fn console() -> Result<Console> {
+async fn console(mount: cortex::fs::FuseTMount) -> Result<Console> {
     let program =
         std::env::var("AILOY_CORTEX_CONSOLE").unwrap_or_else(|_| CONSOLE_PROGRAM.to_string());
     let mut console = Console::builder()
         .stdio_client(&[&program])
+        .mount(mount)
         .build()
         .await
         .with_context(|| {
@@ -370,6 +392,13 @@ fn build_task(args: &Args) -> Result<String> {
 fn list_files(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     walk(dir, &[], &mut out);
+    // `._name` beside `name` is macOS storing extended attributes it has nowhere else to
+    // put. The run did not write them and cannot not write them.
+    out.retain(|p| {
+        !p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("._"))
+    });
     out.sort();
     out
 }
@@ -385,7 +414,7 @@ fn walk(dir: &Path, skip: &[PathBuf], out: &mut Vec<PathBuf>) {
     };
     for e in entries.flatten() {
         let p = e.path();
-        if skip.iter().any(|s| p == *s) {
+        if skip.contains(&p) {
             continue;
         }
         if p.is_dir() {
@@ -449,25 +478,40 @@ async fn main() -> Result<()> {
         }
     }
 
-    let mountpoint = mountpoint();
-    std::fs::create_dir_all(&mountpoint)?;
-    // Held to the end of `main`: the guard is the mount, and dropping it unmounts.
-    let live = mount_live(&mountpoint)?;
-
     let slug = run_slug(&args);
-    let artifacts_dir = args.out.join(&slug);
-    let workspace_dir = args.workspace.join(&slug);
+    // Absolute from here on. The boundary compares with `starts_with`, which is
+    // component-wise, so mixing the two spellings makes every check answer no.
+    let artifacts_dir = guard::normalize(&tree.join(args.out.join(&slug)));
+    let workspace_dir = guard::normalize(&tree.join(args.workspace.join(&slug)));
     std::fs::create_dir_all(&artifacts_dir)?;
     std::fs::create_dir_all(&workspace_dir)?;
 
+    // Absolute, because that is what the walk that checks them produces: `starts_with`
+    // is component-wise, so a relative root can never prefix an absolute path.
     let boundary = WriteBoundary::new([artifacts_dir.clone(), workspace_dir.clone()]);
     boundary.check(&artifacts_dir.join("report.md"))?;
 
+    let mountpoint = mountpoint();
+    let live = mount_live(
+        &mountpoint,
+        &guard::normalize(&tree.join(&args.out)),
+        &guard::normalize(&tree.join(&args.workspace)),
+    )?;
+    let (gleif, edgar) = (live.gleif.clone(), live.edgar.clone());
+
+    // The console takes the mount and holds it for the session, so the paths the agent
+    // is given are relative to the tree it stands in rather than to this host.
+    let console = console(live.mount).await?;
+    let base = console
+        .workfs_path()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| mountpoint.clone());
+
     let task = build_task(&args)?;
     let paths = Paths {
-        data: &mountpoint.to_string_lossy(),
-        workspace: &args.workspace.to_string_lossy(),
-        artifacts: &args.out.to_string_lossy(),
+        data: ".",
+        workspace: "./workspace",
+        artifacts: "./artifacts",
     };
     let instruction = prompt::instruction(&paths, args.preset, &slug);
 
@@ -475,13 +519,13 @@ async fn main() -> Result<()> {
         .instruction(instruction)
         .system_tools()
         .python_repl_tool()
-        .console(console().await?)
+        .console(console)
         .build()
         .context("assembling the agent")?;
 
     println!("model    {}", args.model);
-    println!("console  {CONSOLE_PROGRAM} (on the host — writes outside the mounts are detected, not refused)");
-    println!("mounts   {}/{{gleif,edgar}}", mountpoint.display());
+    println!("console  {CONSOLE_PROGRAM} (on the host — writes outside the mount are detected, not refused)");
+    println!("mount    {}  gleif, edgar, artifacts, workspace", base.display());
     println!("tree     {}", tree.display());
     println!("run      {slug}\n");
 
@@ -536,7 +580,7 @@ async fn main() -> Result<()> {
                     None => one,
                 };
                 // Charged per call, so the cost lands on the command that caused it.
-                let (g, e) = (live.gleif.calls(), live.edgar.calls());
+                let (g, e) = (gleif.calls(), edgar.calls());
                 let (dg, de) = (g - spent.0, e - spent.1);
                 spent = (g, e);
                 let cost = match (dg, de) {
@@ -559,13 +603,13 @@ async fn main() -> Result<()> {
     println!("{usage}");
     println!(
         "requests  gleif {} / edgar {}",
-        live.gleif.calls(),
-        live.edgar.calls()
+        gleif.calls(),
+        edgar.calls()
     );
     // A total says a run was expensive; this says what it bought.
     for (store, rows) in [
-        ("gleif", live.gleif.breakdown()),
-        ("edgar", live.edgar.breakdown()),
+        ("gleif", gleif.breakdown()),
+        ("edgar", edgar.breakdown()),
     ] {
         if rows.is_empty() {
             continue;
@@ -573,8 +617,8 @@ async fn main() -> Result<()> {
         let detail: Vec<String> = rows.iter().map(|(k, n)| format!("{k} ×{n}")).collect();
         println!("  {store:<6}  {}", detail.join(", "));
         let (hot, distinct) = match store {
-            "gleif" => (live.gleif.hot_keys(3), live.gleif.distinct_keys()),
-            _ => (live.edgar.hot_keys(3), live.edgar.distinct_keys()),
+            "gleif" => (gleif.hot_keys(3), gleif.distinct_keys()),
+            _ => (edgar.hot_keys(3), edgar.distinct_keys()),
         };
         println!("          {distinct} distinct paths; heaviest:");
         for (k, n) in hot {
@@ -593,12 +637,9 @@ async fn main() -> Result<()> {
     // Not `written`: those come from the artifacts directory, which the boundary allows
     // by construction, so checking them could only ever pass. What is worth checking is
     // the rest of what the session could reach.
-    let escaped = writes_outside(
-        &[tree.clone(), mountpoint.clone()],
-        &[mountpoint.join("gleif"), mountpoint.join("edgar")],
-        started,
-        &boundary,
-    );
+    // The mountpoint is not walked: it is the mount, and the stores under it refuse
+    // writes themselves. Walking it would spend a request per registrant to be told so.
+    let escaped = writes_outside(&[tree.clone()], &[mountpoint.clone()], started, &boundary);
     if !escaped.is_empty() {
         println!("write boundary: **violated**");
         for p in &escaped {
