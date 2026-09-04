@@ -364,7 +364,7 @@ impl BedrockUnmarshal {
 }
 
 /// Events arrive as `{"<eventType>": body}` (see
-/// [`frame_to_event_data`](crate::lang_model::r#impl::eventstream::frame_to_event_data));
+/// [`frame_to_event_data`](crate::lang_model::r#impl::framing::eventstream::frame_to_event_data));
 /// each maps onto the same delta fragments the Anthropic stream produces:
 /// - `messageStart`: role
 /// - `contentBlockStart`: begins a `toolUse` call (id + name)

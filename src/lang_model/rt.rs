@@ -6,7 +6,7 @@ use crate::{
     datatype::Value,
     lang_model::{
         LangModelOptions, get_lm_providers,
-        r#impl::{api, eventstream},
+        r#impl::{api, framing::Framing},
     },
     message::{
         Delta as _, FinishReason, Marshaled, Message, MessageDeltaOutput, MessageOutput, Role,
@@ -333,101 +333,6 @@ async fn send_with_retry(
     unreachable!("retry loop returns or bails on every path")
 }
 
-/// How a streamed body is cut into events: SSE for plain HTTP APIs, the AWS
-/// binary event stream for Bedrock. Each drained item is the JSON text handed
-/// to the provider's `unmarshal_event`.
-enum Framing {
-    Sse,
-    EventStream,
-}
-
-impl Framing {
-    fn for_schema(schema: &LangModelAPISchema) -> Self {
-        match schema {
-            LangModelAPISchema::Bedrock => Self::EventStream,
-            _ => Self::Sse,
-        }
-    }
-
-    /// Every complete event currently in `buf`; partial bytes stay behind.
-    fn drain(&mut self, buf: &mut Vec<u8>) -> anyhow::Result<Vec<String>> {
-        let mut out = Vec::new();
-        match self {
-            Self::Sse => {
-                while let Some(data) = drain_next_event(buf) {
-                    if !data.is_empty() {
-                        out.push(data); // empty = keep-alive / comment line
-                    }
-                }
-            }
-            Self::EventStream => {
-                while let Some(frame) = eventstream::drain_next_frame(buf)? {
-                    if let Some(data) = eventstream::frame_to_event_data(&frame)? {
-                        out.push(data);
-                    }
-                }
-            }
-        }
-        Ok(out)
-    }
-
-    /// Events recoverable from the bytes left at EOF. Some SSE servers close
-    /// the connection right after the last event with no trailing blank line,
-    /// so `drain` never framed it — and it may be the only copy of the terminal
-    /// event (e.g. Gemini's finish_reason + usage chunk). Event-stream frames
-    /// are length-prefixed, so a leftover there is a truncated frame and is
-    /// dropped.
-    fn flush(&mut self, buf: &[u8]) -> anyhow::Result<Vec<String>> {
-        match self {
-            Self::Sse => {
-                let data = extract_event_data(buf);
-                Ok(if data.is_empty() { vec![] } else { vec![data] })
-            }
-            Self::EventStream => {
-                if !buf.is_empty() {
-                    log::warn!(
-                        "Bedrock stream ended with {} bytes of a truncated frame",
-                        buf.len()
-                    );
-                }
-                Ok(vec![])
-            }
-        }
-    }
-}
-
-/// Drains the next complete SSE event from `buf`, returning its concatenated
-/// `data:` payload. Returns `None` if no event (terminated by a blank line) is
-/// fully buffered yet; the partial bytes stay in `buf` for the next chunk.
-fn drain_next_event(buf: &mut Vec<u8>) -> Option<String> {
-    // Events are separated by a blank line: "\n\n" (LF) or "\r\n\r\n" (CRLF).
-    let (sep_pos, sep_len) = buf
-        .windows(2)
-        .position(|w| w == b"\n\n")
-        .map(|p| (p, 2))
-        .or_else(|| {
-            buf.windows(4)
-                .position(|w| w == b"\r\n\r\n")
-                .map(|p| (p, 4))
-        })?;
-
-    let raw: Vec<u8> = buf.drain(..sep_pos + sep_len).collect();
-    Some(extract_event_data(&raw))
-}
-
-/// Extracts the concatenated `data:` payload from one raw SSE event's bytes.
-/// SSE permits multiple `data:` lines per event; they are joined with newlines.
-/// Non-`data:` lines (`event:`, `id:`, comments) are dropped — every provider
-/// here carries its event type inside the `data:` JSON.
-fn extract_event_data(raw: &[u8]) -> String {
-    String::from_utf8_lossy(raw)
-        .lines()
-        .filter_map(|line| line.strip_prefix("data:"))
-        .map(|rest| rest.trim())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,36 +378,6 @@ mod tests {
         let json = serde_json::to_string(&original).expect("should serialize");
         let restored: ResponseFormat = serde_json::from_str(&json).expect("should deserialize");
         assert_eq!(original, restored);
-    }
-
-    #[test]
-    fn test_drain_next_event_frames_on_blank_line() {
-        // Two complete LF-separated events plus a partial third still buffered.
-        let mut buf = b"data: a\n\ndata: b\n\ndata: c".to_vec();
-        assert_eq!(drain_next_event(&mut buf).as_deref(), Some("a"));
-        assert_eq!(drain_next_event(&mut buf).as_deref(), Some("b"));
-        // The unterminated tail is not framed; it stays for the next chunk.
-        assert_eq!(drain_next_event(&mut buf), None);
-        assert_eq!(buf, b"data: c");
-    }
-
-    #[test]
-    fn test_drain_next_event_handles_crlf_and_multi_data() {
-        // CRLF separators, and an event with two `data:` lines (joined by \n).
-        let mut buf = b"data: x\r\ndata: y\r\n\r\nrest".to_vec();
-        assert_eq!(drain_next_event(&mut buf).as_deref(), Some("x\ny"));
-        assert_eq!(drain_next_event(&mut buf), None);
-        assert_eq!(buf, b"rest");
-    }
-
-    #[test]
-    fn test_extract_event_data_recovers_eof_terminated_event() {
-        // The run_stream EOF flush relies on this: a final event left in the
-        // buffer without a trailing blank line must still yield its payload.
-        assert_eq!(extract_event_data(b"data: {\"k\":1}"), "{\"k\":1}");
-        // Non-`data:` lines (comments / event:) are dropped.
-        assert_eq!(extract_event_data(b": keep-alive"), "");
-        assert_eq!(extract_event_data(b"event: done\ndata: tail"), "tail");
     }
 
     /// Register a one-off [`LangModelProvider`] under a unique key in the
@@ -769,33 +644,6 @@ mod tests {
             ..Default::default()
         };
         assert!(marshal_request(&LangModelAPISchema::Bedrock, &req(&with_format)).is_err());
-    }
-
-    /// The event-stream framing hands each frame's JSON to the provider and
-    /// tolerates frames split across network chunks; a truncated tail at EOF is
-    /// dropped rather than parsed.
-    #[test]
-    fn event_stream_framing_drains_whole_frames_only() {
-        use eventstream::tests::event_frame;
-
-        let mut wire = event_frame("messageStart", r#"{"role":"assistant"}"#);
-        wire.extend(event_frame("messageStop", r#"{"stopReason":"end_turn"}"#));
-        let cut = wire.len() - 7;
-
-        let mut framing = Framing::EventStream;
-        let mut buf = wire[..cut].to_vec();
-        let first = framing.drain(&mut buf).unwrap();
-        assert_eq!(first.len(), 1);
-        assert!(first[0].starts_with(r#"{"messageStart""#), "{}", first[0]);
-
-        buf.extend_from_slice(&wire[cut..]);
-        let second = framing.drain(&mut buf).unwrap();
-        assert_eq!(second.len(), 1);
-        assert!(second[0].starts_with(r#"{"messageStop""#), "{}", second[0]);
-        assert!(buf.is_empty());
-
-        // A partial prelude left at EOF yields nothing instead of an error.
-        assert!(framing.flush(&wire[..5]).unwrap().is_empty());
     }
 
     /// A streamed response that never carries a finish_reason still ends with a
