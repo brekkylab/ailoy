@@ -1,9 +1,11 @@
 mod anthropic;
+pub(crate) mod bedrock;
 mod chat_completion;
 mod gemini;
 mod openai;
 
 pub use anthropic::{AnthropicMarshal, AnthropicUnmarshal};
+pub use bedrock::{BedrockMarshal, BedrockUnmarshal};
 pub use chat_completion::{ChatCompletionMarshal, ChatCompletionUnmarshal};
 pub use gemini::{GeminiMarshal, GeminiUnmarshal};
 pub use openai::{OpenAIMarshal, OpenAIUnmarshal};
@@ -26,6 +28,13 @@ pub enum LangModelAPISchema {
 
     /// Anthropic Messages API format
     Anthropic,
+
+    /// Amazon Bedrock Converse API format, one body for every model family
+    /// Bedrock serves. The provider `url` is the runtime base
+    /// (`https://bedrock-runtime.<region>.amazonaws.com`); the model id and
+    /// action are appended per request. Authenticated with a Bedrock API key
+    /// as a bearer token (no SigV4); streams as a binary event stream.
+    Bedrock,
 
     /// Google Gemini API format
     Gemini,
@@ -73,6 +82,7 @@ where
 pub fn provider_api(schema: &LangModelAPISchema) -> Box<dyn ProviderApi + Send + Sync> {
     match schema {
         LangModelAPISchema::Anthropic => Box::new(AnthropicUnmarshal),
+        LangModelAPISchema::Bedrock => Box::new(BedrockUnmarshal),
         LangModelAPISchema::ChatCompletion => Box::new(ChatCompletionUnmarshal),
         LangModelAPISchema::Gemini => Box::new(GeminiUnmarshal),
         LangModelAPISchema::OpenAI => Box::new(OpenAIUnmarshal),

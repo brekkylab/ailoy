@@ -32,7 +32,8 @@ pub enum LangModelProviderElem {
 ///
 /// Populate via the convenience constructors ([`openai`](Self::openai),
 /// [`anthropic`](Self::anthropic), [`gemini`](Self::gemini),
-/// [`chat_completion`](Self::chat_completion), …) which return
+/// [`bedrock`](Self::bedrock), [`chat_completion`](Self::chat_completion), …)
+/// which return
 /// [`LangModelProviderElem`] values, then [`insert`](Self::insert) them under
 /// the chosen pattern.  At agent construction time the runtime calls
 /// [`get`](Self::get) to verify that the spec's `model` matches an entry, then
@@ -43,7 +44,9 @@ pub enum LangModelProviderElem {
 /// registers `openai/*`, `anthropic/*`, `google/*`, `x-ai/*`, `deepseek/*`,
 /// and/or `moonshotai/kimi-*` for every `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
 /// / `GEMINI_API_KEY` / `XAI_API_KEY` / `DEEPSEEK_API_KEY` / `KIMI_API_KEY`
-/// that is set.  The default is what the global [`lang_model_providers`]
+/// that is set, plus `bedrock/*` (Converse) for `AWS_BEARER_TOKEN_BEDROCK`
+/// (region from `AWS_REGION`, then `AWS_DEFAULT_REGION`, defaulting to
+/// `us-east-1`).  The default is what the global [`lang_model_providers`]
 /// registry stores under the `"default"` key.  Use [`new`](Self::new) for an
 /// empty registry.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -53,26 +56,43 @@ pub struct LangModelProvider {
     inner: BTreeMap<String, LangModelProviderElem>,
 }
 
+/// Reads an API key from the environment, treating blank as absent.
+///
+/// A `.env` copied from `.env.example` leaves keys set-but-empty; registering
+/// those would produce a provider that resolves fine and then fails with 401 at
+/// call time, which is a much worse error to debug than "no provider found".
+fn env_key(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.trim().is_empty())
+}
+
 impl Default for LangModelProvider {
     fn default() -> Self {
         let mut p = Self::new();
-        if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        if let Some(key) = env_key("OPENAI_API_KEY") {
             p.insert("openai/*".into(), Self::openai(key));
         }
-        if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+        if let Some(key) = env_key("ANTHROPIC_API_KEY") {
             p.insert("anthropic/*".into(), Self::anthropic(key));
         }
-        if let Ok(key) = std::env::var("GEMINI_API_KEY") {
+        if let Some(key) = env_key("GEMINI_API_KEY") {
             p.insert("google/*".into(), Self::gemini(key));
         }
-        if let Ok(key) = std::env::var("XAI_API_KEY") {
+        if let Some(key) = env_key("XAI_API_KEY") {
             p.insert("x-ai/*".into(), Self::grok(key));
         }
-        if let Ok(key) = std::env::var("DEEPSEEK_API_KEY") {
+        if let Some(key) = env_key("DEEPSEEK_API_KEY") {
             p.insert("deepseek/*".into(), Self::deepseek(key));
         }
-        if let Ok(key) = std::env::var("KIMI_API_KEY") {
+        if let Some(key) = env_key("KIMI_API_KEY") {
             p.insert("moonshotai/*".into(), Self::kimi(key));
+        }
+        if let Some(key) = env_key("AWS_BEARER_TOKEN_BEDROCK") {
+            // Same precedence the AWS SDKs use, so a shell already configured
+            // for AWS needs no extra variable.
+            let region = env_key("AWS_REGION")
+                .or_else(|| env_key("AWS_DEFAULT_REGION"))
+                .unwrap_or_else(|| "us-east-1".to_string());
+            p.insert("bedrock/*".into(), Self::bedrock(region, key));
         }
         p
     }
