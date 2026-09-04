@@ -4,7 +4,10 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use super::{LangModelAPISchema, LangModelProviderElem};
 use crate::{
     datatype::Value,
-    lang_model::{LangModelOptions, get_lm_providers, r#impl::api},
+    lang_model::{
+        LangModelOptions, get_lm_providers,
+        r#impl::{api, framing::Framing},
+    },
     message::{
         Delta as _, FinishReason, Marshaled, Message, MessageDeltaOutput, MessageOutput, Role,
     },
@@ -82,36 +85,32 @@ impl LangModel {
         tools: &[ToolDesc],
         options: &LangModelOptions,
     ) -> anyhow::Result<MessageOutput> {
-        match &self.provider {
-            LangModelProviderElem::API { schema, .. } => {
-                // Create request (non-streaming)
-                let req = LangModelRequest {
-                    model: &self.model,
-                    messages,
-                    tools,
-                    provider: &self.provider,
-                    options,
-                    stream: false,
-                };
-                let (url, header_map, body) = marshal_request(schema, &req)?;
+        // Create request (non-streaming)
+        let req = LangModelRequest {
+            model: &self.model,
+            messages,
+            tools,
+            provider: &self.provider,
+            options,
+            stream: false,
+        };
+        let LangModelProviderElem::API { schema, .. } = &self.provider;
+        let (url, header_map, body) = marshal_request(schema, &req)?;
 
-                // Send with retry on 429, then read the whole response.
-                let provider = api::provider_api(schema);
-                let client = reqwest::Client::new();
-                let response =
-                    send_with_retry(&client, &url, header_map, &body, provider.as_ref()).await?;
-                let response_text = response.text().await?;
+        // Send with retry on 429, then read the whole response.
+        let provider = api::provider_api(schema);
+        let client = reqwest::Client::new();
+        let response = send_with_retry(&client, &url, header_map, &body, provider.as_ref()).await?;
+        let response_text = response.text().await?;
 
-                let response_value: Value =
-                    serde_json::from_str::<serde_json::Value>(&response_text)?.into();
+        let response_value: Value =
+            serde_json::from_str::<serde_json::Value>(&response_text)?.into();
 
-                // Decode the whole response into a single delta.
-                let delta_output = provider.unmarshal_response(response_value)?;
+        // Decode the whole response into a single delta.
+        let delta_output = provider.unmarshal_response(response_value)?;
 
-                // In non-streaming API, a single delta is the complete output, so finalize now.
-                delta_output.finish()
-            }
-        }
+        // In non-streaming API, a single delta is the complete output, so finalize now.
+        delta_output.finish()
     }
 
     /// Streaming counterpart to [`run`](Self::run): requests an SSE response and
@@ -132,8 +131,6 @@ impl LangModel {
         tools: &[ToolDesc],
         options: &LangModelOptions,
     ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
-        let LangModelProviderElem::API { schema, .. } = &self.provider;
-
         // Marshal up front so the stream captures only the owned wire artifacts,
         // not a copy of the history. The `'static` return is deliberate: it lets
         // the caller mutate its own history (e.g. Agent::run_stream's rollback)
@@ -146,6 +143,7 @@ impl LangModel {
             options,
             stream: true,
         };
+        let LangModelProviderElem::API { schema, .. } = &self.provider;
         let (url, header_map, body) = match marshal_request(schema, &req) {
             Ok(parts) => parts,
             // Errors surface through the stream, not via `Result`: emit the
@@ -157,13 +155,14 @@ impl LangModel {
             }
         };
         let mut provider = api::provider_api(schema);
+        let mut framing = Framing::for_schema(schema);
 
         Box::pin(async_stream::try_stream! {
             let client = reqwest::Client::new();
             let response =
                 send_with_retry(&client, &url, header_map, &body, provider.as_ref()).await?;
 
-            // Read the SSE body chunk by chunk, framing complete events out of a
+            // Read the body chunk by chunk, framing complete events out of a
             // buffer (network chunks don't align with event boundaries). We drain
             // until the body ends rather than stopping at the first `finish_reason`
             // — some providers (ChatCompletion with `stream_options.include_usage`)
@@ -179,10 +178,7 @@ impl LangModel {
             let mut buf: Vec<u8> = Vec::new();
             while let Some(chunk) = byte_stream.next().await {
                 buf.extend_from_slice(&chunk?);
-                while let Some(data) = drain_next_event(&mut buf) {
-                    if data.is_empty() {
-                        continue; // keep-alive / comment line
-                    }
+                for data in framing.drain(&mut buf)? {
                     if let Some(output) = provider.unmarshal_event(&data)? {
                         if seen_role.is_none() {
                             seen_role = output.delta.role.clone();
@@ -193,16 +189,9 @@ impl LangModel {
                 }
             }
 
-            // A well-behaved server terminates the final event with a blank
-            // line, but some close the connection right after the last event
-            // (no trailing blank line). `drain_next_event` only frames on that
-            // blank line, so flush whatever remains as one last event — this is
-            // the only copy of an EOF-terminated terminal event (e.g. Gemini's
-            // finish_reason + usage chunk), which would otherwise be dropped.
-            let data = extract_event_data(&buf);
-            // Not a let-chain: the `try_stream!` macro rejects them (Rust 2024).
-            #[allow(clippy::collapsible_if)]
-            if !data.is_empty() {
+            // Whatever is left at EOF is the last event for framings that allow
+            // an unterminated final event (SSE without a trailing blank line).
+            for data in framing.flush(&buf)? {
                 if let Some(output) = provider.unmarshal_event(&data)? {
                     if seen_role.is_none() {
                         seen_role = output.delta.role.clone();
@@ -239,9 +228,16 @@ fn marshal_request(
     schema: &LangModelAPISchema,
     req: &LangModelRequest,
 ) -> anyhow::Result<(String, HeaderMap, serde_json::Value)> {
+    if matches!(schema, LangModelAPISchema::Bedrock) {
+        api::bedrock::validate_request(req)?;
+    }
     let marshaled = match schema {
-        LangModelAPISchema::Anthropic => {
-            Value::from(Marshaled::<LangModelRequest, api::AnthropicMarshal>::new(req))
+        LangModelAPISchema::Anthropic => Value::from(Marshaled::<
+            LangModelRequest,
+            api::AnthropicMarshal,
+        >::new(req)),
+        LangModelAPISchema::Bedrock => {
+            Value::from(Marshaled::<LangModelRequest, api::BedrockMarshal>::new(req))
         }
         LangModelAPISchema::ChatCompletion => {
             Value::from(Marshaled::<LangModelRequest, api::ChatCompletionMarshal>::new(req))
@@ -337,34 +333,6 @@ async fn send_with_retry(
     unreachable!("retry loop returns or bails on every path")
 }
 
-/// Drains the next complete SSE event from `buf`, returning its concatenated
-/// `data:` payload. Returns `None` if no event (terminated by a blank line) is
-/// fully buffered yet; the partial bytes stay in `buf` for the next chunk.
-fn drain_next_event(buf: &mut Vec<u8>) -> Option<String> {
-    // Events are separated by a blank line: "\n\n" (LF) or "\r\n\r\n" (CRLF).
-    let (sep_pos, sep_len) = buf
-        .windows(2)
-        .position(|w| w == b"\n\n")
-        .map(|p| (p, 2))
-        .or_else(|| buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| (p, 4)))?;
-
-    let raw: Vec<u8> = buf.drain(..sep_pos + sep_len).collect();
-    Some(extract_event_data(&raw))
-}
-
-/// Extracts the concatenated `data:` payload from one raw SSE event's bytes.
-/// SSE permits multiple `data:` lines per event; they are joined with newlines.
-/// Non-`data:` lines (`event:`, `id:`, comments) are dropped — every provider
-/// here carries its event type inside the `data:` JSON.
-fn extract_event_data(raw: &[u8]) -> String {
-    String::from_utf8_lossy(raw)
-        .lines()
-        .filter_map(|line| line.strip_prefix("data:"))
-        .map(|rest| rest.trim())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,36 +378,6 @@ mod tests {
         let json = serde_json::to_string(&original).expect("should serialize");
         let restored: ResponseFormat = serde_json::from_str(&json).expect("should deserialize");
         assert_eq!(original, restored);
-    }
-
-    #[test]
-    fn test_drain_next_event_frames_on_blank_line() {
-        // Two complete LF-separated events plus a partial third still buffered.
-        let mut buf = b"data: a\n\ndata: b\n\ndata: c".to_vec();
-        assert_eq!(drain_next_event(&mut buf).as_deref(), Some("a"));
-        assert_eq!(drain_next_event(&mut buf).as_deref(), Some("b"));
-        // The unterminated tail is not framed; it stays for the next chunk.
-        assert_eq!(drain_next_event(&mut buf), None);
-        assert_eq!(buf, b"data: c");
-    }
-
-    #[test]
-    fn test_drain_next_event_handles_crlf_and_multi_data() {
-        // CRLF separators, and an event with two `data:` lines (joined by \n).
-        let mut buf = b"data: x\r\ndata: y\r\n\r\nrest".to_vec();
-        assert_eq!(drain_next_event(&mut buf).as_deref(), Some("x\ny"));
-        assert_eq!(drain_next_event(&mut buf), None);
-        assert_eq!(buf, b"rest");
-    }
-
-    #[test]
-    fn test_extract_event_data_recovers_eof_terminated_event() {
-        // The run_stream EOF flush relies on this: a final event left in the
-        // buffer without a trailing blank line must still yield its payload.
-        assert_eq!(extract_event_data(b"data: {\"k\":1}"), "{\"k\":1}");
-        // Non-`data:` lines (comments / event:) are dropped.
-        assert_eq!(extract_event_data(b": keep-alive"), "");
-        assert_eq!(extract_event_data(b"event: done\ndata: tail"), "tail");
     }
 
     /// Register a one-off [`LangModelProvider`] under a unique key in the
@@ -674,6 +612,38 @@ mod tests {
             1,
             "permanent quota 429 must not be retried (1 attempt only)"
         );
+    }
+
+    /// Bedrock requests are validated before marshaling, and the Converse
+    /// envelope comes out of the shared path with the bearer header lower-cased
+    /// by `HeaderMap`.
+    #[test]
+    fn marshal_request_bedrock_envelope_and_guard() {
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+        let provider = LangModelProvider::bedrock("us-east-1", "k".into());
+        let options = LangModelOptions::default();
+        let req = |options| LangModelRequest {
+            model: "m",
+            messages: &messages,
+            tools: &[],
+            provider: &provider,
+            options,
+            stream: false,
+        };
+
+        let (url, headers, body) =
+            marshal_request(&LangModelAPISchema::Bedrock, &req(&options)).unwrap();
+        assert!(url.ends_with("/model/m/converse"), "{url}");
+        assert_eq!(headers["authorization"], "Bearer k");
+        assert!(body.get("model").is_none());
+
+        let with_format = LangModelOptions {
+            response_format: Some(
+                ResponseFormat::json_schema(to_value!({"type": "object"})).unwrap(),
+            ),
+            ..Default::default()
+        };
+        assert!(marshal_request(&LangModelAPISchema::Bedrock, &req(&with_format)).is_err());
     }
 
     /// A streamed response that never carries a finish_reason still ends with a
