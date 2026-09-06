@@ -2,7 +2,6 @@ mod apply_patch;
 mod edit;
 mod glob;
 mod grep;
-mod python_repl;
 mod read;
 mod shell;
 mod web_fetch;
@@ -15,7 +14,6 @@ pub use apply_patch::*;
 pub use edit::*;
 pub use glob::*;
 pub use grep::*;
-pub use python_repl::*;
 pub use read::*;
 pub use shell::*;
 pub use web_fetch::*;
@@ -40,7 +38,6 @@ pub fn get_builtin_tool_factories() -> Vec<(&'static str, BuiltinFactory)> {
 
     vec![
         ("shell", Arc::new(move |_| shell.clone())),
-        ("python_repl", Arc::new(get_python_repl_tool_factory())),
         ("read", Arc::new(move |_| read.clone())),
         ("write", Arc::new(move |_| write.clone())),
         ("edit", Arc::new(move |_| edit.clone())),

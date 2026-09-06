@@ -8,8 +8,8 @@ use crate::{
         ToolDesc, WebSearchEngineKind,
         r#impl::{
             get_apply_patch_tool_desc, get_edit_tool_desc, get_glob_tool_desc, get_grep_tool_desc,
-            get_python_repl_tool_desc, get_read_tool_desc, get_shell_tool_desc,
-            get_web_fetch_tool_desc, get_web_search_tool_desc, get_write_tool_desc,
+            get_read_tool_desc, get_shell_tool_desc, get_web_fetch_tool_desc,
+            get_web_search_tool_desc, get_write_tool_desc,
         },
     },
 };
@@ -120,11 +120,6 @@ impl AgentSpec {
                 get_grep_tool_desc(),
             ]
         });
-        self
-    }
-
-    pub fn python_repl_tool(mut self) -> Self {
-        self.tools.push(get_python_repl_tool_desc());
         self
     }
 

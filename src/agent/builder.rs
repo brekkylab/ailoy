@@ -107,11 +107,6 @@ impl AgentBuilder {
         self
     }
 
-    pub fn python_repl_tool(mut self) -> Self {
-        self.spec = self.spec.python_repl_tool();
-        self
-    }
-
     pub fn shell_tool(mut self) -> Self {
         self.spec = self.spec.shell_tool();
         self
