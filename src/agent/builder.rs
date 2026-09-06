@@ -5,6 +5,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     agent::{Agent, AgentSpec, AgentState, ContextManager},
+    memory::Memory,
     message::Message,
     tool::{ToolDesc, WebSearchEngineKind},
 };
@@ -55,6 +56,8 @@ pub struct AgentBuilder {
 
     console: Option<Arc<Mutex<Option<Console>>>>,
 
+    memory: Option<Memory>,
+
     context_manager: Option<ContextManager>,
 }
 
@@ -69,6 +72,7 @@ impl AgentBuilder {
             agent_provider: "default".to_string(),
             history: Vec::new(),
             console: None,
+            memory: None,
             context_manager: None,
         }
     }
@@ -155,6 +159,25 @@ impl AgentBuilder {
         self
     }
 
+    /// Let this agent remember into `memory`.
+    ///
+    /// Which brings the `mem_search` and `mem_insert` tools with it: an agent that was
+    /// given a memory can recall from it and write to it, and one that was not has
+    /// neither tool. Nothing else has to be listed — these two are not spec tools,
+    /// because which store is a value this one agent holds rather than a name in the
+    /// [`ToolProvider`](crate::tool::ToolProvider).
+    ///
+    /// The store is expected to exist: `mem init` makes one. A file that is not there is
+    /// reported by the first memory tool call rather than by [`build`](Self::build),
+    /// since finding out means running a command on the console.
+    ///
+    /// Runs on the same console as every other tool, so an agent with a memory wants a
+    /// [`console`](Self::console) too — a memory tool without one fails saying so.
+    pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
+        self.memory = Some(memory.into());
+        self
+    }
+
     /// Set the context window management spec.
     pub fn context_manager(mut self, spec: ContextManager) -> Self {
         self.context_manager = Some(spec);
@@ -191,12 +214,16 @@ impl AgentBuilder {
             agent_provider,
             history,
             console,
+            memory,
             context_manager,
         } = self;
 
         let mut state = AgentState::new();
         if let Some(c) = console {
             state = state.with_console_slot(c);
+        }
+        if let Some(m) = memory {
+            state = state.with_memory(m);
         }
         if !history.is_empty() {
             state = state.with_history(history);
@@ -367,5 +394,40 @@ mod tests {
         let history = agent.get_history();
         assert_eq!(history.len(), 2);
         assert_eq!(system_text(&agent).as_deref(), Some("stored instruction"));
+    }
+
+    /// `memory()` lands on the state, which is what the agent's constructor reads to
+    /// decide whether it hands out the memory tools.
+    #[tokio::test]
+    async fn test_builder_memory_is_applied() {
+        use crate::memory::Memory;
+
+        ensure_dummy_provider();
+        let agent = AgentBuilder::new(TEST_MODEL)
+            .agent_provider(TEST_PROVIDER_NAME)
+            .memory(Memory::new("/work/notes.sqlite"))
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            agent.state.memory,
+            Some(Memory::new("/work/notes.sqlite")),
+            "the memory the builder was given is the one on the state"
+        );
+    }
+
+    /// A path names a store, so it can be handed in as one and lands as the same value.
+    #[tokio::test]
+    async fn test_builder_memory_takes_a_path() {
+        use crate::memory::Memory;
+
+        ensure_dummy_provider();
+        let agent = AgentBuilder::new(TEST_MODEL)
+            .agent_provider(TEST_PROVIDER_NAME)
+            .memory(std::path::Path::new("/work/notes.sqlite"))
+            .build()
+            .unwrap();
+
+        assert_eq!(agent.state.memory, Some(Memory::new("/work/notes.sqlite")));
     }
 }
