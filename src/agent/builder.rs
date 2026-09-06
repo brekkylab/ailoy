@@ -173,8 +173,8 @@ impl AgentBuilder {
     ///
     /// Runs on the same console as every other tool, so an agent with a memory wants a
     /// [`console`](Self::console) too — a memory tool without one fails saying so.
-    pub fn memory(mut self, memory: Memory) -> Self {
-        self.memory = Some(memory);
+    pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
+        self.memory = Some(memory.into());
         self
     }
 
@@ -414,5 +414,20 @@ mod tests {
             Some(Memory::new("/work/notes.sqlite")),
             "the memory the builder was given is the one on the state"
         );
+    }
+
+    /// A path names a store, so it can be handed in as one and lands as the same value.
+    #[tokio::test]
+    async fn test_builder_memory_takes_a_path() {
+        use crate::memory::Memory;
+
+        ensure_dummy_provider();
+        let agent = AgentBuilder::new(TEST_MODEL)
+            .agent_provider(TEST_PROVIDER_NAME)
+            .memory(std::path::Path::new("/work/notes.sqlite"))
+            .build()
+            .unwrap();
+
+        assert_eq!(agent.state.memory, Some(Memory::new("/work/notes.sqlite")));
     }
 }

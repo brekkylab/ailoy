@@ -13,6 +13,8 @@
 //! so a mistyped name cannot become an empty store that answers every search with
 //! nothing, and a wrapper that quietly created one would undo that.
 
+use std::path::{Path, PathBuf};
+
 use crate::console::Console;
 
 /// One memory store, named by the file it is.
@@ -164,6 +166,39 @@ impl Memory {
             .filter(|line| !line.trim().is_empty())
             .map(|line| line.to_string())
             .collect())
+    }
+}
+
+/// A store named by a `String`, which is the name a `Memory` already is.
+impl From<String> for Memory {
+    fn from(memfile: String) -> Self {
+        Self::new(memfile)
+    }
+}
+
+/// The same for a borrowed name, since a path written in the call is the common way to
+/// name a store.
+impl From<&str> for Memory {
+    fn from(memfile: &str) -> Self {
+        Self::new(memfile)
+    }
+}
+
+/// A store named by a `PathBuf`, for callers that built the path rather than wrote it.
+///
+/// The path is spelled with [`Path::to_string_lossy`], because what is passed on is an
+/// argument to `mem` and argv here is `String`. A path that is not UTF-8 therefore names
+/// a store the far end will not find, and says so on the first command rather than here.
+impl From<PathBuf> for Memory {
+    fn from(memfile: PathBuf) -> Self {
+        Self::new(memfile.to_string_lossy().into_owned())
+    }
+}
+
+/// The same for a borrowed path.
+impl From<&Path> for Memory {
+    fn from(memfile: &Path) -> Self {
+        Self::new(memfile.to_string_lossy().into_owned())
     }
 }
 
