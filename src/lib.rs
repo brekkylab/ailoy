@@ -6,6 +6,7 @@ pub mod console;
 pub mod datatype;
 pub mod lang_model;
 pub(crate) mod macros;
+pub mod memory;
 pub mod message;
 pub mod tool;
 pub(crate) mod util;
