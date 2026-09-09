@@ -458,8 +458,10 @@ impl BedrockUnmarshal {
     fn parse_finish_reason(reason: &str) -> FinishReason {
         match reason {
             "end_turn" | "stop_sequence" => FinishReason::Stop {},
-            "max_tokens" => FinishReason::Length {},
+            "max_tokens" | "model_context_window_exceeded" => FinishReason::Length {},
             "tool_use" => FinishReason::ToolCall {},
+            // `guardrail_intervened`, `content_filtered`, `malformed_*`: the
+            // model did not finish on its own terms.
             other => FinishReason::Refusal {
                 reason: format!("reason: {other}"),
             },
