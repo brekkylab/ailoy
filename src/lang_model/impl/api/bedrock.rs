@@ -1,5 +1,5 @@
-//! Amazon Bedrock: the endpoint shared by every schema served there, plus the
-//! model-agnostic Converse wire format.
+//! Amazon Bedrock over the Converse API: the runtime endpoint plus the
+//! model-agnostic wire format.
 
 use anyhow::bail;
 use url::Url;
@@ -23,8 +23,10 @@ impl LangModelProvider {
     /// Bedrock over the Converse API, which speaks to every model family in
     /// the region with one body format.
     ///
-    /// `model` must be an id Bedrock accepts for on-demand throughput, e.g. the
-    /// inference-profile id `global.anthropic.claude-sonnet-5`.
+    /// Register under `bedrock/<model>`, where `<model>` is an id Bedrock
+    /// accepts for on-demand throughput, e.g. the inference-profile id
+    /// `global.anthropic.claude-sonnet-5`; plain foundation-model ids are
+    /// rejected.
     pub fn bedrock(region: BedrockRegion, api_key: String) -> LangModelProviderElem {
         LangModelProviderElem::API {
             schema: LangModelAPISchema::Bedrock,
@@ -177,9 +179,10 @@ pub(super) fn headers(api_key: Option<&str>, stream: bool) -> Value {
     header
 }
 
-/// Rejects image URLs, which Bedrock does not fetch, before anything is sent.
-/// Marshals return a bare `Value`, so this is where that becomes an error
-/// instead of a silently dropped part.
+/// Rejects image URLs before anything is sent: Bedrock does not fetch them, and
+/// the marshal returns a bare `Value`, so this is the only place the request
+/// can fail instead of silently dropping the part. Everything else, image
+/// formats included, is left to Bedrock's own validation.
 pub(in crate::lang_model) fn validate_request(req: &LangModelRequest<'_>) -> anyhow::Result<()> {
     let has_url_image = req.messages.iter().any(|m| {
         m.contents.iter().any(|p| {
@@ -204,7 +207,9 @@ pub struct BedrockMarshal;
 
 impl ResponseSchemaMarshal for BedrockMarshal {}
 
-/// Converse image `format` from a MIME type; Converse accepts png/jpeg/gif/webp.
+/// Converse image `format` from a MIME type. Only the `image/` prefix and the
+/// `jpg` alias are handled; an unsupported subtype goes through as-is and
+/// Bedrock rejects it.
 fn image_format(mime_type: &str) -> &str {
     match mime_type.strip_prefix("image/").unwrap_or(mime_type) {
         "jpg" => "jpeg",
