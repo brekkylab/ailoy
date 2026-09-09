@@ -620,7 +620,7 @@ mod tests {
     #[test]
     fn marshal_request_bedrock_envelope_and_guard() {
         let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
-        let provider = LangModelProvider::bedrock("us-east-1", "k".into());
+        let provider = LangModelProvider::bedrock("us-east-1".parse().unwrap(), "k".into());
         let options = LangModelOptions::default();
         let req = |options| LangModelRequest {
             model: "m",

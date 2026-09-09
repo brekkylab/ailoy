@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::lang_model::LangModelAPISchema;
+use crate::lang_model::{BedrockRegion, LangModelAPISchema};
 
 /// Describes the runtime endpoint used to invoke a language model.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -92,7 +92,10 @@ impl Default for LangModelProvider {
             let region = env_key("AWS_REGION")
                 .or_else(|| env_key("AWS_DEFAULT_REGION"))
                 .unwrap_or_else(|| "us-east-1".to_string());
-            p.insert("bedrock/*".into(), Self::bedrock(region, key));
+            match region.parse::<BedrockRegion>() {
+                Ok(region) => p.insert("bedrock/*".into(), Self::bedrock(region, key)),
+                Err(_) => log::warn!("skipping bedrock/*: unsupported AWS region {region:?}"),
+            }
         }
         p
     }

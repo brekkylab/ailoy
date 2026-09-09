@@ -5,7 +5,7 @@ mod gemini;
 mod openai;
 
 pub use anthropic::{AnthropicMarshal, AnthropicUnmarshal};
-pub use bedrock::{BedrockMarshal, BedrockUnmarshal};
+pub use bedrock::{BedrockMarshal, BedrockRegion, BedrockUnmarshal};
 pub use chat_completion::{ChatCompletionMarshal, ChatCompletionUnmarshal};
 pub use gemini::{GeminiMarshal, GeminiUnmarshal};
 pub use openai::{OpenAIMarshal, OpenAIUnmarshal};

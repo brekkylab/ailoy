@@ -21,18 +21,132 @@ impl LangModelProvider {
     ///
     /// `model` must be an id Bedrock accepts for on-demand throughput, e.g. the
     /// inference-profile id `global.anthropic.claude-sonnet-5`.
-    pub fn bedrock(region: impl AsRef<str>, api_key: String) -> LangModelProviderElem {
+    pub fn bedrock(region: BedrockRegion, api_key: String) -> LangModelProviderElem {
         LangModelProviderElem::API {
             schema: LangModelAPISchema::Bedrock,
-            url: runtime_url(region.as_ref()),
+            url: region.runtime_url(),
             api_key: Some(api_key),
         }
     }
 }
 
-/// Runtime base for a region; the registered `url` for both Bedrock schemas.
-fn runtime_url(region: &str) -> Url {
-    Url::parse(&format!("https://bedrock-runtime.{region}.amazonaws.com")).unwrap()
+/// AWS regions with a Bedrock runtime. The id is the host label in
+/// `bedrock-runtime.<id>.amazonaws.com`, so a region is a closed set rather
+/// than free text. `Display` and `FromStr` both use the id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::Display, strum::EnumString)]
+pub enum BedrockRegion {
+    /// US East (N. Virginia)
+    #[strum(serialize = "us-east-1")]
+    UsEast1,
+    /// US East (Ohio)
+    #[strum(serialize = "us-east-2")]
+    UsEast2,
+    /// US West (Oregon)
+    #[strum(serialize = "us-west-2")]
+    UsWest2,
+    /// US West (N. California)
+    #[strum(serialize = "us-west-1")]
+    UsWest1,
+    /// AWS GovCloud (US-East)
+    #[strum(serialize = "us-gov-east-1")]
+    UsGovEast1,
+    /// AWS GovCloud (US-West)
+    #[strum(serialize = "us-gov-west-1")]
+    UsGovWest1,
+    /// Canada (Central)
+    #[strum(serialize = "ca-central-1")]
+    CaCentral1,
+    /// Canada West (Calgary)
+    #[strum(serialize = "ca-west-1")]
+    CaWest1,
+    /// South America (São Paulo)
+    #[strum(serialize = "sa-east-1")]
+    SaEast1,
+    /// Mexico (Central)
+    #[strum(serialize = "mx-central-1")]
+    MxCentral1,
+    /// Europe (Frankfurt)
+    #[strum(serialize = "eu-central-1")]
+    EuCentral1,
+    /// Europe (Zurich)
+    #[strum(serialize = "eu-central-2")]
+    EuCentral2,
+    /// Europe (Ireland)
+    #[strum(serialize = "eu-west-1")]
+    EuWest1,
+    /// Europe (London)
+    #[strum(serialize = "eu-west-2")]
+    EuWest2,
+    /// Europe (Paris)
+    #[strum(serialize = "eu-west-3")]
+    EuWest3,
+    /// Europe (Stockholm)
+    #[strum(serialize = "eu-north-1")]
+    EuNorth1,
+    /// Europe (Milan)
+    #[strum(serialize = "eu-south-1")]
+    EuSouth1,
+    /// Europe (Spain)
+    #[strum(serialize = "eu-south-2")]
+    EuSouth2,
+    /// Israel (Tel Aviv)
+    #[strum(serialize = "il-central-1")]
+    IlCentral1,
+    /// Middle East (UAE)
+    #[strum(serialize = "me-central-1")]
+    MeCentral1,
+    /// Middle East (Bahrain)
+    #[strum(serialize = "me-south-1")]
+    MeSouth1,
+    /// Africa (Cape Town)
+    #[strum(serialize = "af-south-1")]
+    AfSouth1,
+    /// Asia Pacific (Mumbai)
+    #[strum(serialize = "ap-south-1")]
+    ApSouth1,
+    /// Asia Pacific (Hyderabad)
+    #[strum(serialize = "ap-south-2")]
+    ApSouth2,
+    /// Asia Pacific (Taipei)
+    #[strum(serialize = "ap-east-2")]
+    ApEast2,
+    /// Asia Pacific (Tokyo)
+    #[strum(serialize = "ap-northeast-1")]
+    ApNortheast1,
+    /// Asia Pacific (Seoul)
+    #[strum(serialize = "ap-northeast-2")]
+    ApNortheast2,
+    /// Asia Pacific (Osaka)
+    #[strum(serialize = "ap-northeast-3")]
+    ApNortheast3,
+    /// Asia Pacific (Singapore)
+    #[strum(serialize = "ap-southeast-1")]
+    ApSoutheast1,
+    /// Asia Pacific (Sydney)
+    #[strum(serialize = "ap-southeast-2")]
+    ApSoutheast2,
+    /// Asia Pacific (Jakarta)
+    #[strum(serialize = "ap-southeast-3")]
+    ApSoutheast3,
+    /// Asia Pacific (Melbourne)
+    #[strum(serialize = "ap-southeast-4")]
+    ApSoutheast4,
+    /// Asia Pacific (Malaysia)
+    #[strum(serialize = "ap-southeast-5")]
+    ApSoutheast5,
+    /// Asia Pacific (New Zealand)
+    #[strum(serialize = "ap-southeast-6")]
+    ApSoutheast6,
+    /// Asia Pacific (Thailand)
+    #[strum(serialize = "ap-southeast-7")]
+    ApSoutheast7,
+}
+
+impl BedrockRegion {
+    /// Runtime base for the region, the registered `url` for the Bedrock schema.
+    fn runtime_url(self) -> Url {
+        Url::parse(&format!("https://bedrock-runtime.{self}.amazonaws.com")).unwrap()
+    }
 }
 
 /// `<base>/model/<model>/<action>`. `/` in the model id (application
@@ -546,7 +660,8 @@ mod tests {
 
     #[test]
     fn envelope_targets_converse_with_bearer_token() {
-        let provider = LangModelProvider::bedrock("ap-northeast-2", "KEY123".to_string());
+        let provider =
+            LangModelProvider::bedrock("ap-northeast-2".parse().unwrap(), "KEY123".to_string());
         let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
         let options = LangModelOptions::default();
 
@@ -574,7 +689,7 @@ mod tests {
     #[test]
     fn model_url_escapes_slashes_in_arns() {
         let url = model_url(
-            &runtime_url("us-east-1"),
+            &"us-east-1".parse::<BedrockRegion>().unwrap().runtime_url(),
             "arn:aws:bedrock:us-east-1:123:application-inference-profile/abc",
             "converse",
         );
@@ -586,7 +701,7 @@ mod tests {
 
     #[test]
     fn system_tools_and_options_are_mapped() {
-        let provider = LangModelProvider::bedrock("us-east-1", "k".to_string());
+        let provider = LangModelProvider::bedrock("us-east-1".parse().unwrap(), "k".to_string());
         let messages = vec![
             Message::new(Role::System).with_contents([Part::text("Be terse.")]),
             Message::new(Role::User).with_contents([Part::text("hi")]),
@@ -702,7 +817,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_bedrock_only_gaps() {
-        let converse = LangModelProvider::bedrock("us-east-1", "k".to_string());
+        let converse = LangModelProvider::bedrock("us-east-1".parse().unwrap(), "k".to_string());
         let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
 
         let with_format = LangModelOptions {
@@ -813,8 +928,8 @@ mod tests {
     }
 
     #[test]
-    fn constructors_register_the_runtime_base() {
-        let elem = LangModelProvider::bedrock("us-east-1", "k".to_string());
+    fn constructor_registers_the_runtime_base() {
+        let elem = LangModelProvider::bedrock("us-east-1".parse().unwrap(), "k".to_string());
         let json = serde_json::to_value(&elem).unwrap();
         assert_eq!(json["type"], "api");
         assert_eq!(json["schema"], "bedrock");
@@ -822,6 +937,23 @@ mod tests {
             json["url"],
             "https://bedrock-runtime.us-east-1.amazonaws.com/"
         );
+    }
+
+    /// The region table round-trips, and anything outside it is refused
+    /// before it can reach the host.
+    #[test]
+    fn region_parses_only_known_ids() {
+        for id in ["us-east-1", "ap-northeast-2", "us-gov-west-1"] {
+            let region: BedrockRegion = id.parse().unwrap();
+            assert_eq!(region.to_string(), id);
+        }
+        assert_eq!(
+            "us-east-1".parse::<BedrockRegion>().unwrap(),
+            BedrockRegion::UsEast1
+        );
+        for bad in ["us east 1", "a@evil.com", "", "US-EAST-1", "xx-nowhere-9"] {
+            assert!(bad.parse::<BedrockRegion>().is_err(), "{bad:?}");
+        }
     }
 
     /// Live Converse round trip through the env-seeded default provider
