@@ -36,10 +36,12 @@ impl LangModelProvider {
     }
 }
 
-/// AWS regions with a Bedrock runtime. The id is the host label in
-/// `bedrock-runtime.<id>.amazonaws.com`, so a region is a closed set rather
-/// than free text. `Display` and `FromStr` both use the id.
+/// AWS regions where Bedrock is deployed, as listed on the Bedrock endpoints
+/// page. The id is the host label in `bedrock-runtime.<id>.amazonaws.com`, so
+/// a region is a closed set rather than free text; a region not listed here
+/// needs a new entry. `Display` and `FromStr` both use the id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, strum::Display, strum::EnumString)]
+#[non_exhaustive]
 pub enum BedrockRegion {
     /// US East (N. Virginia)
     #[strum(serialize = "us-east-1")]
