@@ -157,7 +157,7 @@ impl BedrockRegion {
 
 /// `<base>/model/<model>/<action>`. `/` in the model id (application
 /// inference-profile ARNs) is escaped so it stays one path segment.
-pub(super) fn model_url(base: &Url, model: &str, action: &str) -> String {
+fn model_url(base: &Url, model: &str, action: &str) -> String {
     format!(
         "{}/model/{}/{action}",
         base.as_str().trim_end_matches('/'),
@@ -167,7 +167,7 @@ pub(super) fn model_url(base: &Url, model: &str, action: &str) -> String {
 
 /// Bearer-token headers. Streaming responses are the binary event stream, so
 /// `accept` names it explicitly.
-pub(super) fn headers(api_key: Option<&str>, stream: bool) -> Value {
+fn headers(api_key: Option<&str>, stream: bool) -> Value {
     let mut header = to_value!({"content-type": "application/json"});
     let h = header.as_object_mut().unwrap();
     if let Some(api_key) = api_key {
