@@ -4,9 +4,13 @@
 use anyhow::bail;
 use url::Url;
 
+use super::super::response_format::ResponseSchemaMarshal;
 use crate::{
     datatype::Value,
-    lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest},
+    lang_model::{
+        LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest,
+        ResponseFormat,
+    },
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage, Unmarshal,
@@ -177,9 +181,6 @@ pub(super) fn headers(api_key: Option<&str>, stream: bool) -> Value {
 /// return a bare `Value`, so this is where a Bedrock-only limitation becomes an
 /// error instead of a silently dropped field.
 pub(in crate::lang_model) fn validate_request(req: &LangModelRequest<'_>) -> anyhow::Result<()> {
-    if req.options.response_format.is_some() {
-        bail!("Bedrock does not support response_format (structured output)");
-    }
     let has_url_image = req.messages.iter().any(|m| {
         m.contents.iter().any(|p| {
             matches!(
@@ -200,6 +201,8 @@ pub(in crate::lang_model) fn validate_request(req: &LangModelRequest<'_>) -> any
 /// model family behind the id.
 #[derive(Clone, Debug, Default)]
 pub struct BedrockMarshal;
+
+impl ResponseSchemaMarshal for BedrockMarshal {}
 
 /// Converse image `format` from a MIME type; Converse accepts png/jpeg/gif/webp.
 fn image_format(mime_type: &str) -> &str {
@@ -418,6 +421,21 @@ impl Marshal<LangModelRequest<'_>> for BedrockMarshal {
             body_obj.insert(
                 "additionalModelRequestFields".into(),
                 to_value!({"top_k": top_k as i64}),
+            );
+        }
+        // Converse takes the schema as a JSON *string*, not an object.
+        if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
+            let wire_schema: serde_json::Value = self.marshal_response_schema(schema).into();
+            body_obj.insert(
+                "outputConfig".into(),
+                to_value!({
+                    "textFormat": {
+                        "type": "json_schema",
+                        "structure": {
+                            "jsonSchema": {"name": "response", "schema": wire_schema.to_string()}
+                        },
+                    }
+                }),
             );
         }
 
@@ -816,32 +834,59 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_bedrock_only_gaps() {
+    fn validate_rejects_url_images() {
         let converse = LangModelProvider::bedrock("us-east-1".parse().unwrap(), "k".to_string());
-        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
-
-        let with_format = LangModelOptions {
-            response_format: Some(
-                ResponseFormat::json_schema(to_value!({"type": "object"})).unwrap(),
-            ),
-            ..Default::default()
-        };
-        let err = validate_request(&request(&converse, &messages, &[], &with_format, false))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("response_format"), "{err}");
+        let options = LangModelOptions::default();
 
         let url_image = vec![
             Message::new(Role::User)
                 .with_contents([Part::image_url("https://example.com/a.png".into()).unwrap()]),
         ];
-        let options = LangModelOptions::default();
         let err = validate_request(&request(&converse, &url_image, &[], &options, false))
             .unwrap_err()
             .to_string();
         assert!(err.contains("image URL"), "{err}");
 
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
         assert!(validate_request(&request(&converse, &messages, &[], &options, false)).is_ok());
+    }
+
+    /// `outputConfig.textFormat` carries the schema as a JSON string, with the
+    /// shared strict-mode normalisation applied before serialising.
+    #[test]
+    fn response_format_maps_to_output_config() {
+        let provider = LangModelProvider::bedrock("us-east-1".parse().unwrap(), "k".to_string());
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+        let options = LangModelOptions {
+            response_format: Some(
+                ResponseFormat::json_schema(to_value!({
+                    "type": "object",
+                    "properties": {"capital": {"type": "string"}},
+                    "required": ["capital"]
+                }))
+                .unwrap(),
+            ),
+            ..Default::default()
+        };
+
+        let v = marshal(&request(&provider, &messages, &[], &options, false));
+        let format = &v["body"]["outputConfig"]["textFormat"];
+        assert_eq!(format["type"], "json_schema");
+        let def = &format["structure"]["jsonSchema"];
+        assert_eq!(def["name"], "response");
+        let schema: serde_json::Value =
+            serde_json::from_str(def["schema"].as_str().expect("schema is a string")).unwrap();
+        assert_eq!(schema["properties"]["capital"]["type"], "string");
+        assert_eq!(schema["additionalProperties"], false);
+
+        let plain = marshal(&request(
+            &provider,
+            &messages,
+            &[],
+            &LangModelOptions::default(),
+            false,
+        ));
+        assert!(plain["body"].get("outputConfig").is_none());
     }
 
     #[test]
@@ -1019,6 +1064,48 @@ mod tests {
                 .as_str()
                 .is_some_and(|c| c.to_lowercase().contains("seoul"))
         );
+    }
+
+    /// Live structured output: the model returns JSON matching the schema.
+    /// Uses Haiku 4.5, since Bedrock lists structured output as unsupported
+    /// for Claude Sonnet 5.
+    #[test_with::env(AWS_BEARER_TOKEN_BEDROCK)]
+    #[tokio::test]
+    async fn test_converse_run_response_format() {
+        dotenvy::dotenv().ok();
+        let model =
+            LangModel::try_new("bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0".into())
+                .unwrap();
+        let messages = vec![Message::new(Role::User).with_contents([Part::text(
+            "Return France's country name and capital city in the requested format.",
+        )])];
+        let schema = to_value!({
+            "type": "object",
+            "properties": {"country": {"type": "string"}, "capital": {"type": "string"}},
+            "required": ["country", "capital"]
+        });
+
+        let resp = model
+            .run(
+                &messages,
+                &[],
+                &LangModelOptions {
+                    response_format: Some(ResponseFormat::json_schema(schema).unwrap()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.finish_reason, FinishReason::Stop {});
+        let text = resp
+            .message
+            .contents
+            .iter()
+            .find_map(|p| p.as_text())
+            .expect("expected text content");
+        let parsed: serde_json::Value = serde_json::from_str(text).expect("response must be JSON");
+        assert_eq!(parsed["capital"].as_str().unwrap().to_lowercase(), "paris");
     }
 
     /// Live `ConverseStream`: the event-stream decoder plus the per-event

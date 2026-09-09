@@ -637,13 +637,15 @@ mod tests {
         assert_eq!(headers["authorization"], "Bearer k");
         assert!(body.get("model").is_none());
 
-        let with_format = LangModelOptions {
-            response_format: Some(
-                ResponseFormat::json_schema(to_value!({"type": "object"})).unwrap(),
-            ),
-            ..Default::default()
+        let url_image = vec![
+            Message::new(Role::User)
+                .with_contents([Part::image_url("https://example.com/a.png".into()).unwrap()]),
+        ];
+        let rejected = LangModelRequest {
+            messages: &url_image,
+            ..req(&options)
         };
-        assert!(marshal_request(&LangModelAPISchema::Bedrock, &req(&with_format)).is_err());
+        assert!(marshal_request(&LangModelAPISchema::Bedrock, &rejected).is_err());
     }
 
     /// A streamed response that never carries a finish_reason still ends with a
