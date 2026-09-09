@@ -177,9 +177,9 @@ pub(super) fn headers(api_key: Option<&str>, stream: bool) -> Value {
     header
 }
 
-/// Rejects requests Bedrock would 400 on, before anything is sent. Marshals
-/// return a bare `Value`, so this is where a Bedrock-only limitation becomes an
-/// error instead of a silently dropped field.
+/// Rejects image URLs, which Bedrock does not fetch, before anything is sent.
+/// Marshals return a bare `Value`, so this is where that becomes an error
+/// instead of a silently dropped part.
 pub(in crate::lang_model) fn validate_request(req: &LangModelRequest<'_>) -> anyhow::Result<()> {
     let has_url_image = req.messages.iter().any(|m| {
         m.contents.iter().any(|p| {
