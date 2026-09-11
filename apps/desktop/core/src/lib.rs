@@ -7,6 +7,7 @@ pub mod prompt;
 pub mod providers;
 pub mod store;
 pub mod types;
+pub mod workspace;
 
 pub use catalog::Catalog;
 pub use config::EngineConfig;
