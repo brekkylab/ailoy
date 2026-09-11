@@ -3,6 +3,10 @@
 
 pub mod connectors;
 pub mod fsops;
+pub mod manager;
+pub mod mount;
 pub mod shared;
 
+pub use manager::*;
+pub use mount::WorkspaceMount;
 pub use shared::SharedFs;
