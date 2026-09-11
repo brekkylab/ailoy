@@ -131,6 +131,12 @@ impl LangModel {
             backoff_base,
         )
         .await?;
+        // Read the headroom off the headers before the body consumes the response.
+        let rate_limit = crate::lang_model::rate_limit::parse_rate_limit(
+            schema,
+            response.headers(),
+            std::time::SystemTime::now(),
+        );
         let response_text = response.text().await?;
 
         let response_value: Value =
@@ -140,7 +146,9 @@ impl LangModel {
         let delta_output = provider.unmarshal_response(response_value)?;
 
         // In non-streaming API, a single delta is the complete output, so finalize now.
-        delta_output.finish()
+        let mut out = delta_output.finish()?;
+        out.rate_limit = rate_limit;
+        Ok(out)
     }
 
     /// Streaming counterpart to [`run`](Self::run): requests an SSE response and
@@ -186,6 +194,8 @@ impl LangModel {
         };
         let mut provider = api::provider_api(schema);
         let mut framing = Framing::for_schema(schema);
+        // The stream is `'static`; it can't borrow the provider's schema.
+        let schema = schema.clone();
         // Cloning a `Client` shares the same connection pool; capture it here so
         // the `'static` stream owns a handle without building a second pool.
         let client = self.client.clone();
@@ -200,6 +210,14 @@ impl LangModel {
                 std::time::Duration::from_secs(1),
             )
             .await?;
+
+            // Headroom rides on the response headers, so it is known before the first
+            // event; `take()` below puts it on the first delta only.
+            let mut rate_limit = crate::lang_model::rate_limit::parse_rate_limit(
+                &schema,
+                response.headers(),
+                std::time::SystemTime::now(),
+            );
 
             // Read the body chunk by chunk, framing complete events out of a
             // buffer (network chunks don't align with event boundaries). We drain
@@ -218,11 +236,14 @@ impl LangModel {
             while let Some(chunk) = byte_stream.next().await {
                 buf.extend_from_slice(&chunk?);
                 for data in framing.drain(&mut buf)? {
-                    if let Some(output) = provider.unmarshal_event(&data)? {
+                    if let Some(mut output) = provider.unmarshal_event(&data)? {
                         if seen_role.is_none() {
                             seen_role = output.delta.role.clone();
                         }
                         saw_finish |= output.finish_reason.is_some();
+                        if let Some(rl) = rate_limit.take() {
+                            output.rate_limit = Some(rl);
+                        }
                         yield output;
                     }
                 }
@@ -231,11 +252,14 @@ impl LangModel {
             // Whatever is left at EOF is the last event for framings that allow
             // an unterminated final event (SSE without a trailing blank line).
             for data in framing.flush(&buf)? {
-                if let Some(output) = provider.unmarshal_event(&data)? {
+                if let Some(mut output) = provider.unmarshal_event(&data)? {
                     if seen_role.is_none() {
                         seen_role = output.delta.role.clone();
                     }
                     saw_finish |= output.finish_reason.is_some();
+                    if let Some(rl) = rate_limit.take() {
+                        output.rate_limit = Some(rl);
+                    }
                     yield output;
                 }
             }
@@ -936,6 +960,68 @@ mod tests {
             1,
             "exactly one finish_reason — the provider's, no synthesized closer"
         );
+    }
+
+    /// Headers on the SSE response land on the first delta only.
+    #[tokio::test]
+    async fn test_stream_carries_rate_limit_on_first_delta() {
+        use axum::{Router, body::Body, response::Response, routing::post};
+
+        let app = Router::new().route(
+            "/",
+            post(|| async {
+                let sse = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"}}]}\n\n\
+                           data: {\"choices\":[{\"delta\":{\"content\":\"!\"},\"finish_reason\":\"stop\"}]}\n\n\
+                           data: [DONE]\n\n";
+                Response::builder()
+                    .status(200)
+                    .header("content-type", "text/event-stream")
+                    .header("x-ratelimit-limit-requests", "100")
+                    .header("x-ratelimit-remaining-requests", "99")
+                    .body(Body::from(sse))
+                    .unwrap()
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let lm = LangModel::from_elem(
+            "m".into(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::ChatCompletion,
+                url: format!("http://{addr}/").parse().unwrap(),
+                api_key: None,
+            },
+        );
+        let deltas: Vec<_> = lm
+            .run_stream(
+                &[Message::new(Role::User).with_contents([crate::message::Part::text("hi")])],
+                &[],
+                &LangModelOptions::default(),
+            )
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|r| r.unwrap())
+            .collect();
+
+        assert!(deltas.len() >= 2);
+        assert_eq!(
+            deltas[0]
+                .rate_limit
+                .as_ref()
+                .unwrap()
+                .requests
+                .as_ref()
+                .unwrap()
+                .remaining,
+            Some(99)
+        );
+        assert!(deltas[1..].iter().all(|d| d.rate_limit.is_none()));
     }
 
     /// A mid-stream error ends the stream WITHOUT a synthesized closer: `?`

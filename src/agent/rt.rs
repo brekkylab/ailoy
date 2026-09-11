@@ -541,6 +541,7 @@ impl Agent {
                             usage: None,
                             depth: Some(0),
                             source_agent: None,
+                            rate_limit: None,
                         }));
                     }
                 }

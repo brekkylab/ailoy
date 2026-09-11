@@ -586,6 +586,7 @@ impl Unmarshal<MessageDeltaOutput> for BedrockUnmarshal {
             usage,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         }))
     }
 
@@ -650,6 +651,7 @@ impl Unmarshal<MessageDeltaOutput> for BedrockUnmarshal {
             usage,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         })
     }
 }

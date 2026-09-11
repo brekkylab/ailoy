@@ -448,6 +448,7 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
             usage,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         }))
     }
 
@@ -486,6 +487,7 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
             usage,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         })
     }
 }

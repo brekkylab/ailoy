@@ -359,6 +359,7 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
                     usage: parsed.usage,
                     depth: None,
                     source_agent: None,
+                    rate_limit: None,
                 }));
             }
             // A failed response carries its reason in `response.error`; surface
@@ -388,6 +389,7 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             usage: None,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         }))
     }
 
@@ -555,6 +557,7 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             usage,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         })
     }
 }

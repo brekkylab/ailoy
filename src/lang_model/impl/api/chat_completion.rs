@@ -396,6 +396,7 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
                 usage: Some(u),
                 depth: None,
                 source_agent: None,
+                rate_limit: None,
             }));
         };
 
@@ -476,6 +477,7 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             usage,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         }))
     }
 
@@ -504,6 +506,7 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
                 usage: None,
                 depth: None,
                 source_agent: None,
+                rate_limit: None,
             });
         }
 
@@ -558,6 +561,7 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             usage,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         })
     }
 }

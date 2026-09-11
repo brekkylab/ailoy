@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::message::Part;
+use crate::message::{Part, RateLimitInfo};
 
 /// The author of a message (or streaming delta) in a chat.
 #[derive(
@@ -232,6 +232,10 @@ pub struct MessageOutput {
     /// [`AgentCard`]: crate::agent::AgentCard
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_agent: Option<String>,
+
+    /// Rate-limit headroom the provider reported with this response, when it reports any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<RateLimitInfo>,
 }
 
 impl fmt::Display for MessageOutput {
