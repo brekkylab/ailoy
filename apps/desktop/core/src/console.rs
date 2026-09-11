@@ -18,6 +18,16 @@ pub const CONSOLE_BIN_NAME: &str = "cortex-local-console";
 /// Where the console server binary is. In a bundle it sits beside the app binary (the Tauri
 /// layer passes that path explicitly); in development it is the sibling checkout's build.
 pub fn resolve_console_bin(explicit: Option<&Path>) -> Result<PathBuf> {
+    let env_dir = std::env::var_os("AILOY_CORTEX_BIN_DIR").map(PathBuf::from);
+    resolve_console_bin_in(explicit, env_dir.as_deref())
+}
+
+/// [`resolve_console_bin`] with `$AILOY_CORTEX_BIN_DIR` already read, so a test can hand in a
+/// directory without mutating the process environment.
+pub(crate) fn resolve_console_bin_in(
+    explicit: Option<&Path>,
+    env_dir: Option<&Path>,
+) -> Result<PathBuf> {
     if let Some(p) = explicit {
         return if p.is_file() {
             Ok(p.to_path_buf())
@@ -28,8 +38,8 @@ pub fn resolve_console_bin(explicit: Option<&Path>) -> Result<PathBuf> {
             )))
         };
     }
-    if let Ok(dir) = std::env::var("AILOY_CORTEX_BIN_DIR") {
-        let p = PathBuf::from(dir).join(CONSOLE_BIN_NAME);
+    if let Some(dir) = env_dir {
+        let p = dir.join(CONSOLE_BIN_NAME);
         if p.is_file() {
             return Ok(p);
         }
@@ -48,7 +58,7 @@ pub fn resolve_console_bin(explicit: Option<&Path>) -> Result<PathBuf> {
             }
         }
     }
-    if let Ok(path) = std::env::var("PATH") {
+    if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
             let p = dir.join(CONSOLE_BIN_NAME);
             if p.is_file() {
@@ -61,6 +71,7 @@ pub fn resolve_console_bin(explicit: Option<&Path>) -> Result<PathBuf> {
     )))
 }
 
+#[derive(Clone, Debug)]
 pub struct ConsoleFactory {
     bin: PathBuf,
 }
@@ -93,23 +104,26 @@ impl ConsoleFactory {
             return Err(EngineError::ConsoleUnavailable("console disabled".into()));
         }
         let mut cmd = Command::new(&self.bin);
+        // Deliberately inherited (tokio's default, spelled out): the server's diagnostics go
+        // where the app's do. Piping it into `tracing` is the later upgrade, not `null`.
         cmd.stderr(Stdio::inherit());
-        if let Some(dir) = self.bin.parent() {
-            let mut path = dir.as_os_str().to_os_string();
-            if let Ok(existing) = std::env::var("PATH") {
-                path.push(":");
-                path.push(existing);
+        if let Some(dir) = self.bin.parent().filter(|d| !d.as_os_str().is_empty()) {
+            let mut dirs = vec![dir.to_path_buf()];
+            if let Some(existing) = std::env::var_os("PATH") {
+                dirs.extend(std::env::split_paths(&existing));
             }
-            cmd.env("PATH", path);
+            if let Ok(path) = std::env::join_paths(dirs) {
+                cmd.env("PATH", path);
+            }
         }
-        let client =
-            StdioClient::new(cmd).map_err(|e| EngineError::ConsoleUnavailable(e.to_string()))?;
+        let client = StdioClient::new(cmd)
+            .map_err(|e| EngineError::ConsoleUnavailable(format!("{}: {e}", self.bin.display())))?;
         Console::builder()
             .client(client)
             .mount(mount)
             .build()
             .await
-            .map_err(|e| EngineError::ConsoleUnavailable(e.to_string()))
+            .map_err(|e| EngineError::ConsoleUnavailable(format!("{}: {e:#}", self.bin.display())))
     }
 }
 
@@ -128,15 +142,16 @@ mod tests {
     }
 
     #[test]
-    fn env_dir_is_honoured() {
+    fn env_dir_is_honoured_and_loses_to_an_explicit_path() {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join(CONSOLE_BIN_NAME);
         std::fs::write(&bin, b"").unwrap();
-        // SAFETY: tests in this module are the only readers of this variable and run serially
-        // under `--test-threads=1` in CI; locally a race only makes the assertion fail.
-        unsafe { std::env::set_var("AILOY_CORTEX_BIN_DIR", dir.path()) };
-        assert_eq!(resolve_console_bin(None).unwrap(), bin);
-        unsafe { std::env::remove_var("AILOY_CORTEX_BIN_DIR") };
+        assert_eq!(resolve_console_bin_in(None, Some(dir.path())).unwrap(), bin);
+        let explicit = tempfile::NamedTempFile::new().unwrap();
+        assert_eq!(
+            resolve_console_bin_in(Some(explicit.path()), Some(dir.path())).unwrap(),
+            explicit.path()
+        );
     }
 
     #[test]
