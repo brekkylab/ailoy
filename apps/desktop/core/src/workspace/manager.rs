@@ -1,7 +1,7 @@
 //! The workspace: one `WorkFs`, mounted for the life of the engine.
 
 use std::{
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::Command,
     sync::{Arc, Mutex as StdMutex},
 };
@@ -22,16 +22,38 @@ pub struct WorkspaceManager {
     /// Held for the life of the engine; dropping it unmounts. Behind a std mutex because
     /// `FuseTMount` is dropped on a blocking thread at shutdown.
     mount: StdMutex<Option<FuseTMount>>,
+    /// The workspace's own health, as `info()` reports it.
+    ///
+    /// `mount_fuse` — reached once, from `start` — is the only writer. That is what makes
+    /// `info()`'s `try_read` fallback unreachable in practice: after startup nothing ever
+    /// contends with a reader. A second writer (a remount command, a watchdog) would make that
+    /// fallback reachable, and a healthy mounted workspace would report `Degraded { reason:
+    /// "busy" }` — and `console_mount()` would hand back `files_root` — for the length of the
+    /// write. Adding one means revisiting `info()` and `console_mount()` first.
     status: RwLock<WorkspaceStatus>,
     mounts: RwLock<Vec<MountInfo>>,
 }
 
 impl WorkspaceManager {
     pub async fn start(files_root: PathBuf, mountpoint: PathBuf, mount: bool) -> WorkspaceManager {
-        let status = match prepare_dirs(&files_root, &mountpoint) {
-            Ok(()) => WorkspaceStatus::Mounted,
+        // The files directory is made whether or not the workspace is mounted — it is what the
+        // root `PassthroughFs` serves — so it is done first and its failure is reported as
+        // itself. Reporting it as "mounting disabled" would leave a passthrough over a
+        // directory that does not exist, and every file operation failing with a bare
+        // `NotFound` and nothing to say about why. The mount point is only prepared when there
+        // is going to be a mount.
+        let status = match std::fs::create_dir_all(&files_root) {
             Err(e) => WorkspaceStatus::Degraded {
-                reason: e.to_string(),
+                reason: format!("files directory: {e}"),
+            },
+            Ok(()) if !mount => WorkspaceStatus::Degraded {
+                reason: "mounting disabled".into(),
+            },
+            Ok(()) => match prepare_mount_point(&mountpoint) {
+                Ok(()) => WorkspaceStatus::Mounted,
+                Err(e) => WorkspaceStatus::Degraded {
+                    reason: e.to_string(),
+                },
             },
         };
         let fs = Arc::new(RwLock::new(
@@ -53,15 +75,13 @@ impl WorkspaceManager {
             files_root,
             mountpoint,
             mount: StdMutex::new(None),
-            status: RwLock::new(if mount {
-                status
-            } else {
-                WorkspaceStatus::Degraded {
-                    reason: "mounting disabled".into(),
-                }
-            }),
+            status: RwLock::new(status),
             mounts: RwLock::new(vec![root]),
         };
+        // The read guard is a temporary: it lives to the end of the condition and is dropped
+        // before the block runs. That is what lets `mount_fuse` take the same lock for writing
+        // on its failure path. Rewriting this as a `match` or `if let` over the guard would
+        // hold it across the call and deadlock on the first mount failure.
         if mount && matches!(*manager.status.read().await, WorkspaceStatus::Mounted) {
             manager.mount_fuse().await;
         }
@@ -137,10 +157,8 @@ impl WorkspaceManager {
     }
 
     pub async fn detach(&self, path: &str) -> Result<()> {
-        if path == "/" || path.is_empty() {
-            return Err(EngineError::Invalid("루트는 분리할 수 없습니다".into()));
-        }
-        let _ = self.fs.write().await.unmount(Path::new(path));
+        let path = detachable_path(path)?;
+        let _ = self.fs.write().await.unmount(Path::new(&path));
         self.mounts.write().await.retain(|m| m.path != path);
         Ok(())
     }
@@ -172,15 +190,21 @@ impl WorkspaceManager {
     }
 }
 
-/// Create the two directories, and make sure the mount point is free: a mount left over
-/// from a crash is unmounted, and anything else inside it is a refusal, not a deletion.
-fn prepare_dirs(files_root: &Path, mountpoint: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(files_root)?;
-    std::fs::create_dir_all(mountpoint)?;
+/// Make sure the mount point exists and is free: a mount left over from a crash is unmounted,
+/// and anything else inside it is a refusal, not a deletion.
+///
+/// The stale-mount check comes *before* the directory is created, not after. `create_dir_all`
+/// stats the path it is asked for, and a FUSE-T mount wedged by a crash — the userspace server
+/// gone, the kernel still routing to it — is exactly the path whose `stat` never returns. Doing
+/// it first would hang the engine at startup on the one case the cleanup below exists to
+/// repair. `is_mounted` reads `mount(8)` and canonicalizes the mount point's *parent*, never
+/// the mount point, so it is safe to ask about a path that is wedged or not there yet.
+fn prepare_mount_point(mountpoint: &Path) -> std::io::Result<()> {
     if is_mounted(mountpoint) {
         tracing::warn!("stale mount at {}, unmounting", mountpoint.display());
         force_unmount(mountpoint)?;
     }
+    std::fs::create_dir_all(mountpoint)?;
     if std::fs::read_dir(mountpoint)?.next().is_some() {
         return Err(std::io::Error::other(format!(
             "mount point {} is not empty",
@@ -188,6 +212,31 @@ fn prepare_dirs(files_root: &Path, mountpoint: &Path) -> std::io::Result<()> {
         )));
     }
     Ok(())
+}
+
+/// The path `detach` will act on, or the refusal to touch the root.
+///
+/// A string compare against `"/"` is not the guard it looks like: `WorkFs::unmount` normalizes
+/// its argument before the lookup, so `"//"`, `"/."` and `"/mem/.."` all arrive at the empty
+/// root key. Each of those would take the root `PassthroughFs` out of the tree — and say
+/// `Ok(())` while doing it, because the `retain` that follows matches no row — leaving the
+/// workspace serving an empty root until the app restarts. So the path is put in normal form
+/// first, and the guard is applied there.
+///
+/// `normalize_mount_path` turns away the empty spellings and every `..`. What it still admits
+/// that collapses to the root is a path made only of `.` and separators, so the normal form is
+/// also required to carry at least one real component.
+fn detachable_path(path: &str) -> Result<String> {
+    let refuse = || EngineError::Invalid("루트는 분리할 수 없습니다".into());
+    let normalized =
+        crate::workspace::connectors::normalize_mount_path(path).map_err(|_| refuse())?;
+    if !Path::new(&normalized)
+        .components()
+        .any(|c| matches!(c, Component::Normal(_)))
+    {
+        return Err(refuse());
+    }
+    Ok(normalized)
 }
 
 pub fn is_mounted(path: &Path) -> bool {
@@ -283,6 +332,35 @@ mod tests {
         assert_eq!(fsops::list(&ws.fs(), "/mem").await.unwrap().len(), 1);
         ws.detach("/mem").await.unwrap();
         assert_eq!(ws.mounts().await.len(), 1);
+        ws.shutdown().await;
+    }
+
+    /// Every spelling of the root that `WorkFs` normalizes back to its empty mount key has to be
+    /// refused, not just the literal `"/"` — and the proof that it was is that the root store is
+    /// still there afterwards.
+    #[tokio::test]
+    async fn detach_refuses_every_spelling_of_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = dir.path().join("files");
+        let mp = dir.path().join("workspace");
+        let ws = WorkspaceManager::start(files.clone(), mp, false).await;
+
+        for spelling in ["/", "", "//", "/.", "/mem/..", "/./", "  /  "] {
+            assert!(
+                matches!(ws.detach(spelling).await, Err(EngineError::Invalid(_))),
+                "detach({spelling:?}) should have refused the root"
+            );
+        }
+
+        // The root `PassthroughFs` survived all of it: a write still lands in `files_root`.
+        fsops::write(&ws.fs(), "/still-here.txt", "root intact")
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(files.join("still-here.txt")).unwrap(),
+            "root intact"
+        );
+        assert_eq!(ws.mounts().await.len(), 1, "the root row");
         ws.shutdown().await;
     }
 }
