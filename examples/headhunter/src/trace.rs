@@ -671,6 +671,7 @@ mod tests {
             usage: None,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         }
     }
 

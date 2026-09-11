@@ -37,7 +37,7 @@ fn header_u64(headers: &HeaderMap, name: &str) -> Option<u64> {
 fn epoch_ms(t: SystemTime) -> Option<u64> {
     t.duration_since(UNIX_EPOCH)
         .ok()
-        .map(|d| d.as_millis() as u64)
+        .and_then(|d| u64::try_from(d.as_millis()).ok())
 }
 
 fn window(
@@ -79,7 +79,8 @@ fn parse_openai(headers: &HeaderMap, now: SystemTime) -> RateLimitInfo {
     let win = |kind: &str| {
         let reset = header_str(headers, &format!("x-ratelimit-reset-{kind}"))
             .and_then(parse_reset_duration)
-            .and_then(|d| epoch_ms(now + d));
+            .and_then(|d| now.checked_add(d))
+            .and_then(epoch_ms);
         window(
             header_u64(headers, &format!("x-ratelimit-limit-{kind}")),
             header_u64(headers, &format!("x-ratelimit-remaining-{kind}")),
@@ -95,6 +96,9 @@ fn parse_openai(headers: &HeaderMap, now: SystemTime) -> RateLimitInfo {
 }
 
 /// `"1h2m3s"`, `"6m0s"`, `"1.5s"`, `"120ms"` — number/unit pairs, concatenated.
+///
+/// A value a server could not have meant — non-finite, or past [`Duration::MAX`] on its own
+/// or once summed — is a parse failure like any other malformed header, never a panic.
 pub(crate) fn parse_reset_duration(s: &str) -> Option<Duration> {
     let s = s.trim();
     if s.is_empty() {
@@ -119,7 +123,7 @@ pub(crate) fn parse_reset_duration(s: &str) -> Option<Duration> {
             "ms" => value / 1000.0,
             _ => return None,
         };
-        total += Duration::from_secs_f64(secs);
+        total = total.checked_add(Duration::try_from_secs_f64(secs).ok()?)?;
         rest = tail;
     }
     Some(total)
@@ -235,5 +239,64 @@ mod tests {
             Some(Duration::from_secs(3723))
         );
         assert_eq!(parse_reset_duration("abc"), None);
+    }
+
+    /// A malformed Anthropic reset drops only `reset_at_ms`; the rest of the window survives.
+    #[test]
+    fn anthropic_malformed_reset_keeps_limit_and_remaining() {
+        let h = headers(&[
+            ("anthropic-ratelimit-requests-limit", "4000"),
+            ("anthropic-ratelimit-requests-remaining", "3999"),
+            ("anthropic-ratelimit-requests-reset", "not-a-date"),
+        ]);
+        let info = parse_rate_limit(&LangModelAPISchema::Anthropic, &h, UNIX_EPOCH).unwrap();
+        let w = info.requests.as_ref().unwrap();
+        assert_eq!(w.limit, Some(4000));
+        assert_eq!(w.remaining, Some(3999));
+        assert_eq!(w.reset_at_ms, None);
+    }
+
+    /// Values a hostile or broken server could send: a reset that overflows `Duration`,
+    /// one that parses to `f64::INFINITY`, one whose parts overflow when summed, one that
+    /// overflows `SystemTime` once added to `now`, and one whose epoch milliseconds
+    /// overflow `u64`. Each drops `reset_at_ms` only — and none of them panics.
+    #[test]
+    fn openai_pathological_reset_yields_none_without_panicking() {
+        let inf = format!("{}s", "9".repeat(400));
+        for reset in [
+            "99999999999999999999s",
+            inf.as_str(),
+            "10000000000000000000s10000000000000000000s",
+            "18000000000000000000s",
+            "99999999999999999s",
+        ] {
+            let h = headers(&[
+                ("x-ratelimit-limit-tokens", "30000000"),
+                ("x-ratelimit-remaining-tokens", "29999500"),
+                ("x-ratelimit-reset-tokens", reset),
+            ]);
+            let info = parse_rate_limit(&LangModelAPISchema::OpenAI, &h, UNIX_EPOCH)
+                .unwrap_or_else(|| panic!("{reset}: limit/remaining should still be reported"));
+            let w = info.tokens.as_ref().unwrap();
+            assert_eq!(w.limit, Some(30_000_000), "{reset}");
+            assert_eq!(w.remaining, Some(29_999_500), "{reset}");
+            assert_eq!(w.reset_at_ms, None, "{reset}");
+        }
+    }
+
+    /// Out-of-range durations are a parse failure, not a panic.
+    #[test]
+    fn duration_parser_rejects_out_of_range_values() {
+        // Larger than `Duration::MAX`.
+        assert_eq!(parse_reset_duration("99999999999999999999s"), None);
+        // Parses to `f64::INFINITY`.
+        assert_eq!(parse_reset_duration(&format!("{}s", "9".repeat(400))), None);
+        // Each term fits; their sum does not.
+        assert_eq!(
+            parse_reset_duration("10000000000000000000s10000000000000000000s"),
+            None
+        );
+        // In range for `Duration`; it is `now + d` that cannot hold it.
+        assert!(parse_reset_duration("18000000000000000000s").is_some());
     }
 }
