@@ -517,7 +517,10 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             finish_reason = Some(FinishReason::ToolCall {});
         }
 
-        // Parse usage (OpenAI Responses API: usage.input_tokens / output_tokens)
+        // Parse usage (OpenAI Responses API: usage.input_tokens / output_tokens).
+        // `input_tokens` already includes the cached prefix; the cached portion is
+        // surfaced separately from `input_tokens_details.cached_tokens`. The
+        // Responses API reports no cache-write count, so creation stays `None`.
         let usage = val
             .as_object()
             .and_then(|r| r.get("usage"))
@@ -532,7 +535,11 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
                     .and_then(|v| v.as_integer())
                     .unwrap_or(0) as u64,
                 cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
+                cache_read_input_tokens: u
+                    .get("input_tokens_details")
+                    .and_then(|d| d.pointer("/cached_tokens"))
+                    .and_then(|v| v.as_integer())
+                    .map(|v| v as u64),
             });
 
         Ok(MessageDeltaOutput {
@@ -797,6 +804,19 @@ mod tests {
                 cache_read_input_tokens: None,
             })
         );
+    }
+
+    /// Cached prompt tokens are reported via `usage.input_tokens_details.cached_tokens`.
+    #[test]
+    fn test_unmarshal_usage_cached_tokens() {
+        let response = to_value!({
+            "status": "completed",
+            "output": [{"type":"message","role":"assistant","content":[{"type":"output_text","text":"x"}]}],
+            "usage": {"input_tokens": 200, "output_tokens": 75, "input_tokens_details": {"cached_tokens": 150}}
+        });
+        let usage = OpenAIUnmarshal.unmarshal(response).unwrap().usage.unwrap();
+        assert_eq!(usage.cache_read_input_tokens, Some(150));
+        assert_eq!(usage.cache_creation_input_tokens, None);
     }
 
     /// Verifies that function_call_output.output is an array of text/image blocks.

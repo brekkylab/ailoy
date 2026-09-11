@@ -376,7 +376,9 @@ impl GeminiUnmarshal {
     }
 
     /// Parses Gemini `usageMetadata` (`promptTokenCount` / `candidatesTokenCount`).
-    /// `promptTokenCount` includes any cached-content tokens (folded into `input_tokens`).
+    /// `promptTokenCount` includes any cached-content tokens (folded into `input_tokens`);
+    /// the cached portion is surfaced separately from `cachedContentTokenCount`. Gemini
+    /// reports no cache-write count, so `cache_creation_input_tokens` stays `None`.
     fn parse_usage(root: &Value) -> Option<TokenUsage> {
         let u = root
             .pointer("/usageMetadata")
@@ -392,7 +394,10 @@ impl GeminiUnmarshal {
                 .and_then(|v| v.as_integer())
                 .unwrap_or(0) as u64,
             cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
+            cache_read_input_tokens: u
+                .get("cachedContentTokenCount")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as u64),
         })
     }
 }
@@ -824,6 +829,18 @@ mod tests {
                 cache_read_input_tokens: None,
             })
         );
+    }
+
+    /// Cached prompt tokens are reported via `usageMetadata.cachedContentTokenCount`.
+    #[test]
+    fn test_unmarshal_usage_cached_content_tokens() {
+        let val = to_value!({
+            "candidates": [{"content":{"role":"model","parts":[{"text":"x"}]},"finishReason":"STOP"}],
+            "usageMetadata": {"promptTokenCount": 15, "candidatesTokenCount": 6, "cachedContentTokenCount": 10}
+        });
+        let usage = GeminiUnmarshal.unmarshal(val).unwrap().usage.unwrap();
+        assert_eq!(usage.cache_read_input_tokens, Some(10));
+        assert_eq!(usage.cache_creation_input_tokens, None);
     }
 
     /// Verifies functionResponse.response.result marshaling for all Part variants.
