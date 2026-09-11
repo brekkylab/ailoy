@@ -1,7 +1,7 @@
 use futures::{StreamExt as _, stream::BoxStream};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
-use super::{LangModelAPISchema, LangModelProviderElem};
+use super::{LangModelAPISchema, LangModelProviderElem, ModelError};
 use crate::{
     datatype::Value,
     lang_model::{
@@ -18,6 +18,9 @@ use crate::{
 pub struct LangModel {
     model: String,
     provider: LangModelProviderElem,
+    /// One connection pool per model, not per call: a fresh `Client` per request was a
+    /// TLS handshake per turn.
+    client: reqwest::Client,
 }
 
 pub(super) struct LangModelRequest<'a> {
@@ -31,6 +34,15 @@ pub(super) struct LangModelRequest<'a> {
 }
 
 impl LangModel {
+    /// Build directly from a resolved endpoint. `model` is the API-side id.
+    pub fn from_elem(model: String, provider: LangModelProviderElem) -> Self {
+        Self {
+            model,
+            provider,
+            client: reqwest::Client::new(),
+        }
+    }
+
     /// Resolve `model` against the `"default"` entry of
     /// [`get_lm_providers`](crate::lang_model::get_lm_providers).  Convenience
     /// over [`try_from_provider`](Self::try_from_provider).
@@ -69,10 +81,7 @@ impl LangModel {
             })?
             .clone();
         let api_model_id = lmp.resolve_model_id(&model)?;
-        Ok(Self {
-            model: api_model_id,
-            provider: provider_elem,
-        })
+        Ok(Self::from_elem(api_model_id, provider_elem))
     }
 
     pub fn model_id(&self) -> &str {
@@ -84,6 +93,20 @@ impl LangModel {
         messages: &[Message],
         tools: &[ToolDesc],
         options: &LangModelOptions,
+    ) -> anyhow::Result<MessageOutput> {
+        self.run_with_backoff_base(messages, tools, options, std::time::Duration::from_secs(1))
+            .await
+    }
+
+    /// [`run`](Self::run) with the retry backoff's first wait made explicit, so a
+    /// test can drive the retry path without sleeping whole seconds. Production
+    /// callers want [`run`](Self::run) (1s base).
+    pub async fn run_with_backoff_base(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDesc],
+        options: &LangModelOptions,
+        backoff_base: std::time::Duration,
     ) -> anyhow::Result<MessageOutput> {
         // Create request (non-streaming)
         let req = LangModelRequest {
@@ -97,10 +120,17 @@ impl LangModel {
         let LangModelProviderElem::API { schema, .. } = &self.provider;
         let (url, header_map, body) = marshal_request(schema, &req)?;
 
-        // Send with retry on 429, then read the whole response.
+        // Send with retry on what may recover, then read the whole response.
         let provider = api::provider_api(schema);
-        let client = reqwest::Client::new();
-        let response = send_with_retry(&client, &url, header_map, &body, provider.as_ref()).await?;
+        let response = send_with_retry(
+            &self.client,
+            &url,
+            header_map,
+            &body,
+            provider.as_ref(),
+            backoff_base,
+        )
+        .await?;
         let response_text = response.text().await?;
 
         let response_value: Value =
@@ -156,11 +186,20 @@ impl LangModel {
         };
         let mut provider = api::provider_api(schema);
         let mut framing = Framing::for_schema(schema);
+        // Cloning a `Client` shares the same connection pool; capture it here so
+        // the `'static` stream owns a handle without building a second pool.
+        let client = self.client.clone();
 
         Box::pin(async_stream::try_stream! {
-            let client = reqwest::Client::new();
-            let response =
-                send_with_retry(&client, &url, header_map, &body, provider.as_ref()).await?;
+            let response = send_with_retry(
+                &client,
+                &url,
+                header_map,
+                &body,
+                provider.as_ref(),
+                std::time::Duration::from_secs(1),
+            )
+            .await?;
 
             // Read the body chunk by chunk, framing complete events out of a
             // buffer (network chunks don't align with event boundaries). We drain
@@ -279,58 +318,84 @@ fn marshal_request(
     Ok((url, header_map, body))
 }
 
-/// POSTs the request, retrying transient 429s with backoff, and returns the
-/// successful (2xx) response **unconsumed** so the caller decides whether to
-/// read it whole (`run`) or stream it (`run_stream`). Bails on a non-2xx
-/// response or exhausted retries.
+/// POSTs the request, retrying what may recover — 429 (unless the body says the quota is
+/// gone for good), 408, 5xx, and transport failures — with exponential backoff from
+/// `backoff_base` (1s in production; tests pass ~1ms) capped at 10s, honouring
+/// `retry-after` when present. Returns the 2xx response **unconsumed** so the caller
+/// decides whether to read it whole (`run`) or stream it (`run_stream`). Anything else is
+/// a [`ModelError`] carrying the status and whether it was retryable.
 async fn send_with_retry(
     client: &reqwest::Client,
     url: &str,
     headers: HeaderMap,
     body: &serde_json::Value,
     provider: &(dyn api::ProviderApi + Send + Sync),
-) -> anyhow::Result<reqwest::Response> {
+    backoff_base: std::time::Duration,
+) -> Result<reqwest::Response, ModelError> {
     const MAX_RETRIES: u32 = 3;
-    const MAX_WAIT_SECS: u64 = 10;
-    for attempt in 0..=MAX_RETRIES {
-        let response = client
+    const MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+    let mut attempt: u32 = 0;
+    loop {
+        attempt += 1;
+        let response = match client
             .post(url)
             .headers(headers.clone())
             .json(body)
             .send()
-            .await?;
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let transient = e.is_connect() || e.is_timeout() || e.is_request();
+                if transient && attempt <= MAX_RETRIES {
+                    log::warn!("transport error, retrying (attempt {attempt}/{MAX_RETRIES}): {e}");
+                    tokio::time::sleep((backoff_base * (1u32 << (attempt - 1))).min(MAX_WAIT))
+                        .await;
+                    continue;
+                }
+                return Err(ModelError {
+                    status: None,
+                    retryable: transient,
+                    message: e.to_string(),
+                    attempts: attempt,
+                });
+            }
+        };
         let status = response.status();
         if status.is_success() {
             return Ok(response);
         }
-        if status.as_u16() == 429 && attempt < MAX_RETRIES {
-            let wait_secs = response
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(1u64 << attempt)
-                .min(MAX_WAIT_SECS);
-            let text = response.text().await?;
-            // Permanent quota/credit exhaustion never recovers; don't retry.
-            if provider.is_permanent_quota_error(&text) {
-                log::warn!("Quota exhausted (429), not retrying: {text}");
-                anyhow::bail!("API request failed with status {status}: {text}");
-            }
+        let retry_after = response
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(std::time::Duration::from_secs);
+        let text = response.text().await.unwrap_or_default();
+        let code = status.as_u16();
+        let permanent_quota = code == 429 && provider.is_permanent_quota_error(&text);
+        let retryable =
+            !permanent_quota && (code == 429 || code == 408 || (500..600).contains(&code));
+        if retryable && attempt <= MAX_RETRIES {
+            let wait = retry_after
+                .unwrap_or(backoff_base * (1u32 << (attempt - 1)))
+                .min(MAX_WAIT);
             log::warn!(
-                "Rate limited (429). Retrying after {}s (attempt {}/{}): {}",
-                wait_secs,
-                attempt + 1,
-                MAX_RETRIES,
-                text
+                "HTTP {code}, retrying after {wait:?} (attempt {attempt}/{MAX_RETRIES}): {text}"
             );
-            tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
+            tokio::time::sleep(wait).await;
             continue;
         }
-        let text = response.text().await.unwrap_or_default();
-        anyhow::bail!("API request failed with status {status}: {text}");
+        if permanent_quota {
+            log::warn!("Quota exhausted (429), not retrying: {text}");
+        }
+        return Err(ModelError {
+            status: Some(code),
+            retryable,
+            message: text,
+            attempts: attempt,
+        });
     }
-    unreachable!("retry loop returns or bails on every path")
 }
 
 #[cfg(test)]
@@ -612,6 +677,121 @@ mod tests {
             1,
             "permanent quota 429 must not be retried (1 attempt only)"
         );
+    }
+
+    /// 503 twice then 200: transient server errors are retried like 429.
+    #[tokio::test]
+    async fn test_retries_5xx_then_succeeds() {
+        use std::sync::{Arc, Mutex};
+
+        use axum::{Router, body::Body, response::Response, routing::post};
+
+        let count = Arc::new(Mutex::new(0u32));
+        let c = count.clone();
+        let app = Router::new().route(
+            "/",
+            post(move || {
+                let c = c.clone();
+                async move {
+                    let n = {
+                        let mut g = c.lock().unwrap();
+                        *g += 1;
+                        *g
+                    };
+                    if n <= 2 {
+                        Response::builder()
+                            .status(503)
+                            .body(Body::from("overloaded"))
+                            .unwrap()
+                    } else {
+                        Response::builder()
+                            .status(200)
+                            .header("content-type", "application/json")
+                            .body(Body::from(r#"{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}"#))
+                            .unwrap()
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let lm = LangModel::from_elem(
+            "m".into(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::ChatCompletion,
+                url: format!("http://{addr}/").parse().unwrap(),
+                api_key: None,
+            },
+        );
+        // Backoff would sleep 1s+2s; keep the test fast by overriding the base wait.
+        let out = lm
+            .run_with_backoff_base(
+                &[Message::new(Role::User).with_contents([crate::message::Part::text("hi")])],
+                &[],
+                &LangModelOptions::default(),
+                std::time::Duration::from_millis(1),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.message.contents[0].as_text(), Some("ok"));
+        assert_eq!(*count.lock().unwrap(), 3);
+    }
+
+    /// 400 is not retried and surfaces as a typed, non-retryable ModelError.
+    #[tokio::test]
+    async fn test_400_is_typed_and_not_retried() {
+        use std::sync::{Arc, Mutex};
+
+        use axum::{Router, body::Body, response::Response, routing::post};
+
+        let count = Arc::new(Mutex::new(0u32));
+        let c = count.clone();
+        let app = Router::new().route(
+            "/",
+            post(move || {
+                let c = c.clone();
+                async move {
+                    *c.lock().unwrap() += 1;
+                    Response::builder()
+                        .status(400)
+                        .body(Body::from(r#"{"error":"bad request"}"#))
+                        .unwrap()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let lm = LangModel::from_elem(
+            "m".into(),
+            LangModelProviderElem::API {
+                schema: LangModelAPISchema::ChatCompletion,
+                url: format!("http://{addr}/").parse().unwrap(),
+                api_key: None,
+            },
+        );
+        let err = lm
+            .run(
+                &[Message::new(Role::User).with_contents([crate::message::Part::text("hi")])],
+                &[],
+                &LangModelOptions::default(),
+            )
+            .await
+            .unwrap_err();
+        let me = err
+            .downcast_ref::<ModelError>()
+            .expect("a ModelError inside the anyhow chain");
+        assert_eq!(me.status, Some(400));
+        assert!(!me.retryable);
+        assert_eq!(me.attempts, 1);
+        assert_eq!(*count.lock().unwrap(), 1);
     }
 
     /// Bedrock requests are validated before marshaling, and the Converse
