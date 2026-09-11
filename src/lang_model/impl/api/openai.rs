@@ -518,28 +518,35 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
         }
 
         // Parse usage (OpenAI Responses API: usage.input_tokens / output_tokens).
-        // `input_tokens` already includes the cached prefix; the cached portion is
-        // surfaced separately from `input_tokens_details.cached_tokens`. The
-        // Responses API reports no cache-write count, so creation stays `None`.
+        // The wire `input_tokens` is the *total* prompt size and already includes the
+        // cached prefix reported by `input_tokens_details.cached_tokens`, whereas
+        // [`TokenUsage::input_tokens`] is the uncached input only (cache fields are
+        // additive components of the prompt). Normalize by subtracting the cached count.
+        // The Responses API reports no cache-write count, so creation stays `None`.
         let usage = val
             .as_object()
             .and_then(|r| r.get("usage"))
             .and_then(|u| u.as_object())
-            .map(|u| TokenUsage {
-                input_tokens: u
-                    .get("input_tokens")
-                    .and_then(|v| v.as_integer())
-                    .unwrap_or(0) as u64,
-                output_tokens: u
-                    .get("output_tokens")
-                    .and_then(|v| v.as_integer())
-                    .unwrap_or(0) as u64,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: u
+            .map(|u| {
+                let cache_read_input_tokens = u
                     .get("input_tokens_details")
                     .and_then(|d| d.pointer("/cached_tokens"))
                     .and_then(|v| v.as_integer())
-                    .map(|v| v as u64),
+                    .map(|v| v as u64);
+                let prompt_tokens = u
+                    .get("input_tokens")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0) as u64;
+                TokenUsage {
+                    input_tokens: prompt_tokens
+                        .saturating_sub(cache_read_input_tokens.unwrap_or(0)),
+                    output_tokens: u
+                        .get("output_tokens")
+                        .and_then(|v| v.as_integer())
+                        .unwrap_or(0) as u64,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens,
+                }
             });
 
         Ok(MessageDeltaOutput {
@@ -807,6 +814,9 @@ mod tests {
     }
 
     /// Cached prompt tokens are reported via `usage.input_tokens_details.cached_tokens`.
+    /// The wire `input_tokens` includes the cached prefix, so it is normalized down to the
+    /// uncached remainder (`TokenUsage` carries Anthropic semantics: input + cache reads +
+    /// cache writes = total prompt).
     #[test]
     fn test_unmarshal_usage_cached_tokens() {
         let response = to_value!({
@@ -815,6 +825,7 @@ mod tests {
             "usage": {"input_tokens": 200, "output_tokens": 75, "input_tokens_details": {"cached_tokens": 150}}
         });
         let usage = OpenAIUnmarshal.unmarshal(response).unwrap().usage.unwrap();
+        assert_eq!(usage.input_tokens, 50);
         assert_eq!(usage.cache_read_input_tokens, Some(150));
         assert_eq!(usage.cache_creation_input_tokens, None);
     }
