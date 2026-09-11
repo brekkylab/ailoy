@@ -90,6 +90,17 @@ mod tests {
                 writable: false,
                 status: MountStatus::Ok,
             },
+            MountInfo {
+                id: "s".into(),
+                path: "/bucket".into(),
+                kind: MountKind::S3,
+                label: "bucket".into(),
+                detail: "s3://b".into(),
+                writable: false,
+                status: MountStatus::Error {
+                    message: "bucket unreachable".into(),
+                },
+            },
         ];
         let s = build(&PromptInput {
             workfs_path: Path::new("/tmp/ws"),
@@ -100,6 +111,7 @@ mod tests {
         });
         assert!(s.contains("/tmp/ws"));
         assert!(s.contains("/notion"));
+        assert!(s.contains("`/bucket` — bucket (unavailable: bucket unreachable)"));
         assert!(s.contains("read-only"));
         assert!(s.contains("page.json"));
         assert!(s.contains("2026-09-11"));
