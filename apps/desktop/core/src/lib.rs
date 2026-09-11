@@ -3,6 +3,7 @@
 pub mod catalog;
 pub mod config;
 pub mod error;
+pub mod prompt;
 pub mod providers;
 pub mod store;
 pub mod types;
