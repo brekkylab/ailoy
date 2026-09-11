@@ -2487,7 +2487,8 @@ mod tests {
     /// `exec` future is dropped, and the console it ran on is not reusable until it ends.
     /// This test therefore drops that console rather than making a second call on it.
     ///
-    /// `#[ignore]` like every console-backed test here: it needs a `cortex-local-console`
+    /// `#[ignore]`d, unlike the other console-backed tests in this crate (which call
+    /// `crate::test_console()` unconditionally): it needs a `cortex-local-console`
     /// binary, which lives in a sibling checkout rather than on `PATH`. Run it with
     /// `AILOY_CORTEX_CONSOLE=<path> cargo test --lib -- --ignored cancel_during_a_console_tool`.
     #[tokio::test]
