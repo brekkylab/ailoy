@@ -1,9 +1,13 @@
 [workspace]
 members = [
-    "./"
+    "./",
+    "apps/desktop/core",
 ]
 exclude = [
     ".worktrees",
+    # Tauri pulls the whole webview stack; it is its own workspace so a root `cargo test`
+    # does not pay for it. See apps/desktop/src-tauri/Cargo.toml.
+    "apps/desktop/src-tauri",
 ]
 
 [workspace.package]
