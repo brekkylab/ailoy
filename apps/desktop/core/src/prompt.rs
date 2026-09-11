@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use crate::types::{MountInfo, MountKind};
+use crate::types::{MountInfo, MountKind, MountStatus};
 
 pub struct PromptInput<'a> {
     pub workfs_path: &'a Path,
@@ -44,10 +44,19 @@ pub fn build(input: &PromptInput) -> String {
         } else {
             m.path.as_str()
         };
-        s.push_str(&format!("- `{path}` — {} ({access}): {hint}\n", m.label));
+        let label = &m.label;
+        match &m.status {
+            MountStatus::Ok => s.push_str(&format!("- `{path}` — {label} ({access}): {hint}\n")),
+            // A mount that failed to come up is listed so the agent knows the path is
+            // spoken for, and told why it will not answer, so it does not spend turns
+            // finding out.
+            MountStatus::Error { message } => s.push_str(&format!(
+                "- `{path}` — {label} (unavailable: {message}): {hint}\n"
+            )),
+        }
     }
     s.push_str("\nA read-only mount rejects writes; do not retry them — tell the user.\n\n");
-    s.push_str("# Tools\n\n`shell` runs `sh -c` in the workspace (output over 30k characters is middle-truncated and flagged `truncated`; a command past its timeout is killed and reported `timed_out`). Prefer `read`, `write`, `edit`, `glob`, `grep` for files, and `shell` for everything else. Run independent tool calls in parallel when it saves time.\n");
+    s.push_str("# Tools\n\n`shell` runs `sh -c` in the workspace (output over 30k characters is middle-truncated, with the omission marked inline; a command past its timeout is killed and reported `timed_out`, and anything it had written is lost). Prefer `read`, `write`, `edit`, `glob`, `grep` for files, and `shell` for everything else. Run independent tool calls in parallel when it saves time.\n");
     if let Some(extra) = input.extra.map(str::trim).filter(|e| !e.is_empty()) {
         s.push_str("\n# Additional instructions\n\n");
         s.push_str(extra);
@@ -94,6 +103,11 @@ mod tests {
         assert!(s.contains("read-only"));
         assert!(s.contains("page.json"));
         assert!(s.contains("2026-09-11"));
+        assert!(s.contains("omission marked inline"));
+        assert!(
+            !s.contains("flagged `truncated`"),
+            "the shell tool sets no such flag for the 30k cut"
+        );
         assert!(s.ends_with("Answer in Korean."));
     }
 }
