@@ -3,7 +3,9 @@ use std::fmt;
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
-use crate::message::{Delta, FinishReason, Message, MessageOutput, PartDelta, Role, TokenUsage};
+use crate::message::{
+    Delta, FinishReason, Message, MessageOutput, PartDelta, RateLimitInfo, Role, TokenUsage,
+};
 
 /// A streaming, incremental update to a [`Message`].
 ///
@@ -307,6 +309,11 @@ pub struct MessageDeltaOutput {
     /// Populated by the agent runtime; `None` from the language-model layer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_agent: Option<String>,
+
+    /// Rate-limit headroom the provider reported with this response, when it reports any.
+    /// Carried on the first delta of a stream only (see [`MessageOutput::rate_limit`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<RateLimitInfo>,
 }
 
 impl MessageDeltaOutput {
@@ -317,6 +324,7 @@ impl MessageDeltaOutput {
             usage: None,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         }
     }
 }
@@ -351,6 +359,7 @@ impl From<MessageOutput> for MessageDeltaOutput {
             usage: out.usage,
             depth: out.depth,
             source_agent: out.source_agent,
+            rate_limit: out.rate_limit,
         }
     }
 }
@@ -400,12 +409,16 @@ impl Delta for MessageDeltaOutput {
         let usage = merge_token_usage(self.usage, other.usage);
         let depth = other.depth.or(self.depth);
         let source_agent = other.source_agent.or(self.source_agent);
+        // First-writer-wins is not the rule here: a later delta's fresher reading
+        // of the same response wins, and `None` never erases what was already read.
+        let rate_limit = other.rate_limit.or(self.rate_limit);
         Ok(Self {
             delta,
             finish_reason,
             usage,
             depth,
             source_agent,
+            rate_limit,
         })
     }
 
@@ -431,6 +444,7 @@ impl Delta for MessageDeltaOutput {
             usage: self.usage,
             depth: self.depth,
             source_agent: self.source_agent,
+            rate_limit: self.rate_limit,
         })
     }
 }
@@ -508,6 +522,7 @@ mod tests {
             usage: None,
             depth: Some(0),
             source_agent: None,
+            rate_limit: None,
         }
         .into();
 
