@@ -86,6 +86,7 @@ dependencies = [
  "test-with",
  "thiserror",
  "tokio",
+ "tokio-util",
  "unicode-segmentation",
  "url",
  "urlencoding",

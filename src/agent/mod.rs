@@ -1,6 +1,8 @@
 mod builder;
 mod card;
 mod context;
+mod control;
+mod error;
 mod provider;
 mod rt;
 mod spec;
@@ -10,6 +12,8 @@ mod subagent;
 pub use builder::AgentBuilder;
 pub use card::*;
 pub use context::ContextManager;
+pub use control::*;
+pub use error::AgentError;
 pub use provider::*;
 pub use rt::*;
 pub use spec::*;
