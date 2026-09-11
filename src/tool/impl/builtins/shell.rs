@@ -22,7 +22,7 @@ pub fn get_shell_tool_desc() -> ToolDesc {
                 },
                 "timeout_secs": {
                     "type": "integer",
-                    "description": "Timeout in seconds. 0 or omitted means no timeout."
+                    "description": "Timeout in seconds. 0 or omitted means the default (600)."
                 }
             },
             "required": ["cmd"]
@@ -44,9 +44,23 @@ pub fn get_shell_tool_func() -> ToolFunc {
             }
         };
 
+        // 0 or absent means the default. The protocol's expiry is a kill with no output,
+        // so a bound has to exist: an agent that hangs a shell forever hangs the run.
+        const DEFAULT_TIMEOUT_SECS: u64 = 600;
+        let timeout_ms = args
+            .pointer("/timeout_secs")
+            .and_then(|v| v.as_integer())
+            .filter(|s| *s > 0)
+            .map(|s| s as u64)
+            .unwrap_or(DEFAULT_TIMEOUT_SECS)
+            .saturating_mul(1000);
+
         // cortex consults no shell, so asking for shell semantics means asking for a
-        // shell. `None` leaves the bound to whatever the console was built with.
-        let out = match console.exec(["sh", "-c", cmd.as_str()], None).await {
+        // shell.
+        let out = match console
+            .exec(["sh", "-c", cmd.as_str()], Some(timeout_ms))
+            .await
+        {
             Ok(out) => out,
             // A killed command has no result — no exit code, and whatever it wrote is
             // gone with it — so cortex refuses the execution instead of inventing one.
@@ -157,6 +171,32 @@ mod tests {
             .and_then(|v| v.as_integer())
             .unwrap();
         assert_eq!(exit_code, 42);
+    }
+
+    #[tokio::test]
+    async fn test_timeout_secs_kills_and_reports_timed_out() {
+        let provider = provider().await;
+        let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
+        let f = funcs.get("shell").unwrap();
+        let mut console = test_console().await;
+        let started = std::time::Instant::now();
+        let msg = f
+            .call(
+                to_value!({ "cmd": "sleep 10", "timeout_secs": 1 }),
+                "",
+                &mut console,
+            )
+            .next()
+            .await
+            .unwrap()
+            .message;
+        let v = msg.contents[0].as_value().unwrap();
+        assert_eq!(
+            v.pointer("/timed_out").and_then(|b| b.as_bool()),
+            Some(true),
+            "{v:?}"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[tokio::test]
