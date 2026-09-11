@@ -449,7 +449,10 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
         // while the final one (100 / 80) normalizes to input 20 / cache 80. Accumulation
         // takes a field-wise max, which would merge those into 100 + 80 — a 180-token
         // prompt that was 100. The terminal reading is the complete one, so it is the
-        // only one worth keeping.
+        // only one worth keeping. The trade: a stream that ends without a `finishReason`
+        // (connection dropped, synthesized terminal Stop in `lang_model::rt`) now reports
+        // no usage for the turn instead of the last inflated intermediate reading, so
+        // `last_input_tokens` stays at the previous turn's value for that one turn.
         let usage = finish_reason
             .is_some()
             .then(|| Self::parse_usage(&val))
