@@ -555,12 +555,29 @@ impl Agent {
                     }
                 };
 
-                self.start_console().await?;
+                if let Err(e) = self.start_console().await {
+                    // Nothing booted, so there is nothing to stop — but the assistant's
+                    // calls are already in history and still owe results.
+                    Self::close_dangling_tool_calls(&mut self.state.history, INTERRUPTED_BY_FAILURE);
+                    Err(e)?;
+                }
 
                 // Drained to the end even on failure, so the console is released
-                // before the error leaves this scope — a `?` here would step over the
-                // `stop` and leave the backend booted with nobody driving it.
-                let mut tool_stream = self.execute_tool_calls(tool_calls)?;
+                // before the error leaves this scope — a bare `?` below would step over
+                // the `stop` and leave the backend booted with nobody driving it. Same
+                // for the launch failure: the batch never started, so none of its calls
+                // will ever answer and every one of them needs a stub.
+                let mut tool_stream = match self.execute_tool_calls(tool_calls) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        Self::close_dangling_tool_calls(
+                            &mut self.state.history,
+                            INTERRUPTED_BY_FAILURE,
+                        );
+                        let _ = self.stop_console().await;
+                        Err(e)?
+                    }
+                };
                 let mut failure = None;
                 while let Some(event) = tool_stream.next().await {
                     match event {
@@ -620,7 +637,8 @@ impl Agent {
     ///
     /// Invariants on every exit, success or not: the history never ends with a tool call
     /// nobody answered, and a cancelled run keeps whatever answer text had arrived.
-    /// Ends in `Err(AgentError::Cancelled)` / `MaxTurns` / `Model` / `Tool` / `Console`.
+    /// Ends in `Err(AgentError::Cancelled)` / `MaxTurns` / `Model` / `Tool` / `Console`
+    /// / `Other` (a delta that would not accumulate or finish).
     pub fn run_stream_controlled(
         &mut self,
         query: Message,
@@ -639,6 +657,12 @@ impl Agent {
                 if let Some(max) = ctl.max_turns
                     && turns >= max
                 {
+                    // `Some(0)` trips on the first iteration, the one time this is
+                    // reached before anything committed — pop like every other early
+                    // exit, or the query dangles ahead of the next run's.
+                    if !committed {
+                        self.state.history.pop();
+                    }
                     Err(AgentError::MaxTurns { turns })?;
                 }
                 turns += 1;
@@ -1769,5 +1793,70 @@ mod tests {
             .unwrap();
         // 20 uncached + 80 read from the cache.
         assert_eq!(agent.state.last_input_tokens, Some(100));
+    }
+
+    /// A whole (non-streaming) ChatCompletion response carrying one tool call — what
+    /// the blocking [`Agent::run`] reads, since it posts with `stream: false`. The
+    /// scripted server serves any body verbatim, SSE framing or not.
+    fn json_tool_call(id: &str, name: &str, args_json: &str) -> String {
+        let args = args_json.replace('"', "\\\"");
+        format!(
+            "{{\"choices\":[{{\"finish_reason\":\"tool_calls\",\"message\":{{\
+             \"role\":\"assistant\",\"tool_calls\":[{{\"id\":\"{id}\",\"type\":\"function\",\
+             \"function\":{{\"name\":\"{name}\",\"arguments\":\"{args}\"}}}}]}}}}]}}"
+        )
+    }
+
+    /// The blocking [`Agent::run`] owes the same invariant as the controlled stream:
+    /// an unknown tool name fails the batch *before* anything launches, so the
+    /// assistant's calls sit unanswered unless the exit stubs them.
+    #[tokio::test]
+    async fn run_stubs_pending_calls_when_a_tool_is_unknown() {
+        let (addr, _) = spawn_sse_server(vec![json_tool_call("c9", "nope", "{}")], None).await;
+        let p = register_fake_provider("ctl_run_unknown_tool", addr, vec![]);
+        let mut agent = Agent::try_with_provider(AgentSpec::new("fake/m"), p).unwrap();
+        let mut ended = None;
+        {
+            let mut stream = agent.run(user("go"));
+            while let Some(item) = stream.next().await {
+                if let Err(e) = item {
+                    ended = Some(e);
+                    break;
+                }
+            }
+        }
+        let err = ended.expect("an unknown tool name must end the run in Err");
+        assert!(err.to_string().contains("No tool found"), "{err:?}");
+        let h = agent.get_history();
+        let last = h.last().unwrap();
+        assert_eq!(last.role, Role::Tool, "{h:?}");
+        assert_eq!(last.id.as_deref(), Some("c9"));
+        assert_eq!(last.contents[0].as_text(), Some(INTERRUPTED_BY_FAILURE));
+    }
+
+    /// `max_turns: Some(0)` trips on the first iteration, the one early exit that
+    /// happens while nothing has committed — so it owes the same `pop` every other
+    /// early exit performs, or the next run on this agent sends two `User` messages.
+    #[tokio::test]
+    async fn max_turns_zero_pops_the_dangling_query() {
+        let (addr, calls) = spawn_sse_server(vec![sse_text(&["never"])], None).await;
+        let p = register_fake_provider("ctl_max_turns_zero", addr, vec![]);
+        let mut agent = Agent::try_with_provider(AgentSpec::new("fake/m"), p).unwrap();
+        let before = agent.get_history().len();
+        let ctl = RunControl {
+            max_turns: Some(0),
+            ..Default::default()
+        };
+        let err = drain(agent.run_stream_controlled(user("go"), ctl))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::MaxTurns { turns: 0 }), "{err:?}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(
+            agent.get_history().len(),
+            before,
+            "{:?}",
+            agent.get_history()
+        );
     }
 }
