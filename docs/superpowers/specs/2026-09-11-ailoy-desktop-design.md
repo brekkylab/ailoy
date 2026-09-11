@@ -169,6 +169,7 @@ impl Agent {
 - **취소 — 툴 실행 중**: 툴 스트림을 drop(진행 중인 future 중단). 결과가 커밋되지 않은 tool_call마다 `Role::Tool` stub `"[Interrupted: cancelled before this tool call completed]"`을 같은 `id`로 history에 넣는다.
 - **승인 거부**: `Deny{reason}`인 호출은 실행하지 않고 `Role::Tool` 결과 `{"error":"denied by user: <reason>","phase":"policy"}`로 기록한다. 같은 배치의 허용된 호출은 정상 실행.
 - **모델 호출 실패(2턴 이후)**: 기존에는 assistant `tool_calls` 뒤에 결과가 없는 상태로 남을 수 있었다. 실패 시점에 미완 tool_call이 있으면 위와 같은 stub을 넣어 history를 닫은 뒤 에러를 반환한다.
+- **블로킹 `run`도 동일**: 콘솔 기동 실패·알 수 없는 툴로 툴 배치가 중단되면 결과가 없는 tool_call마다 같은 stub을 넣고 에러를 반환한다. `max_turns: Some(0)`은 모델을 한 번도 호출하지 않으므로 대기 중인 user 메시지를 pop한다(롤백 규칙과 동일).
 - 어떤 경로로 종료되든 **history에 짝 없는 `tool_use`가 남지 않는다**(Anthropic 400 방지). 이는 테스트로 고정한다.
 
 ### 5.3 `AgentError`
@@ -178,7 +179,7 @@ pub enum AgentError {
     Cancelled,
     MaxTurns { turns: u32 },
     Model(ModelError),                 // status: Option<u16>, retryable: bool, provider_message: String
-    Tool { name: String, source: anyhow::Error },
+    Tool(anyhow::Error),               // 툴 실행 실패. 이름 필드는 두지 않고 소스 에러를 그대로 담는다
     Console(anyhow::Error),            // 콘솔 없음/기동 실패
     Other(anyhow::Error),
 }
@@ -197,7 +198,8 @@ pub enum AgentError {
 - 신규 타입과 필드:
 
 ```rust
-pub struct RateLimitWindow { pub limit: Option<u64>, pub remaining: Option<u64>, pub reset_at: Option<SystemTime> }
+pub struct RateLimitWindow { pub limit: Option<u64>, pub remaining: Option<u64>, pub reset_at_ms: Option<u64> }
+// reset_at_ms: Unix epoch 밀리초. RFC 3339(Anthropic)든 duration(OpenAI)이든 파싱 시점에 ms로 정규화한다.
 pub struct RateLimitInfo {
     pub requests: Option<RateLimitWindow>,
     pub tokens: Option<RateLimitWindow>,        // 통합 토큰(있는 벤더만)
@@ -205,8 +207,10 @@ pub struct RateLimitInfo {
     pub output_tokens: Option<RateLimitWindow>,
 }
 // MessageOutput / MessageDeltaOutput 에 `pub rate_limit: Option<RateLimitInfo>` (serde skip_if_none) 추가.
-// run_stream: 응답 헤더를 첫 델타에 실어 보낸다. run: MessageOutput에 실린다.
+// run_stream: 응답 헤더를 **첫 델타에만** 실어 보낸다(이후 델타의 rate_limit은 항상 None). run: MessageOutput에 실린다.
 ```
+
+**`TokenUsage` 의미 규정**: `input_tokens`는 **캐시되지 않은 입력만** 센다. `cache_read_input_tokens`·`cache_creation_input_tokens`는 겹치지 않는 **가산 성분**이므로 총 프롬프트 = 세 항의 합이다(Anthropic 와이어 의미를 기준으로 삼는다). 프롬프트 수치에 캐시 토큰이 **포함된** 채로 오는 프로바이더 — OpenAI Responses `usage.input_tokens`, OpenAI ChatCompletion `usage.prompt_tokens`(+`prompt_tokens_details.cached_tokens`), Gemini `usageMetadata.promptTokenCount`(+`cachedContentTokenCount`) — 는 파서에서 `input_tokens = total_prompt.saturating_sub(cached)`로 정규화한다. 따라서 §6.6의 `context_used` 공식(세 항의 합)은 모든 프로바이더에서 그대로 성립하며, 이중 계산이 없다.
 
 | 와이어 스키마 | 헤더 매핑 |
 |---|---|
@@ -401,6 +405,8 @@ impl Engine {
 | `Drop for Console`이 런타임 필요 | 엔진이 run 종료 시 명시적으로 drop(런타임 안), 종료 시 `spawn_blocking`. |
 
 `../cortex`는 path 의존이므로 체크아웃된 브랜치가 빌드에 그대로 반영된다. 개발 중 `feat/exec-timeout`을 체크아웃하고, 병합 후 main으로 되돌린다.
+
+**구현 결과**: 위 변경은 cortex 브랜치 `feat/exec-timeout` 커밋 `9d178c7`로 반영되었다(`cortex-local-console` 크레이트에 tokio `time` feature 추가 포함). ailoy 쪽 shell 타임아웃 테스트는 이 브랜치로 빌드한 `cortex-local-console` 바이너리를 요구하므로 CI는 해당 커밋을 고정해야 한다.
 
 ---
 
