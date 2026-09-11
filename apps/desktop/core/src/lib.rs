@@ -2,8 +2,10 @@
 
 pub mod config;
 pub mod error;
+pub mod store;
 pub mod types;
 
 pub use config::EngineConfig;
 pub use error::{EngineError, Result};
+pub use store::Store;
 pub use types::*;
