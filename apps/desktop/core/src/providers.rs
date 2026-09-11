@@ -1,0 +1,256 @@
+//! Settings, and the one side effect they have: which model providers ailoy can call.
+
+use ailoy::lang_model::{BedrockRegion, LangModelProvider, get_lm_providers_mut};
+
+use crate::{
+    error::{EngineError, Result},
+    store::Store,
+    types::{ProviderSetting, Settings, SettingsPatch},
+};
+
+pub struct ProviderDef {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub ailoy_prefix: &'static str,
+    pub pattern: &'static str,
+}
+
+pub const PROVIDERS: &[ProviderDef] = &[
+    ProviderDef {
+        key: "anthropic",
+        label: "Anthropic",
+        ailoy_prefix: "anthropic",
+        pattern: "anthropic/*",
+    },
+    ProviderDef {
+        key: "openai",
+        label: "OpenAI",
+        ailoy_prefix: "openai",
+        pattern: "openai/*",
+    },
+    ProviderDef {
+        key: "google",
+        label: "Google Gemini",
+        ailoy_prefix: "google",
+        pattern: "google/*",
+    },
+    ProviderDef {
+        key: "xai",
+        label: "xAI",
+        ailoy_prefix: "x-ai",
+        pattern: "x-ai/*",
+    },
+    ProviderDef {
+        key: "deepseek",
+        label: "DeepSeek",
+        ailoy_prefix: "deepseek",
+        pattern: "deepseek/*",
+    },
+    ProviderDef {
+        key: "moonshotai",
+        label: "Moonshot Kimi",
+        ailoy_prefix: "moonshotai",
+        pattern: "moonshotai/*",
+    },
+    ProviderDef {
+        key: "bedrock",
+        label: "Amazon Bedrock",
+        ailoy_prefix: "bedrock",
+        pattern: "bedrock/*",
+    },
+];
+
+pub const BEDROCK_REGION_KEY: &str = "provider.bedrock.region";
+pub const DEFAULT_MODEL: &str = "anthropic/claude-opus-5";
+pub const DEFAULT_MAX_TOKENS: u64 = 32_000;
+pub const DEFAULT_MAX_TURNS: u32 = 50;
+
+pub fn setting_key(provider_key: &str) -> String {
+    format!("provider.{provider_key}.api_key")
+}
+
+pub fn key_hint(key: &str) -> String {
+    let tail: String = key
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("…{tail}")
+}
+
+fn provider(key: &str) -> Option<&'static ProviderDef> {
+    PROVIDERS.iter().find(|p| p.key == key)
+}
+
+/// Register every provider that has a key, drop every one that does not, in ailoy's
+/// process-wide `"default"` registry. Returns the keys now active.
+pub fn apply(store: &Store) -> Result<Vec<&'static str>> {
+    let mut active = Vec::new();
+    let region = store
+        .setting_get(BEDROCK_REGION_KEY)?
+        .unwrap_or_else(|| "us-east-1".to_string());
+    let mut registry = get_lm_providers_mut();
+    let default = registry
+        .entry("default".to_string())
+        .or_insert_with(LangModelProvider::new);
+    for def in PROVIDERS {
+        let key = store
+            .setting_get(&setting_key(def.key))?
+            .filter(|k| !k.trim().is_empty());
+        match key {
+            None => default.remove(def.pattern),
+            Some(k) => {
+                let elem = match def.key {
+                    "anthropic" => LangModelProvider::anthropic(k),
+                    "openai" => LangModelProvider::openai(k),
+                    "google" => LangModelProvider::gemini(k),
+                    "xai" => LangModelProvider::grok(k),
+                    "deepseek" => LangModelProvider::deepseek(k),
+                    "moonshotai" => LangModelProvider::kimi(k),
+                    "bedrock" => {
+                        let region: BedrockRegion = region.parse().map_err(|_| {
+                            EngineError::Invalid(format!("unsupported Bedrock region {region:?}"))
+                        })?;
+                        LangModelProvider::bedrock(region, k)
+                    }
+                    _ => unreachable!("PROVIDERS is the closed list above"),
+                };
+                default.insert(def.pattern.to_string(), elem);
+                active.push(def.key);
+            }
+        }
+    }
+    drop(registry);
+    Ok(active)
+}
+
+pub fn read_settings(store: &Store) -> Result<Settings> {
+    let mut providers = Vec::with_capacity(PROVIDERS.len());
+    for def in PROVIDERS {
+        let key = store
+            .setting_get(&setting_key(def.key))?
+            .filter(|k| !k.trim().is_empty());
+        providers.push(ProviderSetting {
+            key: def.key.into(),
+            label: def.label.into(),
+            has_key: key.is_some(),
+            key_hint: key.as_deref().map(key_hint).unwrap_or_default(),
+            region: if def.key == "bedrock" {
+                store.setting_get(BEDROCK_REGION_KEY)?
+            } else {
+                None
+            },
+        });
+    }
+    Ok(Settings {
+        providers,
+        default_model: store
+            .setting_get("default_model")?
+            .unwrap_or_else(|| DEFAULT_MODEL.into()),
+        max_tokens: store
+            .setting_get("max_tokens")?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_MAX_TOKENS),
+        max_turns: store
+            .setting_get("max_turns")?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_MAX_TURNS),
+        catalog_refresh: store
+            .setting_get("catalog_refresh")?
+            .map(|v| v == "true")
+            .unwrap_or(true),
+    })
+}
+
+pub fn write_settings(store: &Store, patch: &SettingsPatch) -> Result<()> {
+    for (key, value) in &patch.provider_keys {
+        if provider(key).is_none() {
+            return Err(EngineError::Invalid(format!("unknown provider {key}")));
+        }
+        match value.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            Some(v) => store.setting_set(&setting_key(key), v)?,
+            None => store.setting_delete(&setting_key(key))?,
+        }
+    }
+    if let Some(r) = &patch.bedrock_region {
+        store.setting_set(BEDROCK_REGION_KEY, r.trim())?;
+    }
+    if let Some(m) = &patch.default_model {
+        store.setting_set("default_model", m.trim())?;
+    }
+    if let Some(t) = patch.max_tokens {
+        store.setting_set("max_tokens", &t.to_string())?;
+    }
+    if let Some(t) = patch.max_turns {
+        store.setting_set("max_turns", &t.to_string())?;
+    }
+    if let Some(c) = patch.catalog_refresh {
+        store.setting_set("catalog_refresh", if c { "true" } else { "false" })?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::Store;
+
+    #[test]
+    fn settings_default_then_patch() {
+        let s = Store::open_in_memory().unwrap();
+        let settings = read_settings(&s).unwrap();
+        assert_eq!(settings.default_model, DEFAULT_MODEL);
+        assert_eq!(settings.max_turns, DEFAULT_MAX_TURNS);
+        assert!(settings.providers.iter().all(|p| !p.has_key));
+
+        let mut patch = SettingsPatch::default();
+        patch
+            .provider_keys
+            .insert("anthropic".into(), Some("sk-ant-abcdefgh1234".into()));
+        patch.default_model = Some("anthropic/claude-sonnet-5".into());
+        patch.max_turns = Some(10);
+        write_settings(&s, &patch).unwrap();
+
+        let settings = read_settings(&s).unwrap();
+        let a = settings
+            .providers
+            .iter()
+            .find(|p| p.key == "anthropic")
+            .unwrap();
+        assert!(a.has_key);
+        assert_eq!(a.key_hint, "…1234");
+        assert_eq!(settings.default_model, "anthropic/claude-sonnet-5");
+        assert_eq!(settings.max_turns, 10);
+
+        let mut patch = SettingsPatch::default();
+        patch.provider_keys.insert("anthropic".into(), None);
+        write_settings(&s, &patch).unwrap();
+        assert!(
+            !read_settings(&s)
+                .unwrap()
+                .providers
+                .iter()
+                .find(|p| p.key == "anthropic")
+                .unwrap()
+                .has_key
+        );
+    }
+
+    #[test]
+    fn apply_registers_only_keyed_providers() {
+        let s = Store::open_in_memory().unwrap();
+        s.setting_set(&setting_key("openai"), "sk-test").unwrap();
+        let active = apply(&s).unwrap();
+        assert_eq!(active, vec!["openai"]);
+        let reg = ailoy::lang_model::get_lm_providers();
+        let def = reg.get("default").unwrap();
+        assert!(def.get("openai/gpt-5").is_some());
+        assert!(
+            def.get("anthropic/claude-opus-5").is_none()
+                || std::env::var("ANTHROPIC_API_KEY").is_ok()
+        );
+    }
+}
