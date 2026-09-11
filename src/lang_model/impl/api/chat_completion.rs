@@ -343,22 +343,36 @@ impl ChatCompletionUnmarshal {
 
     /// Parses the ChatCompletion `usage` object (`prompt_tokens` /
     /// `completion_tokens`). Returns `None` when absent or null.
+    ///
+    /// OpenAI and compatible providers report the cached prefix in
+    /// `prompt_tokens_details.cached_tokens`; providers that do not emit it leave
+    /// `cache_read_input_tokens` as `None`. `prompt_tokens` is the *total* prompt size and
+    /// already includes that cached prefix, whereas [`TokenUsage::input_tokens`] is the
+    /// uncached input only (cache fields are additive components of the prompt), so it is
+    /// normalized by subtracting the cached count. ChatCompletion reports no cache-write
+    /// count, so `cache_creation_input_tokens` stays `None`.
     fn parse_usage(root: &Value) -> Option<TokenUsage> {
         let u = root
             .pointer("/usage")
             .filter(|u| !u.is_null())?
             .as_object()?;
+        let cache_read_input_tokens = u
+            .get("prompt_tokens_details")
+            .and_then(|d| d.pointer("/cached_tokens"))
+            .and_then(|v| v.as_integer())
+            .map(|v| v as u64);
+        let prompt_tokens = u
+            .get("prompt_tokens")
+            .and_then(|v| v.as_integer())
+            .unwrap_or(0) as u64;
         Some(TokenUsage {
-            input_tokens: u
-                .get("prompt_tokens")
-                .and_then(|v| v.as_integer())
-                .unwrap_or(0) as u64,
+            input_tokens: prompt_tokens.saturating_sub(cache_read_input_tokens.unwrap_or(0)),
             output_tokens: u
                 .get("completion_tokens")
                 .and_then(|v| v.as_integer())
                 .unwrap_or(0) as u64,
             cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
+            cache_read_input_tokens,
         })
     }
 }
@@ -628,9 +642,34 @@ mod tests {
         let usage = result.usage.expect("expected usage from final chunk");
         assert_eq!(usage.input_tokens, 12);
         assert_eq!(usage.output_tokens, 3);
+        // No `prompt_tokens_details` on the wire → no cache counts, `prompt_tokens`
+        // passes through unchanged.
+        assert_eq!(usage.cache_read_input_tokens, None);
+        assert_eq!(usage.cache_creation_input_tokens, None);
         assert_eq!(result.message.role, Role::Assistant);
         assert_eq!(result.message.contents.len(), 1);
         assert_eq!(result.message.contents[0].as_text(), Some("Hello world!"));
+    }
+
+    /// Cached prompt tokens are reported via `usage.prompt_tokens_details.cached_tokens`
+    /// (OpenAI ChatCompletion and compatible providers). The wire `prompt_tokens` includes
+    /// the cached prefix, so it is normalized down to the uncached remainder (`TokenUsage`
+    /// carries Anthropic semantics: input + cache reads + cache writes = total prompt).
+    #[test]
+    fn test_unmarshal_usage_cached_tokens() {
+        let response = to_value!({
+            "choices": [{"message": {"role": "assistant", "content": "x"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 120, "completion_tokens": 3, "prompt_tokens_details": {"cached_tokens": 100}}
+        });
+        let usage = ChatCompletionUnmarshal
+            .unmarshal(response)
+            .unwrap()
+            .usage
+            .unwrap();
+        assert_eq!(usage.input_tokens, 20);
+        assert_eq!(usage.output_tokens, 3);
+        assert_eq!(usage.cache_read_input_tokens, Some(100));
+        assert_eq!(usage.cache_creation_input_tokens, None);
     }
 
     #[test]

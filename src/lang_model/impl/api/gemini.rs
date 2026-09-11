@@ -376,28 +376,32 @@ impl GeminiUnmarshal {
     }
 
     /// Parses Gemini `usageMetadata` (`promptTokenCount` / `candidatesTokenCount`).
-    /// `promptTokenCount` includes any cached-content tokens (folded into `input_tokens`);
-    /// the cached portion is surfaced separately from `cachedContentTokenCount`. Gemini
+    /// `promptTokenCount` is the *total* prompt size and already includes any
+    /// cached-content tokens reported by `cachedContentTokenCount`, whereas
+    /// [`TokenUsage::input_tokens`] is the uncached input only (cache fields are additive
+    /// components of the prompt). Normalize by subtracting the cached count. Gemini
     /// reports no cache-write count, so `cache_creation_input_tokens` stays `None`.
     fn parse_usage(root: &Value) -> Option<TokenUsage> {
         let u = root
             .pointer("/usageMetadata")
             .filter(|u| !u.is_null())?
             .as_object()?;
+        let cache_read_input_tokens = u
+            .get("cachedContentTokenCount")
+            .and_then(|v| v.as_integer())
+            .map(|v| v as u64);
+        let prompt_tokens = u
+            .get("promptTokenCount")
+            .and_then(|v| v.as_integer())
+            .unwrap_or(0) as u64;
         Some(TokenUsage {
-            input_tokens: u
-                .get("promptTokenCount")
-                .and_then(|v| v.as_integer())
-                .unwrap_or(0) as u64,
+            input_tokens: prompt_tokens.saturating_sub(cache_read_input_tokens.unwrap_or(0)),
             output_tokens: u
                 .get("candidatesTokenCount")
                 .and_then(|v| v.as_integer())
                 .unwrap_or(0) as u64,
             cache_creation_input_tokens: None,
-            cache_read_input_tokens: u
-                .get("cachedContentTokenCount")
-                .and_then(|v| v.as_integer())
-                .map(|v| v as u64),
+            cache_read_input_tokens,
         })
     }
 }
@@ -832,6 +836,9 @@ mod tests {
     }
 
     /// Cached prompt tokens are reported via `usageMetadata.cachedContentTokenCount`.
+    /// The wire `promptTokenCount` includes the cached tokens, so it is normalized down to
+    /// the uncached remainder (`TokenUsage` carries Anthropic semantics: input + cache reads
+    /// + cache writes = total prompt).
     #[test]
     fn test_unmarshal_usage_cached_content_tokens() {
         let val = to_value!({
@@ -839,6 +846,7 @@ mod tests {
             "usageMetadata": {"promptTokenCount": 15, "candidatesTokenCount": 6, "cachedContentTokenCount": 10}
         });
         let usage = GeminiUnmarshal.unmarshal(val).unwrap().usage.unwrap();
+        assert_eq!(usage.input_tokens, 5);
         assert_eq!(usage.cache_read_input_tokens, Some(10));
         assert_eq!(usage.cache_creation_input_tokens, None);
     }
