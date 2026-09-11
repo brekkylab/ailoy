@@ -3,10 +3,16 @@
 use ailoy::lang_model::{BedrockRegion, LangModelProvider, get_lm_providers_mut};
 
 use crate::{
+    catalog::split_model_id,
     error::{EngineError, Result},
     store::Store,
     types::{ProviderSetting, Settings, SettingsPatch},
 };
+
+/// Every test in this crate that reads or mutates ailoy's process-wide `"default"`
+/// registry holds this while it does, so tests in the same binary do not race on it.
+#[cfg(test)]
+pub(crate) static REGISTRY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub struct ProviderDef {
     pub key: &'static str,
@@ -88,18 +94,28 @@ fn provider(key: &str) -> Option<&'static ProviderDef> {
 /// Register every provider that has a key, drop every one that does not, in ailoy's
 /// process-wide `"default"` registry. Returns the keys now active.
 pub fn apply(store: &Store) -> Result<Vec<&'static str>> {
-    let mut active = Vec::new();
+    // Every SQLite read happens here, before the registry guard exists: `Store::with`
+    // takes the store mutex, so reading under the write guard would pin the order
+    // LM_REGISTRY(write) → STORE_MUTEX on every caller of `apply`.
     let region = store
         .setting_get(BEDROCK_REGION_KEY)?
         .unwrap_or_else(|| "us-east-1".to_string());
+    let mut stored: Vec<(&'static ProviderDef, Option<String>)> =
+        Vec::with_capacity(PROVIDERS.len());
+    for def in PROVIDERS {
+        let key = store
+            .setting_get(&setting_key(def.key))?
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty());
+        stored.push((def, key));
+    }
+
+    let mut active = Vec::new();
     let mut registry = get_lm_providers_mut();
     let default = registry
         .entry("default".to_string())
         .or_insert_with(LangModelProvider::new);
-    for def in PROVIDERS {
-        let key = store
-            .setting_get(&setting_key(def.key))?
-            .filter(|k| !k.trim().is_empty());
+    for (def, key) in stored {
         match key {
             None => default.remove(def.pattern),
             Some(k) => {
@@ -165,21 +181,56 @@ pub fn read_settings(store: &Store) -> Result<Settings> {
     })
 }
 
+/// Validate the whole patch, then write it. A patch that fails any check leaves the
+/// store exactly as it was — half-applied settings are worse than a rejected save.
 pub fn write_settings(store: &Store, patch: &SettingsPatch) -> Result<()> {
-    for (key, value) in &patch.provider_keys {
+    // ── validate ────────────────────────────────────────────────────────────
+    for key in patch.provider_keys.keys() {
         if provider(key).is_none() {
             return Err(EngineError::Invalid(format!("unknown provider {key}")));
         }
+    }
+    // An empty region (or model) means "clear it"; anything else has to be a value the
+    // engine can actually use later.
+    let bedrock_region = patch.bedrock_region.as_deref().map(str::trim);
+    if let Some(r) = bedrock_region
+        && !r.is_empty()
+        && r.parse::<BedrockRegion>().is_err()
+    {
+        return Err(EngineError::Invalid(format!(
+            "unsupported Bedrock region {r:?}"
+        )));
+    }
+    let default_model = patch.default_model.as_deref().map(str::trim);
+    if let Some(m) = default_model
+        && !m.is_empty()
+        && split_model_id(m).is_none()
+    {
+        return Err(EngineError::Invalid(format!(
+            "모델 ID 형식은 provider/model 입니다: {m}"
+        )));
+    }
+
+    // ── write ───────────────────────────────────────────────────────────────
+    for (key, value) in &patch.provider_keys {
         match value.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
             Some(v) => store.setting_set(&setting_key(key), v)?,
             None => store.setting_delete(&setting_key(key))?,
         }
     }
-    if let Some(r) = &patch.bedrock_region {
-        store.setting_set(BEDROCK_REGION_KEY, r.trim())?;
+    if let Some(r) = bedrock_region {
+        if r.is_empty() {
+            store.setting_delete(BEDROCK_REGION_KEY)?;
+        } else {
+            store.setting_set(BEDROCK_REGION_KEY, r)?;
+        }
     }
-    if let Some(m) = &patch.default_model {
-        store.setting_set("default_model", m.trim())?;
+    if let Some(m) = default_model {
+        if m.is_empty() {
+            store.setting_delete("default_model")?;
+        } else {
+            store.setting_set("default_model", m)?;
+        }
     }
     if let Some(t) = patch.max_tokens {
         store.setting_set("max_tokens", &t.to_string())?;
@@ -240,7 +291,104 @@ mod tests {
     }
 
     #[test]
+    fn unknown_provider_rejects_the_whole_patch() {
+        let s = Store::open_in_memory().unwrap();
+        let mut patch = SettingsPatch::default();
+        // BTreeMap order puts "anthropic" first, so a patch that validates as it writes
+        // would have stored this key before reaching the bad one.
+        patch
+            .provider_keys
+            .insert("anthropic".into(), Some("sk-ant-abcdefgh1234".into()));
+        patch
+            .provider_keys
+            .insert("zzz".into(), Some("sk-zzz-0000".into()));
+        let err = write_settings(&s, &patch).unwrap_err();
+        assert!(matches!(err, EngineError::Invalid(_)), "{err:?}");
+        assert_eq!(s.setting_get(&setting_key("anthropic")).unwrap(), None);
+    }
+
+    fn region_patch(region: &str) -> SettingsPatch {
+        SettingsPatch {
+            bedrock_region: Some(region.into()),
+            ..SettingsPatch::default()
+        }
+    }
+
+    fn model_patch(model: &str) -> SettingsPatch {
+        SettingsPatch {
+            default_model: Some(model.into()),
+            ..SettingsPatch::default()
+        }
+    }
+
+    #[test]
+    fn bedrock_region_is_validated_then_round_trips() {
+        let s = Store::open_in_memory().unwrap();
+
+        write_settings(&s, &region_patch("us-east-1")).unwrap();
+        let settings = read_settings(&s).unwrap();
+        let bedrock = settings
+            .providers
+            .iter()
+            .find(|p| p.key == "bedrock")
+            .unwrap();
+        assert_eq!(bedrock.region.as_deref(), Some("us-east-1"));
+
+        let err = write_settings(&s, &region_patch("nowhere-1")).unwrap_err();
+        assert!(matches!(err, EngineError::Invalid(_)), "{err:?}");
+        assert_eq!(
+            s.setting_get(BEDROCK_REGION_KEY).unwrap().as_deref(),
+            Some("us-east-1"),
+            "a rejected patch must not touch the stored region"
+        );
+
+        write_settings(&s, &region_patch("  ")).unwrap();
+        assert_eq!(s.setting_get(BEDROCK_REGION_KEY).unwrap(), None);
+    }
+
+    #[test]
+    fn default_model_is_validated_then_clearable() {
+        let s = Store::open_in_memory().unwrap();
+
+        let err = write_settings(&s, &model_patch("no-slash")).unwrap_err();
+        assert!(matches!(err, EngineError::Invalid(_)), "{err:?}");
+        assert_eq!(s.setting_get("default_model").unwrap(), None);
+
+        write_settings(&s, &model_patch("openai/gpt-5")).unwrap();
+        assert_eq!(read_settings(&s).unwrap().default_model, "openai/gpt-5");
+
+        write_settings(&s, &model_patch("")).unwrap();
+        assert_eq!(s.setting_get("default_model").unwrap(), None);
+        assert_eq!(read_settings(&s).unwrap().default_model, DEFAULT_MODEL);
+    }
+
+    #[test]
+    fn apply_registers_and_drops_bedrock() {
+        let _g = REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let s = Store::open_in_memory().unwrap();
+        s.setting_set(&setting_key("bedrock"), "aws-bedrock-token")
+            .unwrap();
+        s.setting_set(BEDROCK_REGION_KEY, "us-east-1").unwrap();
+
+        let active = apply(&s).unwrap();
+        assert!(active.contains(&"bedrock"), "{active:?}");
+        {
+            let reg = ailoy::lang_model::get_lm_providers();
+            let def = reg.get("default").unwrap();
+            assert!(def.get("bedrock/anthropic.claude-opus-5").is_some());
+        }
+
+        s.setting_delete(&setting_key("bedrock")).unwrap();
+        let active = apply(&s).unwrap();
+        assert!(!active.contains(&"bedrock"), "{active:?}");
+        let reg = ailoy::lang_model::get_lm_providers();
+        let def = reg.get("default").unwrap();
+        assert!(def.get("bedrock/anthropic.claude-opus-5").is_none());
+    }
+
+    #[test]
     fn apply_registers_only_keyed_providers() {
+        let _g = REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let s = Store::open_in_memory().unwrap();
         s.setting_set(&setting_key("openai"), "sk-test").unwrap();
         let active = apply(&s).unwrap();
