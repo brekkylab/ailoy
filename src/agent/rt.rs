@@ -459,6 +459,13 @@ impl Agent {
         self.context_manager.as_ref()
     }
 
+    /// The sampling options this agent sends with every model call — resolved once at
+    /// construction from [`AgentSpec::model_options`], so what is read here is what the
+    /// provider sees.
+    pub fn model_options(&self) -> &LangModelOptions {
+        &self.model_options
+    }
+
     /// Answer every tool call of the last assistant message that has no [`Role::Tool`]
     /// result after it, with a stub carrying `note`. A no-op when nothing is pending, so
     /// it is safe to call on every exit path.
