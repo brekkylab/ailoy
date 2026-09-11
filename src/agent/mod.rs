@@ -8,6 +8,8 @@ mod rt;
 mod spec;
 mod state;
 mod subagent;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 pub use builder::AgentBuilder;
 pub use card::*;
