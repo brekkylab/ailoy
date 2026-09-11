@@ -164,12 +164,12 @@ impl Agent {
 
 ### 5.2 루프 정합성 규칙
 
-- **턴 상한**: 모델 호출 직전(직전 턴의 툴 결과가 모두 커밋된 지점)에 검사. 초과 시 `Err(AgentError::MaxTurns { turns })`. 이 시점의 history는 항상 재전송 가능하다.
+- **턴 상한**: 모델 호출 직전(직전 턴의 툴 결과가 모두 커밋된 지점)에 검사. 초과 시 `Err(AgentError::MaxTurns { turns })`. 이 시점의 history는 항상 재전송 가능하다. `max_turns`는 스트리밍 `run_stream_controlled`에만 있는 개념이며, `max_turns: Some(0)`은 모델을 한 번도 호출하지 않으므로 대기 중인 user 메시지를 pop한다(롤백 규칙과 동일).
 - **취소 — 모델 응답 중**: `select!`로 스트림 `next()`와 `cancel.cancelled()`를 경합. 취소되면 누적된 부분 assistant 메시지를 커밋한다(텍스트·thinking은 그대로, 미완성 tool_call 조각은 버림, `finish_reason = Stop`). 텍스트도 tool_call도 없으면 커밋하지 않고 대기 중인 user 메시지를 pop(기존 롤백 규칙).
 - **취소 — 툴 실행 중**: 툴 스트림을 drop(진행 중인 future 중단). 결과가 커밋되지 않은 tool_call마다 `Role::Tool` stub `"[Interrupted: cancelled before this tool call completed]"`을 같은 `id`로 history에 넣는다.
 - **승인 거부**: `Deny{reason}`인 호출은 실행하지 않고 `Role::Tool` 결과 `{"error":"denied by user: <reason>","phase":"policy"}`로 기록한다. 같은 배치의 허용된 호출은 정상 실행.
 - **모델 호출 실패(2턴 이후)**: 기존에는 assistant `tool_calls` 뒤에 결과가 없는 상태로 남을 수 있었다. 실패 시점에 미완 tool_call이 있으면 위와 같은 stub을 넣어 history를 닫은 뒤 에러를 반환한다.
-- **블로킹 `run`도 동일**: 콘솔 기동 실패·알 수 없는 툴로 툴 배치가 중단되면 결과가 없는 tool_call마다 같은 stub을 넣고 에러를 반환한다. `max_turns: Some(0)`은 모델을 한 번도 호출하지 않으므로 대기 중인 user 메시지를 pop한다(롤백 규칙과 동일).
+- **블로킹 `run`도 동일**: 콘솔 기동 실패·알 수 없는 툴로 툴 배치가 중단되면 결과가 없는 tool_call마다 같은 stub을 넣고 에러를 반환한다(`run`에는 `max_turns`가 없다 — 위 턴 상한 항목 참조).
 - 어떤 경로로 종료되든 **history에 짝 없는 `tool_use`가 남지 않는다**(Anthropic 400 방지). 이는 테스트로 고정한다.
 
 ### 5.3 `AgentError`
@@ -194,7 +194,7 @@ pub enum AgentError {
 
 ### 5.5 사용량과 rate-limit 정보
 
-- `TokenUsage`는 5개 와이어 모두에서 채워진다(Gemini·OpenAI Responses는 캐시 필드 `None`; OpenAI Responses의 `input_tokens_details.cached_tokens`, Gemini `cachedContentTokenCount` 파싱을 추가한다).
+- `TokenUsage`는 5개 와이어 모두에서 채워지며, 캐시 필드도 모두 파싱된다(Gemini는 `usageMetadata.cachedContentTokenCount`, OpenAI Responses는 `usage.input_tokens_details.cached_tokens`를 읽어 `cache_read_input_tokens`에 넣고, 총 프롬프트에서 이를 뺀 값을 `input_tokens`로 정규화한다. 두 벤더 모두 캐시 쓰기 수치는 보고하지 않으므로 `cache_creation_input_tokens`는 `None`이다).
 - 신규 타입과 필드:
 
 ```rust
@@ -341,7 +341,7 @@ ailoy는 `instruction` 외에 아무것도 넣지 않으므로 엔진이 조립�
 
 - 컨텍스트 사용률: 세션의 마지막 assistant 메시지 `usage`에서 `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`(각 `None`은 0) ÷ 카탈로그 `limit.context`. 다음 호출의 입력 크기에 대한 근사치로 표시(Anthropic `input_tokens`는 마지막 캐시 브레이크포인트 이후 토큰만이므로 세 항을 합쳐야 총 입력이 된다).
 - 세션 누적: 모든 assistant `usage` 합. 비용 = Σ(input·cost.input + output·cost.output + cache_read·cost.cache_read + cache_write·cost.cache_write) / 1e6. 카탈로그에 단가가 없으면 비용 생략.
-- 분당 잔여율: `RateLimitInfo`의 각 창에서 `remaining / limit`. `reset_at`까지 카운트다운. 헤더가 없는 프로바이더는 표시하지 않는다.
+- 분당 잔여율: `RateLimitInfo`의 각 창에서 `remaining / limit`. `reset_at_ms`까지 카운트다운. 헤더가 없는 프로바이더는 표시하지 않는다.
 
 ### 6.7 공개 API (엔진)
 

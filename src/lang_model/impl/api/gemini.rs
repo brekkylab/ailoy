@@ -409,9 +409,10 @@ impl GeminiUnmarshal {
 /// Parses one Gemini SSE chunk (`?alt=sse`) into a delta. Each chunk is a
 /// partial `GenerateContentResponse` of the same shape as the final response
 /// and carries incremental text, so it reuses `parse_candidate_content` and
-/// accumulates. A chunk without a candidate yields no delta; `finishReason` and
-/// `usageMetadata` arrive on the final chunk (alongside the function call, if
-/// any — Gemini sends `STOP` even for tool calls, adjusted to `ToolCall`).
+/// accumulates. A chunk without a candidate yields no delta; `finishReason` marks the
+/// final chunk (alongside the function call, if any — Gemini sends `STOP` even for tool
+/// calls, adjusted to `ToolCall`). `usageMetadata` is repeated on every chunk and only
+/// the terminal one's is complete, so only that one is attached to a delta.
 impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;
@@ -440,7 +441,19 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
         // (2.5 Pro / 3.x), so neither chunk alone carries both. The
         // STOP→ToolCall promotion therefore can't be done per chunk — it lives
         // in `MessageDeltaOutput::finish()`, on the fully accumulated message.
-        let usage = Self::parse_usage(&val);
+
+        // Only the terminal chunk's usage is kept. Gemini repeats `usageMetadata` on
+        // every chunk, growing it as the turn goes, and the fields don't all appear at
+        // once: an early chunk can carry `promptTokenCount: 100` with no
+        // `cachedContentTokenCount` yet, so it normalizes to input 100 / cache `None`,
+        // while the final one (100 / 80) normalizes to input 20 / cache 80. Accumulation
+        // takes a field-wise max, which would merge those into 100 + 80 — a 180-token
+        // prompt that was 100. The terminal reading is the complete one, so it is the
+        // only one worth keeping.
+        let usage = finish_reason
+            .is_some()
+            .then(|| Self::parse_usage(&val))
+            .flatten();
 
         Ok(Some(MessageDeltaOutput {
             delta,
@@ -632,6 +645,29 @@ mod tests {
         assert_eq!(result.message.role, Role::Assistant);
         assert_eq!(result.message.contents.len(), 1);
         assert_eq!(result.message.contents[0].as_text(), Some("Hello world!"));
+    }
+
+    /// Gemini repeats `usageMetadata` on every chunk, and the cache count shows up later
+    /// than the prompt count. Normalization subtracts the cache count from the prompt, so
+    /// an intermediate reading (100 / no cache → input 100) and the terminal one
+    /// (100 / 80 → input 20, cache 80) disagree about `input_tokens`. Accumulation takes
+    /// a field-wise max, so keeping both would report a 180-token prompt for a 100-token
+    /// one. Only the terminal chunk's usage is attached, so the final reading stands
+    /// alone.
+    #[test]
+    fn intermediate_usage_chunks_do_not_inflate_the_prompt() {
+        let inputs = [
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"Hi"}]}}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":1}}"#,
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"!"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":2,"cachedContentTokenCount":80}}"#,
+        ];
+        let usage = accumulate_stream(&inputs)
+            .finish()
+            .unwrap()
+            .usage
+            .expect("the terminal chunk carries usage");
+        assert_eq!(usage.input_tokens, 20, "{usage:?}");
+        assert_eq!(usage.cache_read_input_tokens, Some(80), "{usage:?}");
+        assert_eq!(usage.output_tokens, 2, "{usage:?}");
     }
 
     #[test]

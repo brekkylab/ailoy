@@ -7,7 +7,11 @@ use crate::lang_model::ModelError;
 /// The reasons a run stops short. `Cancelled` and `MaxTurns` leave the history
 /// consistent (every tool call answered, a partial answer committed); the rest report
 /// the failing layer so a caller can decide whether retrying makes sense.
+///
+/// `#[non_exhaustive]`: a downstream `match` must carry a `_` arm, so a variant added
+/// here later is not a breaking change.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum AgentError {
     #[error("run cancelled")]
     Cancelled,
@@ -15,9 +19,9 @@ pub enum AgentError {
     MaxTurns { turns: u32 },
     #[error(transparent)]
     Model(#[from] ModelError),
-    #[error("tool execution failed: {0}")]
+    #[error("tool execution failed")]
     Tool(#[source] anyhow::Error),
-    #[error("console unavailable: {0}")]
+    #[error("console unavailable")]
     Console(#[source] anyhow::Error),
     #[error(transparent)]
     Other(anyhow::Error),

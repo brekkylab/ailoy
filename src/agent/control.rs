@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use crate::datatype::Value;
 
 /// One tool call the model asked for, before it runs.
+#[derive(Debug)]
 pub struct ToolCallRequest<'a> {
     pub id: &'a str,
     pub name: &'a str,
@@ -40,6 +41,12 @@ impl ToolGate for AllowAll {
 }
 
 /// Controls for one `run_stream_controlled` call.
+///
+/// `Clone` shares rather than copies: the clone holds the same [`CancellationToken`] and
+/// the same `Arc<dyn ToolGate>`, so cancelling either handle cancels every run built from
+/// them, and every such run is vetted by the one gate. `max_turns` is the only field a
+/// clone owns outright. Hand out a clone to cancel a run from elsewhere; build a fresh
+/// `RunControl` when a run needs a cancel of its own.
 #[derive(Clone)]
 pub struct RunControl {
     /// Cancel at any await point. The runtime commits what it has and answers pending

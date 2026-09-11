@@ -1,10 +1,6 @@
 //! Offline scaffolding for agent-loop tests: a scripted ChatCompletion SSE server and a
 //! provider bundle pointing at it. No network beyond loopback, no keys.
 
-// Helpers land here ahead of the tests that consume them; the module is `cfg(test)`-only,
-// so an unused one is scaffolding waiting for its test, not dead production code.
-#![allow(dead_code)]
-
 use std::{
     net::SocketAddr,
     sync::{
@@ -64,6 +60,28 @@ pub(crate) async fn spawn_sse_server(
         axum::serve(listener, app).await.unwrap();
     });
     (addr, calls)
+}
+
+/// A server that answers every request with `status` and `body` — for the paths that
+/// turn an HTTP failure into a [`crate::lang_model::ModelError`]. [`spawn_sse_server`]
+/// only ever answers 200, so a failure needs its own.
+pub(crate) async fn spawn_status_server(status: u16, body: &'static str) -> SocketAddr {
+    let app = Router::new().route(
+        "/",
+        post(move || async move {
+            Response::builder()
+                .status(status)
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap()
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    addr
 }
 
 pub(crate) fn sse_text(text_chunks: &[&str]) -> String {

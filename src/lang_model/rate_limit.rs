@@ -95,7 +95,9 @@ fn parse_openai(headers: &HeaderMap, now: SystemTime) -> RateLimitInfo {
     }
 }
 
-/// `"1h2m3s"`, `"6m0s"`, `"1.5s"`, `"120ms"` — number/unit pairs, concatenated.
+/// `"1h2m3s"`, `"6m0s"`, `"1.5s"`, `"120ms"` — number/unit pairs, concatenated. A bare
+/// number with no unit at all (`"60"`) is seconds, which is how several providers spell
+/// `x-ratelimit-reset-*`; a unit is only ever omitted on the trailing value.
 ///
 /// A value a server could not have meant — non-finite, or past [`Duration::MAX`] on its own
 /// or once summed — is a parse failure like any other malformed header, never a panic.
@@ -121,6 +123,9 @@ pub(crate) fn parse_reset_duration(s: &str) -> Option<Duration> {
             "m" => value * 60.0,
             "s" => value,
             "ms" => value / 1000.0,
+            // Only at the very end: a missing unit mid-string is a malformed header, and
+            // accepting one would also leave `rest` unshortened and loop forever.
+            "" if tail.is_empty() => value,
             _ => return None,
         };
         total = total.checked_add(Duration::try_from_secs_f64(secs).ok()?)?;
@@ -239,6 +244,16 @@ mod tests {
             Some(Duration::from_secs(3723))
         );
         assert_eq!(parse_reset_duration("abc"), None);
+        // A bare integer is seconds — several providers send `x-ratelimit-reset-*` that way.
+        assert_eq!(parse_reset_duration("60"), Some(Duration::from_secs(60)));
+        assert_eq!(parse_reset_duration("0"), Some(Duration::ZERO));
+        assert_eq!(
+            parse_reset_duration("1.5"),
+            Some(Duration::from_millis(1500))
+        );
+        // But only at the end: a unit missing mid-string is still malformed.
+        assert_eq!(parse_reset_duration("60-"), None);
+        assert_eq!(parse_reset_duration("1m30"), Some(Duration::from_secs(90)));
     }
 
     /// A malformed Anthropic reset drops only `reset_at_ms`; the rest of the window survives.
