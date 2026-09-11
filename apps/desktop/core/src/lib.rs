@@ -2,6 +2,7 @@
 
 pub mod catalog;
 pub mod config;
+pub mod console;
 pub mod error;
 pub mod prompt;
 pub mod providers;
