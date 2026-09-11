@@ -1,0 +1,32 @@
+[package]
+name = "ailoy-desktop-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Headless session engine for Ailoy Desktop: sessions, workspace, runs"
+
+[[bin]]
+name = "gen-catalog"
+path = "src/bin/gen_catalog.rs"
+
+[dependencies]
+ailoy = { path = "../../.." }
+# The workspace, its stores, and the FUSE-T binding that puts it where a kernel answers.
+cortex = { path = "../../../../cortex/cortex", features = ["fuse-t", "notion", "s3"] }
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "fs", "time"] }
+tokio-util = "0.7"
+futures = "0.3"
+reqwest = { version = "0.13", features = ["json"] }
+chrono = "0.4"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
