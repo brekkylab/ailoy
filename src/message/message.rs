@@ -184,8 +184,13 @@ pub struct TokenUsage {
     /// provider does not report a cache-write count. Additive: not part of `input_tokens`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_creation_input_tokens: Option<u64>,
-    /// Prompt tokens served from the cache on this turn (cache hit). `None` when the
-    /// provider does not report caching at all. Additive: not part of `input_tokens`.
+    /// Prompt tokens served from the cache on this turn (cache hit). Additive: not part
+    /// of `input_tokens`.
+    ///
+    /// A provider that reports caching sends `Some(0)` on a miss (OpenAI does), so
+    /// `Some(0)` reads as "the cache was consulted and nothing hit", not "caching is
+    /// enabled". `None` says only that the provider reported nothing on this axis.
+    /// Neither value answers whether caching is on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_read_input_tokens: Option<u64>,
 }
