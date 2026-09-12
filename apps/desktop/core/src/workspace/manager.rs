@@ -1,7 +1,7 @@
 //! The workspace: one `WorkFs`, mounted for the life of the engine.
 
 use std::{
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     process::Command,
     sync::{Arc, Mutex as StdMutex},
 };
@@ -221,22 +221,20 @@ fn prepare_mount_point(mountpoint: &Path) -> std::io::Result<()> {
 /// root key. Each of those would take the root `PassthroughFs` out of the tree — and say
 /// `Ok(())` while doing it, because the `retain` that follows matches no row — leaving the
 /// workspace serving an empty root until the app restarts. So the path is put in normal form
-/// first, and the guard is applied there.
+/// first, and the guard is the normalizer's own: `normalize_mount_path` rebuilds the path from
+/// its components and fails when nothing real is left, which is every spelling of the root.
 ///
-/// `normalize_mount_path` turns away the empty spellings and every `..`. What it still admits
-/// that collapses to the root is a path made only of `.` and separators, so the normal form is
-/// also required to carry at least one real component.
+/// Only that failure is rephrased. A `..` segment is refused with the normalizer's own words,
+/// because "루트는 분리할 수 없습니다" is not true of `"/mem/.."` — the caller named a path,
+/// and what is wrong with it is the `..`.
 fn detachable_path(path: &str) -> Result<String> {
-    let refuse = || EngineError::Invalid("루트는 분리할 수 없습니다".into());
-    let normalized =
-        crate::workspace::connectors::normalize_mount_path(path).map_err(|_| refuse())?;
-    if !Path::new(&normalized)
-        .components()
-        .any(|c| matches!(c, Component::Normal(_)))
-    {
-        return Err(refuse());
-    }
-    Ok(normalized)
+    crate::workspace::connectors::normalize_mount_path(path).map_err(|e| {
+        if path.trim().split('/').any(|s| s == "..") {
+            e
+        } else {
+            EngineError::Invalid("루트는 분리할 수 없습니다".into())
+        }
+    })
 }
 
 pub fn is_mounted(path: &Path) -> bool {
@@ -330,7 +328,13 @@ mod tests {
         );
         fsops::write(&ws.fs(), "/mem/a.txt", "x").await.unwrap();
         assert_eq!(fsops::list(&ws.fs(), "/mem").await.unwrap().len(), 1);
-        ws.detach("/mem").await.unwrap();
+        // Spelled with the trailing slash a sidebar sends: it has to reach the `/mem` row,
+        // not a row of its own that nothing matches.
+        ws.detach("/mem/").await.unwrap();
+        assert!(
+            ws.mounts().await.iter().all(|m| m.path != "/mem"),
+            "detach(\"/mem/\") left the /mem row behind"
+        );
         assert_eq!(ws.mounts().await.len(), 1);
         ws.shutdown().await;
     }

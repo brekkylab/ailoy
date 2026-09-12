@@ -24,20 +24,33 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// A mount path as the sidebar spells it: `/`-rooted, no trailing slash, never the root itself.
 ///
-/// The root is excluded because the session's own in-memory store is there and unmounting it
+/// The path is **rebuilt from its components**, the way `WorkFs` keys its mount table: split on
+/// `/`, empty and `.` segments dropped, the rest joined back under a leading `/`. That is what
+/// keeps the row in the mount list and the key in the tree the same string — `"/mem/."` and
+/// `"/a//b"` are `WorkFs`'s `"mem"` and `"a/b"` whatever the list says, so a row that kept the
+/// user's spelling would name a mount nobody could detach.
+///
+/// A `..` segment is refused rather than resolved: it is never what a mount point means, and
+/// resolving it would let `"/mem/.."` name the root.
+///
+/// The root itself is excluded because the workspace's own files are there and unmounting them
 /// would leave the tree with nowhere to write — an empty workspace is the one thing a launch
 /// guarantees, and a connector is not the thing that gets to take it away.
 pub fn normalize_mount_path(path: &str) -> Result<String> {
-    let cleaned = path.trim().trim_matches('/').trim();
-    if cleaned.is_empty() {
+    let mut segments = Vec::new();
+    for segment in path.trim().split('/') {
+        match segment {
+            "" | "." => continue,
+            ".." => return Err(EngineError::Invalid("경로에 '..' 을 쓸 수 없습니다".into())),
+            s => segments.push(s),
+        }
+    }
+    if segments.is_empty() {
         return Err(EngineError::Invalid(
             "연결할 경로를 입력해 주세요 (예: /notion)".into(),
         ));
     }
-    if cleaned.contains("..") {
-        return Err(EngineError::Invalid("경로에 '..' 을 쓸 수 없습니다".into()));
-    }
-    Ok(format!("/{cleaned}"))
+    Ok(format!("/{}", segments.join("/")))
 }
 
 /// What a config looks like in the sidebar: its kind, the line under the name, and whether the
@@ -146,7 +159,12 @@ mod tests {
     fn mount_paths_are_normalized() {
         assert_eq!(normalize_mount_path(" notion/ ").unwrap(), "/notion");
         assert_eq!(normalize_mount_path("/a/b").unwrap(), "/a/b");
+        // The spellings `WorkFs` collapses on its own: the row has to collapse them too, or
+        // the list names one path and the tree is keyed by another.
+        assert_eq!(normalize_mount_path("/mem/.").unwrap(), "/mem");
+        assert_eq!(normalize_mount_path("/a//b").unwrap(), "/a/b");
         assert!(normalize_mount_path("/").is_err());
+        assert!(normalize_mount_path("/.").is_err(), "the root, spelled out");
         assert!(normalize_mount_path("/../x").is_err());
     }
 
