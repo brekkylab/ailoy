@@ -89,7 +89,12 @@ impl Engine {
             });
         }
 
-        providers::apply(&store)?;
+        // Not fatal: a legacy or hand-edited settings row that fails to parse would otherwise
+        // block startup, and the settings pane that could fix it is behind a started engine.
+        // `settings_set` still surfaces the same error when the user edits.
+        if let Err(e) = providers::apply(&store) {
+            tracing::warn!("applying provider settings at start: {e}");
+        }
 
         // An empty `console_bin` is the caller saying "no console" — that is how the tests and
         // a headless run ask for it. Otherwise the binary is looked for, and *not* finding one
