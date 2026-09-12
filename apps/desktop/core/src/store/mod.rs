@@ -14,6 +14,24 @@ use crate::{
 
 const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_init.sql")];
 
+/// Narrow a store file to its owner. Best-effort on purpose: a file that is not there yet
+/// (the WAL sidecars before the first write) and a filesystem with no unix modes are both
+/// normal, and neither is a reason to refuse to open the database. Nothing at all on
+/// non-unix, where the mode has no meaning.
+fn restrict_permissions(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if path.exists()
+            && let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        {
+            tracing::warn!("could not restrict {} to 0600: {e}", path.display());
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 /// The content column: the ailoy message, versioned so a later shape can be read back.
 #[derive(Serialize, Deserialize)]
 struct Content {
@@ -58,9 +76,21 @@ impl Store {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path)?;
+        // The database holds every provider API key and every connector's credentials in
+        // plain text (see `MountConfig::Notion`/`S3`). SQLite creates it with the process
+        // umask, which on a stock macOS account is world-readable — so it is narrowed the
+        // moment it exists, before the first row is written.
+        restrict_permissions(path);
         conn.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
         )?;
+        // WAL mode creates the sidecars on that batch, and the rows in `-wal` are the same
+        // secrets not yet checkpointed into the database — so they get the same treatment.
+        for suffix in ["-wal", "-shm"] {
+            let mut sidecar = path.as_os_str().to_os_string();
+            sidecar.push(suffix);
+            restrict_permissions(Path::new(&sidecar));
+        }
         Self::migrate(&conn)?;
         Ok(Store {
             conn: Mutex::new(conn),
@@ -501,6 +531,26 @@ mod tests {
             s.message_set_usage("s1", 99, &u),
             Err(EngineError::NotFound(_))
         ));
+    }
+
+    /// The database and its WAL sidecars hold API keys and connector credentials in plain
+    /// text; on a shared machine the default umask would leave them world-readable.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_store_and_its_wal_are_readable_only_by_their_owner() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("ailoy.sqlite");
+        let s = Store::open(&db).unwrap();
+        // A write, so the WAL is not just created but has something in it.
+        s.setting_set("anthropic_api_key", "sk-ant-secret").unwrap();
+
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&db), 0o600, "the database itself");
+        let wal = dir.path().join("ailoy.sqlite-wal");
+        assert!(wal.exists(), "WAL mode should have created the sidecar");
+        assert_eq!(mode(&wal), 0o600, "the write-ahead log");
     }
 
     #[test]

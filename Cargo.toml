@@ -3,6 +3,12 @@ members = [
     "./",
     "apps/desktop/core",
 ]
+# A bare `cargo build`/`cargo check`/`cargo test` at the root builds the root crate only.
+# `ailoy-desktop-core` enables cortex's `fuse-t` feature, whose build script panics on a
+# machine without FUSE-T installed — so leaving the engine in the default set would stop
+# every contributor who only works on `ailoy` itself. The engine is built explicitly, with
+# `-p ailoy-desktop-core`.
+default-members = ["./"]
 exclude = [
     ".worktrees",
     # Tauri pulls the whole webview stack; it is its own workspace so a root `cargo test`

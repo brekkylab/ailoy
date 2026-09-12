@@ -43,6 +43,13 @@ pub(crate) fn resolve_console_bin_in(
         if p.is_file() {
             return Ok(p);
         }
+        // Setting the variable is an explicit instruction, so silently falling through to
+        // the development probes below would answer a different binary than the one asked
+        // for — or none, with nothing to say why the variable did not take.
+        tracing::warn!(
+            "AILOY_CORTEX_BIN_DIR is set to {}, but {CONSOLE_BIN_NAME} is not there; looking elsewhere",
+            dir.display()
+        );
     }
     if let Ok(cwd) = std::env::current_dir() {
         for ancestor in cwd.ancestors() {
@@ -53,6 +60,14 @@ pub(crate) fn resolve_console_bin_in(
                     .join(profile)
                     .join(CONSOLE_BIN_NAME);
                 if p.is_file() {
+                    // This probe walks up from the *working directory* into a sibling
+                    // checkout's build tree — a development convenience with no business
+                    // firing in a bundled app, where the Tauri layer passes the path. If
+                    // it is what answered, the app is running from a source tree.
+                    tracing::warn!(
+                        "using the development {CONSOLE_BIN_NAME} at {} (found by walking up from the working directory)",
+                        p.display()
+                    );
                     return Ok(p);
                 }
             }

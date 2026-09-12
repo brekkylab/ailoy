@@ -217,7 +217,9 @@ pub fn write_settings(store: &Store, patch: &SettingsPatch) -> Result<()> {
     // ── validate ────────────────────────────────────────────────────────────
     for key in patch.provider_keys.keys() {
         if provider(key).is_none() {
-            return Err(EngineError::Invalid(format!("unknown provider {key}")));
+            return Err(EngineError::Invalid(format!(
+                "알 수 없는 프로바이더: {key}"
+            )));
         }
     }
     // An empty region (or model) means "clear it"; anything else has to be a value the
