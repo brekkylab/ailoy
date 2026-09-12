@@ -97,9 +97,16 @@ pub fn apply(store: &Store) -> Result<Vec<&'static str>> {
     // Every SQLite read happens here, before the registry guard exists: `Store::with`
     // takes the store mutex, so reading under the write guard would pin the order
     // LM_REGISTRY(write) → STORE_MUTEX on every caller of `apply`.
-    let region = store
+    let stored_region = store
         .setting_get(BEDROCK_REGION_KEY)?
         .unwrap_or_else(|| "us-east-1".to_string());
+    // Parsed here too, not down in the loop: `write_settings` has rejected an unusable
+    // region since the B4 fix, but a row written before it — or by an older build that knew
+    // a region this one does not — would otherwise fail `apply` half-way through, leaving
+    // the registry holding whichever providers happened to come before "bedrock".
+    let region: BedrockRegion = stored_region.parse().map_err(|_| {
+        EngineError::Invalid(format!("지원하지 않는 Bedrock 리전입니다: {stored_region}"))
+    })?;
     let mut stored: Vec<(&'static ProviderDef, Option<String>)> =
         Vec::with_capacity(PROVIDERS.len());
     for def in PROVIDERS {
@@ -112,9 +119,14 @@ pub fn apply(store: &Store) -> Result<Vec<&'static str>> {
 
     let mut active = Vec::new();
     let mut registry = get_lm_providers_mut();
-    let default = registry
-        .entry("default".to_string())
-        .or_insert_with(LangModelProvider::new);
+    // `contains_key` + `insert` rather than `entry().or_insert_with(..)`: clippy reads the
+    // latter as `or_default()`, and here the two are not the same call —
+    // `LangModelProvider::default()` reads `OPENAI_API_KEY` & co. out of the environment,
+    // which would register providers this store never asked for.
+    if !registry.contains_key("default") {
+        registry.insert("default".to_string(), LangModelProvider::new());
+    }
+    let default = registry.get_mut("default").expect("just inserted");
     for (def, key) in stored {
         match key {
             None => default.remove(def.pattern),
@@ -126,12 +138,8 @@ pub fn apply(store: &Store) -> Result<Vec<&'static str>> {
                     "xai" => LangModelProvider::grok(k),
                     "deepseek" => LangModelProvider::deepseek(k),
                     "moonshotai" => LangModelProvider::kimi(k),
-                    "bedrock" => {
-                        let region: BedrockRegion = region.parse().map_err(|_| {
-                            EngineError::Invalid(format!("unsupported Bedrock region {region:?}"))
-                        })?;
-                        LangModelProvider::bedrock(region, k)
-                    }
+                    // `region` is the `BedrockRegion` parsed above, not the stored string.
+                    "bedrock" => LangModelProvider::bedrock(region, k),
                     _ => unreachable!("PROVIDERS is the closed list above"),
                 };
                 default.insert(def.pattern.to_string(), elem);
@@ -198,7 +206,7 @@ pub fn write_settings(store: &Store, patch: &SettingsPatch) -> Result<()> {
         && r.parse::<BedrockRegion>().is_err()
     {
         return Err(EngineError::Invalid(format!(
-            "unsupported Bedrock region {r:?}"
+            "지원하지 않는 Bedrock 리전입니다: {r}"
         )));
     }
     let default_model = patch.default_model.as_deref().map(str::trim);
