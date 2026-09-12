@@ -8,6 +8,7 @@ pub mod error;
 pub mod events;
 pub mod prompt;
 pub mod providers;
+pub mod run;
 pub mod store;
 pub mod types;
 pub mod usage;

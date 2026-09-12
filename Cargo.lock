@@ -90,6 +90,7 @@ version = "0.3.0"
 dependencies = [
  "ailoy",
  "anyhow",
+ "axum",
  "chrono",
  "cortex",
  "futures",
