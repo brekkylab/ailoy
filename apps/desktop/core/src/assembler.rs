@@ -162,20 +162,6 @@ impl MessageAssembler {
             && self.acc.delta.tool_calls.is_empty()
             && self.acc.delta.thinking.is_none()
     }
-
-    /// The assistant text accumulated so far in the in-progress message — what a
-    /// cancelled or interrupted turn has already produced.
-    pub fn partial_text(&self) -> String {
-        self.acc
-            .delta
-            .contents
-            .iter()
-            .filter_map(|p| match p {
-                PartDelta::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect()
-    }
 }
 
 /// A delta that carries accounting and nothing else: no role, no content, no
@@ -387,7 +373,6 @@ mod tests {
         assert_eq!(t.depth, Some(0));
 
         // Nothing was accumulated, so the stream can end cleanly right here.
-        assert_eq!(a.partial_text(), "");
         assert!(a.finish().unwrap().is_none());
     }
 
@@ -404,7 +389,6 @@ mod tests {
             items.is_empty(),
             "interim usage is not a trailer and streams nothing: {items:?}"
         );
-        assert_eq!(a.partial_text(), "Hel");
 
         let done = completed(a.push(delta(None, "lo", true)).unwrap());
         assert_eq!(done.len(), 1);
@@ -419,7 +403,6 @@ mod tests {
         d.delta.thinking = Some("hmm".into());
         let items = a.push(d).unwrap();
         assert!(matches!(items.as_slice(), [AssembledItem::Thinking(t)] if t == "hmm"));
-        assert_eq!(a.partial_text(), "");
         let items = a.push(delta(None, "answer", true)).unwrap();
         assert!(matches!(&items[0], AssembledItem::Text(t) if t == "answer"));
         assert!(matches!(&items[1], AssembledItem::Completed(_)));

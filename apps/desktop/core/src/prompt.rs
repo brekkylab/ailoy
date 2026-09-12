@@ -10,6 +10,12 @@ pub struct PromptInput<'a> {
     pub mounts: &'a [MountInfo],
     pub today: &'a str,
     pub os: &'a str,
+    /// The session's `provider/model` id. It decides which toolset ailoy attaches — see
+    /// `AgentSpec::system_tools` — and so which tools the preamble is allowed to name.
+    pub model: &'a str,
+    /// The workspace is not mounted in this session: the console stands in the root
+    /// directory itself, and nothing attached under a connector path is reachable from it.
+    pub degraded: bool,
     pub extra: Option<&'a str>,
 }
 
@@ -45,6 +51,15 @@ pub fn build(input: &PromptInput) -> String {
             m.path.as_str()
         };
         let label = &m.label;
+        // Without the FUSE-T mount the tools see the root directory on disk, not the
+        // composed tree: a connector is still configured, still listed — and still not
+        // there. Saying so is cheaper than the turns the agent would spend finding out.
+        if input.degraded && !matches!(m.kind, MountKind::Root) {
+            s.push_str(&format!(
+                "- `{path}` — {label} (unavailable: the workspace is not mounted in this session, so this connector is not visible to your tools): {hint}\n"
+            ));
+            continue;
+        }
         match &m.status {
             MountStatus::Ok => s.push_str(&format!("- `{path}` — {label} ({access}): {hint}\n")),
             // A mount that failed to come up is listed so the agent knows the path is
@@ -55,8 +70,27 @@ pub fn build(input: &PromptInput) -> String {
             )),
         }
     }
-    s.push_str("\nA read-only mount rejects writes; do not retry them — tell the user.\n\n");
-    s.push_str("# Tools\n\n`shell` runs `sh -c` in the workspace (output over 30k characters is middle-truncated, with the omission marked inline; a command past its timeout is killed and reported `timed_out`, and anything it had written is lost). Prefer `read`, `write`, `edit`, `glob`, `grep` for files, and `shell` for everything else. Run independent tool calls in parallel when it saves time.\n");
+    if input.degraded {
+        s.push_str(
+            "\nOnly the workspace's root directory is reachable in this session. The connector paths above do not exist for your tools; do not try to read or write under them — tell the user the workspace is not mounted.\n\n",
+        );
+    } else {
+        s.push_str("\nA read-only mount rejects writes; do not retry them — tell the user.\n\n");
+    }
+    s.push_str("# Tools\n\n`shell` runs `sh -c` in the workspace (output over 30k characters is middle-truncated, with the omission marked inline; a command past its timeout is killed and reported `timed_out`, and anything it had written is lost). ");
+    // Exactly the tools `AgentSpec::system_tools` attaches for this model family. Naming a
+    // tool the model was not given is worse than naming none: it spends a turn calling
+    // something that is not in its schema and gets an error back instead of an answer.
+    if input.model.starts_with("openai/") {
+        s.push_str(
+            "Prefer `read` for files, `apply_patch` for edits, and `shell` for everything else. ",
+        );
+    } else {
+        s.push_str(
+            "Prefer `read`, `write`, `edit`, `glob`, `grep` for files, and `shell` for everything else. ",
+        );
+    }
+    s.push_str("`web_search` finds pages on the internet and `web_fetch` retrieves one you already have a URL for. Run independent tool calls in parallel when it saves time.\n");
     if let Some(extra) = input.extra.map(str::trim).filter(|e| !e.is_empty()) {
         s.push_str("\n# Additional instructions\n\n");
         s.push_str(extra);
@@ -69,9 +103,8 @@ mod tests {
     use super::*;
     use crate::types::{MountInfo, MountKind, MountStatus};
 
-    #[test]
-    fn preamble_names_workfs_mounts_and_readonly() {
-        let mounts = vec![
+    fn mounts() -> Vec<MountInfo> {
+        vec![
             MountInfo {
                 id: "r".into(),
                 path: "/".into(),
@@ -101,13 +134,28 @@ mod tests {
                     message: "bucket unreachable".into(),
                 },
             },
-        ];
-        let s = build(&PromptInput {
+        ]
+    }
+
+    /// A healthy, non-OpenAI session: the defaults every other test varies one field from.
+    fn input<'a>(mounts: &'a [MountInfo], model: &'a str, degraded: bool) -> PromptInput<'a> {
+        PromptInput {
             workfs_path: Path::new("/tmp/ws"),
-            mounts: &mounts,
+            mounts,
             today: "2026-09-11",
             os: "macos",
+            model,
+            degraded,
+            extra: None,
+        }
+    }
+
+    #[test]
+    fn preamble_names_workfs_mounts_and_readonly() {
+        let mounts = mounts();
+        let s = build(&PromptInput {
             extra: Some("Answer in Korean."),
+            ..input(&mounts, "anthropic/claude-opus-5", false)
         });
         assert!(s.contains("/tmp/ws"));
         assert!(s.contains("/notion"));
@@ -121,5 +169,70 @@ mod tests {
             "the shell tool sets no such flag for the 30k cut"
         );
         assert!(s.ends_with("Answer in Korean."));
+    }
+
+    /// The tool paragraph has to match what ailoy actually attached, and
+    /// `AgentSpec::system_tools` gives the two families different toolsets. Naming
+    /// `glob`/`grep`/`write`/`edit` to an OpenAI model — or `apply_patch` to any other —
+    /// invites a call the model's schema cannot carry.
+    #[test]
+    fn the_tool_paragraph_names_only_the_tools_this_family_was_given() {
+        let mounts = mounts();
+
+        let openai = build(&input(&mounts, "openai/gpt-5", false));
+        assert!(openai.contains("`apply_patch`"), "{openai}");
+        for absent in ["`glob`", "`grep`", "`write`", "`edit`"] {
+            assert!(
+                !openai.contains(absent),
+                "an openai/* preamble named {absent}, which `system_tools` did not attach"
+            );
+        }
+
+        let other = build(&input(&mounts, "anthropic/claude-opus-5", false));
+        for present in ["`glob`", "`grep`", "`write`", "`edit`", "`read`"] {
+            assert!(other.contains(present), "{other}");
+        }
+        assert!(
+            !other.contains("`apply_patch`"),
+            "apply_patch is an openai/* tool only"
+        );
+
+        // `run.rs` attaches these two for every model, so both renderings say so.
+        for s in [&openai, &other] {
+            assert!(
+                s.contains("`web_search`") && s.contains("`web_fetch`"),
+                "{s}"
+            );
+            assert!(s.contains("`shell`"), "{s}");
+        }
+    }
+
+    /// Without the mount, the tools stand in the root directory on disk: the connectors are
+    /// configured but unreachable, and the preamble says so rather than letting the agent
+    /// discover it one failed `ls` at a time.
+    #[test]
+    fn a_degraded_workspace_marks_every_connector_unreachable() {
+        let mounts = mounts();
+        let s = build(&input(&mounts, "anthropic/claude-opus-5", true));
+        assert!(
+            s.contains(
+                "- `/notion` — notion (unavailable: the workspace is not mounted in this session, so this connector is not visible to your tools)"
+            ),
+            "{s}"
+        );
+        assert!(
+            s.contains("- `/bucket` — bucket (unavailable: the workspace is not mounted"),
+            "a connector that also failed to build is still reported as unmounted: {s}"
+        );
+        // The root is the one mount that *is* reachable — it is where the console stands.
+        assert!(s.contains("- `/` — Workspace (read-write)"), "{s}");
+        assert!(
+            s.contains("Only the workspace's root directory is reachable"),
+            "{s}"
+        );
+        assert!(
+            !s.contains("A read-only mount rejects writes"),
+            "the read-only rule is about mounts that are there: {s}"
+        );
     }
 }

@@ -27,6 +27,14 @@ pub struct Engine {
     workspace: Arc<WorkspaceManager>,
     catalog: Arc<Catalog>,
     runs: RunManager,
+    /// The exclusive lock on `<data_dir>/engine.lock`, held for the engine's whole life.
+    /// Never read — the value *is* the lock, and the OS releases it when this file closes
+    /// (on drop, or when the process dies however it dies).
+    _instance_lock: std::fs::File,
+    /// Flipped to `true` when the background connector restore has finished. A `watch`
+    /// rather than a `Notify` because it latches: a waiter that arrives after the restore
+    /// already ended must return immediately, not block for a notification it missed.
+    restored: Arc<tokio::sync::watch::Sender<bool>>,
     /// Held across the whole of `settings_set`. The store is transactional per statement and
     /// `providers::apply` reads it before touching ailoy's registry, so two settings commands
     /// arriving together could otherwise interleave as write(A) → write(B) → apply(B) →
@@ -37,66 +45,19 @@ pub struct Engine {
 impl Engine {
     pub async fn start(cfg: EngineConfig) -> Result<Arc<Engine>> {
         std::fs::create_dir_all(&cfg.data_dir)?;
+        let instance_lock = lock_data_dir(&cfg.data_dir)?;
         let store = Arc::new(Store::open(&cfg.db_path())?);
         let workspace = Arc::new(
             WorkspaceManager::start(cfg.files_root(), cfg.mountpoint(), cfg.mount_workspace).await,
         );
 
-        // Connectors come back from the database; one that cannot be rebuilt shows its error
-        // in the list instead of taking the workspace down.
-        //
-        // Probed concurrently, attached in row order. `build_and_probe` gives a remote store
-        // 15 seconds to answer before it gives up, and a laptop that woke up off-network has
-        // every one of them time out: serially that is 15 seconds *per connector* with the
-        // window still dark, and it is the one startup path where the wait is unbounded by
-        // anything the user did. The attaching is left sequential — it takes the workspace's
-        // write lock and the order decides which of two rows on the same path wins.
-        let rows = store.mount_list()?;
-        let probes =
-            futures::future::join_all(rows.iter().map(|r| connectors::build_and_probe(&r.config)))
-                .await;
-        for (row, probe) in rows.into_iter().zip(probes) {
-            let (kind, detail, writable) = connectors::describe(&row.config);
-            let mut info = MountInfo {
-                id: row.id.clone(),
-                path: row.path.clone(),
-                kind,
-                label: row.label.clone(),
-                detail,
-                writable,
-                status: MountStatus::Ok,
-            };
-            // The stored path goes back through the normalizer on the way in. `mount_add`
-            // writes the normal form, but a row from an older build — or a hand-edited
-            // database — can hold a spelling `WorkFs` collapses to something else, and
-            // mounting under it would key the tree by one path and the sidebar by another,
-            // leaving a connector that cannot be removed. Such a row is listed with its
-            // error, the same as one whose store did not answer.
-            let failure = match connectors::normalize_mount_path(&row.path) {
-                Ok(path) => {
-                    info.path = path;
-                    match probe {
-                        Ok(fs) => workspace.attach(info.clone(), fs).await.err(),
-                        Err(e) => Some(e),
-                    }
-                }
-                Err(e) => Some(e),
-            };
-            if let Some(e) = failure {
-                info.status = MountStatus::Error {
-                    message: e.to_string(),
-                };
-                workspace.remember_failed(info).await;
-            }
-        }
-
         let cache = cfg.cache_dir().join("models.json");
         let catalog = Arc::new(Catalog::load(Some(&cache)));
-        let refresh = cfg.catalog_refresh
-            && store
-                .setting_get("catalog_refresh")?
-                .map(|v| v != "false")
-                .unwrap_or(true);
+        // Read through `read_settings` rather than off the raw row, so "is the catalog
+        // allowed to refresh" has exactly one definition. Reading it here as `!= "false"`
+        // while `read_settings` reads it as `== "true"` made the settings pane and the
+        // startup path disagree about any value that is neither.
+        let refresh = cfg.catalog_refresh && providers::read_settings(&store)?.catalog_refresh;
         if refresh {
             let catalog = catalog.clone();
             tokio::spawn(async move {
@@ -134,23 +95,62 @@ impl Engine {
             workspace: workspace.clone(),
             catalog: catalog.clone(),
         });
-        Ok(Arc::new(Engine {
+        let engine = Arc::new(Engine {
             cfg,
             store,
             workspace,
             catalog,
             runs,
+            _instance_lock: instance_lock,
+            restored: Arc::new(tokio::sync::watch::channel(false).0),
             settings_lock: tokio::sync::Mutex::new(()),
-        }))
+        });
+
+        // Restoring connectors is not on the path to a usable window. `build_and_probe`
+        // gives a remote store 15 seconds to answer, and a laptop that woke up off-network
+        // has every one of them time out — awaiting that here is the one startup wait
+        // nothing the user did can bound, with the window still dark for all of it. So the
+        // engine is handed back with the root mount alone and the connectors arrive in the
+        // list as they come up; `mount_list()` says so, and `wait_restored` is for a test
+        // (or a caller) that needs the settled answer.
+        {
+            let store = engine.store.clone();
+            let workspace = engine.workspace.clone();
+            let restored = engine.restored.clone();
+            tokio::spawn(async move {
+                restore_connectors(&store, &workspace).await;
+                let _ = restored.send(true);
+            });
+        }
+        Ok(engine)
     }
 
-    /// Ask every run to stop, give them a moment to write what they have, then take the
-    /// workspace down. `cancel_all` only signals — a run ends on its own terms, and the
-    /// grace period is what lets the partial answer reach SQLite before the process exits.
+    /// Ask every run to stop, wait for them to finish writing, then take the workspace down.
+    ///
+    /// `cancel_all` only signals: a run ends on its own terms — it still flushes the
+    /// assembler's trailing message into SQLite, which is the partial answer the user was
+    /// watching. Joining the run tasks is what makes that write land before the process
+    /// exits. Three seconds is the cap: a run wedged in a tool call must not hold the
+    /// window open, and the workspace comes down either way.
     pub async fn shutdown(&self) {
         self.runs.cancel_all().await;
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        if !self.runs.wait_idle(std::time::Duration::from_secs(3)).await {
+            tracing::warn!("a run did not finish within the shutdown grace period");
+        }
         self.workspace.shutdown().await;
+    }
+
+    /// Wait until the background connector restore has finished — every stored connector
+    /// either attached or listed with its error. Returns immediately once it has.
+    pub async fn wait_restored(&self) {
+        let mut rx = self.restored.subscribe();
+        while !*rx.borrow_and_update() {
+            // The sender lives in this `Engine`, so `changed()` can only fail if the engine
+            // is being dropped — at which point there is nothing left to wait for.
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
     }
 
     // ── sessions ────────────────────────────────────────────────────────────
@@ -279,6 +279,12 @@ impl Engine {
         fsops::import(&self.workspace.fs(), dest, sources).await
     }
 
+    /// The mounts as they stand *right now*.
+    ///
+    /// Right after `start` that is the root alone: the stored connectors are probed on a
+    /// background task and appear here one at a time as they come up, each either `Ok` or
+    /// carrying its error. A client that wants to show them should poll this (or call
+    /// [`Engine::wait_restored`] once) rather than assume the first answer is final.
     pub async fn mount_list(&self) -> Vec<MountInfo> {
         self.workspace.mounts().await
     }
@@ -386,6 +392,92 @@ impl Engine {
 
     pub fn config(&self) -> &EngineConfig {
         &self.cfg
+    }
+}
+
+/// Take the exclusive advisory lock that makes one data directory mean one engine.
+///
+/// Two processes over one SQLite file would each hold their own WAL connection and their
+/// own workspace, and the second would try to mount over the first's mount point; ailoy's
+/// provider registry is process-wide, so they would also disagree about which keys are
+/// registered. The lock is on a file of its own rather than on the database, because the
+/// database is opened and closed by tooling (`sqlite3`, a backup) that has no business
+/// being locked out.
+///
+/// It is an `flock` (`LockFileEx` on Windows), so it is tied to this open file description:
+/// the kernel drops it when the file closes, which covers a clean shutdown, a panic, and a
+/// kill alike. No stale lock file to clean up, and no PID to second-guess.
+///
+/// `std::fs::File::try_lock` is what takes it — stable since Rust 1.89, well under this
+/// workspace's 1.95 MSRV, so the `fs4` crate the review suggested would only shadow an
+/// inherent method that already does the same thing on the same syscalls.
+fn lock_data_dir(data_dir: &std::path::Path) -> Result<std::fs::File> {
+    let path = data_dir.join("engine.lock");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)?;
+    file.try_lock().map_err(|_| {
+        EngineError::Invalid("다른 Ailoy 인스턴스가 이 데이터 디렉터리를 사용 중입니다".into())
+    })?;
+    Ok(file)
+}
+
+/// Rebuild every stored connector into the live workspace.
+///
+/// One that cannot be rebuilt shows its error in the mount list instead of taking the
+/// workspace down — the sidebar is where the user finds out, and the root mount keeps
+/// serving files either way.
+///
+/// Probed concurrently, attached in row order: the probes are what take 15 seconds each
+/// when a store does not answer, and the attaching takes the workspace's write lock, where
+/// order decides which of two rows on the same path wins.
+async fn restore_connectors(store: &Store, workspace: &WorkspaceManager) {
+    let rows = match store.mount_list() {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::error!("reading the stored connectors: {e}");
+            return;
+        }
+    };
+    let probes =
+        futures::future::join_all(rows.iter().map(|r| connectors::build_and_probe(&r.config)))
+            .await;
+    for (row, probe) in rows.into_iter().zip(probes) {
+        let (kind, detail, writable) = connectors::describe(&row.config);
+        let mut info = MountInfo {
+            id: row.id.clone(),
+            path: row.path.clone(),
+            kind,
+            label: row.label.clone(),
+            detail,
+            writable,
+            status: MountStatus::Ok,
+        };
+        // The stored path goes back through the normalizer on the way in. `mount_add`
+        // writes the normal form, but a row from an older build — or a hand-edited
+        // database — can hold a spelling `WorkFs` collapses to something else, and
+        // mounting under it would key the tree by one path and the sidebar by another,
+        // leaving a connector that cannot be removed. Such a row is listed with its
+        // error, the same as one whose store did not answer.
+        let failure = match connectors::normalize_mount_path(&row.path) {
+            Ok(path) => {
+                info.path = path;
+                match probe {
+                    Ok(fs) => workspace.attach(info.clone(), fs).await.err(),
+                    Err(e) => Some(e),
+                }
+            }
+            Err(e) => Some(e),
+        };
+        if let Some(e) = failure {
+            info.status = MountStatus::Error {
+                message: e.to_string(),
+            };
+            workspace.remember_failed(info).await;
+        }
     }
 }
 
@@ -505,6 +597,9 @@ mod tests {
             e.shutdown().await;
         }
         let e = Engine::start(config(dir.path())).await.unwrap();
+        // The restore runs off the startup path now, so the settled list is what this
+        // asserts against — `mount_list()` right after `start` is allowed to be short.
+        e.wait_restored().await;
         let mounts = e.mount_list().await;
         assert!(
             mounts.iter().any(|m| m.path == "/data"
@@ -521,6 +616,7 @@ mod tests {
         drop(e);
 
         let e = Engine::start(config(dir.path())).await.unwrap();
+        e.wait_restored().await;
         assert_eq!(
             e.mount_list().await.len(),
             1,
@@ -575,6 +671,33 @@ mod tests {
         e.shutdown().await;
     }
 
+    /// One data directory, one engine. Two would fight over the SQLite WAL, the mount
+    /// point and ailoy's process-wide registry — and the second one is what the user sees,
+    /// so it is the one that has to say what is wrong.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn a_second_engine_on_the_same_data_directory_is_refused() {
+        let _g = crate::providers::REGISTRY_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let first = Engine::start(config(dir.path())).await.unwrap();
+
+        let err = Engine::start(config(dir.path()))
+            .await
+            .err()
+            .expect("a second engine on the same data directory");
+        assert!(matches!(err, EngineError::Invalid(_)), "{err:?}");
+        assert!(err.to_string().contains("다른 Ailoy 인스턴스"), "{err}");
+
+        // And the lock is the file handle, not a marker to clean up: once the first engine
+        // is gone the directory is free again.
+        first.shutdown().await;
+        drop(first);
+        let third = Engine::start(config(dir.path())).await.unwrap();
+        third.shutdown().await;
+    }
+
     /// A connector whose store is gone comes back as a row with its error, not as a missing
     /// mount and not as a failed start — the sidebar is where the user finds out.
     #[allow(clippy::await_holding_lock)]
@@ -601,6 +724,7 @@ mod tests {
         drop(local); // the directory the connector points at is deleted
 
         let e = Engine::start(config(dir.path())).await.unwrap();
+        e.wait_restored().await;
         let mounts = e.mount_list().await;
         let row = mounts.iter().find(|m| m.path == "/gone").expect("the row");
         assert!(

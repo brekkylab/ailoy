@@ -24,12 +24,13 @@ pub struct WorkspaceManager {
     mount: StdMutex<Option<FuseTMount>>,
     /// The workspace's own health, as `info()` reports it.
     ///
-    /// `mount_fuse` — reached once, from `start` — is the only writer. That is what makes
-    /// `info()`'s `try_read` fallback unreachable in practice: after startup nothing ever
-    /// contends with a reader. A second writer (a remount command, a watchdog) would make that
-    /// fallback reachable, and a healthy mounted workspace would report `Degraded { reason:
-    /// "busy" }` — and `console_mount()` would hand back `files_root` — for the length of the
-    /// write. Adding one means revisiting `info()` and `console_mount()` first.
+    /// Two writers, both of them terminal for the state they write: `mount_fuse` (reached
+    /// once, from `start`) and `shutdown`. That is what keeps `info()`'s `try_read` fallback
+    /// unreachable in practice — outside startup and shutdown nothing contends with a reader.
+    /// A third writer (a remount command, a watchdog) would make it reachable, and a healthy
+    /// mounted workspace would report `Degraded { reason: "busy" }` — and `console_mount()`
+    /// would hand back `files_root` — for the length of the write. Adding one means revisiting
+    /// `info()` and `console_mount()` first.
     status: RwLock<WorkspaceStatus>,
     mounts: RwLock<Vec<MountInfo>>,
 }
@@ -182,11 +183,47 @@ impl WorkspaceManager {
         mounts.sort_by(|a, b| a.path.cmp(&b.path));
     }
 
+    /// Take the mount down, and say so first.
+    ///
+    /// The status is written *before* the unmount because `console_mount()` reads it: a
+    /// caller that asked for a console between the unmount and the status change would be
+    /// handed a mount point the kernel no longer serves, and every command in it would
+    /// fail with `ENOENT` on the working directory rather than with anything a user could
+    /// read. Reporting `Degraded` early costs nothing — `files_root` is the honest answer
+    /// for the rest of the process's life.
     pub async fn shutdown(&self) {
+        *self.status.write().await = WorkspaceStatus::Degraded {
+            reason: "shutting down".into(),
+        };
         let taken = self.mount.lock().expect("mount mutex").take();
-        if let Some(m) = taken {
-            let _ = tokio::task::spawn_blocking(move || drop(m)).await;
-        }
+        let Some(m) = taken else { return };
+        let mountpoint = self.mountpoint.clone();
+        // `FuseTMount::drop` asks the kernel to unmount and does not look at the answer, and
+        // the answer here is often `EBUSY`: a `cortex-local-console` spawned for the last run
+        // had its working directory *inside* this mount, and the process takes a moment to
+        // die after the run that owned it ended. A mount left behind outlives the app — it
+        // still shows in Finder, and anything that walks the data directory (a backup, a
+        // `remove_dir_all`) blocks in it uninterruptibly — so the drop is checked and
+        // escalated rather than trusted.
+        let _ = tokio::task::spawn_blocking(move || {
+            drop(m);
+            for attempt in 1..=5 {
+                if !is_mounted(&mountpoint) {
+                    return;
+                }
+                // `force_unmount` tries `umount`, then `diskutil unmount force`, which
+                // takes a busy mount down regardless of who is standing in it.
+                match force_unmount(&mountpoint) {
+                    Ok(()) => return,
+                    Err(e) if attempt == 5 => {
+                        tracing::error!("could not unmount {}: {e}", mountpoint.display());
+                    }
+                    // Still busy: the console is on its way out, so give it a moment.
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(200)),
+                }
+            }
+        })
+        .await;
     }
 }
 

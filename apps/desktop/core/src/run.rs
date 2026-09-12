@@ -61,6 +61,10 @@ pub struct RunManager {
     deps: RunDeps,
     /// Behind an `Arc` so a detached run task can remove itself when it ends.
     runs: Arc<Mutex<HashMap<String, ActiveRun>>>,
+    /// One handle per spawned run task, so [`wait_idle`](Self::wait_idle) can join them at
+    /// shutdown. Pruned of finished tasks on every `start`, so a long-lived process does
+    /// not accumulate one handle per message ever sent.
+    tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
 /// Deep enough that a slow subscriber on a long tool-heavy run does not lag out: a
@@ -73,7 +77,29 @@ impl RunManager {
         Self {
             deps,
             runs: Arc::new(Mutex::new(HashMap::new())),
+            tasks: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Wait for every run task to finish, up to `timeout`. `true` when they all did.
+    ///
+    /// This is what makes `cancel_all` mean something at shutdown: cancelling only *asks*,
+    /// and a run answers on its own terms — it flushes the assembler's trailing message
+    /// into SQLite and touches the session before it returns. Exiting the process without
+    /// joining loses exactly that last write, which is the partial answer the user was
+    /// watching. A timeout is still a bounded shutdown: `false` means one run is past its
+    /// grace period and the caller stops waiting for it.
+    pub async fn wait_idle(&self, timeout: std::time::Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut tasks = self.tasks.lock().await;
+        while let Some(handle) = tasks.pop() {
+            // A `JoinError` is a task that panicked or was aborted — finished either way,
+            // and `run_task` already caught the panic and reported it.
+            if tokio::time::timeout_at(deadline, handle).await.is_err() {
+                return false;
+            }
+        }
+        true
     }
 
     pub async fn is_running(&self, session_id: &str) -> bool {
@@ -164,10 +190,15 @@ impl RunManager {
         let model = session.model.clone();
         let finished = self.finisher(sid.clone());
 
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             let actor = drive(deps, &sid, &model, user_msg, tx.clone(), cancel, partial);
             run_task(&sid, actor, tx, finished).await;
         });
+        {
+            let mut tasks = self.tasks.lock().await;
+            tasks.retain(|h| !h.is_finished());
+            tasks.push(task);
+        }
 
         Ok(RunHandle { run_id, events: rx })
     }
@@ -207,10 +238,7 @@ async fn run_task(
         .unwrap_or_else(|payload| {
             let message = panic_message(&*payload);
             tracing::error!("the run task for {session_id} panicked: {message}");
-            Err(RunEnd::Failed {
-                kind: "internal".into(),
-                message,
-            })
+            Err(fail("internal", message))
         });
     // The run leaves the active map before its terminal event goes out, so a client that
     // reacts to `Done` by asking `is_running` is told the truth.
@@ -222,8 +250,18 @@ async fn run_task(
         Err(RunEnd::Cancelled) => {
             let _ = tx.send(RunEvent::Cancelled);
         }
-        Err(RunEnd::Failed { kind, message }) => {
-            let _ = tx.send(RunEvent::Error { kind, message });
+        Err(RunEnd::Failed {
+            kind,
+            message,
+            status,
+            retryable,
+        }) => {
+            let _ = tx.send(RunEvent::Error {
+                kind,
+                message,
+                status,
+                retryable,
+            });
         }
     }
 }
@@ -231,7 +269,28 @@ async fn run_task(
 /// How a run ended when it did not simply finish.
 enum RunEnd {
     Cancelled,
-    Failed { kind: String, message: String },
+    Failed {
+        kind: String,
+        message: String,
+        /// The provider's HTTP status, when the failure was a model request that got a
+        /// response. `None` for a transport failure and for every non-model failure.
+        status: Option<u16>,
+        /// Whether the same request may succeed if it is sent again — what the UI's
+        /// "retry" button is allowed to be enabled by. Only a [`ModelError`] sets it.
+        retryable: bool,
+    },
+}
+
+/// A failure with nothing for a client to act on beyond its message: a storage write, a
+/// console that would not start, a tool that threw. Only a model request answers `status`
+/// and `retryable`, and it is built by hand at the one site that has a [`ModelError`].
+fn fail(kind: &str, message: String) -> RunEnd {
+    RunEnd::Failed {
+        kind: kind.into(),
+        message,
+        status: None,
+        retryable: false,
+    }
 }
 
 /// What a caught panic should say. `panic!` payloads are a `&'static str` or a `String`;
@@ -298,6 +357,26 @@ fn max_opt(a: Option<u64>, b: Option<u64>) -> Option<u64> {
     }
 }
 
+/// Put a history read back from SQLite into a shape a provider will accept, after the
+/// caller has dropped the turn the agent is about to push itself.
+///
+/// Two repairs, both for histories this engine wrote and then abandoned:
+///
+/// * A run can die between an assistant's tool calls and their results — the app was
+///   killed, the process crashed — and come back as a batch nobody answered. ailoy only
+///   repairs histories it owns, so the close-out happens here.
+/// * A trailing `Role::User` row is a run that never got an answer at all: cancelled
+///   before its first token, or failed at `build()` or at the console spawn, with the
+///   user's message already persisted (`start` writes it before anything can fail).
+///   Replaying it would put two consecutive user turns on the wire — which Anthropic
+///   merges, Gemini rejects outright, and every provider bills for twice.
+fn normalize_replay(history: &mut Vec<Message>) {
+    ailoy::agent::close_dangling_tool_calls(history, ailoy::agent::INTERRUPTED_BY_FAILURE);
+    while history.last().is_some_and(|m| m.role == Role::User) {
+        history.pop();
+    }
+}
+
 async fn drive(
     deps: RunDeps,
     session_id: &str,
@@ -307,11 +386,6 @@ async fn drive(
     cancel: CancellationToken,
     partial: Arc<StdMutex<String>>,
 ) -> std::result::Result<(), RunEnd> {
-    let fail = |kind: &str, e: String| RunEnd::Failed {
-        kind: kind.into(),
-        message: e,
-    };
-
     let settings =
         providers::read_settings(&deps.store).map_err(|e| fail("storage", e.to_string()))?;
     let mut history = deps
@@ -321,11 +395,13 @@ async fn drive(
     // `start` appended the user message just now, and the agent pushes its own copy of
     // the query, so the replayed history stops one short of the end.
     history.pop();
-    // A history restored from SQLite can end mid-tool-batch (the app died between the
-    // assistant's tool calls and their results); ailoy only repairs histories it owns.
-    ailoy::agent::close_dangling_tool_calls(&mut history, ailoy::agent::INTERRUPTED_BY_FAILURE);
+    normalize_replay(&mut history);
 
     let mounts = deps.workspace.mounts().await;
+    let degraded = matches!(
+        deps.workspace.info().status,
+        crate::types::WorkspaceStatus::Degraded { .. }
+    );
     let ws_mount = deps.workspace.console_mount();
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let extra = deps
@@ -337,6 +413,8 @@ async fn drive(
         mounts: &mounts,
         today: &today,
         os: std::env::consts::OS,
+        model,
+        degraded,
         extra: extra.as_deref(),
     });
 
@@ -399,8 +477,16 @@ async fn drive(
                     ));
                     break;
                 }
+                // The one failure a client can act on: the provider's own status and its
+                // verdict on whether sending the same request again could work. Everything
+                // else below is `status: None, retryable: false`.
                 Err(AgentError::Model(m)) => {
-                    end = Some(fail("model", m.to_string()));
+                    end = Some(RunEnd::Failed {
+                        kind: "model".into(),
+                        message: m.to_string(),
+                        status: m.status,
+                        retryable: m.retryable,
+                    });
                     break;
                 }
                 Err(e @ AgentError::Console(_)) => {
@@ -751,7 +837,7 @@ mod tests {
                     done = true;
                     break;
                 }
-                RunEvent::Error { kind, message } => panic!("{kind}: {message}"),
+                RunEvent::Error { kind, message, .. } => panic!("{kind}: {message}"),
                 RunEvent::Cancelled => panic!("cancelled unexpectedly"),
                 _ => {}
             }
@@ -774,6 +860,13 @@ mod tests {
         assert!(!mgr.is_running("s1").await);
         assert!(mgr.attach("s1").await.is_none());
         assert!(!mgr.cancel("s1").await);
+        // And the task behind it is joinable, which is what `Engine::shutdown` waits on
+        // instead of sleeping and hoping. It is already finished here, so this returns at
+        // once — the two seconds are slack for a loaded CI box, not an expected wait.
+        assert!(
+            mgr.wait_idle(std::time::Duration::from_secs(2)).await,
+            "the run task outlived its own `Done`"
+        );
     }
 
     // Same reasoning as above for the registry lock.
@@ -800,7 +893,7 @@ mod tests {
         let first = loop {
             match handle.events.recv().await.unwrap() {
                 RunEvent::TextDelta { text } => break text,
-                RunEvent::Error { kind, message } => panic!("{kind}: {message}"),
+                RunEvent::Error { kind, message, .. } => panic!("{kind}: {message}"),
                 RunEvent::Done | RunEvent::Cancelled => panic!("the run ended before it spoke"),
                 _ => {}
             }
@@ -822,7 +915,7 @@ mod tests {
                     break;
                 }
                 RunEvent::Done => panic!("ran to completion despite the cancel"),
-                RunEvent::Error { kind, message } => panic!("{kind}: {message}"),
+                RunEvent::Error { kind, message, .. } => panic!("{kind}: {message}"),
                 _ => {}
             }
         }
@@ -866,7 +959,7 @@ mod tests {
         run_task("s3", boom(), tx, finished).await;
 
         match rx.recv().await.expect("a terminal event") {
-            RunEvent::Error { kind, message } => {
+            RunEvent::Error { kind, message, .. } => {
                 assert_eq!(kind, "internal");
                 assert!(message.contains("boom inside the actor"), "{message}");
             }
@@ -904,7 +997,7 @@ mod tests {
             match handle.events.recv().await.unwrap() {
                 RunEvent::TextDelta { .. } => break,
                 RunEvent::Done | RunEvent::Cancelled => panic!("the run ended before it spoke"),
-                RunEvent::Error { kind, message } => panic!("{kind}: {message}"),
+                RunEvent::Error { kind, message, .. } => panic!("{kind}: {message}"),
                 _ => {}
             }
         }
@@ -935,7 +1028,7 @@ mod tests {
                     done = true;
                     break;
                 }
-                RunEvent::Error { kind, message } => panic!("{kind}: {message}"),
+                RunEvent::Error { kind, message, .. } => panic!("{kind}: {message}"),
                 RunEvent::Cancelled => panic!("cancelled unexpectedly"),
                 _ => {}
             }
@@ -999,7 +1092,7 @@ mod tests {
                     done = true;
                     break;
                 }
-                RunEvent::Error { kind, message } => panic!("{kind}: {message}"),
+                RunEvent::Error { kind, message, .. } => panic!("{kind}: {message}"),
                 RunEvent::Cancelled => panic!("cancelled unexpectedly"),
                 _ => {}
             }
@@ -1025,6 +1118,37 @@ mod tests {
         assert_eq!(msgs[1].usage.as_ref().unwrap().input_tokens, 7);
         assert_eq!(msgs[1].usage.as_ref().unwrap().output_tokens, 2);
         assert_eq!(store.message_usages("s5").unwrap().len(), 1);
+    }
+
+    /// The replayed history must never end on a user turn. `start` persists the user's
+    /// message before anything can fail, so a run cancelled before its first token — or
+    /// one that died at `build()` or at the console spawn — leaves an unanswered user row
+    /// behind. Replaying it and then pushing the new query puts two consecutive user turns
+    /// on the wire.
+    #[test]
+    fn replay_normalization_drops_the_user_turns_nothing_answered() {
+        let msg = |role: Role| Message::new(role).with_contents([Part::text("x")]);
+        let roles = |h: &[Message]| h.iter().map(|m| m.role.clone()).collect::<Vec<_>>();
+        let normalized = |input: Vec<Role>| {
+            let mut h: Vec<Message> = input.into_iter().map(msg).collect();
+            normalize_replay(&mut h);
+            roles(&h)
+        };
+
+        // The ordinary case, after `drive` popped the turn the agent will push itself.
+        assert_eq!(
+            normalized(vec![Role::User, Role::Assistant, Role::User]),
+            vec![Role::User, Role::Assistant]
+        );
+        // A first run that never got an answer: nothing is left to replay.
+        assert_eq!(normalized(vec![Role::User]), Vec::<Role>::new());
+        // Two of them in a row — a second attempt that also died before the model spoke.
+        assert_eq!(normalized(vec![Role::User, Role::User]), Vec::<Role>::new());
+        // An answered turn is left exactly as it was.
+        assert_eq!(
+            normalized(vec![Role::User, Role::Assistant]),
+            vec![Role::User, Role::Assistant]
+        );
     }
 
     #[test]
