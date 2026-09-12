@@ -7,9 +7,9 @@ use crate::{
     tool::{
         ToolDesc, WebSearchEngineKind,
         r#impl::{
-            get_apply_patch_tool_desc, get_edit_tool_desc, get_glob_tool_desc, get_grep_tool_desc,
-            get_read_tool_desc, get_shell_tool_desc, get_web_fetch_tool_desc,
-            get_web_search_tool_desc, get_write_tool_desc,
+            get_apply_patch_tool_desc, get_docread_tool_desc, get_edit_tool_desc,
+            get_glob_tool_desc, get_grep_tool_desc, get_read_tool_desc, get_shell_tool_desc,
+            get_web_fetch_tool_desc, get_web_search_tool_desc, get_write_tool_desc,
         },
     },
 };
@@ -100,20 +100,27 @@ impl AgentSpec {
 
     /// Append the canonical local-execution toolset for the spec's model family.
     ///
-    /// * `openai/*`: `shell`, `read`, `apply_patch`. Shell-first — `shell` is preferred
-    ///   over dedicated `glob`/`grep`, and `apply_patch` is preferred over `write`+`edit`.
-    /// * others: `shell`, `read`, `write`, `edit`, `glob`, `grep`.
+    /// * `openai/*`: `shell`, `read`, `docread`, `apply_patch`. Shell-first — `shell` is
+    ///   preferred over dedicated `glob`/`grep`, and `apply_patch` is preferred over
+    ///   `write`+`edit`.
+    /// * others: `shell`, `read`, `docread`, `write`, `edit`, `glob`, `grep`.
+    ///
+    /// Both families get `docread` alongside `read`: `read` returns a file as it is
+    /// written, which for a PDF or a `.docx` is a binary it refuses, and `docread` is
+    /// the only way to reach the text inside one.
     pub fn system_tools(mut self) -> Self {
         self.tools.extend(if self.model.starts_with("openai/") {
             vec![
                 get_shell_tool_desc(),
                 get_read_tool_desc(),
+                get_docread_tool_desc(),
                 get_apply_patch_tool_desc(),
             ]
         } else {
             vec![
                 get_shell_tool_desc(),
                 get_read_tool_desc(),
+                get_docread_tool_desc(),
                 get_write_tool_desc(),
                 get_edit_tool_desc(),
                 get_glob_tool_desc(),

@@ -72,6 +72,12 @@ unicode-segmentation = "1.12.0"
 url = { version = "2.5", features = ["serde"] }
 urlencoding = "2.1"
 uuid = { version = "1.18.0", features = ["v4"] }
+# Document text extraction for the `docread` tool. `default-features = false`
+# drops the tokio/simd defaults we re-request by name; the feature list is the
+# set of format backends, all pure Rust — no ONNX, no OCR models, nothing
+# downloaded at runtime. Adding a format here is the only change a new
+# extension needs. Keep `ocr` out: it pulls tesseract and a model cache.
+xberg = { version = "1.1", default-features = false, features = ["pdf", "office", "excel", "hwp", "hwpx", "html", "tokio-runtime"] }
 # wreq 6 trimmed its default feature set down to webpki-roots and tokio-rt, so
 # everything else this crate relies on has to be requested by name. charset and
 # system-proxy were in wreq 5's defaults; the decompression features and stream
@@ -86,4 +92,7 @@ axum = "0.8"
 dotenvy = "0.15"
 test-with = { version = "0.17", default-features = false, features = ["executable"] }
 tokio = { version = "1.0", features = ["net"] }
+# Builds the OOXML/EPUB fixtures `docread`'s tests extract from, so they stay
+# readable XML in the test file instead of checked-in binaries.
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
