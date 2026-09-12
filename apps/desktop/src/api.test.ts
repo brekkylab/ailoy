@@ -1,0 +1,35 @@
+// `api.ts` itself cannot be imported here — `@tauri-apps/api` needs a webview — so this
+// exercises the error helpers where they live. `api.ts` re-exports them unchanged.
+import { describe, expect, it } from "vitest";
+
+import { kindOf, messageOf } from "@/lib/errors";
+
+describe("messageOf", () => {
+  it("reads the engine's message off a rejection payload", () => {
+    expect(messageOf({ kind: "not_found", message: "not found: session s1" })).toBe("not found: session s1");
+    // `Invalid` carries text the user reads verbatim.
+    expect(messageOf({ kind: "invalid", message: "제목을 입력해 주세요" })).toBe("제목을 입력해 주세요");
+  });
+
+  it("falls back for anything else that can be thrown", () => {
+    expect(messageOf("plain string")).toBe("plain string");
+    expect(messageOf(new Error("boom"))).toBe("boom");
+    expect(messageOf(null)).toBe("null");
+    expect(messageOf(42)).toBe("42");
+  });
+});
+
+describe("kindOf", () => {
+  it("returns the tag to branch on", () => {
+    expect(kindOf({ kind: "already_running", message: "session is already running" })).toBe("already_running");
+    expect(kindOf({ kind: "console_unavailable", message: "console unavailable: no kernel" })).toBe("console_unavailable");
+  });
+
+  it("is null for a failure that did not come from the engine", () => {
+    expect(kindOf(new Error("boom"))).toBeNull();
+    expect(kindOf("not found")).toBeNull();
+    expect(kindOf(null)).toBeNull();
+    // A tag this build does not know is not one the UI may branch on.
+    expect(kindOf({ kind: "from_a_newer_engine", message: "?" })).toBeNull();
+  });
+});
