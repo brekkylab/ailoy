@@ -16,7 +16,8 @@ export function Sidebar({
   onOpenSettings,
 }: {
   selected: string | null;
-  onSelect: (id: string) => void;
+  /** `null` after the selected session is deleted: `App` then picks the next one. */
+  onSelect: (id: string | null) => void;
   onOpenSettings: () => void;
 }) {
   const qc = useQueryClient();
@@ -25,21 +26,36 @@ export function Sidebar({
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessionList, refetchInterval: 5000 });
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // One line for all three mutations: they are mutually exclusive in practice, and a
+  // rejected create/rename/delete otherwise fails silently — the list just does not move.
+  const [error, setError] = useState<string | null>(null);
 
   const create = useMutation({
     mutationFn: () => api.sessionCreate(),
     onSuccess: (s) => {
+      setError(null);
       qc.invalidateQueries({ queryKey: ["sessions"] });
       onSelect(s.id);
     },
+    onError: (err) => setError(api.messageOf(err)),
   });
   const remove = useMutation({
     mutationFn: (id: string) => api.sessionDelete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["sessions"] }),
+    onSuccess: (_void, id) => {
+      setError(null);
+      qc.invalidateQueries({ queryKey: ["sessions"] });
+      // Deselect rather than guess: `App` owns which session takes over.
+      if (id === selected) onSelect(null);
+    },
+    onError: (err) => setError(api.messageOf(err)),
   });
   const rename = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) => api.sessionRename(id, title),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["sessions"] }),
+    onSuccess: () => {
+      setError(null);
+      qc.invalidateQueries({ queryKey: ["sessions"] });
+    },
+    onError: (err) => setError(api.messageOf(err)),
   });
 
   // WKWebView implements neither `window.prompt` nor a reliable `window.confirm`, so the
@@ -65,6 +81,7 @@ export function Sidebar({
           <SettingsIcon className="size-4" />
         </Button>
       </div>
+      {error && <p className="px-3 pb-2 text-xs text-destructive">{error}</p>}
       <ScrollArea className="flex-1 px-2">
         {(sessions.data ?? []).map((s) => (
           <div
