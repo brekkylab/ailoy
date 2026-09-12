@@ -55,7 +55,7 @@ function Shell() {
   const noKey = settings.data && !settings.data.providers.some((p) => p.has_key);
 
   return (
-    <div className="grid h-full grid-cols-[260px_minmax(0,1fr)_320px]">
+    <div className="grid h-full grid-rows-[minmax(0,1fr)] grid-cols-[260px_minmax(0,1fr)_320px]">
       <Sidebar selected={selected} onSelect={setSelected} onOpenSettings={() => setSettingsOpen(true)} />
       <main className="flex h-full min-w-0 flex-col">
         {ws.data?.status.status === "degraded" && <Banner text={`${S.degraded} (${ws.data.status.reason})`} />}

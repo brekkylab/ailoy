@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Core surface plus the folder picker used to connect a local directory.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default"]
+  "permissions": ["core:default", "dialog:default", "dialog:allow-confirm"]
 }

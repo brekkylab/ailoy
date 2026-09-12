@@ -82,7 +82,7 @@ export function Sidebar({
         </Button>
       </div>
       {error && <p className="px-3 pb-2 text-xs text-destructive">{error}</p>}
-      <ScrollArea className="flex-1 px-2">
+      <ScrollArea className="min-h-0 flex-1 px-2">
         {(sessions.data ?? []).map((s) => (
           <div
             key={s.id}
