@@ -90,7 +90,11 @@ impl Store {
     }
 
     fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T> {
-        let conn = self.conn.lock().expect("store mutex poisoned");
+        // A poisoned connection is still a usable connection: the panic that poisoned it
+        // happened in the caller's closure, not inside SQLite, which either committed its
+        // statement or did not. Honouring the poison would mean every later store call in
+        // the process panicking — losing the whole session over one bad read.
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         Ok(f(&conn)?)
     }
 
@@ -214,6 +218,25 @@ impl Store {
             )?;
             Ok(seq)
         })
+    }
+
+    /// Attach (or replace) the accounting on a message already written. The ChatCompletion
+    /// schema reports a turn's usage in a frame that arrives after the message is complete
+    /// and persisted, so the row has to be revisited rather than written once.
+    pub fn message_set_usage(&self, session_id: &str, seq: i64, usage: &TokenUsage) -> Result<()> {
+        let usage = serde_json::to_string(usage).map_err(|e| EngineError::Other(e.into()))?;
+        let updated = self.with(|c| {
+            c.execute(
+                "UPDATE messages SET usage = ?3 WHERE session_id = ?1 AND seq = ?2",
+                params![session_id, seq, usage],
+            )
+        })?;
+        if updated == 0 {
+            return Err(EngineError::NotFound(format!(
+                "message {seq} of session {session_id}"
+            )));
+        }
+        Ok(())
     }
 
     fn stored_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
@@ -439,6 +462,45 @@ mod tests {
         assert_eq!(s.message_usages("s1").unwrap().len(), 1);
         s.session_delete("s1").unwrap();
         assert!(s.message_list("s1").unwrap().is_empty(), "cascade");
+    }
+
+    #[test]
+    fn usage_can_be_attached_after_the_message_is_written() {
+        // The ChatCompletion schema sends a turn's usage in a frame *after* the one that
+        // completed the message, by which time the row is already in the table.
+        let s = Store::open_in_memory().unwrap();
+        s.session_create("s1", "t", "m").unwrap();
+        let seq = s
+            .message_append(
+                "s1",
+                NewMessage {
+                    depth: 0,
+                    source_agent: None,
+                    message: &text(Role::Assistant, "hello"),
+                    usage: None,
+                },
+            )
+            .unwrap();
+        assert!(s.message_list("s1").unwrap()[0].usage.is_none());
+        assert!(s.message_usages("s1").unwrap().is_empty());
+
+        let u = TokenUsage {
+            input_tokens: 7,
+            output_tokens: 2,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        };
+        s.message_set_usage("s1", seq, &u).unwrap();
+
+        let stored = s.message_list("s1").unwrap();
+        assert_eq!(stored[0].usage.as_ref().unwrap().input_tokens, 7);
+        assert_eq!(stored[0].usage.as_ref().unwrap().output_tokens, 2);
+        assert_eq!(s.message_usages("s1").unwrap().len(), 1);
+
+        assert!(matches!(
+            s.message_set_usage("s1", 99, &u),
+            Err(EngineError::NotFound(_))
+        ));
     }
 
     #[test]
