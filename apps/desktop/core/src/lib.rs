@@ -4,6 +4,7 @@ pub mod assembler;
 pub mod catalog;
 pub mod config;
 pub mod console;
+pub mod engine;
 pub mod error;
 pub mod events;
 pub mod prompt;
@@ -16,6 +17,7 @@ pub mod workspace;
 
 pub use catalog::Catalog;
 pub use config::EngineConfig;
+pub use engine::Engine;
 pub use error::{EngineError, Result};
 pub use events::RunEvent;
 pub use store::Store;
