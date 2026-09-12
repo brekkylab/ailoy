@@ -466,7 +466,21 @@ async fn restore_connectors(store: &Store, workspace: &WorkspaceManager) {
             Ok(path) => {
                 info.path = path;
                 match probe {
-                    Ok(fs) => workspace.attach(info.clone(), fs).await.err(),
+                    Ok(fs) => {
+                        // The probes took up to a connector timeout; the user may have
+                        // removed this row (or re-added the path) meanwhile. Attaching
+                        // anyway would resurrect a connector with no row behind it.
+                        let current = store.mount_list().unwrap_or_default();
+                        let mounted = workspace.mounts().await;
+                        if !still_wanted(&current, &mounted, &row.id, &info.path) {
+                            tracing::debug!(
+                                "skipping restore of {}: removed or re-added meanwhile",
+                                info.path
+                            );
+                            continue;
+                        }
+                        workspace.attach(info.clone(), fs).await.err()
+                    }
                     Err(e) => Some(e),
                 }
             }
@@ -479,6 +493,13 @@ async fn restore_connectors(store: &Store, workspace: &WorkspaceManager) {
             workspace.remember_failed(info).await;
         }
     }
+}
+
+/// Whether a stored connector should still be attached once its probe has answered: its
+/// row must still exist (a `mount_remove` during the probe deletes it) and nothing may
+/// already be mounted at the path (the user re-added it while the restore was running).
+fn still_wanted(current: &[MountRow], mounted: &[MountInfo], row_id: &str, path: &str) -> bool {
+    current.iter().any(|r| r.id == row_id) && !mounted.iter().any(|m| m.path == path)
 }
 
 /// Tauri's managed state is shared across the command threads, so an `Engine` that is not
@@ -739,5 +760,51 @@ mod tests {
             Some("root intact")
         );
         e.shutdown().await;
+    }
+
+    #[test]
+    fn a_restore_skips_rows_removed_or_re_added_meanwhile() {
+        let row = |id: &str, path: &str| MountRow {
+            id: id.into(),
+            path: path.into(),
+            kind: MountKind::Local,
+            label: "l".into(),
+            config: MountConfig::Local {
+                host_root: "/tmp".into(),
+            },
+            writable: true,
+            created_at: 0,
+        };
+        let mounted = |path: &str| MountInfo {
+            id: "x".into(),
+            path: path.into(),
+            kind: MountKind::Local,
+            label: "l".into(),
+            detail: String::new(),
+            writable: true,
+            status: MountStatus::Ok,
+        };
+        let root = mounted("/");
+        // Still stored, nothing at the path: attach.
+        assert!(still_wanted(
+            &[row("a", "/docs")],
+            std::slice::from_ref(&root),
+            "a",
+            "/docs"
+        ));
+        // Row deleted during the probe: skip.
+        assert!(!still_wanted(
+            &[],
+            std::slice::from_ref(&root),
+            "a",
+            "/docs"
+        ));
+        // Re-added at the same path while probing: skip.
+        assert!(!still_wanted(
+            &[row("a", "/docs")],
+            &[root, mounted("/docs")],
+            "a",
+            "/docs"
+        ));
     }
 }
