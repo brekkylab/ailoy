@@ -35,10 +35,21 @@ function Shell() {
   useEffect(() => {
     try {
       if (selected) localStorage.setItem(KEY, selected);
+      else localStorage.removeItem(KEY);
     } catch {
       /* storage may be unavailable */
     }
   }, [selected]);
+  const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessionList });
+  // Nothing selected, or an id that named a session since deleted (here or in another
+  // window): fall back to the most recently updated one — `session_list` is ordered
+  // `updated_at DESC`, so that is the head. An empty list deselects.
+  const list = sessions.data;
+  useEffect(() => {
+    if (!list) return;
+    if (selected && list.some((s) => s.id === selected)) return;
+    setSelected(list[0]?.id ?? null);
+  }, [list, selected]);
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspaceInfo });
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settingsGet });
   const noKey = settings.data && !settings.data.providers.some((p) => p.has_key);
