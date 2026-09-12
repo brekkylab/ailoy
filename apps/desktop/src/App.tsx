@@ -32,35 +32,36 @@ function Shell() {
     }
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessionList });
+  // `selected` is the user's explicit choice; `effective` is what the window shows. Derived
+  // during render rather than written back in an effect: the sessions cache is one refetch
+  // behind whatever action just changed it, so an effect that "corrected" the selection
+  // against the stale list would revert a freshly created session to the old head and
+  // briefly show a just-deleted one. A derived value falls back to the most recently
+  // updated session (`session_list` is ordered `updated_at DESC`) only while the choice
+  // is unknown or gone, and snaps back to the choice the moment the list catches up.
+  const list = sessions.data;
+  const effective =
+    selected && (!list || list.some((s) => s.id === selected)) ? selected : (list?.[0]?.id ?? null);
   useEffect(() => {
     try {
-      if (selected) localStorage.setItem(KEY, selected);
+      if (effective) localStorage.setItem(KEY, effective);
       else localStorage.removeItem(KEY);
     } catch {
       /* storage may be unavailable */
     }
-  }, [selected]);
-  const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessionList });
-  // Nothing selected, or an id that named a session since deleted (here or in another
-  // window): fall back to the most recently updated one — `session_list` is ordered
-  // `updated_at DESC`, so that is the head. An empty list deselects.
-  const list = sessions.data;
-  useEffect(() => {
-    if (!list) return;
-    if (selected && list.some((s) => s.id === selected)) return;
-    setSelected(list[0]?.id ?? null);
-  }, [list, selected]);
+  }, [effective]);
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspaceInfo });
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settingsGet });
   const noKey = settings.data && !settings.data.providers.some((p) => p.has_key);
 
   return (
     <div className="grid h-full grid-rows-[minmax(0,1fr)] grid-cols-[260px_minmax(0,1fr)_320px]">
-      <Sidebar selected={selected} onSelect={setSelected} onOpenSettings={() => setSettingsOpen(true)} />
+      <Sidebar selected={effective} onSelect={setSelected} onOpenSettings={() => setSettingsOpen(true)} />
       <main className="flex h-full min-w-0 flex-col">
         {ws.data?.status.status === "degraded" && <Banner text={`${S.degraded} (${ws.data.status.reason})`} />}
         {noKey && <Banner text={S.noKey} tone="error" />}
-        <Thread sessionId={selected} />
+        <Thread sessionId={effective} />
       </main>
       <WorkspacePanel />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
