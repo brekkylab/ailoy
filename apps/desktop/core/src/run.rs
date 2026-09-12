@@ -16,7 +16,7 @@ use ailoy::{
     agent::{AgentBuilder, AgentError, RunControl},
     message::{Message, Part, Role},
 };
-use futures::StreamExt as _;
+use futures::{FutureExt as _, StreamExt as _};
 use tokio::sync::{Mutex, broadcast};
 use tokio_util::sync::CancellationToken;
 
@@ -165,7 +165,29 @@ impl RunManager {
         let finished = self.finisher(sid.clone());
 
         tokio::spawn(async move {
-            let outcome = drive(deps, &sid, &model, user_msg, tx.clone(), cancel, partial).await;
+            // Caught rather than left to unwind the task: a panic anywhere in `drive` would
+            // otherwise skip both the map removal and the terminal event, leaving the session
+            // answering `AlreadyRunning` forever and `attach` handing out a receiver that
+            // never yields again. Every exit — return, panic — now reaches the two lines below.
+            let outcome = std::panic::AssertUnwindSafe(drive(
+                deps,
+                &sid,
+                &model,
+                user_msg,
+                tx.clone(),
+                cancel,
+                partial,
+            ))
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|payload| {
+                let message = panic_message(&*payload);
+                tracing::error!("the run task for {sid} panicked: {message}");
+                Err(RunEnd::Failed {
+                    kind: "internal".into(),
+                    message,
+                })
+            });
             // The run leaves the active map before its terminal event goes out, so a
             // client that reacts to `Done` by asking `is_running` is told the truth.
             finished.await;
@@ -204,6 +226,26 @@ enum RunEnd {
     Failed { kind: String, message: String },
 }
 
+/// What a caught panic should say. `panic!` payloads are a `&'static str` or a `String`;
+/// anything else (a panicking `Drop`, a custom payload) has no rendering, so say what
+/// happened instead of nothing.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "run task panicked".to_string()
+    }
+}
+
+/// An error rendered with its whole `#[source]` chain. `AgentError::Tool`/`Console` display
+/// as fixed strings ("tool execution failed") and keep the real cause behind `source`, so
+/// `to_string()` alone tells the user nothing about what actually went wrong.
+fn with_causes(e: impl std::error::Error + Send + Sync + 'static) -> String {
+    format!("{:#}", anyhow::Error::new(e))
+}
+
 async fn drive(
     deps: RunDeps,
     session_id: &str,
@@ -234,17 +276,16 @@ async fn drive(
     let mounts = deps.workspace.mounts().await;
     let ws_mount = deps.workspace.console_mount();
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let extra = deps
+        .store
+        .setting_get("extra_instruction")
+        .map_err(|e| fail("storage", e.to_string()))?;
     let preamble = prompt::build(&prompt::PromptInput {
         workfs_path: &ws_mount.0,
         mounts: &mounts,
         today: &today,
         os: std::env::consts::OS,
-        extra: deps
-            .store
-            .setting_get("extra_instruction")
-            .ok()
-            .flatten()
-            .as_deref(),
+        extra: extra.as_deref(),
     });
 
     // No console binary means no console: the pure tools still work, and a tool that
@@ -302,25 +343,23 @@ async fn drive(
                     end = Some(fail("model", m.to_string()));
                     break;
                 }
-                Err(AgentError::Console(e)) => {
-                    end = Some(fail("console_unavailable", e.to_string()));
+                Err(e @ AgentError::Console(_)) => {
+                    end = Some(fail("console_unavailable", with_causes(e)));
                     break;
                 }
                 // `AgentError` is `#[non_exhaustive]`; everything else is tool-layer or
-                // unclassified, and reads the same to the user.
+                // unclassified, and reads the same to the user. Bound whole (not as
+                // `Tool(e)`) so the fixed variant text keeps its cause chain.
                 Err(e) => {
-                    end = Some(fail("tool", e.to_string()));
+                    end = Some(fail("tool", with_causes(e)));
                     break;
                 }
             };
-            if delta.usage.is_some() || delta.rate_limit.is_some() {
-                let _ = tx.send(RunEvent::Usage {
-                    context_used: delta.usage.as_ref().map(usage::context_used),
-                    context_limit,
-                    usage: delta.usage.clone(),
-                    rate_limit: delta.rate_limit.clone(),
-                });
-            }
+            // Usage is *not* reported per delta: providers split a turn's accounting across
+            // the stream (Anthropic sends the input and cache counts first and only
+            // `output_tokens` last), so a per-delta event would end every turn showing
+            // input 0. The assembler's `accumulate` merges the turn's totals, so the
+            // completed message below is the one place they are all present at once.
             let items = match assembler.push(delta) {
                 Ok(items) => items,
                 Err(e) => {
@@ -339,7 +378,21 @@ async fn drive(
                     }
                     AssembledItem::Completed(out) => {
                         partial.lock().expect("partial mutex").clear();
-                        if out.message.role == Role::Assistant
+                        // Depth ≥ 1 is a sub-agent's own turn. Its usage is already inside
+                        // the tool call the top-level turn will report, and `RunEvent` has
+                        // no depth on `Usage`/`ToolCallStarted` to tell the two apart — so
+                        // the top-level feed only ever carries depth 0.
+                        let top_level = out.depth.unwrap_or(0) == 0;
+                        if top_level && (out.usage.is_some() || out.rate_limit.is_some()) {
+                            let _ = tx.send(RunEvent::Usage {
+                                usage: out.usage.clone(),
+                                rate_limit: out.rate_limit.clone(),
+                                context_used: out.usage.as_ref().map(usage::context_used),
+                                context_limit,
+                            });
+                        }
+                        if top_level
+                            && out.message.role == Role::Assistant
                             && let Some(calls) = &out.message.tool_calls
                         {
                             for c in calls {
@@ -361,7 +414,12 @@ async fn drive(
     // A stream that ended mid-message (cancel during the model phase) still has text
     // worth keeping — the agent committed it to its history, so mirror that here.
     match assembler.finish() {
-        Ok(Some(out)) => persist(&deps.store, session_id, &tx, out),
+        Ok(Some(out)) => {
+            // Same as the in-loop `Completed` path: once the text is a stored message, a
+            // client that re-attaches must not also be handed it as live partial text.
+            partial.lock().expect("partial mutex").clear();
+            persist(&deps.store, session_id, &tx, out)
+        }
         Ok(None) => {}
         Err(e) => tracing::error!("finalizing the trailing message for {session_id}: {e}"),
     }
@@ -531,8 +589,10 @@ mod tests {
         let _g = crate::providers::REGISTRY_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // The last chunk carries the turn's accounting, the way a ChatCompletion provider
+        // does: `prompt_tokens` 7 with no cache detail, so `context_used` is 7.
         const SSE: &str = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"Hel\"}}]}\n\n\
-                           data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\n\
+                           data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":2,\"total_tokens\":9}}\n\n\
                            data: [DONE]\n\n";
         let addr = fake_model_server(SSE).await;
         point_default_at(addr);
@@ -553,10 +613,24 @@ mod tests {
         let mut text = String::new();
         let mut done = false;
         let mut started = false;
+        let mut usage_events = 0;
+        let mut usage_before_any_text = 0;
+        let mut last_usage: Option<(Option<u64>, Option<u64>)> = None;
         while let Ok(ev) = handle.events.recv().await {
             match ev {
                 RunEvent::Started { .. } => started = true,
                 RunEvent::TextDelta { text: t } => text.push_str(&t),
+                RunEvent::Usage {
+                    usage,
+                    context_used,
+                    ..
+                } => {
+                    usage_events += 1;
+                    if text.is_empty() {
+                        usage_before_any_text += 1;
+                    }
+                    last_usage = Some((usage.map(|u| u.output_tokens), context_used));
+                }
                 RunEvent::Done => {
                     done = true;
                     break;
@@ -569,6 +643,13 @@ mod tests {
         assert!(started);
         assert!(done);
         assert_eq!(text, "Hello");
+        // Exactly one `Usage`, carrying the completed message's merged totals — not one per
+        // delta, and so never ahead of the text it accounts for.
+        assert_eq!(usage_events, 1);
+        assert_eq!(usage_before_any_text, 0);
+        let (output_tokens, context_used) = last_usage.expect("a usage event");
+        assert!(output_tokens.unwrap_or(0) > 0, "{output_tokens:?}");
+        assert_eq!(context_used, Some(7));
         let msgs = store.message_list("s1").unwrap();
         assert_eq!(msgs.len(), 2, "{msgs:?}");
         assert_eq!(msgs[0].message.role, Role::User);
@@ -638,5 +719,73 @@ mod tests {
         assert_eq!(msgs[1].message.role, Role::Assistant);
         assert_eq!(msgs[1].message.contents[0].as_text(), Some(text.as_str()));
         assert!(!mgr.is_running("s2").await);
+    }
+
+    // Same reasoning as above for the registry lock.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn a_panicking_actor_frees_the_session_and_reports_an_error() {
+        let _g = crate::providers::REGISTRY_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        const SSE: &str = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"Half \"}}]}\n\n\
+                           data: {\"choices\":[{\"delta\":{\"content\":\"an answer\"}}]}\n\n\
+                           data: {\"choices\":[{\"delta\":{\"content\":\" and the rest\"},\"finish_reason\":\"stop\"}]}\n\n\
+                           data: [DONE]\n\n";
+        let addr = slow_model_server(SSE, std::time::Duration::from_millis(150)).await;
+        point_default_at(addr);
+        let dir = tempfile::tempdir().unwrap();
+        let d = deps(dir.path()).await;
+        let store = d.store.clone();
+        store.session_create("s3", "t", "fake/m").unwrap();
+        let mgr = RunManager::new(d);
+
+        let mut handle = mgr.start("s3", vec![Part::text("hi")]).await.unwrap();
+        // Wait until the run is inside its stream loop.
+        loop {
+            match handle.events.recv().await.unwrap() {
+                RunEvent::TextDelta { .. } => break,
+                RunEvent::Done | RunEvent::Cancelled => panic!("the run ended before it spoke"),
+                RunEvent::Error { kind, message } => panic!("{kind}: {message}"),
+                _ => {}
+            }
+        }
+
+        // Poison the partial-text mutex from outside the actor: `drive` takes it on the
+        // next text delta and `expect`s, which is the panic under test. Any panic in the
+        // actor would do — this is the one reachable without touching another module.
+        let partial = mgr
+            .runs
+            .lock()
+            .await
+            .get("s3")
+            .expect("the run to still be active")
+            .partial
+            .clone();
+        let _ = std::thread::spawn(move || {
+            let _held = partial.lock().expect("partial mutex");
+            panic!("poisoning the partial mutex on purpose");
+        })
+        .join();
+
+        let mut kind = None;
+        while let Ok(ev) = handle.events.recv().await {
+            match ev {
+                RunEvent::Error { kind: k, .. } => {
+                    kind = Some(k);
+                    break;
+                }
+                RunEvent::Done => panic!("ran to completion despite the panic"),
+                RunEvent::Cancelled => panic!("reported a cancel that never happened"),
+                _ => {}
+            }
+        }
+        // The panic is reported as a run failure, and — the point of the test — the run
+        // does not leak: the session is free again rather than stuck on `AlreadyRunning`.
+        assert_eq!(kind.as_deref(), Some("internal"));
+        assert!(!mgr.is_running("s3").await);
+        assert!(mgr.attach("s3").await.is_none());
+        assert!(mgr.start("s3", vec![Part::text("again")]).await.is_ok());
+        mgr.cancel("s3").await;
     }
 }
