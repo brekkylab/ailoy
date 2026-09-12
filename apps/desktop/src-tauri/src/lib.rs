@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use ailoy_desktop_core::{Engine, EngineConfig};
 use tauri::Manager;
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -21,7 +22,21 @@ pub fn run() {
             cfg.console_bin = sidecar::console_bin();
             // Setup runs on the main thread; the engine's start is short (open the DB,
             // mount, register providers) and must finish before any command can arrive.
-            let engine = tauri::async_runtime::block_on(Engine::start(cfg))?;
+            let engine = match tauri::async_runtime::block_on(Engine::start(cfg)) {
+                Ok(engine) => engine,
+                Err(e) => {
+                    // A Finder-launched app has no stderr, so the failure has to reach the
+                    // log file and the user's eyes before the process gives up. The most
+                    // likely cause is a second instance holding the data directory.
+                    tracing::error!("engine start failed: {e}");
+                    app.dialog()
+                        .message(e.to_string())
+                        .title("Ailoy")
+                        .kind(MessageDialogKind::Error)
+                        .blocking_show();
+                    return Err(e.into());
+                }
+            };
             app.manage(engine);
             Ok(())
         })
@@ -55,7 +70,15 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("the window could not be created")
         .run(|app, event| {
-            if let tauri::RunEvent::ExitRequested { .. } = event {
+            // Closing the last window raises `ExitRequested`; the macOS Quit menu item
+            // (Cmd+Q) goes through `applicationWillTerminate:` and raises only `Exit`.
+            // Both must reach the engine, or Cmd+Q leaks the FUSE-T mount and drops the
+            // trailing partial message. Running shutdown twice is safe: the mount is
+            // `take()`n and the run list is drained on the first pass.
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
                 if let Some(engine) = app.try_state::<Arc<Engine>>() {
                     let engine = engine.inner().clone();
                     // Unmounting joins a thread; do it before the process goes.

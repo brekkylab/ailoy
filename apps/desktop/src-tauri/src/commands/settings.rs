@@ -21,9 +21,13 @@ pub fn models_list(engine: Eng<'_>) -> Result<Vec<ModelInfo>, EngineError> {
 #[tauri::command]
 pub fn open_logs(engine: Eng<'_>) -> Result<(), EngineError> {
     let logs = engine.config().data_dir.join("logs");
-    std::process::Command::new("open")
+    let mut child = std::process::Command::new("open")
         .arg(logs)
         .spawn()
         .map_err(EngineError::Io)?;
+    // `open` returns at once; reap it off-thread so each click does not leave a zombie.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
     Ok(())
 }
