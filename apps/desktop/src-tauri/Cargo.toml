@@ -1,0 +1,29 @@
+[package]
+name = "ailoy-desktop"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Ailoy Desktop"
+
+# Its own workspace: Tauri's webview stack must not be charged to the root `cargo test`.
+[workspace]
+
+[lib]
+name = "ailoy_desktop_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+ailoy-desktop-core = { path = "../core" }
+ailoy = { path = "../../.." }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tracing = "0.1"
+# Default features bring `tracing-log`, so ailoy's `log::` records reach the file too.
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
