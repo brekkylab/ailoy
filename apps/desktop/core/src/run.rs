@@ -14,7 +14,7 @@ use std::{
 
 use ailoy::{
     agent::{AgentBuilder, AgentError, RunControl},
-    message::{Message, Part, Role},
+    message::{Message, Part, RateLimitInfo, Role, TokenUsage},
 };
 use futures::{FutureExt as _, StreamExt as _};
 use tokio::sync::{Mutex, broadcast};
@@ -85,7 +85,7 @@ impl RunManager {
     pub async fn attach(&self, session_id: &str) -> Option<(RunHandle, String)> {
         let runs = self.runs.lock().await;
         let run = runs.get(session_id)?;
-        let partial = run.partial.lock().expect("partial mutex").clone();
+        let partial = lock_partial(&run.partial).clone();
         Some((
             RunHandle {
                 run_id: run.run_id.clone(),
@@ -165,43 +165,8 @@ impl RunManager {
         let finished = self.finisher(sid.clone());
 
         tokio::spawn(async move {
-            // Caught rather than left to unwind the task: a panic anywhere in `drive` would
-            // otherwise skip both the map removal and the terminal event, leaving the session
-            // answering `AlreadyRunning` forever and `attach` handing out a receiver that
-            // never yields again. Every exit — return, panic — now reaches the two lines below.
-            let outcome = std::panic::AssertUnwindSafe(drive(
-                deps,
-                &sid,
-                &model,
-                user_msg,
-                tx.clone(),
-                cancel,
-                partial,
-            ))
-            .catch_unwind()
-            .await
-            .unwrap_or_else(|payload| {
-                let message = panic_message(&*payload);
-                tracing::error!("the run task for {sid} panicked: {message}");
-                Err(RunEnd::Failed {
-                    kind: "internal".into(),
-                    message,
-                })
-            });
-            // The run leaves the active map before its terminal event goes out, so a
-            // client that reacts to `Done` by asking `is_running` is told the truth.
-            finished.await;
-            match outcome {
-                Ok(()) => {
-                    let _ = tx.send(RunEvent::Done);
-                }
-                Err(RunEnd::Cancelled) => {
-                    let _ = tx.send(RunEvent::Cancelled);
-                }
-                Err(RunEnd::Failed { kind, message }) => {
-                    let _ = tx.send(RunEvent::Error { kind, message });
-                }
-            }
+            let actor = drive(deps, &sid, &model, user_msg, tx.clone(), cancel, partial);
+            run_task(&sid, actor, tx, finished).await;
         });
 
         Ok(RunHandle { run_id, events: rx })
@@ -216,6 +181,49 @@ impl RunManager {
         let runs = self.runs.clone();
         async move {
             runs.lock().await.remove(&session_id);
+        }
+    }
+}
+
+/// The body of the detached run task: drive the run, survive a panic in it, leave the
+/// active map, then send exactly one terminal event — in that order.
+///
+/// The panic is caught rather than left to unwind the task: a panic anywhere in `drive`
+/// would otherwise skip both the map removal and the terminal event, leaving the session
+/// answering `AlreadyRunning` forever and `attach` handing out a receiver that never
+/// yields again. Every exit — return, panic — reaches the tail below.
+///
+/// Named (rather than inlined at the spawn site) so a test can run it over a future that
+/// panics and check both halves of that tail.
+async fn run_task(
+    session_id: &str,
+    actor: impl std::future::Future<Output = std::result::Result<(), RunEnd>>,
+    tx: broadcast::Sender<RunEvent>,
+    finished: impl std::future::Future<Output = ()>,
+) {
+    let outcome = std::panic::AssertUnwindSafe(actor)
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|payload| {
+            let message = panic_message(&*payload);
+            tracing::error!("the run task for {session_id} panicked: {message}");
+            Err(RunEnd::Failed {
+                kind: "internal".into(),
+                message,
+            })
+        });
+    // The run leaves the active map before its terminal event goes out, so a client that
+    // reacts to `Done` by asking `is_running` is told the truth.
+    finished.await;
+    match outcome {
+        Ok(()) => {
+            let _ = tx.send(RunEvent::Done);
+        }
+        Err(RunEnd::Cancelled) => {
+            let _ = tx.send(RunEvent::Cancelled);
+        }
+        Err(RunEnd::Failed { kind, message }) => {
+            let _ = tx.send(RunEvent::Error { kind, message });
         }
     }
 }
@@ -242,8 +250,52 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 /// An error rendered with its whole `#[source]` chain. `AgentError::Tool`/`Console` display
 /// as fixed strings ("tool execution failed") and keep the real cause behind `source`, so
 /// `to_string()` alone tells the user nothing about what actually went wrong.
+///
+/// The rule for the `fail(..)` sites below: an error whose `Display` hides its cause is
+/// rendered this way (and an `anyhow::Error`, which this cannot take, as the equivalent
+/// `{e:#}`); an error whose `Display` already embeds it — every `EngineError`, whose
+/// storage/console/workspace variants interpolate their source, and `AgentError::Model`,
+/// which is `#[error(transparent)]` — is rendered with plain `to_string()`, because
+/// `{:#}` would print the same cause twice.
 fn with_causes(e: impl std::error::Error + Send + Sync + 'static) -> String {
     format!("{:#}", anyhow::Error::new(e))
+}
+
+/// The live-text buffer, taken even when a panicking run poisoned its lock. The string is
+/// at worst stale text nobody will read again; honouring the poison would instead panic
+/// every later touch of it — including the `attach` of a window that only wants to read.
+fn lock_partial(partial: &StdMutex<String>) -> std::sync::MutexGuard<'_, String> {
+    partial.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Combine a completed message's accounting with a trailer's, field by field.
+///
+/// The two describe the *same* turn, so the answer is the larger of each pair, never their
+/// sum: a provider that reports a field once leaves the other side at zero (or `None`), and
+/// one that repeats it sends the same number twice.
+fn merge_usage(a: Option<TokenUsage>, b: Option<TokenUsage>) -> Option<TokenUsage> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(TokenUsage {
+            input_tokens: a.input_tokens.max(b.input_tokens),
+            output_tokens: a.output_tokens.max(b.output_tokens),
+            cache_creation_input_tokens: max_opt(
+                a.cache_creation_input_tokens,
+                b.cache_creation_input_tokens,
+            ),
+            cache_read_input_tokens: max_opt(a.cache_read_input_tokens, b.cache_read_input_tokens),
+        }),
+        (Some(u), None) | (None, Some(u)) => Some(u),
+        (None, None) => None,
+    }
+}
+
+/// The larger of two optional counts; whichever is present when only one is.
+fn max_opt(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(v), None) | (None, Some(v)) => Some(v),
+        (None, None) => None,
+    }
 }
 
 async fn drive(
@@ -311,7 +363,11 @@ async fn drive(
     if let Some(c) = console {
         builder = builder.console(c);
     }
-    let mut agent = builder.build().map_err(|e| fail("model", e.to_string()))?;
+    // `build()` answers `anyhow::Error`, whose `to_string()` is only the outermost
+    // context ("unknown model") — `{:#}` is `with_causes` for a type that isn't `Error`.
+    let mut agent = builder
+        .build()
+        .map_err(|e| fail("model", format!("{e:#}")))?;
 
     let ctl = RunControl {
         cancel,
@@ -322,6 +378,10 @@ async fn drive(
     let context_limit = catalog_model.as_ref().and_then(|m| m.context);
 
     let mut assembler = MessageAssembler::new();
+    // The last top-level message written, with the accounting it was written with — what a
+    // usage trailer (see `AssembledItem::UsageTrailer`) belongs to. Replaced by the next
+    // top-level message, and cleared if that one fails to persist.
+    let mut last_top_level: Option<(i64, Option<TokenUsage>, Option<RateLimitInfo>)> = None;
     let mut end: Option<RunEnd> = None;
     {
         let mut stream = agent.run_stream_controlled(user_msg, ctl);
@@ -370,14 +430,14 @@ async fn drive(
             for item in items {
                 match item {
                     AssembledItem::Text(t) => {
-                        partial.lock().expect("partial mutex").push_str(&t);
+                        lock_partial(&partial).push_str(&t);
                         let _ = tx.send(RunEvent::TextDelta { text: t });
                     }
                     AssembledItem::Thinking(t) => {
                         let _ = tx.send(RunEvent::ThinkingDelta { text: t });
                     }
                     AssembledItem::Completed(out) => {
-                        partial.lock().expect("partial mutex").clear();
+                        lock_partial(&partial).clear();
                         // Depth ≥ 1 is a sub-agent's own turn. Its usage is already inside
                         // the tool call the top-level turn will report, and `RunEvent` has
                         // no depth on `Usage`/`ToolCallStarted` to tell the two apart — so
@@ -405,7 +465,46 @@ async fn drive(
                                 }
                             }
                         }
-                        persist(&deps.store, session_id, &tx, *out);
+                        let (u, rl) = (out.usage.clone(), out.rate_limit.clone());
+                        let seq = persist(&deps.store, session_id, &tx, *out);
+                        if top_level {
+                            // `None` when the write failed: there is no row for a later
+                            // trailer to amend, so it has nowhere to land either.
+                            last_top_level = seq.map(|seq| (seq, u, rl));
+                        }
+                    }
+                    // Accounting that arrived after the message it describes was already
+                    // written — the ChatCompletion schema's `include_usage` frame. It is
+                    // both re-announced and back-filled onto that row, so a reload shows
+                    // the same totals the live feed did.
+                    AssembledItem::UsageTrailer(trailer) => {
+                        // A sub-agent's trailer (depth ≥ 1) has no top-level message to
+                        // attribute it to, and neither does one that arrives before
+                        // anything has closed.
+                        let top_level = trailer.depth.unwrap_or(0) == 0;
+                        let target = last_top_level.clone().filter(|_| top_level);
+                        let Some((seq, prev_usage, prev_rl)) = target else {
+                            tracing::debug!(
+                                "a usage trailer for {session_id} at depth {:?} has no message to attribute it to",
+                                trailer.depth
+                            );
+                            continue;
+                        };
+                        let merged = merge_usage(prev_usage, trailer.usage);
+                        let rate_limit = trailer.rate_limit.or(prev_rl);
+                        let _ = tx.send(RunEvent::Usage {
+                            usage: merged.clone(),
+                            rate_limit,
+                            context_used: merged.as_ref().map(usage::context_used),
+                            context_limit,
+                        });
+                        if let Some(u) = &merged
+                            && let Err(e) = deps.store.message_set_usage(session_id, seq, u)
+                        {
+                            tracing::error!(
+                                "recording the usage trailer on message {seq} of {session_id}: {e}"
+                            );
+                        }
                     }
                 }
             }
@@ -417,8 +516,17 @@ async fn drive(
         Ok(Some(out)) => {
             // Same as the in-loop `Completed` path: once the text is a stored message, a
             // client that re-attaches must not also be handed it as live partial text.
-            partial.lock().expect("partial mutex").clear();
-            persist(&deps.store, session_id, &tx, out)
+            lock_partial(&partial).clear();
+            // And the same accounting: a turn cut short still spent what it spent.
+            if out.depth.unwrap_or(0) == 0 && (out.usage.is_some() || out.rate_limit.is_some()) {
+                let _ = tx.send(RunEvent::Usage {
+                    usage: out.usage.clone(),
+                    rate_limit: out.rate_limit.clone(),
+                    context_used: out.usage.as_ref().map(usage::context_used),
+                    context_limit,
+                });
+            }
+            persist(&deps.store, session_id, &tx, out);
         }
         Ok(None) => {}
         Err(e) => tracing::error!("finalizing the trailing message for {session_id}: {e}"),
@@ -430,15 +538,16 @@ async fn drive(
     }
 }
 
-/// Write one finalized message, then announce it with the sequence number it got. A store
-/// failure is logged rather than ending the run: the answer is already on screen, and
-/// failing the run would only lose the rest of it too.
+/// Write one finalized message, then announce it with the sequence number it got — which
+/// is also returned, so a usage trailer arriving later knows which row to amend. A store
+/// failure is logged and answered with `None` rather than ending the run: the answer is
+/// already on screen, and failing the run would only lose the rest of it too.
 fn persist(
     store: &Store,
     session_id: &str,
     tx: &broadcast::Sender<RunEvent>,
     out: ailoy::message::MessageOutput,
-) {
+) -> Option<i64> {
     let depth = out.depth.unwrap_or(0);
     match store.message_append(
         session_id,
@@ -457,8 +566,12 @@ fn persist(
                 message: out.message,
                 usage: out.usage,
             });
+            Some(seq)
         }
-        Err(e) => tracing::error!("persisting message for {session_id}: {e}"),
+        Err(e) => {
+            tracing::error!("persisting message for {session_id}: {e}");
+            None
+        }
     }
 }
 
@@ -589,8 +702,11 @@ mod tests {
         let _g = crate::providers::REGISTRY_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        // The last chunk carries the turn's accounting, the way a ChatCompletion provider
-        // does: `prompt_tokens` 7 with no cache detail, so `context_used` is 7.
+        // The accounting rides on the same frame as the `finish_reason` — what
+        // Anthropic/Gemini/Responses do, and what an OpenAI-compatible server that ignores
+        // `stream_options.include_usage` sends. (The separate trailing frame the schema
+        // normally uses is the next test.) `prompt_tokens` 7 with no cache detail, so
+        // `context_used` is 7.
         const SSE: &str = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"Hel\"}}]}\n\n\
                            data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":2,\"total_tokens\":9}}\n\n\
                            data: [DONE]\n\n";
@@ -721,10 +837,53 @@ mod tests {
         assert!(!mgr.is_running("s2").await);
     }
 
+    #[tokio::test]
+    async fn a_panicking_actor_frees_the_session_and_reports_an_error() {
+        // `run_task`'s tail is the invariant: however the actor ends — returning, or
+        // panicking halfway — the run leaves the active map *and* sends exactly one
+        // terminal event, in that order. Driven directly over a panicking future, because
+        // no fake model can provoke a panic in `drive` now that its locks tolerate poison
+        // (the test below covers that), and because a timing-free test is a stabler guard.
+        async fn boom() -> std::result::Result<(), RunEnd> {
+            panic!("boom inside the actor");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = RunManager::new(deps(dir.path()).await);
+        let (tx, mut rx) = broadcast::channel(EVENT_BUFFER);
+        // Register the run the way `start` does, minus the agent.
+        mgr.runs.lock().await.insert(
+            "s3".into(),
+            ActiveRun {
+                run_id: "r3".into(),
+                cancel: CancellationToken::new(),
+                events: tx.clone(),
+                partial: Arc::new(StdMutex::new(String::new())),
+            },
+        );
+        assert!(mgr.is_running("s3").await);
+
+        let finished = mgr.finisher("s3".into());
+        run_task("s3", boom(), tx, finished).await;
+
+        match rx.recv().await.expect("a terminal event") {
+            RunEvent::Error { kind, message } => {
+                assert_eq!(kind, "internal");
+                assert!(message.contains("boom inside the actor"), "{message}");
+            }
+            other => panic!("expected a terminal error, got {other:?}"),
+        }
+        // `run_task` owned the only sender: the channel closing here is "and nothing else".
+        assert!(rx.recv().await.is_err(), "exactly one terminal event");
+        // The point of the test: the session is free again rather than stuck answering
+        // `AlreadyRunning` forever, with `attach` handing out a dead receiver.
+        assert!(!mgr.is_running("s3").await);
+        assert!(mgr.attach("s3").await.is_none());
+    }
+
     // Same reasoning as above for the registry lock.
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
-    async fn a_panicking_actor_frees_the_session_and_reports_an_error() {
+    async fn a_poisoned_partial_lock_does_not_derail_the_run() {
         let _g = crate::providers::REGISTRY_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -732,16 +891,15 @@ mod tests {
                            data: {\"choices\":[{\"delta\":{\"content\":\"an answer\"}}]}\n\n\
                            data: {\"choices\":[{\"delta\":{\"content\":\" and the rest\"},\"finish_reason\":\"stop\"}]}\n\n\
                            data: [DONE]\n\n";
-        let addr = slow_model_server(SSE, std::time::Duration::from_millis(150)).await;
+        let addr = slow_model_server(SSE, std::time::Duration::from_millis(100)).await;
         point_default_at(addr);
         let dir = tempfile::tempdir().unwrap();
         let d = deps(dir.path()).await;
         let store = d.store.clone();
-        store.session_create("s3", "t", "fake/m").unwrap();
+        store.session_create("s4", "t", "fake/m").unwrap();
         let mgr = RunManager::new(d);
 
-        let mut handle = mgr.start("s3", vec![Part::text("hi")]).await.unwrap();
-        // Wait until the run is inside its stream loop.
+        let mut handle = mgr.start("s4", vec![Part::text("hi")]).await.unwrap();
         loop {
             match handle.events.recv().await.unwrap() {
                 RunEvent::TextDelta { .. } => break,
@@ -751,14 +909,14 @@ mod tests {
             }
         }
 
-        // Poison the partial-text mutex from outside the actor: `drive` takes it on the
-        // next text delta and `expect`s, which is the panic under test. Any panic in the
-        // actor would do — this is the one reachable without touching another module.
+        // Poison the live-text mutex from outside the actor, mid-answer. A run must not
+        // die of someone else's panic: the buffer holds a copy of text that is also on its
+        // way to the store, and the answer still has two deltas to go.
         let partial = mgr
             .runs
             .lock()
             .await
-            .get("s3")
+            .get("s4")
             .expect("the run to still be active")
             .partial
             .clone();
@@ -768,24 +926,134 @@ mod tests {
         })
         .join();
 
-        let mut kind = None;
+        let mut text = String::new();
+        let mut done = false;
         while let Ok(ev) = handle.events.recv().await {
             match ev {
-                RunEvent::Error { kind: k, .. } => {
-                    kind = Some(k);
+                RunEvent::TextDelta { text: t } => text.push_str(&t),
+                RunEvent::Done => {
+                    done = true;
                     break;
                 }
-                RunEvent::Done => panic!("ran to completion despite the panic"),
-                RunEvent::Cancelled => panic!("reported a cancel that never happened"),
+                RunEvent::Error { kind, message } => panic!("{kind}: {message}"),
+                RunEvent::Cancelled => panic!("cancelled unexpectedly"),
                 _ => {}
             }
         }
-        // The panic is reported as a run failure, and — the point of the test — the run
-        // does not leak: the session is free again rather than stuck on `AlreadyRunning`.
-        assert_eq!(kind.as_deref(), Some("internal"));
-        assert!(!mgr.is_running("s3").await);
-        assert!(mgr.attach("s3").await.is_none());
-        assert!(mgr.start("s3", vec![Part::text("again")]).await.is_ok());
-        mgr.cancel("s3").await;
+        assert!(done, "the run finished despite the poisoned lock");
+        assert!(text.ends_with(" and the rest"), "{text:?}");
+        let msgs = store.message_list("s4").unwrap();
+        assert_eq!(msgs.len(), 2, "{msgs:?}");
+        assert_eq!(
+            msgs[1].message.contents[0].as_text(),
+            Some("Half an answer and the rest")
+        );
+    }
+
+    // Same reasoning as above for the registry lock.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn a_usage_trailer_is_billed_to_the_message_it_closes() {
+        let _g = crate::providers::REGISTRY_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // The ChatCompletion schema's real shape: ailoy asks for
+        // `stream_options.include_usage`, so the turn's accounting arrives in a frame of
+        // its own — empty `choices`, no role, no content, no `finish_reason` — *after* the
+        // frame that ended the message. It belongs to the message it follows.
+        const SSE: &str = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"Hel\"}}]}\n\n\
+                           data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\n\
+                           data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":2,\"total_tokens\":9}}\n\n\
+                           data: [DONE]\n\n";
+        let addr = fake_model_server(SSE).await;
+        point_default_at(addr);
+        let dir = tempfile::tempdir().unwrap();
+        let d = deps(dir.path()).await;
+        let store = d.store.clone();
+        store.session_create("s5", "t", "fake/m").unwrap();
+        let mgr = RunManager::new(d);
+
+        let mut handle = mgr.start("s5", vec![Part::text("hi")]).await.unwrap();
+        let mut usage_events = 0;
+        let mut assistant_message_seq = None;
+        let mut usage_after_the_message = 0;
+        let mut last_usage = None;
+        let mut done = false;
+        while let Ok(ev) = handle.events.recv().await {
+            match ev {
+                RunEvent::Message { seq, message, .. } if message.role == Role::Assistant => {
+                    assistant_message_seq = Some(seq);
+                }
+                RunEvent::Usage {
+                    usage,
+                    context_used,
+                    ..
+                } => {
+                    usage_events += 1;
+                    if assistant_message_seq.is_some() {
+                        usage_after_the_message += 1;
+                    }
+                    last_usage = Some((usage, context_used));
+                }
+                RunEvent::Done => {
+                    done = true;
+                    break;
+                }
+                RunEvent::Error { kind, message } => panic!("{kind}: {message}"),
+                RunEvent::Cancelled => panic!("cancelled unexpectedly"),
+                _ => {}
+            }
+        }
+        assert!(done, "`Done` is the last event");
+        // One event, not none (the trailer dropped) and not two (the tool-result message
+        // billed for the model's turn as well).
+        assert_eq!(usage_events, 1);
+        assert_eq!(
+            usage_after_the_message, 1,
+            "the trailer follows its message"
+        );
+        let (usage, context_used) = last_usage.expect("a usage event");
+        let usage = usage.expect("the trailer's counts");
+        assert_eq!(usage.output_tokens, 2);
+        assert_eq!(context_used, Some(7));
+
+        // And it is written back onto the row that was persisted without it, so a reload
+        // shows what the live feed showed.
+        let msgs = store.message_list("s5").unwrap();
+        assert_eq!(msgs.len(), 2, "{msgs:?}");
+        assert_eq!(msgs[1].seq, assistant_message_seq.unwrap());
+        assert_eq!(msgs[1].usage.as_ref().unwrap().input_tokens, 7);
+        assert_eq!(msgs[1].usage.as_ref().unwrap().output_tokens, 2);
+        assert_eq!(store.message_usages("s5").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn merging_usage_takes_each_field_from_whichever_frame_reported_it() {
+        let u = |i, o, cr| TokenUsage {
+            input_tokens: i,
+            output_tokens: o,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: cr,
+        };
+        // The pair describes one turn: the larger of each field, never the sum — a
+        // message finalized with `output_tokens` 0 plus a trailer reporting 2 is 2.
+        let merged = merge_usage(Some(u(7, 0, None)), Some(u(0, 2, Some(3)))).unwrap();
+        assert_eq!((merged.input_tokens, merged.output_tokens), (7, 2));
+        assert_eq!(merged.cache_read_input_tokens, Some(3));
+        // A repeated report is idempotent, not doubled.
+        let twice = merge_usage(Some(u(7, 2, Some(3))), Some(u(7, 2, Some(3)))).unwrap();
+        assert_eq!((twice.input_tokens, twice.output_tokens), (7, 2));
+        // One side missing entirely is the other side.
+        assert_eq!(
+            merge_usage(None, Some(u(1, 1, None))).unwrap().input_tokens,
+            1
+        );
+        assert_eq!(
+            merge_usage(Some(u(1, 1, None)), None)
+                .unwrap()
+                .output_tokens,
+            1
+        );
+        assert!(merge_usage(None, None).is_none());
     }
 }

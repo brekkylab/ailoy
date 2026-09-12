@@ -12,7 +12,8 @@
 //! loudly via `accumulate` rather than being silently healed.
 
 use ailoy::message::{
-    Delta as _, FinishReason, MessageDeltaOutput, MessageOutput, PartDelta, Role,
+    Delta as _, FinishReason, MessageDeltaOutput, MessageOutput, PartDelta, RateLimitInfo, Role,
+    TokenUsage,
 };
 
 /// One actionable item derived from the raw delta stream.
@@ -30,6 +31,33 @@ pub enum AssembledItem {
     /// A message finalized at a boundary: a completed assistant turn or a tool
     /// result. Boxed so this variant doesn't bloat the small `Text` case.
     Completed(Box<MessageOutput>),
+    /// Accounting that arrived *after* a message boundary: it belongs to the
+    /// message that just completed, not to the next one.
+    ///
+    /// The ChatCompletion schema reports a turn's usage in a frame of its own
+    /// (ailoy asks for it with `stream_options.include_usage`; xAI, DeepSeek,
+    /// Moonshot Kimi and custom OpenAI-compatible endpoints all answer that
+    /// way). That frame has empty `choices` and arrives *after* the one carrying
+    /// `finish_reason`, so ailoy unmarshals it as a role-less, content-less,
+    /// finish-less delta carrying only `usage` — landing here once this
+    /// assembler has already cut the message. Folding it into the accumulator
+    /// instead would bill the *next* message (in a tool-using run, the tool
+    /// result) for the model's turn, and a stream that ends right after it would
+    /// lose the turn's tokens altogether.
+    ///
+    /// Boxed for the same reason as [`AssembledItem::Completed`]: `RateLimitInfo`
+    /// alone is four windows wide, and this variant is rare.
+    UsageTrailer(Box<UsageTrailer>),
+}
+
+/// Accounting that belongs to the message before it — see
+/// [`AssembledItem::UsageTrailer`].
+#[derive(Debug)]
+pub struct UsageTrailer {
+    pub usage: Option<TokenUsage>,
+    pub rate_limit: Option<RateLimitInfo>,
+    /// The nesting level of the turn it accounts for, as the delta reported it.
+    pub depth: Option<u8>,
 }
 
 /// Accumulates streamed [`MessageDeltaOutput`]s and emits [`AssembledItem`]s at
@@ -49,11 +77,25 @@ impl MessageAssembler {
     /// Feed one streamed delta. Returns the items to act on, in order: an
     /// optional `Text` and an optional `Thinking` (the live fragments from this
     /// delta), then an optional `Completed` (when this delta carries the
-    /// message's `finish_reason`). `Err` carries a finalization/accumulation
-    /// failure message; a role change with no intervening `finish_reason`
-    /// (contract violation) lands here via `accumulate`'s role-mismatch
-    /// rejection.
+    /// message's `finish_reason`). A usage-only delta arriving between messages
+    /// is the exception: it yields a lone [`AssembledItem::UsageTrailer`] and
+    /// touches nothing. `Err` carries a finalization/accumulation failure
+    /// message; a role change with no intervening `finish_reason` (contract
+    /// violation) lands here via `accumulate`'s role-mismatch rejection.
     pub fn push(&mut self, delta: MessageDeltaOutput) -> Result<Vec<AssembledItem>, String> {
+        // 0. A usage-only frame *between* messages closes the accounting of the
+        //    one that just ended — see `AssembledItem::UsageTrailer`. Only
+        //    between: the same frame shape mid-message is ordinary interim usage
+        //    (Anthropic sends input counts early, output last) and must keep
+        //    accumulating into the message being built.
+        if self.is_fresh() && is_usage_only(&delta) {
+            return Ok(vec![AssembledItem::UsageTrailer(Box::new(UsageTrailer {
+                usage: delta.usage,
+                rate_limit: delta.rate_limit,
+                depth: delta.depth,
+            }))]);
+        }
+
         let mut items = Vec::new();
 
         // 1. Live assistant text — top-level only. A sub-agent's answer is
@@ -112,6 +154,15 @@ impl MessageAssembler {
         Ok(Some(done.finish().map_err(|e| e.to_string())?))
     }
 
+    /// Whether no message is being built right now — i.e. the last one was cut
+    /// at its `finish_reason` and the next has not started.
+    fn is_fresh(&self) -> bool {
+        self.acc.delta.role.is_none()
+            && self.acc.delta.contents.is_empty()
+            && self.acc.delta.tool_calls.is_empty()
+            && self.acc.delta.thinking.is_none()
+    }
+
     /// The assistant text accumulated so far in the in-progress message — what a
     /// cancelled or interrupted turn has already produced.
     pub fn partial_text(&self) -> String {
@@ -125,6 +176,17 @@ impl MessageAssembler {
             })
             .collect()
     }
+}
+
+/// A delta that carries accounting and nothing else: no role, no content, no
+/// tool call, no thinking, and no `finish_reason` of its own.
+fn is_usage_only(delta: &MessageDeltaOutput) -> bool {
+    delta.delta.role.is_none()
+        && delta.delta.contents.is_empty()
+        && delta.delta.tool_calls.is_empty()
+        && delta.delta.thinking.is_none()
+        && delta.finish_reason.is_none()
+        && (delta.usage.is_some() || delta.rate_limit.is_some())
 }
 
 #[cfg(test)]
@@ -289,6 +351,65 @@ mod tests {
     fn finish_on_empty_assembler_yields_nothing() {
         let mut a = MessageAssembler::new();
         assert!(a.finish().unwrap().is_none());
+    }
+
+    /// A frame carrying only `usage` — what a ChatCompletion provider sends after
+    /// the `finish_reason` one when `stream_options.include_usage` is set.
+    fn usage_only(input: u64, output: u64) -> MessageDeltaOutput {
+        let mut out = MessageDeltaOutput::new();
+        out.depth = Some(0);
+        out.usage = Some(TokenUsage {
+            input_tokens: input,
+            output_tokens: output,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        });
+        out
+    }
+
+    #[test]
+    fn usage_after_a_message_boundary_is_a_trailer() {
+        let mut a = MessageAssembler::new();
+        let items = a.push(delta(Some(Role::Assistant), "Hello", true)).unwrap();
+        assert!(matches!(
+            items.as_slice(),
+            [AssembledItem::Text(t), AssembledItem::Completed(_)] if t == "Hello"
+        ));
+
+        // The usage frame arrives after the cut. It must not start a new message.
+        let items = a.push(usage_only(7, 2)).unwrap();
+        let [AssembledItem::UsageTrailer(t)] = items.as_slice() else {
+            panic!("expected a lone usage trailer, got {items:?}");
+        };
+        assert_eq!(t.usage.as_ref().unwrap().input_tokens, 7);
+        assert_eq!(t.usage.as_ref().unwrap().output_tokens, 2);
+        assert!(t.rate_limit.is_none());
+        assert_eq!(t.depth, Some(0));
+
+        // Nothing was accumulated, so the stream can end cleanly right here.
+        assert_eq!(a.partial_text(), "");
+        assert!(a.finish().unwrap().is_none());
+    }
+
+    #[test]
+    fn usage_mid_message_is_not_a_trailer() {
+        // Anthropic reports input counts on an early delta and `output_tokens` on
+        // the last one: accounting that arrives while a message is being built is
+        // that message's own and must keep accumulating.
+        let mut a = MessageAssembler::new();
+        a.push(delta(Some(Role::Assistant), "Hel", false)).unwrap();
+
+        let items = a.push(usage_only(7, 0)).unwrap();
+        assert!(
+            items.is_empty(),
+            "interim usage is not a trailer and streams nothing: {items:?}"
+        );
+        assert_eq!(a.partial_text(), "Hel");
+
+        let done = completed(a.push(delta(None, "lo", true)).unwrap());
+        assert_eq!(done.len(), 1);
+        assert_eq!(done[0].message.contents[0].as_text().unwrap(), "Hello");
+        assert_eq!(done[0].usage.as_ref().unwrap().input_tokens, 7);
     }
 
     #[test]
