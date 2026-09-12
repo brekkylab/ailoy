@@ -97,16 +97,6 @@ pub fn apply(store: &Store) -> Result<Vec<&'static str>> {
     // Every SQLite read happens here, before the registry guard exists: `Store::with`
     // takes the store mutex, so reading under the write guard would pin the order
     // LM_REGISTRY(write) → STORE_MUTEX on every caller of `apply`.
-    let stored_region = store
-        .setting_get(BEDROCK_REGION_KEY)?
-        .unwrap_or_else(|| "us-east-1".to_string());
-    // Parsed here too, not down in the loop: `write_settings` has rejected an unusable
-    // region since the B4 fix, but a row written before it — or by an older build that knew
-    // a region this one does not — would otherwise fail `apply` half-way through, leaving
-    // the registry holding whichever providers happened to come before "bedrock".
-    let region: BedrockRegion = stored_region.parse().map_err(|_| {
-        EngineError::Invalid(format!("지원하지 않는 Bedrock 리전입니다: {stored_region}"))
-    })?;
     let mut stored: Vec<(&'static ProviderDef, Option<String>)> =
         Vec::with_capacity(PROVIDERS.len());
     for def in PROVIDERS {
@@ -116,6 +106,33 @@ pub fn apply(store: &Store) -> Result<Vec<&'static str>> {
             .filter(|k| !k.is_empty());
         stored.push((def, key));
     }
+    // Read and parsed only when a Bedrock key is actually stored, and still before the
+    // registry guard exists.
+    //
+    // Before the loop, because `write_settings` has rejected an unusable region since the B4
+    // fix but a row written before it — or by an older build that knew a region this one does
+    // not — would otherwise fail `apply` half-way through, leaving the registry holding
+    // whichever providers happened to come before "bedrock".
+    //
+    // Only when there is a key, because the region is an input to nothing else: a legacy row
+    // naming a region this build cannot parse would otherwise make every unrelated
+    // `settings_set` — an OpenAI key, a max-turns change — fail on a provider the user never
+    // configured, with no way to reach the setting that would clear it.
+    let bedrock_key = stored
+        .iter()
+        .find(|(def, _)| def.key == "bedrock")
+        .and_then(|(_, key)| key.as_ref());
+    let region: Option<BedrockRegion> = match bedrock_key {
+        None => None,
+        Some(_) => {
+            let stored_region = store
+                .setting_get(BEDROCK_REGION_KEY)?
+                .unwrap_or_else(|| "us-east-1".to_string());
+            Some(stored_region.parse().map_err(|_| {
+                EngineError::Invalid(format!("지원하지 않는 Bedrock 리전입니다: {stored_region}"))
+            })?)
+        }
+    };
 
     let mut active = Vec::new();
     let mut registry = get_lm_providers_mut();
@@ -139,7 +156,12 @@ pub fn apply(store: &Store) -> Result<Vec<&'static str>> {
                     "deepseek" => LangModelProvider::deepseek(k),
                     "moonshotai" => LangModelProvider::kimi(k),
                     // `region` is the `BedrockRegion` parsed above, not the stored string.
-                    "bedrock" => LangModelProvider::bedrock(region, k),
+                    // It is `Some` exactly when this arm is reachable: the same key that
+                    // puts "bedrock" in `stored` with a value is what made it parse.
+                    "bedrock" => LangModelProvider::bedrock(
+                        region.expect("a stored bedrock key means the region was parsed"),
+                        k,
+                    ),
                     _ => unreachable!("PROVIDERS is the closed list above"),
                 };
                 default.insert(def.pattern.to_string(), elem);
@@ -391,6 +413,45 @@ mod tests {
         assert!(!active.contains(&"bedrock"), "{active:?}");
         let reg = ailoy::lang_model::get_lm_providers();
         let def = reg.get("default").unwrap();
+        assert!(def.get("bedrock/anthropic.claude-opus-5").is_none());
+    }
+
+    /// The stored region is an input to Bedrock and to nothing else, so an unusable one is
+    /// only an error once Bedrock is configured — and when it is, it is an error that lands
+    /// before the registry is touched at all.
+    #[test]
+    fn a_bad_region_only_fails_apply_once_bedrock_has_a_key() {
+        let _g = REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let s = Store::open_in_memory().unwrap();
+        s.setting_set(BEDROCK_REGION_KEY, "nowhere-1").unwrap();
+        s.setting_set(&setting_key("openai"), "sk-test-region")
+            .unwrap();
+
+        // No bedrock key: the unusable row is never read, so an unrelated provider applies.
+        let active = apply(&s).unwrap();
+        assert_eq!(active, vec!["openai"]);
+        assert!(
+            ailoy::lang_model::get_lm_providers()
+                .get("default")
+                .unwrap()
+                .get("openai/gpt-5")
+                .is_some()
+        );
+
+        // Now it matters. The OpenAI key is withdrawn at the same time, so the registry can
+        // say whether `apply` got as far as the loop: the removal it would have done first
+        // is the evidence.
+        s.setting_set(&setting_key("bedrock"), "aws-bedrock-token")
+            .unwrap();
+        s.setting_delete(&setting_key("openai")).unwrap();
+        let err = apply(&s).unwrap_err();
+        assert!(matches!(err, EngineError::Invalid(_)), "{err:?}");
+        let reg = ailoy::lang_model::get_lm_providers();
+        let def = reg.get("default").unwrap();
+        assert!(
+            def.get("openai/gpt-5").is_some(),
+            "apply reached the registry before failing on the region"
+        );
         assert!(def.get("bedrock/anthropic.claude-opus-5").is_none());
     }
 

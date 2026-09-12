@@ -44,7 +44,18 @@ impl Engine {
 
         // Connectors come back from the database; one that cannot be rebuilt shows its error
         // in the list instead of taking the workspace down.
-        for row in store.mount_list()? {
+        //
+        // Probed concurrently, attached in row order. `build_and_probe` gives a remote store
+        // 15 seconds to answer before it gives up, and a laptop that woke up off-network has
+        // every one of them time out: serially that is 15 seconds *per connector* with the
+        // window still dark, and it is the one startup path where the wait is unbounded by
+        // anything the user did. The attaching is left sequential — it takes the workspace's
+        // write lock and the order decides which of two rows on the same path wins.
+        let rows = store.mount_list()?;
+        let probes =
+            futures::future::join_all(rows.iter().map(|r| connectors::build_and_probe(&r.config)))
+                .await;
+        for (row, probe) in rows.into_iter().zip(probes) {
             let (kind, detail, writable) = connectors::describe(&row.config);
             let mut info = MountInfo {
                 id: row.id.clone(),
@@ -55,21 +66,27 @@ impl Engine {
                 writable,
                 status: MountStatus::Ok,
             };
-            match connectors::build_and_probe(&row.config).await {
-                Ok(fs) => {
-                    if let Err(e) = workspace.attach(info.clone(), fs).await {
-                        info.status = MountStatus::Error {
-                            message: e.to_string(),
-                        };
-                        workspace.remember_failed(info).await;
+            // The stored path goes back through the normalizer on the way in. `mount_add`
+            // writes the normal form, but a row from an older build — or a hand-edited
+            // database — can hold a spelling `WorkFs` collapses to something else, and
+            // mounting under it would key the tree by one path and the sidebar by another,
+            // leaving a connector that cannot be removed. Such a row is listed with its
+            // error, the same as one whose store did not answer.
+            let failure = match connectors::normalize_mount_path(&row.path) {
+                Ok(path) => {
+                    info.path = path;
+                    match probe {
+                        Ok(fs) => workspace.attach(info.clone(), fs).await.err(),
+                        Err(e) => Some(e),
                     }
                 }
-                Err(e) => {
-                    info.status = MountStatus::Error {
-                        message: e.to_string(),
-                    };
-                    workspace.remember_failed(info).await;
-                }
+                Err(e) => Some(e),
+            };
+            if let Some(e) = failure {
+                info.status = MountStatus::Error {
+                    message: e.to_string(),
+                };
+                workspace.remember_failed(info).await;
             }
         }
 
@@ -156,7 +173,17 @@ impl Engine {
 
     pub async fn session_create(&self, model: Option<String>) -> Result<SessionSummary> {
         let model = match model {
-            Some(m) if !m.trim().is_empty() => m,
+            // Checked the way `session_set_model` checks it: a session whose model is not a
+            // `provider/model` id can be created but never run, and the refusal the user
+            // would eventually see says nothing about the model picker they used.
+            Some(m) if !m.trim().is_empty() => {
+                if split_model_id(&m).is_none() {
+                    return Err(EngineError::Invalid(format!(
+                        "모델 ID 형식은 provider/model 입니다: {m}"
+                    )));
+                }
+                m
+            }
             _ => providers::read_settings(&self.store)?.default_model,
         };
         let id = uuid::Uuid::new_v4().to_string();
@@ -362,6 +389,15 @@ impl Engine {
     }
 }
 
+/// Tauri's managed state is shared across the command threads, so an `Engine` that is not
+/// `Send + Sync` does not compile in the app — a long way from here, in another crate, with
+/// the failure pointing at `app.manage(..)` rather than at whatever field lost the bound.
+/// Asserted here so the field that breaks it is the thing that fails to compile.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Engine>();
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,6 +526,52 @@ mod tests {
             1,
             "a removed connector came back from the database"
         );
+        e.shutdown().await;
+    }
+
+    /// Every refusal the facade can reach without a model call. These are the arguments a
+    /// webview can send — a session id from a stale list, a model id typed into a picker, a
+    /// composer submitted empty — and each has to come back as its own error rather than as
+    /// a run that starts and then fails somewhere the user cannot read.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn bad_arguments_are_refused_at_the_facade() {
+        let _g = crate::providers::REGISTRY_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_dir, e) = engine().await;
+
+        let err = e.message_list("no-such-session").await.unwrap_err();
+        assert!(matches!(err, EngineError::NotFound(_)), "{err:?}");
+
+        let s = e.session_create(None).await.unwrap();
+        let err = e.session_set_model(&s.id, "garbage").await.unwrap_err();
+        assert!(matches!(err, EngineError::Invalid(_)), "{err:?}");
+        assert_eq!(
+            e.session_list().await.unwrap()[0].model,
+            providers::DEFAULT_MODEL,
+            "a rejected model must not have been written"
+        );
+
+        let err = e.session_create(Some("garbage".into())).await.unwrap_err();
+        assert!(matches!(err, EngineError::Invalid(_)), "{err:?}");
+        assert_eq!(
+            e.session_list().await.unwrap().len(),
+            1,
+            "a rejected model must not have created a session"
+        );
+
+        // `matches!` rather than `unwrap_err`: a `RunHandle` is a live subscription, not a
+        // value to format, and it does not implement `Debug`.
+        assert!(
+            matches!(
+                e.run_start(&s.id, Vec::new()).await,
+                Err(EngineError::Invalid(_))
+            ),
+            "an empty message should have been refused"
+        );
+        assert!(!e.session_list().await.unwrap()[0].running);
+
         e.shutdown().await;
     }
 
