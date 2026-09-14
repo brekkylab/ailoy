@@ -12,7 +12,8 @@ macOS 데스크톱 앱. Tauri 2 셸(`src-tauri`) + React 웹뷰(`src`)이고, �
 - **Rust ≥ 1.95** (워크스페이스 `rust-version`), **Node ≥ 22**.
 - **`../cortex` 체크아웃.** `cortex`를 path 의존으로 쓰기 때문에 이 저장소의 형제
   디렉터리에 있어야 하고, 브랜치는 `feat/exec-timeout`, 커밋은 `3dd05ef0` 이상이어야
-  한다. 그 앞 커밋에서는 shell 툴의 `timeout_secs`가 무시된다.
+  한다. `9d178c7` 앞에서는 shell 툴의 `timeout_secs`가 무시되고, `3dd05ef0` 앞에서는
+  타임아웃이 명령이 띄운 자식 프로세스까지 정리하지 못한다.
 
 ## 실행
 
@@ -55,8 +56,10 @@ tauri:dev`). 파일은 위의 `logs/ailoy.log.<날짜>`이고, 개발 중에는 
 
 ## 테스트
 
+모두 저장소 루트에서:
+
 ```sh
-cd apps/desktop && npm test          # 웹뷰 (vitest)
+npm --prefix apps/desktop test       # 웹뷰 (vitest)
 cargo test -p ailoy-desktop-core     # 엔진
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml   # Tauri 커맨드
 ```
@@ -65,7 +68,8 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml   # Tauri 커맨드
 실제 API를 호출하는 테스트가 있다.
 
 실물이 필요한 테스트 넷은 `#[ignore]`다 — FUSE-T가 필요한 `live_workspace`, 빌드된
-콘솔이 필요한 `live_console`과 `live_run`(둘).
+콘솔이 필요한 `live_console`과 `live_run`(둘 — 그중 마운트된 워크스페이스를 거치는
+쪽은 FUSE-T도 필요하다). 역시 저장소 루트에서:
 
 ```sh
 cargo build --manifest-path ../cortex/Cargo.toml -p cortex-local-console
