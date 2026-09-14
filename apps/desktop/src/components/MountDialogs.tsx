@@ -60,8 +60,22 @@ function Field({
  * The dialog shell. Kept mounted so `open` can drive Base UI's open/close transition;
  * the form itself is mounted per opening and keyed by kind, so switching kinds — or
  * reopening the same one — never inherits the previous form's fields or its secret.
+ *
+ * `shown` is what that transition needs: `kind` goes null the instant the dialog is
+ * dismissed, and rendering from it directly emptied the box out from under the fade. So
+ * the last non-null kind is held one render longer — until Base UI reports the close
+ * *finished*, which is also when the form unmounts and takes its secret with it. An
+ * interrupted close (dismiss, then reopen before the animation ends) keeps the same
+ * mounted form, which is the point: the user sees what they were typing.
  */
 export function MountDialog({ kind, onClose }: { kind: Kind | null; onClose: () => void }) {
+  // Adjusted during render rather than in an effect: the new kind has to be in the same
+  // commit as `open`, or the dialog's first painted frame is the *previous* form. React
+  // re-runs this component before anything is shown, and the write is guarded, so it
+  // settles in one pass.
+  const [shown, setShown] = useState<Kind | null>(kind);
+  if (kind !== null && kind !== shown) setShown(kind);
+
   return (
     // Base UI (not Radix): `onOpenChange` is `(open, eventDetails) => void`.
     <Dialog
@@ -69,10 +83,13 @@ export function MountDialog({ kind, onClose }: { kind: Kind | null; onClose: () 
       onOpenChange={(o) => {
         if (!o) onClose();
       }}
+      onOpenChangeComplete={(o) => {
+        if (!o) setShown(null);
+      }}
     >
       {/* S3 asks for six fields in two columns; the default `sm:max-w-sm` wraps its labels. */}
-      <DialogContent className={kind === "s3" ? "sm:max-w-md" : undefined}>
-        {kind !== null && <MountForm key={kind} kind={kind} onClose={onClose} />}
+      <DialogContent className={(kind ?? shown) === "s3" ? "sm:max-w-md" : undefined}>
+        {shown !== null && <MountForm key={shown} kind={shown} onClose={onClose} />}
       </DialogContent>
     </Dialog>
   );
@@ -94,7 +111,8 @@ function MountForm({ kind, onClose }: { kind: Kind; onClose: () => void }) {
   });
 
   const add = useMutation({
-    mutationFn: (config: MountConfig) => api.mountAdd({ path, label: label || null, config }),
+    mutationFn: (config: MountConfig) =>
+      api.mountAdd({ path: path.trim(), label: label.trim() || null, config }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["mounts"] });
       qc.invalidateQueries({ queryKey: ["fs"] });
@@ -117,18 +135,45 @@ function MountForm({ kind, onClose }: { kind: Kind; onClose: () => void }) {
 
   const submit = () => {
     if (kind === "local") add.mutate({ kind: "local", host_root: hostRoot });
-    else if (kind === "notion") add.mutate({ kind: "notion", api_key: apiKey });
-    else add.mutate({ ...s3, kind: "s3", endpoint: s3.endpoint || null, key_prefix: s3.key_prefix || null });
+    else if (kind === "notion") add.mutate({ kind: "notion", api_key: apiKey.trim() });
+    else
+      add.mutate({
+        kind: "s3",
+        bucket: s3.bucket.trim(),
+        region: s3.region.trim(),
+        access_key_id: s3.access_key_id.trim(),
+        secret_access_key: s3.secret_access_key.trim(),
+        endpoint: s3.endpoint.trim() || null,
+        key_prefix: s3.key_prefix.trim() || null,
+      });
   };
 
   // The engine rejects an incomplete mount anyway; disabling here just says so sooner.
+  // Trimmed, because a token pasted out of a browser arrives with a newline on it and a
+  // field holding nothing but whitespace is an empty field, not a filled one. The host
+  // path is left alone: it comes from the picker, and a path may legitimately end in a
+  // space.
   const ready =
     path.trim() !== "" &&
-    (kind === "local" ? hostRoot !== "" : kind === "notion" ? apiKey !== "" : s3.bucket !== "" && s3.region !== "");
+    (kind === "local"
+      ? hostRoot !== ""
+      : kind === "notion"
+        ? apiKey.trim() !== ""
+        : s3.bucket.trim() !== "" && s3.region.trim() !== "");
 
   const title = kind === "local" ? S.connectLocal : kind === "notion" ? S.connectNotion : S.connectS3;
   return (
-    <>
+    // A real form, so Enter in any field connects. `grid gap-4` stands in for the popup's
+    // own layout, which this element now sits between. Every other button here is a Base
+    // UI `Button`, which writes `type="button"` of its own accord, so only the one below
+    // submits.
+    <form
+      className="grid gap-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ready && !add.isPending) submit();
+      }}
+    >
       <DialogHeader>
         <DialogTitle>{title}</DialogTitle>
       </DialogHeader>
@@ -170,10 +215,10 @@ function MountForm({ kind, onClose }: { kind: Kind; onClose: () => void }) {
         <Button variant="ghost" onClick={onClose}>
           {S.cancel}
         </Button>
-        <Button onClick={submit} disabled={add.isPending || !ready}>
+        <Button type="submit" disabled={add.isPending || !ready}>
           {S.connect}
         </Button>
       </DialogFooter>
-    </>
+    </form>
   );
 }
