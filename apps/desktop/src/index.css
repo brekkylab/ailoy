@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+/* `prose` for rendered assistant markdown (`components/Markdown.tsx`). */
+@plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
 
