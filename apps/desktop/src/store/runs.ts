@@ -122,8 +122,12 @@ export const useRunStore = create<RunStore>((set) => ({
   ackMessages: (sessionId, version) =>
     set((st) => {
       const run = st.runs[sessionId];
-      if (!run || run.messagesAcked >= version) return st;
-      return { runs: { ...st.runs, [sessionId]: { ...run, messagesAcked: version } } };
+      // Clamped to the current version: an ack from a refetch that started before a
+      // `reset` must not leave `acked` above `version`, or the next message would land
+      // exactly on the ack and never be fetched.
+      const next = Math.min(version, run?.messagesVersion ?? version);
+      if (!run || run.messagesAcked >= next) return st;
+      return { runs: { ...st.runs, [sessionId]: { ...run, messagesAcked: next } } };
     }),
   reset: (sessionId) => set((st) => ({ runs: { ...st.runs, [sessionId]: emptyRun() } })),
 }));
