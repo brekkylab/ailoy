@@ -87,6 +87,7 @@ version = "0.1.0"
 dependencies = [
  "ailoy",
  "ailoy-desktop-core",
+ "pkg-config",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
