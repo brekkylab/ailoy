@@ -68,11 +68,10 @@ export function Thread({ sessionId }: { sessionId: string | null }) {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [messages.data?.length, live.text, live.thinking, live.toolOrder.length]);
 
-  const { turns, toolResults, claimed, lastAssistantSeq } = useMemo(() => {
+  const { turns, toolResults, claimed, lastTurnSeq } = useMemo(() => {
     const toolResults = new Map<string, StoredMessage>();
     const turns: StoredMessage[] = [];
     const claimed = new Set<string>();
-    let lastAssistantSeq: number | null = null;
     for (const m of messages.data ?? []) {
       if (m.depth !== 0) continue; // sub-agent internals stay hidden in v1
       // A tool row is an answer to a call, never a turn of its own. One without an `id`
@@ -83,12 +82,15 @@ export function Thread({ sessionId }: { sessionId: string | null }) {
       }
       if (m.message.role === "system") continue;
       if (m.message.role === "assistant") {
-        lastAssistantSeq = m.seq;
         for (const p of m.message.tool_calls ?? []) if (p.type === "function") claimed.add(p.id);
       }
       turns.push(m);
     }
-    return { turns, toolResults, claimed, lastAssistantSeq };
+    // "Last turn", not "last assistant message": after a cancel the next user message sits
+    // behind the cancelled assistant row, and only a message that is still the very last
+    // turn can have calls that are genuinely in flight for the current run.
+    const lastTurnSeq = turns.length ? turns[turns.length - 1].seq : null;
+    return { turns, toolResults, claimed, lastTurnSeq };
   }, [messages.data]);
 
   // A session id can outlive the session: the one in `localStorage` after the row was
@@ -122,7 +124,7 @@ export function Thread({ sessionId }: { sessionId: string | null }) {
                 message={m.message}
                 toolResults={toolResults}
                 live={live}
-                isLatest={m.seq === lastAssistantSeq}
+                isLatest={m.seq === lastTurnSeq}
               />
             ),
           )}
