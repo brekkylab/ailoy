@@ -232,7 +232,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                       selected *item*, and the items are in a portal that has not mounted
                       until the list is opened — so the stored default would show as a bare
                       id until then, while the open list showed `provider · name`. */}
-                  <SelectValue placeholder={S.defaultModel}>
+                  <SelectValue>
                     {(id: unknown) => {
                       if (typeof id !== "string" || !id) return S.defaultModel;
                       const m = models.data?.find((x) => x.id === id);
