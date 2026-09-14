@@ -81,7 +81,10 @@ use rmcp::{
 use crate::{
     datatype::{Bytes, Value},
     message::{Message, Part, Role},
-    tool::{MCPToolProviderElem, ToolDesc, ToolDescBuilder, ToolFunc},
+    tool::{
+        MCPToolProviderElem, ToolDesc, ToolDescBuilder, ToolFunc, sanitize_tool_name,
+        warn_if_tool_name_too_long,
+    },
     tool_func,
 };
 
@@ -89,11 +92,6 @@ use crate::{
 ///
 /// See the module docs on names for why it is not `/`.
 pub const MCP_NAME_SEPARATOR: &str = "__";
-
-/// Longest tool name the stricter of the two model APIs (OpenAI) accepts.
-/// Exceeding it is warned about rather than refused: it is the model provider's
-/// limit to enforce, and which provider this agent uses is not known here.
-const MAX_TOOL_NAME_LEN: usize = 64;
 
 // ── Connection ────────────────────────────────────────────────────────────────
 
@@ -295,13 +293,7 @@ fn type_name_of(v: &serde_json::Value) -> &'static str {
 /// Turn a server's tool into the [`ToolDesc`] a spec carries, under `prefix`.
 pub(crate) fn mcp_tool_desc(prefix: &str, tool: &rmcp::model::Tool) -> ToolDesc {
     let name = prefixed_tool_name(prefix, &tool.name);
-
-    if name.len() > MAX_TOOL_NAME_LEN {
-        log::warn!(
-            "MCP tool name '{name}' is {} characters; some model APIs reject names over {MAX_TOOL_NAME_LEN}",
-            name.len()
-        );
-    }
+    warn_if_tool_name_too_long(&name);
 
     // The schema is passed through as the server wrote it. It is already JSON
     // Schema, which is what `ToolDesc::parameters` holds, and rewriting it here
@@ -328,22 +320,10 @@ pub(crate) fn mcp_tool_desc(prefix: &str, tool: &rmcp::model::Tool) -> ToolDesc 
 pub(crate) fn prefixed_tool_name(prefix: &str, remote_name: &str) -> String {
     let mut out =
         String::with_capacity(prefix.len() + MCP_NAME_SEPARATOR.len() + remote_name.len());
-    out.push_str(&sanitize_name_part(prefix));
+    out.push_str(&sanitize_tool_name(prefix));
     out.push_str(MCP_NAME_SEPARATOR);
-    out.push_str(&sanitize_name_part(remote_name));
+    out.push_str(&sanitize_tool_name(remote_name));
     out
-}
-
-fn sanitize_name_part(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 // ── Result mapping ────────────────────────────────────────────────────────────

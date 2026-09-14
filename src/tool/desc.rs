@@ -165,3 +165,43 @@ impl ToolDescBuilder {
         }
     }
 }
+
+/// Longest tool name the stricter of the two model APIs (OpenAI) accepts.
+pub const MAX_TOOL_NAME_LEN: usize = 64;
+
+/// Map anything a model API would refuse in a tool name onto `_`.
+///
+/// OpenAI, Anthropic and Gemini all constrain a function name to
+/// `[A-Za-z0-9_-]`, and [`ToolDesc::name`] is handed to them verbatim — so a
+/// name that came from somewhere else (an MCP server's tool list, an A2A agent
+/// card, a caller's label) has to be brought into that set before a model ever
+/// sees it, or the request itself is rejected.
+///
+/// Sanitising rather than refusing: whatever the name is on the wire is kept
+/// separately by the caller that needs it, and one stray character should not
+/// cost the caller the whole tool.
+pub fn sanitize_tool_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Warn when `name` is longer than every model API will accept.
+///
+/// A warning and not an error: which provider this tool will be sent to is not
+/// known here, and only the strictest of them draws the line at
+/// [`MAX_TOOL_NAME_LEN`].
+pub(crate) fn warn_if_tool_name_too_long(name: &str) {
+    if name.len() > MAX_TOOL_NAME_LEN {
+        log::warn!(
+            "tool name '{name}' is {} characters; some model APIs reject names over {MAX_TOOL_NAME_LEN}",
+            name.len()
+        );
+    }
+}
