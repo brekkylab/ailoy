@@ -107,7 +107,14 @@ export function Sidebar({
             ) : (
               <>
                 <button className="flex-1 truncate text-left" onClick={() => onSelect(s.id)} title={s.model}>
-                  {s.running && <span className="mr-1 inline-block size-2 animate-pulse rounded-full bg-emerald-500" />}
+                  {s.running && (
+                    <>
+                      {/* The dot is the only thing that says a session is working; a
+                          screen reader gets the word instead of a bare bullet. */}
+                      <span className="sr-only">{S.running}</span>
+                      <span className="mr-1 inline-block size-2 animate-pulse rounded-full bg-emerald-500" />
+                    </>
+                  )}
                   {s.title}
                 </button>
                 <button
@@ -127,7 +134,13 @@ export function Sidebar({
             )}
           </div>
         ))}
-        {sessions.data?.length === 0 && <p className="p-3 text-xs text-muted-foreground">{S.empty}</p>}
+        {/* A list that failed to load is not an empty list: saying "비어 있음" there would
+            invite the user to start typing into a storage layer that is not answering. */}
+        {sessions.isError ? (
+          <p className="p-3 text-xs text-destructive">{api.messageOf(sessions.error)}</p>
+        ) : (
+          sessions.data?.length === 0 && <p className="p-3 text-xs text-muted-foreground">{S.empty}</p>
+        )}
       </ScrollArea>
     </aside>
   );
