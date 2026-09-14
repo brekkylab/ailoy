@@ -1,8 +1,9 @@
-// `api.ts` itself cannot be imported here — `@tauri-apps/api` needs a webview — so this
-// exercises the error helpers where they live. `api.ts` re-exports them unchanged.
+// Through `@/api`, the surface components import: importing `@tauri-apps/api/core` under
+// node is fine (only *constructing* a `Channel` needs a webview), so this also pins that
+// the re-export from `lib/errors` stays wired.
 import { describe, expect, it } from "vitest";
 
-import { kindOf, messageOf } from "@/lib/errors";
+import { kindOf, messageOf } from "@/api";
 
 describe("messageOf", () => {
   it("reads the engine's message off a rejection payload", () => {

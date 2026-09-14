@@ -50,6 +50,41 @@ describe("applyRunEvent", () => {
     expect(s.toolCalls.c1.result).toEqual({ stdout: "a\n" });
   });
 
+  it("paints a tool result carrying an error key as a failure", () => {
+    const s = run([
+      { type: "started", run_id: "r1" },
+      { type: "tool_call_started", id: "c1", name: "shell", arguments: { cmd: "nope" } },
+      { type: "message", seq: 3, depth: 0, source_agent: null, message: tool("c1", { error: "no such command" }), usage: null },
+      { type: "tool_call_started", id: "c2", name: "shell", arguments: { cmd: "ls" } },
+      // A non-zero exit is the tool answering, not the tool failing.
+      { type: "message", seq: 4, depth: 0, source_agent: null, message: tool("c2", { stdout: "", exit_code: 1 }), usage: null },
+    ]);
+    expect(s.toolCalls.c1.status).toBe("error");
+    expect(s.toolCalls.c2.status).toBe("done");
+  });
+
+  it("keeps one entry in toolOrder when a call is announced twice", () => {
+    // A re-attach can replay an announcement the store already has.
+    const s = run([
+      { type: "started", run_id: "r1" },
+      { type: "tool_call_started", id: "c1", name: "shell", arguments: { cmd: "ls" } },
+      { type: "tool_call_started", id: "c1", name: "shell", arguments: { cmd: "ls -la" } },
+    ]);
+    expect(s.toolOrder).toEqual(["c1"]);
+    expect(s.toolCalls.c1.arguments).toEqual({ cmd: "ls -la" });
+  });
+
+  it("does not interrupt a still-running tool when the run finishes normally", () => {
+    // `done` is the engine's ordinary end; only cancel and error cut a call short.
+    const s = run([
+      { type: "started", run_id: "r1" },
+      { type: "tool_call_started", id: "c1", name: "shell", arguments: {} },
+      { type: "done" },
+    ]);
+    expect(s.status).toBe("done");
+    expect(s.toolCalls.c1.status).toBe("running");
+  });
+
   it("marks running tools interrupted on cancel and keeps text", () => {
     const s = run([
       { type: "started", run_id: "r1" },

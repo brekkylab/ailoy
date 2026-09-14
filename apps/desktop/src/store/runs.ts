@@ -112,7 +112,16 @@ export const useRunStore = create<RunStore>((set) => ({
 /**
  * One shared "nothing here yet" value. A selector that built a fresh object per call
  * would hand React a new snapshot on every render and never settle.
+ *
+ * Frozen all the way down: the collections are shared by every idle reader, so a
+ * component that pushed onto `toolOrder` or assigned into `toolCalls` would poison every
+ * other session's idle state. Freezing turns that into a throw at the write.
  */
-const IDLE: LiveRun = Object.freeze(emptyRun());
+const IDLE: LiveRun = (() => {
+  const idle = emptyRun();
+  Object.freeze(idle.toolCalls);
+  Object.freeze(idle.toolOrder);
+  return Object.freeze(idle);
+})();
 
 export const selectRun = (sessionId: string | null) => (st: RunStore) => (sessionId ? st.runs[sessionId] ?? IDLE : IDLE);

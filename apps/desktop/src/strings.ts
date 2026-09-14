@@ -49,4 +49,7 @@ export const S = {
   fileTooLarge: "미리보기는 1 MiB까지만 표시합니다.",
   binaryFile: "텍스트가 아닌 파일입니다.",
   empty: "비어 있음",
+  noSession: "왼쪽에서 대화를 고르거나 새 대화를 시작하세요.",
+  loadFailed: "대화를 불러오지 못했습니다.",
+  arguments: "인자",
 } as const;
