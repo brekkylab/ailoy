@@ -8,20 +8,22 @@
 // before the first event of a session and after a reload. Only a run's terminal event
 // moves the persisted total, so a transition into `done`/`cancelled`/`error` is what
 // refetches it — nothing else would.
+//
+// That same transition is the moment *everything* a run changed becomes readable, and
+// this is the one component mounted per session that watches for it, so the whole
+// end-of-run refetch lives here rather than being spread over four components that would
+// each have to re-derive the transition. See the effect below.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
 
 import * as api from "@/api";
 import { Progress } from "@/components/ui/progress";
-import { type LiveRun, selectRun, useRunStore } from "@/store/runs";
+import { useRunStore, useRunTerminal, selectRun } from "@/store/runs";
 import { S } from "@/strings";
 import type { RateLimitWindow } from "@/types";
 
 const fmt = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-
-const isTerminal = (s: LiveRun["status"]) => s === "done" || s === "cancelled" || s === "error";
 
 /**
  * Whether a window carries the two numbers a percentage needs. A provider that sends the
@@ -55,17 +57,19 @@ export function UsageBar({ sessionId }: { sessionId: string }) {
 
   // The engine writes the run's messages — and with them the session's usage row and the
   // session's `updated_at` — as the run ends. Watching the status rather than the event
-  // stream keeps this to one refetch per run, and the ref is keyed by session so that
-  // switching between sessions does not read the previous one's status as a transition.
-  const seen = useRef<{ id: string; status: LiveRun["status"] } | null>(null);
-  const status = live.status;
-  useEffect(() => {
-    const was = seen.current?.id === sessionId ? seen.current.status : null;
-    seen.current = { id: sessionId, status };
-    if (was == null || was === status || !isTerminal(status)) return;
+  // stream keeps this to one refetch per run.
+  //
+  // `fs` and `file` are here for a different reason: the agent's `write_file`/`mkdir`
+  // tools change the workspace through the engine, not through this app's own mutations,
+  // so nothing in `WorkspacePanel` or `FileTree` ever hears about it and the tree sits on
+  // a listing from before the run. `["fs"]` with no path is every open directory level at
+  // once; `["file"]` refreshes whatever preview is showing, in case the run rewrote it.
+  useRunTerminal(sessionId, () => {
     void qc.invalidateQueries({ queryKey: ["usage", sessionId] });
     void qc.invalidateQueries({ queryKey: ["sessions"] });
-  }, [qc, sessionId, status]);
+    void qc.invalidateQueries({ queryKey: ["fs"] });
+    void qc.invalidateQueries({ queryKey: ["file"] });
+  });
 
   const used = live.contextUsed ?? usage.data?.context_used ?? null;
   const limit = live.contextLimit ?? usage.data?.context_limit ?? null;

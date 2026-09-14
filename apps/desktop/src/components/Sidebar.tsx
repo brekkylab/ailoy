@@ -2,13 +2,22 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { cn } from "cn";
 import { MessageSquarePlus, Pencil, Settings as SettingsIcon, Trash } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import * as api from "@/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { formatRelativeTime } from "@/lib/time";
 import { S } from "@/strings";
+
+/**
+ * The model id without its provider prefix. A row is ~180px wide and every id in the
+ * catalog is `provider/name`, so the prefix is the half that repeats down the whole list
+ * and the name is the half that tells two sessions apart. An id with no slash is already
+ * short and is left alone.
+ */
+const shortModel = (id: string) => id.slice(id.lastIndexOf("/") + 1);
 
 export function Sidebar({
   selected,
@@ -26,6 +35,15 @@ export function Sidebar({
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessionList, refetchInterval: 5000 });
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // One instant for the whole list, advanced on its own clock. The query above refetches
+  // every 5s but only re-renders when the rows actually change, so without this a session
+  // would sit at "방금" for as long as nothing else happened in the app — which is exactly
+  // the case where the reading matters.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
   // One line for all three mutations: they are mutually exclusive in practice, and a
   // rejected create/rename/delete otherwise fails silently — the list just does not move.
   const [error, setError] = useState<string | null>(null);
@@ -106,16 +124,24 @@ export function Sidebar({
               />
             ) : (
               <>
-                <button className="flex-1 truncate text-left" onClick={() => onSelect(s.id)} title={s.model}>
-                  {s.running && (
-                    <>
-                      {/* The dot is the only thing that says a session is working; a
-                          screen reader gets the word instead of a bare bullet. */}
-                      <span className="sr-only">{S.running}</span>
-                      <span className="mr-1 inline-block size-2 animate-pulse rounded-full bg-emerald-500" />
-                    </>
-                  )}
-                  {s.title}
+                <button className="min-w-0 flex-1 text-left" onClick={() => onSelect(s.id)} title={s.model}>
+                  <div className="truncate">
+                    {s.running && (
+                      <>
+                        {/* The dot is the only thing that says a session is working; a
+                            screen reader gets the word instead of a bare bullet. */}
+                        <span className="sr-only">{S.running}</span>
+                        <span className="mr-1 inline-block size-2 animate-pulse rounded-full bg-emerald-500" />
+                      </>
+                    )}
+                    {s.title}
+                  </div>
+                  {/* Which model this conversation is pinned to, and when it last moved —
+                      the two things that tell apart a list of rows all titled "새 대화".
+                      The full id is still on the row's `title` attribute. */}
+                  <div className="truncate text-xs text-muted-foreground">
+                    {shortModel(s.model)} · {formatRelativeTime(s.updated_at, now)}
+                  </div>
                 </button>
                 <button
                   className={rowAction}

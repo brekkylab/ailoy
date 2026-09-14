@@ -45,6 +45,7 @@ export function ToolCallCard({
   status,
   result,
   startedAt,
+  finishedAt,
 }: {
   name: string;
   args: unknown;
@@ -52,9 +53,18 @@ export function ToolCallCard({
   result?: unknown;
   /** Only the live thread has one; a call read back from storage does not. */
   startedAt?: number;
+  /** Set when the live run saw the call end. Absent for a stored card, and while running. */
+  finishedAt?: number;
 }) {
   const Icon = ICONS[status];
   const elapsed = useElapsedSeconds(status === "running" ? startedAt : undefined);
+  // How long the call actually took, once it is over. Only the live run carries the two
+  // timestamps: a card rebuilt from storage after a reload has neither and says nothing
+  // rather than guessing from the message's own clock, which measures something else.
+  const took =
+    status !== "running" && startedAt != null && finishedAt != null
+      ? Math.max(0, Math.round((finishedAt - startedAt) / 1000))
+      : null;
   const fields = result === undefined ? [] : fieldsOf(result);
   return (
     <Collapsible className="my-1 rounded-md border bg-muted/40 text-sm">
@@ -78,7 +88,17 @@ export function ToolCallCard({
             {elapsed == null ? "" : ` · ${elapsed}s`}
           </span>
         )}
-        {status === "interrupted" && <span className="shrink-0 text-xs text-muted-foreground">{S.interrupted}</span>}
+        {status === "interrupted" && (
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {S.interrupted}
+            {took == null ? "" : ` · ${took}s`}
+          </span>
+        )}
+        {/* A finished call keeps its number where the running one had it, so the row does
+            not reflow the instant the result lands. */}
+        {(status === "done" || status === "error") && took != null && (
+          <span className="shrink-0 text-xs text-muted-foreground">{took}s</span>
+        )}
       </CollapsibleTrigger>
       <CollapsibleContent className="space-y-2 border-t px-3 py-2">
         <div className="font-mono text-xs text-muted-foreground">{S.arguments}</div>

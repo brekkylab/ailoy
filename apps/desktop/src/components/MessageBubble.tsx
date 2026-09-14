@@ -99,6 +99,7 @@ export function AssistantBubble({
               status={c.status}
               result={c.result}
               startedAt={c.startedAt}
+              finishedAt={c.finishedAt}
             />
           );
         }
