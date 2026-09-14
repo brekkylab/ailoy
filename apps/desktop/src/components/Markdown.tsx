@@ -15,21 +15,49 @@
 // app with the remote page and leave the user no way back. Opening a link in the real
 // browser needs the opener plugin, which v1 does not ship.
 //
-// The import is the *full* shiki bundle, deliberately. `react-shiki/web` is a drop-in —
-// same component, same props — and measured at 6.1 MB of `dist` against 11 MB, but its
-// 79 grammars are the web ones: no `rust`, `toml`, `diff`, `go`, `dockerfile`. Those are
-// the everyday fences in the workspace this app is built to sit next to, and an unknown
-// language degrades to unhighlighted plaintext rather than an error, so the whole cost of
-// the web bundle would be paid silently, in the one surface the user reads all day. The
-// grammars are lazily chunked, so the 5 MB is bundle size on disk and nothing else. If
-// that matters later, `react-shiki/core` with a hand-picked language set buys both.
+// The highlighter is built in `lib/highlighter.ts` and not taken from `react-shiki`'s
+// default entry, because that entry's engine is WebAssembly and the packaged app's CSP
+// refuses it — see the header there. It resolves asynchronously, so a fence renders as a
+// plain block for the frame or two before the grammars land.
 
 import ReactMarkdown from "react-markdown";
-import ShikiHighlighter from "react-shiki";
+import ShikiHighlighter from "react-shiki/core";
+import { useEffect, useState } from "react";
 import remarkGfm from "remark-gfm";
+
+import { getHighlighter, type Highlighter } from "@/lib/highlighter";
 
 /** A fence with no info string still gets a code block, just without a grammar. */
 const PLAIN = "text";
+
+/**
+ * The shared highlighter, once it exists.
+ *
+ * Module-level rather than per-component: every fence in every bubble asks for it, and a
+ * mount after the first must not paint a plain block while a promise that has already
+ * resolved is awaited again. A failure to build it is not worth a message — every fence
+ * keeps rendering as plain text, which is what an unknown language does anyway.
+ */
+let ready: Highlighter | null = null;
+
+function useHighlighter(): Highlighter | null {
+  const [highlighter, setHighlighter] = useState(ready);
+  useEffect(() => {
+    if (highlighter) return;
+    let live = true;
+    void getHighlighter().then(
+      (h) => {
+        ready = h;
+        if (live) setHighlighter(h);
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [highlighter]);
+  return highlighter;
+}
 
 /**
  * Fence or backticks? react-markdown renders both through `code` and (since v9) marks
@@ -43,6 +71,7 @@ function isFence(className: string | undefined, code: string): boolean {
 }
 
 export function Markdown({ text }: { text: string }) {
+  const highlighter = useHighlighter();
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none break-words">
       <ReactMarkdown
@@ -60,9 +89,25 @@ export function Markdown({ text }: { text: string }) {
               );
             }
             const lang = /language-([\w-]+)/.exec(className ?? "")?.[1] ?? PLAIN;
+            const body = code.replace(/\n$/, "");
+            if (!highlighter) {
+              // Shaped like shiki's own output so the block does not jump when the
+              // grammars arrive a frame later.
+              return (
+                <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
+                  <code>{body}</code>
+                </pre>
+              );
+            }
             return (
-              <ShikiHighlighter language={lang} theme="github-dark" showLanguage={false} className="text-xs">
-                {code.replace(/\n$/, "")}
+              <ShikiHighlighter
+                language={lang}
+                theme="github-dark"
+                highlighter={highlighter}
+                showLanguage={false}
+                className="text-xs"
+              >
+                {body}
               </ShikiHighlighter>
             );
           },
