@@ -40,7 +40,7 @@ export function FileTree({
             )}
             style={{ paddingLeft: 4 + depth * 12 }}
             onClick={() => (e.kind === "dir" ? setOpen((o) => ({ ...o, [e.path]: !o[e.path] })) : onOpen(e.path))}
-            title={e.size != null ? `${e.size} bytes` : undefined}
+            title={e.size != null ? `${e.size} B` : undefined}
           >
             {e.kind === "dir" ? (
               <ChevronRight className={cn("size-3 shrink-0 transition-transform", open[e.path] && "rotate-90")} />
