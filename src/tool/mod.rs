@@ -20,10 +20,16 @@
 //!    with every built-in tool ([`ToolProvider::empty`] opts out); additional
 //!    entries are added via [`ToolProvider::insert_func`],
 //!    [`ToolProvider::insert_func_factory`], [`ToolProvider::insert_a2a`], or
-//!    the MCP variants.
+//!    [`ToolProvider::insert_mcp`].
 //! 2. **`Agent` is instantiated from an `AgentSpec`** — [`ToolProvider::provide`]
 //!    walks `spec.tools`, looks up each [`ToolDesc`] by name, and builds the
 //!    matching [`ToolFunc`] (a fresh one per call for factory-style entries).
+//!
+//! An MCP server is the one source that does not fit that order: its tool list
+//! is only knowable by asking it, which is a round trip, and step 2 is a `fn`.
+//! So an MCP server is contacted during step 1 instead, and
+//! [`ToolProvider::insert_mcp`] hands back the [`ToolDesc`]s to put in the spec
+//! — by step 2 it is an ordinary set of name-keyed entries like any other.
 //! 3. **`ToolFunc` drives execution** — when the model issues a tool call, the
 //!    agent invokes the resolved [`ToolFunc`] to produce the result stream.
 
