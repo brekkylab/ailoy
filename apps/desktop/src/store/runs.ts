@@ -31,11 +31,20 @@ export interface LiveRun {
   contextLimit?: number | null;
   /** `status`/`retryable` are filled only for `kind: "model"`. */
   error?: { kind: string; message: string; status: number | null; retryable: boolean };
-  /** Set when a persisted message arrived; the thread refetches `message_list` and clears it. */
-  messagesDirty: boolean;
+  /**
+   * How many messages the engine has persisted for this session since this store started
+   * watching. A counter, not a flag: a boolean latch cleared after the thread's refetch
+   * swallows any `message` that arrives *during* that refetch — the clear erases a signal
+   * raised for a message the query never saw. The thread acks the version it actually
+   * fetched, so a message landing mid-flight leaves `messagesVersion > messagesAcked` and
+   * starts another round.
+   */
+  messagesVersion: number;
+  /** The highest `messagesVersion` the thread has refetched. Never moves backwards. */
+  messagesAcked: number;
 }
 
-export const emptyRun = (): LiveRun => ({ runId: null, status: "idle", text: "", thinking: "", toolCalls: {}, toolOrder: [], messagesDirty: false });
+export const emptyRun = (): LiveRun => ({ runId: null, status: "idle", text: "", thinking: "", toolCalls: {}, toolOrder: [], messagesVersion: 0, messagesAcked: 0 });
 
 function toolResultValue(msg: Message): unknown {
   const first = msg.contents[0];
@@ -50,8 +59,11 @@ export function applyRunEvent(s: LiveRun, ev: RunEvent): LiveRun {
     // Also how a re-attach begins: `run_attach` synthesizes a `started` and replays the
     // buffered text as one `text_delta`, so resetting here is what keeps a reload from
     // painting the previous mount's text twice.
+    // The message counters survive the reset: they describe the session's stored list,
+    // not this run, and rewinding them to zero while the thread still holds a higher ack
+    // would leave the pair permanently mismatched.
     case "started":
-      return { ...emptyRun(), runId: ev.run_id, status: "running" };
+      return { ...emptyRun(), runId: ev.run_id, status: "running", messagesVersion: s.messagesVersion, messagesAcked: s.messagesAcked };
     case "text_delta":
       return { ...s, text: s.text + ev.text };
     case "thinking_delta":
@@ -67,12 +79,12 @@ export function applyRunEvent(s: LiveRun, ev: RunEvent): LiveRun {
       if (m.role === "tool" && m.id && s.toolCalls[m.id]) {
         const value = toolResultValue(m);
         const isError = typeof value === "object" && value !== null && "error" in (value as Record<string, unknown>);
-        return { ...s, messagesDirty: true, toolCalls: { ...s.toolCalls, [m.id]: { ...s.toolCalls[m.id], status: isError ? "error" : "done", result: value, finishedAt: Date.now() } } };
+        return { ...s, messagesVersion: s.messagesVersion + 1, toolCalls: { ...s.toolCalls, [m.id]: { ...s.toolCalls[m.id], status: isError ? "error" : "done", result: value, finishedAt: Date.now() } } };
       }
       if (m.role === "assistant" && ev.depth === 0) {
-        return { ...s, text: "", thinking: "", messagesDirty: true };
+        return { ...s, text: "", thinking: "", messagesVersion: s.messagesVersion + 1 };
       }
-      return { ...s, messagesDirty: true };
+      return { ...s, messagesVersion: s.messagesVersion + 1 };
     }
     // Merged totals for one completed model message: a present field replaces, a null
     // field keeps what was there.
@@ -98,14 +110,21 @@ function interruptRunning(calls: Record<string, ToolCallState>): Record<string, 
 interface RunStore {
   runs: Record<string, LiveRun>;
   apply: (sessionId: string, ev: RunEvent) => void;
-  clearDirty: (sessionId: string) => void;
+  ackMessages: (sessionId: string, version: number) => void;
   reset: (sessionId: string) => void;
 }
 
 export const useRunStore = create<RunStore>((set) => ({
   runs: {},
   apply: (sessionId, ev) => set((st) => ({ runs: { ...st.runs, [sessionId]: applyRunEvent(st.runs[sessionId] ?? emptyRun(), ev) } })),
-  clearDirty: (sessionId) => set((st) => (st.runs[sessionId] ? { runs: { ...st.runs, [sessionId]: { ...st.runs[sessionId], messagesDirty: false } } } : st)),
+  // Monotonic: two refetches in flight can resolve in either order, and the older one
+  // must not pull the ack back under the newer one.
+  ackMessages: (sessionId, version) =>
+    set((st) => {
+      const run = st.runs[sessionId];
+      if (!run || run.messagesAcked >= version) return st;
+      return { runs: { ...st.runs, [sessionId]: { ...run, messagesAcked: version } } };
+    }),
   reset: (sessionId) => set((st) => ({ runs: { ...st.runs, [sessionId]: emptyRun() } })),
 }));
 
