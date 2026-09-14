@@ -7,8 +7,9 @@ macOS 데스크톱 앱. Tauri 2 셸(`src-tauri`) + React 웹뷰(`src`)이고, �
 ## 준비물
 
 - **macOS.** v1은 macOS 전용이다. 워크스페이스 마운트가 FUSE-T에 묶여 있다.
-- **FUSE-T** — `brew install --cask fuse-t`. 없으면 앱은 뜨지만 워크스페이스가
-  `degraded`가 되고 커넥터가 에이전트에게 보이지 않는다.
+- **FUSE-T** — `brew install --cask fuse-t`. 필수다: 번들이 `libfuse-t.dylib`을
+  직접 링크하므로 FUSE-T가 없는 기계에서는 창도 로그도 오류 대화상자도 없이 실행이
+  실패한다(dyld 단계). 개발 실행(`tauri:dev`)도 같다.
 - **Rust ≥ 1.95** (워크스페이스 `rust-version`), **Node ≥ 22**.
 - **`../cortex` 체크아웃.** `cortex`를 path 의존으로 쓰기 때문에 이 저장소의 형제
   디렉터리에 있어야 하고, 브랜치는 `feat/exec-timeout`, 커밋은 `3dd05ef0` 이상이어야
@@ -92,3 +93,5 @@ AILOY_CORTEX_BIN_DIR=$PWD/../cortex/target/debug \
   내용을 고치는 것은 에이전트의 툴뿐이다.
 - **모델 오류로 끊긴 스트림의 부분 텍스트는 저장되지 않는다.** 사용자가 중지한 런은
   그때까지의 텍스트를 남기지만, 모델·네트워크 오류로 끊긴 런은 남기지 않는다.
+- **FUSE-T가 없으면 실행 자체가 안 된다.** 마운트를 `degraded`로 낮추는 경로는 FUSE-T가
+  설치돼 있지만 마운트가 실패한 경우에만 닿는다. 약한 링크 + 사전 점검은 후속 과제.
