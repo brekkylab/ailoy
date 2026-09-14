@@ -168,6 +168,7 @@ export function Thread({ sessionId }: { sessionId: string | null }) {
                     status={c.status}
                     result={c.result}
                     startedAt={c.startedAt}
+                    finishedAt={c.finishedAt}
                   />
                 );
               })}

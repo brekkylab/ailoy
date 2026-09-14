@@ -5,6 +5,7 @@
 // is the thin part: one `LiveRun` per session id, so switching sessions never loses a
 // run in flight.
 
+import { useEffect, useRef } from "react";
 import { create } from "zustand";
 
 import type { Message, RateLimitInfo, RunEvent, TokenUsage } from "@/types";
@@ -148,3 +149,41 @@ const IDLE: LiveRun = (() => {
 })();
 
 export const selectRun = (sessionId: string | null) => (st: RunStore) => (sessionId ? st.runs[sessionId] ?? IDLE : IDLE);
+
+/**
+ * A run is over. The engine drops it from its active map and closes the channel after
+ * one of these, so the transition happens exactly once per run.
+ */
+export const isTerminal = (s: LiveRun["status"]) => s === "done" || s === "cancelled" || s === "error";
+
+/**
+ * Calls `onTerminal` once, each time this session's run *crosses into* a terminal state.
+ *
+ * The transition and not the state: `status` stays `done` until the next run starts, so a
+ * plain `if (isTerminal(status))` in an effect would fire again on every unrelated
+ * re-render. The remembered status is keyed by session id so that switching sessions does
+ * not read the other one's `done` as this one's ending.
+ *
+ * Everything a run writes on its way out — the messages, the session's usage row and
+ * `updated_at`, and whatever the agent's tools did to the workspace — lands at this
+ * moment and at no other, which is why one hook serves all of it.
+ */
+export function useRunTerminal(sessionId: string | null, onTerminal: () => void): void {
+  const { status } = useRunStore(selectRun(sessionId));
+  // Read through a ref: the caller passes a fresh closure every render, and depending on
+  // it would re-run the effect below constantly — re-arming `seen` with the current status
+  // and so swallowing the very transition this exists to catch. Restocked in an effect
+  // rather than during render, and declared first so that it has run by the time the
+  // effect below reads it.
+  const cb = useRef(onTerminal);
+  useEffect(() => {
+    cb.current = onTerminal;
+  });
+  const seen = useRef<{ id: string | null; status: LiveRun["status"] } | null>(null);
+  useEffect(() => {
+    const was = seen.current?.id === sessionId ? seen.current.status : null;
+    seen.current = { id: sessionId, status };
+    if (was == null || was === status || !isTerminal(status)) return;
+    cb.current();
+  }, [sessionId, status]);
+}
