@@ -98,6 +98,7 @@ function MountForm({ kind, onClose }: { kind: Kind; onClose: () => void }) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["mounts"] });
       qc.invalidateQueries({ queryKey: ["fs"] });
+      qc.invalidateQueries({ queryKey: ["file"] });
       onClose();
     },
   });
