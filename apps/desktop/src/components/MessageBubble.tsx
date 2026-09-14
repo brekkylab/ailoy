@@ -4,12 +4,17 @@
 // each call's answer is a *separate* stored message with `role: "tool"` whose `id` is the
 // call id; `Thread` indexes those by id and hands the map down, so a call and its result
 // render as the single card they read as.
+//
+// The assistant row is written when the model turn ends — before its tools run — so this
+// bubble is on screen, listing calls, while those calls are still executing. `live` is how
+// it tells a call that is *running* from one that was cut off: the run in flight is the
+// only thing that knows.
 
 import { Markdown } from "@/components/Markdown";
 import { ToolCallCard } from "@/components/ToolCallCard";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { interruptedNote, isErrorResult } from "@/lib/toolCall";
-import type { ToolStatus } from "@/store/runs";
+import type { LiveRun, ToolStatus } from "@/store/runs";
 import { S } from "@/strings";
 import type { Message, StoredMessage } from "@/types";
 
@@ -53,9 +58,15 @@ export function UserBubble({ message }: { message: Message }) {
 export function AssistantBubble({
   message,
   toolResults,
+  live,
+  isLatest,
 }: {
   message: Message;
   toolResults: Map<string, StoredMessage>;
+  /** The current run for this session, idle or not. */
+  live: LiveRun;
+  /** Whether this is the newest assistant message — the only one a live run can be about. */
+  isLatest: boolean;
 }) {
   const text = textOf(message);
   return (
@@ -75,16 +86,38 @@ export function AssistantBubble({
       {text && <Markdown text={text} />}
       {(message.tool_calls ?? []).map((p) => {
         if (p.type !== "function") return null;
+        // The live run wins where it has an entry: it is ahead of storage for the whole
+        // stretch between the call starting and its result row being written, and it is
+        // the only side that carries a start time to count from.
+        const c = live.toolCalls[p.id];
+        if (c) {
+          return (
+            <ToolCallCard
+              key={p.id}
+              name={p.function.name}
+              args={p.function.arguments}
+              status={c.status}
+              result={c.result}
+              startedAt={c.startedAt}
+            />
+          );
+        }
         const stored = toolResults.get(p.id);
         const value = resultOf(stored);
-        const status = statusOf(value, stored !== undefined);
+        // No live entry and no result row. Still running if a run is going and this is the
+        // turn it is working on — a reload mid-run lands here, having missed the
+        // `tool_call_started`. Otherwise nothing will ever answer this call.
+        const status =
+          stored === undefined && live.status === "running" && isLatest
+            ? "running"
+            : statusOf(value, stored !== undefined);
         return (
           <ToolCallCard
             key={p.id}
             name={p.function.name}
             args={p.function.arguments}
             status={status}
-            result={status === "interrupted" ? undefined : value}
+            result={status === "done" || status === "error" ? value : undefined}
           />
         );
       })}

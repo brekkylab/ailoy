@@ -29,14 +29,38 @@ describe("applyRunEvent", () => {
     expect(s.thinking).toBe("hmm ");
   });
 
-  it("clears live text when the assistant message is persisted and flags a refetch", () => {
+  it("clears live text when the assistant message is persisted and bumps the message version", () => {
     const s = run([
       { type: "started", run_id: "r1" },
       { type: "text_delta", text: "Hello" },
       { type: "message", seq: 2, depth: 0, source_agent: null, message: asst("Hello"), usage: null },
     ]);
     expect(s.text).toBe("");
-    expect(s.messagesDirty).toBe(true);
+    expect(s.messagesVersion).toBe(1);
+    expect(s.messagesAcked).toBe(0);
+  });
+
+  it("counts every persisted message, tool answers included", () => {
+    const s = run([
+      { type: "started", run_id: "r1" },
+      { type: "tool_call_started", id: "c1", name: "shell", arguments: { cmd: "ls" } },
+      { type: "message", seq: 2, depth: 0, source_agent: null, message: asst("", [{ type: "function", id: "c1", function: { name: "shell", arguments: { cmd: "ls" } } }]), usage: null },
+      { type: "message", seq: 3, depth: 0, source_agent: null, message: tool("c1", { stdout: "a\n" }), usage: null },
+      { type: "message", seq: 4, depth: 1, source_agent: "sub", message: asst("nested"), usage: null },
+    ]);
+    expect(s.messagesVersion).toBe(3);
+  });
+
+  it("carries the message counters across a new run", () => {
+    const s = runFrom(run([{ type: "started", run_id: "r1" }, { type: "message", seq: 1, depth: 0, source_agent: null, message: asst("hi"), usage: null }]), [
+      { type: "done" },
+      { type: "started", run_id: "r2" },
+    ]);
+    // They describe the stored list, not the run; rewinding them under a thread that has
+    // already acked 1 would read as "behind" with nothing to fetch.
+    expect(s.messagesVersion).toBe(1);
+    expect(s.text).toBe("");
+    expect(s.runId).toBe("r2");
   });
 
   it("tracks tool calls from started to done with the tool result", () => {
@@ -155,17 +179,28 @@ describe("applyRunEvent", () => {
 });
 
 describe("useRunStore", () => {
-  it("keeps one run per session and clears the refetch flag", () => {
+  it("keeps one run per session and tracks the refetch version", () => {
     const st = () => useRunStore.getState();
     st().apply("s1", { type: "started", run_id: "r1" });
     st().apply("s1", { type: "text_delta", text: "hi" });
     st().apply("s2", { type: "started", run_id: "r2" });
     st().apply("s1", { type: "message", seq: 1, depth: 0, source_agent: null, message: asst("hi"), usage: null });
 
-    expect(selectRun("s1")(st()).messagesDirty).toBe(true);
+    expect(selectRun("s1")(st()).messagesVersion).toBe(1);
     expect(selectRun("s2")(st()).runId).toBe("r2");
-    st().clearDirty("s1");
-    expect(selectRun("s1")(st()).messagesDirty).toBe(false);
+    st().ackMessages("s1", 1);
+    expect(selectRun("s1")(st()).messagesAcked).toBe(1);
+
+    // A message that lands while the refetch for version 1 is in flight: acking 1 when it
+    // resolves leaves the pair mismatched, which is what schedules the next round.
+    st().apply("s1", { type: "message", seq: 2, depth: 0, source_agent: null, message: asst("more"), usage: null });
+    st().ackMessages("s1", 1);
+    expect(selectRun("s1")(st())).toMatchObject({ messagesVersion: 2, messagesAcked: 1 });
+
+    // An out-of-order ack never walks the mark backwards.
+    st().ackMessages("s1", 2);
+    st().ackMessages("s1", 1);
+    expect(selectRun("s1")(st()).messagesAcked).toBe(2);
 
     st().reset("s1");
     expect(selectRun("s1")(st())).toEqual(emptyRun());

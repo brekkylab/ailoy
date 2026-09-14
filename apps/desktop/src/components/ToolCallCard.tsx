@@ -26,15 +26,16 @@ const ICONS = { running: Loader2, done: CheckCircle2, error: XCircle, interrupte
 function useElapsedSeconds(startedAt: number | undefined): number | null {
   // The clock is the state; the duration is derived from it. Storing the duration would
   // mean writing it from inside the effect, which is a render the tick does not need.
-  const [now, setNow] = useState(0);
+  // Seeded at mount rather than at 0, so the first second reads `0s` instead of a blank
+  // that fills in a beat later.
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (startedAt == null) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [startedAt]);
   if (startedAt == null) return null;
-  // Before the first tick — and for the first second of a call that reused this card —
-  // the clock is behind the call, which reads as the zero it is.
+  // A card reused by a later call can hold a clock older than the call for up to a tick.
   return Math.max(0, Math.round((now - startedAt) / 1000));
 }
 
@@ -74,7 +75,7 @@ export function ToolCallCard({
         {status === "running" && (
           <span className="shrink-0 text-xs text-muted-foreground">
             {S.running}
-            {elapsed ? ` · ${elapsed}s` : ""}
+            {elapsed == null ? "" : ` · ${elapsed}s`}
           </span>
         )}
         {status === "interrupted" && <span className="shrink-0 text-xs text-muted-foreground">{S.interrupted}</span>}

@@ -43,7 +43,12 @@ export function Markdown({ text }: { text: string }) {
           code({ className, children }) {
             const code = String(children);
             if (!isFence(className, code)) {
-              return <code className="rounded bg-muted px-1 py-0.5">{children}</code>;
+              // `before:/after:content-none` undoes @tailwindcss/typography, which renders
+              // a literal backtick either side of `prose code` — a convention for printed
+              // prose, and pure noise next to a background-tinted chip.
+              return (
+                <code className="rounded bg-muted px-1 py-0.5 before:content-none after:content-none">{children}</code>
+              );
             }
             const lang = /language-([\w-]+)/.exec(className ?? "")?.[1] ?? PLAIN;
             return (
