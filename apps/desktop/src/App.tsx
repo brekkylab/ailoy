@@ -7,6 +7,7 @@ import { SettingsDialog } from "@/components/SettingsDialog";
 import { Sidebar } from "@/components/Sidebar";
 import { Thread } from "@/components/Thread";
 import { WorkspacePanel } from "@/components/WorkspacePanel";
+import { hasAnyKey } from "@/lib/settings";
 import { S } from "@/strings";
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } } });
@@ -53,7 +54,7 @@ function Shell() {
   }, [effective]);
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspaceInfo });
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settingsGet });
-  const noKey = settings.data && !settings.data.providers.some((p) => p.has_key);
+  const noKey = !hasAnyKey(settings.data);
 
   return (
     <div className="grid h-full grid-rows-[minmax(0,1fr)] grid-cols-[260px_minmax(0,1fr)_320px]">

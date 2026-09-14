@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cancelRun, startRun } from "@/events";
+import { hasAnyKey } from "@/lib/settings";
 import { selectRun, useRunStore } from "@/store/runs";
 import { S } from "@/strings";
 
@@ -31,12 +32,16 @@ export function Composer({ sessionId }: { sessionId: string }) {
   const session = sessions.data?.find((s) => s.id === sessionId);
   // No key anywhere means the engine cannot build a model and would fail the run at
   // `build()`; say so in the place the user is about to type instead.
-  const noKey = settings.data != null && settings.data.providers.every((p) => !p.has_key);
+  const noKey = !hasAnyKey(settings.data);
 
   const setModel = useMutation({
     mutationFn: (m: string) => api.sessionSetModel(sessionId, m),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["sessions"] }),
   });
+  // A cancel that the engine rejects — the run ended a moment ago, the session is gone —
+  // is not worth a message, but it is worth catching: an unhandled rejection in the
+  // webview is a console error the user cannot act on.
+  const cancel = useMutation({ mutationFn: () => cancelRun(sessionId) });
   // `startRun` resolves as soon as the engine accepts the run; the session's `running`
   // flag is what the sidebar paints, hence the invalidate here and not on the terminal
   // event (`UsageBar` owns that one).
@@ -81,7 +86,7 @@ export function Composer({ sessionId }: { sessionId: string }) {
             className="min-h-10 flex-1 resize-none border-0 shadow-none focus-visible:ring-0"
           />
           {running ? (
-            <Button variant="destructive" size="icon" onClick={() => void cancelRun(sessionId)} aria-label={S.stop}>
+            <Button variant="destructive" size="icon" onClick={() => cancel.mutate()} aria-label={S.stop}>
               <Square className="size-4" />
             </Button>
           ) : (
@@ -99,7 +104,20 @@ export function Composer({ sessionId }: { sessionId: string }) {
             disabled={running}
           >
             <SelectTrigger size="sm" className="w-72 text-xs" aria-label={S.model}>
-              <SelectValue placeholder={session?.model ?? S.model} />
+              {/* Base UI takes the trigger's text from the selected *item*, and the items
+                  live in a portal that only mounts once the list has been opened — so a
+                  session restored from storage would show its bare model id until then.
+                  Formatting from the catalog here is what makes the closed trigger read
+                  the same as the open list. The lookup spans every model, not just the
+                  available ones, so a session pinned to a model whose key was removed
+                  still shows a name. */}
+              <SelectValue>
+                {(id: unknown) => {
+                  if (typeof id !== "string" || !id) return S.model;
+                  const m = models.data?.find((x) => x.id === id);
+                  return m ? `${m.provider} · ${m.name}` : id;
+                }}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {(models.data ?? [])

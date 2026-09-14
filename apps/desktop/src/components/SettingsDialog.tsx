@@ -31,6 +31,19 @@ const DEFAULT_BEDROCK_REGION = "us-east-1";
 type Save = (patch: SettingsPatch, onDone?: () => void) => void;
 
 /**
+ * Which provider row a patch belongs to, or `null` for a patch that is not a row's —
+ * the default model, the turn limits, the catalog switch. One shared mutation serves the
+ * whole dialog, so this is what keeps a save on one row from greying out all of them.
+ * A lone Bedrock region is that row's too: it is sent from the field under its key.
+ */
+function providerOf(patch: SettingsPatch | undefined): string | null {
+  if (!patch) return null;
+  const [first] = Object.keys(patch.provider_keys ?? {});
+  if (first != null) return first;
+  return patch.bedrock_region != null ? "bedrock" : null;
+}
+
+/**
  * One provider's row: the key field, save, clear — and, for Bedrock alone, the region
  * that a Bedrock key is useless without.
  */
@@ -93,7 +106,9 @@ function ProviderRow({
         size="sm"
         variant="ghost"
         disabled={!provider.has_key || pending}
-        onClick={() => save({ provider_keys: { [provider.key]: null } })}
+        // The draft goes with the stored key: leaving a half-typed one behind in a field
+        // whose placeholder has just lost its hint reads as if it were still saved.
+        onClick={() => save({ provider_keys: { [provider.key]: null } }, () => setKey(""))}
       >
         {S.clearKey}
       </Button>
@@ -176,6 +191,9 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     },
   });
   const commit: Save = (patch, onDone) => save.mutate(patch, { onSuccess: () => onDone?.() });
+  // `variables` is the patch currently in flight, which is enough to name the one row
+  // that should be disabled — no second piece of state to keep in step with the mutation.
+  const pendingProvider = save.isPending ? providerOf(save.variables) : null;
   // A mutation and not a bare call, so a failure to open the folder has somewhere to go.
   const openLogs = useMutation({ mutationFn: api.openLogs });
 
@@ -193,7 +211,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         <section className="space-y-3">
           <h3 className="text-sm font-medium">{S.providers}</h3>
           {(s?.providers ?? []).map((p) => (
-            <ProviderRow key={p.key} provider={p} save={commit} pending={save.isPending} />
+            <ProviderRow key={p.key} provider={p} save={commit} pending={pendingProvider === p.key} />
           ))}
         </section>
 
@@ -209,7 +227,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                   if (m) commit({ default_model: m });
                 }}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger className="w-full" aria-label={S.defaultModel}>
                   <SelectValue placeholder={s.default_model || S.defaultModel} />
                 </SelectTrigger>
                 <SelectContent>
