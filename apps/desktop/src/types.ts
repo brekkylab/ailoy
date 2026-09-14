@@ -11,7 +11,11 @@ export type Part =
   | { type: "text"; text: string }
   | { type: "function"; id: string; function: { name: string; arguments: unknown } }
   | { type: "value"; value: unknown }
-  | { type: "image"; image: { type: "embedded"; mime_type: string; data: string } | { type: "url"; url: string } };
+  // `data` is `ailoy::datatype::Bytes`, a `serde_bytes::ByteBuf`. Its schema says
+  // `format: base64`, but that is for the models' wire formats; serde_json — which is
+  // what Tauri's IPC uses — has no byte-string type and writes it as an array of numbers.
+  // The UI does not render images yet; whatever does must read it as bytes, not decode it.
+  | { type: "image"; image: { type: "embedded"; mime_type: string; data: number[] } | { type: "url"; url: string } };
 
 export interface Message {
   role: Role;
