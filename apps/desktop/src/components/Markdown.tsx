@@ -14,6 +14,15 @@
 // navigation. That is deliberate: a plain in-webview navigation would replace the running
 // app with the remote page and leave the user no way back. Opening a link in the real
 // browser needs the opener plugin, which v1 does not ship.
+//
+// The import is the *full* shiki bundle, deliberately. `react-shiki/web` is a drop-in —
+// same component, same props — and measured at 6.1 MB of `dist` against 11 MB, but its
+// 79 grammars are the web ones: no `rust`, `toml`, `diff`, `go`, `dockerfile`. Those are
+// the everyday fences in the workspace this app is built to sit next to, and an unknown
+// language degrades to unhighlighted plaintext rather than an error, so the whole cost of
+// the web bundle would be paid silently, in the one surface the user reads all day. The
+// grammars are lazily chunked, so the 5 MB is bundle size on disk and nothing else. If
+// that matters later, `react-shiki/core` with a hand-picked language set buys both.
 
 import ReactMarkdown from "react-markdown";
 import ShikiHighlighter from "react-shiki";
