@@ -62,4 +62,7 @@ export const S = {
   secretAccessKey: "시크릿 액세스 키",
   endpoint: "엔드포인트 (선택)",
   keyPrefix: "키 프리픽스 (선택)",
+  openLogs: "로그 폴더 열기",
+  mounted: "마운트됨",
+  degradedShort: "제한됨",
 } as const;
