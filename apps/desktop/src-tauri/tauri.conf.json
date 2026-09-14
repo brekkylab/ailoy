@@ -35,6 +35,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": []
+    "externalBin": ["binaries/cortex-local-console"]
   }
 }
