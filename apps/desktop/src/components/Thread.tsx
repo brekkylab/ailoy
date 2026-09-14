@@ -30,6 +30,13 @@ import { selectRun, useRunStore } from "@/store/runs";
 import { S } from "@/strings";
 import type { StoredMessage } from "@/types";
 
+/**
+ * How far from the end still counts as "at the end", in px. Wide enough to survive the
+ * rounding a zoomed webview puts on `scrollHeight`, and the half-line a fresh chunk of
+ * streamed text adds between the scroll event and the effect that reads this.
+ */
+const BOTTOM_SLACK = 80;
+
 function EmptyState({ text }: { text: string }) {
   return <div className="grid min-h-0 flex-1 place-items-center text-sm text-muted-foreground">{text}</div>;
 }
@@ -44,6 +51,21 @@ export function Thread({ sessionId }: { sessionId: string | null }) {
     enabled: sessionId != null,
   });
   const bottom = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  // Whether the view is parked at the end of the thread. A run streams text every few
+  // frames, and following it down is right only while the user is actually reading the
+  // end: scrolled up to re-read an earlier tool result, they must not be dragged back.
+  // A ref and not state — nothing renders differently, and a scroll event per frame
+  // should not cost a render.
+  const atBottom = useRef(true);
+  const onScroll = () => {
+    const el = scroller.current;
+    if (el) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
+  };
+  // Another session starts at its own end, whatever the user had done to this one's.
+  useEffect(() => {
+    atBottom.current = true;
+  }, [sessionId]);
 
   // After a reload, or when the window comes back to a session, a run may still be going.
   // `attachRun` is a no-op when this session already has a live channel.
@@ -65,7 +87,7 @@ export function Thread({ sessionId }: { sessionId: string | null }) {
   }, [sessionId, messagesVersion, messagesAcked, qc, ackMessages]);
 
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "end" });
+    if (atBottom.current) bottom.current?.scrollIntoView({ block: "end" });
   }, [messages.data?.length, live.text, live.thinking, live.toolOrder.length]);
 
   const { turns, toolResults, claimed, lastTurnSeq } = useMemo(() => {
@@ -108,7 +130,7 @@ export function Thread({ sessionId }: { sessionId: string | null }) {
   const showLive = streaming && (pulse || !!live.text || !!live.thinking || unclaimed.length > 0);
   return (
     <>
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+      <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
           {messages.isError && (
             <div className="text-sm text-destructive">

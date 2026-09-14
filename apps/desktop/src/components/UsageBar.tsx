@@ -23,9 +23,19 @@ const fmt = (n: number) =>
 
 const isTerminal = (s: LiveRun["status"]) => s === "done" || s === "cancelled" || s === "error";
 
+/**
+ * Whether a window carries the two numbers a percentage needs. A provider that sends the
+ * header but leaves a window empty must not put a bare "분당 잔여" label on the bar with
+ * nothing after it, so the group asks this of all four before it renders at all.
+ */
+const hasWindow = (
+  w: RateLimitWindow | null | undefined,
+): w is RateLimitWindow & { limit: number; remaining: number } =>
+  w != null && w.limit != null && w.remaining != null && w.limit !== 0;
+
 /** One provider window. Rendered only when the provider sent both numbers. */
 function Window({ label, w }: { label: string; w: RateLimitWindow | null | undefined }) {
-  if (!w || w.limit == null || w.remaining == null || w.limit === 0) return null;
+  if (!hasWindow(w)) return null;
   const pct = Math.round((w.remaining / w.limit) * 100);
   const resetIn = w.reset_at_ms != null ? Math.max(0, Math.round((w.reset_at_ms - Date.now()) / 1000)) : null;
   return (
@@ -61,6 +71,13 @@ export function UsageBar({ sessionId }: { sessionId: string }) {
   const limit = live.contextLimit ?? usage.data?.context_limit ?? null;
   const pct = used != null && limit ? Math.min(100, (used / limit) * 100) : null;
   const u = usage.data;
+  // Anthropic sends all four windows; another provider may send the header with none of
+  // them filled in. Nothing to show is nothing to label.
+  const r = live.rateLimit;
+  const rl =
+    r && (hasWindow(r.requests) || hasWindow(r.tokens) || hasWindow(r.input_tokens) || hasWindow(r.output_tokens))
+      ? r
+      : null;
 
   return (
     <div className="flex items-center gap-4 px-1 pb-1 text-xs text-muted-foreground">
@@ -83,13 +100,13 @@ export function UsageBar({ sessionId }: { sessionId: string }) {
           {S.estimatedCost} ${u.estimated_cost_usd.toFixed(4)}
         </span>
       )}
-      {live.rateLimit && (
+      {rl && (
         <span className="flex gap-2">
           <span>{S.rateLimit}</span>
-          <Window label="req" w={live.rateLimit.requests} />
-          <Window label="tok" w={live.rateLimit.tokens} />
-          <Window label="in" w={live.rateLimit.input_tokens} />
-          <Window label="out" w={live.rateLimit.output_tokens} />
+          <Window label={S.rlRequests} w={rl.requests} />
+          <Window label={S.rlTokens} w={rl.tokens} />
+          <Window label={S.rlInput} w={rl.input_tokens} />
+          <Window label={S.rlOutput} w={rl.output_tokens} />
         </span>
       )}
     </div>
