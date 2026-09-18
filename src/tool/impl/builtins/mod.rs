@@ -2,6 +2,7 @@ mod apply_patch;
 mod edit;
 mod glob;
 mod grep;
+mod net_guard;
 mod read;
 mod shell;
 mod web_fetch;
