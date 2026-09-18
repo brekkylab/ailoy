@@ -112,20 +112,22 @@ impl ConsoleFactory {
         &self.bin
     }
 
-    /// One console over the user's workspace, with a scratch directory to work in.
+    /// One console over the three trees a run works with.
     ///
-    /// The workspace goes in as the session's **artifacts**, not its context: cortex mounts a
-    /// context read-only and refuses a `write` that lands in one, and this workspace is the
-    /// place the agent is meant to write — it is the user's own tree, kept between runs and
-    /// shown in the file panel, so what the agent leaves there is the result. `scratch` is the
-    /// throwaway half cortex expects to exist: the session *starts* in it, so a relative path
-    /// a command writes lands there instead of in the user's files.
+    /// * `context` — the user's own files and their connectors. Cortex refuses a write that
+    ///   lands here, which is the point: this tree is managed outside the agent's life and an
+    ///   agent reads it.
+    /// * `artifacts` — what this agent produces. Part of the workspace the user sees, and the
+    ///   one tree here the agent may write.
+    /// * `scratch` — the run's `/tmp`. The session *starts* here, so a relative path a command
+    ///   writes lands in something thrown away rather than among the user's files.
     ///
     /// Its `PATH` starts with the binary's own directory so sidecars beside it (`mem`, later)
     /// are commands the agent can name.
     pub async fn spawn(
         &self,
-        workspace: WorkspaceMount,
+        context: WorkspaceMount,
+        artifacts: WorkspaceMount,
         scratch: WorkspaceMount,
     ) -> Result<Console> {
         if self.is_disabled() {
@@ -148,7 +150,8 @@ impl ConsoleFactory {
             .map_err(|e| EngineError::ConsoleUnavailable(format!("{}: {e}", self.bin.display())))?;
         Console::builder()
             .client(client)
-            .artifacts(workspace)
+            .context(context)
+            .artifacts(artifacts)
             .scratch(scratch)
             .build()
             .await
@@ -200,6 +203,7 @@ mod tests {
         let Err(err) = factory
             .spawn(
                 WorkspaceMount(dir.path().to_path_buf()),
+                WorkspaceMount(dir.path().join("artifacts")),
                 WorkspaceMount(dir.path().join("scratch")),
             )
             .await

@@ -7,6 +7,12 @@ use crate::types::{MountInfo, MountKind, MountStatus};
 
 pub struct PromptInput<'a> {
     pub workfs_path: &'a Path,
+    /// Where this run's output belongs, as the agent must spell it.
+    ///
+    /// The host path, not the one inside the workspace: the workspace is the session's
+    /// context and cortex refuses a write anywhere under it. The same files show up in the
+    /// workspace at `/artifacts`, which is where the user looks for them.
+    pub artifacts_path: &'a Path,
     pub mounts: &'a [MountInfo],
     pub today: &'a str,
     pub os: &'a str,
@@ -21,24 +27,41 @@ pub struct PromptInput<'a> {
 
 pub fn build(input: &PromptInput) -> String {
     let mut s = String::new();
-    s.push_str("You are Ailoy, a desktop assistant that works inside the user's workspace: a directory tree the user assembled from local folders and connected services. You read, write and run commands there with your tools, and you explain what you did in plain language.\n\n");
+    s.push_str("You are Ailoy, a desktop assistant that works inside the user's workspace: a directory tree the user assembled from local folders and connected services. You read it, produce files of your own, run commands, and explain what you did in plain language.\n\n");
     s.push_str(&format!(
         "Today is {}. The host OS is {}.\n\n",
         input.today, input.os
     ));
     s.push_str(&format!(
-        "# Workspace\n\nThe workspace root is `{}`. This is the user's own tree: it is what they see in the app, it is kept between runs, and it is where anything you are asked to produce belongs — write it here, by this path. Your shell does **not** start here; it starts in a scratch directory that is thrown away when the run ends, so a relative path writes something nobody keeps. Name paths under the workspace root when you mean the user's files. Stay inside the workspace unless the user explicitly asks about another path.\n\n",
-        input.workfs_path.display()
+        concat!(
+            "# Workspace\n\n",
+            "The workspace root is `{}`. This is the user's tree — what they put there and what their",
+            " connectors expose — and it is **read-only to you**. It is managed outside this",
+            " conversation: it was there before this run and it stays after. Read it freely; a write",
+            " into it is refused.\n\n",
+            "# Where your own files go\n\n",
+            "Write what you produce under `{}`. That is this run's output, and it is the one tree here",
+            " you may write. The user sees the same files inside their workspace at `/{}`, so anything",
+            " you leave there is delivered — name it by the path above when you write, and by the",
+            " workspace path when you tell the user where it is.\n\n",
+            "Your shell starts in neither: it starts in a scratch directory that is thrown away when",
+            " this run ends. Use it for intermediates — downloads, unpacked archives, anything you",
+            " write only to read back — and put nothing there that the user is meant to keep. Because",
+            " that is where you stand, a relative path is always the scratch: name the workspace and",
+            " your output by the paths above.\n\n",
+        ),
+        input.workfs_path.display(),
+        input.artifacts_path.display(),
+        crate::workspace::ARTIFACTS_PATH,
     ));
-    s.push_str("## Mounts\n\n");
+    // Every one of these is inside the workspace, so every one of them is read-only to the
+    // agent whatever the row says — `writable` is the *user's* access, which is what the file
+    // panel shows and what a connector's own store enforces. Telling the agent a folder is
+    // read-write here would contradict the section above and cost a refused write to learn.
+    s.push_str("## What is in the workspace\n\n");
     for m in input.mounts {
-        let access = if m.writable {
-            "read-write"
-        } else {
-            "read-only"
-        };
         let hint = match m.kind {
-            MountKind::Root => "the workspace's own files",
+            MountKind::Root => "the user's own files",
             MountKind::Local => "a folder on this computer",
             MountKind::Notion => {
                 "a Notion workspace; each page is a directory whose `page.json` holds the page as JSON; databases are directories of pages"
@@ -61,7 +84,7 @@ pub fn build(input: &PromptInput) -> String {
             continue;
         }
         match &m.status {
-            MountStatus::Ok => s.push_str(&format!("- `{path}` — {label} ({access}): {hint}\n")),
+            MountStatus::Ok => s.push_str(&format!("- `{path}` — {label}: {hint}\n")),
             // A mount that failed to come up is listed so the agent knows the path is
             // spoken for, and told why it will not answer, so it does not spend turns
             // finding out.
@@ -141,6 +164,7 @@ mod tests {
     fn input<'a>(mounts: &'a [MountInfo], model: &'a str, degraded: bool) -> PromptInput<'a> {
         PromptInput {
             workfs_path: Path::new("/tmp/ws"),
+            artifacts_path: Path::new("/tmp/out"),
             mounts,
             today: "2026-09-11",
             os: "macos",
@@ -224,8 +248,8 @@ mod tests {
             s.contains("- `/bucket` — bucket (unavailable: the workspace is not mounted"),
             "a connector that also failed to build is still reported as unmounted: {s}"
         );
-        // The root is the one mount that *is* reachable — it is where the console stands.
-        assert!(s.contains("- `/` — Workspace (read-write)"), "{s}");
+        // The root is the one mount that *is* reachable — it is the tree the console reads.
+        assert!(s.contains("- `/` — Workspace: the user's own files"), "{s}");
         assert!(
             s.contains("Only the workspace's root directory is reachable"),
             "{s}"

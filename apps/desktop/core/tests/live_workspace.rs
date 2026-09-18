@@ -8,7 +8,13 @@ async fn a_mounted_workspace_is_visible_to_the_kernel() {
     let dir = tempfile::tempdir().unwrap();
     let files = dir.path().join("files");
     let mp = dir.path().join("workspace");
-    let ws = WorkspaceManager::start(files.clone(), mp.clone(), true).await;
+    let ws = WorkspaceManager::start(
+        files.clone(),
+        dir.path().join("artifacts"),
+        mp.clone(),
+        true,
+    )
+    .await;
     assert!(
         matches!(
             ws.info().status,

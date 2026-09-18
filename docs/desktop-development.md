@@ -6,11 +6,14 @@
 checkout. There is no registry copy to fall back on, so a worktree that is not a sibling
 of one does not build.
 
-That checkout must be on branch `feat/exec-timeout`, at or after commit **`3dd05ef`**.
-Before `9d178c7` the local console accepts the shell tool's `timeout_secs` and ignores it,
-so a command that outruns its timeout runs to completion and the timeout tests fail;
-`3dd05ef` is what makes the kill reach the whole process group rather than the direct
-child alone. `main` has neither.
+That checkout tracks `main`, and must carry **#43** — the split of `WorkFs` into the
+three-layer `ContextFs` plus a console with `context`/`artifacts`/`scratch`. The engine's
+workspace layer is written against exactly that shape and does not compile without it.
+
+Two older commits matter for the shell tool, and `main` has both: before `9d178c7` the
+local console accepts `timeout_secs` and ignores it, so a command that outruns its timeout
+runs to completion; `3dd05ef` is what makes the kill reach the whole process group rather
+than the direct child alone.
 
 ## Tests
 

@@ -48,7 +48,13 @@ impl Engine {
         let instance_lock = lock_data_dir(&cfg.data_dir)?;
         let store = Arc::new(Store::open(&cfg.db_path())?);
         let workspace = Arc::new(
-            WorkspaceManager::start(cfg.files_root(), cfg.mountpoint(), cfg.mount_workspace).await,
+            WorkspaceManager::start(
+                cfg.files_root(),
+                cfg.artifacts_root(),
+                cfg.mountpoint(),
+                cfg.mount_workspace,
+            )
+            .await,
         );
 
         let cache = cfg.cache_dir().join("models.json");

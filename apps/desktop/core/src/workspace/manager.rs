@@ -1,4 +1,11 @@
 //! The workspace: one `ContextFs`, mounted for the life of the engine.
+//!
+//! Two kinds of tree live in it, and cortex keeps them apart on purpose. The user's own —
+//! what they put there and what their connectors expose — is a session's *context*, which an
+//! agent reads and may not write. What an agent produces goes in its *artifacts*, which is
+//! grafted in at [`ARTIFACTS_PATH`] so it is part of the workspace the user sees rather than
+//! somewhere else they have to go looking. (A session's third tree, its scratch, is not the
+//! workspace's business: it is made per run and thrown away with it — see `run`.)
 
 use std::{
     path::{Path, PathBuf},
@@ -15,9 +22,23 @@ use crate::{
     workspace::{mount::WorkspaceMount, shared::SharedFs},
 };
 
+/// Where the agent's output is grafted into the workspace, one segment under its root.
+///
+/// A fixed path rather than a setting: it is named in the system preamble, it is what the
+/// file panel shows, and a connector may not take it — three places that would have to agree
+/// about a configurable one.
+pub const ARTIFACTS_PATH: &str = "artifacts";
+
 pub struct WorkspaceManager {
     fs: Arc<RwLock<ContextFs>>,
     files_root: PathBuf,
+    /// Where the agent's own output goes, on the host.
+    ///
+    /// Handed to a console as its *artifacts* tree, and grafted into the workspace at
+    /// `/artifacts` so the user sees it among their own files. Cortex is given this path
+    /// rather than the one inside the mount: it refuses a write anywhere under the context,
+    /// and the whole point of this tree is that the agent may write in it.
+    artifacts_root: PathBuf,
     mountpoint: PathBuf,
     /// Held for the life of the engine; dropping it unmounts. Behind a std mutex because
     /// `FuseTMount` is dropped on a blocking thread at shutdown.
@@ -36,14 +57,21 @@ pub struct WorkspaceManager {
 }
 
 impl WorkspaceManager {
-    pub async fn start(files_root: PathBuf, mountpoint: PathBuf, mount: bool) -> WorkspaceManager {
+    pub async fn start(
+        files_root: PathBuf,
+        artifacts_root: PathBuf,
+        mountpoint: PathBuf,
+        mount: bool,
+    ) -> WorkspaceManager {
         // The files directory is made whether or not the workspace is mounted — it is what the
         // root `PassthroughFs` serves — so it is done first and its failure is reported as
         // itself. Reporting it as "mounting disabled" would leave a passthrough over a
         // directory that does not exist, and every file operation failing with a bare
         // `NotFound` and nothing to say about why. The mount point is only prepared when there
         // is going to be a mount.
-        let status = match std::fs::create_dir_all(&files_root) {
+        let status = match std::fs::create_dir_all(&files_root)
+            .and_then(|()| std::fs::create_dir_all(&artifacts_root))
+        {
             Err(e) => WorkspaceStatus::Degraded {
                 reason: format!("files directory: {e}"),
             },
@@ -57,10 +85,15 @@ impl WorkspaceManager {
                 },
             },
         };
+        // The artifacts tree is grafted in beside the user's files, at a fixed path. It is
+        // part of the workspace as the user sees it — output belongs where they are already
+        // looking — while being a separate tree as far as a console is concerned.
         let fs = Arc::new(RwLock::new(
             ContextFs::new()
                 .try_with_mount("", PassthroughFs::new(files_root.clone()))
-                .expect("an empty path is a valid mount key"),
+                .expect("an empty path is a valid mount key")
+                .try_with_mount(ARTIFACTS_PATH, PassthroughFs::new(artifacts_root.clone()))
+                .expect("a one-segment path is a valid mount key"),
         ));
         let root = MountInfo {
             id: "root".into(),
@@ -74,6 +107,7 @@ impl WorkspaceManager {
         let manager = WorkspaceManager {
             fs,
             files_root,
+            artifacts_root,
             mountpoint,
             mount: StdMutex::new(None),
             status: RwLock::new(status),
@@ -125,11 +159,28 @@ impl WorkspaceManager {
         }
     }
 
+    /// The tree a console is given to *read*: the user's files and every connector under
+    /// them, through the kernel when the workspace is mounted and straight off the disk when
+    /// it is not. Cortex mounts this read-only — it is the user's, not the agent's.
+    ///
+    /// Degraded is the lesser tree on purpose: without the mount the connectors exist only
+    /// inside this process, so a separate console can reach the passthrough root and nothing
+    /// else.
     pub fn console_mount(&self) -> WorkspaceMount {
         match self.info().status {
             WorkspaceStatus::Mounted => WorkspaceMount(self.mountpoint.clone()),
             WorkspaceStatus::Degraded { .. } => WorkspaceMount(self.files_root.clone()),
         }
+    }
+
+    /// The tree a console is given to *write*: where its output goes.
+    ///
+    /// The host path, never the one inside the mount. Cortex refuses a write to anything
+    /// under the context, and `/artifacts` is visible there — so a console handed the mounted
+    /// spelling would be refused on the one tree it is supposed to fill. The two paths are
+    /// the same directory; the user reaches it through the workspace, the agent through this.
+    pub fn artifacts_mount(&self) -> WorkspaceMount {
+        WorkspaceMount(self.artifacts_root.clone())
     }
 
     pub fn fs(&self) -> SharedFs {
@@ -265,13 +316,22 @@ fn prepare_mount_point(mountpoint: &Path) -> std::io::Result<()> {
 /// because "루트는 분리할 수 없습니다" is not true of `"/mem/.."` — the caller named a path,
 /// and what is wrong with it is the `..`.
 fn detachable_path(path: &str) -> Result<String> {
-    crate::workspace::connectors::normalize_mount_path(path).map_err(|e| {
+    let normalized = crate::workspace::connectors::normalize_mount_path(path).map_err(|e| {
         if path.trim().split('/').any(|s| s == "..") {
             e
         } else {
             EngineError::Invalid("루트는 분리할 수 없습니다".into())
         }
-    })
+    })?;
+    // The artifacts tree is the workspace's own, like the root: a connector can be taken out
+    // of the workspace, but the place the agent's output lands cannot, or the next run has
+    // nowhere to write.
+    if normalized == format!("/{ARTIFACTS_PATH}") {
+        return Err(EngineError::Invalid(
+            "결과물 디렉터리는 분리할 수 없습니다".into(),
+        ));
+    }
+    Ok(normalized)
 }
 
 pub fn is_mounted(path: &Path) -> bool {
@@ -335,7 +395,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let files = dir.path().join("files");
         let mp = dir.path().join("workspace");
-        let ws = WorkspaceManager::start(files.clone(), mp, false).await;
+        let ws =
+            WorkspaceManager::start(files.clone(), dir.path().join("artifacts"), mp, false).await;
         assert!(matches!(ws.info().status, WorkspaceStatus::Degraded { .. }));
         assert_eq!(ws.console_mount().0, files);
         assert_eq!(ws.mounts().await.len(), 1, "the root row");
@@ -384,7 +445,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let files = dir.path().join("files");
         let mp = dir.path().join("workspace");
-        let ws = WorkspaceManager::start(files.clone(), mp, false).await;
+        let ws =
+            WorkspaceManager::start(files.clone(), dir.path().join("artifacts"), mp, false).await;
 
         for spelling in ["/", "", "//", "/.", "/mem/..", "/./", "  /  "] {
             assert!(

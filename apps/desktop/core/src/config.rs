@@ -39,6 +39,16 @@ impl EngineConfig {
         self.data_dir.join("cache")
     }
 
+    /// Where the agent's own output is kept.
+    ///
+    /// Its own directory beside `files/` rather than a folder inside it: cortex refuses a
+    /// write anywhere under the tree it was given as context, so the place the agent writes
+    /// has to be a tree of its own. The workspace shows it to the user all the same — the
+    /// manager grafts it in at `/artifacts`.
+    pub fn artifacts_root(&self) -> PathBuf {
+        self.data_dir.join("artifacts")
+    }
+
     /// Where each run's throwaway directory is made.
     ///
     /// Cortex starts a session in its scratch tree, so everything a command writes to a

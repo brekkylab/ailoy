@@ -407,6 +407,7 @@ async fn drive(
         crate::types::WorkspaceStatus::Degraded { .. }
     );
     let ws_mount = deps.workspace.console_mount();
+    let artifacts_mount = deps.workspace.artifacts_mount();
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let extra = deps
         .store
@@ -414,6 +415,7 @@ async fn drive(
         .map_err(|e| fail("storage", e.to_string()))?;
     let preamble = prompt::build(&prompt::PromptInput {
         workfs_path: &ws_mount.0,
+        artifacts_path: &artifacts_mount.0,
         mounts: &mounts,
         today: &today,
         os: std::env::consts::OS,
@@ -442,7 +444,11 @@ async fn drive(
         None => None,
         Some(scratch) => Some(
             deps.console
-                .spawn(ws_mount, WorkspaceMount(scratch.path().to_path_buf()))
+                .spawn(
+                    ws_mount,
+                    artifacts_mount,
+                    WorkspaceMount(scratch.path().to_path_buf()),
+                )
                 .await
                 .map_err(|e| fail("console_unavailable", e.to_string()))?,
         ),
@@ -783,8 +789,15 @@ mod tests {
 
     async fn deps(dir: &std::path::Path) -> RunDeps {
         let store = Arc::new(Store::open_in_memory().unwrap());
-        let workspace =
-            Arc::new(WorkspaceManager::start(dir.join("files"), dir.join("ws"), false).await);
+        let workspace = Arc::new(
+            WorkspaceManager::start(
+                dir.join("files"),
+                dir.join("artifacts"),
+                dir.join("ws"),
+                false,
+            )
+            .await,
+        );
         // No console binary: a text-only run never needs one, and `drive` skips the spawn.
         let console = Arc::new(ConsoleFactory::disabled());
         RunDeps {
