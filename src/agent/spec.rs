@@ -218,6 +218,13 @@ impl AgentSpec {
         self
     }
 
+    pub fn reasoning_effort(mut self, effort: impl Into<String>) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .reasoning_effort = Some(effort.into());
+        self
+    }
+
     pub fn response_format(mut self, fmt: crate::lang_model::ResponseFormat) -> Self {
         self.model_options
             .get_or_insert_with(LangModelOptions::new)

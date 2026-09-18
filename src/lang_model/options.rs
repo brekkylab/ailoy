@@ -42,6 +42,14 @@ pub struct LangModelOptions {
     /// Constrains the model's output to a JSON schema validated at construction time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<ResponseFormat>,
+
+    /// How much a reasoning model thinks before it answers, in the vocabulary the
+    /// OpenAI ChatCompletion API uses (`"none"`, `"low"`, `"medium"`, `"high"`, …).
+    /// `None` leaves the provider default in place. Only the `ChatCompletion` schema
+    /// carries it, as `reasoning_effort`; other schemas ignore it. Some providers
+    /// accept tools on a reasoning model only when this is `"none"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 impl LangModelOptions {

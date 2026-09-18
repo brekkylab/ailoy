@@ -747,6 +747,7 @@ mod tests {
             top_p: Some(0.9),
             top_k: Some(5),
             response_format: None,
+            reasoning_effort: None,
         };
 
         let v = marshal(&request(&provider, &messages, &tools, &options, false));

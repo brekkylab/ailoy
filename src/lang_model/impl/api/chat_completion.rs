@@ -235,6 +235,11 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
                 .insert("top_p".to_owned(), top_p.into());
         }
         // top_k is not part of the OpenAI ChatCompletion spec; intentionally ignored.
+        if let Some(effort) = &options.reasoning_effort {
+            body.as_object_mut()
+                .unwrap()
+                .insert("reasoning_effort".to_owned(), effort.clone().into());
+        }
         if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
             let wire_schema = self.marshal_response_schema(schema);
             body.as_object_mut().unwrap().insert(
@@ -561,6 +566,47 @@ mod tests {
         message::{Delta, FinishReason, Message, MessageDeltaOutput, Part, Role},
         tool::ToolDesc,
     };
+
+    #[test]
+    fn test_marshal_reasoning_effort() {
+        let messages: Vec<Message> = vec![];
+        let tools: Vec<ToolDesc> = vec![];
+        let provider = LangModelProviderElem::API {
+            schema: LangModelAPISchema::ChatCompletion,
+            url: Url::parse("https://api.openai.com/v1/chat/completions").unwrap(),
+            api_key: None,
+        };
+        let mut options = LangModelOptions::default();
+        let req = LangModelRequest {
+            model: "gpt-5",
+            messages: &messages,
+            tools: &tools,
+            provider: &provider,
+            options: &options,
+            stream: false,
+        };
+
+        // Unset → the field is absent, so the provider's default effort applies.
+        let val = ChatCompletionMarshal.marshal(&req);
+        assert!(val.pointer("/body/reasoning_effort").is_none());
+
+        // Set → sent verbatim under the ChatCompletion name for it.
+        options.reasoning_effort = Some("none".into());
+        let req = LangModelRequest {
+            model: "gpt-5",
+            messages: &messages,
+            tools: &tools,
+            provider: &provider,
+            options: &options,
+            stream: false,
+        };
+        let val = ChatCompletionMarshal.marshal(&req);
+        assert_eq!(
+            val.pointer("/body/reasoning_effort")
+                .and_then(|v| v.as_str()),
+            Some("none")
+        );
+    }
 
     #[test]
     fn test_marshal_stream_options() {
