@@ -9,7 +9,13 @@ use crate::{
     },
     lang_model::{LangModel, LangModelOptions},
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
-    tool::{ToolDesc, ToolFunc, get_tool_providers, r#impl::get_web_search_tool_factory},
+    tool::{
+        ToolDesc, ToolFunc, get_tool_providers,
+        r#impl::{
+            get_mem_insert_tool_desc, get_mem_insert_tool_func, get_mem_search_tool_desc,
+            get_mem_search_tool_func, get_web_search_tool_factory,
+        },
+    },
 };
 
 /// An agent that drives a language model through multi-turn, tool-augmented conversations.
@@ -133,6 +139,27 @@ impl Agent {
             );
             tool_descs.push(desc);
             tools.insert(tool_name, func);
+        }
+
+        // An agent given a memory gets the two tools for it, and one without a memory has
+        // no such tools to be told about. They are not resolved from the ToolProvider like
+        // the tools above, for the reason `tool::impl::memory` gives: which store is not a
+        // name in a registry but a `Memory` this one agent was handed, so the func has to
+        // be built here where that value is.
+        //
+        // Nothing is added to the instruction. What the model is told about remembering is
+        // the tool descriptions, until a prompt says more.
+        if let Some(memory) = state.memory.clone() {
+            for (desc, func) in [
+                (
+                    get_mem_search_tool_desc(),
+                    get_mem_search_tool_func(memory.clone()),
+                ),
+                (get_mem_insert_tool_desc(), get_mem_insert_tool_func(memory)),
+            ] {
+                tools.insert(desc.name.clone(), func);
+                tool_descs.push(desc);
+            }
         }
 
         // Build the system message from the instruction.
@@ -657,6 +684,7 @@ mod tests {
         agent::{AgentCard, AgentProvider, AgentSpec, ContextManager, get_agent_providers_mut},
         datatype::Value,
         lang_model::{LangModelProvider, get_lm_providers_mut},
+        memory::Memory,
         message::{Message, Part, PartDelta, Role},
         suppress_panics, to_value,
         tool::{ToolDescBuilder, ToolProvider, get_tool_providers_mut},
@@ -695,6 +723,27 @@ mod tests {
     fn default_test_provider() -> &'static str {
         refresh_default_lang_models();
         "default"
+    }
+
+    /// A model nothing calls, and a provider with a made-up key behind it — for the
+    /// tests that only construct an agent and look at what it was built with.
+    const DUMMY_MODEL: &str = "openai/gpt-4o-mini";
+
+    fn dummy_provider(name: &'static str) -> &'static str {
+        let mut lmps = get_lm_providers_mut();
+        if !lmps.contains_key(name) {
+            let mut lmp = LangModelProvider::new();
+            lmp.insert(
+                DUMMY_MODEL.into(),
+                LangModelProvider::openai("dummy".into()),
+            );
+            lmps.insert(name.to_string(), lmp);
+        }
+        drop(lmps);
+        get_agent_providers_mut()
+            .entry(name.to_string())
+            .or_insert_with(|| AgentProvider::new(name, "default"));
+        name
     }
 
     // ── tests ─────────────────────────────────────────────────────────────────
@@ -1296,5 +1345,37 @@ mod tests {
             state.console.lock().await.is_none(),
             "a fresh state has no console, and nothing fills it in"
         );
+    }
+
+    /// A memory on the state is the two memory tools on the agent — no spec entry, and
+    /// nothing registered in the ToolProvider.
+    #[tokio::test]
+    async fn test_memory_brings_its_two_tools() {
+        let provider = dummy_provider("agent_rt_memory_tests");
+        let state = AgentState::new().with_memory(Memory::new("/work/notes.sqlite"));
+        let agent =
+            Agent::try_with_provider_and_state(AgentSpec::new(DUMMY_MODEL), provider, state)
+                .unwrap();
+
+        let names: Vec<&str> = agent.tool_descs.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["mem_search", "mem_insert"]);
+        assert!(agent.tools.contains_key("mem_search"));
+        assert!(agent.tools.contains_key("mem_insert"));
+    }
+
+    /// And an agent with no memory is told of no such tools, rather than being given two
+    /// that would fail on a store it does not have.
+    #[tokio::test]
+    async fn test_no_memory_means_no_memory_tools() {
+        let provider = dummy_provider("agent_rt_memory_tests");
+        let agent = Agent::try_with_provider_and_state(
+            AgentSpec::new(DUMMY_MODEL),
+            provider,
+            AgentState::new(),
+        )
+        .unwrap();
+
+        assert!(agent.tool_descs.is_empty(), "{:?}", agent.tool_descs);
+        assert!(agent.tools.is_empty());
     }
 }
