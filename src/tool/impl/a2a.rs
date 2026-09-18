@@ -3,19 +3,28 @@ use url::Url;
 
 use crate::{
     message::{Message, Part, Role},
-    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
+    tool::{ToolDesc, ToolDescBuilder, ToolFunc, sanitize_tool_name, warn_if_tool_name_too_long},
     tool_func,
 };
 
 // ── Tool constructor ──────────────────────────────────────────────────────────
 
-/// Discover the remote A2A agent at `url` and build its [`ToolDesc`].
+/// Discover the remote A2A agent at `url` and build the [`ToolDesc`] a spec
+/// carries for it, under `name`.
 ///
-/// Performs a network fetch of the agent card.
-pub(crate) async fn get_a2a_tool_desc(url: &Url) -> anyhow::Result<ToolDesc> {
+/// Performs a network fetch of the agent card — which is why this is `async`,
+/// and why an A2A agent is contacted when it is *registered* rather than when
+/// [`ToolProvider::provide`](crate::tool::ToolProvider::provide) resolves it.
+///
+/// The name is the caller's, not the card's: it has to match the key the entry
+/// was registered under for `provide` to find it, and a remote card is free to
+/// call itself something no model API would accept as a function name.
+pub(crate) async fn get_a2a_tool_desc(name: &str, url: &Url) -> anyhow::Result<ToolDesc> {
     let base_url = url.to_string();
     let card = discover(&base_url).await?;
 
+    // The card's own name is worth showing even though it is not the tool name,
+    // since it is how the remote agent introduces itself.
     let description = if card.skills.is_empty() {
         card.description.clone()
     } else {
@@ -28,23 +37,43 @@ pub(crate) async fn get_a2a_tool_desc(url: &Url) -> anyhow::Result<ToolDesc> {
         format!("{}\n\n# Skills\n\n{}", card.description, skills)
     };
 
-    Ok(ToolDescBuilder::new(&card.name)
+    let name = sanitize_tool_name(name);
+    warn_if_tool_name_too_long(&name);
+
+    Ok(ToolDescBuilder::new(name)
         .description(description)
-        .parameters(crate::to_value!({"type": "string"}))
+        // An object with a single `task` string, matching the sub-agent tool:
+        // delegating a plain-text task is the same shape of call, and the model
+        // APIs reject a `parameters` schema that is not an object anyway.
+        .parameters(crate::to_value!({
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "The task description to send to the remote agent"
+                }
+            },
+            "required": ["task"]
+        }))
         .build())
 }
 
-/// Build a [`ToolFunc`] that forwards a string task to the A2A agent at `url`.
+/// Build a [`ToolFunc`] that forwards a task to the A2A agent at `url`.
+///
+/// Needs no agent card, and so no `await`: everything it sends is in the call
+/// arguments, which is what lets `provide` stay synchronous.
 pub(crate) fn get_a2a_tool_func(url: &Url) -> ToolFunc {
     let base_url = url.to_string();
     tool_func!(async |args: Value, id: String| -> Message
         with [url = base_url.clone()]
         {
-        let task = match args.as_str() {
+        let task = match args.pointer("/task").and_then(|v| v.as_str()) {
             Some(v) => v.to_string(),
             None => {
                 return Message::new(Role::Tool)
-                    .with_contents([Part::text("Error: expected string argument")])
+                    .with_contents([Part::text(
+                        "Error: expected an object with a string 'task' field",
+                    )])
                     .with_id(id);
             }
         };
@@ -322,10 +351,11 @@ pub(crate) async fn message_send(base_url: &str, task: &str) -> anyhow::Result<S
         .history
         .iter()
         .find(|m| m.role == A2ARole::Agent)
-        .and_then(|m| {
-            m.parts.iter().find_map(|p| match p {
-                A2APart::Text { text } => Some(text.clone()),
-            })
+        // `A2APart` has only a text variant, so the first part is the answer;
+        // `find_map` would suggest a filter that does not exist.
+        .and_then(|m| m.parts.first())
+        .map(|p| match p {
+            A2APart::Text { text } => text.clone(),
         })
         .ok_or_else(|| anyhow::anyhow!("No text in A2A agent response"))?;
 
@@ -340,8 +370,10 @@ mod tests {
         Json, Router,
         routing::{get, post},
     };
+    use futures::StreamExt as _;
 
     use super::*;
+    use crate::{datatype::Value, tool::ToolProvider};
 
     fn test_card() -> AgentCard {
         AgentCard {
@@ -445,6 +477,178 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("Something went wrong")
+        );
+        Ok(())
+    }
+
+    // ── Tool construction ─────────────────────────────────────────────────────
+
+    /// A card server plus a `message/send` endpoint, i.e. a whole A2A agent.
+    async fn test_agent() -> Url {
+        let card = test_card();
+        let app = Router::new()
+            .route(
+                "/.well-known/agent-card.json",
+                get(move || {
+                    let card = card.clone();
+                    async move { Json(card) }
+                }),
+            )
+            .route(
+                "/",
+                post(|Json(req): Json<JsonRpcRequest>| async move {
+                    let echoed = match &req.params.message.parts[0] {
+                        A2APart::Text { text } => text.clone(),
+                    };
+                    let task = Task {
+                        kind: "task".into(),
+                        id: "task-1".into(),
+                        context_id: "ctx-1".into(),
+                        status: TaskStatus {
+                            state: TaskState::Completed,
+                            timestamp: None,
+                        },
+                        history: vec![A2AMessage {
+                            kind: "message".into(),
+                            role: A2ARole::Agent,
+                            parts: vec![A2APart::Text {
+                                text: format!("did: {echoed}"),
+                            }],
+                            message_id: Some("msg-1".into()),
+                            task_id: Some("task-1".into()),
+                            context_id: Some("ctx-1".into()),
+                        }],
+                        artifacts: vec![],
+                    };
+                    Json(JsonRpcResponse::success(req.id, task))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+        Url::parse(&format!("http://{addr}")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_desc_parameters_are_an_object_schema() -> anyhow::Result<()> {
+        let url = test_agent().await;
+        let desc = get_a2a_tool_desc("remote", &url).await?;
+
+        // Not a bare `{"type":"string"}`: OpenAI, Anthropic and Gemini all take
+        // `parameters` verbatim and reject a non-object schema.
+        let params = serde_json::Value::from(desc.parameters);
+        assert_eq!(params["type"], "object");
+        assert_eq!(params["properties"]["task"]["type"], "string");
+        assert_eq!(params["required"][0], "task");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_desc_uses_the_callers_name_not_the_cards() -> anyhow::Result<()> {
+        let url = test_agent().await;
+        // The card calls itself "test-agent"; the registry key is what matters.
+        let desc = get_a2a_tool_desc("my_remote", &url).await?;
+        assert_eq!(desc.name, "my_remote");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_desc_name_is_sanitized() -> anyhow::Result<()> {
+        let url = test_agent().await;
+        let desc = get_a2a_tool_desc("my remote/agent", &url).await?;
+        assert_eq!(desc.name, "my_remote_agent");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_desc_folds_skills_into_the_description() -> anyhow::Result<()> {
+        let url = test_agent().await;
+        let desc = get_a2a_tool_desc("remote", &url).await?;
+        let description = desc.description.unwrap();
+        assert!(description.starts_with("A test agent"));
+        assert!(description.contains("* Test Skill: Does something"));
+        Ok(())
+    }
+
+    // ── Through the provider ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_provided_func_sends_the_task() -> anyhow::Result<()> {
+        let url = test_agent().await;
+        let desc = get_a2a_tool_desc("remote", &url).await?;
+
+        let mut provider = ToolProvider::empty();
+        provider.insert_a2a(desc.name.clone(), url);
+        let funcs = provider.provide(&[desc])?;
+
+        // Pure, like an MCP tool: no console is borrowed to reach the network.
+        let out = funcs
+            .get("remote")
+            .expect("the agent was registered")
+            .call_pure(crate::to_value!({ "task": "say hi" }), "call-1")
+            .expect("A2A tools are pure")
+            .next()
+            .await
+            .expect("one output");
+
+        assert_eq!(out.message.contents[0].as_text(), Some("did: say hi"));
+        assert_eq!(out.message.id.as_deref(), Some("call-1"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_missing_task_field_is_reported_not_sent() -> anyhow::Result<()> {
+        let url = test_agent().await;
+        let desc = get_a2a_tool_desc("remote", &url).await?;
+
+        let mut provider = ToolProvider::empty();
+        provider.insert_a2a(desc.name.clone(), url);
+        let funcs = provider.provide(&[desc])?;
+
+        let out = funcs
+            .get("remote")
+            .unwrap()
+            .call_pure(Value::object_empty(), "call-1")
+            .unwrap()
+            .next()
+            .await
+            .unwrap();
+
+        let text = out.message.contents[0].as_text().unwrap();
+        assert!(text.starts_with("Error:"), "got {text}");
+        assert!(text.contains("task"), "got {text}");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_unreachable_agent_surfaces_as_text() -> anyhow::Result<()> {
+        // Nothing is listening here; the call must come back as a tool message
+        // the model can read, not as a panic or a dropped stream.
+        let url = Url::parse("http://127.0.0.1:1")?;
+        let mut provider = ToolProvider::empty();
+        provider.insert_a2a("dead", url);
+
+        let desc = ToolDescBuilder::new("dead")
+            .parameters(crate::to_value!({ "type": "object" }))
+            .build();
+        let funcs = provider.provide(&[desc])?;
+
+        let out = funcs
+            .get("dead")
+            .unwrap()
+            .call_pure(crate::to_value!({ "task": "anything" }), "call-1")
+            .unwrap()
+            .next()
+            .await
+            .unwrap();
+
+        assert!(
+            out.message.contents[0]
+                .as_text()
+                .unwrap()
+                .starts_with("Error:"),
+            "got {:?}",
+            out.message.contents[0]
         );
         Ok(())
     }

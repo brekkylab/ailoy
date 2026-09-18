@@ -5,13 +5,22 @@ use std::{
 
 use url::Url;
 
-use crate::tool::{ToolDesc, ToolFunc, r#impl::get_builtin_tool_factories};
+use crate::tool::{
+    MCPConnection, MCPToolEntry, ToolDesc, ToolFunc,
+    r#impl::{
+        get_a2a_tool_desc, get_a2a_tool_func, get_builtin_tool_factories, mcp_tool_desc,
+        prefixed_tool_name,
+    },
+};
 
 /// Transport configuration for an MCP (Model Context Protocol) tool server.
 #[derive(Clone, Debug)]
 pub enum MCPToolProviderElem {
     /// Spawns a child process and communicates over its stdio.
-    Stdio { command: String },
+    ///
+    /// `command` is the executable, not a shell line: `args` are passed through
+    /// as written, so nothing here is word-split or glob-expanded.
+    Stdio { command: String, args: Vec<String> },
 
     /// Connects to a remote MCP server over HTTP streaming.
     StreamableHTTP { url: Url },
@@ -29,8 +38,9 @@ pub enum ToolProviderElem {
     /// return a fixed [`ToolFunc`].
     Function(Arc<dyn Fn(&ToolDesc) -> ToolFunc + Send + Sync + 'static>),
 
-    /// A tool served by an external MCP server.
-    MCP(MCPToolProviderElem),
+    /// One tool served by an external MCP server, over a connection opened at
+    /// registration time and shared with that server's other tools.
+    MCP(MCPToolEntry),
 
     /// A remote A2A (Agent-to-Agent) server exposed as a callable tool.
     ///
@@ -46,12 +56,15 @@ impl ToolProviderElem {
     fn provide(&self, desc: &ToolDesc) -> anyhow::Result<ToolFunc> {
         match self {
             ToolProviderElem::Function(factory) => Ok(factory(desc)),
-            ToolProviderElem::MCP(_) => {
-                todo!("MCP factory construction is not yet implemented")
-            }
-            ToolProviderElem::A2A { url: _ } => {
-                todo!("A2A factory construction is not yet implemented")
-            }
+            // The description is ignored: an MCP tool's behaviour is fixed by the
+            // server, and the desc in the spec is a copy of what the server
+            // already reported at registration.
+            ToolProviderElem::MCP(entry) => Ok(entry.tool_func()),
+            // Unlike MCP, nothing has to be discovered to *call* an A2A agent:
+            // the task is in the arguments and the address is in the entry. Only
+            // the description needs the agent card, and that was fetched at
+            // registration (see `register_a2a`).
+            ToolProviderElem::A2A { url } => Ok(get_a2a_tool_func(url)),
         }
     }
 }
@@ -117,8 +130,11 @@ impl ToolProvider {
             .insert(name.into(), ToolProviderElem::Function(Arc::new(f)))
     }
 
-    /// Register a remote A2A agent under `name`. The actual tool description
-    /// is discovered from the agent's card at resolve time.
+    /// Register a remote A2A agent under `name`.
+    ///
+    /// Only the entry: the [`ToolDesc`] a spec needs comes from the agent's
+    /// card, which is a network fetch. [`register_a2a`] does both halves and
+    /// hands back the desc.
     pub fn insert_a2a(
         &mut self,
         name: impl Into<String>,
@@ -128,22 +144,70 @@ impl ToolProvider {
             .insert(name.into(), ToolProviderElem::A2A { url: url.into() })
     }
 
-    /// Register an MCP server reachable via stdio. Not yet implemented.
-    pub fn insert_mcp_stdio(
-        &mut self,
-        _name: impl Into<String>,
-        _command: impl Into<String>,
-    ) -> Option<ToolProviderElem> {
-        todo!("MCP stdio registration is not yet implemented")
+    /// Register every tool an MCP server reported, under `prefix`.
+    ///
+    /// One server becomes many entries — `{prefix}__{remote name}` each — because
+    /// the registry is a flat name-keyed map and two servers may well both offer
+    /// a `search`. The returned [`ToolDesc`]s are exactly those entries, ready to
+    /// hand to [`AgentSpec::tools`](crate::agent::AgentSpec::tools); a spec never
+    /// learns that an MCP server was involved.
+    ///
+    /// Connecting is the caller's step ([`MCPToolProviderElem::connect`]) and not
+    /// part of this one, because it awaits and this registry lives behind a
+    /// `std` lock: a guard held across an `.await` would make the whole future
+    /// `!Send`. [`register_mcp_stdio`] and [`register_mcp_streamable_http`] do
+    /// both halves in the right order for callers who want one call.
+    ///
+    /// An existing entry of the same name is replaced, as with any other insert.
+    pub fn insert_mcp(&mut self, prefix: impl AsRef<str>, conn: MCPConnection) -> Vec<ToolDesc> {
+        let prefix = prefix.as_ref();
+        let conn = Arc::new(conn);
+
+        let mut descs = Vec::with_capacity(conn.tools().len());
+        for tool in conn.tools() {
+            let desc = mcp_tool_desc(prefix, tool);
+            self.inner.insert(
+                desc.name.clone(),
+                ToolProviderElem::MCP(MCPToolEntry::new(conn.clone(), tool.name.to_string())),
+            );
+            descs.push(desc);
+        }
+        descs
     }
 
-    /// Register an MCP server reachable over streamable HTTP. Not yet implemented.
-    pub fn insert_mcp_streamable_http(
-        &mut self,
-        _name: impl Into<String>,
-        _url: impl Into<Url>,
-    ) -> Option<ToolProviderElem> {
-        todo!("MCP streamable HTTP registration is not yet implemented")
+    /// Drop every entry registered under `prefix` and close the session behind
+    /// them — which, for a stdio server, ends the child process.
+    ///
+    /// Worth calling: a [`ToolProvider`] in the process-wide registry lives as
+    /// long as the process, so a server registered there outlives every agent
+    /// that used it unless something says otherwise.
+    ///
+    /// Returns how many entries were removed.
+    pub fn remove_mcp(&mut self, prefix: impl AsRef<str>) -> usize {
+        let wanted = prefixed_tool_name(prefix.as_ref(), "");
+        // `prefixed_tool_name("github", "")` is "github__", so this matches the
+        // separator too and a prefix cannot swallow a longer one beside it.
+        let names: Vec<String> = self
+            .inner
+            .iter()
+            .filter(|(name, elem)| {
+                matches!(elem, ToolProviderElem::MCP(_)) && name.starts_with(&wanted)
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        let mut conn = None;
+        for name in &names {
+            if let Some(ToolProviderElem::MCP(entry)) = self.inner.remove(name) {
+                conn.get_or_insert_with(|| entry.conn().clone());
+            }
+        }
+        // After the entries are gone this is the last handle unless an agent is
+        // mid-call, and cancelling is what stops the session either way.
+        if let Some(conn) = conn {
+            conn.shutdown();
+        }
+        names.len()
     }
 
     /// Look up a registered entry by name.
@@ -197,4 +261,99 @@ pub fn get_tool_providers_mut() -> RwLockWriteGuard<'static, HashMap<String, Too
     TOOL_PROVIDERS
         .write()
         .expect("tool_providers lock poisoned")
+}
+
+/// Connect to a stdio MCP server and register its tools under `prefix` in the
+/// named provider, returning the [`ToolDesc`]s to put in an
+/// [`AgentSpec`](crate::agent::AgentSpec).
+///
+/// The two halves in the order that keeps the future `Send`: the connection is
+/// opened first, and the registry lock is taken only afterwards, for the
+/// insert. Doing it by hand in the other order — holding the guard from
+/// [`get_tool_providers_mut`] across the `.await` — compiles but poisons the
+/// future for [`tokio::spawn`].
+///
+/// The server runs on the host, outside the [`Console`](crate::console::Console)
+/// sandbox that the built-in tools use: `Console::exec` is one-shot, so there is
+/// nowhere inside it to keep a process that must hold its stdio open. An MCP
+/// server therefore has whatever access this process has — register only servers
+/// the caller trusts.
+pub async fn register_mcp_stdio(
+    provider: impl AsRef<str>,
+    prefix: impl AsRef<str>,
+    command: impl AsRef<str>,
+    args: impl IntoIterator<Item = impl AsRef<str>>,
+) -> anyhow::Result<Vec<ToolDesc>> {
+    let conn = MCPConnection::stdio(command, args).await?;
+    register_mcp_connection(provider, prefix, conn)
+}
+
+/// Connect to a streamable-HTTP MCP server and register its tools under
+/// `prefix` in the named provider. The HTTP counterpart of
+/// [`register_mcp_stdio`].
+pub async fn register_mcp_streamable_http(
+    provider: impl AsRef<str>,
+    prefix: impl AsRef<str>,
+    url: impl AsRef<str>,
+) -> anyhow::Result<Vec<ToolDesc>> {
+    let conn = MCPConnection::streamable_http(url).await?;
+    register_mcp_connection(provider, prefix, conn)
+}
+
+/// The lock-holding half of the two `register_mcp_*` helpers: no `.await`
+/// inside, so the guard never crosses a suspension point.
+fn register_mcp_connection(
+    provider: impl AsRef<str>,
+    prefix: impl AsRef<str>,
+    conn: MCPConnection,
+) -> anyhow::Result<Vec<ToolDesc>> {
+    let provider = provider.as_ref();
+    let mut registry = get_tool_providers_mut();
+    let tp = registry
+        .get_mut(provider)
+        .ok_or_else(|| anyhow::anyhow!("tool_provider '{}' not registered", provider))?;
+    Ok(tp.insert_mcp(prefix, conn))
+}
+
+/// Remove an MCP server's tools from the named provider and close its session.
+///
+/// Returns how many entries were removed; an unknown provider name is an error,
+/// but an unknown prefix simply removes nothing.
+pub fn unregister_mcp(provider: impl AsRef<str>, prefix: impl AsRef<str>) -> anyhow::Result<usize> {
+    let provider = provider.as_ref();
+    let mut registry = get_tool_providers_mut();
+    let tp = registry
+        .get_mut(provider)
+        .ok_or_else(|| anyhow::anyhow!("tool_provider '{}' not registered", provider))?;
+    Ok(tp.remove_mcp(prefix))
+}
+
+/// Fetch a remote A2A agent's card, register it under `name` in the named
+/// provider, and return the [`ToolDesc`] to put in an
+/// [`AgentSpec`](crate::agent::AgentSpec).
+///
+/// The A2A counterpart of [`register_mcp_stdio`], and split the same way for
+/// the same reason: the card is fetched before the registry lock is taken, so
+/// no guard is held across an `.await`.
+///
+/// One agent is one tool, so unlike an MCP server there is no prefix and no
+/// fan-out — `name` is the tool name the model will see, with any character the
+/// model APIs refuse mapped to `_`.
+pub async fn register_a2a(
+    provider: impl AsRef<str>,
+    name: impl AsRef<str>,
+    url: Url,
+) -> anyhow::Result<ToolDesc> {
+    let desc = get_a2a_tool_desc(name.as_ref(), &url).await?;
+
+    let provider = provider.as_ref();
+    let mut registry = get_tool_providers_mut();
+    let tp = registry
+        .get_mut(provider)
+        .ok_or_else(|| anyhow::anyhow!("tool_provider '{}' not registered", provider))?;
+
+    // Keyed by the sanitised name the desc ended up with, not the raw argument:
+    // `provide` looks entries up by `ToolDesc::name`, so the two must agree.
+    tp.insert_a2a(desc.name.clone(), url);
+    Ok(desc)
 }

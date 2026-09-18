@@ -1,4 +1,5 @@
 mod apply_patch;
+mod docread;
 mod edit;
 mod glob;
 mod grep;
@@ -12,6 +13,7 @@ mod write;
 use std::sync::Arc;
 
 pub use apply_patch::*;
+pub use docread::*;
 pub use edit::*;
 pub use glob::*;
 pub use grep::*;
@@ -31,6 +33,7 @@ type BuiltinFactory = Arc<dyn Fn(&ToolDesc) -> ToolFunc + Send + Sync + 'static>
 pub fn get_builtin_tool_factories() -> Vec<(&'static str, BuiltinFactory)> {
     let shell = get_shell_tool_func();
     let read = get_read_tool_func();
+    let docread = get_docread_tool_func();
     let write = get_write_tool_func();
     let edit = get_edit_tool_func();
     let apply_patch = get_apply_patch_tool_func();
@@ -40,6 +43,7 @@ pub fn get_builtin_tool_factories() -> Vec<(&'static str, BuiltinFactory)> {
     vec![
         ("shell", Arc::new(move |_| shell.clone())),
         ("read", Arc::new(move |_| read.clone())),
+        ("docread", Arc::new(move |_| docread.clone())),
         ("write", Arc::new(move |_| write.clone())),
         ("edit", Arc::new(move |_| edit.clone())),
         ("apply_patch", Arc::new(move |_| apply_patch.clone())),
