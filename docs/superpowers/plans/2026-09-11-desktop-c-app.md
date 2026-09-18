@@ -1,10 +1,10 @@
-# Ailoy Desktop — Plan C: Tauri 앱과 프론트엔드
+# Ailoy Desktop — Plan C: the Tauri app and the frontend
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `ailoy-desktop-core` 엔진을 Tauri 2 앱으로 감싸고, React + Tailwind + shadcn/ui로 3열 레이아웃(세션 / 스레드 / 워크스페이스)의 채팅 UI를 만들어 실제 키로 E2E 시나리오가 동작하게 한다.
+**Goal:** Wrap the `ailoy-desktop-core` engine in a Tauri 2 app, build a chat UI with React + Tailwind + shadcn/ui in a three-column layout (sessions / thread / workspace), and make the E2E scenario work against a real key.
 
-**Architecture:** `src-tauri`는 `Arc<Engine>`을 `State`로 들고 얇은 `#[tauri::command]`만 제공한다. run 이벤트는 run별 `tauri::ipc::Channel<RunEvent>`로 흐르고, 프론트는 `api.ts`(invoke 단일 통로) + `events.ts`(Channel→zustand) + 순수 리듀서 `applyRunEvent`로 스트림 상태를 만든다. 목록·설정은 TanStack Query로 캐시하고 `Message` 이벤트가 오면 해당 세션의 메시지 쿼리를 무효화한다.
+**Architecture:** `src-tauri` holds an `Arc<Engine>` as `State` and exposes nothing but thin `#[tauri::command]`s. Run events flow over a per-run `tauri::ipc::Channel<RunEvent>`, and the frontend builds stream state from `api.ts` (the single path through `invoke`) + `events.ts` (Channel→zustand) + the pure reducer `applyRunEvent`. Lists and settings are cached by TanStack Query, and a `Message` event invalidates that session's message query.
 
 **Tech Stack:** Tauri 2.11(`tauri`, `tauri-build`, `tauri-plugin-dialog`), React 19, Vite 8, TypeScript 5.9+, Tailwind v4(`@tailwindcss/vite`), shadcn/ui, @tanstack/react-query 5, zustand 5, react-markdown 10 + remark-gfm 4, react-shiki, lucide-react, vitest 5
 
@@ -12,42 +12,42 @@
 
 ## Global Constraints
 
-- Plan A·B 완료 상태의 `feat/desktop` 브랜치. `../cortex`는 `feat/exec-timeout`.
-- `apps/desktop/src-tauri`는 **자체 cargo workspace**(루트 `exclude`에 있음). Rust 명령은 그 디렉터리에서 실행한다: `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml`.
-- npm 명령은 `apps/desktop`에서 실행한다. 패키지 매니저는 npm(lockfile `package-lock.json`).
-- 프론트 → Rust 호출은 `src/api.ts`의 함수만 사용한다. 컴포넌트에서 `invoke`를 직접 부르지 않는다.
-- UI 문자열은 `src/strings.ts`에 모은다(한국어). 컴포넌트에 리터럴 문장을 두지 않는다.
-- 자격 증명·API 키는 절대 로그·콘솔에 출력하지 않는다.
-- 커밋 접두: `feat(desktop-app): …`, `feat(desktop-ui): …`.
+- The `feat/desktop` branch with Plan A and B done. `../cortex` is on `feat/exec-timeout`.
+- `apps/desktop/src-tauri` is **its own cargo workspace** (it sits in the root `exclude`). Run Rust commands from that directory: `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml`.
+- Run npm commands from `apps/desktop`. The package manager is npm (lockfile `package-lock.json`).
+- Frontend → Rust calls go only through the functions in `src/api.ts`. Components never call `invoke` directly.
+- UI strings live in `src/strings.ts` (in English). No literal sentences in components.
+- Credentials and API keys never reach a log or the console.
+- Commit prefixes: `feat(desktop-app): …`, `feat(desktop-ui): …`.
 
 ---
 
-## 파일 구조
+## File layout
 
-| 경로 | 책임 |
+| Path | Responsibility |
 |---|---|
-| `apps/desktop/package.json`, `vite.config.ts`, `tsconfig.json`, `index.html`, `components.json` | 프론트 스캐폴드 |
-| `apps/desktop/src/main.tsx`, `App.tsx`, `index.css` | 진입·레이아웃·테마 |
-| `src/types.ts` | 엔진 타입 미러 |
-| `src/api.ts` | invoke 래퍼 |
-| `src/events.ts` | Channel → 스토어 |
-| `src/store/runs.ts`, `src/store/runs.test.ts` | 라이브 run 상태와 순수 리듀서 |
-| `src/strings.ts` | UI 문자열 |
-| `src/lib/toolCall.ts`, `src/lib/toolCall.test.ts` | 툴콜 인자/결과 표시용 파서 |
-| `src/components/Sidebar.tsx`, `Thread.tsx`, `MessageBubble.tsx`, `ToolCallCard.tsx`, `Composer.tsx`, `UsageBar.tsx`, `Markdown.tsx`, `WorkspacePanel.tsx`, `FileTree.tsx`, `MountDialogs.tsx`, `SettingsDialog.tsx`, `Banner.tsx` | 화면 |
-| `src/components/ui/*` | shadcn 생성물 |
-| `apps/desktop/src-tauri/Cargo.toml`, `build.rs`, `tauri.conf.json`, `capabilities/default.json`, `icons/*` | Tauri 스캐폴드 |
-| `src-tauri/src/main.rs`, `lib.rs`, `sidecar.rs`, `logging.rs`, `commands/{mod,sessions,runs,workspace,settings}.rs` | Rust 계층 |
-| `apps/desktop/scripts/build-sidecar.sh` | cortex 콘솔 빌드 → `src-tauri/binaries/` |
+| `apps/desktop/package.json`, `vite.config.ts`, `tsconfig.json`, `index.html`, `components.json` | Frontend scaffold |
+| `apps/desktop/src/main.tsx`, `App.tsx`, `index.css` | Entry point, layout, theme |
+| `src/types.ts` | Mirror of the engine types |
+| `src/api.ts` | invoke wrappers |
+| `src/events.ts` | Channel → store |
+| `src/store/runs.ts`, `src/store/runs.test.ts` | Live run state and the pure reducer |
+| `src/strings.ts` | UI strings |
+| `src/lib/toolCall.ts`, `src/lib/toolCall.test.ts` | Parser for displaying tool call arguments and results |
+| `src/components/Sidebar.tsx`, `Thread.tsx`, `MessageBubble.tsx`, `ToolCallCard.tsx`, `Composer.tsx`, `UsageBar.tsx`, `Markdown.tsx`, `WorkspacePanel.tsx`, `FileTree.tsx`, `MountDialogs.tsx`, `SettingsDialog.tsx`, `Banner.tsx` | Screens |
+| `src/components/ui/*` | shadcn output |
+| `apps/desktop/src-tauri/Cargo.toml`, `build.rs`, `tauri.conf.json`, `capabilities/default.json`, `icons/*` | Tauri scaffold |
+| `src-tauri/src/main.rs`, `lib.rs`, `sidecar.rs`, `logging.rs`, `commands/{mod,sessions,runs,workspace,settings}.rs` | Rust layer |
+| `apps/desktop/scripts/build-sidecar.sh` | Build the cortex console → `src-tauri/binaries/` |
 
 ---
 
-### Task C1: 프론트엔드 스캐폴드 (Vite + React + Tailwind + shadcn + vitest)
+### Task C1: frontend scaffold (Vite + React + Tailwind + shadcn + vitest)
 
 **Files:**
 - Create: `apps/desktop/package.json`, `vite.config.ts`, `tsconfig.json`, `tsconfig.node.json`, `index.html`, `src/main.tsx`, `src/App.tsx`, `src/index.css`, `src/strings.ts`, `components.json`, `src/lib/utils.ts`, `vitest.config.ts`, `src/smoke.test.ts`
 
-- [ ] **Step 1: 스캐폴드 생성**
+- [ ] **Step 1: create the scaffold**
 
 ```bash
 mkdir -p apps/desktop && cd apps/desktop
@@ -57,7 +57,7 @@ npm install @tauri-apps/api@^2.11 @tauri-apps/plugin-dialog@^2.7 @tanstack/react
 npm install -D tailwindcss@^4 @tailwindcss/vite@^4 vitest@^5 @tauri-apps/cli@^2.11 @types/node
 ```
 
-- [ ] **Step 2: Vite/TS 설정**
+- [ ] **Step 2: Vite/TS configuration**
 
 `vite.config.ts`:
 
@@ -88,7 +88,7 @@ export default defineConfig({
 });
 ```
 
-`tsconfig.json`의 `compilerOptions`에 `"baseUrl": ".", "paths": { "@/*": ["./src/*"] }` 추가. `package.json` scripts:
+Add `"baseUrl": ".", "paths": { "@/*": ["./src/*"] }` to `compilerOptions` in `tsconfig.json`. `package.json` scripts:
 
 ```json
 {
@@ -123,65 +123,65 @@ npx shadcn@latest init -d
 npx shadcn@latest add button input textarea dialog scroll-area select badge progress tooltip collapsible separator label switch dropdown-menu
 ```
 
-(`init -d`가 `components.json`, `src/lib/utils.ts`(`cn`), CSS 토큰을 생성한다. `tw-animate-css`가 자동 추가되지 않으면 `npm i tw-animate-css`.)
+(`init -d` generates `components.json`, `src/lib/utils.ts` (`cn`) and the CSS tokens. If `tw-animate-css` is not added automatically, `npm i tw-animate-css`.)
 
-- [ ] **Step 4: 최소 앱과 문자열 파일**
+- [ ] **Step 4: a minimal app and the strings file**
 
 `src/strings.ts`:
 
 ```ts
 export const S = {
   appName: "Ailoy",
-  newChat: "새 대화",
-  untitled: "새 대화",
-  send: "보내기",
-  stop: "중지",
-  composerPlaceholder: "메시지를 입력하세요. Enter로 보내고 Shift+Enter로 줄을 바꿉니다.",
-  thinking: "생각 중",
-  running: "실행 중",
-  interrupted: "중단됨",
-  denied: "거부됨",
-  toolCall: "도구 호출",
-  workspace: "워크스페이스",
-  mounts: "연결",
-  addMount: "+ 연결",
-  connectLocal: "폴더 연결",
-  connectNotion: "Notion 연결",
-  connectS3: "S3 연결",
-  remove: "제거",
-  settings: "설정",
-  providers: "모델 프로바이더",
-  apiKey: "API 키",
-  saveKey: "저장",
-  clearKey: "지우기",
-  defaultModel: "기본 모델",
-  maxTokens: "응답 최대 토큰",
-  maxTurns: "턴 상한",
-  catalogRefresh: "모델 목록 자동 갱신",
-  contextUsage: "컨텍스트",
-  sessionTokens: "세션 토큰",
-  estimatedCost: "추정 비용",
-  rateLimit: "분당 잔여",
-  resetIn: "리셋",
-  degraded: "워크스페이스가 마운트되지 않아 커넥터는 에이전트에게 보이지 않습니다.",
-  noKey: "사용할 프로바이더의 API 키를 설정에서 먼저 입력하세요.",
-  readOnly: "읽기 전용",
-  rename: "이름 바꾸기",
-  delete: "삭제",
-  confirmDelete: "이 대화를 삭제할까요?",
-  path: "경로 (예: /notion)",
-  label: "표시 이름",
-  cancel: "취소",
-  connect: "연결",
-  continueRun: "계속",
-  errorPrefix: "오류",
-  fileTooLarge: "미리보기는 1 MiB까지만 표시합니다.",
-  binaryFile: "텍스트가 아닌 파일입니다.",
-  empty: "비어 있음",
+  newChat: "New chat",
+  untitled: "New chat",
+  send: "Send",
+  stop: "Stop",
+  composerPlaceholder: "Type a message. Enter sends it, Shift+Enter starts a new line.",
+  thinking: "Thinking",
+  running: "Running",
+  interrupted: "Interrupted",
+  denied: "Denied",
+  toolCall: "Tool call",
+  workspace: "Workspace",
+  mounts: "Connections",
+  addMount: "+ Connect",
+  connectLocal: "Connect folder",
+  connectNotion: "Connect Notion",
+  connectS3: "Connect S3",
+  remove: "Remove",
+  settings: "Settings",
+  providers: "Model providers",
+  apiKey: "API key",
+  saveKey: "Save",
+  clearKey: "Clear",
+  defaultModel: "Default model",
+  maxTokens: "Max response tokens",
+  maxTurns: "Turn limit",
+  catalogRefresh: "Refresh the model list automatically",
+  contextUsage: "Context",
+  sessionTokens: "Session tokens",
+  estimatedCost: "Estimated cost",
+  rateLimit: "Rate limit",
+  resetIn: "resets in",
+  degraded: "The workspace is not mounted, so the agent cannot see your connections.",
+  noKey: "Add an API key for the provider you want to use in Settings first.",
+  readOnly: "Read-only",
+  rename: "Rename",
+  delete: "Delete",
+  confirmDelete: "Delete this chat?",
+  path: "Path (e.g. /notion)",
+  label: "Display name",
+  cancel: "Cancel",
+  connect: "Connect",
+  continueRun: "Continue",
+  errorPrefix: "Error",
+  fileTooLarge: "Previews stop at 1 MiB.",
+  binaryFile: "Not a text file.",
+  empty: "Empty",
 } as const;
 ```
 
-`src/App.tsx`(임시 골격, C5에서 교체):
+`src/App.tsx` (a temporary skeleton, replaced in C5):
 
 ```tsx
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -206,26 +206,26 @@ import { S } from "@/strings";
 describe("strings", () => { it("has an app name", () => { expect(S.appName).toBe("Ailoy"); }); });
 ```
 
-- [ ] **Step 5: 확인·커밋**
+- [ ] **Step 5: verify and commit**
 
 ```bash
 npm run typecheck && npm run build && npm test
 cd ../.. && git add apps/desktop && git commit -m "feat(desktop-ui): Vite/React/Tailwind/shadcn scaffold with vitest"
 ```
 
-(`.gitignore`에 `apps/desktop/node_modules`, `apps/desktop/dist`, `apps/desktop/src-tauri/target`, `apps/desktop/src-tauri/gen`, `apps/desktop/src-tauri/binaries`를 추가한다.)
+(Add `apps/desktop/node_modules`, `apps/desktop/dist`, `apps/desktop/src-tauri/target`, `apps/desktop/src-tauri/gen` and `apps/desktop/src-tauri/binaries` to `.gitignore`.)
 
 ---
 
-### Task C2: Tauri 스캐폴드와 엔진 부트스트랩
+### Task C2: Tauri scaffold and engine bootstrap
 
 **Files:**
 - Create: `apps/desktop/src-tauri/Cargo.toml`, `build.rs`, `tauri.conf.json`, `capabilities/default.json`, `icons/*`, `src/main.rs`, `src/lib.rs`, `src/sidecar.rs`, `src/logging.rs`, `src/commands/mod.rs`
 
 **Interfaces:**
-- Produces: `tauri::State<'_, Arc<Engine>>`가 등록된 앱. `commands::mod`에 `pub type Eng<'a> = tauri::State<'a, Arc<Engine>>;`
+- Produces: an app with `tauri::State<'_, Arc<Engine>>` registered. In `commands::mod`, `pub type Eng<'a> = tauri::State<'a, Arc<Engine>>;`
 
-- [ ] **Step 1: 매니페스트와 설정**
+- [ ] **Step 1: manifest and configuration**
 
 `src-tauri/Cargo.toml`:
 
@@ -305,7 +305,7 @@ tracing-appender = "0.2"
 }
 ```
 
-아이콘(cortex-gui PoC의 것을 재사용):
+Icons (reuse the ones from the cortex-gui PoC):
 
 ```bash
 mkdir -p apps/desktop/src-tauri/icons
@@ -314,9 +314,9 @@ for f in 32x32.png 128x128.png 128x128@2x.png icon.icns icon.ico icon.png; do
 done
 ```
 
-`externalBin`은 빌드 시 `binaries/cortex-local-console-<target-triple>` 파일이 있어야 하므로 C10 전까지는 `tauri.conf.json`의 `externalBin` 줄을 잠시 비워 두거나(`[]`), C10의 스크립트를 먼저 한 번 실행한다.
+`externalBin` needs a `binaries/cortex-local-console-<target-triple>` file at build time, so until C10 either empty the `externalBin` line in `tauri.conf.json` for now (`[]`) or run C10's script once first.
 
-- [ ] **Step 2: Rust 진입점**
+- [ ] **Step 2: the Rust entry point**
 
 `src/main.rs`:
 
@@ -383,7 +383,7 @@ pub mod workspace;
 pub type Eng<'a> = tauri::State<'a, Arc<Engine>>;
 ```
 
-(`runs/sessions/settings/workspace` 파일은 C3에서 만들지만, 이 Task의 컴파일을 위해 빈 파일로 생성한다.)
+(The `runs/sessions/settings/workspace` files are written in C3, but create them empty so this Task compiles.)
 
 `src/lib.rs`:
 
@@ -456,9 +456,9 @@ pub fn run() {
 }
 ```
 
-`generate_handler!`에 나열한 명령은 C3에서 구현된다. 이 Task의 컴파일 확인은 C3 이후에 한다(둘을 한 커밋으로 묶어도 된다).
+The commands listed in `generate_handler!` are implemented in C3. Check that this Task compiles after C3 (the two may go in one commit).
 
-- [ ] **Step 3: 커밋(스캐폴드)**
+- [ ] **Step 3: commit (scaffold)**
 
 ```bash
 git add apps/desktop/src-tauri .gitignore && git commit -m "feat(desktop-app): Tauri scaffold, engine bootstrap, logging, sidecar lookup"
@@ -466,13 +466,13 @@ git add apps/desktop/src-tauri .gitignore && git commit -m "feat(desktop-app): T
 
 ---
 
-### Task C3: Tauri 명령
+### Task C3: Tauri commands
 
 **Files:**
 - Create: `src-tauri/src/commands/sessions.rs`, `runs.rs`, `workspace.rs`, `settings.rs`
 
 **Interfaces:**
-- Produces(프론트가 호출하는 이름·인자·반환; 인자 이름은 camelCase로 도착):
+- Produces (the names, arguments and return values the frontend calls; argument names arrive as camelCase):
   | command | args | returns |
   |---|---|---|
   | `session_list` | — | `SessionSummary[]` |
@@ -493,9 +493,9 @@ git add apps/desktop/src-tauri .gitignore && git commit -m "feat(desktop-app): T
   | `settings_get` | — | `Settings` |
   | `settings_set` | `{ patch: SettingsPatch }` | `Settings` |
   | `models_list` | — | `ModelInfo[]` |
-  | `open_logs` | — | `void` (Finder에서 로그 폴더 열기) |
+  | `open_logs` | — | `void` (open the log folder in Finder) |
 
-- [ ] **Step 1: 이벤트 전달 함수 테스트** (`runs.rs` 하단)
+- [ ] **Step 1: test for the event forwarding function** (at the bottom of `runs.rs`)
 
 ```rust
 #[cfg(test)]
@@ -529,7 +529,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 구현**
+- [ ] **Step 2: implementation**
 
 `commands/runs.rs`:
 
@@ -679,26 +679,26 @@ pub fn open_logs(engine: Eng<'_>) -> Result<(), EngineError> {
 }
 ```
 
-- [ ] **Step 3: 확인·커밋**
+- [ ] **Step 3: verify and commit**
 
 ```bash
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml 2>&1 | grep -E 'test result|FAILED|error'
 git add apps/desktop/src-tauri && git commit -m "feat(desktop-app): Tauri commands over the engine with channel-forwarded run events"
 ```
 
-(첫 컴파일은 webview 의존 때문에 수 분 걸린다.) `externalBin` 때문에 `tauri-build`가 실패하면 C10을 먼저 수행하거나 `externalBin: []`로 잠시 비운다.
+(The first compile takes several minutes because of the webview dependency.) If `tauri-build` fails over `externalBin`, do C10 first or empty it to `externalBin: []` for now.
 
 ---
 
-### Task C4: 타입, API 레이어, 이벤트, run 스토어(리듀서 + 테스트)
+### Task C4: types, API layer, events, run store (reducer + tests)
 
 **Files:**
 - Create: `src/types.ts`, `src/api.ts`, `src/events.ts`, `src/store/runs.ts`, `src/store/runs.test.ts`
 
 **Interfaces:**
-- Produces: `api.*` 함수, `startRun(sessionId, text)`, `attachRun(sessionId)`, `cancelRun(sessionId)`, `useRunStore` (세션별 `LiveRun`), 순수 `applyRunEvent(state, ev): LiveRun`, `emptyRun(): LiveRun`
+- Produces: the `api.*` functions, `startRun(sessionId, text)`, `attachRun(sessionId)`, `cancelRun(sessionId)`, `useRunStore` (a `LiveRun` per session), the pure `applyRunEvent(state, ev): LiveRun`, `emptyRun(): LiveRun`
 
-- [ ] **Step 1: `src/types.ts`** (엔진 타입 미러; ailoy Message JSON 포함)
+- [ ] **Step 1: `src/types.ts`** (mirrors the engine types; includes the ailoy Message JSON)
 
 ```ts
 export type Role = "system" | "user" | "assistant" | "tool";
@@ -827,7 +827,7 @@ export function messageOf(err: unknown): string {
 }
 ```
 
-- [ ] **Step 3: 리듀서 테스트** — `src/store/runs.test.ts`
+- [ ] **Step 3: reducer tests** — `src/store/runs.test.ts`
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -914,7 +914,7 @@ describe("applyRunEvent", () => {
 });
 ```
 
-- [ ] **Step 4: 스토어 구현** — `src/store/runs.ts`
+- [ ] **Step 4: store implementation** — `src/store/runs.ts`
 
 ```ts
 import { create } from "zustand";
@@ -1037,7 +1037,7 @@ export async function attachRun(sessionId: string): Promise<string | null> {
 export const cancelRun = (sessionId: string) => api.runCancel(sessionId);
 ```
 
-- [ ] **Step 6: 확인·커밋**
+- [ ] **Step 6: verify and commit**
 
 ```bash
 npm run typecheck && npm test
@@ -1046,14 +1046,14 @@ git add apps/desktop/src && git commit -m "feat(desktop-ui): types, api layer, r
 
 ---
 
-### Task C5: 앱 셸과 세션 사이드바
+### Task C5: app shell and session sidebar
 
 **Files:**
 - Create: `src/components/Sidebar.tsx`, `src/components/Banner.tsx`
 - Modify: `src/App.tsx`, `src/main.tsx`
 
 **Interfaces:**
-- Produces: `App` — 3열 그리드(`Sidebar` 260px / `Thread` / `WorkspacePanel` 320px). 선택 세션 id는 `useState` + `localStorage("ailoy.session")`. `Sidebar` props `{ selected: string | null; onSelect(id): void; onOpenSettings(): void }`.
+- Produces: `App` — a three-column grid (`Sidebar` 260px / `Thread` / `WorkspacePanel` 320px). The selected session id lives in `useState` + `localStorage("ailoy.session")`. `Sidebar` props `{ selected: string | null; onSelect(id): void; onOpenSettings(): void }`.
 
 - [ ] **Step 1: `Sidebar.tsx`**
 
@@ -1108,7 +1108,7 @@ export function Sidebar({ selected, onSelect, onOpenSettings }: { selected: stri
 }
 ```
 
-- [ ] **Step 2: `Banner.tsx`** (Degraded/키 없음 안내)
+- [ ] **Step 2: `Banner.tsx`** (the degraded / no-key notices)
 
 ```tsx
 import { AlertTriangle } from "lucide-react";
@@ -1169,9 +1169,9 @@ export default function App() {
 }
 ```
 
-`Thread`, `WorkspacePanel`, `SettingsDialog`는 C6~C9에서 만든다. 이 Task를 컴파일하려면 각각 `export function X() { return null; }` 스텁을 먼저 둔다.
+`Thread`, `WorkspacePanel` and `SettingsDialog` are written in C6–C9. To compile this Task, drop in an `export function X() { return null; }` stub for each first.
 
-- [ ] **Step 4: 확인·커밋**
+- [ ] **Step 4: verify and commit**
 
 ```bash
 npm run typecheck
@@ -1180,15 +1180,15 @@ git add apps/desktop/src && git commit -m "feat(desktop-ui): app shell and sessi
 
 ---
 
-### Task C6: 스레드 — 메시지, 마크다운, 툴콜 카드, 스트리밍
+### Task C6: thread — messages, markdown, tool call cards, streaming
 
 **Files:**
 - Create: `src/components/Thread.tsx`, `MessageBubble.tsx`, `ToolCallCard.tsx`, `Markdown.tsx`, `src/lib/toolCall.ts`, `src/lib/toolCall.test.ts`
 
 **Interfaces:**
-- Produces: `Thread({ sessionId })` — 저장 메시지 + 라이브 상태 렌더, 새 `message` 이벤트마다 `["messages", id]` 무효화, 마운트 시 `attachRun`. `summarizeToolCall(name, args): string`, `fieldsOf(value): {key, value, kind}[]`.
+- Produces: `Thread({ sessionId })` — renders stored messages plus live state, invalidates `["messages", id]` on every new `message` event, and calls `attachRun` on mount. `summarizeToolCall(name, args): string`, `fieldsOf(value): {key, value, kind}[]`.
 
-- [ ] **Step 1: 툴콜 파서 테스트** — `src/lib/toolCall.test.ts`
+- [ ] **Step 1: tool call parser tests** — `src/lib/toolCall.test.ts`
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -1268,7 +1268,7 @@ export function Markdown({ text }: { text: string }) {
 }
 ```
 
-(`react-shiki`의 기본 export 이름은 `npm view react-shiki readme`로 확인한다. `prose` 클래스를 쓰려면 `npm i -D @tailwindcss/typography` 후 `index.css`에 `@plugin "@tailwindcss/typography";`.)
+(Check `react-shiki`'s default export name with `npm view react-shiki readme`. To use the `prose` classes, `npm i -D @tailwindcss/typography` and then `@plugin "@tailwindcss/typography";` in `index.css`.)
 
 - [ ] **Step 4: `ToolCallCard.tsx`**
 
@@ -1304,7 +1304,7 @@ export function ToolCallCard({ name, args, status, result, elapsedMs }: { name: 
 }
 ```
 
-- [ ] **Step 5: `MessageBubble.tsx`** (저장 메시지 한 턴: user 또는 assistant + 그 툴콜)
+- [ ] **Step 5: `MessageBubble.tsx`** (one stored turn: a user message, or an assistant message plus its tool calls)
 
 ```tsx
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -1422,7 +1422,7 @@ export function Thread({ sessionId }: { sessionId: string | null }) {
 }
 ```
 
-- [ ] **Step 7: 확인·커밋**
+- [ ] **Step 7: verify and commit**
 
 ```bash
 npm run typecheck && npm test
@@ -1431,13 +1431,13 @@ git add apps/desktop/src && git commit -m "feat(desktop-ui): thread with markdow
 
 ---
 
-### Task C7: 컴포저, 모델 선택, 사용량 바
+### Task C7: composer, model picker, usage bar
 
 **Files:**
 - Create: `src/components/Composer.tsx`, `src/components/UsageBar.tsx`
 
 **Interfaces:**
-- Produces: `Composer({ sessionId })` — 텍스트 입력, Enter 전송, 중지 버튼, 모델 선택(`session_set_model`), 위에 `UsageBar`. `UsageBar({ sessionId })` — `session_usage` 쿼리 + 라이브 `contextUsed/contextLimit/rateLimit` 병합.
+- Produces: `Composer({ sessionId })` — text input, Enter sends, a stop button, the model picker (`session_set_model`), and `UsageBar` above it. `UsageBar({ sessionId })` — the `session_usage` query merged with the live `contextUsed/contextLimit/rateLimit`.
 
 - [ ] **Step 1: `UsageBar.tsx`**
 
@@ -1549,7 +1549,7 @@ export function Composer({ sessionId }: { sessionId: string }) {
 }
 ```
 
-- [ ] **Step 3: 확인·커밋**
+- [ ] **Step 3: verify and commit**
 
 ```bash
 npm run typecheck
@@ -1558,12 +1558,12 @@ git add apps/desktop/src && git commit -m "feat(desktop-ui): composer with model
 
 ---
 
-### Task C8: 워크스페이스 패널 — 파일 트리, 미리보기, 마운트, 연결 다이얼로그
+### Task C8: workspace panel — file tree, preview, mounts, connect dialogs
 
 **Files:**
 - Create: `src/components/WorkspacePanel.tsx`, `FileTree.tsx`, `MountDialogs.tsx`
 
-- [ ] **Step 1: `FileTree.tsx`** (지연 로딩 트리; 디렉터리 클릭 시 `fs_list`)
+- [ ] **Step 1: `FileTree.tsx`** (a lazily loaded tree; clicking a directory calls `fs_list`)
 
 ```tsx
 import { useState } from "react";
@@ -1598,7 +1598,7 @@ export function FileTree({ path, depth = 0, onOpen, selected }: { path: string; 
 }
 ```
 
-- [ ] **Step 2: `MountDialogs.tsx`** (로컬/Notion/S3 세 폼; 로컬은 `@tauri-apps/plugin-dialog`의 `open({ directory: true })`)
+- [ ] **Step 2: `MountDialogs.tsx`** (three forms — local/Notion/S3; local uses `open({ directory: true })` from `@tauri-apps/plugin-dialog`)
 
 ```tsx
 import { useState } from "react";
@@ -1735,7 +1735,7 @@ export function WorkspacePanel() {
 }
 ```
 
-- [ ] **Step 4: 확인·커밋**
+- [ ] **Step 4: verify and commit**
 
 ```bash
 npm run typecheck
@@ -1744,12 +1744,12 @@ git add apps/desktop/src && git commit -m "feat(desktop-ui): workspace panel wit
 
 ---
 
-### Task C9: 설정 다이얼로그
+### Task C9: settings dialog
 
 **Files:**
 - Create: `src/components/SettingsDialog.tsx`
 
-- [ ] **Step 1: 구현**
+- [ ] **Step 1: implementation**
 
 ```tsx
 import { useState } from "react";
@@ -1805,7 +1805,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         </section>
         <section className="pt-3 text-xs text-muted-foreground">
           <div>{S.workspace}: <span className="font-mono">{ws.data?.mountpoint}</span> · {ws.data?.status.status}</div>
-          <Button size="sm" variant="link" onClick={() => api.openLogs()}>로그 폴더 열기</Button>
+          <Button size="sm" variant="link" onClick={() => api.openLogs()}>Open logs folder</Button>
         </section>
         {save.isError && <p className="text-sm text-destructive">{api.messageOf(save.error)}</p>}
       </DialogContent>
@@ -1814,9 +1814,9 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
 }
 ```
 
-("로그 폴더 열기"는 `S.openLogs`로 `strings.ts`에 추가한다.)
+("Open logs folder" goes into `strings.ts` as `S.openLogs`.)
 
-- [ ] **Step 2: 확인·커밋**
+- [ ] **Step 2: verify and commit**
 
 ```bash
 npm run typecheck && npm test
@@ -1825,13 +1825,13 @@ git add apps/desktop/src && git commit -m "feat(desktop-ui): settings dialog for
 
 ---
 
-### Task C10: 사이드카 빌드와 번들
+### Task C10: sidecar build and bundling
 
 **Files:**
 - Create: `apps/desktop/scripts/build-sidecar.sh`
-- Modify: `apps/desktop/package.json` (scripts), `src-tauri/tauri.conf.json`(`externalBin` 확인)
+- Modify: `apps/desktop/package.json` (scripts), `src-tauri/tauri.conf.json` (check `externalBin`)
 
-- [ ] **Step 1: 스크립트**
+- [ ] **Step 1: the script**
 
 ```bash
 #!/usr/bin/env bash
@@ -1848,7 +1848,7 @@ cp "$CORTEX/target/$PROFILE/cortex-local-console" "$HERE/src-tauri/binaries/cort
 echo "sidecar: $HERE/src-tauri/binaries/cortex-local-console-$TRIPLE"
 ```
 
-`chmod +x apps/desktop/scripts/build-sidecar.sh`. `package.json` scripts에 추가:
+`chmod +x apps/desktop/scripts/build-sidecar.sh`. Add to `package.json` scripts:
 
 ```json
 "sidecar": "bash scripts/build-sidecar.sh release",
@@ -1857,24 +1857,24 @@ echo "sidecar: $HERE/src-tauri/binaries/cortex-local-console-$TRIPLE"
 "tauri:build": "npm run sidecar && tauri build"
 ```
 
-- [ ] **Step 2: 개발 실행 확인**
+- [ ] **Step 2: check the dev run**
 
 ```bash
 cd apps/desktop && npm run tauri:dev
 ```
 
-Expected: 창이 뜨고 사이드바에 "새 대화" 버튼, 우측에 워크스페이스(마운트 상태 `mounted` — FUSE-T 설치 시), 설정에서 키 입력 가능. 터미널에 `workspace mounted at …` 로그.
+Expected: the window opens with a "New chat" button in the sidebar, the workspace on the right (mount status `mounted` — when FUSE-T is installed), and a settings dialog that accepts a key. `workspace mounted at …` in the terminal log.
 
-- [ ] **Step 3: 번들 확인**
+- [ ] **Step 3: check the bundle**
 
 ```bash
 npm run tauri:build 2>&1 | tail -5
 ls src-tauri/target/release/bundle/macos/
 ```
 
-Expected: `Ailoy.app` 생성. `Ailoy.app/Contents/MacOS/` 안에 `cortex-local-console`이 함께 있어야 한다.
+Expected: `Ailoy.app` is produced. `cortex-local-console` must sit alongside it inside `Ailoy.app/Contents/MacOS/`.
 
-- [ ] **Step 4: 커밋**
+- [ ] **Step 4: commit**
 
 ```bash
 cd ../.. && git add apps/desktop/scripts apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json && git commit -m "feat(desktop-app): sidecar build script and bundle wiring"
@@ -1882,23 +1882,23 @@ cd ../.. && git add apps/desktop/scripts apps/desktop/package.json apps/desktop/
 
 ---
 
-### Task C11: 수동 E2E와 마무리
+### Task C11: manual E2E and wrap-up
 
-- [ ] **Step 1: E2E 체크리스트 실행** (실제 키; `.env`의 `ANTHROPIC_API_KEY`를 설정 다이얼로그에 입력)
+- [ ] **Step 1: run the E2E checklist** (a real key; paste `ANTHROPIC_API_KEY` from `.env` into the settings dialog)
 
-1. 앱 시작 → 워크스페이스 `mounted`, Finder에서 `~/Library/Application Support/com.brekkylab.ailoy/workspace` 열림.
-2. 설정 → Anthropic 키 저장 → 모델 목록에 Anthropic 모델이 `available`.
-3. 새 대화 → "워크스페이스에 있는 파일 목록을 보여줘" → 스트리밍 텍스트, `shell` 툴카드(`ls`) 표시 → 완료 후 카드에 결과.
-4. 로컬 폴더 연결(`/docs`) → "docs 폴더의 README 첫 줄을 읽어줘" → `read` 또는 `cat` 호출과 내용.
-5. Notion 연결(토큰) → 트리에서 페이지 디렉터리 확인 → "notion의 첫 페이지 제목을 알려줘" → `page.json` 읽기.
-6. 긴 작업 중 중지 → `cancelled` 상태, 부분 텍스트 유지, 미완 툴카드 "중단됨".
-7. 앱 종료 → 재시작 → 대화·마운트 복원, 마운트포인트 정상.
-8. 컨텍스트 게이지 %, 세션 토큰, 추정 비용, Anthropic 분당 잔여 % 표시 확인.
-9. 잘못된 키 저장 → 401 오류가 스레드에 표시.
+1. Start the app → workspace `mounted`, `~/Library/Application Support/com.brekkylab.ailoy/workspace` opens in Finder.
+2. Settings → save the Anthropic key → Anthropic models show as `available` in the model list.
+3. New chat → "List the files in the workspace" → streaming text, a `shell` tool card (`ls`) → the result on the card once it finishes.
+4. Connect a local folder (`/docs`) → "Read me the first line of the README in the docs folder" → a `read` or `cat` call and the contents.
+5. Connect Notion (token) → check the page directories in the tree → "Tell me the title of the first page in notion" → reads `page.json`.
+6. Stop during a long task → `cancelled` state, partial text kept, unfinished tool cards "Interrupted".
+7. Quit the app → restart → chats and mounts restored, the mountpoint healthy.
+8. Check that the context gauge %, session tokens, estimated cost and the Anthropic rate limit % are shown.
+9. Save a bad key → the 401 error shows in the thread.
 
-발견한 결함은 이 Task 안에서 고치고 각 수정을 별도 커밋으로 남긴다.
+Fix any defect you find inside this Task and leave each fix as its own commit.
 
-- [ ] **Step 2: 정리**
+- [ ] **Step 2: cleanup**
 
 ```bash
 cd apps/desktop && npm run typecheck && npm test && npm run build
@@ -1907,14 +1907,14 @@ cd ../.. && cargo test -p ailoy-desktop-core 2>&1 | grep -E 'test result|FAILED'
 git add -A && git commit -m "chore(desktop): e2e pass, fixes and polish"
 ```
 
-- [ ] **Step 3: README** — `apps/desktop/README.md`에 실행 방법(FUSE-T 설치, `../cortex` 브랜치 `feat/exec-timeout`, `npm run tauri:dev`), 데이터 디렉터리 위치, 로그 위치, 알려진 제한(stdout 스트리밍 없음, 승인 UI 없음, macOS 전용)을 적고 커밋한다.
+- [ ] **Step 3: README** — in `apps/desktop/README.md`, write down how to run it (install FUSE-T, `../cortex` on branch `feat/exec-timeout`, `npm run tauri:dev`), where the data directory is, where the logs are, and the known limits (no stdout streaming, no approval UI, macOS only), then commit.
 
 ---
 
-## Self-Review 체크리스트 (작성자용)
+## Self-Review checklist (for the author)
 
-- 스펙 §7 명령 표 → C3 전부(추가: `session_set_model`, `open_logs`) ✓; Channel per run ✓; 사이드카 경로 해석 ✓(C2 `sidecar.rs`); 종료 시 `shutdown` ✓; CSP ✓
-- §8 스택·3열·리듀서·툴콜 카드·설정 다이얼로그·문자열 파일 → C1, C4~C9 ✓
-- §10 오류 UX: Degraded 배너(C5), 키 없음 배너(C5), 모델 오류 표시(C6), `max_turns` "계속"(C7), 커넥터 오류 배지(C8), 취소 표시(C6) ✓
-- §11 E2E 체크리스트 → C11 ✓
-- 타입 일치: `RunEvent` 태그(`started, text_delta, thinking_delta, tool_call_started, message, usage, awaiting_approval, done, cancelled, error`)가 엔진 `#[serde(tag="type", rename_all="snake_case")]` 와 일치 ✓; `MountConfig` 태그 `kind` 소문자 ✓; `MountStatus`/`WorkspaceStatus` 태그 `status` 소문자 ✓; command 인자 camelCase(`sessionId`, `onEvent`) ✓
+- Spec §7 command table → all of C3 (added: `session_set_model`, `open_logs`) ✓; Channel per run ✓; sidecar path resolution ✓ (C2 `sidecar.rs`); `shutdown` on exit ✓; CSP ✓
+- §8 stack, three columns, reducer, tool call cards, settings dialog, strings file → C1, C4–C9 ✓
+- §10 error UX: degraded banner (C5), no-key banner (C5), model error display (C6), `max_turns` "Continue" (C7), connector error badge (C8), cancellation display (C6) ✓
+- §11 E2E checklist → C11 ✓
+- Type agreement: the `RunEvent` tags (`started, text_delta, thinking_delta, tool_call_started, message, usage, awaiting_approval, done, cancelled, error`) match the engine's `#[serde(tag="type", rename_all="snake_case")]` ✓; `MountConfig` tag `kind` lowercase ✓; `MountStatus`/`WorkspaceStatus` tag `status` lowercase ✓; command arguments camelCase (`sessionId`, `onEvent`) ✓

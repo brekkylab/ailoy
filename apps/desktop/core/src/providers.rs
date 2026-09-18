@@ -129,7 +129,7 @@ pub fn apply(store: &Store) -> Result<Vec<&'static str>> {
                 .setting_get(BEDROCK_REGION_KEY)?
                 .unwrap_or_else(|| "us-east-1".to_string());
             Some(stored_region.parse().map_err(|_| {
-                EngineError::Invalid(format!("지원하지 않는 Bedrock 리전입니다: {stored_region}"))
+                EngineError::Invalid(format!("Unsupported Bedrock region: {stored_region}"))
             })?)
         }
     };
@@ -217,9 +217,7 @@ pub fn write_settings(store: &Store, patch: &SettingsPatch) -> Result<()> {
     // ── validate ────────────────────────────────────────────────────────────
     for key in patch.provider_keys.keys() {
         if provider(key).is_none() {
-            return Err(EngineError::Invalid(format!(
-                "알 수 없는 프로바이더: {key}"
-            )));
+            return Err(EngineError::Invalid(format!("Unknown provider: {key}")));
         }
     }
     // An empty region (or model) means "clear it"; anything else has to be a value the
@@ -230,7 +228,7 @@ pub fn write_settings(store: &Store, patch: &SettingsPatch) -> Result<()> {
         && r.parse::<BedrockRegion>().is_err()
     {
         return Err(EngineError::Invalid(format!(
-            "지원하지 않는 Bedrock 리전입니다: {r}"
+            "Unsupported Bedrock region: {r}"
         )));
     }
     let default_model = patch.default_model.as_deref().map(str::trim);
@@ -239,7 +237,7 @@ pub fn write_settings(store: &Store, patch: &SettingsPatch) -> Result<()> {
         && split_model_id(m).is_none()
     {
         return Err(EngineError::Invalid(format!(
-            "모델 ID 형식은 provider/model 입니다: {m}"
+            "A model id looks like provider/model: {m}"
         )));
     }
 

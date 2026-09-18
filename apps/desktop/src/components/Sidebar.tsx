@@ -37,7 +37,7 @@ export function Sidebar({
   const [draft, setDraft] = useState("");
   // One instant for the whole list, advanced on its own clock. The query above refetches
   // every 5s but only re-renders when the rows actually change, so without this a session
-  // would sit at "방금" for as long as nothing else happened in the app — which is exactly
+  // would sit at "just now" for as long as nothing else happened in the app — which is exactly
   // the case where the reading matters.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -137,7 +137,7 @@ export function Sidebar({
                     {s.title}
                   </div>
                   {/* Which model this conversation is pinned to, and when it last moved —
-                      the two things that tell apart a list of rows all titled "새 대화".
+                      the two things that tell apart a list of rows all titled "New chat".
                       The full id is still on the row's `title` attribute. */}
                   <div className="truncate text-xs text-muted-foreground">
                     {shortModel(s.model)} · {formatRelativeTime(s.updated_at, now)}
@@ -160,7 +160,7 @@ export function Sidebar({
             )}
           </div>
         ))}
-        {/* A list that failed to load is not an empty list: saying "비어 있음" there would
+        {/* A list that failed to load is not an empty list: saying "Empty" there would
             invite the user to start typing into a storage layer that is not answering. */}
         {sessions.isError ? (
           <p className="p-3 text-xs text-destructive">{api.messageOf(sessions.error)}</p>

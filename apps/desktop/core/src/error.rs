@@ -76,8 +76,8 @@ mod tests {
         // `Invalid` carries messages the user reads verbatim — the Korean survives the
         // round trip rather than arriving as escapes.
         assert_eq!(
-            serde_json::to_value(EngineError::Invalid("제목을 입력해 주세요".into())).unwrap()["message"],
-            serde_json::json!("제목을 입력해 주세요")
+            serde_json::to_value(EngineError::Invalid("Enter a title".into())).unwrap()["message"],
+            serde_json::json!("Enter a title")
         );
     }
 }

@@ -13,21 +13,21 @@ function isoDate(d: Date): string {
 }
 
 /**
- * A timestamp as Korean relative time.
+ * A timestamp as relative time.
  *
  * `now` is a parameter and not `Date.now()` so that a list of rows all measure against the
  * same instant — and so that this is testable without freezing the clock.
  *
- * A timestamp in the future reads as `방금`: the engine's clock and the webview's are the
- * same clock, so any lead is a rounding artefact or a machine whose time just changed, and
- * "in 3 minutes" for a session that already exists is worse than saying nothing new.
+ * A timestamp in the future reads as `just now`: the engine's clock and the webview's are
+ * the same clock, so any lead is a rounding artefact or a machine whose time just changed,
+ * and "in 3 minutes" for a session that already exists is worse than saying nothing new.
  */
 export function formatRelativeTime(ms: number, now: number): string {
   if (!Number.isFinite(ms)) return "";
   const delta = now - ms;
-  if (delta < MINUTE) return "방금";
-  if (delta < HOUR) return `${Math.floor(delta / MINUTE)}분 전`;
-  if (delta < DAY) return `${Math.floor(delta / HOUR)}시간 전`;
-  if (delta < RELATIVE_LIMIT) return `${Math.floor(delta / DAY)}일 전`;
+  if (delta < MINUTE) return "just now";
+  if (delta < HOUR) return `${Math.floor(delta / MINUTE)}m ago`;
+  if (delta < DAY) return `${Math.floor(delta / HOUR)}h ago`;
+  if (delta < RELATIVE_LIMIT) return `${Math.floor(delta / DAY)}d ago`;
   return isoDate(new Date(ms));
 }

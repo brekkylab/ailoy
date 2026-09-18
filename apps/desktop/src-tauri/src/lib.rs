@@ -41,7 +41,7 @@ fn fail_to_start(e: &dyn std::fmt::Display) -> ! {
     // the user's eyes before the process gives up. The most likely cause is a second
     // instance holding the data directory.
     tracing::error!("engine start failed: {e}");
-    let msg = format!("Ailoy를 시작할 수 없습니다.\n\n{e}");
+    let msg = format!("Ailoy could not start.\n\n{e}");
     #[cfg(target_os = "macos")]
     {
         let script = format!(

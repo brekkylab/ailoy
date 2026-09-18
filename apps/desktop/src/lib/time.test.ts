@@ -10,22 +10,22 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
 describe("formatRelativeTime", () => {
-  it("calls anything under a minute 방금", () => {
-    expect(ago(0)).toBe("방금");
-    expect(ago(59_999)).toBe("방금");
+  it("calls anything under a minute just now", () => {
+    expect(ago(0)).toBe("just now");
+    expect(ago(59_999)).toBe("just now");
   });
 
   it("counts down in the largest unit that still fits", () => {
-    expect(ago(MINUTE)).toBe("1분 전");
-    expect(ago(59 * MINUTE)).toBe("59분 전");
-    expect(ago(HOUR)).toBe("1시간 전");
-    expect(ago(23 * HOUR + 59 * MINUTE)).toBe("23시간 전");
-    expect(ago(DAY)).toBe("1일 전");
-    expect(ago(6 * DAY)).toBe("6일 전");
+    expect(ago(MINUTE)).toBe("1m ago");
+    expect(ago(59 * MINUTE)).toBe("59m ago");
+    expect(ago(HOUR)).toBe("1h ago");
+    expect(ago(23 * HOUR + 59 * MINUTE)).toBe("23h ago");
+    expect(ago(DAY)).toBe("1d ago");
+    expect(ago(6 * DAY)).toBe("6d ago");
   });
 
   it("floors rather than rounds, so a row never claims more time than has passed", () => {
-    expect(ago(119_000)).toBe("1분 전");
+    expect(ago(119_000)).toBe("1m ago");
   });
 
   it("switches to a local calendar date at a week", () => {
@@ -35,7 +35,7 @@ describe("formatRelativeTime", () => {
   });
 
   it("does not count forwards when a clock runs ahead", () => {
-    expect(ago(-5 * MINUTE)).toBe("방금");
+    expect(ago(-5 * MINUTE)).toBe("just now");
   });
 
   it("says nothing for a timestamp that is not one", () => {

@@ -194,7 +194,7 @@ impl WorkspaceManager {
             let mut mounts = self.mounts.write().await;
             if mounts.iter().any(|m| m.path == info.path) {
                 return Err(EngineError::Invalid(format!(
-                    "{} 에는 이미 다른 저장소가 연결되어 있습니다",
+                    "{} already has another store connected",
                     info.path
                 )));
             }
@@ -313,14 +313,14 @@ fn prepare_mount_point(mountpoint: &Path) -> std::io::Result<()> {
 /// its components and fails when nothing real is left, which is every spelling of the root.
 ///
 /// Only that failure is rephrased. A `..` segment is refused with the normalizer's own words,
-/// because "루트는 분리할 수 없습니다" is not true of `"/mem/.."` — the caller named a path,
+/// because "The root cannot be detached" is not true of `"/mem/.."` — the caller named a path,
 /// and what is wrong with it is the `..`.
 fn detachable_path(path: &str) -> Result<String> {
     let normalized = crate::workspace::connectors::normalize_mount_path(path).map_err(|e| {
         if path.trim().split('/').any(|s| s == "..") {
             e
         } else {
-            EngineError::Invalid("루트는 분리할 수 없습니다".into())
+            EngineError::Invalid("The root cannot be detached".into())
         }
     })?;
     // The artifacts tree is the workspace's own, like the root: a connector can be taken out
@@ -328,7 +328,7 @@ fn detachable_path(path: &str) -> Result<String> {
     // nowhere to write.
     if normalized == format!("/{ARTIFACTS_PATH}") {
         return Err(EngineError::Invalid(
-            "결과물 디렉터리는 분리할 수 없습니다".into(),
+            "The artifacts directory cannot be detached".into(),
         ));
     }
     Ok(normalized)

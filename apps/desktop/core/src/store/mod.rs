@@ -421,11 +421,11 @@ mod tests {
     fn sessions_round_trip() {
         let s = Store::open_in_memory().unwrap();
         let row = s
-            .session_create("s1", "첫 대화", "anthropic/claude-opus-5")
+            .session_create("s1", "First chat", "anthropic/claude-opus-5")
             .unwrap();
-        assert_eq!(row.title, "첫 대화");
-        s.session_rename("s1", "이름 변경").unwrap();
-        assert_eq!(s.session_get("s1").unwrap().title, "이름 변경");
+        assert_eq!(row.title, "First chat");
+        s.session_rename("s1", "Renamed").unwrap();
+        assert_eq!(s.session_get("s1").unwrap().title, "Renamed");
         assert_eq!(s.session_list().unwrap().len(), 1);
         s.session_delete("s1").unwrap();
         assert!(matches!(s.session_get("s1"), Err(EngineError::NotFound(_))));

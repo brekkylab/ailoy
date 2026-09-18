@@ -1,23 +1,24 @@
 # Ailoy Desktop
 
-macOS 데스크톱 앱. Tauri 2 셸(`src-tauri`) + React 웹뷰(`src`)이고, 실제 일은
-`apps/desktop/core`의 엔진이 한다. 엔진 쪽 설계와 테스트 규칙은
-[`docs/desktop-development.md`](../../docs/desktop-development.md)에 있다.
+A macOS desktop app: a Tauri 2 shell (`src-tauri`) around a React webview (`src`). The
+real work happens in the engine at `apps/desktop/core`. Its design and testing rules are in
+[`docs/desktop-development.md`](../../docs/desktop-development.md).
 
-## 준비물
+## Prerequisites
 
-- **macOS.** v1은 macOS 전용이다. 워크스페이스 마운트가 FUSE-T에 묶여 있다.
-- **FUSE-T** — `brew install --cask fuse-t`. 필수다: 번들이 `libfuse-t.dylib`을
-  직접 링크하므로 FUSE-T가 없는 기계에서는 창도 로그도 오류 대화상자도 없이 실행이
-  실패한다(dyld 단계). 개발 실행(`tauri:dev`)도 같다.
-- **Rust ≥ 1.95** (워크스페이스 `rust-version`), **Node ≥ 22**.
-- **`../cortex` 체크아웃.** `cortex`를 path 의존으로 쓰기 때문에 이 저장소의 형제
-  디렉터리에 있어야 한다. `main` 기준이며 `#43`(workfs를 context·artifacts·scratch
-  세 층으로 분리) 이상이 필요하다 — 그 앞에는 `ContextFs`도, 콘솔의 세 트리도 없다.
-  타임아웃 관련으로는 `#38` 이상이어야 shell 툴의 `timeout_secs`가 실제로 걸리고
-  명령이 띄운 자식까지 정리된다.
+- **macOS.** v1 is macOS-only, because the workspace mount is tied to FUSE-T.
+- **FUSE-T** — `brew install --cask fuse-t`. Required: the bundle links `libfuse-t.dylib`
+  directly, so on a machine without FUSE-T the app fails at the dyld stage, with no window,
+  no log and no error dialog. A development run (`tauri:dev`) behaves the same way.
+- **Rust ≥ 1.95** (the workspace `rust-version`) and **Node ≥ 22**.
+- **A `../cortex` checkout.** `cortex` is a path dependency, so it has to sit next to this
+  repository. Track `main`, at `#43` or later — that is the change that split workfs into
+  the context, artifacts and scratch layers, and before it there is no `ContextFs` and no
+  three-tree console. For timeouts you also want `#38` or later, which is where the shell
+  tool's `timeout_secs` starts being enforced and starts reaping the children a command
+  spawned.
 
-## 실행
+## Running it
 
 ```sh
 cd apps/desktop
@@ -25,55 +26,57 @@ npm install
 npm run tauri:dev
 ```
 
-`tauri dev`를 직접 부르지 말 것. 사이드카(`cortex-local-console`)를 먼저 빌드해
-`src-tauri/binaries/`에 넣어야 하는데 그 일을 `npm run tauri:dev`가 한다
-(`scripts/build-sidecar.sh`). `../cortex`가 다른 곳에 있으면 `CORTEX_DIR`로 알려준다.
+Do not call `tauri dev` directly. The sidecar (`cortex-local-console`) has to be built into
+`src-tauri/binaries/` first, and `npm run tauri:dev` is what does that, through
+`scripts/build-sidecar.sh`. If `../cortex` lives somewhere else, point `CORTEX_DIR` at it.
 
-`.app` 번들은 `npm run tauri:build` — 결과는
+For an `.app` bundle, run `npm run tauri:build`. The result lands at
 `src-tauri/target/release/bundle/macos/Ailoy.app`.
 
-첫 실행에는 키가 없다. **설정**에서 쓰려는 프로바이더의 API 키를 입력해야 모델 목록이
-`available`이 되고 대화를 시작할 수 있다. 키는 엔진이 보관하고 웹뷰로 돌려주지 않는다.
+The first run has no keys. Open **Settings** and enter an API key for the provider you want
+before the model list turns `available` and a chat can start. The engine holds the keys and
+never hands them back to the webview.
 
-## 데이터
+## Data
 
-전부 `~/Library/Application Support/com.brekkylab.ailoy/` 아래에 있다.
+Everything lives under `~/Library/Application Support/com.brekkylab.ailoy/`.
 
-| 경로            | 내용                                                      |
-| --------------- | --------------------------------------------------------- |
-| `ailoy.sqlite`  | 대화·메시지·설정·마운트. 키도 여기에 있다 (파일 권한 0600) |
-| `files/`        | 유저의 파일. 워크스페이스의 뿌리                           |
-| `workspace/`    | FUSE-T 마운트포인트. 에이전트가 읽는 경로                  |
-| `cache/`        | 모델 카탈로그 캐시                                         |
-| `artifacts/`    | 에이전트가 만든 파일. 워크스페이스 안에서는 `/artifacts`로 보인다 |
-| `scratch/`      | 런마다 하나씩 만들어지는 임시 디렉터리. 셸은 여기서 시작하고, 런이 끝나면 지워진다 |
-| `logs/`         | `ailoy.log.<날짜>` (일 단위 롤링)                          |
-| `engine.lock`   | 한 데이터 디렉터리에 한 인스턴스만 허용하는 잠금           |
+| Path           | What it holds                                                          |
+| -------------- | ---------------------------------------------------------------------- |
+| `ailoy.sqlite` | Chats, messages, settings, mounts. Keys too, at file mode 0600          |
+| `files/`       | The user's files. The root of the workspace                             |
+| `workspace/`   | The FUSE-T mountpoint. The path the agent reads                         |
+| `cache/`       | The model catalog cache                                                 |
+| `artifacts/`   | Files the agent produced. Inside the workspace these appear at `/artifacts` |
+| `scratch/`     | One temporary directory per run. The shell starts here, and it is deleted when the run ends |
+| `logs/`        | `ailoy.log.<date>`, rolled daily                                        |
+| `engine.lock`  | The lock that allows one instance per data directory                    |
 
-지우면 처음 상태로 돌아간다.
+Delete the directory to get back to a first-run state.
 
-## 로그
+## Logs
 
-기본 레벨은 `info`, `RUST_LOG`로 바꾼다 (`RUST_LOG=ailoy_desktop_core=debug npm run
-tauri:dev`). 파일은 위의 `logs/ailoy.log.<날짜>`이고, 개발 중에는 stderr로도 나온다.
-앱에서는 **설정 → 로그 폴더 열기**가 그 디렉터리를 Finder로 연다.
+The default level is `info`, and `RUST_LOG` overrides it
+(`RUST_LOG=ailoy_desktop_core=debug npm run tauri:dev`). Logs go to `logs/ailoy.log.<date>`
+above, and during development to stderr as well. In the app, **Settings → Open logs folder**
+opens that directory in Finder.
 
-## 테스트
+## Tests
 
-모두 저장소 루트에서:
+All from the repository root:
 
 ```sh
-npm --prefix apps/desktop test       # 웹뷰 (vitest)
-cargo test -p ailoy-desktop-core     # 엔진
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml   # Tauri 커맨드
+npm --prefix apps/desktop test       # the webview (vitest)
+cargo test -p ailoy-desktop-core     # the engine
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml   # the Tauri commands
 ```
 
-저장소 루트에서 `cargo test`를 인자 없이 돌리지 말 것. 루트 크레이트에는 `.env`의 키로
-실제 API를 호출하는 테스트가 있다.
+Do not run a bare `cargo test` at the repository root. The root crate has tests that call
+real APIs with the keys in `.env`.
 
-실물이 필요한 테스트 넷은 `#[ignore]`다 — FUSE-T가 필요한 `live_workspace`, 빌드된
-콘솔이 필요한 `live_console`과 `live_run`(둘 — 그중 마운트된 워크스페이스를 거치는
-쪽은 FUSE-T도 필요하다). 역시 저장소 루트에서:
+Four tests need real machinery and are `#[ignore]`d: `live_workspace`, which needs FUSE-T,
+and `live_console` plus the two `live_run` tests, which need a built console (and, for the
+one that goes through a mounted workspace, FUSE-T as well). Again from the repository root:
 
 ```sh
 cargo build --manifest-path ../cortex/Cargo.toml -p cortex-local-console
@@ -81,21 +84,25 @@ AILOY_CORTEX_BIN_DIR=$PWD/../cortex/target/debug \
   cargo test -p ailoy-desktop-core --test live_run -- --ignored
 ```
 
-## 알려진 제한
+## Known limitations
 
-- **macOS 전용.**
-- **승인 UI가 없다.** 툴은 곧바로 실행된다. 엔진은 `awaiting_approval` 이벤트를 알지만
-  v1의 웹뷰는 그것을 물어보지 않는다.
-- **툴 실행 중 stdout 스트리밍이 없다.** 툴카드는 호출과 최종 결과를 보여줄 뿐,
-  진행 중인 출력을 흘리지 않는다.
-- **서명하지 않은 번들.** 다른 기계에서는 Gatekeeper를 우회해서 열어야 한다.
-- **데이터 디렉터리당 한 인스턴스.** 두 번째 실행은 잠금을 얻지 못하고 오류 대화상자와
-  함께 종료한다.
-- **에이전트는 워크스페이스를 수정하지 못한다.** 워크스페이스(유저 파일 + 커넥터)는
-  세션의 *context*라 읽기 전용이고, 에이전트가 만든 것은 `/artifacts`로 들어간다.
-  유저 파일을 고쳐 달라는 요청은 v1에서 결과물을 새로 만드는 쪽으로 처리된다.
-- **파일 미리보기는 읽기 전용(편집 UI 없음).** 워크스페이스 패널은 파일을 보여줄 뿐이다.
-- **모델 오류로 끊긴 스트림의 부분 텍스트는 저장되지 않는다.** 사용자가 중지한 런은
-  그때까지의 텍스트를 남기지만, 모델·네트워크 오류로 끊긴 런은 남기지 않는다.
-- **FUSE-T가 없으면 실행 자체가 안 된다.** 마운트를 `degraded`로 낮추는 경로는 FUSE-T가
-  설치돼 있지만 마운트가 실패한 경우에만 닿는다. 약한 링크 + 사전 점검은 후속 과제.
+- **macOS only.**
+- **No approval UI.** Tools run immediately. The engine knows about the `awaiting_approval`
+  event, but the v1 webview never asks.
+- **No stdout streaming while a tool runs.** A tool card shows the call and the final
+  result, not the output as it arrives.
+- **Unsigned bundle.** On another machine it has to be opened around Gatekeeper.
+- **One instance per data directory.** A second launch fails to take the lock and exits with
+  an error dialog.
+- **The agent cannot modify the workspace.** The workspace — the user's files and their
+  connectors — is the session's *context*, so it is read-only, and what the agent makes goes
+  to `/artifacts`. In v1, a request to change one of the user's files is answered by
+  producing a new artifact instead.
+- **File previews are read-only (there is no editor).** The workspace panel shows files and
+  nothing more.
+- **Partial text from a stream that a model error cut short is not saved.** A run the user
+  stopped keeps the text it had produced; a run that died on a model or network error does
+  not.
+- **Without FUSE-T the app does not start at all.** The path that downgrades a mount to
+  `degraded` is reachable only when FUSE-T is installed and the mount itself failed. Weak
+  linking plus a preflight check is follow-up work.

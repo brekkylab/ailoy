@@ -1,101 +1,101 @@
-# Ailoy Desktop — Plan A: ailoy 코어 강화 + cortex exec timeout
+# Ailoy Desktop — Plan A: harden the ailoy core + cortex exec timeout
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** ailoy 에이전트 루프에 취소·턴 상한·툴 승인 훅·실패 시 history 정합성·타입 있는 에러·5xx 재시도·rate-limit 헤더 파싱을 추가하고, cortex 로컬 콘솔에 `timeout_ms` 강제를 구현한다.
+**Goal:** Add cancellation, a turn bound, a tool-approval hook, history consistency on failure, typed errors, 5xx retries and rate-limit header parsing to the ailoy agent loop, and enforce `timeout_ms` in the cortex local console.
 
-**Architecture:** `Agent::run_stream_controlled(query, RunControl)`를 새 진입점으로 추가하고 기존 `run_stream`은 기본 제어로 위임한다. 모든 종료 경로에서 짝 없는 `tool_use`가 history에 남지 않도록 `close_dangling_tool_calls`가 stub `Role::Tool` 메시지를 넣는다. `LangModel`은 `ModelError`(HTTP 상태·재시도 가능 여부)를 내고 응답 헤더를 `RateLimitInfo`로 파싱해 첫 델타에 실어 보낸다. cortex 로컬 콘솔 서버는 `exec.timeout_ms` 경과 시 프로세스 그룹을 kill하고 `TIMED_OUT`을 답한다.
+**Architecture:** Add `Agent::run_stream_controlled(query, RunControl)` as the new entry point and let the existing `run_stream` delegate to it with the default controls. So that no unmatched `tool_use` is ever left in the history on any exit path, `close_dangling_tool_calls` inserts stub `Role::Tool` messages. `LangModel` raises a `ModelError` (HTTP status, whether it is retryable) and parses the response headers into a `RateLimitInfo` that rides on the first delta. The cortex local console server kills the process group when `exec.timeout_ms` elapses and answers `TIMED_OUT`.
 
-**Tech Stack:** Rust 1.97, tokio, tokio-util(`CancellationToken`), thiserror, reqwest 0.13, humantime, axum 0.8(테스트용 가짜 서버), cortex(`../cortex/cortex` path 의존)
+**Tech Stack:** Rust 1.97, tokio, tokio-util (`CancellationToken`), thiserror, reqwest 0.13, humantime, axum 0.8 (fake server for tests), cortex (`../cortex/cortex` path dependency)
 
 **Spec:** `docs/superpowers/specs/2026-09-11-ailoy-desktop-design.md` §5, §9
 
 ## Global Constraints
 
-- 작업 브랜치: ailoy `feat/desktop`(`origin/mem-applied` 기반, 설계서 커밋 `b7c845a8` 포함). cortex는 `../cortex`에 `feat/exec-timeout` 브랜치(Task A2에서 생성) 체크아웃 상태여야 한다.
-- 작업 트리는 `../cortex`가 형제 디렉터리로 보이는 위치여야 한다(`Cargo.toml`의 `cortex = { path = "../cortex/cortex" }`). 권장: 메인 체크아웃에서 `git switch feat/desktop`, 또는 `git worktree add ../ailoy-desktop feat/desktop`.
-- 기존 공개 API(`Agent::run`, `Agent::run_stream`, `anyhow` 반환)는 유지한다. 새 타입은 추가만 한다.
-- 테스트 중 외부 API를 호출하는 라이브 테스트(`.env` 키 필요)는 건드리지 않는다. 새 테스트는 모두 오프라인(axum 가짜 서버)이어야 한다. 단 `shell` 툴 테스트는 `cortex-local-console` 바이너리가 필요하다(`AILOY_CORTEX_CONSOLE` 환경 변수로 경로 지정, 기본 `cortex-local-console`).
-- 커밋 메시지는 conventional commits(`feat(agent): …`). 각 Task 끝에 커밋한다.
-- `cargo fmt` 후 커밋. 편집 스타일은 기존 파일(주석은 "왜"를 설명)을 따른다.
+- Working branch: ailoy `feat/desktop` (based on `origin/mem-applied`, including the design-doc commit `b7c845a8`). cortex must sit at `../cortex` with the `feat/exec-timeout` branch (created in Task A2) checked out.
+- The working tree must sit where `../cortex` is a sibling directory (`Cargo.toml`'s `cortex = { path = "../cortex/cortex" }`). Recommended: `git switch feat/desktop` in the main checkout, or `git worktree add ../ailoy-desktop feat/desktop`.
+- The existing public API (`Agent::run`, `Agent::run_stream`, returning `anyhow`) stays. New types are only added.
+- Leave the live tests that call external APIs (they need keys in `.env`) alone. Every new test must be offline (axum fake server). The one exception is the `shell` tool test, which needs the `cortex-local-console` binary (point at it with the `AILOY_CORTEX_CONSOLE` environment variable; the default is `cortex-local-console`).
+- Commit messages are conventional commits (`feat(agent): …`). Commit at the end of each Task.
+- Commit after `cargo fmt`. Follow the existing files' editing style (comments explain "why").
 
 ---
 
-## 파일 구조
+## File layout
 
-| 경로 | 책임 |
+| Path | Responsibility |
 |---|---|
-| `src/agent/control.rs` (신규) | `RunControl`, `ToolGate`, `ToolCallRequest`, `ToolDecision`, `AllowAll` |
-| `src/agent/error.rs` (신규) | `AgentError` |
-| `src/agent/rt.rs` (수정) | `run_stream_controlled`, `close_dangling_tool_calls`, `run_stream` 위임 |
-| `src/agent/builder.rs` (수정) | `AgentBuilder::max_tokens` |
-| `src/agent/mod.rs` (수정) | 재수출 |
-| `src/agent/test_support.rs` (신규, `cfg(test)`) | 가짜 ChatCompletion SSE 서버, 가짜 프로바이더 등록 헬퍼 |
-| `src/lang_model/error.rs` (신규) | `ModelError` |
-| `src/lang_model/rate_limit.rs` (신규) | 헤더 → `RateLimitInfo` 파서 |
-| `src/lang_model/rt.rs` (수정) | 재시도 정책, 클라이언트 캐시, 헤더 파싱 연결 |
-| `src/lang_model/mod.rs` (수정) | 재수출 |
-| `src/message/rate_limit.rs` (신규) | `RateLimitInfo`, `RateLimitWindow` |
-| `src/message/message.rs`, `message_delta.rs`, `mod.rs` (수정) | `rate_limit` 필드 추가와 누적 |
-| `src/lang_model/impl/api/openai.rs`, `gemini.rs` (수정) | 캐시 토큰 파싱 |
-| `src/tool/impl/builtins/shell.rs` (수정) | `timeout_secs` → `timeout_ms` 전달 |
-| `Cargo.toml` (수정) | `tokio-util`, `humantime` 추가 |
-| `../cortex/cortex-console-servers/local/src/server/mod.rs` (수정) | `execute`에 timeout 강제 |
-| `../cortex/cortex-console-servers/local/tests/exec_timeout.rs` (신규) | timeout E2E |
+| `src/agent/control.rs` (new) | `RunControl`, `ToolGate`, `ToolCallRequest`, `ToolDecision`, `AllowAll` |
+| `src/agent/error.rs` (new) | `AgentError` |
+| `src/agent/rt.rs` (modified) | `run_stream_controlled`, `close_dangling_tool_calls`, `run_stream` delegation |
+| `src/agent/builder.rs` (modified) | `AgentBuilder::max_tokens` |
+| `src/agent/mod.rs` (modified) | Re-exports |
+| `src/agent/test_support.rs` (new, `cfg(test)`) | Fake ChatCompletion SSE server, helper that registers a fake provider |
+| `src/lang_model/error.rs` (new) | `ModelError` |
+| `src/lang_model/rate_limit.rs` (new) | Headers → `RateLimitInfo` parser |
+| `src/lang_model/rt.rs` (modified) | Retry policy, client cache, wiring up header parsing |
+| `src/lang_model/mod.rs` (modified) | Re-exports |
+| `src/message/rate_limit.rs` (new) | `RateLimitInfo`, `RateLimitWindow` |
+| `src/message/message.rs`, `message_delta.rs`, `mod.rs` (modified) | Add the `rate_limit` field, and accumulate it |
+| `src/lang_model/impl/api/openai.rs`, `gemini.rs` (modified) | Cached-token parsing |
+| `src/tool/impl/builtins/shell.rs` (modified) | Pass `timeout_secs` → `timeout_ms` |
+| `Cargo.toml` (modified) | Add `tokio-util`, `humantime` |
+| `../cortex/cortex-console-servers/local/src/server/mod.rs` (modified) | Enforce the timeout in `execute` |
+| `../cortex/cortex-console-servers/local/tests/exec_timeout.rs` (new) | timeout E2E |
 
 ---
 
-### Task A1: 작업 브랜치에 develop(#448 Bedrock) 머지
+### Task A1: Merge develop (#448 Bedrock) into the working branch
 
 **Files:**
-- Modify: `Cargo.toml`, `src/lang_model/impl/api/mod.rs`, `src/lang_model/provider.rs` (머지 결과)
-- Delete(충돌 해소): `src/runenv/sandbox.rs` 등 `src/runenv/*`
+- Modify: `Cargo.toml`, `src/lang_model/impl/api/mod.rs`, `src/lang_model/provider.rs` (merge result)
+- Delete (conflict resolution): `src/runenv/sandbox.rs` and the rest of `src/runenv/*`
 
 **Interfaces:**
-- Produces: `LangModelAPISchema::Bedrock` 변형과 `src/lang_model/impl/api/bedrock.rs`가 브랜치에 존재. 이후 Task는 `match schema` 에 `Bedrock` 가지를 포함해야 한다.
+- Produces: the `LangModelAPISchema::Bedrock` variant and `src/lang_model/impl/api/bedrock.rs` exist on the branch. Later Tasks must include a `Bedrock` arm in `match schema`.
 
-- [ ] **Step 1: 브랜치 확인 및 머지 시작**
+- [ ] **Step 1: Check the branch and start the merge**
 
 ```bash
 git switch feat/desktop
-git log --oneline -1          # b7c845a8 docs(design): ... 이어야 함
+git log --oneline -1          # must read b7c845a8 docs(design): ...
 git merge develop
 ```
 
-Expected: 충돌 보고. 충돌 파일은 대체로 `Cargo.toml`, `Cargo.lock`, `src/runenv/sandbox.rs`(ours에서 삭제됨, theirs에서 수정됨), 경우에 따라 `src/tool/impl/builtins/web_fetch.rs`.
+Expected: conflicts reported. The conflicting files are usually `Cargo.toml`, `Cargo.lock`, `src/runenv/sandbox.rs` (deleted in ours, modified in theirs), and sometimes `src/tool/impl/builtins/web_fetch.rs`.
 
-- [ ] **Step 2: 충돌 해소 규칙 적용**
+- [ ] **Step 2: Apply the conflict-resolution rules**
 
 ```bash
-# runenv는 cortex-applied에서 제거된 모듈: 삭제로 해소
+# runenv is a module cortex-applied removed: resolve it by deleting
 git rm -q src/runenv/sandbox.rs 2>/dev/null || true
 git status --short | grep '^UD\|^DU\|^AA\|^UU'
 ```
 
-- `Cargo.toml`: ours(mem-applied) 기준. `microsandbox*` 의존과 `sandbox` feature는 넣지 않는다. develop이 추가한 의존(있다면 Bedrock 관련 `sha2`/`hmac` 류)만 가져온다. `[features]`는 `default = []`만 남긴다.
-- `src/lang_model/impl/api/mod.rs`: 두 쪽을 합친다 — `LangModelAPISchema::Bedrock` 변형, `BedrockRegion` 재수출, `provider_api`의 `Bedrock => Box::new(BedrockUnmarshal)` 가지, `mod bedrock;`.
-- `src/lang_model/provider.rs`: develop 쪽 `bedrock()` 생성자와 `Default`의 `AWS_BEARER_TOKEN_BEDROCK` 블록을 가져온다.
-- `web_fetch.rs`: develop(#443)의 변경을 받아들이되, 충돌 부분은 컴파일이 되는 쪽으로 develop 우선.
-- `Cargo.lock`: `git checkout --theirs Cargo.lock` 후 Step 3의 `cargo check`가 갱신하게 둔다.
+- `Cargo.toml`: take ours (mem-applied). Do not bring in the `microsandbox*` dependencies or the `sandbox` feature. Take only the dependencies develop added (the Bedrock-related `sha2`/`hmac` sort, if any). Leave `[features]` with `default = []` alone.
+- `src/lang_model/impl/api/mod.rs`: combine both sides — the `LangModelAPISchema::Bedrock` variant, the `BedrockRegion` re-export, `provider_api`'s `Bedrock => Box::new(BedrockUnmarshal)` arm, and `mod bedrock;`.
+- `src/lang_model/provider.rs`: take develop's `bedrock()` constructor and the `AWS_BEARER_TOKEN_BEDROCK` block in `Default`.
+- `web_fetch.rs`: accept develop's (#443) changes, and in the conflicting parts prefer develop, going with whichever side compiles.
+- `Cargo.lock`: run `git checkout --theirs Cargo.lock` and let Step 3's `cargo check` refresh it.
 
-- [ ] **Step 3: 컴파일 확인**
+- [ ] **Step 3: Check that it compiles**
 
 ```bash
 cargo check --all-targets 2>&1 | tail -5
 ```
 
-Expected: `Finished`. 오류가 `runenv`/`Sandbox` 참조라면 그 참조를 지운다(develop 전용 코드).
+Expected: `Finished`. If an error is a reference to `runenv`/`Sandbox`, delete that reference (develop-only code).
 
-- [ ] **Step 4: 오프라인 테스트 통과 확인**
+- [ ] **Step 4: Check the offline tests pass**
 
 ```bash
 cargo test --lib lang_model::provider 2>&1 | tail -3
 cargo test --lib message 2>&1 | tail -3
 ```
 
-Expected: 모두 `test result: ok`.
+Expected: `test result: ok` everywhere.
 
-- [ ] **Step 5: 머지 커밋**
+- [ ] **Step 5: Merge commit**
 
 ```bash
 git add -A
@@ -104,7 +104,7 @@ git commit -m "merge: develop into feat/desktop (Bedrock wire #448; drop microsa
 
 ---
 
-### Task A2: cortex 로컬 콘솔 `timeout_ms` 강제
+### Task A2: Enforce `timeout_ms` in the cortex local console
 
 **Files:**
 - Modify: `../cortex/cortex-console-servers/local/src/server/mod.rs:587-630` (`execute`)
@@ -112,15 +112,15 @@ git commit -m "merge: develop into feat/desktop (Bedrock wire #448; drop microsa
 
 **Interfaces:**
 - Consumes: `ExecCall { cmd: Vec<String>, timeout_ms: Option<u64> }`, `Error::TIMED_OUT: i64 = -32000`, `refused(code, msg) -> Error`, `finished(io::Result<Output>) -> Response`
-- Produces: `exec` 에 `timeout_ms` 가 있으면 경과 시 `Response::Error(Error{code: TIMED_OUT, message: "killed after {ms}ms"})`. 콘솔 세션은 살아 있어 다음 요청을 받는다.
+- Produces: when `exec` carries a `timeout_ms`, expiry answers `Response::Error(Error{code: TIMED_OUT, message: "killed after {ms}ms"})`. The console session stays alive and takes the next request.
 
-- [ ] **Step 1: cortex 브랜치 생성**
+- [ ] **Step 1: Create the cortex branch**
 
 ```bash
 cd ../cortex && git switch -c feat/exec-timeout main && cd -
 ```
 
-- [ ] **Step 2: 실패하는 E2E 테스트 작성**
+- [ ] **Step 2: Write the failing E2E test**
 
 `../cortex/cortex-console-servers/local/tests/exec_timeout.rs`:
 
@@ -199,17 +199,17 @@ async fn no_timeout_means_no_limit() {
 }
 ```
 
-- [ ] **Step 3: 실패 확인**
+- [ ] **Step 3: Confirm it fails**
 
 ```bash
 cd ../cortex && cargo test -p cortex-local-console --test exec_timeout 2>&1 | tail -15; cd -
 ```
 
-Expected: `a_command_past_its_timeout_is_killed_and_reported` FAIL (현재는 10초 뒤 `Ok` 응답이 오거나 `elapsed` 단언 실패).
+Expected: `a_command_past_its_timeout_is_killed_and_reported` FAIL (today an `Ok` response arrives 10 seconds later, or the `elapsed` assertion fails).
 
-- [ ] **Step 4: `execute` 구현**
+- [ ] **Step 4: Implement `execute`**
 
-`../cortex/cortex-console-servers/local/src/server/mod.rs` 의 `execute` 를 다음으로 교체한다(기존 주석은 유지·보강). 파일 상단 `use` 에 `std::time::Duration` 을 추가한다.
+Replace `execute` in `../cortex/cortex-console-servers/local/src/server/mod.rs` with the following (keep and extend the existing comments). Add `std::time::Duration` to the `use` at the top of the file.
 
 ```rust
 /// Run one command, and answer with everything it produced.
@@ -284,17 +284,17 @@ async fn execute(exec: &ExecCall, session: &Session) -> Response {
 }
 ```
 
-모듈 상단 doc 주석 76-78행의 "Neither timeout is enforced" 문장을 "`exec.timeout_ms` is enforced by a kill; `init` carries no default." 로 고친다.
+Change the "Neither timeout is enforced" sentence on lines 76-78 of the module's top doc comment to "`exec.timeout_ms` is enforced by a kill; `init` carries no default."
 
-- [ ] **Step 5: 테스트 통과 확인**
+- [ ] **Step 5: Confirm the tests pass**
 
 ```bash
 cd ../cortex && cargo test -p cortex-local-console --test exec_timeout 2>&1 | tail -8 && cargo test -p cortex-local-console 2>&1 | grep -E 'test result|FAILED' ; cd -
 ```
 
-Expected: 3 passed, 기존 `files`/`workfs` 테스트도 ok.
+Expected: 3 passed, and the existing `files`/`workfs` tests ok too.
 
-- [ ] **Step 6: 커밋(cortex)**
+- [ ] **Step 6: Commit (cortex)**
 
 ```bash
 cd ../cortex && git add -A && git commit -m "feat(local-console): enforce exec timeout_ms with a process-group kill
@@ -306,15 +306,15 @@ default timeout." && cd -
 
 ---
 
-### Task A3: `shell` 툴이 `timeout_secs`를 콘솔에 전달
+### Task A3: The `shell` tool passes `timeout_secs` to the console
 
 **Files:**
 - Modify: `src/tool/impl/builtins/shell.rs`
 
 **Interfaces:**
-- Produces: `shell` 인자 `timeout_secs`(0 또는 생략 = 기본 600초)를 `Console::exec(.., Some(ms))` 로 전달. 만료 시 결과 `{"timed_out": true, "exit_code": -1}` (기존 분기 유지).
+- Produces: the `shell` argument `timeout_secs` (0 or omitted = the default 600 seconds) is passed to `Console::exec(.., Some(ms))`. On expiry the result is `{"timed_out": true, "exit_code": -1}` (the existing branch stays).
 
-- [ ] **Step 1: 실패하는 테스트 추가** (`shell.rs` `mod tests` 안, 기존 헬퍼 `provider()` 사용)
+- [ ] **Step 1: Add the failing test** (inside `shell.rs`'s `mod tests`, using the existing `provider()` helper)
 
 ```rust
     #[tokio::test]
@@ -336,15 +336,15 @@ default timeout." && cd -
     }
 ```
 
-- [ ] **Step 2: 실패 확인**
+- [ ] **Step 2: Confirm it fails**
 
 ```bash
 AILOY_CORTEX_CONSOLE=../cortex/target/debug/cortex-local-console cargo test --lib tool::impl::builtins::shell::tests::test_timeout_secs 2>&1 | tail -5
 ```
 
-Expected: FAIL (`timed_out` 가 `false`, 10초 소요). 바이너리가 없으면 먼저 `(cd ../cortex && cargo build -p cortex-local-console)`.
+Expected: FAIL (`timed_out` is `false`, and it takes 10 seconds). If the binary is missing, run `(cd ../cortex && cargo build -p cortex-local-console)` first.
 
-- [ ] **Step 3: 구현** — `get_shell_tool_func` 안, `console.exec(...)` 호출 직전에 timeout 계산을 넣고 `None` 대신 전달한다.
+- [ ] **Step 3: Implement** — inside `get_shell_tool_func`, compute the timeout right before the `console.exec(...)` call and pass it instead of `None`.
 
 ```rust
         // 0 or absent means the default. The protocol's expiry is a kill with no output,
@@ -361,17 +361,17 @@ Expected: FAIL (`timed_out` 가 `false`, 10초 소요). 바이너리가 없으�
         let out = match console.exec(["sh", "-c", cmd.as_str()], Some(timeout_ms)).await {
 ```
 
-툴 설명의 `timeout_secs` 문구를 `"Timeout in seconds. 0 or omitted means the default (600)."` 로 고친다.
+Change the tool description's `timeout_secs` wording to `"Timeout in seconds. 0 or omitted means the default (600)."`
 
-- [ ] **Step 4: 통과 확인**
+- [ ] **Step 4: Confirm it passes**
 
 ```bash
 AILOY_CORTEX_CONSOLE=../cortex/target/debug/cortex-local-console cargo test --lib tool::impl::builtins::shell 2>&1 | grep -E 'test result|FAILED'
 ```
 
-Expected: 모두 ok.
+Expected: all ok.
 
-- [ ] **Step 5: 커밋**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/tool/impl/builtins/shell.rs
@@ -380,21 +380,21 @@ git commit -m "feat(tool): shell passes timeout_secs to the console (default 600
 
 ---
 
-### Task A4: `ModelError`와 재시도 정책 확대, 클라이언트 캐시
+### Task A4: `ModelError`, a wider retry policy, and a cached client
 
 **Files:**
 - Create: `src/lang_model/error.rs`
-- Modify: `src/lang_model/rt.rs` (`LangModel` 필드, `send_with_retry`), `src/lang_model/mod.rs`
+- Modify: `src/lang_model/rt.rs` (`LangModel` fields, `send_with_retry`), `src/lang_model/mod.rs`
 
 **Interfaces:**
 - Produces:
   ```rust
   pub struct ModelError { pub status: Option<u16>, pub retryable: bool, pub message: String, pub attempts: u32 }
-  // std::error::Error + Display. `anyhow::Error` 로 감싸져 나가며 `downcast_ref::<ModelError>()` 가능.
+  // std::error::Error + Display. It goes out wrapped in an `anyhow::Error`, and `downcast_ref::<ModelError>()` works.
   ```
-  재시도: 429(영구 quota 제외)·408·5xx·transport(connect/timeout/request) 를 최대 3회(총 4시도) 지수 백오프(1,2,4초, `retry-after` 우선, 상한 10초). 그 외 4xx는 즉시 실패.
+  Retries: 429 (except a permanent quota), 408, 5xx and transport failures (connect/timeout/request), up to 3 times (4 attempts in all) with exponential backoff (1, 2, 4 seconds; `retry-after` wins; capped at 10 seconds). Every other 4xx fails immediately.
 
-- [ ] **Step 1: 실패하는 테스트 작성** (`src/lang_model/rt.rs` `mod tests`에 추가; 기존 429 테스트와 같은 axum 패턴)
+- [ ] **Step 1: Write the failing tests** (added to `src/lang_model/rt.rs`'s `mod tests`; the same axum pattern as the existing 429 test)
 
 ```rust
     /// 503 twice then 200: transient server errors are retried like 429.
@@ -466,17 +466,17 @@ git commit -m "feat(tool): shell passes timeout_secs to the console (default 600
     }
 ```
 
-기존 테스트들이 `LangModel { model, provider }` 리터럴로 구성한다면 `LangModel::from_elem(model, elem)` 로 바꾼다(Step 3에서 추가).
+If the existing tests build a `LangModel { model, provider }` literal, switch them to `LangModel::from_elem(model, elem)` (added in Step 3).
 
-- [ ] **Step 2: 실패 확인**
+- [ ] **Step 2: Confirm it fails**
 
 ```bash
 cargo test --lib lang_model::rt::tests::test_retries_5xx 2>&1 | tail -5
 ```
 
-Expected: 컴파일 실패(`from_elem`, `run_with_backoff_base`, `ModelError` 미정의).
+Expected: compile failure (`from_elem`, `run_with_backoff_base` and `ModelError` are undefined).
 
-- [ ] **Step 3: `ModelError` 정의**
+- [ ] **Step 3: Define `ModelError`**
 
 `src/lang_model/error.rs`:
 
@@ -501,9 +501,9 @@ pub struct ModelError {
 }
 ```
 
-`src/lang_model/mod.rs` 에 `mod error; pub use error::ModelError;` 추가.
+Add `mod error; pub use error::ModelError;` to `src/lang_model/mod.rs`.
 
-- [ ] **Step 4: `LangModel` 에 클라이언트 캐시와 생성자 추가, 재시도 재작성**
+- [ ] **Step 4: Add a cached client and a constructor to `LangModel`, and rewrite the retry**
 
 `src/lang_model/rt.rs`:
 
@@ -521,14 +521,14 @@ impl LangModel {
     pub fn from_elem(model: String, provider: LangModelProviderElem) -> Self {
         Self { model, provider, client: reqwest::Client::new() }
     }
-    // try_from_provider 의 `Ok(Self { model: api_model_id, provider: provider_elem })` 를
-    // `Ok(Self::from_elem(api_model_id, provider_elem))` 로 바꾼다.
+    // Change try_from_provider's `Ok(Self { model: api_model_id, provider: provider_elem })`
+    // to `Ok(Self::from_elem(api_model_id, provider_elem))`.
 }
 ```
 
-`run` 은 `run_with_backoff_base(messages, tools, options, Duration::from_secs(1))` 로 위임하고, 새 함수는 기존 `run` 본문에서 `reqwest::Client::new()` 대신 `&self.client` 를, `send_with_retry(...)` 대신 `send_with_retry(&self.client, &url, header_map, &body, provider.as_ref(), backoff_base)` 를 쓴다. `run_stream` 도 `let client = self.client.clone();` 을 스트림 밖에서 캡처해 사용하고 `Duration::from_secs(1)` 을 넘긴다.
+`run` delegates to `run_with_backoff_base(messages, tools, options, Duration::from_secs(1))`, and the new function takes the existing `run` body but uses `&self.client` instead of `reqwest::Client::new()` and `send_with_retry(&self.client, &url, header_map, &body, provider.as_ref(), backoff_base)` instead of `send_with_retry(...)`. `run_stream` likewise captures `let client = self.client.clone();` outside the stream and passes `Duration::from_secs(1)`.
 
-`send_with_retry` 교체:
+Replace `send_with_retry`:
 
 ```rust
 /// POSTs the request, retrying what may recover — 429 (unless the body says the quota is
@@ -589,17 +589,17 @@ async fn send_with_retry(
 }
 ```
 
-`run`/`run_stream` 의 호출부 `?` 는 그대로 동작한다(`ModelError: std::error::Error` → `anyhow`). 기존 `test_retries_429_then_succeeds` 류 테스트는 `retry-after: 0` 을 쓰므로 그대로 통과한다.
+The `?` at the call sites in `run`/`run_stream` keeps working (`ModelError: std::error::Error` → `anyhow`). Existing tests of the `test_retries_429_then_succeeds` sort use `retry-after: 0`, so they pass unchanged.
 
-- [ ] **Step 5: 통과 확인**
+- [ ] **Step 5: Confirm it passes**
 
 ```bash
 cargo test --lib lang_model::rt 2>&1 | grep -E 'test result|FAILED|panicked'
 ```
 
-Expected: 모두 ok(라이브 테스트는 키가 없으면 skip/ignore 규칙에 따름).
+Expected: all ok (live tests follow the skip/ignore rule when there is no key).
 
-- [ ] **Step 6: 커밋**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/lang_model
@@ -608,11 +608,11 @@ git commit -m "feat(lang_model): typed ModelError, retry 5xx/transport, cached r
 
 ---
 
-### Task A5: `RateLimitInfo` 타입과 헤더 파서
+### Task A5: The `RateLimitInfo` type and the header parser
 
 **Files:**
 - Create: `src/message/rate_limit.rs`, `src/lang_model/rate_limit.rs`
-- Modify: `src/message/mod.rs`, `src/message/message.rs`, `src/message/message_delta.rs`, `src/lang_model/mod.rs`, `src/lang_model/rt.rs`, `Cargo.toml`, 그리고 `MessageOutput { .. }` 리터럴이 있는 모든 파일
+- Modify: `src/message/mod.rs`, `src/message/message.rs`, `src/message/message_delta.rs`, `src/lang_model/mod.rs`, `src/lang_model/rt.rs`, `Cargo.toml`, and every file holding a `MessageOutput { .. }` literal
 
 **Interfaces:**
 - Produces:
@@ -623,13 +623,13 @@ git commit -m "feat(lang_model): typed ModelError, retry 5xx/transport, cached r
   // MessageOutput / MessageDeltaOutput: pub rate_limit: Option<RateLimitInfo>  (serde skip_if_none)
   pub(crate) fn lang_model::rate_limit::parse_rate_limit(schema: &LangModelAPISchema, headers: &HeaderMap, now: SystemTime) -> Option<RateLimitInfo>
   ```
-  스트리밍에서는 첫 델타에, 블로킹 `run` 에서는 `MessageOutput` 에 실린다. 누적 시 `other.or(self)`.
+  It rides on the first delta when streaming, and on the `MessageOutput` in the blocking `run`. Accumulation is `other.or(self)`.
 
-- [ ] **Step 1: 의존 추가**
+- [ ] **Step 1: Add the dependency**
 
-`Cargo.toml` `[dependencies]` 에 `humantime = "2"` 추가.
+Add `humantime = "2"` to `Cargo.toml`'s `[dependencies]`.
 
-- [ ] **Step 2: 타입 정의**
+- [ ] **Step 2: Define the types**
 
 `src/message/rate_limit.rs`:
 
@@ -677,7 +677,7 @@ impl RateLimitInfo {
 
 `src/message/mod.rs`: `mod rate_limit; pub use rate_limit::{RateLimitInfo, RateLimitWindow};`
 
-`src/message/message.rs` `MessageOutput` 에 필드 추가(마지막에):
+Add a field to `MessageOutput` in `src/message/message.rs` (at the end):
 
 ```rust
     /// Rate-limit headroom the provider reported with this response, when it reports any.
@@ -685,17 +685,17 @@ impl RateLimitInfo {
     pub rate_limit: Option<RateLimitInfo>,
 ```
 
-`src/message/message_delta.rs` `MessageDeltaOutput` 에 같은 필드 추가; `new()` 에 `rate_limit: None`; `accumulate` 에 `let rate_limit = other.rate_limit.or(self.rate_limit);` 와 결과 구조체에 포함; `finish` 의 `MessageOutput { .. }` 에 `rate_limit: self.rate_limit`; `From<MessageOutput> for MessageDeltaOutput` 에 `rate_limit: out.rate_limit`.
+Add the same field to `MessageDeltaOutput` in `src/message/message_delta.rs`; `rate_limit: None` in `new()`; `let rate_limit = other.rate_limit.or(self.rate_limit);` in `accumulate`, included in the resulting struct; `rate_limit: self.rate_limit` in `finish`'s `MessageOutput { .. }`; `rate_limit: out.rate_limit` in `From<MessageOutput> for MessageDeltaOutput`.
 
-- [ ] **Step 3: 나머지 리터럴 보정**
+- [ ] **Step 3: Fix up the remaining literals**
 
 ```bash
 grep -rn 'source_agent: None' src --include=*.rs | grep -v 'rate_limit' | cut -d: -f1 | sort -u
 ```
 
-나열된 파일(`src/tool/func.rs`, `src/agent/rt.rs`, `src/agent/subagent.rs`, `src/lang_model/impl/api/*.rs` 등)의 `MessageOutput { ... source_agent: None }` / `MessageDeltaOutput { ... }` 리터럴마다 `rate_limit: None,` 을 추가한다. `cargo check --all-targets` 가 빠진 곳을 알려준다.
+In each file listed (`src/tool/func.rs`, `src/agent/rt.rs`, `src/agent/subagent.rs`, `src/lang_model/impl/api/*.rs` and so on), add `rate_limit: None,` to every `MessageOutput { ... source_agent: None }` / `MessageDeltaOutput { ... }` literal. `cargo check --all-targets` points out the ones you missed.
 
-- [ ] **Step 4: 파서 테스트 작성** (`src/lang_model/rate_limit.rs` 의 `mod tests`)
+- [ ] **Step 4: Write the parser tests** (`mod tests` in `src/lang_model/rate_limit.rs`)
 
 ```rust
 #[cfg(test)]
@@ -776,15 +776,15 @@ mod tests {
 }
 ```
 
-- [ ] **Step 5: 실패 확인**
+- [ ] **Step 5: Confirm it fails**
 
 ```bash
 cargo test --lib lang_model::rate_limit 2>&1 | tail -5
 ```
 
-Expected: 컴파일 실패(모듈 없음).
+Expected: compile failure (no such module).
 
-- [ ] **Step 6: 파서 구현** — `src/lang_model/rate_limit.rs`
+- [ ] **Step 6: Implement the parser** — `src/lang_model/rate_limit.rs`
 
 ```rust
 //! Rate-limit headroom, read off response headers per wire schema.
@@ -895,11 +895,11 @@ pub(crate) fn parse_reset_duration(s: &str) -> Option<Duration> {
 }
 ```
 
-`src/lang_model/mod.rs` 에 `pub(crate) mod rate_limit;` 추가. `LangModelAPISchema` 에 `Bedrock` 이 없다면(Task A1 머지 확인) 그 가지를 제거한다.
+Add `pub(crate) mod rate_limit;` to `src/lang_model/mod.rs`. If `LangModelAPISchema` has no `Bedrock` (check the Task A1 merge), drop that arm.
 
-- [ ] **Step 7: 응답에 연결** — `src/lang_model/rt.rs`
+- [ ] **Step 7: Wire it into the response** — `src/lang_model/rt.rs`
 
-`run_with_backoff_base` 에서:
+In `run_with_backoff_base`:
 
 ```rust
                 let response = send_with_retry(&self.client, &url, header_map, &body, provider.as_ref(), backoff_base).await?;
@@ -911,21 +911,21 @@ pub(crate) fn parse_reset_duration(s: &str) -> Option<Duration> {
                 Ok(out)
 ```
 
-`run_stream` 에서: 스트림 밖에서 `let schema = schema.clone();` 을 만들고, 스트림 안에서 응답을 받은 직후
+In `run_stream`: make a `let schema = schema.clone();` outside the stream, and inside the stream, right after the response arrives, put
 
 ```rust
             let mut rate_limit = crate::lang_model::rate_limit::parse_rate_limit(&schema, response.headers(), std::time::SystemTime::now());
 ```
 
-를 두고, `yield output;` 두 곳 모두 직전에
+and immediately before each of the two `yield output;` sites, put
 
 ```rust
                         if let Some(rl) = rate_limit.take() { output.rate_limit = Some(rl); }
 ```
 
-(두 곳의 `output` 바인딩을 `let mut output`/`Some(mut output)` 으로 바꾼다.)
+(Change the `output` binding in both places to `let mut output`/`Some(mut output)`.)
 
-- [ ] **Step 8: 스트림 연결 테스트** (`src/lang_model/rt.rs` `mod tests`)
+- [ ] **Step 8: Test the stream wiring** (`src/lang_model/rt.rs` `mod tests`)
 
 ```rust
     /// Headers on the SSE response land on the first delta only.
@@ -958,16 +958,16 @@ pub(crate) fn parse_reset_duration(s: &str) -> Option<Duration> {
     }
 ```
 
-- [ ] **Step 9: 전체 확인**
+- [ ] **Step 9: Check everything**
 
 ```bash
 cargo check --all-targets 2>&1 | tail -3
 cargo test --lib lang_model::rate_limit lang_model::rt::tests::test_stream_carries message 2>&1 | grep -E 'test result|FAILED|panicked'
 ```
 
-Expected: 컴파일 성공, 테스트 ok.
+Expected: it compiles, tests ok.
 
-- [ ] **Step 10: 커밋**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add -A
@@ -976,15 +976,15 @@ git commit -m "feat(lang_model,message): RateLimitInfo parsed from Anthropic/Ope
 
 ---
 
-### Task A6: 캐시 토큰 파싱 보강 (OpenAI Responses, Gemini)
+### Task A6: Fill in cached-token parsing (OpenAI Responses, Gemini)
 
 **Files:**
 - Modify: `src/lang_model/impl/api/openai.rs:521-536`, `src/lang_model/impl/api/gemini.rs:380-396`
 
 **Interfaces:**
-- Produces: `TokenUsage.cache_read_input_tokens` 가 OpenAI Responses `usage.input_tokens_details.cached_tokens`, Gemini `usageMetadata.cachedContentTokenCount` 에서 채워진다.
+- Produces: `TokenUsage.cache_read_input_tokens` is filled from OpenAI Responses' `usage.input_tokens_details.cached_tokens` and Gemini's `usageMetadata.cachedContentTokenCount`.
 
-- [ ] **Step 1: 실패하는 테스트** — `openai.rs` `mod tests`:
+- [ ] **Step 1: The failing tests** — `openai.rs` `mod tests`:
 
 ```rust
     #[test]
@@ -1013,9 +1013,9 @@ git commit -m "feat(lang_model,message): RateLimitInfo parsed from Anthropic/Ope
     }
 ```
 
-(기존 테스트가 `Unmarshal` 트레이트를 어떻게 호출하는지 — `T::default().unmarshal(val)` 등 — 같은 파일의 `test_unmarshal_usage` 를 따라 맞춘다.)
+(Match how the existing tests call the `Unmarshal` trait — `T::default().unmarshal(val)` and the like — by following `test_unmarshal_usage` in the same file.)
 
-- [ ] **Step 2: 실패 확인**
+- [ ] **Step 2: Confirm it fails**
 
 ```bash
 cargo test --lib 'lang_model::impl::api::openai::tests::test_unmarshal_usage_cached' 'lang_model::impl::api::gemini::tests::test_unmarshal_usage_cached' 2>&1 | grep -E 'test result|panicked'
@@ -1023,9 +1023,9 @@ cargo test --lib 'lang_model::impl::api::openai::tests::test_unmarshal_usage_cac
 
 Expected: FAIL(`None`).
 
-- [ ] **Step 3: 구현** — `openai.rs` usage 파싱에서 `cache_read_input_tokens: u.pointer("/input_tokens_details/cached_tokens").and_then(|v| v.as_u64())`(값 접근 방식은 파일의 기존 코드 — `.get("input_tokens")` 등 — 와 동일한 헬퍼를 사용). `gemini.rs` `parse_usage` 에서 `cache_read_input_tokens: u.get("cachedContentTokenCount").and_then(as_u64)`. `cache_creation_input_tokens` 는 두 곳 모두 `None` 유지.
+- [ ] **Step 3: Implement** — in `openai.rs`'s usage parsing, `cache_read_input_tokens: u.pointer("/input_tokens_details/cached_tokens").and_then(|v| v.as_u64())` (reach the value with the same helper the file's existing code uses — `.get("input_tokens")` and so on). In `gemini.rs`'s `parse_usage`, `cache_read_input_tokens: u.get("cachedContentTokenCount").and_then(as_u64)`. `cache_creation_input_tokens` stays `None` in both places.
 
-- [ ] **Step 4: 통과 확인 후 커밋**
+- [ ] **Step 4: Confirm it passes, then commit**
 
 ```bash
 cargo test --lib lang_model::impl::api 2>&1 | grep -E 'test result|FAILED'
@@ -1034,7 +1034,7 @@ git add src/lang_model/impl/api && git commit -m "fix(lang_model): report cached
 
 ---
 
-### Task A7: `AgentError`, `RunControl`, `ToolGate` 타입
+### Task A7: The `AgentError`, `RunControl` and `ToolGate` types
 
 **Files:**
 - Create: `src/agent/error.rs`, `src/agent/control.rs`
@@ -1044,17 +1044,17 @@ git add src/lang_model/impl/api && git commit -m "fix(lang_model): report cached
 - Produces:
   ```rust
   pub enum AgentError { Cancelled, MaxTurns { turns: u32 }, Model(ModelError), Tool(anyhow::Error), Console(anyhow::Error), Other(anyhow::Error) }
-  impl AgentError { pub fn from_anyhow(e: anyhow::Error) -> Self }   // ModelError 를 찾아 Model 로 분류
-  pub struct RunControl { pub cancel: CancellationToken, pub max_turns: Option<u32>, pub tool_gate: Arc<dyn ToolGate> }  // Default = 무제한/AllowAll
+  impl AgentError { pub fn from_anyhow(e: anyhow::Error) -> Self }   // finds a ModelError and classifies it as Model
+  pub struct RunControl { pub cancel: CancellationToken, pub max_turns: Option<u32>, pub tool_gate: Arc<dyn ToolGate> }  // Default = unbounded/AllowAll
   pub struct ToolCallRequest<'a> { pub id: &'a str, pub name: &'a str, pub arguments: &'a Value }
   pub enum ToolDecision { Allow, Deny { reason: String } }
   #[async_trait] pub trait ToolGate: Send + Sync { async fn review(&self, call: ToolCallRequest<'_>) -> ToolDecision; }
   pub struct AllowAll;
   ```
 
-- [ ] **Step 1: 의존 추가** — `Cargo.toml` `[dependencies]` 에 `tokio-util = "0.7"` 추가.
+- [ ] **Step 1: Add the dependency** — add `tokio-util = "0.7"` to `Cargo.toml`'s `[dependencies]`.
 
-- [ ] **Step 2: 타입 테스트 작성** — `src/agent/control.rs` 하단:
+- [ ] **Step 2: Write the type tests** — at the bottom of `src/agent/control.rs`:
 
 ```rust
 #[cfg(test)]
@@ -1086,7 +1086,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: 구현**
+- [ ] **Step 3: Implement**
 
 `src/agent/error.rs`:
 
@@ -1195,9 +1195,9 @@ impl Default for RunControl {
 }
 ```
 
-`src/agent/mod.rs` 에 `mod control; mod error; pub use control::*; pub use error::AgentError;` 추가.
+Add `mod control; mod error; pub use control::*; pub use error::AgentError;` to `src/agent/mod.rs`.
 
-- [ ] **Step 4: 통과 확인 및 커밋**
+- [ ] **Step 4: Confirm it passes and commit**
 
 ```bash
 cargo test --lib agent::control 2>&1 | grep -E 'test result|FAILED'
@@ -1206,24 +1206,24 @@ git add Cargo.toml Cargo.lock src/agent && git commit -m "feat(agent): AgentErro
 
 ---
 
-### Task A8: 테스트 지원 — 가짜 ChatCompletion SSE 서버와 프로바이더 등록
+### Task A8: Test support — a fake ChatCompletion SSE server and provider registration
 
 **Files:**
 - Create: `src/agent/test_support.rs`
 - Modify: `src/agent/mod.rs` (`#[cfg(test)] pub(crate) mod test_support;`)
 
 **Interfaces:**
-- Produces(테스트 전용):
+- Produces (test-only):
   ```rust
   pub(crate) async fn spawn_sse_server(bodies: Vec<String>, chunk_delay: Option<Duration>) -> (SocketAddr, Arc<AtomicU32> /*call count*/)
-  pub(crate) fn sse_text(text_chunks: &[&str]) -> String                       // assistant 텍스트 → stop
+  pub(crate) fn sse_text(text_chunks: &[&str]) -> String                       // assistant text → stop
   pub(crate) fn sse_tool_call(id: &str, name: &str, args_json: &str) -> String  // tool_calls → tool_calls finish
   pub(crate) fn register_fake_provider(name: &'static str, addr: SocketAddr, tools: Vec<(&str, ToolDesc, ToolFunc)>) -> &'static str
   pub(crate) fn user(text: &str) -> Message
   ```
-  가짜 서버는 i번째 호출에 `bodies[min(i, len-1)]` 를 `text/event-stream` 으로 답한다. `chunk_delay` 가 있으면 `\n\n` 단위 이벤트마다 그만큼 기다린다.
+  On its i-th call the fake server answers `bodies[min(i, len-1)]` as `text/event-stream`. With a `chunk_delay`, it waits that long before each `\n\n`-delimited event.
 
-- [ ] **Step 1: 구현**
+- [ ] **Step 1: Implement**
 
 ```rust
 //! Offline scaffolding for agent-loop tests: a scripted ChatCompletion SSE server and a
@@ -1345,15 +1345,15 @@ pub(crate) fn user(text: &str) -> Message {
 }
 ```
 
-- [ ] **Step 2: 컴파일 확인**
+- [ ] **Step 2: Check that it compiles**
 
 ```bash
 cargo check --all-targets 2>&1 | tail -3
 ```
 
-`LangModelProvider::chat_completion` 시그니처가 `(url: &str, api_key: Option<String>) -> anyhow::Result<LangModelProviderElem>` 인지 `src/lang_model/impl/api/chat_completion.rs` 에서 확인하고 다르면 맞춘다.
+Check in `src/lang_model/impl/api/chat_completion.rs` whether `LangModelProvider::chat_completion`'s signature is `(url: &str, api_key: Option<String>) -> anyhow::Result<LangModelProviderElem>`, and match it if it differs.
 
-- [ ] **Step 3: 커밋**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add src/agent && git commit -m "test(agent): scripted SSE server and fake provider helpers"
@@ -1361,13 +1361,13 @@ git add src/agent && git commit -m "test(agent): scripted SSE server and fake pr
 
 ---
 
-### Task A9: `close_dangling_tool_calls`와 `run_stream_controlled`
+### Task A9: `close_dangling_tool_calls` and `run_stream_controlled`
 
 **Files:**
 - Modify: `src/agent/rt.rs`
 
 **Interfaces:**
-- Consumes: Task A7 타입, A8 헬퍼, `MessageOutput.rate_limit`(A5)
+- Consumes: the Task A7 types, the A8 helpers, `MessageOutput.rate_limit` (A5)
 - Produces:
   ```rust
   impl Agent {
@@ -1378,9 +1378,9 @@ git add src/agent && git commit -m "test(agent): scripted SSE server and fake pr
   pub const INTERRUPTED_BY_CANCEL: &str = "[Interrupted: cancelled before this tool call completed]";
   pub const INTERRUPTED_BY_FAILURE: &str = "[Interrupted: tool execution failed before this tool call completed]";
   ```
-  `run_stream` 은 `run_stream_controlled(query, RunControl::default())` 에 `anyhow` 변환을 얹은 것이 된다.
+  `run_stream` becomes `run_stream_controlled(query, RunControl::default())` with an `anyhow` conversion on top.
 
-- [ ] **Step 1: 단위 테스트 — stub 삽입** (`rt.rs` `mod tests`)
+- [ ] **Step 1: Unit test — stub insertion** (`rt.rs` `mod tests`)
 
 ```rust
     #[test]
@@ -1404,7 +1404,7 @@ git add src/agent && git commit -m "test(agent): scripted SSE server and fake pr
     }
 ```
 
-- [ ] **Step 2: 통합 테스트 4종** (`rt.rs` `mod tests`; `use crate::agent::test_support::*;`, `use crate::agent::{RunControl, ToolGate, ToolCallRequest, ToolDecision, AgentError, INTERRUPTED_BY_CANCEL};`)
+- [ ] **Step 2: Four integration tests** (`rt.rs` `mod tests`; `use crate::agent::test_support::*;`, `use crate::agent::{RunControl, ToolGate, ToolCallRequest, ToolDecision, AgentError, INTERRUPTED_BY_CANCEL};`)
 
 ```rust
     fn slow_tool(secs: u64) -> (&'static str, ToolDesc, ToolFunc) {
@@ -1524,19 +1524,19 @@ git add src/agent && git commit -m "test(agent): scripted SSE server and fake pr
     }
 ```
 
-- [ ] **Step 3: 실패 확인**
+- [ ] **Step 3: Confirm it fails**
 
 ```bash
 cargo test --lib agent::rt::tests::close_dangling agent::rt::tests::cancel_during agent::rt::tests::max_turns agent::rt::tests::denied 2>&1 | tail -5
 ```
 
-Expected: 컴파일 실패(미정의 항목).
+Expected: compile failure (undefined items).
 
-- [ ] **Step 4: 구현** — `src/agent/rt.rs`
+- [ ] **Step 4: Implement** — `src/agent/rt.rs`
 
-`use` 에 추가: `use crate::agent::{AgentError, RunControl, ToolCallRequest, ToolDecision};`
+Add to the `use`: `use crate::agent::{AgentError, RunControl, ToolCallRequest, ToolDecision};`
 
-상수와 헬퍼(`impl Agent` 바깥/안 적절히):
+Constants and helper (outside or inside `impl Agent`, as fits):
 
 ```rust
 /// What a tool call that never got to answer is answered with, so the history it sits in
@@ -1577,7 +1577,7 @@ impl Agent {
 }
 ```
 
-`run_stream` 교체:
+Replace `run_stream`:
 
 ```rust
     /// Token-streaming counterpart to [`run`](Self::run) with the default
@@ -1594,7 +1594,7 @@ impl Agent {
     }
 ```
 
-`run_stream_controlled` (기존 `run_stream` 본문을 이 형태로 옮긴다):
+`run_stream_controlled` (move the existing `run_stream` body into this shape):
 
 ```rust
     /// Drive one agent turn as a stream of deltas under `ctl`.
@@ -1787,19 +1787,19 @@ impl Agent {
     }
 ```
 
-`run`(블로킹) 의 툴 실패 경로에도 같은 보호를 넣는다: `if let Some(e) = failure { Self::close_dangling_tool_calls(&mut self.state.history, INTERRUPTED_BY_FAILURE); Err(e)?; }`.
+Put the same guard on the tool-failure path of `run` (the blocking one): `if let Some(e) = failure { Self::close_dangling_tool_calls(&mut self.state.history, INTERRUPTED_BY_FAILURE); Err(e)?; }`.
 
-`futures::StreamExt` 의 `map` 이 필요하므로 `use futures::{FutureExt as _, Stream, StreamExt as _, ...}` 는 그대로(이미 `StreamExt as _`).
+`map` from `futures::StreamExt` is needed, so `use futures::{FutureExt as _, Stream, StreamExt as _, ...}` stays as it is (it already has `StreamExt as _`).
 
-- [ ] **Step 5: 통과 확인**
+- [ ] **Step 5: Confirm it passes**
 
 ```bash
 cargo test --lib agent 2>&1 | grep -E 'test result|FAILED|panicked'
 ```
 
-Expected: 새 테스트 5개 포함 모두 ok. 기존 `run_stream` 계열 테스트도 동일하게 통과해야 한다(동작 불변).
+Expected: all ok, including the 5 new tests. The existing `run_stream` tests must pass exactly as before (behaviour unchanged).
 
-- [ ] **Step 6: 커밋**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/agent && git commit -m "feat(agent): run_stream_controlled with cancel, turn bound, tool gate and dangling-call repair"
@@ -1807,12 +1807,12 @@ git add src/agent && git commit -m "feat(agent): run_stream_controlled with canc
 
 ---
 
-### Task A10: `AgentBuilder::max_tokens` 와 문서
+### Task A10: `AgentBuilder::max_tokens` and the docs
 
 **Files:**
-- Modify: `src/agent/builder.rs`, `src/agent/rt.rs`(모듈 doc), `README.md`
+- Modify: `src/agent/builder.rs`, `src/agent/rt.rs` (module doc), `README.md`
 
-- [ ] **Step 1: 테스트** (`builder.rs` `mod tests`)
+- [ ] **Step 1: The test** (`builder.rs` `mod tests`)
 
 ```rust
     #[tokio::test]
@@ -1827,7 +1827,7 @@ git add src/agent && git commit -m "feat(agent): run_stream_controlled with canc
     }
 ```
 
-- [ ] **Step 2: 구현** — `AgentBuilder`:
+- [ ] **Step 2: Implement** — `AgentBuilder`:
 
 ```rust
     /// Cap on tokens per model response. The provider default (8192 on Anthropic) is too
@@ -1838,9 +1838,9 @@ git add src/agent && git commit -m "feat(agent): run_stream_controlled with canc
     }
 ```
 
-`Agent` 에 읽기 접근자 추가(`rt.rs`): `pub fn model_options(&self) -> &LangModelOptions { &self.model_options }`.
+Add a read accessor to `Agent` (`rt.rs`): `pub fn model_options(&self) -> &LangModelOptions { &self.model_options }`.
 
-- [ ] **Step 3: 확인·커밋**
+- [ ] **Step 3: Confirm and commit**
 
 ```bash
 cargo test --lib agent::builder 2>&1 | grep -E 'test result|FAILED'
@@ -1849,9 +1849,9 @@ git add src/agent && git commit -m "feat(agent): AgentBuilder::max_tokens and Ag
 
 ---
 
-### Task A11: 전체 검증과 정리
+### Task A11: Full verification and cleanup
 
-- [ ] **Step 1: 포맷·클리피·전체 오프라인 테스트**
+- [ ] **Step 1: Format, clippy, and the whole offline test suite**
 
 ```bash
 cargo fmt --all
@@ -1859,11 +1859,11 @@ cargo clippy --all-targets 2>&1 | grep -E '^(warning|error)' | sort | uniq -c | 
 cargo test --lib 2>&1 | grep -E 'test result|FAILED|panicked'
 ```
 
-Expected: 새로 추가된 clippy 경고 없음(기존 경고 수 유지), 오프라인 테스트 전부 ok. 라이브 테스트가 키 부재로 실패하면 그 테스트 이름이 기존 라이브 테스트인지 확인하고 넘어간다.
+Expected: no newly added clippy warnings (the existing warning count holds), and every offline test ok. If a live test fails for a missing key, check that its name is one of the pre-existing live tests and move on.
 
-- [ ] **Step 2: 설계서 정합성 메모** — `docs/superpowers/specs/2026-09-11-ailoy-desktop-design.md` §5.3 의 `Tool { name, source }` 를 `Tool(anyhow::Error)` 로, §5.5 의 `reset_at: Option<SystemTime>` 를 `reset_at_ms: Option<u64>` 로 고친다(구현과 일치).
+- [ ] **Step 2: Design-doc consistency note** — in `docs/superpowers/specs/2026-09-11-ailoy-desktop-design.md`, change §5.3's `Tool { name, source }` to `Tool(anyhow::Error)` and §5.5's `reset_at: Option<SystemTime>` to `reset_at_ms: Option<u64>` (matching the implementation).
 
-- [ ] **Step 3: 커밋**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add -A && git commit -m "chore(core): fmt, clippy, align spec with implemented types"
@@ -1871,13 +1871,13 @@ git add -A && git commit -m "chore(core): fmt, clippy, align spec with implement
 
 ---
 
-## Self-Review 체크리스트 (작성자용)
+## Self-review checklist (for the author)
 
-- 스펙 §5.1 RunControl/ToolGate/run_stream_controlled → A7, A9 ✓
-- §5.2 취소·턴 상한·거부·실패 stub 규칙 → A9 ✓ (모델 2턴 이후 실패는 툴 결과 커밋 뒤에 발생하므로 stub 불필요 — A9 주석에 명시)
-- §5.3 AgentError/ModelError → A4, A7 ✓ (Tool 변형은 이름 없이 `Tool(anyhow::Error)`; A11에서 스펙 반영)
-- §5.4 재시도 확대·클라이언트 캐시 → A4 ✓
-- §5.5 사용량 캐시 필드·RateLimitInfo·헤더 매핑 → A5, A6 ✓ (`reset_at_ms`)
-- §5.6 기반 브랜치 정리 → A1 ✓
+- Spec §5.1 RunControl/ToolGate/run_stream_controlled → A7, A9 ✓
+- §5.2 the cancel, turn-bound, denial and failure stub rules → A9 ✓ (a failure after the second model turn happens once the tool results have committed, so no stub is needed — spelled out in A9's comments)
+- §5.3 AgentError/ModelError → A4, A7 ✓ (the Tool variant is unnamed, `Tool(anyhow::Error)`; the spec catches up in A11)
+- §5.4 wider retries, cached client → A4 ✓
+- §5.5 usage cache fields, RateLimitInfo, header mapping → A5, A6 ✓ (`reset_at_ms`)
+- §5.6 base-branch cleanup → A1 ✓
 - §9 cortex timeout → A2, A3 ✓
-- 타입 일치: `RateLimitInfo/RateLimitWindow`(message) · `parse_rate_limit`(lang_model::rate_limit) · `AgentError::{Cancelled, MaxTurns{turns}, Model, Tool, Console, Other}` · `RunControl{cancel, max_turns, tool_gate}` · `ToolCallRequest{id,name,arguments}` · `ToolDecision::{Allow, Deny{reason}}` · `INTERRUPTED_BY_CANCEL/FAILURE` — A7~A9 전체에서 동일 철자 사용 ✓
+- Type agreement: `RateLimitInfo/RateLimitWindow` (message) · `parse_rate_limit` (lang_model::rate_limit) · `AgentError::{Cancelled, MaxTurns{turns}, Model, Tool, Console, Other}` · `RunControl{cancel, max_turns, tool_gate}` · `ToolCallRequest{id,name,arguments}` · `ToolDecision::{Allow, Deny{reason}}` · `INTERRUPTED_BY_CANCEL/FAILURE` — spelled identically throughout A7–A9 ✓

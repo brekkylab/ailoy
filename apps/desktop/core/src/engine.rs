@@ -186,7 +186,7 @@ impl Engine {
             Some(m) if !m.trim().is_empty() => {
                 if split_model_id(&m).is_none() {
                     return Err(EngineError::Invalid(format!(
-                        "모델 ID 형식은 provider/model 입니다: {m}"
+                        "A model id looks like provider/model: {m}"
                     )));
                 }
                 m
@@ -194,7 +194,7 @@ impl Engine {
             _ => providers::read_settings(&self.store)?.default_model,
         };
         let id = uuid::Uuid::new_v4().to_string();
-        let r = self.store.session_create(&id, "새 대화", &model)?;
+        let r = self.store.session_create(&id, "New chat", &model)?;
         Ok(SessionSummary {
             id: r.id,
             title: r.title,
@@ -208,7 +208,7 @@ impl Engine {
     pub async fn session_rename(&self, id: &str, title: &str) -> Result<()> {
         let title = title.trim();
         if title.is_empty() {
-            return Err(EngineError::Invalid("제목을 입력해 주세요".into()));
+            return Err(EngineError::Invalid("Enter a title".into()));
         }
         self.store.session_rename(id, title)
     }
@@ -216,7 +216,7 @@ impl Engine {
     pub async fn session_set_model(&self, id: &str, model: &str) -> Result<()> {
         if split_model_id(model).is_none() {
             return Err(EngineError::Invalid(format!(
-                "모델 ID 형식은 provider/model 입니다: {model}"
+                "A model id looks like provider/model: {model}"
             )));
         }
         self.store.session_set_model(id, model)
@@ -236,7 +236,7 @@ impl Engine {
 
     pub async fn run_start(&self, session_id: &str, parts: Vec<Part>) -> Result<RunHandle> {
         if parts.is_empty() {
-            return Err(EngineError::Invalid("메시지가 비어 있습니다".into()));
+            return Err(EngineError::Invalid("The message is empty".into()));
         }
         self.runs.start(session_id, parts).await
     }
@@ -427,7 +427,7 @@ fn lock_data_dir(data_dir: &std::path::Path) -> Result<std::fs::File> {
         .truncate(false)
         .open(&path)?;
     file.try_lock().map_err(|_| {
-        EngineError::Invalid("다른 Ailoy 인스턴스가 이 데이터 디렉터리를 사용 중입니다".into())
+        EngineError::Invalid("Another Ailoy instance is using this data directory".into())
     })?;
     Ok(file)
 }
@@ -615,7 +615,7 @@ mod tests {
             let e = Engine::start(config(dir.path())).await.unwrap();
             e.mount_add(MountRequest {
                 path: "/data".into(),
-                label: Some("데이터".into()),
+                label: Some("data".into()),
                 config: MountConfig::Local {
                     host_root: local.path().to_path_buf(),
                 },
@@ -631,7 +631,7 @@ mod tests {
         let mounts = e.mount_list().await;
         assert!(
             mounts.iter().any(|m| m.path == "/data"
-                && m.label == "데이터"
+                && m.label == "data"
                 && matches!(m.status, MountStatus::Ok)),
             "{mounts:?}"
         );
@@ -716,7 +716,7 @@ mod tests {
             .err()
             .expect("a second engine on the same data directory");
         assert!(matches!(err, EngineError::Invalid(_)), "{err:?}");
-        assert!(err.to_string().contains("다른 Ailoy 인스턴스"), "{err}");
+        assert!(err.to_string().contains("Another Ailoy instance"), "{err}");
 
         // And the lock is the file handle, not a marker to clean up: once the first engine
         // is gone the directory is free again.

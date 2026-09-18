@@ -27,7 +27,7 @@ const fmt = (n: number) =>
 
 /**
  * Whether a window carries the two numbers a percentage needs. A provider that sends the
- * header but leaves a window empty must not put a bare "분당 잔여" label on the bar with
+ * header but leaves a window empty must not put a bare "Rate limit" label on the bar with
  * nothing after it, so the group asks this of all four before it renders at all.
  */
 const hasWindow = (

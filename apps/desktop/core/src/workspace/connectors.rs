@@ -41,13 +41,13 @@ pub fn normalize_mount_path(path: &str) -> Result<String> {
     for segment in path.trim().split('/') {
         match segment {
             "" | "." => continue,
-            ".." => return Err(EngineError::Invalid("경로에 '..' 을 쓸 수 없습니다".into())),
+            ".." => return Err(EngineError::Invalid("A path cannot contain '..'".into())),
             s => segments.push(s),
         }
     }
     if segments.is_empty() {
         return Err(EngineError::Invalid(
-            "연결할 경로를 입력해 주세요 (예: /notion)".into(),
+            "Enter a path to connect at (e.g. /notion)".into(),
         ));
     }
     Ok(format!("/{}", segments.join("/")))
@@ -57,7 +57,7 @@ pub fn normalize_mount_path(path: &str) -> Result<String> {
 /// store implements the write half.
 pub fn describe(config: &MountConfig) -> (MountKind, String, bool) {
     match config {
-        MountConfig::Root => (MountKind::Root, "워크스페이스 파일".into(), true),
+        MountConfig::Root => (MountKind::Root, "Workspace files".into(), true),
         MountConfig::Local { host_root } => {
             // Read-write: `PassthroughFs` serves the host's own permissions, so what this
             // promises is that the store implements the write half — not that every file under
@@ -66,7 +66,7 @@ pub fn describe(config: &MountConfig) -> (MountKind, String, bool) {
         }
         MountConfig::Notion { .. } => (
             MountKind::Notion,
-            "Notion workspace · 읽기 전용".into(),
+            "Notion workspace · read-only".into(),
             false,
         ),
         MountConfig::S3 {
@@ -89,14 +89,14 @@ pub fn describe(config: &MountConfig) -> (MountKind, String, bool) {
 pub async fn build_and_probe(config: &MountConfig) -> Result<Arc<dyn FileSystem>> {
     match config {
         MountConfig::Root => Err(EngineError::Invalid(
-            "루트는 커넥터로 추가할 수 없습니다".into(),
+            "The root cannot be added as a connector".into(),
         )),
         MountConfig::Local { host_root } => {
             let meta = tokio::fs::metadata(host_root)
                 .await
                 .map_err(|e| EngineError::Invalid(format!("{}: {e}", host_root.display())))?;
             if !meta.is_dir() {
-                return Err(EngineError::Invalid("디렉터리를 선택해 주세요".into()));
+                return Err(EngineError::Invalid("Choose a directory".into()));
             }
             Ok(Arc::new(PassthroughFs::new(host_root.clone())))
         }
@@ -104,7 +104,7 @@ pub async fn build_and_probe(config: &MountConfig) -> Result<Arc<dyn FileSystem>
             let api_key = api_key.trim().to_string();
             if api_key.is_empty() {
                 return Err(EngineError::Invalid(
-                    "Notion 통합 토큰을 입력해 주세요".into(),
+                    "Enter a Notion integration token".into(),
                 ));
             }
             let store = NotionFs::new(&NotionConfig { api_key })?;
@@ -112,8 +112,8 @@ pub async fn build_and_probe(config: &MountConfig) -> Result<Arc<dyn FileSystem>
             // first anyway, so a token that cannot do it is a connection worth refusing now.
             tokio::time::timeout(PROBE_TIMEOUT, store.list(Path::new("")))
                 .await
-                .map_err(|_| EngineError::Invalid("Notion 응답이 없습니다 (15초)".into()))?
-                .map_err(|e| EngineError::Invalid(format!("Notion에 연결하지 못했습니다: {e}")))?;
+                .map_err(|_| EngineError::Invalid("Notion did not answer (15s)".into()))?
+                .map_err(|e| EngineError::Invalid(format!("Could not connect to Notion: {e}")))?;
             Ok(Arc::new(store))
         }
         MountConfig::S3 {
@@ -139,13 +139,15 @@ pub async fn build_and_probe(config: &MountConfig) -> Result<Arc<dyn FileSystem>
                     .filter(|v| !v.is_empty()),
             };
             if cfg.bucket.is_empty() {
-                return Err(EngineError::Invalid("버킷 이름을 입력해 주세요".into()));
+                return Err(EngineError::Invalid("Enter a bucket name".into()));
             }
             let store = S3Fs::new(&cfg)?;
             tokio::time::timeout(PROBE_TIMEOUT, store.check_reachable())
                 .await
-                .map_err(|_| EngineError::Invalid("S3 응답이 없습니다 (15초)".into()))?
-                .map_err(|e| EngineError::Invalid(format!("버킷에 연결하지 못했습니다: {e}")))?;
+                .map_err(|_| EngineError::Invalid("S3 did not answer (15s)".into()))?
+                .map_err(|e| {
+                    EngineError::Invalid(format!("Could not connect to the bucket: {e}"))
+                })?;
             Ok(Arc::new(store))
         }
     }

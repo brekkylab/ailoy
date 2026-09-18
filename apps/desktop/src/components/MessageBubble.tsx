@@ -39,7 +39,7 @@ function resultOf(stored: StoredMessage | undefined): unknown {
  *
  * No stored answer at all means the run died before the engine could write one. An
  * answer that *is* the interruption stub means the same thing, written down — either way
- * the card says "중단됨" and shows no output, because the stub is a marker for the model,
+ * the card says "Interrupted" and shows no output, because the stub is a marker for the model,
  * not a result the user wants to read.
  */
 function statusOf(value: unknown, answered: boolean): ToolStatus {

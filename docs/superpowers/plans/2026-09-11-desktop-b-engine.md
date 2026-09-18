@@ -1,61 +1,61 @@
-# Ailoy Desktop — Plan B: 세션 엔진 `ailoy-desktop-core`
+# Ailoy Desktop — Plan B: session engine `ailoy-desktop-core`
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Tauri 없이 테스트 가능한 헤드리스 세션 엔진 크레이트를 만든다 — SQLite 영속, 워크스페이스(WorkFs + FUSE-T 마운트 + 커넥터), 콘솔 스폰, 모델 카탈로그(models.dev), 프로바이더 등록, run actor(취소·이벤트·재조립·사용량).
+**Goal:** Build a headless session engine crate that is testable without Tauri — SQLite persistence, the workspace (WorkFs + FUSE-T mount + connectors), console spawning, the model catalog (models.dev), provider registration, the run actor (cancellation, events, reassembly, usage).
 
-**Architecture:** `Engine`이 `Store`(rusqlite), `WorkspaceManager`(WorkFs·FuseTMount·fsops), `ConsoleFactory`, `Catalog`, `RunManager`를 소유한다. run마다 콘솔 하나를 스폰해 `AgentBuilder`로 `Agent`를 조립하고 `run_stream_controlled`를 actor 태스크에서 구동한다. 델타는 `MessageAssembler`(agent-k 이식)가 `RunEvent`로 바꿔 `broadcast` 채널로 내보내고, 완성 메시지는 즉시 DB에 기록한다.
+**Architecture:** `Engine` owns `Store`(rusqlite), `WorkspaceManager`(WorkFs, FuseTMount, fsops), `ConsoleFactory`, `Catalog` and `RunManager`. Every run spawns one console, assembles an `Agent` with `AgentBuilder`, and drives `run_stream_controlled` on an actor task. `MessageAssembler`(ported from agent-k) turns deltas into `RunEvent`s and sends them out over a `broadcast` channel, and a completed message is written to the DB immediately.
 
-**Tech Stack:** Rust 1.97, tokio, rusqlite 0.40(bundled), cortex(`fuse-t`,`notion`,`s3`), ailoy(Plan A 완료 상태), serde/serde_json, reqwest(카탈로그 갱신), chrono, tracing, uuid
+**Tech Stack:** Rust 1.97, tokio, rusqlite 0.40(bundled), cortex(`fuse-t`,`notion`,`s3`), ailoy(Plan A complete), serde/serde_json, reqwest(catalog refresh), chrono, tracing, uuid
 
 **Spec:** `docs/superpowers/specs/2026-09-11-ailoy-desktop-design.md` §4, §6, §10
 
 ## Global Constraints
 
-- Plan A가 완료된 `feat/desktop` 브랜치 위에서 작업한다. `../cortex`는 `feat/exec-timeout` 체크아웃.
-- 크레이트 경로 `apps/desktop/core`, 이름 `ailoy-desktop-core`, 루트 workspace member. cortex path 의존은 `../../../../cortex/cortex`.
-- 모든 공개 타입은 `serde::{Serialize, Deserialize}` 가능해야 한다(Tauri IPC 페이로드). 자격 증명은 `Settings`/`MountInfo`로 나갈 때 마스킹한다.
-- 단위 테스트는 오프라인·in-memory SQLite. 실제 `cortex-local-console`·FUSE-T가 필요한 테스트는 `#[ignore]`로 표시하고 환경 변수 `AILOY_CORTEX_BIN_DIR`(콘솔 바이너리 디렉터리)로 켠다.
-- 앱 데이터 디렉터리 구조: `<data_dir>/ailoy.sqlite`, `<data_dir>/files/`, `<data_dir>/workspace/`(마운트포인트), `<data_dir>/cache/models.json`.
-- 커밋 메시지 접두: `feat(desktop-core): …`.
+- Work on the `feat/desktop` branch, where Plan A is complete. `../cortex` is checked out at `feat/exec-timeout`.
+- Crate path `apps/desktop/core`, name `ailoy-desktop-core`, a root workspace member. The cortex path dependency is `../../../../cortex/cortex`.
+- Every public type must be `serde::{Serialize, Deserialize}`-able (Tauri IPC payloads). Credentials are masked on their way out through `Settings`/`MountInfo`.
+- Unit tests are offline and use in-memory SQLite. A test that needs a real `cortex-local-console` or FUSE-T is marked `#[ignore]` and turned on with the `AILOY_CORTEX_BIN_DIR` environment variable(the console binary's directory).
+- App data directory layout: `<data_dir>/ailoy.sqlite`, `<data_dir>/files/`, `<data_dir>/workspace/`(the mount point), `<data_dir>/cache/models.json`.
+- Commit message prefix: `feat(desktop-core): …`.
 
 ---
 
-## 파일 구조
+## File layout
 
-| 경로 | 책임 |
+| Path | Responsibility |
 |---|---|
-| `Cargo.toml` (루트, 수정) | members에 `apps/desktop/core`, exclude에 `apps/desktop/src-tauri` |
-| `apps/desktop/core/Cargo.toml` | 크레이트 정의 |
-| `src/lib.rs` | 모듈 선언·재수출 |
+| `Cargo.toml` (root, modified) | `apps/desktop/core` in members, `apps/desktop/src-tauri` in exclude |
+| `apps/desktop/core/Cargo.toml` | Crate definition |
+| `src/lib.rs` | Module declarations and re-exports |
 | `src/error.rs` | `EngineError`, `Result<T>` |
-| `src/types.rs` | IPC 페이로드 타입 전부 |
-| `src/config.rs` | `EngineConfig`와 경로 헬퍼 |
-| `src/store/mod.rs`, `src/store/migrations/0001_init.sql` | SQLite 저장소 |
-| `src/catalog.rs`, `assets/models.json`, `src/bin/gen_catalog.rs` | 모델 카탈로그 |
-| `src/providers.rs` | 설정 → ailoy 프로바이더 등록 |
-| `src/prompt.rs` | 시스템 프리앰블 |
-| `src/workspace/mod.rs`, `shared.rs`, `fsops.rs`, `connectors.rs`, `mount.rs` | 워크스페이스 |
-| `src/console.rs` | 콘솔 바이너리 탐색·스폰 |
-| `src/assembler.rs` | 델타 → 텍스트/thinking/완성 메시지 |
+| `src/types.rs` | Every IPC payload type |
+| `src/config.rs` | `EngineConfig` and the path helpers |
+| `src/store/mod.rs`, `src/store/migrations/0001_init.sql` | SQLite store |
+| `src/catalog.rs`, `assets/models.json`, `src/bin/gen_catalog.rs` | Model catalog |
+| `src/providers.rs` | Settings → provider registration in ailoy |
+| `src/prompt.rs` | System preamble |
+| `src/workspace/mod.rs`, `shared.rs`, `fsops.rs`, `connectors.rs`, `mount.rs` | Workspace |
+| `src/console.rs` | Console binary discovery and spawning |
+| `src/assembler.rs` | Deltas → text/thinking/completed messages |
 | `src/events.rs` | `RunEvent` |
-| `src/usage.rs` | 사용량·비용·컨텍스트 계산 |
+| `src/usage.rs` | Usage, cost and context arithmetic |
 | `src/run.rs` | `RunManager`, actor |
-| `src/engine.rs` | `Engine` 파사드 |
-| `tests/live_console.rs` | `#[ignore]` 통합 테스트 |
+| `src/engine.rs` | The `Engine` facade |
+| `tests/live_console.rs` | `#[ignore]` integration tests |
 
 ---
 
-### Task B1: 크레이트 스캐폴드, 에러, 타입, 설정
+### Task B1: crate scaffold, errors, types, config
 
 **Files:**
-- Modify: `Cargo.toml` (루트)
+- Modify: `Cargo.toml` (root)
 - Create: `apps/desktop/core/Cargo.toml`, `src/lib.rs`, `src/error.rs`, `src/types.rs`, `src/config.rs`
 
 **Interfaces:**
-- Produces(이후 모든 Task가 사용):
+- Produces(used by every later Task):
   ```rust
-  pub enum EngineError { NotFound(String), AlreadyRunning, Invalid(String), ConsoleUnavailable(String), Workspace(String), Storage(rusqlite::Error), Io(std::io::Error), Other(anyhow::Error) }  // Serialize → 문자열
+  pub enum EngineError { NotFound(String), AlreadyRunning, Invalid(String), ConsoleUnavailable(String), Workspace(String), Storage(rusqlite::Error), Io(std::io::Error), Other(anyhow::Error) }  // Serialize → a string
   pub type Result<T> = std::result::Result<T, EngineError>;
   pub struct EngineConfig { pub data_dir: PathBuf, pub console_bin: Option<PathBuf>, pub catalog_refresh: bool, pub mount_workspace: bool }
   impl EngineConfig { pub fn new(data_dir: impl Into<PathBuf>) -> Self; pub fn db_path(&self) -> PathBuf; pub fn files_root(&self) -> PathBuf; pub fn mountpoint(&self) -> PathBuf; pub fn cache_dir(&self) -> PathBuf }
@@ -82,7 +82,7 @@
   pub struct ImportReport { pub files: usize, pub bytes: u64, pub skipped: Vec<String> }
   ```
 
-- [ ] **Step 1: 루트 workspace 갱신** — `Cargo.toml`(루트):
+- [ ] **Step 1: update the root workspace** — `Cargo.toml`(root):
 
 ```toml
 [workspace]
@@ -98,7 +98,7 @@ exclude = [
 ]
 ```
 
-- [ ] **Step 2: 크레이트 매니페스트** — `apps/desktop/core/Cargo.toml`:
+- [ ] **Step 2: crate manifest** — `apps/desktop/core/Cargo.toml`:
 
 ```toml
 [package]
@@ -170,7 +170,7 @@ impl serde::Serialize for EngineError {
 pub type Result<T> = std::result::Result<T, EngineError>;
 ```
 
-- [ ] **Step 4: `src/types.rs`** — 위 Interfaces 블록의 모든 타입을 `#[derive(Clone, Debug, Serialize, Deserialize)]`로 정의한다. 열거형 serde 속성: `MountKind`/`MountStatus`/`WorkspaceStatus`는 `#[serde(rename_all = "lowercase")]`, `MountStatus`·`WorkspaceStatus`는 추가로 `#[serde(tag = "status")]`, `MountConfig`는 `#[serde(tag = "kind", rename_all = "lowercase")]`. `SettingsPatch`는 `Default`도 파생하고 `#[serde(default)]` 를 구조체에 붙여 부분 패치가 가능하게 한다(테스트가 `SettingsPatch::default()`를 쓴다). `MountKind`·`MountStatus`·`WorkspaceStatus`는 `PartialEq`도 파생한다. 끝에:
+- [ ] **Step 4: `src/types.rs`** — Define every type in the Interfaces block above with `#[derive(Clone, Debug, Serialize, Deserialize)]`. Enum serde attributes: `MountKind`/`MountStatus`/`WorkspaceStatus` take `#[serde(rename_all = "lowercase")]`, `MountStatus` and `WorkspaceStatus` additionally take `#[serde(tag = "status")]`, and `MountConfig` takes `#[serde(tag = "kind", rename_all = "lowercase")]`. `SettingsPatch` also derives `Default` and carries `#[serde(default)]` on the struct so that a partial patch works(the tests use `SettingsPatch::default()`). `MountKind`, `MountStatus` and `WorkspaceStatus` also derive `PartialEq`. At the end:
 
 ```rust
 pub fn now_ms() -> i64 {
@@ -229,7 +229,7 @@ impl EngineConfig {
 }
 ```
 
-- [ ] **Step 6: `src/lib.rs`** (아직 없는 모듈은 이 Task에서는 선언하지 않고, 각 Task가 추가한다)
+- [ ] **Step 6: `src/lib.rs`** (a module that does not exist yet is not declared in this Task; each Task adds its own)
 
 ```rust
 //! Ailoy Desktop's session engine: everything the window does, without the window.
@@ -243,18 +243,18 @@ pub use error::{EngineError, Result};
 pub use types::*;
 ```
 
-- [ ] **Step 7: 컴파일과 커밋**
+- [ ] **Step 7: compile and commit**
 
 ```bash
 cargo check -p ailoy-desktop-core 2>&1 | tail -3
 git add Cargo.toml apps/desktop/core && git commit -m "feat(desktop-core): crate scaffold, error and IPC types, config"
 ```
 
-`gen-catalog` bin이 아직 없어 실패하면 `src/bin/gen_catalog.rs` 에 `fn main() {}` 스텁을 두고 Task B3에서 채운다.
+If it fails because the `gen-catalog` bin does not exist yet, put a `fn main() {}` stub in `src/bin/gen_catalog.rs` and fill it in during Task B3.
 
 ---
 
-### Task B2: SQLite 저장소
+### Task B2: the SQLite store
 
 **Files:**
 - Create: `src/store/mod.rs`, `src/store/migrations/0001_init.sql`
@@ -273,16 +273,16 @@ git add Cargo.toml apps/desktop/core && git commit -m "feat(desktop-core): crate
     pub fn session_create(&self, id: &str, title: &str, model: &str) -> Result<SessionRow>;
     pub fn session_rename(&self, id: &str, title: &str) -> Result<()>; pub fn session_set_model(&self, id: &str, model: &str) -> Result<()>;
     pub fn session_touch(&self, id: &str) -> Result<()>; pub fn session_delete(&self, id: &str) -> Result<()>;
-    pub fn message_append(&self, session_id: &str, m: NewMessage<'_>) -> Result<i64>;   // 반환: seq
+    pub fn message_append(&self, session_id: &str, m: NewMessage<'_>) -> Result<i64>;   // returns: seq
     pub fn message_list(&self, session_id: &str) -> Result<Vec<StoredMessage>>;
-    pub fn message_history(&self, session_id: &str) -> Result<Vec<Message>>;            // depth 0만, seq 순
-    pub fn message_usages(&self, session_id: &str) -> Result<Vec<TokenUsage>>;         // assistant usage 모두, seq 순
+    pub fn message_history(&self, session_id: &str) -> Result<Vec<Message>>;            // depth 0 only, in seq order
+    pub fn message_usages(&self, session_id: &str) -> Result<Vec<TokenUsage>>;         // every assistant usage, in seq order
     pub fn mount_list(&self) -> Result<Vec<MountRow>>; pub fn mount_insert(&self, row: &MountRow) -> Result<()>; pub fn mount_delete(&self, path: &str) -> Result<()>;
     pub fn setting_get(&self, key: &str) -> Result<Option<String>>; pub fn setting_set(&self, key: &str, value: &str) -> Result<()>; pub fn setting_delete(&self, key: &str) -> Result<()>;
   }
   ```
 
-- [ ] **Step 1: 마이그레이션 SQL** — `src/store/migrations/0001_init.sql`
+- [ ] **Step 1: the migration SQL** — `src/store/migrations/0001_init.sql`
 
 ```sql
 CREATE TABLE workspaces (
@@ -331,7 +331,7 @@ CREATE TABLE settings (
 );
 ```
 
-- [ ] **Step 2: 실패하는 테스트** — `src/store/mod.rs` 하단 `mod tests`:
+- [ ] **Step 2: a failing test** — `mod tests` at the bottom of `src/store/mod.rs`:
 
 ```rust
 #[cfg(test)]
@@ -347,10 +347,10 @@ mod tests {
     #[test]
     fn sessions_round_trip() {
         let s = Store::open_in_memory().unwrap();
-        let row = s.session_create("s1", "첫 대화", "anthropic/claude-opus-5").unwrap();
-        assert_eq!(row.title, "첫 대화");
-        s.session_rename("s1", "이름 변경").unwrap();
-        assert_eq!(s.session_get("s1").unwrap().title, "이름 변경");
+        let row = s.session_create("s1", "First chat", "anthropic/claude-opus-5").unwrap();
+        assert_eq!(row.title, "First chat");
+        s.session_rename("s1", "Renamed").unwrap();
+        assert_eq!(s.session_get("s1").unwrap().title, "Renamed");
         assert_eq!(s.session_list().unwrap().len(), 1);
         s.session_delete("s1").unwrap();
         assert!(matches!(s.session_get("s1"), Err(EngineError::NotFound(_))));
@@ -405,15 +405,15 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: 실패 확인**
+- [ ] **Step 3: confirm the failure**
 
 ```bash
 cargo test -p ailoy-desktop-core store 2>&1 | tail -5
 ```
 
-Expected: 컴파일 실패.
+Expected: a compile failure.
 
-- [ ] **Step 4: 구현** — `src/store/mod.rs`
+- [ ] **Step 4: implementation** — `src/store/mod.rs`
 
 ```rust
 //! SQLite persistence. One connection behind a mutex: every call is a few local
@@ -676,9 +676,9 @@ impl Store {
 }
 ```
 
-`src/lib.rs`에 `pub mod store;` 추가.
+Add `pub mod store;` to `src/lib.rs`.
 
-- [ ] **Step 5: 통과 확인·커밋**
+- [ ] **Step 5: confirm it passes, commit**
 
 ```bash
 cargo test -p ailoy-desktop-core store 2>&1 | grep -E 'test result|FAILED|panicked'
@@ -687,10 +687,10 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): SQLite store for
 
 ---
 
-### Task B3: 모델 카탈로그 (models.dev)
+### Task B3: the model catalog (models.dev)
 
 **Files:**
-- Create: `src/catalog.rs`, `src/bin/gen_catalog.rs`, `assets/models.json`(생성물)
+- Create: `src/catalog.rs`, `src/bin/gen_catalog.rs`, `assets/models.json`(generated)
 - Modify: `src/lib.rs`
 
 **Interfaces:**
@@ -704,14 +704,14 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): SQLite store for
   pub fn models_dev_provider(ailoy_prefix: &str) -> Option<&'static str>;
   pub struct Catalog { .. }
   impl Catalog {
-    pub fn load(cache: Option<&Path>) -> Catalog;             // 내장 스냅샷 → 캐시 파일이 있으면 덮어씀
+    pub fn load(cache: Option<&Path>) -> Catalog;             // the embedded snapshot → overridden by the cache file when there is one
     pub fn lookup(&self, ailoy_model: &str) -> Option<CatalogModel>;
     pub fn models_for(&self, ailoy_prefix: &str) -> Vec<CatalogModel>;
-    pub async fn refresh(&self, cache: &Path) -> anyhow::Result<()>;   // GET https://models.dev/api.json → filter → 캐시 저장 → 메모리 교체
+    pub async fn refresh(&self, cache: &Path) -> anyhow::Result<()>;   // GET https://models.dev/api.json → filter → write the cache → swap in memory
   }
   ```
 
-- [ ] **Step 1: 실패하는 테스트** (`catalog.rs` 하단)
+- [ ] **Step 1: a failing test** (at the bottom of `catalog.rs`)
 
 ```rust
 #[cfg(test)]
@@ -773,13 +773,13 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 실패 확인**
+- [ ] **Step 2: confirm the failure**
 
 ```bash
 cargo test -p ailoy-desktop-core catalog 2>&1 | tail -5
 ```
 
-- [ ] **Step 3: 구현** — `src/catalog.rs`
+- [ ] **Step 3: implementation** — `src/catalog.rs`
 
 ```rust
 //! Model metadata — context window, output cap, prices, capabilities — from models.dev.
@@ -965,7 +965,7 @@ impl Catalog {
 }
 ```
 
-- [ ] **Step 4: 생성기** — `src/bin/gen_catalog.rs`
+- [ ] **Step 4: the generator** — `src/bin/gen_catalog.rs`
 
 ```rust
 //! Regenerate `assets/models.json` from models.dev. Run from the repository root:
@@ -986,7 +986,7 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-`src/lib.rs`에 `pub mod catalog;` 추가. 스냅샷 생성(첫 컴파일 전에 `include_str!` 대상이 있어야 하므로 먼저 빈 파일을 만든 뒤 생성기를 실행):
+Add `pub mod catalog;` to `src/lib.rs`. Generate the snapshot(the `include_str!` target has to exist before the first compile, so create an empty file first and then run the generator):
 
 ```bash
 mkdir -p apps/desktop/core/assets && echo '{"providers":{}}' > apps/desktop/core/assets/models.json
@@ -995,7 +995,7 @@ cargo run -p ailoy-desktop-core --bin gen-catalog
 
 Expected: `wrote .../assets/models.json (7 providers, N models)`.
 
-- [ ] **Step 5: 통과 확인·커밋**
+- [ ] **Step 5: confirm it passes, commit**
 
 ```bash
 cargo test -p ailoy-desktop-core catalog 2>&1 | grep -E 'test result|FAILED|panicked'
@@ -1004,7 +1004,7 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): models.dev catal
 
 ---
 
-### Task B4: 프로바이더 등록과 설정
+### Task B4: provider registration and settings
 
 **Files:**
 - Create: `src/providers.rs`
@@ -1015,16 +1015,16 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): models.dev catal
   ```rust
   pub struct ProviderDef { pub key: &'static str, pub label: &'static str, pub ailoy_prefix: &'static str, pub pattern: &'static str }
   pub const PROVIDERS: &[ProviderDef];   // anthropic, openai, google, xai, deepseek, moonshotai, bedrock
-  pub const KEY_ANTHROPIC.. 대신: pub fn setting_key(provider_key: &str) -> String  // "provider.<key>.api_key"
+  pub const KEY_ANTHROPIC.. instead: pub fn setting_key(provider_key: &str) -> String  // "provider.<key>.api_key"
   pub const BEDROCK_REGION_KEY: &str = "provider.bedrock.region";
-  pub fn apply(store: &Store) -> Result<Vec<&'static str>>;      // 키 있는 프로바이더를 ailoy "default" 레지스트리에 등록, 없는 것은 제거. 반환: 활성 key 목록
+  pub fn apply(store: &Store) -> Result<Vec<&'static str>>;      // register every provider that has a key in ailoy's "default" registry, drop the ones that do not. returns: the list of active keys
   pub fn key_hint(key: &str) -> String;                          // "…abcd"
   pub fn read_settings(store: &Store) -> Result<Settings>;
   pub fn write_settings(store: &Store, patch: &SettingsPatch) -> Result<()>;
   pub const DEFAULT_MODEL: &str = "anthropic/claude-opus-5"; pub const DEFAULT_MAX_TOKENS: u64 = 32_000; pub const DEFAULT_MAX_TURNS: u32 = 50;
   ```
 
-- [ ] **Step 1: 테스트** (`providers.rs` 하단)
+- [ ] **Step 1: the test** (at the bottom of `providers.rs`)
 
 ```rust
 #[cfg(test)]
@@ -1073,7 +1073,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 구현** — `src/providers.rs`
+- [ ] **Step 2: implementation** — `src/providers.rs`
 
 ```rust
 //! Settings, and the one side effect they have: which model providers ailoy can call.
@@ -1199,9 +1199,9 @@ pub fn write_settings(store: &Store, patch: &SettingsPatch) -> Result<()> {
 }
 ```
 
-(`BTreeMap` 더미 줄은 실제로 불필요하면 `use` 와 함께 삭제.) `src/lib.rs`에 `pub mod providers;`.
+(Delete the dummy `BTreeMap` line together with its `use` if it really is unnecessary.) `pub mod providers;` in `src/lib.rs`.
 
-- [ ] **Step 3: 확인·커밋**
+- [ ] **Step 3: confirm, commit**
 
 ```bash
 cargo test -p ailoy-desktop-core providers 2>&1 | grep -E 'test result|FAILED|panicked'
@@ -1210,7 +1210,7 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): settings and pro
 
 ---
 
-### Task B5: 시스템 프리앰블
+### Task B5: the system preamble
 
 **Files:**
 - Create: `src/prompt.rs`
@@ -1219,7 +1219,7 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): settings and pro
 **Interfaces:**
 - Produces: `pub struct PromptInput<'a> { pub workfs_path: &'a Path, pub mounts: &'a [MountInfo], pub today: &'a str, pub os: &'a str, pub extra: Option<&'a str> }`, `pub fn build(input: &PromptInput) -> String`
 
-- [ ] **Step 1: 테스트**
+- [ ] **Step 1: the test**
 
 ```rust
 #[cfg(test)]
@@ -1244,7 +1244,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 구현**
+- [ ] **Step 2: implementation**
 
 ```rust
 //! The system preamble. ailoy sends only what `instruction` says, so this is where the
@@ -1292,7 +1292,7 @@ pub fn build(input: &PromptInput) -> String {
 }
 ```
 
-- [ ] **Step 3: 확인·커밋**
+- [ ] **Step 3: confirm, commit**
 
 ```bash
 cargo test -p ailoy-desktop-core prompt 2>&1 | grep -E 'test result|FAILED'
@@ -1301,7 +1301,7 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): system preamble 
 
 ---
 
-### Task B6: 워크스페이스 — SharedFs, fsops, 커넥터
+### Task B6: the workspace — SharedFs, fsops, connectors
 
 **Files:**
 - Create: `src/workspace/mod.rs`, `src/workspace/shared.rs`, `src/workspace/fsops.rs`, `src/workspace/connectors.rs`
@@ -1311,7 +1311,7 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): system preamble 
 - Produces:
   ```rust
   pub struct SharedFs(Arc<tokio::sync::RwLock<WorkFs>>);  impl FileSystem + Clone
-  // fsops (모두 &dyn FileSystem 위 free fn, 경로는 "/"-rooted 문자열)
+  // fsops (all free fns over &dyn FileSystem; paths are "/"-rooted strings)
   pub async fn list(fs: &dyn FileSystem, path: &str) -> Result<Vec<Entry>>
   pub async fn read(fs: &dyn FileSystem, path: &str) -> Result<FileContent>
   pub async fn write(fs: &dyn FileSystem, path: &str, text: &str) -> Result<()>
@@ -1323,10 +1323,10 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): system preamble 
   // connectors
   pub fn normalize_mount_path(path: &str) -> Result<String>     // "/notion"
   pub fn describe(config: &MountConfig) -> (MountKind, String /*detail*/, bool /*writable*/)
-  pub async fn build_and_probe(config: &MountConfig) -> Result<Box<dyn FileSystem>>   // 생성 + 연결 확인(15초 상한)
+  pub async fn build_and_probe(config: &MountConfig) -> Result<Box<dyn FileSystem>>   // build + prove it connects(15s cap)
   ```
 
-- [ ] **Step 1: `shared.rs`** — cortex-gui `shared.rs`를 그대로 옮긴다(모듈 doc 유지). 11개 메서드 모두 `let fs = self.0.read().await; fs.<method>(..).await` 로 전달. 시그니처는 cortex `FileSystem` 트레이트와 동일(`stat, list, read_at, create, mkdir, unlink, rmdir, write_at, truncate, rename, flush`).
+- [ ] **Step 1: `shared.rs`** — Port cortex-gui's `shared.rs` as it stands(keep the module doc). All 11 methods forward through `let fs = self.0.read().await; fs.<method>(..).await`. The signatures are the same as cortex's `FileSystem` trait(`stat, list, read_at, create, mkdir, unlink, rmdir, write_at, truncate, rename, flush`).
 
 ```rust
 use std::{io, path::Path, sync::Arc};
@@ -1377,7 +1377,7 @@ impl FileSystem for SharedFs {
 }
 ```
 
-- [ ] **Step 2: `fsops.rs` 테스트** (`InMemFs` 루트의 `WorkFs` 위에서)
+- [ ] **Step 2: `fsops.rs` tests** (over a `WorkFs` whose root is an `InMemFs`)
 
 ```rust
 #[cfg(test)]
@@ -1425,7 +1425,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: `fsops.rs` 구현** — cortex-gui `fsops.rs`를 Tauri 의존 없이 옮긴다. 함수 시그니처를 Interfaces대로 바꾸고(`State` 제거, `&dyn FileSystem` 첫 인자), `Error::msg(..)` → `EngineError::Invalid(..)`, `epoch_ms` 는 로컬 헬퍼로. 반환 타입은 `crate::types::{Entry, FileContent, ImportReport}`. `READ_CAP = 1 << 20`, `IMPORT_CAP = 64 << 20`. `write_file`/`read_all`/`mkdir_p`/`as_text`/`kind_str`/`join` 은 그대로(`pub(crate)`). `fs_touch`는 `touch(fs, path)` 로 유지.
+- [ ] **Step 3: `fsops.rs` implementation** — Port cortex-gui's `fsops.rs` without the Tauri dependency. Change the function signatures to match the Interfaces(drop `State`, take `&dyn FileSystem` as the first argument), `Error::msg(..)` → `EngineError::Invalid(..)`, and make `epoch_ms` a local helper. The return types are `crate::types::{Entry, FileContent, ImportReport}`. `READ_CAP = 1 << 20`, `IMPORT_CAP = 64 << 20`. `write_file`/`read_all`/`mkdir_p`/`as_text`/`kind_str`/`join` stay as they are(`pub(crate)`). `fs_touch` stays as `touch(fs, path)`.
 
 ```rust
 fn epoch_ms(t: std::time::SystemTime) -> Option<u64> {
@@ -1433,7 +1433,7 @@ fn epoch_ms(t: std::time::SystemTime) -> Option<u64> {
 }
 ```
 
-`io::Error` → `EngineError` 변환은 `From` 이 있으므로 `?` 로 충분.
+`From` covers the `io::Error` → `EngineError` conversion, so `?` is enough.
 
 - [ ] **Step 4: `connectors.rs`**
 
@@ -1455,19 +1455,19 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 pub fn normalize_mount_path(path: &str) -> Result<String> {
     let cleaned = path.trim().trim_matches('/').trim();
     if cleaned.is_empty() {
-        return Err(EngineError::Invalid("연결할 경로를 입력해 주세요 (예: /notion)".into()));
+        return Err(EngineError::Invalid("Enter a path to connect at (e.g. /notion)".into()));
     }
     if cleaned.contains("..") {
-        return Err(EngineError::Invalid("경로에 '..' 을 쓸 수 없습니다".into()));
+        return Err(EngineError::Invalid("A path cannot contain '..'".into()));
     }
     Ok(format!("/{cleaned}"))
 }
 
 pub fn describe(config: &MountConfig) -> (MountKind, String, bool) {
     match config {
-        MountConfig::Root => (MountKind::Root, "워크스페이스 파일".into(), true),
+        MountConfig::Root => (MountKind::Root, "Workspace files".into(), true),
         MountConfig::Local { host_root } => (MountKind::Local, host_root.display().to_string(), true),
-        MountConfig::Notion { .. } => (MountKind::Notion, "Notion workspace · 읽기 전용".into(), false),
+        MountConfig::Notion { .. } => (MountKind::Notion, "Notion workspace · read-only".into(), false),
         MountConfig::S3 { bucket, region, endpoint, .. } => (
             MountKind::S3,
             match endpoint { Some(e) => format!("s3://{bucket} · {e}"), None => format!("s3://{bucket} · {region}") },
@@ -1478,25 +1478,25 @@ pub fn describe(config: &MountConfig) -> (MountKind, String, bool) {
 
 pub async fn build_and_probe(config: &MountConfig) -> Result<Box<dyn FileSystem>> {
     match config {
-        MountConfig::Root => Err(EngineError::Invalid("루트는 커넥터로 추가할 수 없습니다".into())),
+        MountConfig::Root => Err(EngineError::Invalid("The root cannot be added as a connector".into())),
         MountConfig::Local { host_root } => {
             let meta = tokio::fs::metadata(host_root).await
                 .map_err(|e| EngineError::Invalid(format!("{}: {e}", host_root.display())))?;
             if !meta.is_dir() {
-                return Err(EngineError::Invalid("디렉터리를 선택해 주세요".into()));
+                return Err(EngineError::Invalid("Choose a directory".into()));
             }
             Ok(Box::new(PassthroughFs::new(host_root.clone())))
         }
         MountConfig::Notion { api_key } => {
             let api_key = api_key.trim().to_string();
             if api_key.is_empty() {
-                return Err(EngineError::Invalid("Notion 통합 토큰을 입력해 주세요".into()));
+                return Err(EngineError::Invalid("Enter a Notion integration token".into()));
             }
             let store = NotionFs::new(&NotionConfig { api_key })?;
             tokio::time::timeout(PROBE_TIMEOUT, store.list(Path::new("")))
                 .await
-                .map_err(|_| EngineError::Invalid("Notion 응답이 없습니다 (15초)".into()))?
-                .map_err(|e| EngineError::Invalid(format!("Notion에 연결하지 못했습니다: {e}")))?;
+                .map_err(|_| EngineError::Invalid("Notion did not answer (15s)".into()))?
+                .map_err(|e| EngineError::Invalid(format!("Could not connect to Notion: {e}")))?;
             Ok(Box::new(store))
         }
         MountConfig::S3 { bucket, region, access_key_id, secret_access_key, endpoint, key_prefix } => {
@@ -1509,13 +1509,13 @@ pub async fn build_and_probe(config: &MountConfig) -> Result<Box<dyn FileSystem>
                 key_prefix: key_prefix.clone().map(|v| v.trim().to_string()).filter(|v| !v.is_empty()),
             };
             if cfg.bucket.is_empty() {
-                return Err(EngineError::Invalid("버킷 이름을 입력해 주세요".into()));
+                return Err(EngineError::Invalid("Enter a bucket name".into()));
             }
             let store = S3Fs::new(&cfg)?;
             tokio::time::timeout(PROBE_TIMEOUT, store.check_reachable())
                 .await
-                .map_err(|_| EngineError::Invalid("S3 응답이 없습니다 (15초)".into()))?
-                .map_err(|e| EngineError::Invalid(format!("버킷에 연결하지 못했습니다: {e}")))?;
+                .map_err(|_| EngineError::Invalid("S3 did not answer (15s)".into()))?
+                .map_err(|e| EngineError::Invalid(format!("Could not connect to the bucket: {e}")))?;
             Ok(Box::new(store))
         }
     }
@@ -1543,9 +1543,9 @@ mod tests {
 }
 ```
 
-`S3Fs::check_reachable` 시그니처가 `async fn check_reachable(&self) -> io::Result<()>` 인지 `../cortex/cortex/src/fs/filesystem/impl/s3.rs` 에서 확인하고 오류 타입 변환을 맞춘다.
+Confirm in `../cortex/cortex/src/fs/filesystem/impl/s3.rs` that `S3Fs::check_reachable`'s signature is `async fn check_reachable(&self) -> io::Result<()>`, and match the error type conversion to it.
 
-- [ ] **Step 5: `workspace/mod.rs`(모듈 선언만 이 Task에서)**
+- [ ] **Step 5: `workspace/mod.rs`(module declarations only in this Task)**
 
 ```rust
 pub mod connectors;
@@ -1557,9 +1557,9 @@ pub use manager::*;
 pub use shared::SharedFs;
 ```
 
-`manager.rs` 는 다음 Task에서 만들므로, 이 Task의 컴파일을 위해 빈 파일 `src/workspace/manager.rs` 를 두고 시작한다.
+`manager.rs` arrives in the next Task, so start with an empty `src/workspace/manager.rs` file to keep this Task compiling.
 
-- [ ] **Step 6: 확인·커밋**
+- [ ] **Step 6: confirm, commit**
 
 ```bash
 cargo test -p ailoy-desktop-core workspace 2>&1 | grep -E 'test result|FAILED|panicked'
@@ -1568,7 +1568,7 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): workspace Shared
 
 ---
 
-### Task B7: `WorkspaceManager` — 마운트 수명, stale 정리, 커넥터 부착
+### Task B7: `WorkspaceManager` — mount lifetime, stale cleanup, attaching connectors
 
 **Files:**
 - Create: `src/workspace/manager.rs`, `src/workspace/mount.rs`
@@ -1576,20 +1576,20 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): workspace Shared
 **Interfaces:**
 - Produces:
   ```rust
-  pub struct WorkspaceMount(PathBuf);  impl cortex::fs::Mount   // mountpoint() = 경로
+  pub struct WorkspaceMount(PathBuf);  impl cortex::fs::Mount   // mountpoint() = the path
   pub struct WorkspaceManager { .. }
   impl WorkspaceManager {
-    pub async fn start(files_root: PathBuf, mountpoint: PathBuf, mount: bool) -> WorkspaceManager;   // 실패 시에도 Degraded 로 시작
+    pub async fn start(files_root: PathBuf, mountpoint: PathBuf, mount: bool) -> WorkspaceManager;   // starts Degraded even when it fails
     pub fn info(&self) -> WorkspaceInfo;
     pub fn console_mount(&self) -> WorkspaceMount;   // Mounted → mountpoint, Degraded → files_root
     pub fn fs(&self) -> SharedFs;
-    pub async fn attach(&self, info: MountInfo, store: Box<dyn FileSystem>) -> Result<()>;   // WorkFs::mount + 목록 갱신 (DB는 Engine 몫)
+    pub async fn attach(&self, info: MountInfo, store: Box<dyn FileSystem>) -> Result<()>;   // WorkFs::mount + refresh the list (the DB is the Engine's job)
     pub async fn detach(&self, path: &str) -> Result<()>;
     pub async fn mounts(&self) -> Vec<MountInfo>;
     pub async fn set_mount_status(&self, path: &str, status: MountStatus);
-    pub async fn shutdown(&self);   // 마운트 drop (spawn_blocking)
+    pub async fn shutdown(&self);   // drops the mount (spawn_blocking)
   }
-  pub fn is_mounted(path: &Path) -> bool;          // `mount` 출력에 " on <path> (" 포함
+  pub fn is_mounted(path: &Path) -> bool;          // `mount` output contains " on <path> ("
   pub fn force_unmount(path: &Path) -> std::io::Result<()>;   // umount → diskutil unmount force
   ```
 
@@ -1612,7 +1612,7 @@ impl Mount for WorkspaceMount {
 }
 ```
 
-- [ ] **Step 2: 테스트** (`manager.rs` 하단; FUSE 없이 `mount: false` 경로만 단위 테스트)
+- [ ] **Step 2: the test** (at the bottom of `manager.rs`; unit-tests only the `mount: false` path, without FUSE)
 
 ```rust
 #[cfg(test)]
@@ -1648,7 +1648,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: 구현** — `manager.rs`
+- [ ] **Step 3: implementation** — `manager.rs`
 
 ```rust
 //! The workspace: one `WorkFs`, mounted for the life of the engine.
@@ -1758,7 +1758,7 @@ impl WorkspaceManager {
         {
             let mut mounts = self.mounts.write().await;
             if mounts.iter().any(|m| m.path == info.path) {
-                return Err(EngineError::Invalid(format!("{} 에는 이미 다른 저장소가 연결되어 있습니다", info.path)));
+                return Err(EngineError::Invalid(format!("{} already has another store connected", info.path)));
             }
             mounts.push(info.clone());
             mounts.sort_by(|a, b| a.path.cmp(&b.path));
@@ -1772,7 +1772,7 @@ impl WorkspaceManager {
 
     pub async fn detach(&self, path: &str) -> Result<()> {
         if path == "/" || path.is_empty() {
-            return Err(EngineError::Invalid("루트는 분리할 수 없습니다".into()));
+            return Err(EngineError::Invalid("The root cannot be detached".into()));
         }
         let _ = self.fs.write().await.unmount(Path::new(path));
         self.mounts.write().await.retain(|m| m.path != path);
@@ -1832,9 +1832,9 @@ pub fn force_unmount(path: &Path) -> std::io::Result<()> {
 }
 ```
 
-`workspace/mod.rs` 에 `pub mod mount; pub use mount::WorkspaceMount;` 추가.
+Add `pub mod mount; pub use mount::WorkspaceMount;` to `workspace/mod.rs`.
 
-- [ ] **Step 4: FUSE-T 통합 테스트(`#[ignore]`)** — `apps/desktop/core/tests/live_workspace.rs`
+- [ ] **Step 4: the FUSE-T integration test(`#[ignore]`)** — `apps/desktop/core/tests/live_workspace.rs`
 
 ```rust
 //! Needs FUSE-T installed. Run: `cargo test -p ailoy-desktop-core --test live_workspace -- --ignored`
@@ -1860,17 +1860,17 @@ async fn a_mounted_workspace_is_visible_to_the_kernel() {
 }
 ```
 
-- [ ] **Step 5: 확인·커밋**
+- [ ] **Step 5: confirm, commit**
 
 ```bash
 cargo test -p ailoy-desktop-core workspace 2>&1 | grep -E 'test result|FAILED|panicked'
-cargo test -p ailoy-desktop-core --test live_workspace -- --ignored 2>&1 | grep -E 'test result|FAILED|panicked'   # FUSE-T 있는 머신
+cargo test -p ailoy-desktop-core --test live_workspace -- --ignored 2>&1 | grep -E 'test result|FAILED|panicked'   # on a machine with FUSE-T
 git add apps/desktop/core && git commit -m "feat(desktop-core): WorkspaceManager with app-lifetime FUSE-T mount and stale cleanup"
 ```
 
 ---
 
-### Task B8: 콘솔 팩토리
+### Task B8: the console factory
 
 **Files:**
 - Create: `src/console.rs`
@@ -1880,12 +1880,12 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): WorkspaceManager
 - Produces:
   ```rust
   pub const CONSOLE_BIN_NAME: &str = "cortex-local-console";
-  pub fn resolve_console_bin(explicit: Option<&Path>) -> Result<PathBuf>;   // explicit → $AILOY_CORTEX_BIN_DIR/<name> → cwd 상위 탐색 `cortex/target/{debug,release}/<name>` → PATH(which)
+  pub fn resolve_console_bin(explicit: Option<&Path>) -> Result<PathBuf>;   // explicit → $AILOY_CORTEX_BIN_DIR/<name> → search cwd's ancestors for `cortex/target/{debug,release}/<name>` → PATH(which)
   pub struct ConsoleFactory { bin: PathBuf }
   impl ConsoleFactory { pub fn new(bin: PathBuf) -> Self; pub fn bin(&self) -> &Path; pub async fn spawn(&self, mount: WorkspaceMount) -> Result<cortex::console::Console> }
   ```
 
-- [ ] **Step 1: 테스트**
+- [ ] **Step 1: the test**
 
 ```rust
 #[cfg(test)]
@@ -1913,7 +1913,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 구현**
+- [ ] **Step 2: implementation**
 
 ```rust
 //! Starting a `cortex-local-console` for one run.
@@ -2005,9 +2005,9 @@ impl ConsoleFactory {
 }
 ```
 
-`src/lib.rs`에 `pub mod console;`.
+`pub mod console;` in `src/lib.rs`.
 
-- [ ] **Step 3: 라이브 테스트(`#[ignore]`)** — `tests/live_console.rs`
+- [ ] **Step 3: the live test(`#[ignore]`)** — `tests/live_console.rs`
 
 ```rust
 //! Needs a built `cortex-local-console` (AILOY_CORTEX_BIN_DIR or ../cortex/target/debug).
@@ -2027,7 +2027,7 @@ async fn a_console_stands_in_the_mount_it_was_given() {
 }
 ```
 
-- [ ] **Step 4: 확인·커밋**
+- [ ] **Step 4: confirm, commit**
 
 ```bash
 cargo test -p ailoy-desktop-core console 2>&1 | grep -E 'test result|FAILED|panicked'
@@ -2037,7 +2037,7 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): console factory 
 
 ---
 
-### Task B9: 델타 재조립기와 이벤트, 사용량 계산
+### Task B9: the delta assembler, events, usage arithmetic
 
 **Files:**
 - Create: `src/assembler.rs`, `src/events.rs`, `src/usage.rs`
@@ -2065,7 +2065,7 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): console factory 
   pub fn session_usage(usages: &[TokenUsage], model: Option<&CatalogModel>) -> SessionUsage;
   ```
 
-- [ ] **Step 1: `assembler.rs`** — agent-k `agent_stream.rs`를 이식하되 (a) `AgentStreamItem::Delta` → `AssembledItem::Text`, (b) `delta.delta.thinking` 조각을 `AssembledItem::Thinking` 으로 추가 방출(같은 최상위·비-Tool 조건), (c) `partial_text()` — 현재 `acc` 의 텍스트 파트 연결. agent-k 테스트 7개를 모두 옮기고(`Delta`→`Text`), thinking 테스트를 추가한다:
+- [ ] **Step 1: `assembler.rs`** — Port agent-k's `agent_stream.rs`, but with (a) `AgentStreamItem::Delta` → `AssembledItem::Text`, (b) `delta.delta.thinking` fragments emitted additionally as `AssembledItem::Thinking`(under the same top-level, non-Tool condition), (c) `partial_text()` — the text parts of the current `acc`, concatenated. Port all 7 agent-k tests(`Delta`→`Text`) and add a thinking test:
 
 ```rust
     #[test]
@@ -2082,7 +2082,7 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): console factory 
     }
 ```
 
-`push` 의 1단계에 텍스트 조각 수집 뒤:
+In the first stage of `push`, after the text fragments are collected:
 
 ```rust
             if let Some(th) = delta.delta.thinking.as_deref().filter(|t| !t.is_empty()) {
@@ -2098,9 +2098,9 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): console factory 
     }
 ```
 
-- [ ] **Step 2: `events.rs`** — Interfaces 그대로 `#[derive(Clone, Debug, Serialize, Deserialize)]`, `#[serde(tag = "type", rename_all = "snake_case")]`. `Value` 는 `ailoy::datatype::Value`.
+- [ ] **Step 2: `events.rs`** — Exactly as in the Interfaces, with `#[derive(Clone, Debug, Serialize, Deserialize)]` and `#[serde(tag = "type", rename_all = "snake_case")]`. `Value` is `ailoy::datatype::Value`.
 
-- [ ] **Step 3: `usage.rs` 테스트와 구현**
+- [ ] **Step 3: `usage.rs` tests and implementation**
 
 ```rust
 //! Token arithmetic the UI shows: context in use, totals, cost.
@@ -2173,9 +2173,9 @@ mod tests {
 }
 ```
 
-`src/lib.rs`에 `pub mod assembler; pub mod events; pub mod usage; pub use events::RunEvent;`.
+`pub mod assembler; pub mod events; pub mod usage; pub use events::RunEvent;` in `src/lib.rs`.
 
-- [ ] **Step 4: 확인·커밋**
+- [ ] **Step 4: confirm, commit**
 
 ```bash
 cargo test -p ailoy-desktop-core assembler usage 2>&1 | grep -E 'test result|FAILED|panicked'
@@ -2184,7 +2184,7 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): message assemble
 
 ---
 
-### Task B10: `RunManager` — actor, 이벤트, 취소
+### Task B10: `RunManager` — the actor, events, cancellation
 
 **Files:**
 - Create: `src/run.rs`
@@ -2207,7 +2207,7 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): message assemble
   }
   ```
 
-- [ ] **Step 1: 구현**
+- [ ] **Step 1: implementation**
 
 ```rust
 //! One actor per active run: assemble the agent, drive its stream, persist and broadcast.
@@ -2353,7 +2353,7 @@ impl RunManager {
 }
 ```
 
-위 스케치의 `runs_ref`/`runs_arc` 혼란을 피하기 위해 **필드를 `runs: Arc<Mutex<HashMap<String, ActiveRun>>>` 로 정의**하고, `runs_handle()` 은 `self.runs.clone()`, `finisher` 는 그 clone 을 캡처한다. `runs_ref` 관련 두 줄은 삭제한다. 즉 최종 구조체:
+To avoid the `runs_ref`/`runs_arc` confusion in the sketch above, **define the field as `runs: Arc<Mutex<HashMap<String, ActiveRun>>>`**, make `runs_handle()` return `self.runs.clone()`, and have `finisher` capture that clone. Delete the two lines about `runs_ref`. So the final struct is:
 
 ```rust
 pub struct RunManager {
@@ -2362,7 +2362,7 @@ pub struct RunManager {
 }
 ```
 
-이어서 actor 본체:
+Then the actor body:
 
 ```rust
 enum RunEnd {
@@ -2485,11 +2485,11 @@ fn persist(store: &Store, session_id: &str, tx: &broadcast::Sender<RunEvent>, ou
 }
 ```
 
-주의: `history` 필터는 방금 추가한 user 메시지를 제외하기 위한 것이다. 더 단순하고 안전한 방법은 `message_history` 결과의 **마지막 원소**(방금 넣은 user 메시지)를 `pop()` 하는 것이다 — `start` 가 append 직후 `drive` 를 호출하므로 마지막이 그 메시지임이 보장된다. `take_while` 대신 `history.pop();` 으로 구현한다.
+Note: the `history` filter is there to exclude the user message just appended. The simpler and safer way is to `pop()` the **last element** of the `message_history` result(the user message just inserted) — `start` calls `drive` right after the append, so the last element is guaranteed to be that message. Implement it as `history.pop();` instead of `take_while`.
 
-`src/lib.rs`에 `pub mod run;`.
+`pub mod run;` in `src/lib.rs`.
 
-- [ ] **Step 2: 오프라인 테스트** — `run.rs` `mod tests`. Plan A의 가짜 SSE 서버는 ailoy 크레이트 내부(`cfg(test)`)여서 여기서 못 쓴다. 같은 최소 버전을 이 테스트 모듈에 둔다(텍스트 응답 하나만 서빙):
+- [ ] **Step 2: the offline test** — `mod tests` in `run.rs`. Plan A's fake SSE server lives inside the ailoy crate(`cfg(test)`), so it cannot be used here. Put the same minimal version in this test module(serving one text response only):
 
 ```rust
 #[cfg(test)]
@@ -2570,7 +2570,7 @@ mod tests {
 }
 ```
 
-주의: 콘솔 스폰은 `Console::builder().build()` 가 `init` 핸드셰이크를 기다리므로 `/usr/bin/true` 로는 실패한다(`ConsoleUnavailable`). 이 테스트가 그 이유로 실패하면, `drive` 의 콘솔 스폰을 **첫 툴 배치 직전이 아니라 시작 시** 하도록 두는 대신 다음 규칙으로 바꾼다: `ConsoleFactory::spawn` 실패는 `Error{kind:"console_unavailable"}` 로 끝내되, 테스트에서는 `AILOY_CORTEX_BIN_DIR` 가 없으면 `#[ignore]` 처리 대신 **`ConsoleFactory` 에 `Optional` 모드를 둔다**: `ConsoleFactory::disabled()` 는 `spawn` 시 `Err(ConsoleUnavailable)` 을 즉시 반환하고, `drive` 는 콘솔이 없으면 `AgentBuilder::console` 을 생략한다(pure 툴만 동작; 콘솔 툴 호출은 ailoy 가 "needs a console" 오류로 답한다). 테스트는 `ConsoleFactory::disabled()` 를 쓴다. 이 변형을 채택하면 `console.rs` 에 다음을 추가한다:
+Note: spawning the console fails with `/usr/bin/true`(`ConsoleUnavailable`), because `Console::builder().build()` waits for the `init` handshake. If the test fails for that reason, then instead of leaving `drive`'s console spawn **at start-up rather than right before the first tool batch**, change to this rule: a `ConsoleFactory::spawn` failure still ends the run with `Error{kind:"console_unavailable"}`, but in tests, rather than marking it `#[ignore]` when `AILOY_CORTEX_BIN_DIR` is absent, **give `ConsoleFactory` an `Optional` mode**: `ConsoleFactory::disabled()` returns `Err(ConsoleUnavailable)` from `spawn` immediately, and `drive` skips `AgentBuilder::console` when there is no console(only pure tools work; ailoy answers a console tool call with a "needs a console" error). The test uses `ConsoleFactory::disabled()`. If this variant is adopted, add the following to `console.rs`:
 
 ```rust
     /// A factory that never spawns: runs proceed without a console (tools that need one fail
@@ -2579,7 +2579,7 @@ mod tests {
     pub fn is_disabled(&self) -> bool { self.bin.as_os_str().is_empty() }
 ```
 
-그리고 `drive` 에서:
+And in `drive`:
 
 ```rust
     let console = if deps.console.is_disabled() { None } else { Some(deps.console.spawn(ws_mount).await.map_err(|e| fail("console_unavailable", e.to_string()))?) };
@@ -2588,7 +2588,7 @@ mod tests {
     let mut agent = builder.build()...;
 ```
 
-- [ ] **Step 3: 확인·커밋**
+- [ ] **Step 3: confirm, commit**
 
 ```bash
 cargo test -p ailoy-desktop-core run 2>&1 | grep -E 'test result|FAILED|panicked'
@@ -2597,14 +2597,14 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): RunManager actor
 
 ---
 
-### Task B11: `Engine` 파사드
+### Task B11: the `Engine` facade
 
 **Files:**
 - Create: `src/engine.rs`
 - Modify: `src/lib.rs` (`pub mod engine; pub use engine::Engine;`)
 
 **Interfaces:**
-- Produces(스펙 §6.7):
+- Produces(spec §6.7):
   ```rust
   pub struct Engine { .. }
   impl Engine {
@@ -2619,7 +2619,7 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): RunManager actor
     pub async fn run_start(&self, session_id: &str, parts: Vec<Part>) -> Result<RunHandle>;
     pub async fn run_attach(&self, session_id: &str) -> Option<(RunHandle, String)>;
     pub async fn run_cancel(&self, session_id: &str) -> bool;
-    pub async fn fs_list(&self, path: &str) -> Result<Vec<Entry>>;  fs_read, fs_write, fs_mkdir, fs_delete, fs_rename, fs_import (fsops 위임)
+    pub async fn fs_list(&self, path: &str) -> Result<Vec<Entry>>;  fs_read, fs_write, fs_mkdir, fs_delete, fs_rename, fs_import (delegated to fsops)
     pub async fn mount_list(&self) -> Vec<MountInfo>;
     pub async fn mount_add(&self, req: MountRequest) -> Result<MountInfo>;
     pub async fn mount_remove(&self, path: &str) -> Result<()>;
@@ -2631,7 +2631,7 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): RunManager actor
   }
   ```
 
-- [ ] **Step 1: 테스트** (`engine.rs` `mod tests`; 마운트 비활성, 콘솔 disabled)
+- [ ] **Step 1: the test** (`mod tests` in `engine.rs`; mounting off, console disabled)
 
 ```rust
 #[cfg(test)]
@@ -2684,18 +2684,18 @@ mod tests {
         let mk = || { let mut c = EngineConfig::new(dir.path()); c.mount_workspace = false; c.catalog_refresh = false; c.console_bin = Some(PathBuf::new()); c };
         {
             let e = Engine::start(mk()).await.unwrap();
-            e.mount_add(MountRequest { path: "/data".into(), label: Some("데이터".into()), config: MountConfig::Local { host_root: local.path().to_path_buf() } }).await.unwrap();
+            e.mount_add(MountRequest { path: "/data".into(), label: Some("data".into()), config: MountConfig::Local { host_root: local.path().to_path_buf() } }).await.unwrap();
             e.shutdown().await;
         }
         let e = Engine::start(mk()).await.unwrap();
         let mounts = e.mount_list().await;
-        assert!(mounts.iter().any(|m| m.path == "/data" && m.label == "데이터" && matches!(m.status, MountStatus::Ok)));
+        assert!(mounts.iter().any(|m| m.path == "/data" && m.label == "data" && matches!(m.status, MountStatus::Ok)));
         e.shutdown().await;
     }
 }
 ```
 
-- [ ] **Step 2: 구현**
+- [ ] **Step 2: implementation**
 
 ```rust
 //! The engine: everything the window can ask for, behind one `Arc`.
@@ -2795,18 +2795,18 @@ impl Engine {
     pub async fn session_create(&self, model: Option<String>) -> Result<SessionSummary> {
         let model = match model { Some(m) if !m.trim().is_empty() => m, _ => providers::read_settings(&self.store)?.default_model };
         let id = uuid::Uuid::new_v4().to_string();
-        let r = self.store.session_create(&id, "새 대화", &model)?;
+        let r = self.store.session_create(&id, "New chat", &model)?;
         Ok(SessionSummary { id: r.id, title: r.title, model: r.model, created_at: r.created_at, updated_at: r.updated_at, running: false })
     }
 
     pub async fn session_rename(&self, id: &str, title: &str) -> Result<()> {
         let title = title.trim();
-        if title.is_empty() { return Err(EngineError::Invalid("제목을 입력해 주세요".into())); }
+        if title.is_empty() { return Err(EngineError::Invalid("Enter a title".into())); }
         self.store.session_rename(id, title)
     }
 
     pub async fn session_set_model(&self, id: &str, model: &str) -> Result<()> {
-        if split_model_id(model).is_none() { return Err(EngineError::Invalid(format!("모델 ID 형식은 provider/model 입니다: {model}"))); }
+        if split_model_id(model).is_none() { return Err(EngineError::Invalid(format!("A model id looks like provider/model: {model}"))); }
         self.store.session_set_model(id, model)
     }
 
@@ -2823,7 +2823,7 @@ impl Engine {
     // ── runs ────────────────────────────────────────────────────────────────
 
     pub async fn run_start(&self, session_id: &str, parts: Vec<Part>) -> Result<RunHandle> {
-        if parts.is_empty() { return Err(EngineError::Invalid("메시지가 비어 있습니다".into())); }
+        if parts.is_empty() { return Err(EngineError::Invalid("The message is empty".into())); }
         self.runs.start(session_id, parts).await
     }
 
@@ -2912,7 +2912,7 @@ impl Engine {
 }
 ```
 
-- [ ] **Step 3: 확인·커밋**
+- [ ] **Step 3: confirm, commit**
 
 ```bash
 cargo test -p ailoy-desktop-core 2>&1 | grep -E 'test result|FAILED|panicked'
@@ -2921,12 +2921,12 @@ git add apps/desktop/core && git commit -m "feat(desktop-core): Engine facade ov
 
 ---
 
-### Task B12: 라이브 E2E(콘솔 + 툴콜)와 정리
+### Task B12: live E2E(console + tool call) and cleanup
 
 **Files:**
 - Create: `tests/live_run.rs`
 
-- [ ] **Step 1: 라이브 run 테스트(`#[ignore]`)** — 가짜 모델이 `shell` 툴로 `echo` 를 호출하고, 결과가 DB에 기록되는지 확인. 콘솔 바이너리가 필요하다.
+- [ ] **Step 1: the live run test(`#[ignore]`)** — A fake model calls `echo` through the `shell` tool; check that the result is written to the DB. It needs the console binary.
 
 ```rust
 //! A run that calls the shell tool through a real `cortex-local-console`.
@@ -2996,15 +2996,15 @@ async fn a_run_reads_a_workspace_file_through_the_shell_tool() {
 }
 ```
 
-`axum` 을 `[dev-dependencies]` 에 추가한다(`axum = "0.8"`).
+Add `axum` to `[dev-dependencies]`(`axum = "0.8"`).
 
-- [ ] **Step 2: 실행**
+- [ ] **Step 2: run it**
 
 ```bash
 AILOY_CORTEX_BIN_DIR=../cortex/target/debug cargo test -p ailoy-desktop-core --test live_run -- --ignored 2>&1 | grep -E 'test result|FAILED|panicked'
 ```
 
-- [ ] **Step 3: 전체 정리·커밋**
+- [ ] **Step 3: full cleanup, commit**
 
 ```bash
 cargo fmt --all && cargo clippy -p ailoy-desktop-core --all-targets 2>&1 | grep -E '^(warning|error)' | head
@@ -3014,14 +3014,14 @@ git add -A && git commit -m "test(desktop-core): live run through cortex-local-c
 
 ---
 
-## Self-Review 체크리스트 (작성자용)
+## Self-review checklist (for the author)
 
-- 스펙 §6.1 모듈표 → B1(config), B2(store), B3(catalog), B4(providers), B5(prompt), B6/B7(workspace), B8(console), B9(assembler/events/usage), B10(run), B11(engine) ✓
-- §6.2 스키마 → B2 SQL과 일치(`workspace_id` 기본값 'default') ✓
-- §6.3 run 수명·이벤트 → B10 (`Started`→user `Message`→델타/툴콜/메시지/사용량→`Done|Cancelled|Error{kind}`) ✓; `AwaitingApproval` 은 정의만(v1 미발생) ✓
-- §6.4 프리앰블 → B5 ✓ (`extra_instruction` 설정 키로 사용자 지시문)
-- §6.5 카탈로그 → B3 (`gen-catalog` 바이너리가 스크립트 대신 Rust 필터 재사용) ✓
-- §6.6 사용량 계산 → B9 ✓
-- §6.7 공개 API → B11 (`session_set_model` 추가) ✓
-- §10 오류 처리: Degraded 워크스페이스(B7), 커넥터 복원 실패 배지(B11), 콘솔 없음(B8/B10 `console_unavailable`), 턴 상한 `max_turns` kind(B10) ✓
-- 타입 일치: `MountInfo{id,path,kind,label,detail,writable,status}` · `MountConfig::{Root,Local{host_root},Notion{api_key},S3{..}}` · `RunEvent` 변형명 · `EngineError` 변형명 · `ConsoleFactory::{new,disabled,is_disabled,spawn}` · `WorkspaceManager::{start,info,console_mount,fs,attach,detach,mounts,remember_failed,shutdown}` — B6~B12 전체 동일 ✓
+- Spec §6.1 module table → B1(config), B2(store), B3(catalog), B4(providers), B5(prompt), B6/B7(workspace), B8(console), B9(assembler/events/usage), B10(run), B11(engine) ✓
+- §6.2 schema → matches B2's SQL(`workspace_id` defaults to 'default') ✓
+- §6.3 run lifetime and events → B10 (`Started`→user `Message`→deltas/tool calls/messages/usage→`Done|Cancelled|Error{kind}`) ✓; `AwaitingApproval` is defined only(never emitted in v1) ✓
+- §6.4 preamble → B5 ✓ (user instructions through the `extra_instruction` setting key)
+- §6.5 catalog → B3 (the `gen-catalog` binary reuses the Rust filter instead of a script) ✓
+- §6.6 usage arithmetic → B9 ✓
+- §6.7 public API → B11 (`session_set_model` added) ✓
+- §10 error handling: a Degraded workspace(B7), the badge for a connector that failed to restore(B11), no console(B8/B10 `console_unavailable`), the turn limit's `max_turns` kind(B10) ✓
+- Type agreement: `MountInfo{id,path,kind,label,detail,writable,status}` · `MountConfig::{Root,Local{host_root},Notion{api_key},S3{..}}` · `RunEvent` variant names · `EngineError` variant names · `ConsoleFactory::{new,disabled,is_disabled,spawn}` · `WorkspaceManager::{start,info,console_mount,fs,attach,detach,mounts,remember_failed,shutdown}` — identical across B6~B12 ✓

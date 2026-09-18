@@ -1,148 +1,148 @@
-# Ailoy Desktop — 설계서 (v1)
+# Ailoy Desktop — design (v1)
 
-- 작성일: 2026-09-11
-- 상태: 리뷰 대기
-- 범위: ailoy를 개발자 라이브러리에서 Claude/ChatGPT형 데스크톱 앱(Tauri)으로 전환하는 v1(minimal) 설계
-- 관련 저장소: `brekkylab/ailoy`(이 저장소), `brekkylab/cortex`(형제 체크아웃 `../cortex`, 당분간 path 의존)
-
----
-
-## 1. 목표와 범위
-
-### 1.1 목표
-
-세션 기반 대화형 UI를 가진 데스크톱 앱을 만든다. 에이전트는 **cortex workspace**(WorkFs를 FUSE-T로 마운트한 디렉터리) 안에서 `cortex-local-console`을 통해 셸 명령과 파일 I/O를 수행하고, 사용자는 로컬 폴더·Notion·S3를 하나의 파일시스템 트리에 붙여 에이전트에게 보여줄 수 있다(Rambox/Ferdium식 "내 FS에 서비스 붙이기"). 에이전틱 루프는 Claude/ChatGPT 수준의 기본 완성도(취소, 턴 상한, 승인 훅, 실패 복구, 사용량 표시)를 갖춘다.
-
-### 1.2 v1 포함
-
-- 세션 CRUD와 영속(SQLite), 앱 재시작 후 대화 복원
-- 스트리밍 대화(텍스트·thinking 델타), 툴콜 카드(이름·인자·결과·상태)
-- 시스템 툴 `shell/read/write/edit/glob/grep` + `web_search/web_fetch`
-- 실행 취소, 턴 상한(기본 50), 툴 승인 훅(v1 정책은 자동 승인)
-- 워크스페이스: 앱 수명 동안 유지되는 FUSE-T 마운트, 루트는 영속 로컬 디렉터리, 커넥터 로컬 폴더/Notion/S3
-- 파일 브라우저(트리·텍스트 미리보기), 마운트 관리 UI
-- 토큰 사용량: 메시지·세션 누적, 컨텍스트 창 사용률, 추정 비용, Anthropic/OpenAI(xAI 조건부) rate-limit 잔여율
-- 설정: 프로바이더 API 키, 기본 모델
-- 대상 플랫폼: macOS(Apple Silicon 우선). FUSE-T 설치 필요.
-
-### 1.3 v1 제외 (후속 로드맵은 §12)
-
-승인 UI·정책 저장, `mem` 메모리 툴 연결, micro-VM 콘솔, GDrive 커넥터(OAuth), stdout 스트리밍, 컨텍스트 요약, MCP, Keychain, Windows/Linux, `Length` 이어쓰기, 세션 제목 자동 생성, 계정 잔액·월 사용량 조회.
+- Written: 2026-09-11
+- Status: awaiting review
+- Scope: the v1 (minimal) design for turning ailoy from a developer library into a Claude/ChatGPT-style desktop app (Tauri)
+- Related repositories: `brekkylab/ailoy` (this repository), `brekkylab/cortex` (sibling checkout `../cortex`, a path dependency for now)
 
 ---
 
-## 2. 현황 요약과 재활용 판단
+## 1. Goals and scope
 
-### 2.1 ailoy 브랜치
+### 1.1 Goal
 
-| 브랜치 | 요지 | 판단 |
+Build a desktop app with a session-based conversational UI. The agent runs shell commands and file I/O through `cortex-local-console` inside a **cortex workspace** (a directory where WorkFs is mounted over FUSE-T), and the user can attach local folders, Notion, and S3 to a single filesystem tree to show them to the agent (the Rambox/Ferdium style of "attach services to my FS"). The agentic loop has the baseline polish of Claude/ChatGPT: cancellation, a turn limit, an approval hook, failure recovery, and usage display.
+
+### 1.2 In v1
+
+- Session CRUD and persistence (SQLite), conversations restored after an app restart
+- Streaming conversation (text and thinking deltas), tool call cards (name, arguments, result, status)
+- The system tools `shell/read/write/edit/glob/grep` plus `web_search/web_fetch`
+- Cancelling a run, a turn limit (50 by default), a tool approval hook (the v1 policy is auto-approve)
+- Workspace: a FUSE-T mount held for the app's lifetime, a persistent local directory as the root, and local folder/Notion/S3 connectors
+- File browser (tree and text preview), mount management UI
+- Token usage: per-message and per-session totals, context window utilization, estimated cost, and the remaining Anthropic/OpenAI (xAI conditionally) rate limit
+- Settings: provider API keys, default model
+- Target platform: macOS (Apple Silicon first). FUSE-T must be installed.
+
+### 1.3 Not in v1 (the follow-up roadmap is §12)
+
+The approval UI and policy storage, wiring up the `mem` memory tool, the micro-VM console, the GDrive connector (OAuth), stdout streaming, context summarization, MCP, Keychain, Windows/Linux, continuing after `Length`, automatic session titles, and account balance and monthly usage lookups.
+
+---
+
+## 2. Current state and reuse decisions
+
+### 2.1 ailoy branches
+
+| Branch | Gist | Decision |
 |---|---|---|
-| `develop` (`60716d12`) | 순수 Rust 라이브러리. API 모델 5종(Anthropic/OpenAI Responses/ChatCompletion/Gemini/Bedrock). 자체 `runenv`(Local, microsandbox), `skill`, `python_repl`. MCP `todo!()`. | 기반으로 쓰지 않음. 단 #448(Bedrock wire)은 가져옴. |
-| `origin/mem-applied` (`8d3f0238`, 9/7) ⊃ `cortex-applied` | `runenv`·`skill`·`python_repl` 제거. `cortex::console::Console` 재수출(`src/console.rs`). 도구는 cortex `exec/read/write` 직접 호출. 툴 배치마다 `console.start/stop`. `src/memory`(`mem` 실행파일 기반) + `mem_search/mem_insert` 툴. `cortex = { path = "../cortex/cortex" }`. **cortex main과 컴파일 확인.** | **작업 기반.** |
-| `origin/feat/krun-sandbox` (8/6) | agent-k의 기반. ailoy가 libkrun VM을 직접 띄움. | cortex가 VM 콘솔을 흡수했으므로 채택하지 않음. |
-| `origin/feat/vfs-provider-mounts` 등 (6~7월) | `src/vfs`(S3/Notion/GDrive + in-guest FUSE). | cortex `fs`로 대체됨. 참고만. |
+| `develop` (`60716d12`) | A pure Rust library. Five API models (Anthropic/OpenAI Responses/ChatCompletion/Gemini/Bedrock). Its own `runenv` (Local, microsandbox), `skill`, `python_repl`. MCP is `todo!()`. | Not used as the base. We do take #448 (Bedrock wire) from it. |
+| `origin/mem-applied` (`8d3f0238`, 9/7) ⊃ `cortex-applied` | `runenv`, `skill`, and `python_repl` removed. Re-exports `cortex::console::Console` (`src/console.rs`). The tools call cortex `exec/read/write` directly. `console.start/stop` around every tool batch. `src/memory` (built on the `mem` executable) plus the `mem_search/mem_insert` tools. `cortex = { path = "../cortex/cortex" }`. **Confirmed to compile against cortex main.** | **The base for this work.** |
+| `origin/feat/krun-sandbox` (8/6) | The base of agent-k. ailoy brings up a libkrun VM itself. | Not adopted, because cortex absorbed the VM console. |
+| `origin/feat/vfs-provider-mounts` and others (June–July) | `src/vfs` (S3/Notion/GDrive plus in-guest FUSE). | Superseded by cortex `fs`. For reference only. |
 
-`mem-applied`는 #448 이전에서 갈라져 `bedrock.rs`가 없다. 작업 브랜치는 `mem-applied`에서 따고 `develop`을 머지한다(#448은 그대로, #443은 삭제된 sandbox 코드 → 삭제로 해소, `web_fetch.rs` 변경은 유지).
+`mem-applied` branched off before #448, so it has no `bedrock.rs`. The working branch is cut from `mem-applied` and merges `develop` (#448 as is, #443 resolved by the deletion of the sandbox code, the `web_fetch.rs` change kept).
 
 ### 2.2 cortex (`../cortex` main `dfabb34`)
 
-- `console`: stdio 위 BSON JSON-RPC. 메서드 `init/exec/read/write/commit/start/stop/quit`. 서버는 `cortex-local-console`(호스트), `cortex-uvm-console`(micro-VM). **제약**: stdout 스트리밍 없음(설계상), 디렉터리 listing 없음, 콘솔당 요청 1개(`&mut self`), `timeout_ms`는 받지만 두 서버 모두 **미구현**, 64 MiB 프레임 상한(`ExecResp::truncated`).
-- `fs`: `FileSystem` 트레이트(필수 `stat/list/read_at`, 나머지 기본 read-only), `WorkFs` 최장접두 마운트 테이블(자체가 `FileSystem`), 백엔드 `InMemFs/PassthroughFs/S3Fs/NotionFs/GdriveFs`, 호스트 마운트 `FuseMount`(macFUSE)/`FuseTMount`(FUSE-T, kext 불필요). `Mount` 트레이트: `mountpoint()`, drop 시 언마운트.
-- `rootfs`/이미지 레이어, `mem`/`index` 실행파일(SQLite+vec0).
-- **`origin/cortex-gui`** (jhlee525, 9/7): Tauri 2 + React PoC. WorkFs 파일 브라우저, 로컬/Notion/S3 커넥터, `SharedFs`(마운트에 넘겨도 WorkFs를 잃지 않는 핸들), FUSE-T 임시 마운트로 `mem init`. 세션 저장 없음. README: "에이전트 실행 — ailoy가 붙는 자리".
+- `console`: BSON JSON-RPC over stdio. The methods `init/exec/read/write/commit/start/stop/quit`. The servers are `cortex-local-console` (host) and `cortex-uvm-console` (micro-VM). **Constraints**: no stdout streaming (by design), no directory listing, one request per console (`&mut self`), `timeout_ms` is accepted but **unimplemented** in both servers, and a 64 MiB frame cap (`ExecResp::truncated`).
+- `fs`: the `FileSystem` trait (`stat/list/read_at` required, the rest read-only by default), the `WorkFs` longest-prefix mount table (itself a `FileSystem`), the backends `InMemFs/PassthroughFs/S3Fs/NotionFs/GdriveFs`, and the host mounts `FuseMount` (macFUSE) and `FuseTMount` (FUSE-T, no kext needed). The `Mount` trait: `mountpoint()`, unmounts on drop.
+- `rootfs`/image layers, the `mem`/`index` executables (SQLite+vec0).
+- **`origin/cortex-gui`** (jhlee525, 9/7): a Tauri 2 + React PoC. A WorkFs file browser, local/Notion/S3 connectors, `SharedFs` (a handle that does not lose WorkFs when you hand it to a mount), and `mem init` over a temporary FUSE-T mount. No session storage. From the README: "agent execution — where ailoy plugs in".
 
 ### 2.3 agent-k (`../agent-k`)
 
-ailoy(`feat/krun-sandbox`) + cortex 위의 서버형 풀스택(axum + SQLite + SSE). 프론트는 구버전 backend에 묶여 재사용 불가. **이식 가치가 높은 조각**: `backend/src/agent_stream.rs`(델타→메시지 재조립 `MessageAssembler`, 테스트 포함), `state/session.rs`의 중단 처리(drain 모드, `completed_naturally`, 미완 tool_call stub), `SessionMessage{depth, source_agent, message}` 저장 형태와 "depth 0만 모델에 재주입" 규칙, `lib/toolCallFormat.ts`(툴콜 렌더/복사 단일 파서). 툴 승인은 없었다.
+A server-style full stack (axum + SQLite + SSE) on top of ailoy (`feat/krun-sandbox`) and cortex. The frontend is tied to the old backend and cannot be reused. **The pieces worth porting**: `backend/src/agent_stream.rs` (the `MessageAssembler` that reassembles deltas into messages, tests included), the interruption handling in `state/session.rs` (drain mode, `completed_naturally`, stubs for unfinished tool_calls), the `SessionMessage{depth, source_agent, message}` storage shape and its "only depth 0 goes back into the model" rule, and `lib/toolCallFormat.ts` (one parser for rendering and copying tool calls). There was no tool approval.
 
-### 2.4 재활용 결정 요약
+### 2.4 Reuse decisions at a glance
 
-| 출처 | 그대로 사용 | 이식(코드 복사·수정) | 아이디어만 |
+| Source | Use as is | Port (copy and adapt code) | Ideas only |
 |---|---|---|---|
-| ailoy `mem-applied` | 코어 전체(메시지 모델, LM 와이어 5종, 툴, 에이전트 루프, memory) | — | — |
-| cortex main | `Console`, `WorkFs`, 백엔드 FS, `FuseTMount` | — | — |
-| cortex-gui | — | `SharedFs`, `fsops`(list/read/write/import), `mounts`(커넥터 사전 검증), 파일 트리 UI 로직 | 3열 레이아웃 |
-| agent-k | — | `MessageAssembler`, 중단 처리, `SessionMessage` 형태, 툴콜 포맷터 | `.ref` 지식 인덱싱(후속) |
+| ailoy `mem-applied` | The whole core (the message model, the five LM wires, the tools, the agent loop, memory) | — | — |
+| cortex main | `Console`, `WorkFs`, the FS backends, `FuseTMount` | — | — |
+| cortex-gui | — | `SharedFs`, `fsops` (list/read/write/import), `mounts` (connector pre-validation), the file tree UI logic | The three-column layout |
+| agent-k | — | `MessageAssembler`, interruption handling, the `SessionMessage` shape, the tool call formatter | `.ref` knowledge indexing (follow-up) |
 
 ---
 
-## 3. 결정 사항 (Q&A 기록)
+## 3. Decisions (Q&A record)
 
-| 항목 | 결정 |
+| Item | Decision |
 |---|---|
-| 코어 기반 브랜치 | `mem-applied` (+ develop #448 머지) |
-| v1 콘솔 백엔드 | `cortex-local-console` (호스트 실행). micro-VM은 후속 토글 |
-| v1 범위 | 채팅 + 로컬 폴더 + 외부 커넥터(Notion/S3) |
-| 툴 승인 | 훅과 이벤트는 지금, 정책은 자동 승인 |
-| 코드 위치 | ailoy 저장소 `apps/desktop/`. 브랜치는 `mem-applied`에서. `mem-applied→develop` 병합은 브랜치 소유자 |
-| cortex 수정 | 필요 시 cortex에 변경 브랜치 생성(path 의존으로 참조) |
-| 워크스페이스 모델 | 앱에 워크스페이스 1개, 세션 N개(스키마에 `workspace_id` 유지) |
-| UI 스택 | React 19 + Vite + TS + Tailwind v4 + shadcn/ui, 채팅 UI 직접 구현 |
-| 런타임 배치 | 헤드리스 세션 엔진 크레이트 + Tauri 임베드 |
-| 마운트 수명 | 앱 수명 동안 FUSE-T 마운트 유지 |
-| 사용량 표시 | 계층 1(전 벤더 컨텍스트 사용률·누적·비용) + 계층 2(rate-limit 헤더) |
-| 모델 메타데이터 | models.dev(`https://models.dev/api.json`) 스냅샷 내장 + 런타임 갱신 |
+| Core base branch | `mem-applied` (+ the develop #448 merge) |
+| v1 console backend | `cortex-local-console` (runs on the host). The micro-VM becomes a later toggle |
+| v1 scope | Chat + local folders + external connectors (Notion/S3) |
+| Tool approval | The hook and the events now, the policy stays auto-approve |
+| Code location | `apps/desktop/` in the ailoy repository. The branch comes from `mem-applied`. Merging `mem-applied→develop` is the branch owner's call |
+| cortex changes | Create a branch on cortex when needed (referenced through the path dependency) |
+| Workspace model | One workspace per app, N sessions (the schema keeps `workspace_id`) |
+| UI stack | React 19 + Vite + TS + Tailwind v4 + shadcn/ui, with the chat UI built by hand |
+| Runtime layout | A headless session engine crate embedded in Tauri |
+| Mount lifetime | The FUSE-T mount is held for the app's lifetime |
+| Usage display | Tier 1 (context utilization, totals, and cost across every vendor) plus tier 2 (rate limit headers) |
+| Model metadata | A bundled models.dev (`https://models.dev/api.json`) snapshot refreshed at runtime |
 
-관례적 기본값(질문 없이 결정): SQLite는 `rusqlite`(bundled), API 키는 앱 데이터 디렉터리의 설정 DB에 저장(Keychain은 후속), 기본 모델 `anthropic/claude-opus-5`, `max_tokens` 기본 32,000, 턴 상한 50.
+Conventional defaults (decided without asking): SQLite is `rusqlite` (bundled), API keys are stored in the settings DB in the app data directory (Keychain later), the default model is `anthropic/claude-opus-5`, `max_tokens` defaults to 32,000, and the turn limit is 50.
 
 ---
 
-## 4. 전체 아키텍처
+## 4. Overall architecture
 
-### 4.1 저장소 배치
+### 4.1 Repository layout
 
 ```
-ailoy/                         cargo workspace 루트 (패키지 `ailoy`는 그대로 라이브러리)
+ailoy/                         cargo workspace root (the `ailoy` package stays a library)
 ├─ Cargo.toml                  members = ["./", "apps/desktop/core"], exclude += ["apps/desktop/src-tauri"]
-├─ src/                        ailoy 코어 (§5)
+├─ src/                        the ailoy core (§5)
 ├─ apps/desktop/
-│  ├─ package.json, vite.config.ts, tailwind, src/   React 프론트 (§8)
-│  ├─ core/                    crate `ailoy-desktop-core` — 헤드리스 세션 엔진 (§6)
-│  ├─ src-tauri/               crate `ailoy-desktop` — 자체 [workspace] (§7)
-│  └─ scripts/                 models.dev 스냅샷 생성 등
-└─ ../cortex/cortex            path 의존
+│  ├─ package.json, vite.config.ts, tailwind, src/   the React frontend (§8)
+│  ├─ core/                    crate `ailoy-desktop-core` — the headless session engine (§6)
+│  ├─ src-tauri/               crate `ailoy-desktop` — its own [workspace] (§7)
+│  └─ scripts/                 generating the models.dev snapshot, etc.
+└─ ../cortex/cortex            path dependency
 ```
 
-`src-tauri`를 루트 workspace의 member로 두지 않는 이유는 cortex-gui와 같다: Tauri가 끌어오는 webview 의존 수백 개를 루트의 `cargo test`에 부담시키지 않는다. `core`는 가벼우므로(rusqlite, tokio, cortex, ailoy) member로 둔다.
+`src-tauri` is kept out of the root workspace's members for the same reason as in cortex-gui: the hundreds of webview dependencies Tauri pulls in should not weigh on the root's `cargo test`. `core` is light (rusqlite, tokio, cortex, ailoy), so it stays a member.
 
-### 4.2 프로세스와 데이터 흐름
+### 4.2 Processes and data flow
 
 ```
-┌──────────────── Tauri 앱 프로세스 ────────────────┐      stdio(BSON JSON-RPC)   ┌──────────────────────┐
-│ WebView(React) ⇄ invoke/Channel ⇄ src-tauri       │ ───────────────────────────▶ │ cortex-local-console │ (run당 1개)
-│                    └── ailoy-desktop-core          │                              │  cwd = workfs 마운트  │
+┌──────────────── Tauri app process ────────────────┐      stdio(BSON JSON-RPC)   ┌──────────────────────┐
+│ WebView(React) ⇄ invoke/Channel ⇄ src-tauri       │ ───────────────────────────▶ │ cortex-local-console │ (one per run)
+│                    └── ailoy-desktop-core          │                              │  cwd = workfs mount  │
 │                          ├─ Agent(ailoy) ─ LLM API │                              └──────────┬───────────┘
-│                          ├─ WorkFs ── FuseTMount ──┼── <appdata>/workspace ◀── 커널 FUSE ────┘
+│                          ├─ WorkFs ── FuseTMount ──┼── <appdata>/workspace ◀── kernel FUSE ──┘
 │                          └─ SQLite(<appdata>/db)   │
 └───────────────────────────────────────────────────┘
 ```
 
-- 파일 트리는 두 경로로 본다. 에이전트 셸은 FUSE-T 마운트 경로를 workfs로 받고, UI 파일 브라우저는 같은 `WorkFs`를 in-process `FileSystem::list/read`로 읽는다(FUSE 왕복 없음).
-- 콘솔은 **run 하나에 하나**. cortex 콘솔은 요청을 하나씩만 받으므로 세션 간 동시 실행이 자연스럽고, run 종료 시 `quit`으로 정리된다. 한 세션에 run은 동시에 하나만.
-- LLM 호출은 ailoy 코어가 앱 프로세스에서 직접 수행한다(키는 코어 프로세스에만 존재).
+- The file tree is seen through two paths. The agent's shell gets the FUSE-T mount path as its workfs, and the UI's file browser reads the same `WorkFs` in process through `FileSystem::list/read` (no FUSE round trip).
+- There is **one console per run**. A cortex console takes one request at a time, so concurrent runs across sessions fall out naturally, and the console is cleaned up with `quit` when the run ends. A session has at most one run at a time.
+- LLM calls are made by the ailoy core inside the app process (the keys exist only in the core process).
 
-### 4.3 앱 데이터 디렉터리
+### 4.3 App data directory
 
 `~/Library/Application Support/com.brekkylab.ailoy/`
-- `ailoy.sqlite` — 세션·메시지·마운트·설정
-- `files/` — 워크스페이스 루트(`PassthroughFs`)
-- `workspace/` — FUSE-T 마운트포인트(비어 있어야 함)
-- `cache/models.json` — models.dev 갱신 캐시
+- `ailoy.sqlite` — sessions, messages, mounts, settings
+- `files/` — the workspace root (`PassthroughFs`)
+- `workspace/` — the FUSE-T mountpoint (must be empty)
+- `cache/models.json` — the models.dev refresh cache
 
 ---
 
-## 5. ailoy 코어 변경
+## 5. Changes to the ailoy core
 
-원칙: 기존 `run`/`run_stream`과 `anyhow` 기반 공개 API는 유지하고, 제어 가능한 진입점과 타입 있는 에러를 **추가**한다. 라이브러리 소비자 누구나 같은 완성도를 얻도록 루프 정합성(취소·복구)은 코어에 둔다.
+The principle: keep the existing `run`/`run_stream` and the `anyhow`-based public API, and **add** a controllable entry point and typed errors. Loop consistency (cancellation and recovery) lives in the core so that every library consumer gets the same level of polish.
 
-### 5.1 `RunControl`과 `run_stream_controlled`
+### 5.1 `RunControl` and `run_stream_controlled`
 
 ```rust
-// src/agent/control.rs (신규)
+// src/agent/control.rs (new)
 pub struct RunControl {
     pub cancel: tokio_util::sync::CancellationToken,
-    pub max_turns: Option<u32>,            // 모델 호출 횟수 상한. None = 무제한(기존 동작)
-    pub tool_gate: Arc<dyn ToolGate>,      // 기본 AllowAll
+    pub max_turns: Option<u32>,            // cap on model calls. None = unlimited (the existing behavior)
+    pub tool_gate: Arc<dyn ToolGate>,      // AllowAll by default
 }
 
 pub struct ToolCallRequest<'a> { pub id: &'a str, pub name: &'a str, pub arguments: &'a Value }
@@ -159,18 +159,18 @@ impl Agent {
 }
 ```
 
-- 기존 `run_stream`은 `RunControl::default()`(취소 없음, 상한 없음, AllowAll)로 위임하고 `AgentError`를 `anyhow`로 감싼다.
-- `MessageDeltaOutput` 아이템 타입은 바꾸지 않는다. "승인 대기" 같은 UI 이벤트는 게이트 구현체(엔진) 쪽에서 낸다.
+- The existing `run_stream` delegates with `RunControl::default()` (no cancellation, no limit, AllowAll) and wraps `AgentError` in `anyhow`.
+- The `MessageDeltaOutput` item type does not change. UI events such as "awaiting approval" are emitted on the gate implementation (the engine) side.
 
-### 5.2 루프 정합성 규칙
+### 5.2 Loop consistency rules
 
-- **턴 상한**: 모델 호출 직전(직전 턴의 툴 결과가 모두 커밋된 지점)에 검사. 초과 시 `Err(AgentError::MaxTurns { turns })`. 이 시점의 history는 항상 재전송 가능하다. `max_turns`는 스트리밍 `run_stream_controlled`에만 있는 개념이며, `max_turns: Some(0)`은 모델을 한 번도 호출하지 않으므로 대기 중인 user 메시지를 pop한다(롤백 규칙과 동일).
-- **취소 — 모델 응답 중**: `select!`로 스트림 `next()`와 `cancel.cancelled()`를 경합. 취소되면 누적된 부분 assistant 메시지를 커밋한다(텍스트·thinking은 그대로, 미완성 tool_call 조각은 버림, `finish_reason = Stop`). 텍스트도 tool_call도 없으면 커밋하지 않고 대기 중인 user 메시지를 pop(기존 롤백 규칙).
-- **취소 — 툴 실행 중**: 툴 스트림을 drop(진행 중인 future 중단). 결과가 커밋되지 않은 tool_call마다 `Role::Tool` stub `"[Interrupted: cancelled before this tool call completed]"`을 같은 `id`로 history에 넣는다.
-- **승인 거부**: `Deny{reason}`인 호출은 실행하지 않고 `Role::Tool` 결과 `{"error":"denied by user: <reason>","phase":"policy"}`로 기록한다. 같은 배치의 허용된 호출은 정상 실행.
-- **모델 호출 실패(2턴 이후)**: 기존에는 assistant `tool_calls` 뒤에 결과가 없는 상태로 남을 수 있었다. 실패 시점에 미완 tool_call이 있으면 위와 같은 stub을 넣어 history를 닫은 뒤 에러를 반환한다.
-- **블로킹 `run`도 동일**: 콘솔 기동 실패·알 수 없는 툴로 툴 배치가 중단되면 결과가 없는 tool_call마다 같은 stub을 넣고 에러를 반환한다(`run`에는 `max_turns`가 없다 — 위 턴 상한 항목 참조).
-- 어떤 경로로 종료되든 **history에 짝 없는 `tool_use`가 남지 않는다**(Anthropic 400 방지). 이는 테스트로 고정한다.
+- **Turn limit**: checked right before a model call (the point where every tool result from the previous turn has been committed). Over the limit it is `Err(AgentError::MaxTurns { turns })`. The history at that point is always safe to resend. `max_turns` only exists for the streaming `run_stream_controlled`, and `max_turns: Some(0)` never calls the model at all, so it pops the pending user message (the same as the rollback rule).
+- **Cancellation — during the model response**: race the stream's `next()` against `cancel.cancelled()` with `select!`. On cancellation, commit the partial assistant message accumulated so far (text and thinking as is, unfinished tool_call fragments dropped, `finish_reason = Stop`). If there is neither text nor a tool_call, commit nothing and pop the pending user message (the existing rollback rule).
+- **Cancellation — during tool execution**: drop the tool stream (aborting the futures in flight). For every tool_call whose result was not committed, put a `Role::Tool` stub `"[Interrupted: cancelled before this tool call completed]"` into the history under the same `id`.
+- **Approval denied**: a call that comes back `Deny{reason}` is not executed and is recorded as a `Role::Tool` result `{"error":"denied by user: <reason>","phase":"policy"}`. The allowed calls in the same batch run normally.
+- **Model call failure (turn 2 onward)**: previously the history could be left with an assistant `tool_calls` and no results after it. If there are unfinished tool_calls at the point of failure, close the history with the same stubs as above and then return the error.
+- **The blocking `run` behaves the same**: when a tool batch is aborted by a console startup failure or an unknown tool, put the same stub in for every tool_call without a result and return the error (`run` has no `max_turns` — see the turn limit item above).
+- No matter which path ends the run, **no unpaired `tool_use` is left in the history** (this avoids Anthropic 400s). Tests pin this down.
 
 ### 5.3 `AgentError`
 
@@ -179,82 +179,82 @@ pub enum AgentError {
     Cancelled,
     MaxTurns { turns: u32 },
     Model(ModelError),                 // status: Option<u16>, retryable: bool, provider_message: String
-    Tool(anyhow::Error),               // 툴 실행 실패. 이름 필드는 두지 않고 소스 에러를 그대로 담는다
-    Console(anyhow::Error),            // 콘솔 없음/기동 실패
+    Tool(anyhow::Error),               // tool execution failed. No name field; it carries the source error as is
+    Console(anyhow::Error),            // no console / startup failed
     Other(anyhow::Error),
 }
 ```
 
-`LangModel` 계층에도 `ModelError`를 도입하고 HTTP 상태·본문·재시도 여부를 담는다. 기존 `anyhow` 경로는 `From<AgentError> for anyhow::Error`로 호환.
+`ModelError` is introduced at the `LangModel` layer too, carrying the HTTP status, the body, and whether a retry is worthwhile. The existing `anyhow` path stays compatible through `From<AgentError> for anyhow::Error`.
 
-### 5.4 재시도와 클라이언트
+### 5.4 Retries and the client
 
-- `send_with_retry`: 429 외에 **5xx와 transport 오류**도 지수 백오프(최대 3회, 10초 상한) 대상으로 포함. 4xx(429 제외)는 즉시 실패. 영구 quota 오류 분류(`is_permanent_quota_error`)는 유지.
-- `reqwest::Client`를 `LangModel`에 캐시해 매 호출 TLS 핸드셰이크를 없앤다.
+- `send_with_retry`: **5xx and transport errors** join 429 as subjects of exponential backoff (at most 3 attempts, capped at 10 seconds). 4xx (other than 429) fails immediately. The permanent quota error classification (`is_permanent_quota_error`) stays.
+- Cache the `reqwest::Client` on `LangModel` to remove the TLS handshake from every call.
 
-### 5.5 사용량과 rate-limit 정보
+### 5.5 Usage and rate limit information
 
-- `TokenUsage`는 5개 와이어 모두에서 채워지며, 캐시 필드도 모두 파싱된다(Gemini는 `usageMetadata.cachedContentTokenCount`, OpenAI Responses는 `usage.input_tokens_details.cached_tokens`를 읽어 `cache_read_input_tokens`에 넣고, 총 프롬프트에서 이를 뺀 값을 `input_tokens`로 정규화한다. 두 벤더 모두 캐시 쓰기 수치는 보고하지 않으므로 `cache_creation_input_tokens`는 `None`이다).
-- 신규 타입과 필드:
+- `TokenUsage` is filled in by all five wires, and the cache fields are all parsed too (Gemini reads `usageMetadata.cachedContentTokenCount` and OpenAI Responses reads `usage.input_tokens_details.cached_tokens` into `cache_read_input_tokens`, then normalizes `input_tokens` to the total prompt minus that. Neither vendor reports cache write numbers, so `cache_creation_input_tokens` is `None`).
+- New types and fields:
 
 ```rust
 pub struct RateLimitWindow { pub limit: Option<u64>, pub remaining: Option<u64>, pub reset_at_ms: Option<u64> }
-// reset_at_ms: Unix epoch 밀리초. RFC 3339(Anthropic)든 duration(OpenAI)이든 파싱 시점에 ms로 정규화한다.
+// reset_at_ms: Unix epoch milliseconds. Whether it arrives as RFC 3339 (Anthropic) or a duration (OpenAI), it is normalized to ms at parse time.
 pub struct RateLimitInfo {
     pub requests: Option<RateLimitWindow>,
-    pub tokens: Option<RateLimitWindow>,        // 통합 토큰(있는 벤더만)
+    pub tokens: Option<RateLimitWindow>,        // combined tokens (only the vendors that have it)
     pub input_tokens: Option<RateLimitWindow>,
     pub output_tokens: Option<RateLimitWindow>,
 }
-// MessageOutput / MessageDeltaOutput 에 `pub rate_limit: Option<RateLimitInfo>` (serde skip_if_none) 추가.
-// run_stream: 응답 헤더를 **첫 델타에만** 실어 보낸다(이후 델타의 rate_limit은 항상 None). run: MessageOutput에 실린다.
+// Add `pub rate_limit: Option<RateLimitInfo>` (serde skip_if_none) to MessageOutput / MessageDeltaOutput.
+// run_stream: the response headers ride on **the first delta only** (rate_limit is always None on later deltas). run: they ride on MessageOutput.
 ```
 
-**`TokenUsage` 의미 규정**: `input_tokens`는 **캐시되지 않은 입력만** 센다. `cache_read_input_tokens`·`cache_creation_input_tokens`는 겹치지 않는 **가산 성분**이므로 총 프롬프트 = 세 항의 합이다(Anthropic 와이어 의미를 기준으로 삼는다). 프롬프트 수치에 캐시 토큰이 **포함된** 채로 오는 프로바이더 — OpenAI Responses `usage.input_tokens`, OpenAI ChatCompletion `usage.prompt_tokens`(+`prompt_tokens_details.cached_tokens`), Gemini `usageMetadata.promptTokenCount`(+`cachedContentTokenCount`) — 는 파서에서 `input_tokens = total_prompt.saturating_sub(cached)`로 정규화한다. 따라서 §6.6의 `context_used` 공식(세 항의 합)은 모든 프로바이더에서 그대로 성립하며, 이중 계산이 없다.
+**Defining what `TokenUsage` means**: `input_tokens` counts **only uncached input**. `cache_read_input_tokens` and `cache_creation_input_tokens` are non-overlapping **additive components**, so the total prompt is the sum of the three (we take the Anthropic wire's meaning as the standard). Providers that report cache tokens **included** in the prompt number — OpenAI Responses `usage.input_tokens`, OpenAI ChatCompletion `usage.prompt_tokens` (+`prompt_tokens_details.cached_tokens`), Gemini `usageMetadata.promptTokenCount` (+`cachedContentTokenCount`) — are normalized in the parser with `input_tokens = total_prompt.saturating_sub(cached)`. The `context_used` formula in §6.6 (the sum of the three) therefore holds as written for every provider, with no double counting.
 
-| 와이어 스키마 | 헤더 매핑 |
+| Wire schema | Header mapping |
 |---|---|
-| Anthropic | `anthropic-ratelimit-{requests,tokens,input-tokens,output-tokens}-{limit,remaining,reset}` (reset은 RFC 3339) |
-| OpenAI Responses / ChatCompletion | `x-ratelimit-{limit,remaining,reset}-{requests,tokens}` (reset은 `1m2s` 형식 duration → 현재 시각에 더함). xAI·DeepSeek·Moonshot는 같은 파서를 시도하고 헤더가 없으면 `None` |
-| Gemini, Bedrock | 헤더 없음 → `None` |
+| Anthropic | `anthropic-ratelimit-{requests,tokens,input-tokens,output-tokens}-{limit,remaining,reset}` (reset is RFC 3339) |
+| OpenAI Responses / ChatCompletion | `x-ratelimit-{limit,remaining,reset}-{requests,tokens}` (reset is a `1m2s`-style duration → added to the current time). xAI, DeepSeek, and Moonshot go through the same parser and come back `None` when the headers are absent |
+| Gemini, Bedrock | no headers → `None` |
 
-### 5.6 기반 브랜치 정리
+### 5.6 Sorting out the base branch
 
-`feat/desktop` 브랜치 = `origin/mem-applied` + `develop` 머지(#448 유지, #443의 `sandbox.rs` 변경은 파일 삭제로 해소). 이후 `develop`으로의 병합은 `mem-applied` 소유자와 조율한다.
+The `feat/desktop` branch = `origin/mem-applied` + a `develop` merge (#448 kept, #443's `sandbox.rs` change resolved by deleting the file). Merging back into `develop` later is coordinated with the owner of `mem-applied`.
 
 ---
 
-## 6. 세션 엔진 `ailoy-desktop-core`
+## 6. The session engine `ailoy-desktop-core`
 
-Tauri 의존이 없는 라이브러리 크레이트. 모든 공개 타입은 `serde` 직렬화 가능하며 그대로 IPC 페이로드가 된다.
+A library crate with no Tauri dependency. Every public type is `serde`-serializable and doubles as the IPC payload.
 
-### 6.1 모듈
+### 6.1 Modules
 
-| 모듈 | 책임 |
+| Module | Responsibility |
 |---|---|
-| `engine` | `Engine::start(config) -> Engine`: DB 열기·마이그레이션 → stale 마운트 정리 → WorkFs 조립·마운트 → 커넥터 복원 → 프로바이더 등록 → 모델 카탈로그 로드. `Engine::shutdown()`: 모든 run 취소 → 콘솔 quit → 마운트 drop. |
-| `workspace` | `Arc<RwLock<WorkFs>>` 소유. `SharedFs`(cortex-gui 이식)를 `FuseTMount::try_new`에 넘겨 앱 수명 동안 유지. 루트 `""` = `PassthroughFs(<appdata>/files)`. 커넥터 `mount_add/remove`는 DB 갱신 + `WorkFs::mount/unmount`. 파일 브라우저용 `list/read/write/mkdir/delete/rename/import`(cortex-gui `fsops` 이식). `WorkspaceMount: cortex::fs::Mount` 구현체로 마운트포인트를 콘솔에 전달. |
-| `console` | 사이드카 경로 해석 → `tokio::process::Command` → `Console::builder().client(StdioClient::new(cmd)).mount(WorkspaceMount).build()`. 환경 변수 `PATH`에 사이드카 디렉터리를 prepend(후속 `mem` 대비). run당 1개, run 종료 시 drop(`quit`). 스폰 실패는 `EngineError::ConsoleUnavailable`. |
-| `store` | `rusqlite`(bundled, WAL). 스키마는 §6.2. `Message`는 ailoy serde JSON을 `{version, depth, source_agent, message}`로 감싸 저장. |
-| `catalog` | models.dev 스냅샷(§6.5). 모델 목록, 컨텍스트 창, 단가, 기능 플래그 제공. |
-| `providers` | 설정의 API 키를 ailoy 전역 `"default"` `LangModelProvider`에 등록/갱신(`get_lm_providers_mut`). 키 변경 즉시 반영. |
-| `prompt` | 시스템 프리앰블 생성(§6.4). |
-| `run` | 세션당 최대 1개의 actor 태스크(§6.3). |
-| `usage` | `TokenUsage`·`RateLimitInfo`·카탈로그로 컨텍스트 사용률, 세션 누적, 추정 비용, 분당 잔여율 계산(§6.6). |
-| `events` | `RunEvent`(§6.3), `EngineEvent`(마운트 변경·오류). |
+| `engine` | `Engine::start(config) -> Engine`: open and migrate the DB → clean up stale mounts → assemble and mount WorkFs → restore connectors → register providers → load the model catalog. `Engine::shutdown()`: cancel every run → quit the consoles → drop the mount. |
+| `workspace` | Owns `Arc<RwLock<WorkFs>>`. Hands `SharedFs` (ported from cortex-gui) to `FuseTMount::try_new` and holds it for the app's lifetime. The root `""` = `PassthroughFs(<appdata>/files)`. Connector `mount_add/remove` updates the DB and calls `WorkFs::mount/unmount`. `list/read/write/mkdir/delete/rename/import` for the file browser (ported from cortex-gui `fsops`). A `WorkspaceMount: cortex::fs::Mount` implementation passes the mountpoint to the console. |
+| `console` | Resolve the sidecar path → `tokio::process::Command` → `Console::builder().client(StdioClient::new(cmd)).mount(WorkspaceMount).build()`. Prepend the sidecar directory to the `PATH` environment variable (in preparation for `mem` later). One per run, dropped (`quit`) when the run ends. A spawn failure is `EngineError::ConsoleUnavailable`. |
+| `store` | `rusqlite` (bundled, WAL). The schema is in §6.2. A `Message` is stored as the ailoy serde JSON wrapped in `{version, depth, source_agent, message}`. |
+| `catalog` | The models.dev snapshot (§6.5). Supplies the model list, context windows, prices, and capability flags. |
+| `providers` | Register and update the API keys from settings on ailoy's global `"default"` `LangModelProvider` (`get_lm_providers_mut`). Key changes take effect immediately. |
+| `prompt` | Builds the system preamble (§6.4). |
+| `run` | At most one actor task per session (§6.3). |
+| `usage` | Computes context utilization, session totals, estimated cost, and the remaining rate limit from `TokenUsage`, `RateLimitInfo`, and the catalog (§6.6). |
+| `events` | `RunEvent` (§6.3), `EngineEvent` (mount changes and errors). |
 
-### 6.2 데이터 모델 (SQLite)
+### 6.2 Data model (SQLite)
 
 ```sql
 CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL);
--- v1은 'default' 한 행만 생성
+-- v1 creates a single 'default' row
 
 CREATE TABLE mounts (
   id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  path TEXT NOT NULL,                 -- WorkFs 내 경로. 루트 행은 '' (표시는 '/')
+  path TEXT NOT NULL,                 -- the path inside WorkFs. The root row is '' (displayed as '/')
   kind TEXT NOT NULL,                 -- 'root' | 'local' | 'notion' | 's3'
   label TEXT NOT NULL,
-  config TEXT NOT NULL,               -- JSON. 자격 증명 포함(v1은 평문, 파일 권한 0600)
+  config TEXT NOT NULL,               -- JSON. Includes credentials (plaintext in v1, file mode 0600)
   writable INTEGER NOT NULL,
   created_at INTEGER NOT NULL,
   UNIQUE(workspace_id, path)
@@ -269,41 +269,41 @@ CREATE TABLE sessions (
 CREATE TABLE messages (
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   seq INTEGER NOT NULL,
-  depth INTEGER NOT NULL DEFAULT 0,   -- 0 = 최상위, ≥1 = 서브에이전트 내부
+  depth INTEGER NOT NULL DEFAULT 0,   -- 0 = top level, ≥1 = inside a subagent
   source_agent TEXT,
-  role TEXT NOT NULL,                 -- 조회 편의용 복제
+  role TEXT NOT NULL,                 -- duplicated for easy querying
   content TEXT NOT NULL,              -- {"version":1,"message":<ailoy Message JSON>}
-  usage TEXT,                         -- TokenUsage JSON (assistant 메시지만)
+  usage TEXT,                         -- TokenUsage JSON (assistant messages only)
   created_at INTEGER NOT NULL,
   PRIMARY KEY(session_id, seq)
 );
 
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
--- provider.<name>.api_key, default_model, catalog.last_refreshed 등
+-- provider.<name>.api_key, default_model, catalog.last_refreshed, and so on
 ```
 
-- 모델에 재주입하는 history는 `depth = 0`인 행만(agent-k 규칙). 서브에이전트 내부 메시지는 UI 표시용으로만 저장.
-- `messages.usage`는 세션 누적 계산과 컨텍스트 사용률의 근거.
-- 마이그레이션은 `PRAGMA user_version` 기반의 순차 SQL 파일(`core/migrations/NNNN_*.sql`).
+- The history fed back into the model is only the rows with `depth = 0` (the agent-k rule). Messages from inside a subagent are stored purely for display.
+- `messages.usage` is the basis for session totals and context utilization.
+- Migrations are sequential SQL files keyed off `PRAGMA user_version` (`core/migrations/NNNN_*.sql`).
 
-### 6.3 실행(run) 수명과 이벤트
+### 6.3 Run lifetime and events
 
 ```
 run_start(session, parts)
- ├─ 세션에 활성 run 있으면 EngineError::AlreadyRunning
- ├─ user 메시지 즉시 DB 기록(seq N) → RunEvent::Message
- ├─ 콘솔 스폰 → Agent 조립:
+ ├─ EngineError::AlreadyRunning if the session already has an active run
+ ├─ write the user message to the DB immediately (seq N) → RunEvent::Message
+ ├─ spawn the console → assemble the Agent:
  │     AgentBuilder::new(model).instruction(preamble).system_tools()
  │        .web_search_tool(vec![]).web_fetch_tool()
- │        .history(depth0 메시지).console(console).build()
- │     spec.max_tokens = settings 또는 32_000
+ │        .history(the depth-0 messages).console(console).build()
+ │     spec.max_tokens = settings or 32_000
  ├─ tokio::spawn(actor):
  │     stream = agent.run_stream_controlled(user_msg, RunControl{cancel, max_turns: 50, tool_gate: AllowAll})
- │     MessageAssembler(agent-k 이식)로 델타→(TextDelta|ThinkingDelta|Completed) 분류
- │     Completed 메시지는 즉시 DB 기록(seq++) → RunEvent::Message
- │     usage/rate_limit이 실린 델타 → RunEvent::Usage
- │     종료: Ok → Done, Err(Cancelled) → Cancelled, Err(MaxTurns) → Error{kind:"max_turns"}, 그 외 → Error
- └─ 콘솔 drop(quit), 세션 updated_at 갱신
+ │     classify deltas into (TextDelta|ThinkingDelta|Completed) with MessageAssembler (ported from agent-k)
+ │     a Completed message goes to the DB at once (seq++) → RunEvent::Message
+ │     a delta carrying usage/rate_limit → RunEvent::Usage
+ │     ending: Ok → Done, Err(Cancelled) → Cancelled, Err(MaxTurns) → Error{kind:"max_turns"}, anything else → Error
+ └─ drop the console (quit), update the session's updated_at
 ```
 
 ```rust
@@ -315,35 +315,35 @@ pub enum RunEvent {
     ToolCallStarted { id: String, name: String, arguments: Value },
     Message { seq: i64, depth: u8, source_agent: Option<String>, message: Message, usage: Option<TokenUsage> },
     Usage { usage: Option<TokenUsage>, rate_limit: Option<RateLimitInfo>, context_used: Option<u64>, context_limit: Option<u64> },
-    AwaitingApproval { id: String, name: String, arguments: Value },   // v1에서는 발생하지 않음
+    AwaitingApproval { id: String, name: String, arguments: Value },   // never fires in v1
     Done, Cancelled,
     Error { kind: String, message: String },
 }
 ```
 
-- 이벤트는 run별 `tokio::sync::broadcast`로 내보낸다. 창이 새로 고쳐져도 `run_attach`로 재구독하며, 이때 현재까지의 부분 텍스트를 한 번에 `TextDelta`로 보낸다.
-- `run_cancel`은 `CancellationToken::cancel()` 후 actor 종료를 기다리지 않고 반환. 최종 상태는 이벤트로.
-- 부분 assistant 텍스트는 코어가 커밋하므로(§5.2) 취소 후에도 DB에 남는다.
+- Events go out over a per-run `tokio::sync::broadcast`. A refreshed window resubscribes with `run_attach`, which sends the partial text so far as a single `TextDelta`.
+- `run_cancel` calls `CancellationToken::cancel()` and returns without waiting for the actor to finish. The final state arrives as an event.
+- Partial assistant text is committed by the core (§5.2), so it survives in the DB after a cancellation.
 
-### 6.4 시스템 프리앰블
+### 6.4 The system preamble
 
-ailoy는 `instruction` 외에 아무것도 넣지 않으므로 엔진이 조립한다. 구성: (1) 정체성과 역할, (2) 날짜·OS, (3) 작업 디렉터리 = workfs 경로와 "모든 경로는 이 안"이라는 규칙, (4) 마운트 테이블: 경로·종류·읽기 전용 여부·각 커넥터 사용 안내(Notion은 `page.json` 렌더, S3는 객체 키 규칙), (5) 툴 사용 지침(`shell`은 `sh -c`, 결과 30k 문자 절단·`truncated` 플래그 의미), (6) 사용자 설정 추가 지시문(선택). 마운트가 바뀌면 다음 run부터 반영된다(세션 중간 변경은 새 시스템 메시지로 교체하지 않고 다음 run의 첫 메시지에 반영).
+ailoy puts nothing in beyond `instruction`, so the engine assembles it. The parts: (1) identity and role, (2) the date and the OS, (3) the working directory = the workfs path plus the rule that "every path lives inside it", (4) the mount table: path, kind, whether it is read-only, and how to use each connector (Notion renders `page.json`, S3 has object key rules), (5) tool usage guidance (`shell` is `sh -c`, results are truncated at 30k characters and what the `truncated` flag means), (6) extra user-configured instructions (optional). A mount change takes effect from the next run (a change mid-session does not replace the system message; it shows up in the first message of the next run).
 
-### 6.5 모델 카탈로그 (models.dev)
+### 6.5 The model catalog (models.dev)
 
-- 출처: `https://models.dev/api.json` (MIT, TOML 소스 + PR, 213 프로바이더·7,677 모델, 4.5 MB). 스키마: `provider.models[id] = { name, family, limit: {context, output}, cost: {input, output, cache_read, cache_write} (USD/1M), reasoning, tool_call, structured_output, modalities, release_date, ... }`.
-- **빌드 시**: `apps/desktop/scripts/gen-catalog` 스크립트가 api.json을 받아 7개 프로바이더(`anthropic, openai, google, amazon-bedrock, xai, deepseek, moonshotai`)의 chat 모델만 남긴 스냅샷 `core/assets/models.json`(수십 KB)을 생성해 커밋. `include_str!`로 내장.
-- **런타임**: 시작 시 24시간 캐시 기준으로 백그라운드 갱신 시도(`<appdata>/cache/models.json`). 실패는 조용히 내장 스냅샷으로 폴백. 설정에서 갱신 끄기 가능.
-- **ID 매핑**: ailoy `provider/model` → models.dev `provider.models[model]`. 접두 매핑 `anthropic→anthropic, openai→openai, google→google, x-ai→xai, deepseek→deepseek, moonshotai→moonshotai, bedrock→amazon-bedrock`(Bedrock은 모델 ID 자체가 `anthropic.claude-...` 형태로 일치). 카탈로그에 없는 모델은 컨텍스트·비용 표시를 생략하고 "알 수 없음"으로.
-- 모델 선택 UI 목록은 "키가 등록된 프로바이더 × 카탈로그의 `tool_call: true` 모델"이며, 사용자가 임의 ID를 직접 입력할 수도 있다.
+- Source: `https://models.dev/api.json` (MIT, TOML sources plus PRs, 213 providers and 7,677 models, 4.5 MB). Schema: `provider.models[id] = { name, family, limit: {context, output}, cost: {input, output, cache_read, cache_write} (USD/1M), reasoning, tool_call, structured_output, modalities, release_date, ... }`.
+- **At build time**: the `apps/desktop/scripts/gen-catalog` script fetches api.json and generates the snapshot `core/assets/models.json` (a few tens of KB) keeping only the chat models of seven providers (`anthropic, openai, google, amazon-bedrock, xai, deepseek, moonshotai`), which is committed. It is embedded with `include_str!`.
+- **At runtime**: on startup, try a background refresh against a 24-hour cache (`<appdata>/cache/models.json`). A failure quietly falls back to the embedded snapshot. The refresh can be turned off in settings.
+- **ID mapping**: ailoy `provider/model` → models.dev `provider.models[model]`. The prefix mapping is `anthropic→anthropic, openai→openai, google→google, x-ai→xai, deepseek→deepseek, moonshotai→moonshotai, bedrock→amazon-bedrock` (for Bedrock the model ID itself matches, in the form `anthropic.claude-...`). A model missing from the catalog omits the context and cost display and shows "unknown".
+- The model picker's list is "providers with a registered key × catalog models with `tool_call: true`", and the user can also type an arbitrary ID directly.
 
-### 6.6 사용량 계산
+### 6.6 Usage calculations
 
-- 컨텍스트 사용률: 세션의 마지막 assistant 메시지 `usage`에서 `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`(각 `None`은 0) ÷ 카탈로그 `limit.context`. 다음 호출의 입력 크기에 대한 근사치로 표시(Anthropic `input_tokens`는 마지막 캐시 브레이크포인트 이후 토큰만이므로 세 항을 합쳐야 총 입력이 된다).
-- 세션 누적: 모든 assistant `usage` 합. 비용 = Σ(input·cost.input + output·cost.output + cache_read·cost.cache_read + cache_write·cost.cache_write) / 1e6. 카탈로그에 단가가 없으면 비용 생략.
-- 분당 잔여율: `RateLimitInfo`의 각 창에서 `remaining / limit`. `reset_at_ms`까지 카운트다운. 헤더가 없는 프로바이더는 표시하지 않는다.
+- Context utilization: from the `usage` of the session's last assistant message, `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` (each `None` counts as 0) ÷ the catalog's `limit.context`. Shown as an approximation of the input size of the next call (Anthropic's `input_tokens` covers only the tokens after the last cache breakpoint, so the three have to be summed to get the total input).
+- Session totals: the sum of every assistant `usage`. Cost = Σ(input·cost.input + output·cost.output + cache_read·cost.cache_read + cache_write·cost.cache_write) / 1e6. If the catalog has no prices, the cost is omitted.
+- Remaining rate limit: `remaining / limit` for each window of `RateLimitInfo`. Counts down to `reset_at_ms`. Providers without the headers are not shown.
 
-### 6.7 공개 API (엔진)
+### 6.7 Public API (the engine)
 
 ```rust
 impl Engine {
@@ -363,9 +363,9 @@ impl Engine {
   pub async fn mount_list(&self) -> Vec<MountInfo>;
   pub async fn mount_add(&self, req: MountRequest) -> Result<MountInfo, EngineError>;   // Local{host_root} | Notion{api_key} | S3{S3Form}
   pub async fn mount_remove(&self, path);
-  pub fn workspace_info(&self) -> WorkspaceInfo;   // 마운트포인트, 상태
+  pub fn workspace_info(&self) -> WorkspaceInfo;   // the mountpoint and the status
   // settings & catalog
-  pub async fn settings_get(&self) -> Settings /*키는 마스킹*/; pub async fn settings_set(&self, patch: SettingsPatch);
+  pub async fn settings_get(&self) -> Settings /*keys are masked*/; pub async fn settings_set(&self, patch: SettingsPatch);
   pub fn models_list(&self) -> Vec<ModelInfo>;
   pub async fn session_usage(&self, session_id) -> SessionUsage;
 }
@@ -373,87 +373,87 @@ impl Engine {
 
 ---
 
-## 7. Tauri 계층 `ailoy-desktop`
+## 7. The Tauri layer `ailoy-desktop`
 
-- `tauri::Builder` setup에서 `Engine::start` → `app.manage(engine)`. 종료(`tauri::RunEvent::ExitRequested`, 엔진의 `RunEvent`와는 별개 타입)에서 `engine.shutdown()`을 `spawn_blocking`으로 기다린 뒤 종료(FUSE 언마운트는 스레드 join이 필요).
-- 명령(모두 `async`, 엔진 호출을 감싸는 얇은 래퍼): `session_list/create/rename/delete`, `message_list`, `run_start(session_id, parts, on_event: Channel<RunEvent>) -> run_id`, `run_attach(session_id, on_event)`, `run_cancel(session_id)`, `fs_*`, `mount_list/add_local/add_notion/add_s3/remove`, `workspace_info`, `settings_get/set`, `models_list`, `session_usage`.
-- 이벤트: run 이벤트는 `tauri::ipc::Channel<RunEvent>`(타입·순서 보장, 스트리밍용). 전역 변화(`workspace_changed`, `mount_error`, `catalog_refreshed`)만 `AppHandle::emit`.
-- 사이드카: `tauri.conf.json` `bundle.externalBin: ["binaries/cortex-local-console"]`, capability `shell:allow-execute`(sidecar). cortex `StdioClient`가 `tokio::process::Command`를 요구하므로 플러그인 대신 경로만 해석한다: 번들에서는 실행 파일 옆(`current_exe().parent()`), dev에서는 `AILOY_CORTEX_BIN_DIR` → `../../../cortex/target/{debug,release}` 폴백. 빌드 스크립트가 `../cortex`에서 `cargo build -p cortex-local-console`을 돌려 `binaries/`에 target-triple 접미사로 복사한다.
-- 보안: CSP `default-src 'self'`, 원격 콘텐츠 없음. 자격 증명은 프론트에 마스킹만 내려간다. `fs_read`는 텍스트 상한(1 MiB)과 바이너리 감지.
-- 로그: `tracing` → 앱 데이터 `logs/`. 프론트에서 "로그 폴더 열기".
-
----
-
-## 8. 프론트엔드
-
-- 스택: React 19, Vite, TypeScript, Tailwind v4, shadcn/ui(Radix), TanStack Query(목록·설정), Zustand(스트림/런 상태), react-markdown + remark-gfm + shiki, lucide-react. `src/api.ts`가 `invoke`의 유일한 통로, `src/events.ts`가 `Channel`을 스토어에 연결(cortex-gui 패턴).
-- 레이아웃(3열): 좌 세션 목록(+새 대화, 설정 버튼, 각 세션 제목·모델·최근 시각), 중앙 스레드(user/assistant 말풍선, 접히는 thinking, 툴콜 카드: 이름·인자 요약·결과·상태 running/done/error·소요시간, 컴포저: 모델 선택·전송·중지, 컴포저 위 컨텍스트 사용률 게이지와 세션 토큰·비용 요약, 프로바이더 배지에 분당 잔여율·리셋 카운트다운), 우 워크스페이스 패널(파일 트리, 마운트 목록·종류 배지·읽기전용 표시, "+ 연결" 다이얼로그 로컬/Notion/S3 — 연결 전 검증 요청 1회, 텍스트 미리보기·간단 편집).
-- 설정 다이얼로그: 프로바이더별 API 키(마스킹, 저장 시 즉시 등록), 기본 모델, `max_tokens`, 턴 상한, 카탈로그 갱신 토글.
-- 스트림 리듀서: `RunEvent`→ 현재 assistant 버블에 `TextDelta`/`ThinkingDelta` 누적, `ToolCallStarted`로 카드 생성, `Message`로 낙관적 상태를 저장된 메시지로 교체(tool 결과는 카드에 부착), `Usage`로 게이지 갱신, `Done/Cancelled/Error`로 종료 표시. 창 새로고침 시 `message_list` + `run_attach`.
-- 툴콜 렌더: agent-k `toolCallFormat.ts` 이식(렌더와 복사가 같은 파서).
-- 문자열은 `src/strings.ts` 한 파일(한국어 기본)로 모아 후속 i18n 대비.
+- In the `tauri::Builder` setup, `Engine::start` → `app.manage(engine)`. On exit (`tauri::RunEvent::ExitRequested`, a different type from the engine's `RunEvent`), wait for `engine.shutdown()` on `spawn_blocking` before quitting (unmounting FUSE needs a thread join).
+- Commands (all `async`, thin wrappers around engine calls): `session_list/create/rename/delete`, `message_list`, `run_start(session_id, parts, on_event: Channel<RunEvent>) -> run_id`, `run_attach(session_id, on_event)`, `run_cancel(session_id)`, `fs_*`, `mount_list/add_local/add_notion/add_s3/remove`, `workspace_info`, `settings_get/set`, `models_list`, `session_usage`.
+- Events: run events go over `tauri::ipc::Channel<RunEvent>` (typed and ordered, made for streaming). Only global changes (`workspace_changed`, `mount_error`, `catalog_refreshed`) use `AppHandle::emit`.
+- Sidecar: `tauri.conf.json` `bundle.externalBin: ["binaries/cortex-local-console"]`, capability `shell:allow-execute` (sidecar). cortex's `StdioClient` wants a `tokio::process::Command`, so we resolve the path ourselves instead of using the plugin: in a bundle it sits next to the executable (`current_exe().parent()`), and in dev it is `AILOY_CORTEX_BIN_DIR` with a `../../../cortex/target/{debug,release}` fallback. The build script runs `cargo build -p cortex-local-console` in `../cortex` and copies the result into `binaries/` with the target-triple suffix.
+- Security: CSP `default-src 'self'`, no remote content. Credentials only reach the frontend masked. `fs_read` has a text cap (1 MiB) and binary detection.
+- Logs: `tracing` → `logs/` in the app data directory. "Open logs folder" from the frontend.
 
 ---
 
-## 9. cortex 변경
+## 8. Frontend
 
-| 항목 | v1 처리 |
+- Stack: React 19, Vite, TypeScript, Tailwind v4, shadcn/ui (Radix), TanStack Query (lists and settings), Zustand (stream and run state), react-markdown + remark-gfm + shiki, lucide-react. `src/api.ts` is the only route to `invoke`, and `src/events.ts` wires `Channel` into the stores (the cortex-gui pattern).
+- Layout (three columns): left, the session list (+ New chat, a settings button, and each session's title, model, and last activity); center, the thread (user/assistant bubbles, collapsible thinking, tool call cards with the name, an argument summary, the result, the status running/done/error, and the elapsed time, and a composer with model selection, send, and stop, a context utilization gauge above the composer next to the session token and cost summary, and a provider badge with the remaining rate limit and a reset countdown); right, the workspace panel (the file tree, the mount list with kind badges and read-only markers, the "+ Connect" dialog for local/Notion/S3 — one validation request before connecting — and a text preview with light editing).
+- Settings dialog: per-provider API keys (masked, registered as soon as they are saved), the default model, `max_tokens`, the turn limit, and the catalog refresh toggle.
+- Stream reducer: `RunEvent` → accumulate `TextDelta`/`ThinkingDelta` into the current assistant bubble, create a card on `ToolCallStarted`, replace the optimistic state with the stored message on `Message` (tool results are attached to the card), refresh the gauges on `Usage`, and mark the end on `Done/Cancelled/Error`. On a window refresh, `message_list` + `run_attach`.
+- Tool call rendering: port agent-k's `toolCallFormat.ts` (rendering and copying share one parser).
+- Strings are collected in the single file `src/strings.ts` (Korean by default) in preparation for i18n later.
+
+---
+
+## 9. Changes to cortex
+
+| Item | How v1 handles it |
 |---|---|
-| `timeout_ms` 미구현 | **cortex 브랜치 `feat/exec-timeout`**: `cortex-local-console`의 `execute`에서 `tokio::time::timeout` 후 자식 kill, `Error::TIMED_OUT` 응답. ailoy `shell` 툴은 인자 `timeout_secs`를 `timeout_ms`로 전달(기본 600초). 앱은 `../cortex`가 이 브랜치인 상태를 전제로 하며 README에 명시. |
-| stdout 스트리밍 없음 | v1은 "실행 중 + 경과 시간" 표시로 대체. 요구사항(server→client `exec.output` 알림, 또는 chunked 응답)을 cortex 이슈로 기록. |
-| 콘솔 listing 없음 | in-process `FileSystem::list` 사용. 변경 불필요. |
-| `Drop for Console`이 런타임 필요 | 엔진이 run 종료 시 명시적으로 drop(런타임 안), 종료 시 `spawn_blocking`. |
+| `timeout_ms` unimplemented | **the cortex branch `feat/exec-timeout`**: in `cortex-local-console`'s `execute`, kill the child after a `tokio::time::timeout` and answer with `Error::TIMED_OUT`. The ailoy `shell` tool passes its `timeout_secs` argument through as `timeout_ms` (600 seconds by default). The app assumes `../cortex` is on this branch and says so in the README. |
+| No stdout streaming | v1 substitutes a "running + elapsed time" display. The requirement (a server→client `exec.output` notification, or a chunked response) is filed as a cortex issue. |
+| No console listing | Use the in-process `FileSystem::list`. No change needed. |
+| `Drop for Console` needs a runtime | The engine drops it explicitly when a run ends (inside the runtime), and uses `spawn_blocking` at shutdown. |
 
-`../cortex`는 path 의존이므로 체크아웃된 브랜치가 빌드에 그대로 반영된다. 개발 중 `feat/exec-timeout`을 체크아웃하고, 병합 후 main으로 되돌린다.
+`../cortex` is a path dependency, so whichever branch is checked out is what gets built. Check out `feat/exec-timeout` during development, and go back to main once it is merged.
 
-**구현 결과**: 위 변경은 cortex 브랜치 `feat/exec-timeout` 커밋 `9d178c7`로 반영되었다(`cortex-local-console` 크레이트에 tokio `time` feature 추가 포함). ailoy 쪽 shell 타임아웃 테스트는 이 브랜치로 빌드한 `cortex-local-console` 바이너리를 요구하므로 CI는 해당 커밋을 고정해야 한다.
+**Implementation result**: the changes above landed as cortex branch `feat/exec-timeout` commit `9d178c7` (including adding the tokio `time` feature to the `cortex-local-console` crate). The shell timeout tests on the ailoy side need a `cortex-local-console` binary built from this branch, so CI has to pin that commit.
 
 ---
 
-## 10. 오류 처리
+## 10. Error handling
 
-| 상황 | 동작 |
+| Situation | Behavior |
 |---|---|
-| FUSE-T 미설치 / 마운트 실패 | 엔진 시작은 성공하되 `WorkspaceInfo.status = Degraded{reason}`. run 시작 시 FUSE 없이 `<appdata>/files` 디렉터리 자체를 `Mount` 구현체(마운트포인트만 반환)로 콘솔에 넘기고 UI에 경고 배너("커넥터는 에이전트에게 보이지 않음"). |
-| stale 마운트(비정상 종료) | 시작 시 마운트포인트가 마운트 상태이거나 비어 있지 않으면 `umount`(실패 시 `diskutil unmount force`) 후 재시도. 그래도 실패면 Degraded. |
-| 콘솔 스폰 실패 | `Error{kind:"console_unavailable"}` 이벤트, 설정의 사이드카 경로 안내. |
-| 커넥터 검증 실패(키·버킷 오류) | `mount_add`가 400류 오류 메시지를 그대로 반환, 마운트하지 않음. 시작 시 복원 실패는 `mount_error` 전역 이벤트 + 목록에 오류 배지. |
-| 모델 오류 | `ModelError{status, retryable}`을 `Error{kind:"model", message}`로. 401은 설정 다이얼로그 열기 제안, 429 spend cap(`enforced_spend_limit_reached`)은 별도 문구. |
-| 턴 상한 | `Error{kind:"max_turns"}` + "계속" 버튼(새 user 메시지 "continue" 전송). |
-| 취소 | 부분 텍스트 유지, 미완 툴콜 카드는 "중단됨". |
-| DB 오류 | 치명. 시작 실패 다이얼로그(파일 경로 표시). |
+| FUSE-T missing / mount failure | The engine still starts, but with `WorkspaceInfo.status = Degraded{reason}`. When a run starts, hand the console the `<appdata>/files` directory itself through a `Mount` implementation (one that only returns the mountpoint) without FUSE, and show a warning banner in the UI ("the agent cannot see your connections"). |
+| Stale mount (after a crash) | On startup, if the mountpoint is still mounted or is not empty, `umount` it (falling back to `diskutil unmount force`) and retry. If that still fails, Degraded. |
+| Console spawn failure | An `Error{kind:"console_unavailable"}` event, plus guidance about the sidecar path in settings. |
+| Connector validation failure (bad key or bucket) | `mount_add` returns the 400-class error message as is and does not mount. A restore failure at startup raises the global `mount_error` event and an error badge in the list. |
+| Model error | `ModelError{status, retryable}` becomes `Error{kind:"model", message}`. A 401 offers to open the settings dialog, and a 429 spend cap (`enforced_spend_limit_reached`) gets its own wording. |
+| Turn limit | `Error{kind:"max_turns"}` plus a "Continue" button (which sends a new user message, "continue"). |
+| Cancellation | Partial text is kept, and unfinished tool call cards read "Interrupted". |
+| DB error | Fatal. A startup failure dialog (showing the file path). |
 
 ---
 
-## 11. 테스트와 검증
+## 11. Testing and verification
 
-- **ailoy 코어**: dev-deps의 `axum`으로 OpenAI 호환 가짜 서버를 띄워 (a) 취소 시점별(모델 중/툴 중) history 최종 형태, (b) 턴 상한, (c) `ToolGate` 거부, (d) 5xx 재시도, (e) rate-limit 헤더 파싱(Anthropic/OpenAI 형식)을 검증. 기존 라이브 테스트는 유지.
-- **엔진**: in-memory SQLite로 store/마이그레이션, 이식한 `MessageAssembler` 테스트, 카탈로그 매핑·사용량 계산 단위 테스트. 실제 `cortex-local-console`이 필요한 run 테스트와 FUSE-T 마운트 테스트는 `#[ignore]`(`AILOY_CORTEX_BIN_DIR` 설정 시 실행).
-- **앱**: `cargo check`(src-tauri), `tsc --noEmit`, 스트림 리듀서·툴콜 포맷터 vitest.
-- **수동 E2E 체크리스트**(실제 키): 세션 생성 → 메시지 → `shell`로 workfs `ls` → 로컬 폴더 연결 후 그 안 파일 `cat` → Notion 연결 후 `page.json` 읽기 → 실행 중 취소 → 앱 재시작 후 대화·마운트 복원 → 컨텍스트 게이지·비용·잔여율 표시 확인.
-
----
-
-## 12. 후속 로드맵 (우선순위 순)
-
-1. 승인 UI와 정책 저장(`ToolGate` 구현체 교체, `AwaitingApproval` 이벤트 활성화, 세션/워크스페이스별 허용 규칙)
-2. `mem` 메모리 툴 연결(사이드카 `mem` + `mem init`, cortex-gui의 `+ memory` UI)
-3. micro-VM 콘솔 토글(`cortex-uvm-console`, 이미지·네트워크 정책 설정)
-4. GDrive 커넥터(OAuth 데스크톱 플로우)
-5. stdout 스트리밍(cortex 프로토콜 확장)
-6. 컨텍스트 요약/컴팩션(Anthropic 서버측 compaction 포함)
-7. MCP 클라이언트(ailoy `ToolProviderElem::MCP` 구현)
-8. 계정 잔액·월 사용량: DeepSeek/Moonshot 잔액 API, Anthropic/OpenAI Admin 키 옵트인
-9. Keychain 저장, 다중 워크스페이스, Windows/Linux, `Length` 이어쓰기, 세션 제목 자동 생성
+- **The ailoy core**: bring up a fake OpenAI-compatible server with `axum` from dev-deps and verify (a) the final shape of the history per cancellation point (during the model, during a tool), (b) the turn limit, (c) a `ToolGate` denial, (d) 5xx retries, and (e) rate limit header parsing (the Anthropic and OpenAI formats). The existing live tests stay.
+- **The engine**: store and migration tests on in-memory SQLite, the ported `MessageAssembler` tests, and unit tests for catalog mapping and usage calculations. The run tests that need a real `cortex-local-console` and the FUSE-T mount tests are `#[ignore]` (they run when `AILOY_CORTEX_BIN_DIR` is set).
+- **The app**: `cargo check` (src-tauri), `tsc --noEmit`, and vitest for the stream reducer and the tool call formatter.
+- **Manual E2E checklist** (with real keys): create a session → send a message → `ls` the workfs with `shell` → connect a local folder and `cat` a file inside it → connect Notion and read `page.json` → cancel a run in progress → restart the app and confirm the conversation and mounts are restored → confirm the context gauge, cost, and remaining rate limit are displayed.
 
 ---
 
-## 13. 리스크와 오픈 이슈
+## 12. Follow-up roadmap (in priority order)
 
-- **FUSE-T 설치 의존**: 최종 사용자 배포 시 설치 안내가 필요. macFUSE 대안(`fuse` 피처)은 kext 승인 부담.
-- **stale 마운트**: 비정상 종료 뒤 `<appdata>/workspace`가 남는 경우의 정리 루틴이 실패하면 Degraded 모드로만 동작.
-- **path 의존**: `../cortex`의 체크아웃 브랜치가 빌드를 좌우. 병합 전까지 README에 요구 브랜치를 명시. 장기적으로 git rev 핀 또는 crates.io 배포로 전환.
-- **팀 조율**: `mem-applied`·`cortex-gui`는 jhlee525의 진행 중 브랜치. 이식한 코드의 출처를 커밋 메시지에 남기고, `mem-applied→develop` 병합 시점을 합의한다.
-- **models.dev 가용성**: 외부 서비스 중단 시 내장 스냅샷으로 폴백하므로 기능은 유지되나 신모델 정보가 늦어질 수 있다.
-- **cortex 프로토콜 제약**: 콘솔당 요청 1개·스트리밍 없음은 v1에서 수용. 병렬 툴콜은 콘솔 기준으로 직렬 실행된다(모델은 병렬로 요청하지만 실행은 순차).
-- **Anthropic thinking 표시**: 최신 모델은 기본 `omitted`이므로 thinking 델타가 비어 올 수 있다. 표시 옵션(`display: summarized`)은 ailoy 마샬 옵션 추가가 필요해 후속으로 둔다.
+1. The approval UI and policy storage (swap in a different `ToolGate` implementation, turn on the `AwaitingApproval` event, per-session and per-workspace allow rules)
+2. Wiring up the `mem` memory tool (the `mem` sidecar plus `mem init`, cortex-gui's `+ memory` UI)
+3. A micro-VM console toggle (`cortex-uvm-console`, image and network policy settings)
+4. The GDrive connector (the OAuth desktop flow)
+5. stdout streaming (a cortex protocol extension)
+6. Context summarization/compaction (including Anthropic's server-side compaction)
+7. An MCP client (implementing ailoy's `ToolProviderElem::MCP`)
+8. Account balance and monthly usage: the DeepSeek/Moonshot balance APIs, opt-in Anthropic/OpenAI Admin keys
+9. Keychain storage, multiple workspaces, Windows/Linux, continuing after `Length`, automatic session titles
+
+---
+
+## 13. Risks and open issues
+
+- **The FUSE-T dependency**: shipping to end users needs installation guidance. The macFUSE alternative (the `fuse` feature) carries the burden of kext approval.
+- **Stale mounts**: if the cleanup routine for a leftover `<appdata>/workspace` after a crash fails, the app only runs in Degraded mode.
+- **The path dependency**: whichever branch is checked out in `../cortex` determines the build. Until it is merged, state the required branch in the README. Longer term, move to a pinned git rev or a crates.io release.
+- **Team coordination**: `mem-applied` and `cortex-gui` are jhlee525's in-progress branches. Record where ported code came from in the commit messages, and agree on when `mem-applied→develop` lands.
+- **models.dev availability**: an outage of the external service falls back to the embedded snapshot, so the feature keeps working, but information about new models can lag.
+- **cortex protocol constraints**: one request per console and no streaming are accepted for v1. Parallel tool calls run serially as far as the console is concerned (the model asks for them in parallel, but they execute in sequence).
+- **Anthropic thinking display**: the newest models default to `omitted`, so thinking deltas can arrive empty. The display option (`display: summarized`) needs a new ailoy marshalling option, so it is left for later.

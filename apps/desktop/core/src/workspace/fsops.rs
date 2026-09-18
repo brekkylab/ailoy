@@ -69,7 +69,7 @@ pub async fn read(fs: &dyn FileSystem, path: &str) -> Result<FileContent> {
     let stat = fs.stat(target).await?;
     if stat.kind == DirentKind::Dir {
         return Err(EngineError::Invalid(
-            "디렉터리는 편집기에서 열 수 없습니다".into(),
+            "A directory cannot be opened in the editor".into(),
         ));
     }
 
@@ -128,7 +128,7 @@ pub async fn import(
 ) -> Result<ImportReport> {
     if fs.stat(Path::new(dest)).await?.kind != DirentKind::Dir {
         return Err(EngineError::Invalid(
-            "파일은 디렉터리 위에만 놓을 수 있습니다".into(),
+            "Files can only be dropped onto a directory".into(),
         ));
     }
 
@@ -146,7 +146,7 @@ pub async fn import(
             None => {
                 report
                     .skipped
-                    .push(format!("{}: 이름을 읽을 수 없음", source.display()));
+                    .push(format!("{}: could not read the name", source.display()));
                 continue;
             }
         };
@@ -181,7 +181,7 @@ pub async fn import(
 
         if meta.len() > IMPORT_CAP {
             report.skipped.push(format!(
-                "{}: {} MiB — 한 파일당 {} MiB까지만 가져옵니다",
+                "{}: {} MiB — imports stop at {} MiB per file",
                 source.display(),
                 meta.len() >> 20,
                 IMPORT_CAP >> 20
@@ -214,7 +214,9 @@ pub async fn import(
 pub(crate) async fn write_file(fs: &dyn FileSystem, path: &Path, bytes: &[u8]) -> Result<()> {
     match fs.stat(path).await {
         Ok(stat) if stat.kind == DirentKind::Dir => {
-            return Err(EngineError::Invalid("디렉터리에는 쓸 수 없습니다".into()));
+            return Err(EngineError::Invalid(
+                "A directory cannot be written to".into(),
+            ));
         }
         Ok(_) => fs.truncate(path, 0).await?,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -230,7 +232,7 @@ pub(crate) async fn write_file(fs: &dyn FileSystem, path: &Path, bytes: &[u8]) -
         let n = fs.write_at(path, &bytes[written..], written as u64).await?;
         if n == 0 {
             return Err(EngineError::Invalid(
-                "저장소가 쓰기를 더 받지 않습니다".into(),
+                "The store is not accepting further writes".into(),
             ));
         }
         written += n;
@@ -275,7 +277,7 @@ pub(crate) async fn mkdir_p(fs: &dyn FileSystem, path: &Path) -> Result<()> {
                 // into, and continuing would report success for a path that cannot hold one.
                 if fs.stat(&here).await?.kind != DirentKind::Dir {
                     return Err(EngineError::Invalid(format!(
-                        "{} 는 파일입니다",
+                        "{} is a file",
                         here.display()
                     )));
                 }

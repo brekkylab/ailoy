@@ -9,7 +9,7 @@ describe("messageOf", () => {
   it("reads the engine's message off a rejection payload", () => {
     expect(messageOf({ kind: "not_found", message: "not found: session s1" })).toBe("not found: session s1");
     // `Invalid` carries text the user reads verbatim.
-    expect(messageOf({ kind: "invalid", message: "제목을 입력해 주세요" })).toBe("제목을 입력해 주세요");
+    expect(messageOf({ kind: "invalid", message: "Enter a title" })).toBe("Enter a title");
   });
 
   it("falls back for anything else that can be thrown", () => {
