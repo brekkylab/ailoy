@@ -27,7 +27,7 @@ pub fn build(input: &PromptInput) -> String {
         input.today, input.os
     ));
     s.push_str(&format!(
-        "# Workspace\n\nThe workspace root is `{}`. It is also the shell's working directory, so relative paths resolve inside it. Stay inside the workspace unless the user explicitly asks about another path.\n\n",
+        "# Workspace\n\nThe workspace root is `{}`. This is the user's own tree: it is what they see in the app, it is kept between runs, and it is where anything you are asked to produce belongs — write it here, by this path. Your shell does **not** start here; it starts in a scratch directory that is thrown away when the run ends, so a relative path writes something nobody keeps. Name paths under the workspace root when you mean the user's files. Stay inside the workspace unless the user explicitly asks about another path.\n\n",
         input.workfs_path.display()
     ));
     s.push_str("## Mounts\n\n");

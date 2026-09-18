@@ -8,7 +8,7 @@
 //!
 //! The store comes back as an `Arc<dyn FileSystem>` rather than a `Box`: cortex implements
 //! `FileSystem` for `Arc<T: FileSystem + ?Sized>` and not for `Box<dyn FileSystem>`, and
-//! `WorkFs::mount` needs a `FileSystem` by value.
+//! `ContextFs::mount` needs a `FileSystem` by value.
 
 use std::{path::Path, sync::Arc, time::Duration};
 
@@ -24,10 +24,10 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// A mount path as the sidebar spells it: `/`-rooted, no trailing slash, never the root itself.
 ///
-/// The path is **rebuilt from its components**, the way `WorkFs` keys its mount table: split on
+/// The path is **rebuilt from its components**, the way `ContextFs` keys its mount table: split on
 /// `/`, empty and `.` segments dropped, the rest joined back under a leading `/`. That is what
 /// keeps the row in the mount list and the key in the tree the same string — `"/mem/."` and
-/// `"/a//b"` are `WorkFs`'s `"mem"` and `"a/b"` whatever the list says, so a row that kept the
+/// `"/a//b"` are `ContextFs`'s `"mem"` and `"a/b"` whatever the list says, so a row that kept the
 /// user's spelling would name a mount nobody could detach.
 ///
 /// A `..` segment is refused rather than resolved: it is never what a mount point means, and
@@ -159,7 +159,7 @@ mod tests {
     fn mount_paths_are_normalized() {
         assert_eq!(normalize_mount_path(" notion/ ").unwrap(), "/notion");
         assert_eq!(normalize_mount_path("/a/b").unwrap(), "/a/b");
-        // The spellings `WorkFs` collapses on its own: the row has to collapse them too, or
+        // The spellings `ContextFs` collapses on its own: the row has to collapse them too, or
         // the list names one path and the tree is keyed by another.
         assert_eq!(normalize_mount_path("/mem/.").unwrap(), "/mem");
         assert_eq!(normalize_mount_path("/a//b").unwrap(), "/a/b");

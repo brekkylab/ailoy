@@ -94,6 +94,7 @@ impl Engine {
             console,
             workspace: workspace.clone(),
             catalog: catalog.clone(),
+            scratch_root: cfg.scratch_root(),
         });
         let engine = Arc::new(Engine {
             cfg,
@@ -458,7 +459,7 @@ async fn restore_connectors(store: &Store, workspace: &WorkspaceManager) {
         };
         // The stored path goes back through the normalizer on the way in. `mount_add`
         // writes the normal form, but a row from an older build — or a hand-edited
-        // database — can hold a spelling `WorkFs` collapses to something else, and
+        // database — can hold a spelling `ContextFs` collapses to something else, and
         // mounting under it would key the tree by one path and the sidebar by another,
         // leaving a connector that cannot be removed. Such a row is listed with its
         // error, the same as one whose store did not answer.

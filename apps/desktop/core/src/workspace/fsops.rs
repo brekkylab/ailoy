@@ -57,7 +57,7 @@ pub async fn list(fs: &dyn FileSystem, path: &str) -> Result<Vec<Entry>> {
         });
     }
     // Directories first, then by name: the order a store answers in is its own business —
-    // `WorkFs` leads with mount points, an object store with whatever its listing returned —
+    // `ContextFs` leads with mount points, an object store with whatever its listing returned —
     // and a tree that reorders itself as stores are added is harder to read than a sorted one.
     entries.sort_by_key(|entry| (entry.kind != "dir", entry.name.to_lowercase()));
     Ok(entries)
@@ -281,7 +281,7 @@ pub(crate) async fn mkdir_p(fs: &dyn FileSystem, path: &Path) -> Result<()> {
                 }
             }
             // A mount point, or a directory the mount table synthesized: it exists and is a
-            // directory, and `WorkFs` answers a create aimed at one with `EROFS`.
+            // directory, and `ContextFs` answers a create aimed at one with `EROFS`.
             Err(err) if err.kind() == std::io::ErrorKind::ReadOnlyFilesystem => {
                 if fs.stat(&here).await?.kind != DirentKind::Dir {
                     return Err(err.into());
@@ -325,12 +325,12 @@ pub fn join(dir: &str, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use cortex::fs::{InMemFs, WorkFs};
+    use cortex::fs::{ContextFs, InMemFs};
 
     use super::*;
 
-    fn ws() -> WorkFs {
-        WorkFs::new().try_with_mount("", InMemFs::new()).unwrap()
+    fn ws() -> ContextFs {
+        ContextFs::new().try_with_mount("", InMemFs::new()).unwrap()
     }
 
     #[tokio::test]

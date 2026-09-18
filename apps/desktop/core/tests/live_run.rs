@@ -5,8 +5,8 @@
 //! Run: `AILOY_CORTEX_BIN_DIR=../cortex/target/debug cargo test -p ailoy-desktop-core --test live_run -- --ignored`
 //!
 //! The model is fake and the console is real: the point is the seam between them — a tool
-//! call the engine routes into a console standing in the workspace, whose result comes back
-//! through the assembler and lands in SQLite as a `Role::Tool` message.
+//! call the engine routes into a console holding the workspace as its artifacts tree, whose
+//! result comes back through the assembler and lands in SQLite as a `Role::Tool` message.
 
 use std::{
     sync::{
@@ -26,8 +26,8 @@ use ailoy_desktop_core::{Engine, EngineConfig, MountConfig, MountRequest, RunEve
 use axum::{Router, body::Body, response::Response, routing::post};
 
 /// The first turn: one `shell` tool call reading `path`, no text. `cmd` is the parameter
-/// name in ailoy's `shell` tool descriptor, and the console's cwd is the workspace root, so
-/// a bare relative path is what reads the file each test wrote.
+/// name in ailoy's `shell` tool descriptor. The path is absolute: the session starts in its
+/// scratch tree, so a relative one would read the throwaway directory instead.
 fn tool_call(path: &str) -> String {
     format!(
         "data: {{\"choices\":[{{\"delta\":{{\"role\":\"assistant\",\"tool_calls\":[{{\"index\":0,\"id\":\"c1\",\"type\":\"function\",\"function\":{{\"name\":\"shell\",\"arguments\":\"{{\\\"cmd\\\":\\\"cat {path}\\\"}}\"}}}}]}}}}]}}\n\n\
@@ -40,13 +40,18 @@ fn tool_call(path: &str) -> String {
 const ANSWER: &str = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"It says hi.\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":3,\"total_tokens\":14}}\n\n\
                       data: [DONE]\n\n";
 
+/// The `"default"` provider registry is process-global, and each test points it at a server
+/// living on that test's own runtime. Overlapping would aim one test's agent at a listener
+/// whose runtime has already gone — which reads as a model error, not as the race it is.
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// No live test may hang the suite: a console that never answers, or a mount the kernel
 /// stops serving, would otherwise block the recv loop forever with nothing to read.
 const RUN_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Serve the tool call first, then the answer to every request after it — so a retry
 /// cannot hang the run by replaying the tool call forever.
-async fn scripted_model(reads: &'static str) -> std::net::SocketAddr {
+async fn scripted_model(reads: &str) -> std::net::SocketAddr {
     let first = Arc::new(tool_call(reads));
     let calls = Arc::new(AtomicUsize::new(0));
     let app = Router::new().route(
@@ -149,14 +154,18 @@ async fn tool_stdout(engine: &Engine, session_id: &str) -> String {
         .to_string()
 }
 
-/// The unmounted path: the console stands in `files/` itself, so the tool reads the root
-/// store straight off the disk.
+/// The unmounted path: the workspace is `files/` on the host, handed to the console as its
+/// artifacts tree, so the tool reads the root store straight off the disk.
 #[tokio::test]
 #[ignore]
 async fn a_run_reads_a_workspace_file_through_the_shell_tool() {
-    point_default_at(scripted_model("hello.txt").await);
-
+    let _serial = SERIAL.lock().await;
     let dir = tempfile::tempdir().unwrap();
+    // By its own path, not a relative one: the session starts in its scratch directory, so
+    // `cat hello.txt` would read the throwaway tree and find nothing.
+    let hello = dir.path().join("files").join("hello.txt");
+    point_default_at(scripted_model(&hello.display().to_string()).await);
+
     let mut cfg = EngineConfig::new(dir.path());
     cfg.mount_workspace = false; // the console stands in files/ directly
     cfg.catalog_refresh = false;
@@ -207,14 +216,18 @@ async fn a_run_reads_a_workspace_file_through_the_shell_tool() {
 #[tokio::test]
 #[ignore]
 async fn a_mounted_run_reads_a_connector_through_the_kernel() {
-    point_default_at(scripted_model("docs/f.txt").await);
-
+    let _serial = SERIAL.lock().await;
     // The connector's backing directory, outside the workspace entirely. This one holds no
     // mount, so it can clean up after itself.
     let host = tempfile::tempdir().unwrap();
     std::fs::write(host.path().join("f.txt"), b"hi from docs").unwrap();
 
     let dir = tempfile::tempdir().unwrap().keep();
+    // Through the mount point, by absolute path: the session stands in its scratch, and the
+    // connector exists for a separate process only because the kernel answers for it here.
+    let through_the_mount = dir.join("workspace").join("docs").join("f.txt");
+    point_default_at(scripted_model(&through_the_mount.display().to_string()).await);
+
     let mut cfg = EngineConfig::new(&dir);
     cfg.mount_workspace = true;
     cfg.catalog_refresh = false;

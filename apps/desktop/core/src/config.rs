@@ -38,4 +38,13 @@ impl EngineConfig {
     pub fn cache_dir(&self) -> PathBuf {
         self.data_dir.join("cache")
     }
+
+    /// Where each run's throwaway directory is made.
+    ///
+    /// Cortex starts a session in its scratch tree, so everything a command writes to a
+    /// relative path lands here rather than in the user's workspace. One directory per run,
+    /// removed when the run ends; this is only the root they are made under.
+    pub fn scratch_root(&self) -> PathBuf {
+        self.data_dir.join("scratch")
+    }
 }

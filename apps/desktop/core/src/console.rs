@@ -112,9 +112,22 @@ impl ConsoleFactory {
         &self.bin
     }
 
-    /// One console standing in `mount`. Its `PATH` starts with the binary's own directory so
-    /// sidecars beside it (`mem`, later) are commands the agent can name.
-    pub async fn spawn(&self, mount: WorkspaceMount) -> Result<Console> {
+    /// One console over the user's workspace, with a scratch directory to work in.
+    ///
+    /// The workspace goes in as the session's **artifacts**, not its context: cortex mounts a
+    /// context read-only and refuses a `write` that lands in one, and this workspace is the
+    /// place the agent is meant to write — it is the user's own tree, kept between runs and
+    /// shown in the file panel, so what the agent leaves there is the result. `scratch` is the
+    /// throwaway half cortex expects to exist: the session *starts* in it, so a relative path
+    /// a command writes lands there instead of in the user's files.
+    ///
+    /// Its `PATH` starts with the binary's own directory so sidecars beside it (`mem`, later)
+    /// are commands the agent can name.
+    pub async fn spawn(
+        &self,
+        workspace: WorkspaceMount,
+        scratch: WorkspaceMount,
+    ) -> Result<Console> {
         if self.is_disabled() {
             return Err(EngineError::ConsoleUnavailable("console disabled".into()));
         }
@@ -135,7 +148,8 @@ impl ConsoleFactory {
             .map_err(|e| EngineError::ConsoleUnavailable(format!("{}: {e}", self.bin.display())))?;
         Console::builder()
             .client(client)
-            .mount(mount)
+            .artifacts(workspace)
+            .scratch(scratch)
             .build()
             .await
             .map_err(|e| EngineError::ConsoleUnavailable(format!("{}: {e:#}", self.bin.display())))
@@ -184,7 +198,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // `Console` is not `Debug`, so the error comes out of a match rather than `unwrap_err`.
         let Err(err) = factory
-            .spawn(WorkspaceMount(dir.path().to_path_buf()))
+            .spawn(
+                WorkspaceMount(dir.path().to_path_buf()),
+                WorkspaceMount(dir.path().join("scratch")),
+            )
             .await
         else {
             panic!("a disabled factory spawned a console");

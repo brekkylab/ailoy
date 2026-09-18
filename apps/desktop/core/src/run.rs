@@ -9,6 +9,7 @@
 
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{Arc, Mutex as StdMutex},
 };
 
@@ -29,7 +30,7 @@ use crate::{
     prompt, providers,
     store::{NewMessage, Store},
     usage,
-    workspace::WorkspaceManager,
+    workspace::{WorkspaceManager, WorkspaceMount},
 };
 
 /// Everything a run needs from the engine around it. All `Arc`s, so cloning it per run is
@@ -40,6 +41,9 @@ pub struct RunDeps {
     pub console: Arc<ConsoleFactory>,
     pub workspace: Arc<WorkspaceManager>,
     pub catalog: Arc<Catalog>,
+    /// Where each run's scratch directory is made. Cortex starts the session in it, so a
+    /// relative path a command writes lands there rather than among the user's files.
+    pub scratch_root: PathBuf,
 }
 
 /// A subscription to one run: its id, and the events it will emit from now on.
@@ -420,15 +424,28 @@ async fn drive(
 
     // No console binary means no console: the pure tools still work, and a tool that
     // needs a shell answers "needs a console" instead of the run failing outright.
-    let console = if deps.console.is_disabled() {
+    //
+    // The scratch directory is this run's alone and goes away with it: kept as a `TempDir`
+    // for the length of this function so it is removed however the run ends — done,
+    // cancelled, failed or panicking — rather than on a path only the happy ending reaches.
+    let scratch_dir = if deps.console.is_disabled() {
         None
     } else {
+        std::fs::create_dir_all(&deps.scratch_root)
+            .map_err(|e| fail("console_unavailable", e.to_string()))?;
         Some(
-            deps.console
-                .spawn(ws_mount)
-                .await
+            tempfile::TempDir::new_in(&deps.scratch_root)
                 .map_err(|e| fail("console_unavailable", e.to_string()))?,
         )
+    };
+    let console = match &scratch_dir {
+        None => None,
+        Some(scratch) => Some(
+            deps.console
+                .spawn(ws_mount, WorkspaceMount(scratch.path().to_path_buf()))
+                .await
+                .map_err(|e| fail("console_unavailable", e.to_string()))?,
+        ),
     };
 
     let mut builder = AgentBuilder::new(model)
@@ -775,6 +792,7 @@ mod tests {
             console,
             workspace,
             catalog: Arc::new(Catalog::from_data(CatalogData::default())),
+            scratch_root: dir.join("scratch"),
         }
     }
 

@@ -1,4 +1,4 @@
-//! The workspace: one `WorkFs`, mounted for the life of the engine.
+//! The workspace: one `ContextFs`, mounted for the life of the engine.
 
 use std::{
     path::{Path, PathBuf},
@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, Mutex as StdMutex},
 };
 
-use cortex::fs::{FileSystem, FuseTMount, PassthroughFs, WorkFs};
+use cortex::fs::{ContextFs, FileSystem, FuseTMount, PassthroughFs};
 use tokio::sync::RwLock;
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
 };
 
 pub struct WorkspaceManager {
-    fs: Arc<RwLock<WorkFs>>,
+    fs: Arc<RwLock<ContextFs>>,
     files_root: PathBuf,
     mountpoint: PathBuf,
     /// Held for the life of the engine; dropping it unmounts. Behind a std mutex because
@@ -58,7 +58,7 @@ impl WorkspaceManager {
             },
         };
         let fs = Arc::new(RwLock::new(
-            WorkFs::new()
+            ContextFs::new()
                 .try_with_mount("", PassthroughFs::new(files_root.clone()))
                 .expect("an empty path is a valid mount key"),
         ));
@@ -253,7 +253,7 @@ fn prepare_mount_point(mountpoint: &Path) -> std::io::Result<()> {
 
 /// The path `detach` will act on, or the refusal to touch the root.
 ///
-/// A string compare against `"/"` is not the guard it looks like: `WorkFs::unmount` normalizes
+/// A string compare against `"/"` is not the guard it looks like: `ContextFs::unmount` normalizes
 /// its argument before the lookup, so `"//"`, `"/."` and `"/mem/.."` all arrive at the empty
 /// root key. Each of those would take the root `PassthroughFs` out of the tree — and say
 /// `Ok(())` while doing it, because the `retain` that follows matches no row — leaving the
@@ -376,7 +376,7 @@ mod tests {
         ws.shutdown().await;
     }
 
-    /// Every spelling of the root that `WorkFs` normalizes back to its empty mount key has to be
+    /// Every spelling of the root that `ContextFs` normalizes back to its empty mount key has to be
     /// refused, not just the literal `"/"` — and the proof that it was is that the root store is
     /// still there afterwards.
     #[tokio::test]

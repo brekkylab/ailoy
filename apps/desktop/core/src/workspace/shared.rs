@@ -3,7 +3,7 @@
 //! A binding takes ownership of what it serves — `FuseTMount::try_new(fs, …)` moves the
 //! `FileSystem` in, keeps a raw pointer into it, and dereferences that on every request for the
 //! life of the mount. That is the right shape for a program whose whole job is one mount, and
-//! the wrong one for this window: connecting Notion is `WorkFs::mount`, which needs the
+//! the wrong one for this window: connecting Notion is `ContextFs::mount`, which needs the
 //! workspace back afterwards.
 //!
 //! So the thing handed to the binding is this — a handle onto the workspace rather than the
@@ -12,7 +12,7 @@
 //!
 //! **Every method takes the read lock, writes included.** That is not an oversight: the trait's
 //! methods all take `&self`, so a store's own interior mutability is what serves a write, and
-//! the only `&mut WorkFs` in the crate is the mount table — `mount` and `unmount`. A FUSE
+//! the only `&mut ContextFs` in the crate is the mount table — `mount` and `unmount`. A FUSE
 //! request and a connector being attached are therefore a reader and a writer of the *table*,
 //! which is exactly what they are.
 
@@ -20,16 +20,16 @@ use std::{io, path::Path, sync::Arc};
 
 use cortex::{
     BoxFuture,
-    fs::{Dirent, FileSystem, Stat, WorkFs},
+    fs::{ContextFs, Dirent, FileSystem, Stat},
 };
 use tokio::sync::RwLock;
 
 /// A cloneable handle onto the window's workspace.
 #[derive(Clone)]
-pub struct SharedFs(Arc<RwLock<WorkFs>>);
+pub struct SharedFs(Arc<RwLock<ContextFs>>);
 
 impl SharedFs {
-    pub fn new(fs: Arc<RwLock<WorkFs>>) -> Self {
+    pub fn new(fs: Arc<RwLock<ContextFs>>) -> Self {
         SharedFs(fs)
     }
 }
