@@ -1,3 +1,5 @@
+use cortex::console::Error;
+
 use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
@@ -29,7 +31,7 @@ pub fn get_shell_tool_desc() -> ToolDesc {
 }
 
 pub fn get_shell_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &dyn Console| -> Value {
+    tool_func!(async |args: Value, console: &mut Console| -> Value {
         let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
@@ -42,19 +44,41 @@ pub fn get_shell_tool_func() -> ToolFunc {
             }
         };
 
-        let Ok(out) = console.exec_shell(cmd, None).await else {
-            return crate::to_value!({
-                "stdout": String::new(),
-                "stderr": String::from("Internal error"),
-                "exit_code": -1,
-                "timed_out": false
-            });
+        // cortex consults no shell, so asking for shell semantics means asking for a
+        // shell. `None` leaves the bound to whatever the console was built with.
+        let out = match console.exec(["sh", "-c", cmd.as_str()], None).await {
+            Ok(out) => out,
+            // A killed command has no result — no exit code, and whatever it wrote is
+            // gone with it — so cortex refuses the execution instead of inventing one.
+            Err(e) if e.code() == Some(Error::TIMED_OUT) => {
+                return crate::to_value!({
+                    "stdout": "",
+                    "stderr": "",
+                    "exit_code": -1,
+                    "timed_out": true
+                });
+            }
+            Err(e) => {
+                return crate::to_value!({
+                    "stdout": "",
+                    "stderr": e.to_string(),
+                    "exit_code": -1,
+                    "timed_out": false
+                });
+            }
         };
+
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
         crate::to_value!({
-            "stdout": middle_truncate(out.stdout, MAX_OUTPUT_CHARS).as_str(),
-            "stderr": middle_truncate(out.stderr, MAX_OUTPUT_CHARS).as_str(),
-            "exit_code": out.exit_code as i64,
-            "timed_out": out.timed_out
+            "stdout": middle_truncate(stdout, MAX_OUTPUT_CHARS).as_str(),
+            "stderr": middle_truncate(stderr, MAX_OUTPUT_CHARS).as_str(),
+            "exit_code": out.code as i64,
+            "timed_out": false,
+            // The console cut the output because it would not fit one message. Said
+            // out loud, because a model reading a partial result it believes is whole
+            // draws a conclusion from it.
+            "truncated": out.truncated
         })
     })
 }
@@ -64,11 +88,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{
-        runenv::{Local, Machine},
-        to_value,
-        tool::ToolProvider,
-    };
+    use crate::{test_console, to_value, tool::ToolProvider};
 
     async fn provider() -> ToolProvider {
         let mut provider = ToolProvider::new();
@@ -81,10 +101,9 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
         let f = funcs.get("shell").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let mut console = test_console().await;
         let msg = f
-            .call(to_value!({}), "", console)
+            .call(to_value!({}), "", &mut console)
             .next()
             .await
             .unwrap()
@@ -103,10 +122,9 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
         let f = funcs.get("shell").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let mut console = test_console().await;
         let msg = f
-            .call(to_value!({ "cmd": "echo ailoy" }), "", console)
+            .call(to_value!({ "cmd": "echo ailoy" }), "", &mut console)
             .next()
             .await
             .unwrap()
@@ -125,10 +143,9 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
         let f = funcs.get("shell").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let mut console = test_console().await;
         let msg = f
-            .call(to_value!({ "cmd": "exit 42" }), "", console)
+            .call(to_value!({ "cmd": "exit 42" }), "", &mut console)
             .next()
             .await
             .unwrap()
@@ -149,14 +166,13 @@ mod tests {
         let provider = provider().await;
         let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
         let f = funcs.get("shell").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
+        let mut console = test_console().await;
 
         let r1 = f
             .call(
                 to_value!({ "cmd": format!("echo persisted > {path}") }),
                 "",
-                console,
+                &mut console,
             )
             .next()
             .await
@@ -173,7 +189,11 @@ mod tests {
         );
 
         let r2 = f
-            .call(to_value!({ "cmd": format!("cat {path}") }), "", console)
+            .call(
+                to_value!({ "cmd": format!("cat {path}") }),
+                "",
+                &mut console,
+            )
             .next()
             .await
             .unwrap()

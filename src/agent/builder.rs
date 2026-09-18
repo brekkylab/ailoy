@@ -1,11 +1,12 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
+use cortex::console::Console;
 use tokio::sync::Mutex;
 
 use crate::{
     agent::{Agent, AgentSpec, AgentState, ContextManager},
+    memory::Memory,
     message::Message,
-    runenv::{FileEntry, Machine, MachineDyn},
     tool::{ToolDesc, WebSearchEngineKind},
 };
 
@@ -53,7 +54,9 @@ pub struct AgentBuilder {
 
     history: Vec<Message>,
 
-    machine: Option<Arc<Mutex<dyn MachineDyn>>>,
+    console: Option<Arc<Mutex<Option<Console>>>>,
+
+    memory: Option<Memory>,
 
     context_manager: Option<ContextManager>,
 }
@@ -68,7 +71,8 @@ impl AgentBuilder {
             spec,
             agent_provider: "default".to_string(),
             history: Vec::new(),
-            machine: None,
+            console: None,
+            memory: None,
             context_manager: None,
         }
     }
@@ -107,11 +111,6 @@ impl AgentBuilder {
         self
     }
 
-    pub fn python_repl_tool(mut self) -> Self {
-        self.spec = self.spec.python_repl_tool();
-        self
-    }
-
     pub fn shell_tool(mut self) -> Self {
         self.spec = self.spec.shell_tool();
         self
@@ -143,19 +142,39 @@ impl AgentBuilder {
         self
     }
 
-    /// Use this [`Machine`] for tool execution instead of a default [`Local`].
-    /// Wraps the machine in `Arc<Mutex<>>` so sub-agents inherit the same VM.
-    pub fn machine<M: Machine>(mut self, m: M) -> Self {
-        let m: Arc<Mutex<dyn MachineDyn>> = Arc::new(Mutex::new(m));
-        self.machine = Some(m);
+    /// Run this agent's console tools in `console`, which must already be started.
+    ///
+    /// Required for an agent whose tools need one — nothing builds a console on its
+    /// own, because building one means choosing a console server to start, and that
+    /// is the caller's decision. Without it, pure tools still run and a console tool
+    /// fails saying so.
+    pub fn console(mut self, console: Console) -> Self {
+        self.console = Some(Arc::new(Mutex::new(Some(console))));
         self
     }
 
-    /// Use this pre-shared machine handle. Useful when the same VM should be
-    /// shared with another `Agent` built elsewhere.
-    pub fn shared_machine<M: Machine>(mut self, m: Arc<Mutex<M>>) -> Self {
-        let m: Arc<Mutex<dyn MachineDyn>> = m;
-        self.machine = Some(m);
+    /// Share a console slot with another `Agent` built elsewhere.
+    pub fn shared_console(mut self, console: Arc<Mutex<Option<Console>>>) -> Self {
+        self.console = Some(console);
+        self
+    }
+
+    /// Let this agent remember into `memory`.
+    ///
+    /// Which brings the `mem_search` and `mem_insert` tools with it: an agent that was
+    /// given a memory can recall from it and write to it, and one that was not has
+    /// neither tool. Nothing else has to be listed — these two are not spec tools,
+    /// because which store is a value this one agent holds rather than a name in the
+    /// [`ToolProvider`](crate::tool::ToolProvider).
+    ///
+    /// The store is expected to exist: `mem init` makes one. A file that is not there is
+    /// reported by the first memory tool call rather than by [`build`](Self::build),
+    /// since finding out means running a command on the console.
+    ///
+    /// Runs on the same console as every other tool, so an agent with a memory wants a
+    /// [`console`](Self::console) too — a memory tool without one fails saying so.
+    pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
+        self.memory = Some(memory.into());
         self
     }
 
@@ -186,27 +205,6 @@ impl AgentBuilder {
         self
     }
 
-    pub fn file(mut self, entry: FileEntry) -> Self {
-        self.spec.files.push(entry);
-        self
-    }
-
-    pub fn files(mut self, entries: impl IntoIterator<Item = FileEntry>) -> Self {
-        self.spec.files.extend(entries);
-        self
-    }
-
-    /// Declare a skill at `dir` together with its pre-fill content.
-    /// Writes through to [`AgentSpec::skill`].
-    pub fn skill(
-        mut self,
-        dir: impl Into<PathBuf>,
-        entries: impl IntoIterator<Item = FileEntry>,
-    ) -> Self {
-        self.spec = self.spec.skill(dir, entries);
-        self
-    }
-
     /// Materialise the agent by dispatching to
     /// [`Agent::try_with_provider_name_and_state`] with a state assembled from
     /// the optional machine and history.
@@ -215,13 +213,17 @@ impl AgentBuilder {
             spec,
             agent_provider,
             history,
-            machine,
+            console,
+            memory,
             context_manager,
         } = self;
 
         let mut state = AgentState::new();
-        if let Some(m) = machine {
-            state.runenv = m;
+        if let Some(c) = console {
+            state = state.with_console_slot(c);
+        }
+        if let Some(m) = memory {
+            state = state.with_memory(m);
         }
         if !history.is_empty() {
             state = state.with_history(history);
@@ -242,7 +244,7 @@ mod tests {
         agent::{AgentCard, AgentProvider, get_agent_providers_mut},
         lang_model::{LangModelProvider, get_lm_providers_mut},
         message::Role,
-        runenv::Local,
+        test_console,
     };
 
     const TEST_MODEL: &str = "openai/gpt-4o-mini";
@@ -299,169 +301,24 @@ mod tests {
         assert!(agent.get_history().is_empty());
     }
 
-    /// `machine()` carries the supplied [`Machine`] through to `state.machine`.
+    /// `console()` carries the supplied console through to `state.console`, already
+    /// filled in — where an agent left to itself would build one on first run.
     #[tokio::test]
-    async fn test_builder_machine_is_applied() {
+    async fn test_builder_console_is_applied() {
         ensure_dummy_provider();
         let agent = AgentBuilder::new(TEST_MODEL)
             .agent_provider(TEST_PROVIDER_NAME)
-            .machine(Local::new())
+            .console(test_console().await)
             .build()
             .unwrap();
-        // Smoke check: machine is plugged in and usable.
-        let mut guard = agent.state.runenv.lock().await;
-        let console = guard.start().await.expect("machine start failed");
+
+        let mut guard = agent.state.console.lock().await;
+        let console = guard.as_mut().expect("the supplied console is in the slot");
         let result = console
-            .exec("sh".into(), vec!["-c".into(), "echo ok".into()], None)
+            .exec(["sh", "-c", "echo ok"], None)
             .await
             .expect("exec failed");
-        assert!(result.stdout.contains("ok"));
-    }
-
-    fn skill_md(name: &str, desc: &str, body: &str) -> Vec<u8> {
-        format!("---\nname: {name}\ndescription: {desc}\n---\n{body}").into_bytes()
-    }
-
-    #[tokio::test]
-    async fn test_file_skill_seeds_spec() {
-        ensure_dummy_provider();
-        let dir = tempfile::tempdir().unwrap();
-        let greet_dir = dir.path().join("skills/greet");
-        let skill_path = greet_dir.join("SKILL.md");
-        let agent = AgentBuilder::new(TEST_MODEL)
-            .agent_provider(TEST_PROVIDER_NAME)
-            .machine(Local::new())
-            .skill(
-                &greet_dir,
-                [FileEntry::new(
-                    &skill_path,
-                    skill_md("greet", "Say hello.", "# greet\nbody\n"),
-                )],
-            )
-            .build()
-            .unwrap();
-
-        assert_eq!(agent.files().len(), 1);
-        assert_eq!(agent.files()[0].path, skill_path);
-        assert_eq!(agent.skills(), vec![greet_dir.clone()]);
-
-        let sys = system_text(&agent).expect("expected system message");
-        assert!(sys.contains("Available Skills"));
-        assert!(sys.contains("greet"));
-    }
-
-    #[tokio::test]
-    async fn test_no_skill_block_when_nothing_declared() {
-        ensure_dummy_provider();
-        let agent = AgentBuilder::new(TEST_MODEL)
-            .agent_provider(TEST_PROVIDER_NAME)
-            .build()
-            .unwrap();
-        assert!(agent.get_history().is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_per_agent_skill_isolation() {
-        ensure_dummy_provider();
-        let dir = tempfile::tempdir().unwrap();
-        let parent_skill_dir = dir.path().join("parent_skills/a_skill");
-        let parent_skill_path = parent_skill_dir.join("SKILL.md");
-        let sub_skill_dir = dir.path().join("sub_skills/b_skill");
-        let sub_skill_path = sub_skill_dir.join("SKILL.md");
-
-        let sub_spec = AgentSpec::new(TEST_MODEL)
-            .card(AgentCard {
-                name: "child".into(),
-                description: "child agent".into(),
-                skills: vec![],
-            })
-            .skill(
-                &sub_skill_dir,
-                [FileEntry::new(
-                    &sub_skill_path,
-                    skill_md("b_skill", "child only", "child body\n"),
-                )],
-            );
-
-        let parent = AgentBuilder::new(TEST_MODEL)
-            .agent_provider(TEST_PROVIDER_NAME)
-            .machine(Local::new())
-            .skill(
-                &parent_skill_dir,
-                [FileEntry::new(
-                    &parent_skill_path,
-                    skill_md("a_skill", "parent only", "parent body\n"),
-                )],
-            )
-            .subagent(sub_spec)
-            .build()
-            .unwrap();
-
-        let sys = system_text(&parent).expect("parent system message");
-        assert!(sys.contains("a_skill"), "parent should advertise a_skill");
-        assert!(
-            !sys.contains("b_skill"),
-            "parent must NOT see child's skill in its instruction: {sys}"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_same_skill_name_across_levels_no_conflict() {
-        ensure_dummy_provider();
-        let dir = tempfile::tempdir().unwrap();
-        let parent_foo_dir = dir.path().join("parent/foo");
-        let child_foo_dir = dir.path().join("child/foo");
-        let parent_foo = parent_foo_dir.join("SKILL.md");
-        let child_foo = child_foo_dir.join("SKILL.md");
-
-        let sub_spec = AgentSpec::new(TEST_MODEL)
-            .card(AgentCard {
-                name: "child".into(),
-                description: "child agent".into(),
-                skills: vec![],
-            })
-            .skill(
-                &child_foo_dir,
-                [FileEntry::new(
-                    &child_foo,
-                    skill_md("foo", "child foo", "CHILD\n"),
-                )],
-            );
-
-        let parent = AgentBuilder::new(TEST_MODEL)
-            .agent_provider(TEST_PROVIDER_NAME)
-            .machine(Local::new())
-            .skill(
-                &parent_foo_dir,
-                [FileEntry::new(
-                    &parent_foo,
-                    skill_md("foo", "parent foo", "PARENT\n"),
-                )],
-            )
-            .subagent(sub_spec)
-            .build()
-            .unwrap();
-
-        let parent_entry = parent
-            .files()
-            .iter()
-            .find(|f| f.path == parent_foo)
-            .expect("parent file");
-        let child_entry = parent
-            .files()
-            .iter()
-            .find(|f| f.path == child_foo)
-            .expect("child file");
-        assert!(
-            std::str::from_utf8(parent_entry.content.as_ref())
-                .unwrap()
-                .contains("description: parent foo")
-        );
-        assert!(
-            std::str::from_utf8(child_entry.content.as_ref())
-                .unwrap()
-                .contains("description: child foo")
-        );
+        assert_eq!(result.stdout, b"ok\n");
     }
 
     #[tokio::test]
@@ -537,5 +394,40 @@ mod tests {
         let history = agent.get_history();
         assert_eq!(history.len(), 2);
         assert_eq!(system_text(&agent).as_deref(), Some("stored instruction"));
+    }
+
+    /// `memory()` lands on the state, which is what the agent's constructor reads to
+    /// decide whether it hands out the memory tools.
+    #[tokio::test]
+    async fn test_builder_memory_is_applied() {
+        use crate::memory::Memory;
+
+        ensure_dummy_provider();
+        let agent = AgentBuilder::new(TEST_MODEL)
+            .agent_provider(TEST_PROVIDER_NAME)
+            .memory(Memory::new("/work/notes.sqlite"))
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            agent.state.memory,
+            Some(Memory::new("/work/notes.sqlite")),
+            "the memory the builder was given is the one on the state"
+        );
+    }
+
+    /// A path names a store, so it can be handed in as one and lands as the same value.
+    #[tokio::test]
+    async fn test_builder_memory_takes_a_path() {
+        use crate::memory::Memory;
+
+        ensure_dummy_provider();
+        let agent = AgentBuilder::new(TEST_MODEL)
+            .agent_provider(TEST_PROVIDER_NAME)
+            .memory(std::path::Path::new("/work/notes.sqlite"))
+            .build()
+            .unwrap();
+
+        assert_eq!(agent.state.memory, Some(Memory::new("/work/notes.sqlite")));
     }
 }

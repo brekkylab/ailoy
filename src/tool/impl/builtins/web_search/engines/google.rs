@@ -244,9 +244,7 @@ mod tests {
     #[test]
     fn test_mobile_uas_includes_modern_chrome() {
         let any_modern = MOBILE_UAS.iter().any(|ua| {
-            ua.contains("Chrome/144.")
-                || ua.contains("Chrome/146.")
-                || ua.contains("Chrome/138.")
+            ua.contains("Chrome/144.") || ua.contains("Chrome/146.") || ua.contains("Chrome/138.")
         });
         assert!(any_modern, "expected at least one Chrome 138+ entry");
     }

@@ -1,0 +1,69 @@
+-- headhunter query log
+-- posting jd/backend-rust.md
+-- 11 calls holding 26 commands. The turn number is which assistant response made the call.
+
+-- turn 1
+cat in/jd.md | head -50; echo ---; headhunting search --help; echo ---; headhunting read --help
+
+-- turn 3
+for s in "Rust" "rust-lang" "Rust (Programming Language)" "Rust Lang" "Async Rust" "Tokio"; do
+echo "=== $s ===";
+headhunting search --city Seoul --min-years 4 --skill "$s" --columns name,years,naive_years,open,contact,headline --limit 100;
+done
+
+-- turn 4
+headhunting search --city Seoul --min-years 4 --skill "러스트" --columns name,years,naive_years,open,contact,headline --limit 100
+
+-- turn 6
+headhunting search --city Seoul --min-years 4 --skill "러스트" --columns name,years,naive_years,open,contact,headline --limit 100
+echo ---
+headhunting search --city Seoul --min-years 4 --skill "Tokio" --columns name,years,naive_years,open,contact,headline --limit 100
+
+-- turn 10
+FULL=$(cat /tmp/fullids.txt)
+echo "--- mentions 멱등성/idempotency ---"
+headhunting search --id "$FULL" --mentions "멱등성" --columns name,years,naive_years,open,contact,headline --limit 100
+headhunting search --id "$FULL" --mentions "idempoten" --columns name,years,naive_years,open,contact,headline --limit 100
+echo "--- mentions kafka ---"
+headhunting search --id "$FULL" --mentions "Kafka" --columns name,years,naive_years,open,contact,headline --limit 100
+echo "--- mentions 정산 ---"
+headhunting search --id "$FULL" --mentions "정산" --columns name,years,naive_years,open,contact,headline --limit 100
+echo "--- mentions 결제/payments ---"
+headhunting search --id "$FULL" --mentions "결제" --columns name,years,naive_years,open,contact,headline --limit 100
+headhunting search --id "$FULL" --mentions "payment" --columns name,years,naive_years,open,contact,headline --limit 100
+
+
+-- turn 11
+FULL=$(cat /tmp/fullids.txt)
+echo "--- mentions 분산 시스템 ---"
+headhunting search --id "$FULL" --mentions "분산 시스템" --columns name,years,naive_years,open,contact,headline --limit 100
+echo "--- mentions distributed ---"
+headhunting search --id "$FULL" --mentions "distributed" --columns name,years,naive_years,open,contact,headline --limit 100
+echo "--- mentions 장애 조치 / failover ---"
+headhunting search --id "$FULL" --mentions "장애" --columns name,years,naive_years,open,contact,headline --limit 100
+headhunting search --id "$FULL" --mentions "failover" --columns name,years,naive_years,open,contact,headline --limit 100
+echo "--- mentions 재시도 / retry ---"
+headhunting search --id "$FULL" --mentions "재시도" --columns name,years,naive_years,open,contact,headline --limit 100
+headhunting search --id "$FULL" --mentions "retry" --columns name,years,naive_years,open,contact,headline --limit 100
+
+
+-- turn 12
+headhunting read urn:li:person:b3tq9wmk urn:li:person:q8jw3rvh urn:li:person:k6qb3nwd urn:li:person:n7kv4jsb urn:li:person:w3gm8rbq urn:li:person:a4rn7qvt urn:li:person:r2vt6nsw
+
+-- turn 13
+headhunting read urn:li:person:t4qm9wbd urn:li:person:w9td4bmq urn:li:person:p4jn8qhd urn:li:person:u5cz9jhr urn:li:person:d8kf3prw urn:li:person:t8jc3wqz urn:li:person:k8vq3mrt urn:li:person:z4hn7cwp
+
+-- turn 14
+headhunting read urn:li:person:bqsuo43r urn:li:person:b2pq7x72 urn:li:person:v7tb4mkj urn:li:person:x7bk3mfz
+
+-- turn 15
+headhunting read urn:li:person:8rs80uy8
+
+-- turn 16
+headhunting search --name "서연 강" --columns name,city,years,contact,headline --limit 20
+echo ---
+headhunting search --name "하은 성" --columns name,city,years,contact,headline --limit 20
+echo ---
+headhunting search --name "채원 노" --columns name,city,years,contact,headline --limit 20
+echo ---
+headhunting search --name "도윤 반" --columns name,city,years,contact,headline --limit 20

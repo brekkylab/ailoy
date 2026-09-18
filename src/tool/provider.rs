@@ -189,9 +189,7 @@ static TOOL_PROVIDERS: LazyLock<RwLock<HashMap<String, ToolProvider>>> = LazyLoc
 
 /// Borrow the process-wide [`ToolProvider`] registry for reading.
 pub fn get_tool_providers() -> RwLockReadGuard<'static, HashMap<String, ToolProvider>> {
-    TOOL_PROVIDERS
-        .read()
-        .expect("tool_providers lock poisoned")
+    TOOL_PROVIDERS.read().expect("tool_providers lock poisoned")
 }
 
 /// Borrow the process-wide [`ToolProvider`] registry for writing.

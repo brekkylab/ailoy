@@ -124,7 +124,6 @@ pub fn gen_useragent() -> String {
     format!("Mozilla/5.0 ({os}; rv:{version}) Gecko/20100101 Firefox/{version}")
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -377,6 +377,9 @@ mod tests {
                 arguments: "{\"location\":".into(), // truncated JSON
             },
         };
-        assert!(delta.finish().is_err(), "malformed args must error, not panic");
+        assert!(
+            delta.finish().is_err(),
+            "malformed args must error, not panic"
+        );
     }
 }

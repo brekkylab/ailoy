@@ -1,0 +1,9 @@
+# Built by `python3 sql/load.py` from `data/candidates.json`, which is committed. A 2.4MB
+# binary does not diff, and it is regenerated in a second, so what is kept is the JSON it
+# is built from. Listed here so `git add -A` cannot pull it in by accident.
+data/headhunter.db
+
+# The root .gitignore excludes `*.log`, and the query log is what this example commits as
+# the record of a run — every pool call, untruncated. Without this line it disappears from
+# `git add` without a word, which is how it was left out the first time.
+!run_result/**/*.log

@@ -1,0 +1,104 @@
+{
+  "run_id": "1788179290-samsung-electronics-entity-profile",
+  "task": "Profile Samsung Electronics from the registries: what the entity is, where it is registered, what identifiers name it, and what it discloses about itself.",
+  "entities": [
+    {
+      "name": "SAMSUNG ELECTRONICS CO., LTD (\uc0bc\uc131\uc804\uc790(\uc8fc))",
+      "registry": "GLEIF",
+      "lei": "9884007ER46L6N7EI764",
+      "jurisdiction": "KR",
+      "status": "ACTIVE",
+      "registered_as": "124-81-00998"
+    },
+    {
+      "name": "SAMSUNG ELECTRONICS CO LTD /FI",
+      "registry": "SEC EDGAR",
+      "cik": "0000879316",
+      "jurisdiction": "M5 (Korea, Republic of)",
+      "entityType": "other"
+    },
+    {
+      "name": "SAMSUNG ELECTRONICS COMPANY LIMITED (branch)",
+      "registry": "GLEIF",
+      "lei": "335800A16O7QD1TDQO62",
+      "jurisdiction": "KR (registered branch in Mumbai, IN)",
+      "status": "ACTIVE",
+      "note": "Branch of LEI 9884007ER46L6N7EI764"
+    },
+    {
+      "name": "ProShares Ultra Samsung Electronics",
+      "registry": "GLEIF",
+      "lei": "529900JUHLXQE4F70208",
+      "jurisdiction": "US-DE",
+      "status": "ACTIVE",
+      "note": "Unrelated leveraged ETF fund named after Samsung Electronics; not the company itself"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "info",
+      "statement": "Samsung Electronics' GLEIF-registered legal entity is 삼성전자(주) / SAMSUNG ELECTRONICS CO., LTD, LEI 9884007ER46L6N7EI764, jurisdiction Korea (KR), status ACTIVE, Korean business registration number 124-81-00998, headquartered in Suwon, Gyeonggi-do.",
+      "evidence": ["gleif/by-lei/9884007ER46L6N7EI764/record/record.json"],
+      "confidence": "high"
+    },
+    {
+      "severity": "info",
+      "statement": "GLEIF records no known corporate parent for this LEI: both direct-parent and ultimate-parent fields carry a NO_KNOWN_PERSON reporting exception.",
+      "evidence": [
+        "gleif/by-lei/9884007ER46L6N7EI764/direct-parent-reporting-exception/direct-parent-reporting-exception.json",
+        "gleif/by-lei/9884007ER46L6N7EI764/ultimate-parent-reporting-exception/ultimate-parent-reporting-exception.json"
+      ],
+      "confidence": "high"
+    },
+    {
+      "severity": "info",
+      "statement": "GLEIF lists one branch of this LEI (SAMSUNG ELECTRONICS COMPANY LIMITED, LEI 335800A16O7QD1TDQO62, registered in Mumbai, India) and a corporate-group child list including Samsung Display, Samsung Malaysia Electronics, Samsung R&D Institute India-Bangalore, Samsung Eletronica da Amazonia, and the Harman International group of entities (22 ultimate children total per GLEIF pagination).",
+      "evidence": [
+        "gleif/by-lei/9884007ER46L6N7EI764/branches/branches.json",
+        "gleif/by-lei/9884007ER46L6N7EI764/direct-children/direct-children.json",
+        "gleif/by-lei/9884007ER46L6N7EI764/ultimate-children/ultimate-children.json"
+      ],
+      "confidence": "medium"
+    },
+    {
+      "severity": "info",
+      "statement": "SEC EDGAR carries a filer entry for Samsung Electronics under CIK 0000879316, name 'SAMSUNG ELECTRONICS CO LTD /FI', entityType 'other', stateOfIncorporation Korea (M5), no ticker or exchange, EDGAR-recorded ein 953170778, lei field null.",
+      "evidence": ["edgar/by-cik/0000879316/submissions/submissions.json"],
+      "confidence": "high"
+    },
+    {
+      "severity": "info",
+      "statement": "CIK 0000879316's 251 listed filings (1995-03-06 to 2015-01-20) are almost entirely beneficial-ownership, tender-offer, going-private, and paper supplemental/annual-report filings tied to Samsung's stakes in other US issuers (e.g. Seagate Technology, Rambus, SunEdison Semiconductor); no 10-K/10-Q/20-F is present and the XBRL company-facts endpoint returns an S3 NoSuchKey error, i.e. no structured financial facts are on file.",
+      "evidence": [
+        "edgar/by-cik/0000879316/submissions/submissions.json",
+        "edgar/by-cik/0000879316/facts/facts.json"
+      ],
+      "confidence": "high"
+    },
+    {
+      "severity": "medium",
+      "statement": "possible match \u2014 needs confirmation: the GLEIF LEI record (9884007ER46L6N7EI764) and the EDGAR CIK record (0000879316) are linked in this report only by legal name and Korean jurisdiction; EDGAR's own lei field for this CIK is null and GLEIF carries no SEC CIK field, so no registry-asserted key connects them.",
+      "evidence": [
+        "CATALOG.md",
+        "gleif/by-lei/9884007ER46L6N7EI764/record/record.json",
+        "edgar/by-cik/0000879316/submissions/submissions.json"
+      ],
+      "confidence": "medium"
+    },
+    {
+      "severity": "low",
+      "statement": "A plain GLEIF entity.legalName search for 'Samsung Electronics' (English) returns 47 records but misses the Korean parent entirely (its legalName is recorded in Korean script); the same search also returns an unrelated leveraged-ETF fund, 'ProShares Ultra Samsung Electronics' (LEI 529900JUHLXQE4F70208), and two similarly unrelated Hong Kong CSOP leveraged/inverse products \u2014 a realized instance of the name-collision risk the registries' catalogs warn about.",
+      "evidence": [
+        "gleif/search/entity.legalName/Samsung Electronics/pages/page-001.json",
+        "gleif/search/fulltext/Samsung Electronics Co Ltd/pages/page-001.json"
+      ],
+      "confidence": "high"
+    }
+  ],
+  "data_gaps": [
+    "Neither GLEIF nor EDGAR carries Samsung Electronics' financial statements (revenue, profit, headcount); this data is outside both registries' coverage.",
+    "EDGAR's filing history for CIK 0000879316 contains nothing after 2015-01-20; whether more recent EDGAR activity exists under a different CIK was not exhaustively checked beyond the first page of a 213-hit full-text search.",
+    "GLEIF's parent/child relationship data for LEI 9884007ER46L6N7EI764 is incomplete relative to the actual corporate group: most of the 47 'Samsung Electronics'-named national subsidiaries found by legalName search do not appear in the ultimate-children list (22 total).",
+    "No registry-asserted identifier (LEI, CIK, EIN) bridges the GLEIF and EDGAR records used in this profile; the join is by name and jurisdiction only, per the top-level CATALOG.md warning."
+  ]
+}

@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use cortex::console::Error;
+
 use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
@@ -29,7 +31,7 @@ pub fn get_write_tool_desc() -> ToolDesc {
 }
 
 pub fn get_write_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &dyn Console| -> Value {
+    tool_func!(async |args: Value, console: &mut Console| -> Value {
         let Some(path) = args.pointer("/path").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: path",
@@ -43,8 +45,43 @@ pub fn get_write_tool_func() -> ToolFunc {
             });
         };
 
-        match console.write(Path::new(path), content.as_bytes()).await {
-            Ok(()) => crate::to_value!({
+        // cortex writes the file, not the path: a directory above it that is not
+        // there is a `NOT_FOUND`, not something `write` creates. Creating one *is*
+        // this tool's job, though — it exists to put a file where there was none — so
+        // the miss is paid for here, once, and only when it actually happens.
+        let mut wrote = console.write(path, content.as_bytes().to_vec(), None).await;
+
+        if wrote.as_ref().err().and_then(|e| e.code()) == Some(Error::NOT_FOUND)
+            && let Some(parent) = Path::new(path)
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+        {
+            let parent = parent.to_string_lossy().into_owned();
+            match console.exec(["mkdir", "-p", &parent], None).await {
+                Ok(r) if r.code == 0 => {
+                    wrote = console.write(path, content.as_bytes().to_vec(), None).await;
+                }
+                Ok(r) => {
+                    return crate::to_value!({
+                        "error": format!(
+                            "write {path}: mkdir {parent} failed (exit {}): {}",
+                            r.code,
+                            String::from_utf8_lossy(&r.stderr).trim()
+                        ),
+                        "phase": "io",
+                    });
+                }
+                Err(e) => {
+                    return crate::to_value!({
+                        "error": format!("write {path}: mkdir {parent}: {e}"),
+                        "phase": "io",
+                    });
+                }
+            }
+        }
+
+        match wrote {
+            Ok(_) => crate::to_value!({
                 "ok": true,
                 "bytes_written": content.len() as i64,
             }),
@@ -61,13 +98,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{
-        datatype::Value,
-        message::Message,
-        runenv::{Local, Machine},
-        to_value,
-        tool::ToolProvider,
-    };
+    use crate::{datatype::Value, message::Message, test_console, to_value, tool::ToolProvider};
 
     fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
@@ -79,9 +110,12 @@ mod tests {
         let provider = provider();
         let funcs = provider.provide(&[get_write_tool_desc()]).unwrap();
         let f = funcs.get("write").unwrap();
-        let mut local = Local::new();
-        let console = local.start().await.unwrap();
-        f.call(args, "1", console).next().await.unwrap().message
+        let mut console = test_console().await;
+        f.call(args, "1", &mut console)
+            .next()
+            .await
+            .unwrap()
+            .message
     }
 
     #[tokio::test]

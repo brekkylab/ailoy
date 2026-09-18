@@ -1,0 +1,91 @@
+{
+  "run_id": "1787633069-alphabet-ownership-tree",
+  "task": "Starting from Alphabet, follow the disclosed ownership relationships as far as they go. Report the shape of the group and where the disclosure stops.",
+  "entities": [
+    {"name": "ALPHABET INC.", "lei": "5493006MHB84DD0ZWV18", "cik": "0001652044", "jurisdiction": "US-DE", "role": "ultimate parent (root of the disclosed tree)"},
+    {"name": "GOOGLE LLC", "lei": "7ZW8QJWVPR4P1J1KQY45", "jurisdiction": "US-DE", "role": "direct child of Alphabet Inc."},
+    {"name": "GOOGLE INTERNATIONAL LLC", "lei": "549300Y7W34DK0WBPY51", "jurisdiction": "US-DE", "role": "direct child of Google LLC"},
+    {"name": "WIZ, INC.", "lei": "6488C2T08TXT755U3P86", "jurisdiction": "US-DE", "role": "direct child of Google LLC"},
+    {"name": "GOOGLE CLOUD EMEA LIMITED", "lei": "98450052CF14CFEB6435", "jurisdiction": "IE", "role": "direct child of Alphabet Inc."},
+    {"name": "CHARLESTON ROAD REGISTRY INC.", "lei": "984500639BT036CND679", "jurisdiction": "US-DE", "role": "direct child of Google LLC"},
+    {"name": "GOOGLE ENERGY LLC", "lei": "549300XRQBENEKTBS153", "jurisdiction": "US-DE", "role": "direct child of Google LLC"},
+    {"name": "GOOGLE IRELAND LIMITED", "lei": "YYPPRNO5HB304LHFVG31", "jurisdiction": "IE", "role": "direct child of Google International LLC"},
+    {"name": "GOOGLE INDIA PRIVATE LIMITED", "lei": "335800P2W6AY6E8BEP06", "jurisdiction": "IN", "role": "direct child of Google International LLC"},
+    {"name": "GOOGLE POLAND SP. Z O.O.", "lei": "984500E14WF63DAD2C91", "jurisdiction": "PL", "role": "direct child of Google International LLC"},
+    {"name": "GOOGLE CLOUD POLAND SP. Z O.O.", "lei": "984500B8CC95C15F8Q65", "jurisdiction": "PL", "role": "direct child of Google Cloud EMEA Limited"},
+    {"name": "WIZ CLOUD LIMITED", "lei": "6488R1WLKN077T974P96", "jurisdiction": "GB", "role": "direct child of Wiz, Inc."}
+  ],
+  "findings": [
+    {
+      "severity": "info",
+      "statement": "Alphabet Inc. (LEI 5493006MHB84DD0ZWV18) has no parent disclosed in GLEIF; both direct- and ultimate-parent fields carry a reporting exception with reason 'NO_KNOWN_PERSON', and a search for entities that own it (search/owns) returns zero results.",
+      "evidence": [
+        "gleif/by-lei/5493006MHB84DD0ZWV18/direct-parent-reporting-exception/direct-parent-reporting-exception.json",
+        "gleif/by-lei/5493006MHB84DD0ZWV18/ultimate-parent-reporting-exception/ultimate-parent-reporting-exception.json",
+        "gleif/search/owns/5493006MHB84DD0ZWV18/pages/page-001.json"
+      ],
+      "confidence": "high"
+    },
+    {
+      "severity": "info",
+      "statement": "GLEIF discloses exactly 50 entities consolidated under Alphabet Inc. (its 'ownedBy'/ultimate-children set), arranged across up to four tiers below Alphabet: Alphabet -> Google LLC -> {Google International LLC, Wiz Inc.} -> their own subsidiaries (e.g. Google Ireland Limited, Google India Private Limited, Google Poland, Wiz Cloud Limited); and Alphabet -> Google Cloud EMEA Limited -> Google Cloud Poland.",
+      "evidence": [
+        "gleif/search/ownedBy/5493006MHB84DD0ZWV18/pages/page-001.json",
+        "gleif/by-lei/5493006MHB84DD0ZWV18/ultimate-children/ultimate-children.json",
+        "gleif/by-lei/5493006MHB84DD0ZWV18/direct-children/direct-children.json",
+        "gleif/by-lei/7ZW8QJWVPR4P1J1KQY45/direct-children/direct-children.json",
+        "gleif/by-lei/549300Y7W34DK0WBPY51/direct-children/direct-children.json",
+        "gleif/by-lei/98450052CF14CFEB6435/direct-children/direct-children.json",
+        "gleif/by-lei/6488C2T08TXT755U3P86/direct-children/direct-children.json"
+      ],
+      "confidence": "high"
+    },
+    {
+      "severity": "info",
+      "statement": "No entity among the 50 disclosed subsidiaries has any further direct-children of its own beyond Google LLC, Google International LLC, Google Cloud EMEA Limited, and Wiz, Inc. -- the disclosed tree has a maximum depth of four tiers below Alphabet and does not extend further in GLEIF's data.",
+      "evidence": [
+        "gleif/by-lei/<LEI>/direct-children/direct-children.json for each of the 50 LEIs listed in evidence.md (only the four LEIs above return non-empty data)"
+      ],
+      "confidence": "high"
+    },
+    {
+      "severity": "caveat",
+      "statement": "Nine of the 50 subsidiaries (GLUI Engineering Oy; Waymo IT Services India; Google IT Services India; Raiden Infotech India; SZS Tech India; Mandiant Cybersecurity India; Google Payment India; Alphabet Capital US LLC) have their direct-parent relationship withheld under a reporting exception (reason NON_PUBLIC or NO_LEI); only their ultimate-parent link to Alphabet Inc. is disclosed, so one middle link in the chain is not shown for these nine.",
+      "evidence": [
+        "gleif/by-lei/74370096HBTUWJRFIT29/direct-parent-reporting-exception/direct-parent-reporting-exception.json",
+        "gleif/by-lei/335800LW63MGNBQTB908/direct-parent-reporting-exception/direct-parent-reporting-exception.json",
+        "gleif/by-lei/335800VPK652AEFF1O79/direct-parent-reporting-exception/direct-parent-reporting-exception.json",
+        "gleif/by-lei/335800FMIGZ24EJ2XW80/direct-parent-reporting-exception/direct-parent-reporting-exception.json",
+        "gleif/by-lei/335800VQ73CQOLRRSK16/direct-parent-reporting-exception/direct-parent-reporting-exception.json",
+        "gleif/by-lei/335800APEHUAALHEZA12/direct-parent-reporting-exception/direct-parent-reporting-exception.json",
+        "gleif/by-lei/335800SCE2XZHDWXCG42/direct-parent-reporting-exception/direct-parent-reporting-exception.json",
+        "gleif/by-lei/549300KG6S007HTRLN18/direct-parent-reporting-exception/direct-parent-reporting-exception.json"
+      ],
+      "confidence": "high"
+    },
+    {
+      "severity": "caveat",
+      "statement": "A GLEIF name search for 'Alphabet Inc' also surfaces four unrelated entities (Alphabet Energy Inc, India; Alphabet Minerals Inc, India; Alphabet Holding Company, Inc., Delaware but a different registration number and LAPSED status; Alphabet Millcreek Self Storage Inc., Ontario) that share the word 'Alphabet' but do not appear in Alphabet Inc.'s ownedBy list and whose addresses/registration numbers do not corroborate a link -- treated as name collisions, not part of the group.",
+      "evidence": [
+        "gleif/search/entity.legalName/Alphabet Inc/pages/page-001.json"
+      ],
+      "confidence": "medium"
+    },
+    {
+      "severity": "caveat",
+      "statement": "Alphabet Inc.'s CIK in EDGAR (0001652044) was confirmed by name and address/EIN match against the GLEIF record (both give Mountain View, CA and Delaware incorporation), but EDGAR's submissions.json carries a null 'lei' field and no structured subsidiary list -- EDGAR did not contribute additional ownership-tree data in this run beyond confirming Alphabet is a top-level public filer.",
+      "evidence": [
+        "edgar/search/entityName/Alphabet Inc/pages/page-001.json",
+        "edgar/by-cik/0001652044/submissions/submissions.json"
+      ],
+      "confidence": "high"
+    }
+  ],
+  "data_gaps": [
+    "GLEIF's ownership data reflects accounting-consolidation relationships (IS_DIRECTLY/ULTIMATELY_CONSOLIDATED_BY), not stated ownership percentages or voting control -- percentage of equity held is not available from the fields read here.",
+    "GLEIF only shows entities that hold an LEI and have filed a relationship record; Alphabet's full corporate family (e.g. as listed in a 10-K Exhibit 21) likely includes additional subsidiaries with no LEI, which would not appear in this 50-entity set.",
+    "Nine of the 50 subsidiaries have their direct-parent link withheld (reason NON_PUBLIC or NO_LEI); only the ultimate-parent (Alphabet Inc.) is confirmed for those nine, not the immediate parent in between.",
+    "EDGAR was checked (submissions.json, full-text search) but does not carry a machine-readable subsidiary/ownership graph for Alphabet in the paths available; a narrower search for Exhibit 21 filings was not performed in this run.",
+    "Neither registry covers ownership percentage, governance/control agreements, or non-US financial-statement detail, per the top-level CATALOG.md scope note."
+  ]
+}
