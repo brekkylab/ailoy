@@ -5,34 +5,79 @@
 // explorer settles on. The tree scrolls on its own, so a deep directory does not push the
 // document out of view and a long document does not shorten the tree.
 //
-// `render` is the only thing that differs between the sources. A Notion page is markdown
-// and is worth reading as markdown; a file off a disk or a bucket is bytes, and showing
-// those as anything but themselves would be a guess about what they are.
+// `kind` is the only thing that differs between the sources, and only because Notion's
+// layout means something. Everything else is files: what you click is what you read, and
+// showing bytes as anything but themselves would be a guess about what they are.
 
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import * as api from "@/api";
-import { FileTree } from "@/components/FileTree";
+import { FileTree, type TreeAdapter } from "@/components/FileTree";
 import { Markdown } from "@/components/Markdown";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { notionHeading, notionMarkdown, notionTitle } from "@/lib/notion";
 import { S } from "@/strings";
+import type { FileContent } from "@/types";
 
-export function FileBrowser({ root, render = "text" }: { root: string; render?: "text" | "markdown" }) {
+/**
+ * Notion's shape, in one place.
+ *
+ * A page is a directory holding `page.json`, so the directory *is* the page: it carries
+ * the title, and clicking it is asking for the body. The json files are hidden because
+ * they are that body rather than siblings of it, and the id cortex sanitizes into the
+ * directory name comes off, since the tree is a list of pages and not of paths.
+ */
+const NOTION: TreeAdapter = {
+  label: (e) => (e.kind === "dir" ? notionTitle(e.name) : e.name),
+  hide: (e) => e.name === "page.json" || e.name === "database.json",
+  openDirs: true,
+};
+
+/**
+ * Reads what a click asked for.
+ *
+ * For Notion that is a directory, and the file inside it is `page.json` — unless the
+ * directory is a database, which holds a `database.json` instead. Nothing in the listing
+ * distinguishes the two (cortex names both `<title>__<id>`), so the fallback is the way to
+ * find out, and it costs one refused request on the rarer of the two.
+ */
+async function readTarget(path: string, kind: "plain" | "notion"): Promise<FileContent> {
+  if (kind !== "notion") return api.fsRead(path);
+  try {
+    return await api.fsRead(`${path}/page.json`);
+  } catch (err) {
+    if (api.kindOf(err) !== "not_found") throw err;
+    return api.fsRead(`${path}/database.json`);
+  }
+}
+
+export function FileBrowser({ root, kind = "plain" }: { root: string; kind?: "plain" | "notion" }) {
   // Keyed by path, so the pane follows the selection and an unopened browser fetches
   // nothing. Reset when the root changes, because a path under the old root means nothing
   // under the new one — which `WorkspacePanel` gets by keying this component on its root.
   const [selected, setSelected] = useState<string | null>(null);
   const file = useQuery({
-    queryKey: ["file", selected],
-    queryFn: () => api.fsRead(selected!),
+    queryKey: ["file", selected, kind],
+    queryFn: () => readTarget(selected!, kind),
     enabled: !!selected,
   });
+
+  const text = file.data?.text ?? null;
+  // Markdown for a Notion page, the raw bytes for everything else — including a Notion
+  // database, whose json has no body to render and is more use shown as what it is.
+  const body = text !== null && kind === "notion" ? notionMarkdown(text) : null;
+  const heading = text !== null && kind === "notion" ? notionHeading(text) : null;
 
   return (
     <div className="flex min-h-0 flex-1">
       <ScrollArea className="w-72 shrink-0 border-t border-r px-2 py-1">
-        <FileTree path={root} onOpen={setSelected} selected={selected} />
+        <FileTree
+          path={root}
+          onOpen={setSelected}
+          selected={selected}
+          adapter={kind === "notion" ? NOTION : undefined}
+        />
       </ScrollArea>
       <div className="min-w-0 flex-1 overflow-auto border-t">
         {!selected ? (
@@ -44,20 +89,21 @@ export function FileBrowser({ root, render = "text" }: { root: string; render?: 
             <div className="mb-3 truncate font-mono text-xs text-muted-foreground" title={selected}>
               {selected}
             </div>
-            {file.data?.text != null ? (
-              render === "markdown" ? (
-                <>
-                  <Markdown text={file.data.text} />
-                  {file.data.truncated && (
-                    <p className="mt-2 text-xs text-muted-foreground">… {S.fileTooLarge}</p>
-                  )}
-                </>
-              ) : (
-                <pre className="whitespace-pre-wrap font-mono text-xs">
-                  {file.data.text}
-                  {file.data.truncated && `\n… ${S.fileTooLarge}`}
-                </pre>
-              )
+            {body !== null ? (
+              <>
+                {/* The title lives beside the body rather than in it: cortex renders the
+                    blocks, and a page's name is not one of them. */}
+                {heading && <h2 className="mb-2 text-lg font-semibold">{heading}</h2>}
+                <Markdown text={body} />
+                {file.data?.truncated && (
+                  <p className="mt-2 text-xs text-muted-foreground">… {S.fileTooLarge}</p>
+                )}
+              </>
+            ) : text !== null ? (
+              <pre className="whitespace-pre-wrap font-mono text-xs">
+                {text}
+                {file.data?.truncated && `\n… ${S.fileTooLarge}`}
+              </pre>
             ) : file.data ? (
               <p className="text-xs text-muted-foreground">{S.binaryFile}</p>
             ) : null}
