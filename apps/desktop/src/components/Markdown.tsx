@@ -22,42 +22,13 @@
 
 import ReactMarkdown from "react-markdown";
 import ShikiHighlighter from "react-shiki/core";
-import { useEffect, useState } from "react";
 import remarkGfm from "remark-gfm";
 
-import { getHighlighter, type Highlighter } from "@/lib/highlighter";
+import { useHighlighter } from "@/lib/useHighlighter";
 
 /** A fence with no info string still gets a code block, just without a grammar. */
 const PLAIN = "text";
 
-/**
- * The shared highlighter, once it exists.
- *
- * Module-level rather than per-component: every fence in every bubble asks for it, and a
- * mount after the first must not paint a plain block while a promise that has already
- * resolved is awaited again. A failure to build it is not worth a message — every fence
- * keeps rendering as plain text, which is what an unknown language does anyway.
- */
-let ready: Highlighter | null = null;
-
-function useHighlighter(): Highlighter | null {
-  const [highlighter, setHighlighter] = useState(ready);
-  useEffect(() => {
-    if (highlighter) return;
-    let live = true;
-    void getHighlighter().then(
-      (h) => {
-        ready = h;
-        if (live) setHighlighter(h);
-      },
-      () => {},
-    );
-    return () => {
-      live = false;
-    };
-  }, [highlighter]);
-  return highlighter;
-}
 
 /**
  * Fence or backticks? react-markdown renders both through `code` and (since v9) marks

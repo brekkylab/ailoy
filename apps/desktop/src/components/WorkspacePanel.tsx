@@ -71,7 +71,16 @@ export function WorkspacePanel({ source }: { source: string | null }) {
       </div>
       {/* Keyed on the root so switching sources drops the open file with the tree it came
           from: a selection under the old root names nothing under the new one. */}
-      <FileBrowser key={browseRoot} root={browseRoot} kind={notion ? "notion" : "plain"} hide={hide} />
+      <FileBrowser
+        key={browseRoot}
+        root={browseRoot}
+        kind={notion ? "notion" : "plain"}
+        hide={hide}
+        // Local folders and buckets only, for now. Notion renders its own pages, and what
+        // sits under the workspace root is either one of these or something the agent
+        // wrote, which the artifacts view shows as written.
+        viewers={open?.kind === "local" || open?.kind === "s3"}
+      />
     </section>
   );
 }

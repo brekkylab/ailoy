@@ -16,7 +16,10 @@ import * as api from "@/api";
 import { FileTree, type TreeAdapter } from "@/components/FileTree";
 import { Markdown } from "@/components/Markdown";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { CodeViewer } from "@/components/viewers/CodeViewer";
+import { TableViewer } from "@/components/viewers/TableViewer";
 import { notionHeading, notionMarkdown, notionTitle } from "@/lib/notion";
+import { viewerFor, type Viewer } from "@/lib/viewers";
 import { S } from "@/strings";
 import type { Entry, FileContent } from "@/types";
 
@@ -52,15 +55,55 @@ async function readTarget(path: string, kind: "plain" | "notion"): Promise<FileC
   }
 }
 
+/** The registry's choice, rendered. `text` never reaches here — it is the fallback below. */
+function TypedView({
+  text,
+  viewer,
+  truncated,
+}: {
+  text: string;
+  viewer: Viewer;
+  truncated: boolean;
+}) {
+  switch (viewer.kind) {
+    case "markdown":
+      return (
+        <>
+          <Markdown text={text} />
+          {truncated && <p className="mt-2 text-xs text-muted-foreground">… {S.fileTooLarge}</p>}
+        </>
+      );
+    case "table":
+      return <TableViewer text={text} delimiter={viewer.delimiter ?? ","} truncated={truncated} />;
+    case "code":
+      return (
+        <>
+          <CodeViewer text={text} lang={viewer.lang ?? "text"} />
+          {truncated && <p className="mt-2 text-xs text-muted-foreground">… {S.fileTooLarge}</p>}
+        </>
+      );
+    case "text":
+      return null;
+  }
+}
+
 export function FileBrowser({
   root,
   kind = "plain",
   hide,
+  viewers = false,
 }: {
   root: string;
   kind?: "plain" | "notion";
   /** Entries to leave out, on top of whatever the kind already hides. */
   hide?: (e: Entry) => boolean;
+  /**
+   * Show a file as its type rather than as characters — a table for a `.csv`, highlighted
+   * source for a `.rs`, rendered prose for a `.md`. Off by default, and switched on per
+   * source rather than everywhere, because it is the sources holding documents that earn
+   * it: a Notion page already renders, and what the agent writes is read as it is written.
+   */
+  viewers?: boolean;
 }) {
   // The kind's own rules and the caller's, as one predicate: a Notion tree hides the json
   // that is its body, and the root hides the sources grafted into it, and a tree could
@@ -85,6 +128,9 @@ export function FileBrowser({
   // database, whose json has no body to render and is more use shown as what it is.
   const body = text !== null && kind === "notion" ? notionMarkdown(text) : null;
   const heading = text !== null && kind === "notion" ? notionHeading(text) : null;
+  // Only for a file this browser opened by name: a Notion page's `page.json` is the
+  // envelope, not the document, and reading its extension would call it JSON.
+  const viewer = viewers && selected && kind !== "notion" ? viewerFor(selected) : null;
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -98,8 +144,11 @@ export function FileBrowser({
           </div>
         ) : (
           <div className="p-4">
-            <div className="mb-3 truncate font-mono text-xs text-muted-foreground" title={selected}>
-              {selected}
+            <div className="mb-3 flex items-baseline gap-2 text-xs text-muted-foreground">
+              <span className="truncate font-mono" title={selected}>
+                {selected}
+              </span>
+              {viewer && text !== null && <span className="shrink-0">· {viewer.label}</span>}
             </div>
             {body !== null ? (
               <>
@@ -111,6 +160,8 @@ export function FileBrowser({
                   <p className="mt-2 text-xs text-muted-foreground">… {S.fileTooLarge}</p>
                 )}
               </>
+            ) : text !== null && viewer && viewer.kind !== "text" ? (
+              <TypedView text={text} viewer={viewer} truncated={!!file.data?.truncated} />
             ) : text !== null ? (
               <pre className="whitespace-pre-wrap font-mono text-xs">
                 {text}
