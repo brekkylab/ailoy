@@ -8,7 +8,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { ChevronRight, File, Folder } from "lucide-react";
-import { useState } from "react";
 
 import * as api from "@/api";
 import { S } from "@/strings";
@@ -35,17 +34,25 @@ export function FileTree({
   onOpen,
   selected,
   adapter,
+  expanded,
+  onToggle,
 }: {
   path: string;
   depth?: number;
   onOpen: (path: string) => void;
   selected: string | null;
   adapter?: TreeAdapter;
+  /**
+   * Every open directory, for the whole tree, owned above it.
+   *
+   * Not per level: collapsing a parent unmounts its children, so state held there is gone
+   * before anything could write it down. One set, held by the browser, is what lets the
+   * shape outlive the window — see `lib/treeState`.
+   */
+  expanded: Set<string>;
+  onToggle: (path: string) => void;
 }) {
   const entries = useQuery({ queryKey: ["fs", path], queryFn: () => api.fsList(path) });
-  // Expansion is per level, keyed by child path: collapsing a parent unmounts the child
-  // and drops its state with it, which is the behaviour a lazy tree wants anyway.
-  const [open, setOpen] = useState<Record<string, boolean>>({});
 
   const rows = (entries.data ?? []).filter((e) => !adapter?.hide?.(e));
 
@@ -62,21 +69,29 @@ export function FileTree({
             onClick={() => {
               // A directory that also opens does both on the one click: in a page tree the
               // children and the body are the same thing being asked for.
-              if (e.kind === "dir") setOpen((o) => ({ ...o, [e.path]: !o[e.path] }));
+              if (e.kind === "dir") onToggle(e.path);
               if (e.kind !== "dir" || adapter?.openDirs) onOpen(e.path);
             }}
             title={e.size != null ? `${e.size} B` : undefined}
           >
             {e.kind === "dir" ? (
-              <ChevronRight className={cn("size-3 shrink-0 transition-transform", open[e.path] && "rotate-90")} />
+              <ChevronRight className={cn("size-3 shrink-0 transition-transform", expanded.has(e.path) && "rotate-90")} />
             ) : (
               <span className="w-3 shrink-0" />
             )}
             {e.kind === "dir" ? <Folder className="size-3.5 shrink-0" /> : <File className="size-3.5 shrink-0" />}
             <span className="truncate">{adapter?.label?.(e) ?? e.name}</span>
           </button>
-          {e.kind === "dir" && open[e.path] && (
-            <FileTree path={e.path} depth={depth + 1} onOpen={onOpen} selected={selected} adapter={adapter} />
+          {e.kind === "dir" && expanded.has(e.path) && (
+            <FileTree
+              path={e.path}
+              depth={depth + 1}
+              onOpen={onOpen}
+              selected={selected}
+              adapter={adapter}
+              expanded={expanded}
+              onToggle={onToggle}
+            />
           )}
         </li>
       ))}

@@ -19,6 +19,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { CodeViewer } from "@/components/viewers/CodeViewer";
 import { TableViewer } from "@/components/viewers/TableViewer";
 import { notionHeading, notionMarkdown, notionTitle } from "@/lib/notion";
+import { isHidden, loadExpanded, saveExpanded, toggle } from "@/lib/treeState";
 import { DocxViewer } from "@/components/viewers/DocxViewer";
 import { ImageViewer } from "@/components/viewers/ImageViewer";
 import { PdfViewer } from "@/components/viewers/PdfViewer";
@@ -129,6 +130,7 @@ export function FileBrowser({
   kind = "plain",
   hide,
   viewers = false,
+  hiddenFiles = false,
 }: {
   root: string;
   kind?: "plain" | "notion";
@@ -141,15 +143,41 @@ export function FileBrowser({
    * it: a Notion page already renders, and what the agent writes is read as it is written.
    */
   viewers?: boolean;
+  /**
+   * Offer a switch for dotfiles, and leave them out until it is on.
+   *
+   * For a tree over someone's own disk, where the convention still means what it always
+   * meant: a home directory is mostly configuration, and a browser that opens onto `.ssh`
+   * and `.DS_Store` has buried what the user came for. A connector's namespace carries no
+   * such convention, so there is nothing to offer there.
+   */
+  hiddenFiles?: boolean;
 }) {
-  // The kind's own rules and the caller's, as one predicate: a Notion tree hides the json
-  // that is its body, and the root hides the sources grafted into it, and a tree could
-  // want both.
+  const [showHidden, setShowHidden] = useState(false);
+  // The kind's own rules, the caller's, and the dotfile switch, as one predicate: a Notion
+  // tree hides the json that is its body, the root hides the sources grafted into it, and a
+  // tree could want any of them.
   const adapter: TreeAdapter | undefined = useMemo(() => {
     const base = kind === "notion" ? NOTION : undefined;
-    if (!hide) return base;
-    return { ...base, hide: (e: Entry) => !!base?.hide?.(e) || hide(e) };
-  }, [kind, hide]);
+    const dotfiles = hiddenFiles && !showHidden;
+    if (!hide && !dotfiles) return base;
+    return {
+      ...base,
+      hide: (e: Entry) =>
+        !!base?.hide?.(e) || (dotfiles && isHidden(e.name)) || !!hide?.(e),
+    };
+  }, [kind, hide, hiddenFiles, showHidden]);
+  // Expansion lives here rather than inside the tree, and is remembered per root: the shape
+  // someone left a directory in is worth more than one window's lifetime.
+  const [expanded, setExpanded] = useState<Set<string>>(() =>
+    loadExpanded(root),
+  );
+  const onToggle = (path: string) =>
+    setExpanded((open) => {
+      const next = toggle(open, path);
+      saveExpanded(root, next);
+      return next;
+    });
   // Keyed by path, so the pane follows the selection and an unopened browser fetches
   // nothing. Reset when the root changes, because a path under the old root means nothing
   // under the new one — which `WorkspacePanel` gets by keying this component on its root.
@@ -176,14 +204,29 @@ export function FileBrowser({
 
   return (
     <div className="flex min-h-0 flex-1">
-      <ScrollArea className="w-72 shrink-0 border-t border-r px-2 py-1">
-        <FileTree
-          path={root}
-          onOpen={setSelected}
-          selected={selected}
-          adapter={adapter}
-        />
-      </ScrollArea>
+      <div className="flex w-72 shrink-0 flex-col border-t border-r">
+        {hiddenFiles && (
+          <div className="flex shrink-0 justify-end px-2 pt-1">
+            <button
+              className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+              aria-pressed={showHidden}
+              onClick={() => setShowHidden((v) => !v)}
+            >
+              {showHidden ? S.hideHidden : S.showHidden}
+            </button>
+          </div>
+        )}
+        <ScrollArea className="min-h-0 flex-1 px-2 py-1">
+          <FileTree
+            path={root}
+            onOpen={setSelected}
+            selected={selected}
+            adapter={adapter}
+            expanded={expanded}
+            onToggle={onToggle}
+          />
+        </ScrollArea>
+      </div>
       {/* A column rather than one scrolling box: the path line stays put, and what is under
           it either scrolls on its own padding or takes the rest of the height outright. */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col border-t">

@@ -80,6 +80,9 @@ export function WorkspacePanel({ source }: { source: string | null }) {
         // sits under the workspace root is either one of these or something the agent
         // wrote, which the artifacts view shows as written.
         viewers={open?.kind === "local" || open?.kind === "s3"}
+        // A leading dot only means "hidden" on a disk. A bucket key or a Notion title that
+        // starts with one is just a name, and hiding it would lose the object.
+        hiddenFiles={open?.kind === "local"}
       />
     </section>
   );

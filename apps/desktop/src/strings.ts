@@ -30,6 +30,8 @@ export const S = {
   rootUndetachable: "The workspace always has a root, so this one cannot be removed.",
   noSources: "No connected sources yet.",
   pickFile: "Pick something on the left to open it.",
+  showHidden: "Show hidden files",
+  hideHidden: "Hide hidden files",
   rowsHidden: "More rows not shown:",
   viewerFailed: "This file could not be opened here.",
   loading: "Opening…",
