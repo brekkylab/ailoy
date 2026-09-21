@@ -177,15 +177,47 @@ describe("withChildLinks", () => {
   });
 
   it("leaves prose that merely looks like a marker alone", () => {
-    // Order alone would send this one to the first child's page.
     expect(withChildLinks("see [page: something else]", links)).toBe(
       "see [page: something else]",
     );
   });
 
-  it("escapes a title that would end the label early", () => {
-    const odd = [{ title: "a]b", kind: "page" as const, icon: "📄", href: "n:1" }];
-    expect(withChildLinks("[page: a]b]", odd)).toBe("[page: a]b]");
+  it("links a title that contains a bracket, which Notion titles do", () => {
+    // A dated log page really is called `[2024-07-14] numpy build`, and a pattern that
+    // stopped at the first `]` read a title that belonged to nobody.
+    const dated = [
+      { title: "[2024-07-14] numpy", kind: "page" as const, icon: "📄", href: "n:1" },
+    ];
+    expect(withChildLinks("[page: [2024-07-14] numpy]", dated)).toBe(
+      "[📄 \\[2024-07-14\\] numpy](n:1)",
+    );
+  });
+
+  it("gives three children sharing a title their own three markers", () => {
+    const same = ["a", "b", "c"].map((h) => ({
+      title: "vfs",
+      kind: "page" as const,
+      icon: "📄",
+      href: `n:${h}`,
+    }));
+    expect(withChildLinks("[page: vfs]\n[page: vfs]\n[page: vfs]", same)).toBe(
+      "[📄 vfs](n:a)\n[📄 vfs](n:b)\n[📄 vfs](n:c)",
+    );
+  });
+
+  it("skips a child the body never mentions, without shifting the rest", () => {
+    const gone = [
+      { title: "missing", kind: "page" as const, icon: "📄", href: "n:0" },
+      ...links,
+    ];
+    expect(withChildLinks("[page: 회의록] and [database: Tasks]", gone)).toBe(
+      "[📝 회의록](n:1) and [🗂️ Tasks](n:2)",
+    );
+  });
+
+  it("keeps the marker for a child the listing could not place", () => {
+    const unplaced = [{ title: "회의록", kind: "page" as const, icon: "📝", href: null }];
+    expect(withChildLinks("[page: 회의록]", unplaced)).toBe("[page: 회의록]");
   });
 
   it("leaves the body alone when there is nothing to link", () => {

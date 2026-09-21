@@ -10,7 +10,11 @@
 // so keeping both would nest one padded `prose` box inside another. Unwrapping leaves
 // exactly one code block; inline code never reaches `pre`, so nothing else is affected.
 //
-// Anchors carry `target="_blank"`, which the webview turns into a no-op rather than a
+// A link the app handles itself — a Notion page, say — is a button instead: there is no
+// document to navigate to. Its href survives `urlTransform` only because the caller's
+// `resolveLink` claims it; see there.
+//
+// Every other anchor carries `target="_blank"`, which the webview turns into a no-op rather than a
 // navigation. That is deliberate: a plain in-webview navigation would replace the running
 // app with the remote page and leave the user no way back. Opening a link in the real
 // browser needs the opener plugin, which v1 does not ship.
@@ -20,7 +24,7 @@
 // refuses it — see the header there. It resolves asynchronously, so a fence renders as a
 // plain block for the frame or two before the grammars land.
 
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import ShikiHighlighter from "react-shiki/core";
 import remarkGfm from "remark-gfm";
 
@@ -60,6 +64,11 @@ export function Markdown({
     <div className="prose prose-sm dark:prose-invert max-w-none break-words">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        // react-markdown drops every scheme but the handful it considers safe, which is
+        // right for a model's output and would silently empty the href of a link this app
+        // handles itself. One a `resolveLink` claims is not going anywhere, so it is kept;
+        // everything else still faces the default.
+        urlTransform={(url) => (resolveLink?.(url) ? url : defaultUrlTransform(url))}
         components={{
           pre: ({ children }) => <>{children}</>,
           code({ className, children }) {

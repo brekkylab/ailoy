@@ -158,30 +158,34 @@ export type ChildLink = {
 };
 
 /**
- * Cortex's marker for a child page — `[page: <title>]` — so the rendered body says where
- * the content went rather than reading as a gap in the page.
- */
-const MARKER = /\[(page|database): ([^\]\n]*)\]/g;
-
-/**
  * The markers turned into links, so a page tree reads the way Notion's does.
  *
- * Matched in order and confirmed by title: the body is rendered from the same block tree
- * [`notionChildren`] walks, so the nth marker is the nth child. The title check is what
- * keeps a line of prose that happens to read `[page: x]` from becoming a link to
- * somewhere else — on a mismatch the marker is left exactly as cortex wrote it.
+ * Each child's marker is built from the title the child itself carries and then found
+ * literally, rather than matched by a pattern. Notion titles contain `]` often enough to
+ * matter — a dated log page really is called `[2024-07-14] numpy build` — and a pattern
+ * that stops at the first `]` reads a title that belongs to nobody.
+ *
+ * Searched forward from the last one, which is what makes the marker unambiguous: cortex
+ * renders the markers in the order [`notionChildren`] walks the same blocks, so three
+ * sub-pages sharing a title still land on their own three markers, in order. A child whose
+ * marker is nowhere in the body is skipped without disturbing the ones after it.
  */
 export function withChildLinks(body: string, links: ChildLink[]): string {
-  let next = 0;
-  return body.replace(MARKER, (marker, kind: string, title: string) => {
-    const link = links[next];
-    if (!link || link.kind !== kind || link.title !== title) return marker;
-    // Consumed either way: it is this child's marker whether or not there is anywhere to
-    // send a reader, and the next marker belongs to the next child.
-    next += 1;
-    if (!link.href) return marker;
-    return `[${escapeLabel(`${link.icon} ${title}`)}](${link.href})`;
-  });
+  let out = "";
+  let at = 0;
+  for (const link of links) {
+    const marker = `[${link.kind}: ${link.title}]`;
+    const found = body.indexOf(marker, at);
+    if (found < 0) continue;
+    out += body.slice(at, found);
+    // A child the listing could not place keeps the line cortex wrote: it still says where
+    // the content went, which is more than a link to nowhere would.
+    out += link.href
+      ? `[${escapeLabel(`${link.icon} ${link.title}`)}](${link.href})`
+      : marker;
+    at = found + marker.length;
+  }
+  return out + body.slice(at);
 }
 
 /** `[` and `]` would end the label early, and a backslash would escape whatever follows. */
