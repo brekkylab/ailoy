@@ -28,8 +28,8 @@ interface Page {
   height: number;
 }
 
-type Task = Awaited<ReturnType<typeof openDocument>>;
-type Doc = Awaited<Task["promise"]>;
+type Opened = Awaited<ReturnType<typeof openDocument>>;
+type Doc = Awaited<Opened["task"]["promise"]>;
 
 /**
  * How large a page bitmap may get.
@@ -47,15 +47,19 @@ const MAX_SIDE = 8192;
  * what tears down the worker with it. The document is on its `promise`.
  */
 async function openDocument(bytes: ArrayBuffer) {
+  // Before pdf.js, so the methods it calls exist by the time it calls them.
+  await import("@/lib/mapUpsert");
   const pdfjs = await import("pdfjs-dist");
-  // The worker is bundled from our own origin, which is what `script-src 'self'` allows.
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    import.meta.url,
-  ).toString();
+  // Our own module rather than pdf.js's worker directly: it carries the same polyfill into
+  // the worker's realm, which the main thread's cannot reach. Bundled from our own origin,
+  // which is what `script-src 'self'` allows.
+  const worker = new Worker(new URL("../../workers/pdf.ts", import.meta.url), {
+    type: "module",
+  });
+  pdfjs.GlobalWorkerOptions.workerPort = worker;
   // The buffer is transferred to the worker, so it must not be the one `useBytes` holds —
   // a re-render would hand over an already-detached buffer.
-  return pdfjs.getDocument({ data: bytes.slice(0) });
+  return { task: pdfjs.getDocument({ data: bytes.slice(0) }), worker };
 }
 
 /** One page: its own size until it is on screen, a canvas once it has been. */
@@ -167,11 +171,11 @@ export function PdfViewer({ path }: { path: string }) {
   useEffect(() => {
     if (bytes.state !== "ready") return;
     let live = true;
-    let opened: Task | null = null;
+    let opened: Opened | null = null;
     void openDocument(bytes.bytes)
-      .then(async (task) => {
-        opened = task;
-        const d = await task.promise;
+      .then(async (o) => {
+        opened = o;
+        const d = await o.task.promise;
         // Geometry for every page up front: it is metadata, not pixels, and it is what
         // lets the placeholders below be the right size.
         const read: Page[] = [];
@@ -192,7 +196,10 @@ export function PdfViewer({ path }: { path: string }) {
       });
     return () => {
       live = false;
-      void opened?.destroy();
+      // The task first, then the worker: pdf.js does not own a port it was handed, so
+      // nothing else terminates it and every opened document would leave one running.
+      void opened?.task.destroy();
+      opened?.worker.terminate();
     };
   }, [bytes, path]);
 
