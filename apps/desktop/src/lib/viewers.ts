@@ -4,14 +4,26 @@
 // one component rather than a condition spread through the file panel. A name whose
 // extension is absent falls back to plain text, which is what every file did before.
 //
-// Everything here reads *text*, because that is all the engine hands back: `fs_read`
-// decodes what it read and returns `null` for bytes it could not, so a file the app
-// cannot show as characters it cannot show at all. Images, PDFs and Office documents
-// therefore have no entry — they need the engine to serve bytes first, and a viewer
-// registered for them today would open on an empty pane.
+// A viewer either reads characters or it does not, and which it is decides how the file
+// reaches it. The text ones are handed what `fs_read` decoded; the rest are handed the
+// file's address on the app's own scheme and fetch the bytes themselves — see
+// `lib/wsfile` and `src-tauri/src/wsfile.rs`.
 
-/** What the content pane does with the text. */
-export type ViewerKind = "markdown" | "table" | "code" | "text";
+/** What the content pane does with the file. */
+export type ViewerKind =
+  | "markdown"
+  | "table"
+  | "code"
+  | "text"
+  | "image"
+  | "pdf"
+  | "docx"
+  | "xlsx";
+
+/** Whether a viewer is given the decoded text or goes and gets the bytes. */
+export function readsText(kind: ViewerKind): boolean {
+  return kind === "markdown" || kind === "table" || kind === "code" || kind === "text";
+}
 
 export interface Viewer {
   /** What the pane calls the format, beside the path. */
@@ -50,7 +62,28 @@ const code = (label: string, lang: string): Viewer => ({ label, kind: "code", la
  */
 const HTML = code("HTML", "html");
 
+const IMAGE: Viewer = { label: "Image", kind: "image" };
+const PDF: Viewer = { label: "PDF", kind: "pdf" };
+const DOCX: Viewer = { label: "Word", kind: "docx" };
+const XLSX: Viewer = { label: "Spreadsheet", kind: "xlsx" };
+
 const BY_EXT: Record<string, Viewer | undefined> = {
+  png: IMAGE,
+  jpg: IMAGE,
+  jpeg: IMAGE,
+  gif: IMAGE,
+  webp: IMAGE,
+  avif: IMAGE,
+  bmp: IMAGE,
+  ico: IMAGE,
+  // In an `<img>`, which is the context that runs none of what makes an SVG active
+  // content — and the scheme serves it as an image rather than as a document.
+  svg: IMAGE,
+  pdf: PDF,
+  docx: DOCX,
+  docm: DOCX,
+  xlsx: XLSX,
+  xlsm: XLSX,
   md: MARKDOWN,
   markdown: MARKDOWN,
   mdown: MARKDOWN,

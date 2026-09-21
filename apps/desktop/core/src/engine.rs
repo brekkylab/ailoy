@@ -274,6 +274,16 @@ impl Engine {
         fsops::read(&self.workspace.fs(), path).await
     }
 
+    /// A file's bytes, for the viewers that open a format rather than read characters.
+    ///
+    /// Not a Tauri command: a PDF crossing the IPC bridge would be base64 in a JSON string,
+    /// which is a third again in size and a copy at each end. The window reaches this
+    /// through the app's own URI scheme instead, which streams and gives the webview
+    /// something it can hand straight to an `<img>` or an `<object>`.
+    pub async fn fs_read_bytes(&self, path: &str) -> Result<Vec<u8>> {
+        fsops::read_bytes(&self.workspace.fs(), path).await
+    }
+
     pub async fn fs_write(&self, path: &str, text: &str) -> Result<()> {
         fsops::write(&self.workspace.fs(), path, text).await
     }

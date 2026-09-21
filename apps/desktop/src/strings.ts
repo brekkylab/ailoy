@@ -31,6 +31,8 @@ export const S = {
   noSources: "No connected sources yet.",
   pickFile: "Pick something on the left to open it.",
   rowsHidden: "More rows not shown:",
+  viewerFailed: "This file could not be opened here.",
+  loading: "Opening…",
   chats: "Chats",
   connectLocal: "Connect folder",
   connectNotion: "Connect Notion",

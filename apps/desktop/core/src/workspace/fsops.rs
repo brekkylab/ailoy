@@ -83,6 +83,38 @@ pub async fn read(fs: &dyn FileSystem, path: &str) -> Result<FileContent> {
     })
 }
 
+/// How much of a file may be handed over as bytes.
+///
+/// Far above [`READ_CAP`], because these are the formats whose whole point is that they are
+/// not text: a scanned PDF or a deck of photographs is tens of megabytes and is still one
+/// document. The cap is here so that a mistake — a disk image, a video — is refused rather
+/// than read into memory twice on its way to the window.
+const BYTES_CAP: u64 = 64 << 20;
+
+/// The contents of `path` as bytes, whatever they are.
+///
+/// The sibling of [`read`], for the viewers that open a format rather than read characters.
+/// Where `read` decodes and gives up on anything that is not text, this gives up on nothing
+/// and decides nothing: what the bytes mean is the caller's to work out from the name.
+pub async fn read_bytes(fs: &dyn FileSystem, path: &str) -> Result<Vec<u8>> {
+    let target = Path::new(path);
+    let stat = fs.stat(target).await?;
+    if stat.kind == DirentKind::Dir {
+        return Err(EngineError::Invalid(
+            "A directory cannot be opened in the editor".into(),
+        ));
+    }
+    if stat.size > BYTES_CAP {
+        return Err(EngineError::Invalid(format!(
+            "{}: {} MiB — files above {} MiB are not opened here",
+            path,
+            stat.size >> 20,
+            BYTES_CAP >> 20
+        )));
+    }
+    read_all(fs, target, BYTES_CAP).await
+}
+
 /// Replace the contents of `path`, creating the file if it is not there.
 pub async fn write(fs: &dyn FileSystem, path: &str, text: &str) -> Result<()> {
     write_file(fs, Path::new(path), text.as_bytes()).await

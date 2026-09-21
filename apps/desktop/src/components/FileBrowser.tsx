@@ -19,7 +19,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { CodeViewer } from "@/components/viewers/CodeViewer";
 import { TableViewer } from "@/components/viewers/TableViewer";
 import { notionHeading, notionMarkdown, notionTitle } from "@/lib/notion";
-import { viewerFor, type Viewer } from "@/lib/viewers";
+import { DocxViewer } from "@/components/viewers/DocxViewer";
+import { ImageViewer } from "@/components/viewers/ImageViewer";
+import { PdfViewer } from "@/components/viewers/PdfViewer";
+import { XlsxViewer } from "@/components/viewers/XlsxViewer";
+import { readsText, viewerFor, type Viewer } from "@/lib/viewers";
 import { S } from "@/strings";
 import type { Entry, FileContent } from "@/types";
 
@@ -55,6 +59,22 @@ async function readTarget(path: string, kind: "plain" | "notion"): Promise<FileC
   }
 }
 
+/** A viewer that opens the file itself, from its address rather than from decoded text. */
+function BinaryView({ path, viewer }: { path: string; viewer: Viewer }) {
+  switch (viewer.kind) {
+    case "image":
+      return <ImageViewer path={path} />;
+    case "pdf":
+      return <PdfViewer path={path} />;
+    case "docx":
+      return <DocxViewer path={path} />;
+    case "xlsx":
+      return <XlsxViewer path={path} />;
+    default:
+      return null;
+  }
+}
+
 /** The registry's choice, rendered. `text` never reaches here — it is the fallback below. */
 function TypedView({
   text,
@@ -82,7 +102,7 @@ function TypedView({
           {truncated && <p className="mt-2 text-xs text-muted-foreground">… {S.fileTooLarge}</p>}
         </>
       );
-    case "text":
+    default:
       return null;
   }
 }
@@ -117,10 +137,15 @@ export function FileBrowser({
   // nothing. Reset when the root changes, because a path under the old root means nothing
   // under the new one — which `WorkspacePanel` gets by keying this component on its root.
   const [selected, setSelected] = useState<string | null>(null);
+  // What the registry says about the open file, before anything is fetched: a viewer that
+  // opens the bytes itself does not want `fs_read`, which would read the whole container
+  // only to decode it to null.
+  const viewer = viewers && selected && kind !== "notion" ? viewerFor(selected) : null;
+  const binary = viewer !== null && !readsText(viewer.kind);
   const file = useQuery({
     queryKey: ["file", selected, kind],
     queryFn: () => readTarget(selected!, kind),
-    enabled: !!selected,
+    enabled: !!selected && !binary,
   });
 
   const text = file.data?.text ?? null;
@@ -128,9 +153,6 @@ export function FileBrowser({
   // database, whose json has no body to render and is more use shown as what it is.
   const body = text !== null && kind === "notion" ? notionMarkdown(text) : null;
   const heading = text !== null && kind === "notion" ? notionHeading(text) : null;
-  // Only for a file this browser opened by name: a Notion page's `page.json` is the
-  // envelope, not the document, and reading its extension would call it JSON.
-  const viewer = viewers && selected && kind !== "notion" ? viewerFor(selected) : null;
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -148,9 +170,15 @@ export function FileBrowser({
               <span className="truncate font-mono" title={selected}>
                 {selected}
               </span>
-              {viewer && text !== null && <span className="shrink-0">· {viewer.label}</span>}
+              {viewer && (binary || text !== null) && (
+                <span className="shrink-0">· {viewer.label}</span>
+              )}
             </div>
-            {body !== null ? (
+            {binary && viewer ? (
+              // Keyed: each of these fetches and decodes on mount, so another file is
+              // another mount rather than an effect undoing the last one's state.
+              <BinaryView key={selected} path={selected} viewer={viewer} />
+            ) : body !== null ? (
               <>
                 {/* The title lives beside the body rather than in it: cortex renders the
                     blocks, and a page's name is not one of them. */}
