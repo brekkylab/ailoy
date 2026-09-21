@@ -28,14 +28,19 @@ export function useBytes(path: string): Bytes {
     // leaving it to finish into a component that is gone.
     const abort = new AbortController();
     fetch(wsfileUrl(path), { signal: abort.signal })
-      .then((r) => {
-        if (!r.ok) throw new Error(String(r.status));
+      .then(async (r) => {
+        // The engine answers a refusal with its own message as the body. The pane has room
+        // for one sentence and says it; this is where the rest of it goes, so a file that
+        // will not open leaves something to read rather than only a red line.
+        if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
         return r.arrayBuffer();
       })
       .then((bytes) => {
         if (live) setResult({ state: "ready", bytes });
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        if (abort.signal.aborted) return;
+        console.warn(`${path} could not be fetched`, err);
         if (live) setResult({ state: "failed" });
       });
     return () => {

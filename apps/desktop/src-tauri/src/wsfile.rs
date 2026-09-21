@@ -50,6 +50,11 @@ fn content_type(path: &str) -> &'static str {
 ///
 /// The path is the URL's own path component, percent-decoded: a file called `q3 (final).pdf`
 /// has to survive the round trip, and the window builds these with `encodeURIComponent`.
+///
+/// `/`-rooted on the way out, because that is the shape the engine's tree is walked in and
+/// what every other command is handed. The authority eats the leading slash on the way in,
+/// so putting it back is not cosmetic: without it the engine is asked about a path that
+/// resolves against nothing and answers `NotFound` for a file that is there.
 fn requested_path(uri: &str) -> Option<String> {
     // `wsfile://localhost/<path>` — everything after the authority, which is the third `/`.
     let rest = uri.split_once("://")?.1;
@@ -58,7 +63,8 @@ fn requested_path(uri: &str) -> Option<String> {
     if path.is_empty() {
         return None;
     }
-    percent_decode(path)
+    let decoded = percent_decode(path)?;
+    Some(format!("/{}", decoded.trim_start_matches('/')))
 }
 
 /// Percent-decoding, over bytes so a multi-byte character split across escapes survives.
@@ -121,9 +127,10 @@ pub fn handle<R: tauri::Runtime>(
         match engine.fs_read_bytes(&path).await {
             Ok(bytes) => responder.respond(reply(StatusCode::OK, bytes, content_type(&path))),
             Err(e) => {
-                // The window shows its own message for a file it cannot open; this body is
-                // for the log and for anyone looking at the request.
-                tracing::debug!("{SCHEME}: {path}: {e}");
+                // The window can only say "this could not be opened"; the reason belongs in
+                // the log, at a level the default filter actually shows — a viewer failing
+                // with nothing written down is the hard kind of bug to be told about.
+                tracing::warn!("{SCHEME}: {path}: {e}");
                 responder.respond(reply(
                     StatusCode::NOT_FOUND,
                     e.to_string().into_bytes(),
@@ -142,20 +149,23 @@ mod tests {
     fn a_request_names_the_workspace_path_it_asked_for() {
         assert_eq!(
             requested_path("wsfile://localhost/reports/q3.pdf").as_deref(),
-            Some("reports/q3.pdf")
+            Some("/reports/q3.pdf")
         );
         // Percent-encoded, because the window builds these with `encodeURIComponent` and
         // a real file is allowed spaces, parentheses and Hangul.
         assert_eq!(
             requested_path("wsfile://localhost/a%20b/%ED%95%9C%EA%B8%80.png").as_deref(),
-            Some("a b/한글.png")
+            Some("/a b/한글.png")
         );
         // A query or fragment is not part of the name.
         assert_eq!(
             requested_path("wsfile://localhost/x.png?v=2#top").as_deref(),
-            Some("x.png")
+            Some("/x.png")
         );
         assert_eq!(requested_path("wsfile://localhost/"), None);
+        // The shape every other command is handed, so a file reached this way and a file
+        // reached through `fs_read` name the same thing.
+        assert!(requested_path("wsfile://localhost/a.png").unwrap().starts_with('/'));
         assert_eq!(requested_path("wsfile://localhost"), None);
     }
 
