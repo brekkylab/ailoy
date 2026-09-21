@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { isHidden, loadExpanded, saveExpanded, toggle } from "@/lib/treeState";
+import { expandTo, isHidden, loadExpanded, saveExpanded, toggle } from "@/lib/treeState";
 
 /** vitest runs in node, which has no `localStorage`. */
 function stubStorage() {
@@ -90,5 +90,26 @@ describe("isHidden", () => {
     expect(isHidden("Documents")).toBe(false);
     // Not a hidden file: the dot is not leading.
     expect(isHidden("archive.tar.gz")).toBe(false);
+  });
+});
+
+describe("expandTo", () => {
+  it("opens every directory on the way down, but not the target", () => {
+    const open = expandTo(new Set(), "/notion/pages", "/notion/pages/a__1/b__2/c__3");
+    expect([...open].sort()).toEqual(["/notion/pages/a__1", "/notion/pages/a__1/b__2"]);
+  });
+
+  it("keeps what was already open", () => {
+    const open = expandTo(new Set(["/other"]), "/", "/a/b");
+    expect([...open].sort()).toEqual(["/a", "/other"]);
+  });
+
+  it("does nothing for a path outside the root", () => {
+    const open = new Set(["/a"]);
+    expect(expandTo(open, "/notion", "/s3/x/y")).toBe(open);
+  });
+
+  it("has nothing to open for a direct child", () => {
+    expect([...expandTo(new Set(), "/notion", "/notion/a__1")]).toEqual([]);
   });
 });

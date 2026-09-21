@@ -41,7 +41,20 @@ function isFence(className: string | undefined, code: string): boolean {
   return /^language-/.test(className ?? "") || code.includes("\n");
 }
 
-export function Markdown({ text }: { text: string }) {
+export function Markdown({
+  text,
+  resolveLink,
+}: {
+  text: string;
+  /**
+   * Turns a link that points inside the app into what to do about it, or answers `null`
+   * to leave it as an ordinary outbound link.
+   *
+   * Returning the handler rather than taking a click means the anchor knows at render time
+   * which of the two it is, and can be drawn as the thing it actually does.
+   */
+  resolveLink?: (href: string) => (() => void) | null;
+}) {
   const highlighter = useHighlighter();
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none break-words">
@@ -91,6 +104,21 @@ export function Markdown({ text }: { text: string }) {
             );
           },
           a({ href, children }) {
+            const go = href ? resolveLink?.(href) : null;
+            if (go) {
+              // A button, not an anchor: there is no document to navigate to, and an
+              // anchor with no destination is a link a reader cannot open in a new tab,
+              // copy, or hover to see where it goes.
+              return (
+                <button
+                  type="button"
+                  className="cursor-pointer text-inherit underline underline-offset-2"
+                  onClick={go}
+                >
+                  {children}
+                </button>
+              );
+            }
             return (
               <a href={href} target="_blank" rel="noreferrer">
                 {children}

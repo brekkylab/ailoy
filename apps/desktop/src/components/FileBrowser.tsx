@@ -18,50 +18,17 @@ import { Markdown } from "@/components/Markdown";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { CodeViewer } from "@/components/viewers/CodeViewer";
 import { TableViewer } from "@/components/viewers/TableViewer";
-import { notionHeading, notionMarkdown, notionTitle } from "@/lib/notion";
-import { isHidden, loadExpanded, saveExpanded, toggle } from "@/lib/treeState";
+import { NOTION, readNotionNode } from "@/components/notion/node";
+import { NotionPage } from "@/components/notion/NotionPage";
+import { notionMarkdown } from "@/lib/notion";
+import { expandTo, isHidden, loadExpanded, saveExpanded, toggle } from "@/lib/treeState";
 import { DocxViewer } from "@/components/viewers/DocxViewer";
 import { ImageViewer } from "@/components/viewers/ImageViewer";
 import { PdfViewer } from "@/components/viewers/PdfViewer";
 import { XlsxViewer } from "@/components/viewers/XlsxViewer";
 import { readsText, viewerFor, type Viewer } from "@/lib/viewers";
 import { S } from "@/strings";
-import type { Entry, FileContent } from "@/types";
-
-/**
- * Notion's shape, in one place.
- *
- * A page is a directory holding `page.json`, so the directory *is* the page: it carries
- * the title, and clicking it is asking for the body. The json files are hidden because
- * they are that body rather than siblings of it, and the id cortex sanitizes into the
- * directory name comes off, since the tree is a list of pages and not of paths.
- */
-const NOTION: TreeAdapter = {
-  label: (e) => (e.kind === "dir" ? notionTitle(e.name) : e.name),
-  hide: (e) => e.name === "page.json" || e.name === "database.json",
-  openDirs: true,
-};
-
-/**
- * Reads what a click asked for.
- *
- * For Notion that is a directory, and the file inside it is `page.json` — unless the
- * directory is a database, which holds a `database.json` instead. Nothing in the listing
- * distinguishes the two (cortex names both `<title>__<id>`), so the fallback is the way to
- * find out, and it costs one refused request on the rarer of the two.
- */
-async function readTarget(
-  path: string,
-  kind: "plain" | "notion",
-): Promise<FileContent> {
-  if (kind !== "notion") return api.fsRead(path);
-  try {
-    return await api.fsRead(`${path}/page.json`);
-  } catch (err) {
-    if (api.kindOf(err) !== "not_found") throw err;
-    return api.fsRead(`${path}/database.json`);
-  }
-}
+import type { Entry } from "@/types";
 
 /** A viewer that opens the file itself, from its address rather than from decoded text. */
 function BinaryView({ path, viewer }: { path: string; viewer: Viewer }) {
@@ -173,8 +140,8 @@ export function FileBrowser({
     loadExpanded(root),
   );
   const onToggle = (path: string) =>
-    setExpanded((open) => {
-      const next = toggle(open, path);
+    setExpanded((was) => {
+      const next = toggle(was, path);
       saveExpanded(root, next);
       return next;
     });
@@ -182,6 +149,17 @@ export function FileBrowser({
   // nothing. Reset when the root changes, because a path under the old root means nothing
   // under the new one — which `WorkspacePanel` gets by keying this component on its root.
   const [selected, setSelected] = useState<string | null>(null);
+  // Selecting also opens the way down to what was selected, for a path that did not come
+  // from the tree — a link inside a page. Following one should leave the reader looking at
+  // where they landed, not at a tree still showing where they were.
+  const openPath = (path: string) => {
+    setSelected(path);
+    setExpanded((was) => {
+      const next = expandTo(was, root, path);
+      if (next !== was) saveExpanded(root, next);
+      return next;
+    });
+  };
   // What the registry says about the open file, before anything is fetched: a viewer that
   // opens the bytes itself does not want `fs_read`, which would read the whole container
   // only to decode it to null.
@@ -191,7 +169,8 @@ export function FileBrowser({
   const fills = !!viewer?.fills;
   const file = useQuery({
     queryKey: ["file", selected, kind],
-    queryFn: () => readTarget(selected!, kind),
+    queryFn: () =>
+      kind === "notion" ? readNotionNode(selected!) : api.fsRead(selected!),
     enabled: !!selected && !binary,
   });
 
@@ -199,8 +178,6 @@ export function FileBrowser({
   // Markdown for a Notion page, the raw bytes for everything else — including a Notion
   // database, whose json has no body to render and is more use shown as what it is.
   const body = text !== null && kind === "notion" ? notionMarkdown(text) : null;
-  const heading =
-    text !== null && kind === "notion" ? notionHeading(text) : null;
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -219,7 +196,7 @@ export function FileBrowser({
         <ScrollArea className="min-h-0 flex-1 px-2 py-1">
           <FileTree
             path={root}
-            onOpen={setSelected}
+            onOpen={openPath}
             selected={selected}
             adapter={adapter}
             expanded={expanded}
@@ -262,20 +239,15 @@ export function FileBrowser({
                 // Keyed: each of these fetches and decodes on mount, so another file is
                 // another mount rather than an effect undoing the last one's state.
                 <BinaryView key={selected} path={selected} viewer={viewer} />
-              ) : body !== null ? (
-                <>
-                  {/* The title lives beside the body rather than in it: cortex renders the
-                    blocks, and a page's name is not one of them. */}
-                  {heading && (
-                    <h2 className="mb-2 text-lg font-semibold">{heading}</h2>
-                  )}
-                  <Markdown text={body} />
-                  {file.data?.truncated && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      … {S.fileTooLarge}
-                    </p>
-                  )}
-                </>
+              ) : body !== null && text !== null ? (
+                <NotionPage
+                  key={selected}
+                  path={selected}
+                  text={text}
+                  body={body}
+                  truncated={!!file.data?.truncated}
+                  onOpen={openPath}
+                />
               ) : text !== null && viewer && viewer.kind !== "text" ? (
                 <TypedView
                   text={text}

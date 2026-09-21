@@ -8,10 +8,27 @@
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { ChevronRight, File, Folder } from "lucide-react";
+import type { ReactNode } from "react";
 
 import * as api from "@/api";
 import { S } from "@/strings";
 import type { Entry } from "@/types";
+
+/** What a source wants on a row beyond its name. */
+export type RowInfo = {
+  /** Drawn where the folder or file icon would be. */
+  icon?: ReactNode;
+  /**
+   * True when a directory has nothing inside, so no expander is offered for it.
+   *
+   * `undefined` is "not known yet", and reads as expandable: a chevron that resolves away
+   * a moment later is a smaller lie than one that never appears over real children.
+   */
+  leaf?: boolean;
+};
+
+/** A source with nothing to add. Calls no hooks, which is what keeps `useRow` honest. */
+const plainRow = (): RowInfo => ({});
 
 /**
  * How a source wants its entries shown. Absent, the tree lists exactly what the engine
@@ -26,6 +43,16 @@ export type TreeAdapter = {
   hide?: (e: Entry) => boolean;
   /** True when clicking a directory should open it as well as expand it. */
   openDirs?: boolean;
+  /**
+   * Per-row decoration — a hook, because for Notion the answer is a fetch: a page's icon
+   * and whether it holds any sub-pages both live in the `page.json` behind it.
+   *
+   * A hook in a plain object is a contract about shape: an adapter may be rebuilt as often
+   * as it likes, but it must not gain or lose this field while a tree is mounted, or the
+   * rows under it would change how many hooks they call. Nothing does — `kind` is fixed
+   * per source, and `WorkspacePanel` keys the whole browser on its root.
+   */
+  useRow?: (e: Entry) => RowInfo;
 };
 
 export function FileTree({
@@ -59,41 +86,16 @@ export function FileTree({
   return (
     <ul>
       {rows.map((e) => (
-        <li key={e.path}>
-          <button
-            className={cn(
-              "flex w-full items-center gap-1 truncate rounded px-1 py-0.5 text-left text-xs hover:bg-accent",
-              selected === e.path && "bg-accent",
-            )}
-            style={{ paddingLeft: 4 + depth * 12 }}
-            onClick={() => {
-              // A directory that also opens does both on the one click: in a page tree the
-              // children and the body are the same thing being asked for.
-              if (e.kind === "dir") onToggle(e.path);
-              if (e.kind !== "dir" || adapter?.openDirs) onOpen(e.path);
-            }}
-            title={e.size != null ? `${e.size} B` : undefined}
-          >
-            {e.kind === "dir" ? (
-              <ChevronRight className={cn("size-3 shrink-0 transition-transform", expanded.has(e.path) && "rotate-90")} />
-            ) : (
-              <span className="w-3 shrink-0" />
-            )}
-            {e.kind === "dir" ? <Folder className="size-3.5 shrink-0" /> : <File className="size-3.5 shrink-0" />}
-            <span className="truncate">{adapter?.label?.(e) ?? e.name}</span>
-          </button>
-          {e.kind === "dir" && expanded.has(e.path) && (
-            <FileTree
-              path={e.path}
-              depth={depth + 1}
-              onOpen={onOpen}
-              selected={selected}
-              adapter={adapter}
-              expanded={expanded}
-              onToggle={onToggle}
-            />
-          )}
-        </li>
+        <Row
+          key={e.path}
+          entry={e}
+          depth={depth}
+          onOpen={onOpen}
+          selected={selected}
+          adapter={adapter}
+          expanded={expanded}
+          onToggle={onToggle}
+        />
       ))}
       {rows.length === 0 && entries.data && (
         <li className="py-0.5 text-xs text-muted-foreground" style={{ paddingLeft: 4 + depth * 12 }}>
@@ -106,5 +108,73 @@ export function FileTree({
         </li>
       )}
     </ul>
+  );
+}
+
+/**
+ * One entry, as its own component so a source's `useRow` has somewhere to run.
+ *
+ * It cannot be a call inside the loop above: a hook per row means a component per row.
+ */
+function Row({
+  entry: e,
+  depth,
+  onOpen,
+  selected,
+  adapter,
+  expanded,
+  onToggle,
+}: {
+  entry: Entry;
+  depth: number;
+  onOpen: (path: string) => void;
+  selected: string | null;
+  adapter?: TreeAdapter;
+  expanded: Set<string>;
+  onToggle: (path: string) => void;
+}) {
+  const { icon, leaf } = (adapter?.useRow ?? plainRow)(e);
+  // A directory known to hold nothing is drawn as what it is. For Notion that is most of
+  // them: a page is a directory because it *may* have sub-pages, and usually has none.
+  const expandable = e.kind === "dir" && leaf !== true;
+  const open = expandable && expanded.has(e.path);
+
+  return (
+    <li>
+      <button
+        className={cn(
+          "flex w-full items-center gap-1 truncate rounded px-1 py-0.5 text-left text-xs hover:bg-accent",
+          selected === e.path && "bg-accent",
+        )}
+        style={{ paddingLeft: 4 + depth * 12 }}
+        onClick={() => {
+          // A directory that also opens does both on the one click: in a page tree the
+          // children and the body are the same thing being asked for.
+          if (expandable) onToggle(e.path);
+          if (e.kind !== "dir" || adapter?.openDirs) onOpen(e.path);
+        }}
+        title={e.size != null ? `${e.size} B` : undefined}
+      >
+        {expandable ? (
+          <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
+        ) : (
+          <span className="w-3 shrink-0" />
+        )}
+        {icon ??
+          (e.kind === "dir" ? <Folder className="size-3.5 shrink-0" /> : <File className="size-3.5 shrink-0" />)}
+        <span className="truncate">{adapter?.label?.(e) ?? e.name}</span>
+      </button>
+      {open && (
+        <FileTree
+          path={e.path}
+          depth={depth + 1}
+          onOpen={onOpen}
+          selected={selected}
+          adapter={adapter}
+          expanded={expanded}
+          onToggle={onToggle}
+        />
+      )}
+    </li>
   );
 }

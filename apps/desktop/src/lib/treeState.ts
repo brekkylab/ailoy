@@ -76,3 +76,24 @@ export function toggle(expanded: Set<string>, path: string): Set<string> {
 export function isHidden(name: string): boolean {
   return name.startsWith(".");
 }
+
+/**
+ * `expanded` with every directory between `root` and `path` opened.
+ *
+ * For a selection that did not come from the tree — a link inside a page, say. Following
+ * one should leave the reader looking at where they landed, not at a tree still showing
+ * where they were.
+ */
+export function expandTo(expanded: Set<string>, root: string, path: string): Set<string> {
+  if (!path.startsWith(root)) return expanded;
+  const next = new Set(expanded);
+  const rest = path.slice(root.length).split("/").filter(Boolean);
+  let at = root === "/" ? "" : root.replace(/\/$/, "");
+  // The last segment is the target itself, which is opened by being selected, not by the
+  // tree — a file has nothing to open, and a page opens whether or not it has children.
+  for (const seg of rest.slice(0, -1)) {
+    at = `${at}/${seg}`;
+    next.add(at);
+  }
+  return next;
+}
