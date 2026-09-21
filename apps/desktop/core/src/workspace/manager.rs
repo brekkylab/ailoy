@@ -31,7 +31,12 @@ pub const ARTIFACTS_PATH: &str = "artifacts";
 
 pub struct WorkspaceManager {
     fs: Arc<RwLock<ContextFs>>,
-    files_root: PathBuf,
+    /// The host directory behind `/`, which the user can repoint while the app runs.
+    ///
+    /// A std mutex because `info()` is sync and reads it, and every write is a handful of
+    /// instructions with no await inside the guard. It has to agree with the `""` mount in
+    /// `fs` at all times, so `set_root` is the only thing that writes it.
+    files_root: StdMutex<PathBuf>,
     /// Where the agent's own output goes, on the host.
     ///
     /// Handed to a console as its *artifacts* tree, and grafted into the workspace at
@@ -98,7 +103,10 @@ impl WorkspaceManager {
         let root = MountInfo {
             id: "root".into(),
             path: "/".into(),
-            kind: MountKind::Root,
+            // A local mount like any other, and it is the user's own machine. What makes it
+            // the root is its path: `detachable_path` refuses `/`, so it cannot be taken out
+            // of the workspace the way a connector can.
+            kind: MountKind::Local,
             // The one source that is the user's own machine, in a list beside Notion and
             // S3 where that is the distinction worth drawing.
             label: "My Computer".into(),
@@ -108,7 +116,7 @@ impl WorkspaceManager {
         };
         let manager = WorkspaceManager {
             fs,
-            files_root,
+            files_root: StdMutex::new(files_root),
             artifacts_root,
             mountpoint,
             mount: StdMutex::new(None),
@@ -149,10 +157,58 @@ impl WorkspaceManager {
         }
     }
 
+    /// The host directory `/` currently serves.
+    fn root(&self) -> PathBuf {
+        self.files_root
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Point `/` at a different directory on the host.
+    ///
+    /// The directory is checked before anything is taken apart, because the swap itself has
+    /// no failure to report: `mount` refuses a key that escapes the tree or one already
+    /// taken, and `""` is neither once the unmount above has vacated it. So by the time the
+    /// tree is briefly rootless, the only thing left to do is put the new store in.
+    ///
+    /// The FUSE mount is untouched. It serves this `ContextFs`, not any one store inside it,
+    /// so a window looking at the workspace sees the new tree without a remount — and without
+    /// the unmount/remount dance that would invalidate every open handle.
+    pub async fn set_root(&self, host_root: PathBuf) -> Result<()> {
+        let meta = std::fs::metadata(&host_root)
+            .map_err(|e| EngineError::Invalid(format!("{}: {e}", host_root.display())))?;
+        if !meta.is_dir() {
+            return Err(EngineError::Invalid(format!(
+                "{} is not a directory",
+                host_root.display()
+            )));
+        }
+        // Canonical, so the path stored and shown is the one the kernel will use — a root
+        // given as a symlink would otherwise read back differently from what it serves.
+        let root = std::fs::canonicalize(&host_root).unwrap_or(host_root);
+        if root == self.root() {
+            return Ok(());
+        }
+        {
+            let mut fs = self.fs.write().await;
+            let _ = fs.unmount("");
+            fs.mount("", PassthroughFs::new(root.clone()))
+                .expect("an empty path is a valid mount key, and was just vacated");
+        }
+        // No await between taking this guard and dropping it.
+        *self.files_root.lock().unwrap_or_else(|e| e.into_inner()) = root.clone();
+        if let Some(m) = self.mounts.write().await.iter_mut().find(|m| m.path == "/") {
+            m.detail = root.display().to_string();
+        }
+        tracing::info!("workspace root is now {}", root.display());
+        Ok(())
+    }
+
     pub fn info(&self) -> WorkspaceInfo {
         WorkspaceInfo {
             mountpoint: self.mountpoint.clone(),
-            files_root: self.files_root.clone(),
+            files_root: self.root(),
             status: self.status.try_read().map(|s| s.clone()).unwrap_or(
                 WorkspaceStatus::Degraded {
                     reason: "busy".into(),
@@ -171,7 +227,7 @@ impl WorkspaceManager {
     pub fn console_mount(&self) -> WorkspaceMount {
         match self.info().status {
             WorkspaceStatus::Mounted => WorkspaceMount(self.mountpoint.clone()),
-            WorkspaceStatus::Degraded { .. } => WorkspaceMount(self.files_root.clone()),
+            WorkspaceStatus::Degraded { .. } => WorkspaceMount(self.root()),
         }
     }
 
@@ -391,6 +447,51 @@ mod tests {
         types::{MountKind, MountStatus},
         workspace::fsops,
     };
+
+    #[tokio::test]
+    async fn the_root_can_be_repointed_at_another_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(second.join("there.txt"), "b").unwrap();
+        let ws = WorkspaceManager::start(
+            first.clone(),
+            dir.path().join("artifacts"),
+            dir.path().join("workspace"),
+            false,
+        )
+        .await;
+        std::fs::write(first.join("here.txt"), "a").unwrap();
+
+        let names = |v: Vec<crate::types::Entry>| {
+            v.into_iter().map(|e| e.name).collect::<std::collections::BTreeSet<_>>()
+        };
+        assert!(names(fsops::list(&ws.fs(), "/").await.unwrap()).contains("here.txt"));
+
+        ws.set_root(second.clone()).await.unwrap();
+
+        // The tree serves the new directory, and only it. The artifacts graft is untouched:
+        // it is a separate mount and the root swap does not reach it.
+        let after = names(fsops::list(&ws.fs(), "/").await.unwrap());
+        assert!(after.contains("there.txt"), "{after:?}");
+        assert!(!after.contains("here.txt"), "{after:?}");
+        assert!(after.contains("artifacts"), "{after:?}");
+
+        // And everything that reports the root agrees with the tree.
+        let canonical = std::fs::canonicalize(&second).unwrap();
+        assert_eq!(ws.info().files_root, canonical);
+        assert_eq!(ws.console_mount().0, canonical, "degraded serves the root itself");
+        let row = ws.mounts().await.into_iter().find(|m| m.path == "/").unwrap();
+        assert_eq!(row.detail, canonical.display().to_string());
+        assert!(matches!(row.kind, MountKind::Local), "the root is a local mount");
+
+        // A directory that is not one is refused, and refusing leaves the tree alone.
+        assert!(ws.set_root(second.join("there.txt")).await.is_err());
+        assert!(ws.set_root(dir.path().join("nope")).await.is_err());
+        assert_eq!(ws.info().files_root, canonical);
+        assert!(names(fsops::list(&ws.fs(), "/").await.unwrap()).contains("there.txt"));
+    }
 
     #[tokio::test]
     async fn degraded_manager_serves_files_root_and_attaches_stores() {

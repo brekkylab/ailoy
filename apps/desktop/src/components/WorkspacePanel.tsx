@@ -60,7 +60,13 @@ export function WorkspacePanel({ source }: { source: string | null }) {
     // the same column, and a full-height panel would push itself off the bottom by theirs.
     <section className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex items-center gap-2 px-6 pt-3 pb-4">
-        {open && <SourceIcon kind={open.kind} className="size-5 shrink-0 text-muted-foreground" />}
+        {open && (
+          <SourceIcon
+            kind={open.kind}
+            root={open.path === WORKSPACE_ROOT}
+            className="size-5 shrink-0 text-muted-foreground"
+          />
+        )}
         <h1 className="truncate text-xl font-semibold">{open?.label ?? S.workspace}</h1>
       </div>
       {/* Keyed on the root so switching sources drops the open file with the tree it came

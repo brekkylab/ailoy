@@ -47,9 +47,17 @@ impl Engine {
         std::fs::create_dir_all(&cfg.data_dir)?;
         let instance_lock = lock_data_dir(&cfg.data_dir)?;
         let store = Arc::new(Store::open(&cfg.db_path())?);
+        // The chosen root, or the default when nothing has been chosen yet. Read before the
+        // workspace is built rather than applied after: starting on one directory and
+        // swapping to another would mount the wrong tree for as long as that took, and a
+        // console spawned in between would have been handed it.
+        let files_root = store
+            .setting_get(crate::config::ROOT_SETTING)?
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| cfg.default_files_root());
         let workspace = Arc::new(
             WorkspaceManager::start(
-                cfg.files_root(),
+                files_root,
                 cfg.artifacts_root(),
                 cfg.mountpoint(),
                 cfg.mount_workspace,
@@ -342,6 +350,21 @@ impl Engine {
         self.workspace.detach(path).await?;
         let path = connectors::normalize_mount_path(path)?;
         self.store.mount_delete(&path)
+    }
+
+    /// Point the workspace root at a different directory on the host.
+    ///
+    /// Swapped first, stored second: the store is what the next launch reads, so writing it
+    /// for a directory the workspace refused would come back as a root that does not work
+    /// and a window with no way to say why.
+    pub async fn workspace_set_root(&self, path: &str) -> Result<WorkspaceInfo> {
+        self.workspace
+            .set_root(std::path::PathBuf::from(path))
+            .await?;
+        let info = self.workspace.info();
+        self.store
+            .setting_set(crate::config::ROOT_SETTING, &info.files_root.to_string_lossy())?;
+        Ok(info)
     }
 
     // ── settings & catalog ──────────────────────────────────────────────────

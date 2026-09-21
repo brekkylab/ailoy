@@ -34,17 +34,24 @@ function BrandMark({ path, title, className }: { path: string; title: string; cl
 }
 
 /**
- * The glyph for a mount's kind. `root` is the workspace's own files rather than a
- * connector, so it takes the disk rather than a service mark.
+ * The glyph for a source. `root` is the workspace itself — a local mount like any other, so
+ * it is not a kind, but it is the machine rather than a folder on it and takes the disk.
  */
-export function SourceIcon({ kind, className }: { kind: MountKind; className?: string }) {
+export function SourceIcon({
+  kind,
+  root,
+  className,
+}: {
+  kind: MountKind;
+  root?: boolean;
+  className?: string;
+}) {
+  if (root) return <HardDrive className={className} aria-hidden="true" />;
   switch (kind) {
     case "notion":
       return <BrandMark path={siNotion.path} title={siNotion.title} className={className} />;
     case "s3":
       return <Database className={className} aria-hidden="true" />;
-    case "root":
-      return <HardDrive className={className} aria-hidden="true" />;
     case "local":
       return <Folder className={className} aria-hidden="true" />;
   }

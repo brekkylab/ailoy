@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { WORKSPACE_ROOT } from "@/paths";
 import { S } from "@/strings";
 import type { MountInfo } from "@/types";
 
@@ -92,10 +93,14 @@ export function SourcesList({
               "group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent",
               // The root stands in for a null selection, so it lights up on the first paint
               // as the panel beside it already shows it.
-              (selected ?? "/") === m.path && "bg-accent",
+              (selected ?? WORKSPACE_ROOT) === m.path && "bg-accent",
             )}
           >
-            <SourceIcon kind={m.kind} className="size-4 shrink-0 text-muted-foreground" />
+            <SourceIcon
+              kind={m.kind}
+              root={m.path === WORKSPACE_ROOT}
+              className="size-4 shrink-0 text-muted-foreground"
+            />
             <button
               className="min-w-0 flex-1 truncate text-left"
               title={m.path}

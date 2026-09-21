@@ -57,10 +57,10 @@ pub fn normalize_mount_path(path: &str) -> Result<String> {
 /// store implements the write half.
 pub fn describe(config: &MountConfig) -> (MountKind, String, bool) {
     match config {
-        // The root never reaches here — `WorkspaceManager::start` builds its row itself,
-        // including its label, and this function is only ever handed a connector's config.
-        // The arm exists because `MountConfig` has the variant.
-        MountConfig::Root => (MountKind::Root, "Workspace files".into(), true),
+        // The root never reaches here: `WorkspaceManager::start` builds its row itself, and
+        // this function is only ever handed a connector's config. It is a local mount at `/`
+        // like the arm below, which is what this would say if it ever were asked.
+        MountConfig::Root => (MountKind::Local, "the workspace root".into(), true),
         MountConfig::Local { host_root } => {
             // Read-write: `PassthroughFs` serves the host's own permissions, so what this
             // promises is that the store implements the write half — not that every file under

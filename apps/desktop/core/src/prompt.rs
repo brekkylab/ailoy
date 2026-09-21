@@ -60,8 +60,11 @@ pub fn build(input: &PromptInput) -> String {
     // read-write here would contradict the section above and cost a refused write to learn.
     s.push_str("## What is in the workspace\n\n");
     for m in input.mounts {
+        // The root is a local mount like any other; what sets it apart is that it *is* the
+        // workspace, so it is named by its path rather than by a kind of its own.
+        let root = m.path.is_empty() || m.path == "/";
         let hint = match m.kind {
-            MountKind::Root => "the user's own files",
+            MountKind::Local if root => "the user's own files",
             MountKind::Local => "a folder on this computer",
             MountKind::Notion => {
                 "a Notion workspace; each page is a directory whose `page.json` holds the page as JSON; databases are directories of pages"
@@ -77,7 +80,7 @@ pub fn build(input: &PromptInput) -> String {
         // Without the FUSE-T mount the tools see the root directory on disk, not the
         // composed tree: a connector is still configured, still listed — and still not
         // there. Saying so is cheaper than the turns the agent would spend finding out.
-        if input.degraded && !matches!(m.kind, MountKind::Root) {
+        if input.degraded && !root {
             s.push_str(&format!(
                 "- `{path}` — {label} (unavailable: the workspace is not mounted in this session, so this connector is not visible to your tools): {hint}\n"
             ));
@@ -131,7 +134,7 @@ mod tests {
             MountInfo {
                 id: "r".into(),
                 path: "/".into(),
-                kind: MountKind::Root,
+                kind: MountKind::Local,
                 label: "Workspace".into(),
                 detail: "".into(),
                 writable: true,

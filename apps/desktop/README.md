@@ -44,7 +44,7 @@ Everything lives under `~/Library/Application Support/com.brekkylab.ailoy/`.
 | Path           | What it holds                                                          |
 | -------------- | ---------------------------------------------------------------------- |
 | `ailoy.sqlite` | Chats, messages, settings, mounts. Keys too, at file mode 0600          |
-| `files/`       | The user's files. The root of the workspace                             |
+| `files/`       | The workspace root only when the process has no `HOME`; otherwise unused |
 | `workspace/`   | The FUSE-T mountpoint. The path the agent reads                         |
 | `cache/`       | The model catalog cache                                                 |
 | `artifacts/`   | Files the agent produced. Inside the workspace these appear at `/artifacts` |
@@ -94,6 +94,10 @@ AILOY_CORTEX_BIN_DIR=$PWD/../cortex/target/debug \
 - **Unsigned bundle.** On another machine it has to be opened around Gatekeeper.
 - **One instance per data directory.** A second launch fails to take the lock and exits with
   an error dialog.
+- **The workspace root is the user's home directory by default.** It is a local source
+  like any other, repointed from its sheet in the sidebar, and the agent reads it — so
+  out of the box the agent can read everything under `$HOME`. Point it somewhere
+  narrower if that is not wanted.
 - **The agent cannot modify the workspace.** The workspace — the user's files and their
   connectors — is the session's *context*, so it is read-only, and what the agent makes goes
   to `/artifacts`. In v1, a request to change one of the user's files is answered by

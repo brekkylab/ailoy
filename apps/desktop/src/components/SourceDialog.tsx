@@ -1,18 +1,24 @@
-// What one connected source is, and the button that disconnects it.
+// What one connected source is, and the one thing you can do to it.
 //
-// A read-only sheet rather than an edit form. The engine has no command to change a mount
-// in place — a connector's credentials are handed over once at `mount_add` and never read
-// back, so "edit" would mean removing and re-adding, which is the two buttons the user
-// already has. What this shows is what `mount_list` returns: where it is mounted, what
-// kind it is, and the redacted `detail` the engine is willing to say about it.
+// For a connector that is disconnecting it. The engine has no command to change one in
+// place — credentials are handed over once at `mount_add` and never read back, so "edit"
+// would mean removing and re-adding, which is the two buttons the user already has.
+//
+// The root is the exception, and the only one: it is a local mount whose directory is a
+// setting rather than a credential, so it can be repointed, and it cannot be removed —
+// the workspace has to have a root, and the engine refuses to detach `/`.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Trash2 } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { FolderOpen, Trash2 } from "lucide-react";
+import { useState } from "react";
 
 import * as api from "@/api";
 import { SourceIcon } from "@/components/SourceIcon";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { WORKSPACE_ROOT } from "@/paths";
 import { S } from "@/strings";
 import type { MountInfo } from "@/types";
 
@@ -24,6 +30,51 @@ function Row({ label, value }: { label: string; value: string }) {
       <span className="truncate font-mono text-xs" title={value}>
         {value}
       </span>
+    </div>
+  );
+}
+
+/** The root's directory, with the picker that changes it. */
+function RootDirectory({ source, onDone }: { source: MountInfo; onDone: () => void }) {
+  const qc = useQueryClient();
+  // Seeded from the source and not kept in sync with it: the box is what the user is
+  // editing, and a poll landing mid-edit must not overwrite what they typed.
+  const [dir, setDir] = useState(source.detail);
+  const save = useMutation({
+    mutationFn: (path: string) => api.workspaceSetRoot(path),
+    onSuccess: () => {
+      // Everything below `/` is a different tree now: the listings, any open preview, and
+      // the row itself, which carries the directory as its detail.
+      qc.invalidateQueries({ queryKey: ["mounts"] });
+      qc.invalidateQueries({ queryKey: ["workspace"] });
+      qc.invalidateQueries({ queryKey: ["fs"] });
+      qc.invalidateQueries({ queryKey: ["file"] });
+      onDone();
+    },
+  });
+
+  const browse = async () => {
+    const picked = await open({ directory: true, multiple: false });
+    if (typeof picked === "string") setDir(picked);
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <Input value={dir} onChange={(e) => setDir(e.target.value)} aria-label={S.rootDirectory} />
+        <Button variant="outline" size="icon" onClick={() => void browse()} aria-label={S.selectFolder}>
+          <FolderOpen className="size-4" />
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">{S.rootDirectoryHint}</p>
+      {save.isError && <p className="text-xs text-destructive">{api.messageOf(save.error)}</p>}
+      <Button
+        size="sm"
+        disabled={save.isPending || dir.trim() === "" || dir === source.detail}
+        onClick={() => save.mutate(dir.trim())}
+      >
+        {S.saveKey}
+      </Button>
     </div>
   );
 }
@@ -40,6 +91,7 @@ export function SourceDialog({ source, onClose }: { source: MountInfo | null; on
       onClose();
     },
   });
+  const isRoot = source?.path === WORKSPACE_ROOT;
 
   return (
     // Base UI (not Radix): `onOpenChange` is `(open, eventDetails) => void`.
@@ -54,14 +106,14 @@ export function SourceDialog({ source, onClose }: { source: MountInfo | null; on
           <>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                <SourceIcon kind={source.kind} className="size-4 shrink-0" />
+                <SourceIcon kind={source.kind} root={isRoot} className="size-4 shrink-0" />
                 <span className="truncate">{source.label}</span>
               </DialogTitle>
             </DialogHeader>
             <div className="space-y-2">
               <Row label={S.mountPath} value={source.path} />
               <Row label={S.sourceKind} value={source.kind} />
-              <Row label={S.sourceDetail} value={source.detail} />
+              {!isRoot && <Row label={S.sourceDetail} value={source.detail} />}
               {!source.writable && <Row label={S.readOnly} value="yes" />}
               {source.status.status === "error" && (
                 <p className="text-xs text-destructive">
@@ -69,11 +121,10 @@ export function SourceDialog({ source, onClose }: { source: MountInfo | null; on
                 </p>
               )}
             </div>
+            {isRoot && <RootDirectory source={source} onDone={onClose} />}
             <DialogFooter className="sm:justify-between">
-              {/* The root is the workspace's own files; there is nothing to disconnect it
-                  from, and the engine refuses it anyway. */}
-              {source.kind === "root" ? (
-                <span className="text-xs text-muted-foreground">{S.workspace}</span>
+              {isRoot ? (
+                <span className="text-xs text-muted-foreground">{S.rootUndetachable}</span>
               ) : (
                 <div className="flex min-w-0 flex-col gap-1">
                   <Button

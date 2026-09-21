@@ -1,5 +1,11 @@
 use std::path::PathBuf;
 
+/// The store key holding the workspace root the user chose.
+///
+/// A setting rather than a config field: it is changed from the window, at runtime, and has
+/// to survive a restart. [`EngineConfig::default_files_root`] is only what it falls back to.
+pub const ROOT_SETTING: &str = "workspace.root";
+
 /// Where the engine keeps everything, and what it may start.
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
@@ -27,8 +33,21 @@ impl EngineConfig {
         self.data_dir.join("ailoy.sqlite")
     }
 
-    pub fn files_root(&self) -> PathBuf {
-        self.data_dir.join("files")
+    /// Where the workspace's root points when nothing has been chosen.
+    ///
+    /// The user's home directory, because the source is called My Computer and that is what
+    /// it should be — their machine, not a folder the app made up inside its own data. The
+    /// fallback under `data_dir` is for a process with no `HOME`, which on macOS means a
+    /// launch context that has no user to have a home; it keeps the workspace working rather
+    /// than refusing to start.
+    ///
+    /// This is a default, not the value: the chosen root lives in the store under
+    /// [`ROOT_SETTING`] and can be changed while the app runs.
+    pub fn default_files_root(&self) -> PathBuf {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| self.data_dir.join("files"))
     }
 
     pub fn mountpoint(&self) -> PathBuf {

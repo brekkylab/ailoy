@@ -90,7 +90,8 @@ export type RunEvent =
    */
   | { type: "error"; kind: string; message: string; status: number | null; retryable: boolean };
 
-export type MountKind = "root" | "local" | "notion" | "s3";
+/** The root is a `local` mount too; what makes it the root is its path being `/`. */
+export type MountKind = "local" | "notion" | "s3";
 export type MountStatus = { status: "ok" } | { status: "error"; message: string };
 export interface MountInfo { id: string; path: string; kind: MountKind; label: string; detail: string; writable: boolean; status: MountStatus }
 /** The request side of a mount. The engine also has a `root` variant, which only it creates. */

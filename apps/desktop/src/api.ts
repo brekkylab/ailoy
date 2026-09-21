@@ -33,6 +33,9 @@ export const runAttach = (sessionId: string, onEvent: Channel<T.RunEvent>) =>
 export const runCancel = (sessionId: string) => invoke<boolean>("run_cancel", { sessionId });
 
 export const workspaceInfo = () => invoke<T.WorkspaceInfo>("workspace_info");
+/** Repoint the workspace root at another directory on this machine. */
+export const workspaceSetRoot = (path: string) =>
+  invoke<T.WorkspaceInfo>("workspace_set_root", { path });
 export const fsList = (path: string) => invoke<T.Entry[]>("fs_list", { path });
 export const fsRead = (path: string) => invoke<T.FileContent>("fs_read", { path });
 export const fsWrite = (path: string, text: string) => invoke<void>("fs_write", { path, text });

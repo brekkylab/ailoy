@@ -12,6 +12,14 @@ pub async fn workspace_info(engine: Eng<'_>) -> Result<WorkspaceInfo, EngineErro
 }
 
 #[tauri::command]
+pub async fn workspace_set_root(
+    engine: Eng<'_>,
+    path: String,
+) -> Result<WorkspaceInfo, EngineError> {
+    engine.workspace_set_root(&path).await
+}
+
+#[tauri::command]
 pub async fn fs_list(engine: Eng<'_>, path: String) -> Result<Vec<Entry>, EngineError> {
     engine.fs_list(&path).await
 }
