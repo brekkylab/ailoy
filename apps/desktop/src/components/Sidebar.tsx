@@ -1,13 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { cn } from "cn";
-import { FolderTree, MessageSquarePlus, Package, Pencil, Trash } from "lucide-react";
+import { FolderTree, MessageSquarePlus, MessagesSquare, Package, Pencil, Trash } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import * as api from "@/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SourcesList } from "@/components/SourcesList";
 import { formatRelativeTime } from "@/lib/time";
 import { S } from "@/strings";
 import type { MainView } from "@/views";
@@ -123,10 +124,20 @@ export function Sidebar({
           <MessageSquarePlus className="size-4" /> {S.newChat}
         </Button>
       </div>
-      {/* The two panels that are not a conversation. They sit above the session list
-          because they are one row each and the list below it is unbounded — under it they
-          would be the first thing to scroll away. */}
+      {/* What the window can show. One row each, above the list below, because that list
+          is unbounded — under it they would be the first thing to scroll away.
+
+          `Chats` is a destination rather than the action `New chat` is, and it is what
+          makes the list below safe to swap: with the workspace open the sessions are not
+          on screen, and without a way back the only route to an existing conversation
+          would be to start a new one. */}
       <nav className="space-y-0.5 px-2 pb-2">
+        <NavRow
+          icon={<MessagesSquare className="size-4" />}
+          label={S.chats}
+          active={view === "session"}
+          onClick={() => onSelectView("session")}
+        />
         <NavRow
           icon={<FolderTree className="size-4" />}
           label={S.workspace}
@@ -140,6 +151,12 @@ export function Sidebar({
           onClick={() => onSelectView("artifacts")}
         />
       </nav>
+      {/* The lower half belongs to whichever panel is open: the sources that feed the
+          workspace while it is showing, the conversations otherwise. */}
+      {view === "workspace" ? (
+        <SourcesList />
+      ) : (
+        <>
       {error && <p className="px-3 pb-2 text-xs text-destructive">{error}</p>}
       <ScrollArea className="min-h-0 flex-1 px-2">
         {(sessions.data ?? []).map((s) => (
@@ -211,6 +228,8 @@ export function Sidebar({
           sessions.data?.length === 0 && <p className="p-3 text-xs text-muted-foreground">{S.empty}</p>
         )}
       </ScrollArea>
+        </>
+      )}
     </aside>
   );
 }
