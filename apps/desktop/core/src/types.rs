@@ -176,6 +176,11 @@ pub struct Entry {
 pub struct FileContent {
     pub path: String,
     pub text: Option<String>,
+    /// What the bytes turned out to be written in, when there was text to read.
+    ///
+    /// Named rather than assumed: a file decoded by inference is one whose reader should
+    /// be told so, and the difference between a document and mojibake is exactly this.
+    pub encoding: Option<String>,
     pub size: u64,
     pub truncated: bool,
 }

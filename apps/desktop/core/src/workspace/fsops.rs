@@ -75,9 +75,14 @@ pub async fn read(fs: &dyn FileSystem, path: &str) -> Result<FileContent> {
 
     let buf = read_all(fs, target, READ_CAP).await?;
     let truncated = stat.size > READ_CAP;
+    let (text, encoding) = match as_text(buf, truncated) {
+        Some((text, encoding)) => (Some(text), Some(encoding.to_string())),
+        None => (None, None),
+    };
     Ok(FileContent {
         path: path.to_string(),
-        text: as_text(buf, truncated),
+        text,
+        encoding,
         size: stat.size,
         truncated,
     })
@@ -331,17 +336,87 @@ pub(crate) async fn mkdir_p(fs: &dyn FileSystem, path: &Path) -> Result<()> {
 ///
 /// A truncated read is allowed to end mid-character — the cap is a byte count and knows nothing
 /// about UTF-8 — so an invalid tail there is cut off rather than treated as evidence of binary.
-pub(crate) fn as_text(buf: Vec<u8>, truncated: bool) -> Option<String> {
-    match String::from_utf8(buf) {
-        Ok(text) => Some(text),
-        Err(err) if truncated => {
-            let valid = err.utf8_error().valid_up_to();
-            let mut bytes = err.into_bytes();
-            bytes.truncate(valid);
-            String::from_utf8(bytes).ok()
-        }
-        Err(_) => None,
+/// `buf` as characters, with the encoding worked out from the bytes.
+///
+/// UTF-8 is not the only thing on a disk. A Korean spreadsheet exported from anything
+/// Windows-hosted is CP949, and read as UTF-8 it is not an error anywhere — it is a file
+/// that decodes to nothing and is shown as binary, or to mojibake nobody can read.
+///
+/// The order is what keeps the inference honest in both directions. A byte order mark
+/// settles it outright. Failing that UTF-8 is tried *strictly*, so a plain ASCII file —
+/// identical bytes in every encoding here — is never "detected" as Korean; and Korean text
+/// in CP949 is not valid UTF-8, so it falls through on the first Hangul syllable rather
+/// than on a heuristic. Only a file that fails UTF-8 is tried as CP949, and only a file
+/// that fails both is binary.
+///
+/// A truncated read is the one place errors are tolerated: the cap lands mid-character, so
+/// the tail is dropped for UTF-8 and replaced for CP949 rather than losing the whole file
+/// over its last few bytes.
+pub fn as_text(buf: Vec<u8>, truncated: bool) -> Option<(String, &'static str)> {
+    // The marks Windows editors write, which no UTF-8 decoder recovers from.
+    if let Some(rest) = buf.strip_prefix(&[0xFF, 0xFE]) {
+        let (text, _, _) = encoding_rs::UTF_16LE.decode(rest);
+        return Some((text.into_owned(), "UTF-16"));
     }
+    if let Some(rest) = buf.strip_prefix(&[0xFE, 0xFF]) {
+        let (text, _, _) = encoding_rs::UTF_16BE.decode(rest);
+        return Some((text.into_owned(), "UTF-16"));
+    }
+
+    let buf = match String::from_utf8(buf) {
+        Ok(text) => return Some((text, "UTF-8")),
+        Err(err) => {
+            let valid = err.utf8_error().valid_up_to();
+            let bytes = err.into_bytes();
+            // A UTF-8 file that the cap cut mid-character fails within a character's
+            // length of the end, and nowhere else. Anything failing earlier is not UTF-8
+            // that got cut — it is another encoding, and taking the prefix would hand back
+            // whatever happened to precede the first Hangul syllable, which for a Korean
+            // file is the empty string.
+            if truncated && valid + MAX_UTF8_CHAR >= bytes.len() {
+                let mut prefix = bytes;
+                prefix.truncate(valid);
+                return String::from_utf8(prefix).ok().map(|t| (t, "UTF-8"));
+            }
+            bytes
+        }
+    };
+
+    // `EUC_KR` is the label; the index behind it is Windows-949, which is what these files
+    // actually use — EUC-KR plus the syllables it left out.
+    let (text, _, had_errors) = encoding_rs::EUC_KR.decode(&buf);
+    // CP949 accepts almost any byte, so "it decoded" is not evidence of anything the way
+    // valid UTF-8 is. A PNG header decodes to characters too. What separates a document
+    // from a binary is that a document has no control bytes in it.
+    if had_errors && !truncated {
+        return None;
+    }
+    // A cut file ends mid-character, so the decoder's replacement there is expected and is
+    // not evidence of anything. Everywhere else it still is.
+    let body = if truncated {
+        text.trim_end_matches('\u{FFFD}')
+    } else {
+        &text
+    };
+    if !looks_like_text(body) {
+        return None;
+    }
+    Some((body.to_string(), "CP949"))
+}
+
+/// The longest a single UTF-8 character can be, which is how far from the end a cut file
+/// is allowed to stop being valid.
+const MAX_UTF8_CHAR: usize = 4;
+
+/// Whether decoded characters read as a document rather than as bytes that happened to map.
+///
+/// Control characters are the tell: tab, newline and carriage return belong in text and
+/// nothing else in that range does. The replacement character counts against it too — it is
+/// what a decoder emits for a byte it could not place.
+fn looks_like_text(text: &str) -> bool {
+    !text
+        .chars()
+        .any(|c| (c.is_control() && c != '\t' && c != '\n' && c != '\r') || c == '\u{FFFD}')
 }
 
 pub(crate) fn kind_str(kind: DirentKind) -> &'static str {
@@ -359,6 +434,77 @@ pub fn join(dir: &str, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::as_text;
+
+    /// The bytes a Windows-hosted Korean export actually contains.
+    fn cp949(text: &str) -> Vec<u8> {
+        let (bytes, _, had_errors) = encoding_rs::EUC_KR.encode(text);
+        assert!(!had_errors, "the fixture has to be encodable");
+        bytes.into_owned()
+    }
+
+    #[test]
+    fn text_is_decoded_as_what_it_was_written_in() {
+        // The ordinary case, and the one every other case must not be mistaken for.
+        assert_eq!(
+            as_text("hello".as_bytes().to_vec(), false),
+            Some(("hello".into(), "UTF-8"))
+        );
+        assert_eq!(
+            as_text("안녕".as_bytes().to_vec(), false),
+            Some(("안녕".into(), "UTF-8"))
+        );
+
+        // The file this was written for: Korean, CP949, not valid UTF-8 anywhere in it.
+        let korean = "구분,고급휘발유\n에쓰오일,1798";
+        let bytes = cp949(korean);
+        assert!(String::from_utf8(bytes.clone()).is_err(), "or it proves nothing");
+        assert_eq!(as_text(bytes, false), Some((korean.into(), "CP949")));
+
+        // ASCII is the same bytes in both, so plain English is never "detected" as Korean.
+        assert_eq!(
+            as_text(b"a,b,c\n1,2,3".to_vec(), false),
+            Some(("a,b,c\n1,2,3".into(), "UTF-8"))
+        );
+    }
+
+    #[test]
+    fn a_byte_order_mark_settles_it() {
+        let mut le = vec![0xFF, 0xFE];
+        for u in "안녕".encode_utf16() {
+            le.extend_from_slice(&u.to_le_bytes());
+        }
+        assert_eq!(as_text(le, false), Some(("안녕".into(), "UTF-16")));
+
+        let mut be = vec![0xFE, 0xFF];
+        for u in "안녕".encode_utf16() {
+            be.extend_from_slice(&u.to_be_bytes());
+        }
+        assert_eq!(as_text(be, false), Some(("안녕".into(), "UTF-16")));
+    }
+
+    #[test]
+    fn bytes_that_are_no_encoding_stay_binary() {
+        // A PNG header: not UTF-8, and not text in CP949 either.
+        let png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00];
+        assert_eq!(as_text(png, false), None);
+    }
+
+    #[test]
+    fn a_cut_file_keeps_what_it_has() {
+        // The cap lands mid-character. UTF-8 drops the partial tail...
+        let mut cut = "안녕하세요".as_bytes().to_vec();
+        cut.truncate(cut.len() - 1);
+        let (text, encoding) = as_text(cut, true).expect("a clean prefix is still text");
+        assert_eq!(encoding, "UTF-8");
+        assert!(text.starts_with("안녕하세"), "{text}");
+
+        // ...and CP949 is allowed its replacement rather than losing the file over a byte.
+        let mut cut = cp949("가나다");
+        cut.truncate(cut.len() - 1);
+        let (_, encoding) = as_text(cut, true).expect("still text");
+        assert_eq!(encoding, "CP949");
+    }
     use cortex::fs::{ContextFs, InMemFs};
 
     use super::*;

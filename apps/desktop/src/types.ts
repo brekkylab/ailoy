@@ -105,7 +105,14 @@ export type WorkspaceStatus = { status: "mounted" } | { status: "degraded"; reas
 export interface WorkspaceInfo { mountpoint: string; files_root: string; status: WorkspaceStatus }
 
 export interface Entry { name: string; path: string; kind: "dir" | "file"; size: number | null; mtime_ms: number | null }
-export interface FileContent { path: string; text: string | null; size: number; truncated: boolean }
+export interface FileContent {
+  path: string;
+  text: string | null;
+  /** What the bytes were decoded as. `null` when there was no text to read. */
+  encoding: string | null;
+  size: number;
+  truncated: boolean;
+}
 export interface ImportReport { files: number; bytes: number; skipped: string[] }
 
 export interface ProviderSetting { key: string; label: string; has_key: boolean; key_hint: string; region: string | null }

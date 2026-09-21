@@ -107,6 +107,7 @@ dependencies = [
  "axum",
  "chrono",
  "cortex",
+ "encoding_rs",
  "futures",
  "reqwest",
  "rusqlite",

@@ -22,3 +22,11 @@ pub use error::{EngineError, Result};
 pub use events::RunEvent;
 pub use store::Store;
 pub use types::*;
+
+/// The text decoder, for the ignored probe in `tests/encoding_probe.rs`.
+///
+/// Exposed rather than duplicated: a probe that reimplemented the decision would be
+/// checking its own copy of it.
+pub fn decode_for_tests(buf: Vec<u8>, truncated: bool) -> Option<(String, &'static str)> {
+    workspace::fsops::as_text(buf, truncated)
+}

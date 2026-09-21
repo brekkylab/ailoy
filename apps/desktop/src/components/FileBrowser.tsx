@@ -200,6 +200,11 @@ export function FileBrowser({
               {viewer && (binary || text !== null) && (
                 <span className="shrink-0">· {viewer.label}</span>
               )}
+              {/* Only when it was worked out rather than assumed. A file that had to be
+                  inferred is one whose reader should be told which way it was read. */}
+              {file.data?.encoding && file.data.encoding !== "UTF-8" && (
+                <span className="shrink-0">· {file.data.encoding}</span>
+              )}
             </div>
             {/* A filling viewer gets the height and no padding; everything else scrolls
                 inside its own. */}

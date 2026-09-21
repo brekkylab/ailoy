@@ -16,6 +16,8 @@ ailoy = { path = "../../.." }
 # The workspace, its stores, and the FUSE-T binding that puts it where a kernel answers.
 cortex = { path = "../../../../cortex/cortex", features = ["fuse-t", "notion", "s3"] }
 anyhow = "1"
+# Decoding a file that is not UTF-8. See `fsops::as_text`.
+encoding_rs = "0.8"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
