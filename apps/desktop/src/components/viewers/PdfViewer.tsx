@@ -31,6 +31,17 @@ type Task = Awaited<ReturnType<typeof openDocument>>;
 type Doc = Awaited<Task["promise"]>;
 
 /**
+ * How large a page bitmap may get.
+ *
+ * WebKit gives up on a canvas past its budget by leaving it blank rather than by throwing,
+ * so a page that asks for too much does not fail — it renders as nothing, which is a bug
+ * with no symptom to search for. The resolution is capped before it gets there, and a
+ * capped page is slightly soft rather than absent.
+ */
+const MAX_AREA = 12e6;
+const MAX_SIDE = 8192;
+
+/**
  * The loading task, not the document: releasing a PDF means destroying the task, which is
  * what tears down the worker with it. The document is on its `promise`.
  */
@@ -50,7 +61,7 @@ async function openDocument(bytes: ArrayBuffer) {
 function PageView({ doc, page, width }: { doc: Doc; page: Page; width: number }) {
   const host = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
-  const scale = width > 0 ? width / page.width : 1;
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     const el = host.current;
@@ -67,37 +78,57 @@ function PageView({ doc, page, width }: { doc: Doc; page: Page; width: number })
   }, [visible]);
 
   useEffect(() => {
-    if (!visible || !host.current || scale <= 0) return;
     const into = host.current;
+    if (!visible || !into || width <= 0) return;
     let live = true;
     let task: { cancel: () => void } | null = null;
-    void doc.getPage(page.index).then((p) => {
-      if (!live) return;
-      // Drawn at device resolution and laid out at CSS size, or the text is soft on a
-      // retina display.
-      const dpr = window.devicePixelRatio || 1;
-      const viewport = p.getViewport({ scale: scale * dpr });
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.floor(viewport.width);
-      canvas.height = Math.floor(viewport.height);
-      canvas.style.width = "100%";
-      canvas.style.display = "block";
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      const render = p.render({ canvas, canvasContext: ctx, viewport });
-      task = render;
-      void render.promise.then(
-        () => {
-          if (live) into.replaceChildren(canvas);
-        },
-        () => {},
-      );
-    });
+
+    void doc
+      .getPage(page.index)
+      .then((p) => {
+        if (!live) return;
+        const scale = width / page.width;
+        // Device resolution for a sharp page, held under what the engine will actually
+        // rasterise. `getViewport` twice rather than arithmetic on the first: a page's own
+        // rotation is in there, and guessing at it is how a landscape page comes out the
+        // wrong way round.
+        const css = p.getViewport({ scale });
+        const budget = Math.min(
+          Math.sqrt(MAX_AREA / (css.width * css.height)),
+          MAX_SIDE / css.width,
+          MAX_SIDE / css.height,
+        );
+        const ratio = Math.max(1, Math.min(window.devicePixelRatio || 1, budget));
+        const viewport = p.getViewport({ scale: scale * ratio });
+
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        canvas.style.width = "100%";
+        canvas.style.display = "block";
+        // In the tree before it is drawn, so a page appears as it fills rather than after.
+        into.replaceChildren(canvas);
+
+        // `canvas` alone. Handing over a `canvasContext` as well is the backwards-compatible
+        // form, and pdf.js is explicit that the canvas must then be null — passing both is
+        // neither shape, and what comes back is a canvas nothing was painted into.
+        const render = p.render({ canvas, viewport });
+        task = render;
+        return render.promise;
+      })
+      .catch((err: unknown) => {
+        // A cancel is not a failure: this effect re-runs on a width change and cancels the
+        // render it replaces.
+        if (!live) return;
+        console.warn(`page ${page.index} could not be drawn`, err);
+        setFailed(true);
+      });
+
     return () => {
       live = false;
       task?.cancel();
     };
-  }, [visible, doc, page.index, scale]);
+  }, [visible, doc, page.index, page.width, width]);
 
   return (
     <div
@@ -105,7 +136,9 @@ function PageView({ doc, page, width }: { doc: Doc; page: Page; width: number })
       className="bg-card shadow-sm"
       // The page's own aspect, so the column is the right height before it is drawn.
       style={{ aspectRatio: `${page.width} / ${page.height}` }}
-    />
+    >
+      {failed && <p className="p-4 text-xs text-destructive">{S.viewerFailed}</p>}
+    </div>
   );
 }
 
@@ -122,7 +155,10 @@ export function PdfViewer({ path }: { path: string }) {
   useEffect(() => {
     const el = column.current;
     if (!el) return;
-    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
+    // Rounded, so a sub-pixel reflow does not re-rasterise every page on screen.
+    const observer = new ResizeObserver(([entry]) =>
+      setWidth(Math.round(entry.contentRect.width)),
+    );
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
@@ -162,6 +198,11 @@ export function PdfViewer({ path }: { path: string }) {
   if (bytes.state === "failed" || failed)
     return <p className="p-4 text-xs text-destructive">{S.viewerFailed}</p>;
 
+  // The width a page is laid out at: the column less its padding, never negative — the
+  // first render has no measurement yet, and a negative width used to reach `PageView` as
+  // a scale of its own.
+  const pageWidth = Math.max(0, Math.min(width - 48, 896));
+
   return (
     <div ref={column} className="h-full overflow-auto bg-background px-6 py-4">
       {doc === null ? (
@@ -169,7 +210,7 @@ export function PdfViewer({ path }: { path: string }) {
       ) : (
         <div className="mx-auto flex max-w-4xl flex-col gap-4">
           {pages.map((page) => (
-            <PageView key={page.index} doc={doc} page={page} width={Math.min(width - 48, 896)} />
+            <PageView key={page.index} doc={doc} page={page} width={pageWidth} />
           ))}
         </div>
       )}
