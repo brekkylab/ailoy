@@ -22,14 +22,34 @@ const SIDEBAR_KEY = "ailoy.sidebarCollapsed";
 /** One source for the sidebar's width: the grid column and the title bar's left segment. */
 const SIDEBAR_VARS = { "--sidebar-w": "260px" } as CSSProperties;
 
-/** The generated tokens carry a `.dark` set; nothing else toggles it, so the OS does. */
+/**
+ * Keeps Tailwind's `.dark` class on the same side as the palette.
+ *
+ * The colours come from `light-dark()` pairs and need no help — CSS resolves them off
+ * `color-scheme`. This is only for the handful of `dark:` variants in the components,
+ * which key off a class instead and would otherwise be reading a different theme from
+ * everything around them.
+ *
+ * `data-theme` wins where it is set, matching the three `color-scheme` rules in
+ * `index.css`, so a theme picker added later moves both halves by setting that one
+ * attribute. Absent it, the OS decides and the listener follows it switching at night.
+ */
 function useSystemTheme() {
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const apply = () => document.documentElement.classList.toggle("dark", mq.matches);
+    const root = document.documentElement;
+    const apply = () => {
+      const forced = root.dataset.theme;
+      root.classList.toggle("dark", forced ? forced === "dark" : mq.matches);
+    };
     apply();
     mq.addEventListener("change", apply);
-    return () => mq.removeEventListener("change", apply);
+    const observer = new MutationObserver(apply);
+    observer.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => {
+      mq.removeEventListener("change", apply);
+      observer.disconnect();
+    };
   }, []);
 }
 
