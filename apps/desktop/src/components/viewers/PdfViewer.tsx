@@ -129,7 +129,7 @@ function PageView({ doc, page, width, path }: { doc: Doc; page: Page; width: num
       live = false;
       task?.cancel();
     };
-  }, [visible, doc, page.index, page.width, width]);
+  }, [visible, doc, page.index, page.width, width, path]);
 
   return (
     <div
