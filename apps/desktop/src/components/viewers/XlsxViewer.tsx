@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 
 import { useBytes } from "@/lib/useBytes";
+import { report } from "@/lib/report";
 import { S } from "@/strings";
 
 /** Rows put in the DOM per sheet. */
@@ -69,7 +70,7 @@ export function XlsxViewer({ path }: { path: string }) {
         if (live) setSheets(read);
       })
       .catch((err: unknown) => {
-        console.warn(`${path} could not be read`, err);
+        report(`${path} could not be read as a workbook`, err);
         if (live) setFailed(true);
       });
     return () => {

@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useBytes } from "@/lib/useBytes";
+import { report } from "@/lib/report";
 import { S } from "@/strings";
 
 export function DocxViewer({ path }: { path: string }) {
@@ -39,7 +40,7 @@ export function DocxViewer({ path }: { path: string }) {
         // What a reader says about a malformed container names parts of a file format,
         // which is not what belongs on screen. It goes to the console; the pane says the
         // one thing that is actionable.
-        console.warn(`${path} could not be read`, err);
+        report(`${path} could not be read as a document`, err);
         if (live) setFailed(true);
       });
     return () => {

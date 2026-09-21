@@ -40,6 +40,10 @@ export const workspaceInfo = () => invoke<T.WorkspaceInfo>("workspace_info");
  */
 export const fsReadBytes = (path: string) => invoke<ArrayBuffer>("fs_read_bytes", { path });
 
+/** Put a line from the window into the engine's log. See `lib/report`. */
+export const clientLog = (level: "info" | "warn" | "error", message: string) =>
+  invoke<void>("client_log", { level, message });
+
 /** Repoint the workspace root at another directory on this machine. */
 export const workspaceSetRoot = (path: string) =>
   invoke<T.WorkspaceInfo>("workspace_set_root", { path });

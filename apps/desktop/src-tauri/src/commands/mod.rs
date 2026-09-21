@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use ailoy_desktop_core::Engine;
 
+pub mod client;
 pub mod runs;
 pub mod sessions;
 pub mod settings;

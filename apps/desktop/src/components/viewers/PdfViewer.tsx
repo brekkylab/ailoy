@@ -18,6 +18,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useBytes } from "@/lib/useBytes";
+import { report } from "@/lib/report";
 import { S } from "@/strings";
 
 /** Page geometry, known before anything is rasterised. */
@@ -58,7 +59,7 @@ async function openDocument(bytes: ArrayBuffer) {
 }
 
 /** One page: its own size until it is on screen, a canvas once it has been. */
-function PageView({ doc, page, width }: { doc: Doc; page: Page; width: number }) {
+function PageView({ doc, page, width, path }: { doc: Doc; page: Page; width: number; path: string }) {
   const host = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -120,7 +121,7 @@ function PageView({ doc, page, width }: { doc: Doc; page: Page; width: number })
         // A cancel is not a failure: this effect re-runs on a width change and cancels the
         // render it replaces.
         if (!live) return;
-        console.warn(`page ${page.index} could not be drawn`, err);
+        report(`pdf page ${page.index} of ${path} could not be drawn`, err);
         setFailed(true);
       });
 
@@ -186,7 +187,7 @@ export function PdfViewer({ path }: { path: string }) {
       .catch((err: unknown) => {
         // What a reader says about a malformed document names parts of a file format,
         // which is not what belongs on screen. The pane says the one actionable thing.
-        console.warn(`${path} could not be read`, err);
+        report(`${path} could not be opened as a pdf`, err);
         if (live) setFailed(true);
       });
     return () => {
@@ -210,7 +211,7 @@ export function PdfViewer({ path }: { path: string }) {
       ) : (
         <div className="mx-auto flex max-w-4xl flex-col gap-4">
           {pages.map((page) => (
-            <PageView key={page.index} doc={doc} page={page} width={pageWidth} />
+            <PageView key={page.index} doc={doc} page={page} width={pageWidth} path={path} />
           ))}
         </div>
       )}

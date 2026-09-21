@@ -14,6 +14,7 @@
 import { useEffect, useState } from "react";
 
 import * as api from "@/api";
+import { report } from "@/lib/report";
 
 export type Bytes =
   | { state: "loading" }
@@ -38,7 +39,7 @@ export function useBytes(path: string): Bytes {
       (err: unknown) => {
         // The pane has room for one sentence and says it. The reason goes here, so a file
         // that will not open leaves something to read rather than only a red line.
-        console.warn(`${path} could not be read`, err);
+        report(`${path} could not be read`, err);
         if (live) setResult({ state: "failed" });
       },
     );
