@@ -1,14 +1,15 @@
-// The right-hand workspace: what is mounted, the tree over it, and a read-only preview.
+// The workspace view: what is mounted, and the tree over it.
 //
-// The panel is a flex column inside a `minmax(0,1fr)` grid row, so the tree scrolls
-// (`min-h-0 flex-1`) and the preview is capped rather than pushing the tree out of view.
+// This fills the main panel, reached from the sidebar, rather than sitting in a column of
+// its own, and names itself: the title bar is left to conversations, so there is room here
+// to set the heading at a size that reads as the page's rather than the window's.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Cloud, FolderPlus, Globe, HardDrive, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import * as api from "@/api";
-import { FileTree } from "@/components/FileTree";
+import { FileBrowser } from "@/components/FileBrowser";
 import { MountDialog } from "@/components/MountDialogs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { S } from "@/strings";
 
 export function WorkspacePanel() {
@@ -28,8 +28,6 @@ export function WorkspacePanel() {
   // enough that a restored mount appears while the user is still looking at the panel.
   const mounts = useQuery({ queryKey: ["mounts"], queryFn: api.mountList, refetchInterval: 3000 });
   const [dialog, setDialog] = useState<"local" | "notion" | "s3" | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  const file = useQuery({ queryKey: ["file", selected], queryFn: () => api.fsRead(selected!), enabled: !!selected });
   const remove = useMutation({
     mutationFn: (p: string) => api.mountRemove(p),
     onSuccess: () => {
@@ -52,9 +50,11 @@ export function WorkspacePanel() {
   }, [signature, qc]);
 
   return (
-    <aside className="flex h-full min-w-0 flex-col border-l">
-      <div className="flex items-center justify-between p-3">
-        <h2 className="text-sm font-medium">{S.workspace}</h2>
+    // `min-h-0 flex-1` rather than `h-full`: the banners above this in `main` are part of
+    // the same column, and a full-height panel would push itself off the bottom by theirs.
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="flex items-center justify-between px-6 pt-3 pb-4">
+        <h1 className="text-xl font-semibold">{S.workspace}</h1>
         <DropdownMenu>
           {/* Base UI (not Radix): the trigger takes `render`, not `asChild`. */}
           <DropdownMenuTrigger render={<Button size="sm" variant="outline" />}>
@@ -74,7 +74,7 @@ export function WorkspacePanel() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <div className="space-y-1 px-3 pb-2">
+      <div className="space-y-1 px-6 pb-3">
         {(mounts.data ?? []).map((m) => (
           <div key={m.path} className="flex items-center gap-2 text-xs">
             <Badge
@@ -108,24 +108,8 @@ export function WorkspacePanel() {
         {mounts.isError && <p className="text-xs text-destructive">{api.messageOf(mounts.error)}</p>}
         {remove.isError && <p className="text-xs text-destructive">{api.messageOf(remove.error)}</p>}
       </div>
-      <ScrollArea className="min-h-0 flex-1 border-t px-2 py-1">
-        <FileTree path="/" onOpen={setSelected} selected={selected} />
-      </ScrollArea>
-      {selected && (
-        <div className="max-h-[40%] shrink-0 overflow-auto border-t p-2">
-          <div className="mb-1 truncate font-mono text-xs text-muted-foreground">{selected}</div>
-          {file.data?.text != null ? (
-            <pre className="whitespace-pre-wrap font-mono text-xs">
-              {file.data.text}
-              {file.data.truncated && `\n… ${S.fileTooLarge}`}
-            </pre>
-          ) : file.data ? (
-            <p className="text-xs text-muted-foreground">{S.binaryFile}</p>
-          ) : null}
-          {file.isError && <p className="text-xs text-destructive">{api.messageOf(file.error)}</p>}
-        </div>
-      )}
+      <FileBrowser root="/" />
       <MountDialog kind={dialog} onClose={() => setDialog(null)} />
-    </aside>
+    </section>
   );
 }

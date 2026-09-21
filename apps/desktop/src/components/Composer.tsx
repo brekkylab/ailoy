@@ -6,6 +6,13 @@
 // somewhere to land. Everything about the run *after* it starts is the event stream's
 // business and is read back out of the run store — this component only starts and
 // cancels.
+//
+// `sessionId` is null while the window is on a new, unsaved chat. Nothing is stored for
+// one of those until there is a message to store: clicking New used to write a row, which
+// left a drift of empty "New chat" sessions behind every time someone opened one and
+// changed their mind. So the draft keeps its model in local state, and the first send
+// creates the session and starts the run as one action — the two together, because a
+// session that exists without the message that caused it is the thing being avoided.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SendHorizontal, Square } from "lucide-react";
@@ -21,7 +28,15 @@ import { hasAnyKey } from "@/lib/settings";
 import { selectRun, useRunStore } from "@/store/runs";
 import { S } from "@/strings";
 
-export function Composer({ sessionId }: { sessionId: string }) {
+export function Composer({
+  sessionId,
+  onCreated,
+}: {
+  /** `null` on an unsaved new chat: the first send is what brings a session into being. */
+  sessionId: string | null;
+  /** Called with the new session's id once the first message has started its run. */
+  onCreated: (id: string) => void;
+}) {
   const qc = useQueryClient();
   const [text, setText] = useState("");
   const live = useRunStore(selectRun(sessionId));
@@ -34,28 +49,52 @@ export function Composer({ sessionId }: { sessionId: string }) {
   // `build()`; say so in the place the user is about to type instead.
   const noKey = !hasAnyKey(settings.data);
 
+  // A draft's model has nowhere to be stored yet, so it lives here until the session does.
+  // Null means "whatever the settings default is", which is also what `session_create`
+  // does with no model, so an untouched draft and the engine agree without being told.
+  const [draftModel, setDraftModel] = useState<string | null>(null);
+  const model = sessionId ? (session?.model ?? null) : (draftModel ?? settings.data?.default_model ?? null);
+
   const setModel = useMutation({
-    mutationFn: (m: string) => api.sessionSetModel(sessionId, m),
+    mutationFn: (m: string) => api.sessionSetModel(sessionId!, m),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["sessions"] }),
   });
   // A cancel that the engine rejects — the run ended a moment ago, the session is gone —
   // is not worth a message, but it is worth catching: an unhandled rejection in the
   // webview is a console error the user cannot act on.
-  const cancel = useMutation({ mutationFn: () => cancelRun(sessionId) });
+  const cancel = useMutation({ mutationFn: () => cancelRun(sessionId!) });
   // `startRun` resolves as soon as the engine accepts the run; the session's `running`
   // flag is what the sidebar paints, hence the invalidate here and not on the terminal
   // event (`UsageBar` owns that one).
+  //
+  // On a draft both steps are in the one mutation, and the window is told about the new
+  // session only after the run is away. Switching earlier would unmount this composer
+  // mid-request and take the error with it — which is the one case where the user most
+  // needs to see what went wrong, since their message is in the box that vanished.
   const send = useMutation({
-    mutationFn: () => startRun(sessionId, text.trim()),
-    onSuccess: () => {
+    // Resolves to the session this send had to create, or null when it sent into one that
+    // already existed. Not the run id: `startRun` returns that, and the two are both bare
+    // strings, so handing back whichever came last would read fine and mean nothing.
+    mutationFn: async (): Promise<string | null> => {
+      const body = text.trim();
+      if (sessionId) {
+        await startRun(sessionId, body);
+        return null;
+      }
+      const created = await api.sessionCreate(model ?? undefined);
+      await startRun(created.id, body);
+      return created.id;
+    },
+    onSuccess: (createdId) => {
       setText("");
       void qc.invalidateQueries({ queryKey: ["sessions"] });
+      if (createdId) onCreated(createdId);
     },
   });
   // The engine stops a run at `max_turns` rather than looping forever; "continue" is the
   // message that resumes it, and is a model-facing payload, not UI copy.
   const resume = useMutation({
-    mutationFn: () => startRun(sessionId, "continue"),
+    mutationFn: () => startRun(sessionId!, "continue"),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["sessions"] }),
   });
 
@@ -74,7 +113,9 @@ export function Composer({ sessionId }: { sessionId: string }) {
   return (
     <div className="border-t px-6 py-3">
       <div className="mx-auto max-w-3xl">
-        <UsageBar sessionId={sessionId} />
+        {/* Nothing has been spent on a draft, and the bar is also what refetches a
+            session's state when a run ends — neither applies until there is a session. */}
+        {sessionId && <UsageBar sessionId={sessionId} />}
         <div className="flex items-end gap-2 rounded-xl border bg-background p-2">
           <Textarea
             value={text}
@@ -97,9 +138,13 @@ export function Composer({ sessionId }: { sessionId: string }) {
         </div>
         <div className="mt-1 flex items-center gap-3">
           <Select
-            value={session?.model ?? null}
+            value={model}
             onValueChange={(m) => {
-              if (m) setModel.mutate(m);
+              if (!m) return;
+              // A draft has no row to update, so its choice is just remembered until the
+              // send that creates the session passes it to `session_create`.
+              if (sessionId) setModel.mutate(m);
+              else setDraftModel(m);
             }}
             disabled={running}
           >

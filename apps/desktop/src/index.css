@@ -20,3 +20,18 @@ html, body, #root { height: 100%; margin: 0; }
     @apply bg-background text-foreground; }
   html {
     @apply font-sans; } }
+
+/* Fades a scrolling column out at its top edge, so content thins away as it goes under
+   the title bar instead of being cut off by a line. A mask rather than a gradient overlay
+   on purpose: it fades to transparent against whatever is actually behind, so it needs no
+   second copy of the background colour and stays right in both themes.
+
+   `--fade-top` is published so the column can pad itself clear of the fade: anything
+   inside this distance is dimmed even when the column is scrolled to the top, which on a
+   thread means the first message is greyed out for no reason. Pad by at least this much
+   and the fade only ever catches content on its way out. */
+@utility mask-fade-top {
+  --fade-top: 2.5rem;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--fade-top));
+  mask-image: linear-gradient(to bottom, transparent, black var(--fade-top));
+}

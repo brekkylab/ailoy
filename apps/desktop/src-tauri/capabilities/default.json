@@ -1,7 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Core surface plus the folder picker used to connect a local directory.",
+  "description": "Core surface, the two window commands our own title bar needs, and the folder picker used to connect a local directory.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "dialog:allow-confirm"]
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "dialog:allow-confirm",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize"
+  ]
 }

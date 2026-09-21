@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { cn } from "cn";
-import { MessageSquarePlus, Pencil, Settings as SettingsIcon, Trash } from "lucide-react";
+import { FolderTree, MessageSquarePlus, Package, Pencil, Trash } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import * as api from "@/api";
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatRelativeTime } from "@/lib/time";
 import { S } from "@/strings";
+import type { MainView } from "@/views";
 
 /**
  * The model id without its provider prefix. A row is ~180px wide and every id in the
@@ -19,15 +20,48 @@ import { S } from "@/strings";
  */
 const shortModel = (id: string) => id.slice(id.lastIndexOf("/") + 1);
 
+/** One row of the panel nav, styled to match a session row so the list reads as one column. */
+function NavRow({
+  icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={cn(
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent",
+        active && "bg-accent",
+      )}
+      aria-current={active ? "page" : undefined}
+      onClick={onClick}
+    >
+      {icon}
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
 export function Sidebar({
   selected,
   onSelect,
-  onOpenSettings,
+  onNewChat,
+  view,
+  onSelectView,
 }: {
   selected: string | null;
   /** `null` after the selected session is deleted: `App` then picks the next one. */
   onSelect: (id: string | null) => void;
-  onOpenSettings: () => void;
+  /** Opens an unsaved chat. Nothing is stored until the user sends into it. */
+  onNewChat: () => void;
+  /** Which of the three the main panel is showing, so this can mark the active row. */
+  view: MainView;
+  onSelectView: (view: MainView) => void;
 }) {
   const qc = useQueryClient();
   // Polled: `running` drives the per-row dot, and a run started in another window — or
@@ -44,19 +78,12 @@ export function Sidebar({
     const timer = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(timer);
   }, []);
-  // One line for all three mutations: they are mutually exclusive in practice, and a
-  // rejected create/rename/delete otherwise fails silently — the list just does not move.
+  // One line for both mutations: they are mutually exclusive in practice, and a rejected
+  // rename or delete otherwise fails silently — the list just does not move. Creating is
+  // not among them any more: New opens a draft, and the session is created by the first
+  // send, where the composer already has somewhere to put the error.
   const [error, setError] = useState<string | null>(null);
 
-  const create = useMutation({
-    mutationFn: () => api.sessionCreate(),
-    onSuccess: (s) => {
-      setError(null);
-      qc.invalidateQueries({ queryKey: ["sessions"] });
-      onSelect(s.id);
-    },
-    onError: (err) => setError(api.messageOf(err)),
-  });
   const remove = useMutation({
     mutationFn: (id: string) => api.sessionDelete(id),
     onSuccess: (_void, id) => {
@@ -91,14 +118,28 @@ export function Sidebar({
 
   return (
     <aside className="flex h-full flex-col border-r bg-muted/30">
-      <div className="flex items-center gap-2 p-3">
-        <Button className="flex-1" onClick={() => create.mutate()} disabled={create.isPending}>
+      <div className="flex items-center p-3 pb-2">
+        <Button className="flex-1" onClick={onNewChat}>
           <MessageSquarePlus className="size-4" /> {S.newChat}
         </Button>
-        <Button variant="ghost" size="icon" onClick={onOpenSettings} aria-label={S.settings}>
-          <SettingsIcon className="size-4" />
-        </Button>
       </div>
+      {/* The two panels that are not a conversation. They sit above the session list
+          because they are one row each and the list below it is unbounded — under it they
+          would be the first thing to scroll away. */}
+      <nav className="space-y-0.5 px-2 pb-2">
+        <NavRow
+          icon={<FolderTree className="size-4" />}
+          label={S.workspace}
+          active={view === "workspace"}
+          onClick={() => onSelectView("workspace")}
+        />
+        <NavRow
+          icon={<Package className="size-4" />}
+          label={S.artifacts}
+          active={view === "artifacts"}
+          onClick={() => onSelectView("artifacts")}
+        />
+      </nav>
       {error && <p className="px-3 pb-2 text-xs text-destructive">{error}</p>}
       <ScrollArea className="min-h-0 flex-1 px-2">
         {(sessions.data ?? []).map((s) => (
@@ -106,7 +147,9 @@ export function Sidebar({
             key={s.id}
             className={cn(
               "group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm hover:bg-accent",
-              selected === s.id && "bg-accent",
+              // Only while the thread is what the main panel is actually showing: a
+              // highlighted row next to an open workspace would claim the window.
+              view === "session" && selected === s.id && "bg-accent",
             )}
           >
             {editing === s.id ? (

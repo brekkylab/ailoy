@@ -41,7 +41,16 @@ function EmptyState({ text }: { text: string }) {
   return <div className="grid min-h-0 flex-1 place-items-center text-sm text-muted-foreground">{text}</div>;
 }
 
-export function Thread({ sessionId }: { sessionId: string | null }) {
+export function Thread({
+  sessionId,
+  draft,
+  onCreated,
+}: {
+  sessionId: string | null;
+  /** A new chat the user has opened but not yet sent into: no session, but a composer. */
+  draft: boolean;
+  onCreated: (id: string) => void;
+}) {
   const qc = useQueryClient();
   const live = useRunStore(selectRun(sessionId));
   const ackMessages = useRunStore((s) => s.ackMessages);
@@ -118,8 +127,9 @@ export function Thread({ sessionId }: { sessionId: string | null }) {
   // A session id can outlive the session: the one in `localStorage` after the row was
   // deleted, or one the list has not dropped yet. The engine says `not_found`; there is
   // nothing to compose into, so this reads as "no session" rather than as a failure.
+  // A draft is empty on purpose and has a composer; "no session" is the state with neither.
   const gone = messages.isError && api.kindOf(messages.error) === "not_found";
-  if (!sessionId || gone) return <EmptyState text={S.noSession} />;
+  if ((!sessionId && !draft) || gone) return <EmptyState text={S.noSession} />;
 
   const streaming = live.status === "running";
   // Calls the engine announced before it wrote the message that names them. Once that
@@ -130,7 +140,15 @@ export function Thread({ sessionId }: { sessionId: string | null }) {
   const showLive = streaming && (pulse || !!live.text || !!live.thinking || unclaimed.length > 0);
   return (
     <>
-      <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+      {/* `mask-fade-top` thins messages out as they pass under the title bar, which has no
+          rule of its own to stop them at. The top padding is derived from the fade rather
+          than picked: the mask dims everything within `--fade-top` of the edge, scrolled
+          or not, so anything less would leave the first message greyed out at rest. */}
+      <div
+        ref={scroller}
+        onScroll={onScroll}
+        className="mask-fade-top min-h-0 flex-1 overflow-y-auto px-6 pt-[calc(var(--fade-top)+0.5rem)] pb-4"
+      >
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
           {messages.isError && (
             <div className="text-sm text-destructive">
@@ -183,7 +201,7 @@ export function Thread({ sessionId }: { sessionId: string | null }) {
           <div ref={bottom} />
         </div>
       </div>
-      <Composer sessionId={sessionId} />
+      <Composer sessionId={sessionId} onCreated={onCreated} />
     </>
   );
 }
