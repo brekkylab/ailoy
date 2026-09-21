@@ -4,7 +4,6 @@
 mod commands;
 mod logging;
 mod sidecar;
-mod wsfile;
 
 use std::sync::Arc;
 
@@ -62,8 +61,6 @@ fn fail_to_start(e: &dyn std::fmt::Display) -> ! {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        // How the window reads a file it cannot read as text: see `wsfile`.
-        .register_asynchronous_uri_scheme_protocol(wsfile::SCHEME, wsfile::handle)
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             logging::init(&data_dir);
@@ -93,6 +90,7 @@ pub fn run() {
             commands::workspace::workspace_set_root,
             commands::workspace::fs_list,
             commands::workspace::fs_read,
+            commands::workspace::fs_read_bytes,
             commands::workspace::fs_write,
             commands::workspace::fs_mkdir,
             commands::workspace::fs_delete,

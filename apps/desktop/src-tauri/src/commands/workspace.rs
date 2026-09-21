@@ -29,6 +29,21 @@ pub async fn fs_read(engine: Eng<'_>, path: String) -> Result<FileContent, Engin
     engine.fs_read(&path).await
 }
 
+/// A file's bytes, for the viewers that open a format rather than read characters.
+///
+/// `tauri::ipc::Response` rather than a `Vec<u8>` return: a plain vector is serialized as a
+/// JSON array of numbers, which is roughly six bytes on the wire per byte of file. This
+/// sends the buffer as it is, and the window receives an `ArrayBuffer`.
+#[tauri::command]
+pub async fn fs_read_bytes(
+    engine: Eng<'_>,
+    path: String,
+) -> Result<tauri::ipc::Response, EngineError> {
+    Ok(tauri::ipc::Response::new(
+        engine.fs_read_bytes(&path).await?,
+    ))
+}
+
 #[tauri::command]
 pub async fn fs_write(engine: Eng<'_>, path: String, text: String) -> Result<(), EngineError> {
     engine.fs_write(&path, &text).await

@@ -9,6 +9,8 @@
 // What that costs is the platform's selection, search and printing, and ~350 KB of
 // renderer. The renderer is imported lazily, so only a PDF pays for it.
 //
+// The bytes come over the bridge, like every other viewer's.
+//
 // Pages are drawn as they come into view. A report is a hundred pages and a canvas each is
 // a hundred bitmaps at device resolution; the placeholders carry each page's real size, so
 // the scrollbar is right from the first frame and nothing jumps as pages fill in.

@@ -33,6 +33,13 @@ export const runAttach = (sessionId: string, onEvent: Channel<T.RunEvent>) =>
 export const runCancel = (sessionId: string) => invoke<boolean>("run_cancel", { sessionId });
 
 export const workspaceInfo = () => invoke<T.WorkspaceInfo>("workspace_info");
+/**
+ * A file's bytes, for the viewers that open a format. The command answers with
+ * `tauri::ipc::Response`, so this resolves to the buffer itself rather than to a number
+ * per byte.
+ */
+export const fsReadBytes = (path: string) => invoke<ArrayBuffer>("fs_read_bytes", { path });
+
 /** Repoint the workspace root at another directory on this machine. */
 export const workspaceSetRoot = (path: string) =>
   invoke<T.WorkspaceInfo>("workspace_set_root", { path });
