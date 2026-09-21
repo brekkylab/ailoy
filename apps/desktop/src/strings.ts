@@ -26,6 +26,7 @@ export const S = {
   removeSource: "Remove source",
   removeSourceHint: "The files stay where they are. Only the connection to this workspace goes away.",
   noSources: "No connected sources yet.",
+  pickFile: "Pick something on the left to open it.",
   chats: "Chats",
   connectLocal: "Connect folder",
   connectNotion: "Connect Notion",

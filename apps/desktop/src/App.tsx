@@ -72,6 +72,10 @@ function Shell() {
   // composer put the cursor back in the box when the second click left it on the button
   // and nothing else about the window moved.
   const [draft, setDraft] = useState<number | null>(null);
+  // Which connected source the workspace panel is showing. `null` is the root, which is
+  // also what the panel falls back to when a selected source is disconnected — the row it
+  // named is simply no longer in the list, and nothing has to notice.
+  const [source, setSource] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_KEY) === "1";
@@ -160,6 +164,8 @@ function Shell() {
           onNewChat={newChat}
           view={view}
           onSelectView={setView}
+          source={source}
+          onSelectSource={setSource}
         />
       )}
       <main className="flex h-full min-w-0 flex-col">
@@ -171,7 +177,7 @@ function Shell() {
         {view === "session" && (
           <Thread sessionId={effective} draft={draft} onCreated={selectSession} />
         )}
-        {view === "workspace" && <WorkspacePanel />}
+        {view === "workspace" && <WorkspacePanel source={source} />}
         {view === "artifacts" && <ArtifactsPanel />}
       </main>
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />

@@ -24,7 +24,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { S } from "@/strings";
 import type { MountInfo } from "@/types";
 
-export function SourcesList() {
+export function SourcesList({
+  selected,
+  onSelect,
+}: {
+  /** The source path the main panel is showing, or `null` for the root. */
+  selected: string | null;
+  onSelect: (path: string) => void;
+}) {
   const qc = useQueryClient();
   // Polled: connectors are restored in the background after launch, so `mount_list` is
   // eventually consistent and there is no event to invalidate on. Three seconds is short
@@ -50,7 +57,7 @@ export function SourcesList() {
   // sheet is open, updates or closes instead of showing a snapshot of something that is no
   // longer there. Nothing has to clear `open` when that happens: with no row to find, the
   // sheet has nothing to show and closes itself, and the next click overwrites it.
-  const selected = rows.find((m) => m.path === open) ?? null;
+  const sheet = rows.find((m) => m.path === open) ?? null;
 
   return (
     <>
@@ -81,12 +88,21 @@ export function SourcesList() {
         {rows.map((m) => (
           <div
             key={m.path}
-            className="group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+            className={cn(
+              "group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent",
+              // The root stands in for a null selection, so it lights up on the first paint
+              // as the panel beside it already shows it.
+              (selected ?? "/") === m.path && "bg-accent",
+            )}
           >
             <SourceIcon kind={m.kind} className="size-4 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate" title={m.path}>
+            <button
+              className="min-w-0 flex-1 truncate text-left"
+              title={m.path}
+              onClick={() => onSelect(m.path)}
+            >
               {m.label}
-            </span>
+            </button>
             {m.status.status === "error" && (
               <span className="shrink-0 text-destructive" title={m.status.message} aria-label={S.errorPrefix}>
                 !
@@ -111,7 +127,7 @@ export function SourcesList() {
       </ScrollArea>
 
       <MountDialog kind={adding} onClose={() => setAdding(null)} />
-      <SourceDialog source={selected} onClose={() => setOpen(null)} />
+      <SourceDialog source={sheet} onClose={() => setOpen(null)} />
     </>
   );
 }

@@ -57,7 +57,10 @@ pub fn normalize_mount_path(path: &str) -> Result<String> {
 /// store implements the write half.
 pub fn describe(config: &MountConfig) -> (MountKind, String, bool) {
     match config {
-        MountConfig::Root => (MountKind::Root, "Workspace files".into(), true),
+        // "My Computer" rather than anything about workspaces: this is the one source that
+        // is the user's own machine, and it sits in a list next to Notion and S3 where that
+        // is the distinction worth drawing.
+        MountConfig::Root => (MountKind::Root, "My Computer".into(), true),
         MountConfig::Local { host_root } => {
             // Read-write: `PassthroughFs` serves the host's own permissions, so what this
             // promises is that the store implements the write half — not that every file under

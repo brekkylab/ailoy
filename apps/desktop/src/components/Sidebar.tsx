@@ -54,6 +54,8 @@ export function Sidebar({
   onNewChat,
   view,
   onSelectView,
+  source,
+  onSelectSource,
 }: {
   selected: string | null;
   /** `null` after the selected session is deleted: `App` then picks the next one. */
@@ -63,6 +65,9 @@ export function Sidebar({
   /** Which of the three the main panel is showing, so this can mark the active row. */
   view: MainView;
   onSelectView: (view: MainView) => void;
+  /** The connected source the workspace panel is showing, `null` for the root. */
+  source: string | null;
+  onSelectSource: (path: string) => void;
 }) {
   const qc = useQueryClient();
   // Polled: `running` drives the per-row dot, and a run started in another window — or
@@ -154,7 +159,7 @@ export function Sidebar({
       {/* The lower half belongs to whichever panel is open: the sources that feed the
           workspace while it is showing, the conversations otherwise. */}
       {view === "workspace" ? (
-        <SourcesList />
+        <SourcesList selected={source} onSelect={onSelectSource} />
       ) : (
         <>
       {error && <p className="px-3 pb-2 text-xs text-destructive">{error}</p>}
