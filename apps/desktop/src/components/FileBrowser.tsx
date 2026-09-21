@@ -49,7 +49,10 @@ const NOTION: TreeAdapter = {
  * distinguishes the two (cortex names both `<title>__<id>`), so the fallback is the way to
  * find out, and it costs one refused request on the rarer of the two.
  */
-async function readTarget(path: string, kind: "plain" | "notion"): Promise<FileContent> {
+async function readTarget(
+  path: string,
+  kind: "plain" | "notion",
+): Promise<FileContent> {
   if (kind !== "notion") return api.fsRead(path);
   try {
     return await api.fsRead(`${path}/page.json`);
@@ -90,16 +93,30 @@ function TypedView({
       return (
         <>
           <Markdown text={text} />
-          {truncated && <p className="mt-2 text-xs text-muted-foreground">… {S.fileTooLarge}</p>}
+          {truncated && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              … {S.fileTooLarge}
+            </p>
+          )}
         </>
       );
     case "table":
-      return <TableViewer text={text} delimiter={viewer.delimiter ?? ","} truncated={truncated} />;
+      return (
+        <TableViewer
+          text={text}
+          delimiter={viewer.delimiter ?? ","}
+          truncated={truncated}
+        />
+      );
     case "code":
       return (
         <>
           <CodeViewer text={text} lang={viewer.lang ?? "text"} />
-          {truncated && <p className="mt-2 text-xs text-muted-foreground">… {S.fileTooLarge}</p>}
+          {truncated && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              … {S.fileTooLarge}
+            </p>
+          )}
         </>
       );
     default:
@@ -140,8 +157,10 @@ export function FileBrowser({
   // What the registry says about the open file, before anything is fetched: a viewer that
   // opens the bytes itself does not want `fs_read`, which would read the whole container
   // only to decode it to null.
-  const viewer = viewers && selected && kind !== "notion" ? viewerFor(selected) : null;
+  const viewer =
+    viewers && selected && kind !== "notion" ? viewerFor(selected) : null;
   const binary = viewer !== null && !readsText(viewer.kind);
+  const fills = !!viewer?.fills;
   const file = useQuery({
     queryKey: ["file", selected, kind],
     queryFn: () => readTarget(selected!, kind),
@@ -152,21 +171,29 @@ export function FileBrowser({
   // Markdown for a Notion page, the raw bytes for everything else — including a Notion
   // database, whose json has no body to render and is more use shown as what it is.
   const body = text !== null && kind === "notion" ? notionMarkdown(text) : null;
-  const heading = text !== null && kind === "notion" ? notionHeading(text) : null;
+  const heading =
+    text !== null && kind === "notion" ? notionHeading(text) : null;
 
   return (
     <div className="flex min-h-0 flex-1">
       <ScrollArea className="w-72 shrink-0 border-t border-r px-2 py-1">
-        <FileTree path={root} onOpen={setSelected} selected={selected} adapter={adapter} />
+        <FileTree
+          path={root}
+          onOpen={setSelected}
+          selected={selected}
+          adapter={adapter}
+        />
       </ScrollArea>
-      <div className="min-w-0 flex-1 overflow-auto border-t">
+      {/* A column rather than one scrolling box: the path line stays put, and what is under
+          it either scrolls on its own padding or takes the rest of the height outright. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col border-t">
         {!selected ? (
           <div className="grid h-full place-items-center p-6 text-sm text-muted-foreground">
             {S.pickFile}
           </div>
         ) : (
-          <div className="p-4">
-            <div className="mb-3 flex items-baseline gap-2 text-xs text-muted-foreground">
+          <>
+            <div className="flex shrink-0 items-baseline gap-2 px-4 pt-4 pb-3 text-xs text-muted-foreground">
               <span className="truncate font-mono" title={selected}>
                 {selected}
               </span>
@@ -174,32 +201,54 @@ export function FileBrowser({
                 <span className="shrink-0">· {viewer.label}</span>
               )}
             </div>
-            {binary && viewer ? (
-              // Keyed: each of these fetches and decodes on mount, so another file is
-              // another mount rather than an effect undoing the last one's state.
-              <BinaryView key={selected} path={selected} viewer={viewer} />
-            ) : body !== null ? (
-              <>
-                {/* The title lives beside the body rather than in it: cortex renders the
+            {/* A filling viewer gets the height and no padding; everything else scrolls
+                inside its own. */}
+            <div
+              className={
+                fills
+                  ? "min-h-0 flex-1"
+                  : "min-h-0 flex-1 overflow-auto px-4 pb-4"
+              }
+            >
+              {binary && viewer ? (
+                // Keyed: each of these fetches and decodes on mount, so another file is
+                // another mount rather than an effect undoing the last one's state.
+                <BinaryView key={selected} path={selected} viewer={viewer} />
+              ) : body !== null ? (
+                <>
+                  {/* The title lives beside the body rather than in it: cortex renders the
                     blocks, and a page's name is not one of them. */}
-                {heading && <h2 className="mb-2 text-lg font-semibold">{heading}</h2>}
-                <Markdown text={body} />
-                {file.data?.truncated && (
-                  <p className="mt-2 text-xs text-muted-foreground">… {S.fileTooLarge}</p>
-                )}
-              </>
-            ) : text !== null && viewer && viewer.kind !== "text" ? (
-              <TypedView text={text} viewer={viewer} truncated={!!file.data?.truncated} />
-            ) : text !== null ? (
-              <pre className="whitespace-pre-wrap font-mono text-xs">
-                {text}
-                {file.data?.truncated && `\n… ${S.fileTooLarge}`}
-              </pre>
-            ) : file.data ? (
-              <p className="text-xs text-muted-foreground">{S.binaryFile}</p>
-            ) : null}
-            {file.isError && <p className="text-xs text-destructive">{api.messageOf(file.error)}</p>}
-          </div>
+                  {heading && (
+                    <h2 className="mb-2 text-lg font-semibold">{heading}</h2>
+                  )}
+                  <Markdown text={body} />
+                  {file.data?.truncated && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      … {S.fileTooLarge}
+                    </p>
+                  )}
+                </>
+              ) : text !== null && viewer && viewer.kind !== "text" ? (
+                <TypedView
+                  text={text}
+                  viewer={viewer}
+                  truncated={!!file.data?.truncated}
+                />
+              ) : text !== null ? (
+                <pre className="whitespace-pre-wrap font-mono text-xs">
+                  {text}
+                  {file.data?.truncated && `\n… ${S.fileTooLarge}`}
+                </pre>
+              ) : file.data ? (
+                <p className="text-xs text-muted-foreground">{S.binaryFile}</p>
+              ) : null}
+              {file.isError && (
+                <p className="text-xs text-destructive">
+                  {api.messageOf(file.error)}
+                </p>
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>

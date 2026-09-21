@@ -33,6 +33,14 @@ export interface Viewer {
   lang?: string;
   /** For `table`: what separates the fields. */
   delimiter?: string;
+  /**
+   * Take the whole pane, with no padding around it.
+   *
+   * For a viewer that is a document surface rather than content on a page: a PDF brings
+   * its own margins, its own background and its own scrolling, so anything this pane adds
+   * lands *outside* the page as a grey border around a document that is already inset.
+   */
+  fills?: boolean;
 }
 
 /** The lowercased extension of a file name, or `""` when it has none. */
@@ -63,7 +71,7 @@ const code = (label: string, lang: string): Viewer => ({ label, kind: "code", la
 const HTML = code("HTML", "html");
 
 const IMAGE: Viewer = { label: "Image", kind: "image" };
-const PDF: Viewer = { label: "PDF", kind: "pdf" };
+const PDF: Viewer = { label: "PDF", kind: "pdf", fills: true };
 const DOCX: Viewer = { label: "Word", kind: "docx" };
 const XLSX: Viewer = { label: "Spreadsheet", kind: "xlsx" };
 
