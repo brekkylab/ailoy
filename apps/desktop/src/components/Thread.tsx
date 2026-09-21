@@ -47,8 +47,12 @@ export function Thread({
   onCreated,
 }: {
   sessionId: string | null;
-  /** A new chat the user has opened but not yet sent into: no session, but a composer. */
-  draft: boolean;
+  /**
+   * A new chat the user has opened but not yet sent into: no session, but a composer.
+   * `null` when this is a saved session; otherwise a token that changes each time New is
+   * clicked, which the composer watches to take the cursor back.
+   */
+  draft: number | null;
   onCreated: (id: string) => void;
 }) {
   const qc = useQueryClient();
@@ -129,7 +133,7 @@ export function Thread({
   // nothing to compose into, so this reads as "no session" rather than as a failure.
   // A draft is empty on purpose and has a composer; "no session" is the state with neither.
   const gone = messages.isError && api.kindOf(messages.error) === "not_found";
-  if ((!sessionId && !draft) || gone) return <EmptyState text={S.noSession} />;
+  if ((!sessionId && draft === null) || gone) return <EmptyState text={S.noSession} />;
 
   const streaming = live.status === "running";
   // Calls the engine announced before it wrote the message that names them. Once that
@@ -201,7 +205,7 @@ export function Thread({
           <div ref={bottom} />
         </div>
       </div>
-      <Composer sessionId={sessionId} onCreated={onCreated} />
+      <Composer sessionId={sessionId} draft={draft} onCreated={onCreated} />
     </>
   );
 }

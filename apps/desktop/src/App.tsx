@@ -68,7 +68,10 @@ function Shell() {
   // A new chat that has not been sent into yet. It holds the window on an empty thread
   // without anything being stored, which is the point: a session is written by the first
   // message, not by the click that opened the window for it.
-  const [draft, setDraft] = useState(false);
+  // A token rather than a flag: it changes on every New click, which is what lets the
+  // composer put the cursor back in the box when the second click left it on the button
+  // and nothing else about the window moved.
+  const [draft, setDraft] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_KEY) === "1";
@@ -91,7 +94,7 @@ function Shell() {
   const list = sessions.data;
   const stored =
     selected && (!list || list.some((s) => s.id === selected)) ? selected : (list?.[0]?.id ?? null);
-  const effective = draft ? null : stored;
+  const effective = draft !== null ? null : stored;
   // Follows `stored`, not `effective`: a draft is not a session and must not erase which
   // one the window would go back to, or opening a new chat and closing the app would lose
   // the conversation that was open before it.
@@ -115,11 +118,11 @@ function Shell() {
   // can only mean show it.
   const selectSession = (id: string | null) => {
     setSelected(id);
-    setDraft(false);
+    setDraft(null);
     setView("session");
   };
   const newChat = () => {
-    setDraft(true);
+    setDraft((n) => (n ?? 0) + 1);
     setView("session");
   };
 

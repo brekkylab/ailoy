@@ -16,7 +16,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SendHorizontal, Square } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import * as api from "@/api";
 import { UsageBar } from "@/components/UsageBar";
@@ -30,15 +30,26 @@ import { S } from "@/strings";
 
 export function Composer({
   sessionId,
+  draft,
   onCreated,
 }: {
   /** `null` on an unsaved new chat: the first send is what brings a session into being. */
   sessionId: string | null;
+  /** The open draft's token, or `null` for a saved session. Only the focus below reads it. */
+  draft: number | null;
   /** Called with the new session's id once the first message has started its run. */
   onCreated: (id: string) => void;
 }) {
   const qc = useQueryClient();
   const [text, setText] = useState("");
+  const box = useRef<HTMLTextAreaElement>(null);
+  // Opening a new chat puts the cursor where the user is about to type. Keyed on the draft
+  // token as well as the session, so clicking New a second time brings focus back from the
+  // button it just landed on — without it, nothing about the window would have changed and
+  // the effect would not run.
+  useEffect(() => {
+    if (sessionId === null) box.current?.focus();
+  }, [sessionId, draft]);
   const live = useRunStore(selectRun(sessionId));
   const running = live.status === "running";
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessionList });
@@ -118,6 +129,7 @@ export function Composer({
         {sessionId && <UsageBar sessionId={sessionId} />}
         <div className="flex items-end gap-2 rounded-xl border bg-background p-2">
           <Textarea
+            ref={box}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKey}
