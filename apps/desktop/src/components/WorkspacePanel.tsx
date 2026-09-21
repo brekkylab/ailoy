@@ -7,18 +7,18 @@
 // Every source is browsed through the same two commands. The engine mounts Notion, S3 and
 // a local folder into one tree, so `fs_list` and `fs_read` already answer for all three
 // and none of them needs a client of its own here. What differs is how the thing you open
-// deserves to be shown, which is the one prop below.
+// deserves to be shown, and — at the root — which of its children belong to it at all.
 
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 
 import * as api from "@/api";
 import { FileBrowser } from "@/components/FileBrowser";
 import { SourceIcon } from "@/components/SourceIcon";
+import { ARTIFACTS_ROOT, WORKSPACE_ROOT } from "@/paths";
 import { S } from "@/strings";
-import type { MountInfo } from "@/types";
+import type { Entry, MountInfo } from "@/types";
 
-/** The root, for the first paint and for a selection whose source has gone away. */
-const ROOT = "/";
 /** The single directory cortex puts at the top of a Notion mount. */
 const NOTION_PAGES = "pages";
 
@@ -26,13 +26,34 @@ export function WorkspacePanel({ source }: { source: string | null }) {
   // The same query the sidebar reads, so this is a cache hit rather than a second call.
   const mounts = useQuery({ queryKey: ["mounts"], queryFn: api.mountList });
   const rows: MountInfo[] = mounts.data ?? [];
-  const path = source ?? ROOT;
+  const path = source ?? WORKSPACE_ROOT;
   const open = rows.find((m) => m.path === path) ?? null;
   const notion = open?.kind === "notion";
   // A Notion mount's own root holds one directory, `pages`, and nothing else. Starting the
   // tree inside it puts the pages on screen at once instead of behind a folder that only
   // ever has one thing in it.
   const browseRoot = notion ? `${path}/${NOTION_PAGES}` : path;
+
+  // Everything else is grafted into the root, so a listing of `/` returns the user's own
+  // files *and* a directory per connector, plus the agent's artifacts. My Computer is the
+  // machine's own files: the grafts have their own rows in the sidebar and their own place
+  // in the nav, and showing them here again would say the user's disk contains Notion.
+  //
+  // Matched on the full path rather than the name, so a folder of the user's that happens
+  // to be called `notion` deeper in the tree is still theirs and still shown.
+  //
+  // Keyed on `mounts.data` rather than on `rows`: the `?? []` above builds a new array on
+  // every render while the query is empty, and a memo over that never holds — which would
+  // hand `FileBrowser` a new predicate each time and remount the tree under it.
+  const grafted = useMemo(() => {
+    const paths = new Set<string>([ARTIFACTS_ROOT]);
+    for (const m of mounts.data ?? []) if (m.path !== WORKSPACE_ROOT) paths.add(m.path);
+    return paths;
+  }, [mounts.data]);
+  const hide = useMemo(
+    () => (path === WORKSPACE_ROOT ? (e: Entry) => grafted.has(e.path) : undefined),
+    [path, grafted],
+  );
 
   return (
     // `min-h-0 flex-1` rather than `h-full`: the banners above this in `main` are part of
@@ -44,7 +65,7 @@ export function WorkspacePanel({ source }: { source: string | null }) {
       </div>
       {/* Keyed on the root so switching sources drops the open file with the tree it came
           from: a selection under the old root names nothing under the new one. */}
-      <FileBrowser key={browseRoot} root={browseRoot} kind={notion ? "notion" : "plain"} />
+      <FileBrowser key={browseRoot} root={browseRoot} kind={notion ? "notion" : "plain"} hide={hide} />
     </section>
   );
 }

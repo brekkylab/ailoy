@@ -99,7 +99,9 @@ impl WorkspaceManager {
             id: "root".into(),
             path: "/".into(),
             kind: MountKind::Root,
-            label: "Workspace".into(),
+            // The one source that is the user's own machine, in a list beside Notion and
+            // S3 where that is the distinction worth drawing.
+            label: "My Computer".into(),
             detail: files_root.display().to_string(),
             writable: true,
             status: MountStatus::Ok,

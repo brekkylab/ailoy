@@ -10,7 +10,7 @@
 // showing bytes as anything but themselves would be a guess about what they are.
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import * as api from "@/api";
 import { FileTree, type TreeAdapter } from "@/components/FileTree";
@@ -18,7 +18,7 @@ import { Markdown } from "@/components/Markdown";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { notionHeading, notionMarkdown, notionTitle } from "@/lib/notion";
 import { S } from "@/strings";
-import type { FileContent } from "@/types";
+import type { Entry, FileContent } from "@/types";
 
 /**
  * Notion's shape, in one place.
@@ -52,7 +52,24 @@ async function readTarget(path: string, kind: "plain" | "notion"): Promise<FileC
   }
 }
 
-export function FileBrowser({ root, kind = "plain" }: { root: string; kind?: "plain" | "notion" }) {
+export function FileBrowser({
+  root,
+  kind = "plain",
+  hide,
+}: {
+  root: string;
+  kind?: "plain" | "notion";
+  /** Entries to leave out, on top of whatever the kind already hides. */
+  hide?: (e: Entry) => boolean;
+}) {
+  // The kind's own rules and the caller's, as one predicate: a Notion tree hides the json
+  // that is its body, and the root hides the sources grafted into it, and a tree could
+  // want both.
+  const adapter: TreeAdapter | undefined = useMemo(() => {
+    const base = kind === "notion" ? NOTION : undefined;
+    if (!hide) return base;
+    return { ...base, hide: (e: Entry) => !!base?.hide?.(e) || hide(e) };
+  }, [kind, hide]);
   // Keyed by path, so the pane follows the selection and an unopened browser fetches
   // nothing. Reset when the root changes, because a path under the old root means nothing
   // under the new one — which `WorkspacePanel` gets by keying this component on its root.
@@ -72,12 +89,7 @@ export function FileBrowser({ root, kind = "plain" }: { root: string; kind?: "pl
   return (
     <div className="flex min-h-0 flex-1">
       <ScrollArea className="w-72 shrink-0 border-t border-r px-2 py-1">
-        <FileTree
-          path={root}
-          onOpen={setSelected}
-          selected={selected}
-          adapter={kind === "notion" ? NOTION : undefined}
-        />
+        <FileTree path={root} onOpen={setSelected} selected={selected} adapter={adapter} />
       </ScrollArea>
       <div className="min-w-0 flex-1 overflow-auto border-t">
         {!selected ? (

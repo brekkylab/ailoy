@@ -1,20 +1,16 @@
 // The artifacts view: what the agent has produced, as a tree.
 //
-// This is the same directory the workspace shows at `/artifacts` — the engine grafts the
-// artifacts root in there so the user meets the agent's output inside their own files.
-// Giving it its own entry in the sidebar is the other half of that: what the agent made
-// is the thing a user comes back for, and having to remember which folder it is under is
-// exactly the friction the graft was meant to remove.
+// The engine grafts the artifacts root into the workspace at `/artifacts`, so the agent
+// writes there by an ordinary path and reads it back the same way. This is that directory,
+// given its own entry rather than left to be found: what the agent made is the thing a
+// user comes back for, and remembering which folder it is under is friction.
+//
+// Which is also why `WorkspacePanel` leaves it out of My Computer. It is in the tree the
+// agent sees; it is not one of the user's own files, and it is already here.
 
 import { FileBrowser } from "@/components/FileBrowser";
+import { ARTIFACTS_ROOT } from "@/paths";
 import { S } from "@/strings";
-
-/**
- * Where the engine grafts the artifacts tree into the workspace. Must match
- * `ARTIFACTS_PATH` in `apps/desktop/core/src/workspace/manager.rs`: the engine also
- * refuses to detach this path, so the two are a pair and a rename has to move together.
- */
-const ARTIFACTS_ROOT = "/artifacts";
 
 export function ArtifactsPanel() {
   return (
