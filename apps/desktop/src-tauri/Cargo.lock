@@ -118,6 +118,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "cortex",
+ "encoding_rs",
  "futures",
  "reqwest",
  "rusqlite",
