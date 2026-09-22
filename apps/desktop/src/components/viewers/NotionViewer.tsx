@@ -14,7 +14,7 @@ import { useCallback, useMemo } from "react";
 
 import * as api from "@/api";
 import { Markdown } from "@/components/Markdown";
-import { notionNodeQuery } from "@/components/notion/node";
+import { notionNodeQuery } from "@/lib/notionNode";
 import {
   DB_ICON,
   PAGE_ICON,
@@ -30,7 +30,7 @@ import { S } from "@/strings";
 /** Marks a link this panel handles itself. Percent-encoded, so any page name survives it. */
 const INTERNAL = "ailoy-page:";
 
-export function NotionPage({
+export function NotionViewer({
   path,
   text,
   body,

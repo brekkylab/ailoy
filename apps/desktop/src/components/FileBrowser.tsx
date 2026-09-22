@@ -16,20 +16,21 @@ import { useMemo, useState } from "react";
 import * as api from "@/api";
 import { FileTree, type TreeAdapter } from "@/components/FileTree";
 import { Markdown } from "@/components/Markdown";
+import { NOTION } from "@/components/trees/notion";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { CodeViewer } from "@/components/viewers/CodeViewer";
-import { TableViewer } from "@/components/viewers/TableViewer";
-import { NOTION, readNotionNode } from "@/components/notion/node";
-import { NotionPage } from "@/components/notion/NotionPage";
-import { BYTES_KEY } from "@/lib/bytes";
-import { notionMarkdown } from "@/lib/notion";
-import { expandTo, isHidden, loadExpanded, saveExpanded, toggle } from "@/lib/treeState";
 import { DocxViewer } from "@/components/viewers/DocxViewer";
 import { HwpViewer } from "@/components/viewers/HwpViewer";
 import { ImageViewer } from "@/components/viewers/ImageViewer";
+import { NotionViewer } from "@/components/viewers/NotionViewer";
 import { PdfViewer } from "@/components/viewers/PdfViewer";
 import { PptxViewer } from "@/components/viewers/PptxViewer";
+import { TableViewer } from "@/components/viewers/TableViewer";
 import { XlsxViewer } from "@/components/viewers/XlsxViewer";
+import { BYTES_KEY } from "@/lib/bytes";
+import { notionMarkdown } from "@/lib/notion";
+import { readNotionNode } from "@/lib/notionNode";
+import { expandTo, isHidden, loadExpanded, saveExpanded, toggle } from "@/lib/treeState";
 import { readsText, viewerFor, type Viewer } from "@/lib/viewers";
 import { S } from "@/strings";
 import type { Entry } from "@/types";
@@ -269,7 +270,7 @@ export function FileBrowser({
                 // another mount rather than an effect undoing the last one's state.
                 <BinaryView key={selected} path={selected} viewer={viewer} />
               ) : body !== null && text !== null ? (
-                <NotionPage
+                <NotionViewer
                   key={selected}
                   path={selected}
                   text={text}

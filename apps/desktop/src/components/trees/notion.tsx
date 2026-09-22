@@ -1,19 +1,12 @@
-// Reading one node of a Notion tree.
+// The Notion flavour of `FileTree`: how a page directory is drawn as a row.
 //
-// A page directory holds `page.json` and a database directory holds `database.json`, and
-// the directory's own name says which — cortex puts `__db__` in one and not the other so a
-// path there resolves without fetching its parent. Asking for the right file outright is
-// what that marker is for; trying one and falling back to the other would spend a refused
-// request on every database in the tree.
-//
-// One query key, `["file", <dir>, "notion"]`, shared by everything that reads a node: the
-// tree row that wants its icon, the panel that renders its body, and the links in a parent
-// page. A row the user then clicks is already in hand, and nothing is fetched twice.
+// A page is a directory holding `page.json`, so the directory *is* the page. The json
+// behind it is read through the shared query in `lib/notionNode`, which the panel showing
+// that page reads too — a row the user then clicks is already in hand.
 
-import { useQuery, type UseQueryOptions } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 
-import * as api from "@/api";
 import type { RowInfo, TreeAdapter } from "@/components/FileTree";
 import {
   DB_ICON,
@@ -25,31 +18,9 @@ import {
   notionRowCount,
   notionTitle,
 } from "@/lib/notion";
+import { notionNodeQuery } from "@/lib/notionNode";
 import { recalledRow, rememberRow } from "@/lib/notionRows";
-import type { Entry, FileContent } from "@/types";
-
-/** The json behind a page or database directory. */
-export function readNotionNode(path: string): Promise<FileContent> {
-  const name = path.slice(path.lastIndexOf("/") + 1);
-  return api.fsRead(`${path}/${isNotionDatabase(name) ? "database.json" : "page.json"}`);
-}
-
-/**
- * The shared query for a node.
- *
- * `staleTime: Infinity` because a render costs cortex a page fetch and a walk of its whole
- * block tree — worth paying when a row first appears, not again every time the window is
- * focused. A failure is not retried for the same reason: the row falls back to the plain
- * page icon, which is a better answer than three more requests.
- */
-export function notionNodeQuery(path: string) {
-  return {
-    queryKey: ["file", path, "notion"],
-    queryFn: () => readNotionNode(path),
-    staleTime: Infinity,
-    retry: false,
-  } satisfies UseQueryOptions<FileContent>;
-}
+import type { Entry } from "@/types";
 
 /**
  * A row's icon and whether it holds anything.
