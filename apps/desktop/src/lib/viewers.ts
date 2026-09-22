@@ -19,7 +19,8 @@ export type ViewerKind =
   | "pdf"
   | "docx"
   | "xlsx"
-  | "hwp";
+  | "hwp"
+  | "pptx";
 
 /** Whether a viewer is given the decoded text or goes and gets the bytes. */
 export function readsText(kind: ViewerKind): boolean {
@@ -82,6 +83,8 @@ const XLSX: Viewer = { label: "Spreadsheet", kind: "xlsx" };
  * anything this pane adds lands outside the page rather than around the content.
  */
 const HWP: Viewer = { label: "Hangul", kind: "hwp", fills: true };
+/** A deck, for the reason a PDF and a Hangul document are: slides are pages. */
+const PPTX: Viewer = { label: "Slides", kind: "pptx", fills: true };
 
 const BY_EXT: Record<string, Viewer | undefined> = {
   png: IMAGE,
@@ -102,6 +105,10 @@ const BY_EXT: Record<string, Viewer | undefined> = {
   xlsm: XLSX,
   hwp: HWP,
   hwpx: HWP,
+  pptx: PPTX,
+  // The same OOXML container, differing only in the macros it may carry, which nothing
+  // here runs — as `docm` and `xlsm` are to their own formats.
+  pptm: PPTX,
   md: MARKDOWN,
   markdown: MARKDOWN,
   mdown: MARKDOWN,

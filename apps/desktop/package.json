@@ -32,6 +32,7 @@
     "jszip": "^3.10.1",
     "lucide-react": "^1.45.0",
     "pdfjs-dist": "^6.3.289",
+    "pptx-viewer-core": "^4.0.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",

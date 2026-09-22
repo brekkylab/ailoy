@@ -19,6 +19,10 @@ export default defineConfig({
       // does reach for it. See `src/lib/onigurumaStub.ts`.
       "shiki/engine/oniguruma": path.join(src, "lib/onigurumaStub.ts"),
       "shiki/wasm": path.join(src, "lib/onigurumaStub.ts"),
+      // A Node addon `emf-converter` reaches for only where there is no canvas — never in
+      // a webview, and behind a `try`. Vite's dependency scanner resolves it all the same,
+      // and fails the graph when it cannot. See `src/lib/napiCanvasStub.ts`.
+      "@napi-rs/canvas": path.join(src, "lib/napiCanvasStub.ts"),
     },
   },
   clearScreen: false,

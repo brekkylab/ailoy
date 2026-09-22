@@ -26,6 +26,7 @@ import { DocxViewer } from "@/components/viewers/DocxViewer";
 import { HwpViewer } from "@/components/viewers/HwpViewer";
 import { ImageViewer } from "@/components/viewers/ImageViewer";
 import { PdfViewer } from "@/components/viewers/PdfViewer";
+import { PptxViewer } from "@/components/viewers/PptxViewer";
 import { XlsxViewer } from "@/components/viewers/XlsxViewer";
 import { readsText, viewerFor, type Viewer } from "@/lib/viewers";
 import { S } from "@/strings";
@@ -44,6 +45,8 @@ function BinaryView({ path, viewer }: { path: string; viewer: Viewer }) {
       return <XlsxViewer path={path} />;
     case "hwp":
       return <HwpViewer path={path} />;
+    case "pptx":
+      return <PptxViewer path={path} />;
     default:
       return null;
   }

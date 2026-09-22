@@ -56,10 +56,16 @@ describe("viewerFor", () => {
     expect(viewerFor("공고.HWPX")).toMatchObject({ kind: "hwp", fills: true });
   });
 
+  it("opens a deck as slides rather than as bytes", () => {
+    expect(viewerFor("pitch.pptx")).toMatchObject({ kind: "pptx", fills: true });
+    // The same container, differing only in macros, which nothing here runs.
+    expect(viewerFor("pitch.PPTM")).toMatchObject({ kind: "pptx" });
+  });
+
   it("hands every page-shaped format the whole pane", () => {
     // A document typeset onto paper brings its own margins; padding from the pane would
     // land outside the page rather than around the content.
-    for (const name of ["a.pdf", "a.hwp", "a.hwpx"]) {
+    for (const name of ["a.pdf", "a.hwp", "a.hwpx", "a.pptx"]) {
       expect(viewerFor(name).fills, name).toBe(true);
     }
   });
