@@ -33,7 +33,11 @@ export interface Viewer {
   kind: ViewerKind;
   /** For `code`: the grammar to ask shiki for. Must be one `lib/highlighter` registers. */
   lang?: string;
-  /** For `table`: what separates the fields. */
+  /**
+   * For `table`: what separates the fields, where the extension settles it. Absent means
+   * the viewer sniffs — `.csv` names the file and not the character, and an export from a
+   * locale that spells decimals with a comma separates on a semicolon.
+   */
   delimiter?: string;
   /**
    * Take the whole pane, with no padding around it.
@@ -41,6 +45,8 @@ export interface Viewer {
    * For a viewer that is a document surface rather than content on a page: a PDF brings
    * its own margins, its own background and its own scrolling, so anything this pane adds
    * lands *outside* the page as a grey border around a document that is already inset.
+   * A sheet wants it for a second reason — a header and a row gutter that stay put need a
+   * scrolling box of their own, and one inside the pane's would scroll twice.
    */
   fills?: boolean;
 }
@@ -57,8 +63,8 @@ const MARKDOWN: Viewer = { label: "Markdown", kind: "markdown" };
 const TEXT: Viewer = { label: "Text", kind: "text" };
 /** The same viewer under the name the file gave itself. */
 const LOG: Viewer = { label: "Log", kind: "text" };
-const CSV: Viewer = { label: "CSV", kind: "table", delimiter: "," };
-const TSV: Viewer = { label: "TSV", kind: "table", delimiter: "\t" };
+const CSV: Viewer = { label: "CSV", kind: "table", fills: true };
+const TSV: Viewer = { label: "TSV", kind: "table", delimiter: "\t", fills: true };
 const code = (label: string, lang: string): Viewer => ({ label, kind: "code", lang });
 
 /**
@@ -75,7 +81,7 @@ const HTML = code("HTML", "html");
 const IMAGE: Viewer = { label: "Image", kind: "image" };
 const PDF: Viewer = { label: "PDF", kind: "pdf", fills: true };
 const DOCX: Viewer = { label: "Word", kind: "docx" };
-const XLSX: Viewer = { label: "Spreadsheet", kind: "xlsx" };
+const XLSX: Viewer = { label: "Spreadsheet", kind: "xlsx", fills: true };
 /**
  * Hangul, the word processor most Korean public paperwork is written in.
  *

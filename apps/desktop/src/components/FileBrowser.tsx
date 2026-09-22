@@ -76,11 +76,7 @@ function TypedView({
       );
     case "table":
       return (
-        <TableViewer
-          text={text}
-          delimiter={viewer.delimiter ?? ","}
-          truncated={truncated}
-        />
+        <TableViewer text={text} delimiter={viewer.delimiter} truncated={truncated} />
       );
     case "code":
       return (

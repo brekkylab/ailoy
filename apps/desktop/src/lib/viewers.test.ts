@@ -20,7 +20,10 @@ describe("extOf", () => {
 describe("viewerFor", () => {
   it("picks by extension", () => {
     expect(viewerFor("notes.md").kind).toBe("markdown");
-    expect(viewerFor("rows.csv")).toMatchObject({ kind: "table", delimiter: "," });
+    // A `.tsv` has said what separates its fields; a `.csv` has only named the file, so
+    // it carries no delimiter and the viewer works one out. See `sniffDelimiter`.
+    expect(viewerFor("rows.csv").kind).toBe("table");
+    expect(viewerFor("rows.csv").delimiter).toBeUndefined();
     expect(viewerFor("rows.tsv")).toMatchObject({ kind: "table", delimiter: "\t" });
     expect(viewerFor("main.rs")).toMatchObject({ kind: "code", lang: "rust" });
   });
@@ -64,8 +67,9 @@ describe("viewerFor", () => {
 
   it("hands every page-shaped format the whole pane", () => {
     // A document typeset onto paper brings its own margins; padding from the pane would
-    // land outside the page rather than around the content.
-    for (const name of ["a.pdf", "a.hwp", "a.hwpx", "a.pptx"]) {
+    // land outside the page rather than around the content. A sheet wants it for a second
+    // reason: a header and a row gutter that stay put need a scrolling box of their own.
+    for (const name of ["a.pdf", "a.hwp", "a.hwpx", "a.pptx", "a.csv", "a.xlsx"]) {
       expect(viewerFor(name).fills, name).toBe(true);
     }
   });

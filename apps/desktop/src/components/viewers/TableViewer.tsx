@@ -1,20 +1,35 @@
-// A delimited file as the table it is.
+// A delimited file, read the way a spreadsheet reads one.
 //
-// The first row is treated as a header. That is a guess, and it is the right one often
+// A row-number gutter that stays put while the sheet scrolls sideways, a header that
+// stays put while it scrolls down, figures right-aligned in tabular figures, and an empty
+// cell marked as empty rather than left looking like a rendering slip. The numbers in the
+// gutter are the file's own, so a reader can point at a line in the source: the header
+// record is line 1.
+//
+// The first record is treated as a header. That is a guess, and the right one often
 // enough to be worth making: a file without one loses nothing but a bold row, while a file
-// with one gains column names that stay put while the body scrolls.
+// with one gains column names that stay in view.
 //
-// Rows past `LIMIT` are not rendered. The engine already caps what it reads, but a
-// megabyte of CSV is still tens of thousands of records and each one becomes DOM; the cap
-// is on the laying out rather than on the reading, and the pane says how much it left.
+// Rows are put in the DOM a page at a time. The engine already caps what it reads, but a
+// megabyte of CSV is still tens of thousands of records and each one becomes DOM.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
-import { parseDelimited } from "@/lib/delimited";
+import { cn } from "cn";
+
+import { isNumericColumn, parseTable } from "@/lib/delimited";
 import { S } from "@/strings";
 
-/** How many body rows are put in the DOM. */
-const LIMIT = 500;
+/** How many body rows are added at a time. */
+const PAGE = 500;
+
+/** What to call the character a file turned out to be separated on. */
+const DELIMITER_NAMES: Record<string, string> = {
+  ",": "comma",
+  ";": "semicolon",
+  "\t": "tab",
+  "|": "pipe",
+};
 
 export function TableViewer({
   text,
@@ -22,44 +37,77 @@ export function TableViewer({
   truncated,
 }: {
   text: string;
-  delimiter: string;
+  /** What the extension already knows, where it knows it. Sniffed when it does not. */
+  delimiter?: string;
   /** The engine cut the file short, so the last row it handed over may be half of one. */
   truncated: boolean;
 }) {
-  const rows = useMemo(() => {
-    const parsed = parseDelimited(text, delimiter);
-    // A cut file ends mid-record, and a half row rendered as a row is a row that lies
+  const table = useMemo(() => {
+    const parsed = parseTable(text, delimiter);
+    // A cut file ends mid-record, and half a row rendered as a row is a row that lies
     // about what is in the file.
-    return truncated && parsed.length > 1 ? parsed.slice(0, -1) : parsed;
+    if (!truncated || parsed.rows.length === 0) return parsed;
+    return { ...parsed, rows: parsed.rows.slice(0, -1) };
   }, [text, delimiter, truncated]);
 
-  if (rows.length === 0) return <p className="text-xs text-muted-foreground">{S.empty}</p>;
+  const numeric = useMemo(
+    () => Array.from({ length: table.columns }, (_, i) => isNumericColumn(table.rows, i)),
+    [table],
+  );
 
-  const [head, ...body] = rows;
-  const shown = body.slice(0, LIMIT);
-  const hidden = body.length - shown.length;
+  const [shown, setShown] = useState(PAGE);
+  const visible = table.rows.slice(0, shown);
+  const remaining = table.rows.length - visible.length;
+
+  if (table.columns === 0) return <p className="text-xs text-muted-foreground">{S.empty}</p>;
+
+  const cell = "max-w-[42ch] truncate border-r border-b px-3 py-1 text-left align-top";
+  const gutter =
+    "sticky left-0 z-10 border-r border-b bg-muted px-2 py-1 text-right font-mono text-[11px] font-normal text-muted-foreground select-none";
 
   return (
-    <div className="space-y-2">
-      <div className="overflow-x-auto rounded-md border">
-        <table className="w-full border-collapse text-xs">
-          <thead className="bg-muted/50">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="min-h-0 flex-1 overflow-auto">
+        <table className="border-separate border-spacing-0 text-xs whitespace-pre">
+          <thead>
             <tr>
-              {head.map((cell, i) => (
-                <th key={i} className="border-b px-2 py-1 text-left font-medium whitespace-nowrap">
-                  {cell}
+              <th scope="col" className={cn(gutter, "top-0 z-20")}>
+                <span className="sr-only">{S.row}</span>
+              </th>
+              {table.header.map((head, i) => (
+                <th
+                  key={i}
+                  scope="col"
+                  className={cn(
+                    cell,
+                    "sticky top-0 z-10 bg-muted font-medium",
+                    numeric[i] && "text-right",
+                  )}
+                >
+                  {head}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {shown.map((row, r) => (
-              <tr key={r} className="even:bg-muted/20">
-                {/* Indexed against the header so a short row still lines up under the
-                    right columns, and a long one does not silently lose its tail. */}
-                {Array.from({ length: Math.max(head.length, row.length) }, (_, c) => (
-                  <td key={c} className="border-b px-2 py-1 align-top font-mono">
-                    {row[c] ?? ""}
+            {visible.map((row, r) => (
+              <tr key={r} className="group">
+                <th scope="row" className={cn(gutter, "group-hover:bg-accent")}>
+                  {r + 2}
+                </th>
+                {row.map((value, c) => (
+                  <td
+                    key={c}
+                    className={cn(
+                      cell,
+                      "group-hover:bg-accent",
+                      numeric[c] && "text-right tabular-nums",
+                      // An empty cell reads as an empty cell rather than as something
+                      // that failed to render.
+                      value === "" && "before:text-muted-foreground before:content-['–']",
+                    )}
+                  >
+                    {value}
                   </td>
                 ))}
               </tr>
@@ -67,11 +115,21 @@ export function TableViewer({
           </tbody>
         </table>
       </div>
-      {(hidden > 0 || truncated) && (
-        <p className="text-xs text-muted-foreground">
-          {hidden > 0 ? `${S.rowsHidden} ${hidden}` : S.fileTooLarge}
-        </p>
-      )}
+      <div className="flex shrink-0 items-center justify-between gap-3 border-t px-3 py-1.5 text-xs text-muted-foreground">
+        <span>
+          {table.rows.length.toLocaleString()} {S.rows} · {table.columns} {S.columns} ·{" "}
+          {DELIMITER_NAMES[table.delimiter] ?? S.delimiter}
+          {truncated && ` · ${S.fileTooLarge}`}
+        </span>
+        {remaining > 0 && (
+          <button
+            className="rounded border px-2 py-0.5 text-foreground hover:bg-accent"
+            onClick={() => setShown((n) => n + PAGE)}
+          >
+            {S.showMore} ({remaining.toLocaleString()})
+          </button>
+        )}
+      </div>
     </div>
   );
 }

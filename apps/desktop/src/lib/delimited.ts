@@ -81,3 +81,122 @@ export function parseDelimited(text: string, delimiter: string): string[][] {
   if (field !== "" || row.length > 0) endRow();
   return rows;
 }
+
+/**
+ * The delimiters worth sniffing for.
+ *
+ * A file that separates on anything else reads as one column per record, which is the
+ * honest answer rather than a wrong guess.
+ */
+const DELIMITERS = [",", ";", "\t", "|"];
+
+/** How much of a file the sniffer looks at, and how many records it reads out of it. */
+const SNIFF_BYTES = 64 << 10;
+const SNIFF_ROWS = 40;
+
+/**
+ * The delimiter `text` is most likely written with.
+ *
+ * `.csv` names the file, not the character: an export from a spreadsheet set to a locale
+ * that spells decimals with a comma separates on a semicolon, and the file is still
+ * called `.csv`. Read with the wrong one it comes back as a single column of whole lines,
+ * which is exactly what a reader sees and cannot explain.
+ *
+ * Each candidate is scored by how consistently it gives the same number of columns across
+ * the sample, weighted by how many columns that is: a character that splits every record
+ * into five fields is a delimiter, and one that splits a few records unevenly is a
+ * character that happens to appear in the text. Agreement is squared so a clean 2-column
+ * read beats a ragged 3-column one.
+ */
+export function sniffDelimiter(text: string): string {
+  const sample = text.slice(0, SNIFF_BYTES);
+  let best = DELIMITERS[0];
+  let bestScore = 0;
+
+  for (const delimiter of DELIMITERS) {
+    const rows = parseDelimited(sample, delimiter)
+      .filter((row) => row.length > 1 || row[0] !== "")
+      .slice(0, SNIFF_ROWS);
+    // The last record of a sliced sample may have been cut mid-line.
+    const counts = (rows.length > 1 ? rows.slice(0, -1) : rows).map((row) => row.length);
+    if (counts.length === 0) continue;
+
+    const tally = new Map<number, number>();
+    for (const n of counts) tally.set(n, (tally.get(n) ?? 0) + 1);
+
+    let mode = 0;
+    let hits = 0;
+    for (const [n, count] of tally) {
+      // Ties go to the wider read: four columns say more than two.
+      if (count > hits || (count === hits && n > mode)) {
+        mode = n;
+        hits = count;
+      }
+    }
+    if (mode < 2) continue;
+
+    const agreement = hits / counts.length;
+    const score = agreement * agreement * mode;
+    if (score > bestScore) {
+      bestScore = score;
+      best = delimiter;
+    }
+  }
+
+  return best;
+}
+
+/** A delimited file, read. */
+export interface Table {
+  /** What it was read with, sniffed unless the caller knew. */
+  delimiter: string;
+  /** The first record. A file with no header shows its first row of data up there. */
+  header: string[];
+  /** Every record after it, each padded out to `columns`. */
+  rows: string[][];
+  /** The width of the widest record. */
+  columns: number;
+}
+
+/**
+ * `text` as a table. `delimiter` overrides the sniffer — what a `.tsv` already knows.
+ *
+ * Ragged records are padded and never clipped: a trailing field only one row has is still
+ * that row's data. Blank lines are dropped, because in a one-column file an empty record
+ * and a blank line are the same bytes and skipping them is the reading that matches what
+ * the file means.
+ */
+export function parseTable(text: string, delimiter?: string): Table {
+  // A byte order mark is a byte order mark, not the first letter of the first column name.
+  const body = text.replace(/^﻿/, "");
+  const sep = delimiter ?? sniffDelimiter(body);
+  const records = parseDelimited(body, sep).filter((row) => row.length > 1 || row[0] !== "");
+  const columns = records.reduce((wide, row) => Math.max(wide, row.length), 0);
+  const pad = (row: string[]) =>
+    row.length === columns ? row : row.concat(Array<string>(columns - row.length).fill(""));
+
+  return {
+    delimiter: sep,
+    header: pad(records[0] ?? []),
+    rows: records.slice(1).map(pad),
+    columns,
+  };
+}
+
+/**
+ * Whether a column holds numbers, and so should be read right-aligned.
+ *
+ * Thousands separators and a leading currency symbol still count; a column of dates or
+ * ids does not, which is why this is asked per column and not per cell. Empty cells are
+ * ignored, and a column that is entirely empty is not numeric.
+ */
+export function isNumericColumn(rows: readonly string[][], index: number): boolean {
+  let seen = 0;
+  for (const row of rows) {
+    const cell = (row[index] ?? "").trim();
+    if (cell === "") continue;
+    if (!/^[-+(]?[$€£¥₩]?\s?\d[\d,\s]*(?:\.\d+)?\)?%?$/.test(cell)) return false;
+    seen += 1;
+  }
+  return seen > 0;
+}
