@@ -569,10 +569,3 @@ test_*
 # registries are mounted over, and what lands under it is API responses.
 examples/company_analysis/workspace/
 examples/company_analysis/live/
-
-# desktop app (frontend deps/build output and Tauri-generated artifacts)
-apps/desktop/node_modules
-apps/desktop/dist
-apps/desktop/src-tauri/target
-apps/desktop/src-tauri/gen
-apps/desktop/src-tauri/binaries
