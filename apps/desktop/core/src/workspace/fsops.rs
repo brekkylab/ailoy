@@ -110,11 +110,12 @@ pub async fn read(fs: &dyn FileSystem, path: &str) -> Result<FileContent> {
         ));
     }
 
-    // The `stat` above and the one inside `read_all` are both timed, so a log that shows two
-    // per read is showing something real rather than double counting.
-    let buf = timed("read", path, read_all(fs, target, READ_CAP), |b| {
-        b.len() as u64
-    })
+    let buf = timed(
+        "read",
+        path,
+        read_all(fs, target, stat.size.min(READ_CAP)),
+        |b| b.len() as u64,
+    )
     .await?;
     let truncated = stat.size > READ_CAP;
     let (text, encoding) = match as_text(buf, truncated) {
@@ -159,7 +160,7 @@ pub async fn read_bytes(fs: &dyn FileSystem, path: &str) -> Result<Vec<u8>> {
             BYTES_CAP >> 20
         )));
     }
-    timed("read", path, read_all(fs, target, BYTES_CAP), |b| {
+    timed("read", path, read_all(fs, target, stat.size), |b| {
         b.len() as u64
     })
     .await
@@ -323,12 +324,14 @@ pub(crate) async fn write_file(fs: &dyn FileSystem, path: &Path, bytes: &[u8]) -
     Ok(())
 }
 
-/// Read up to `cap` bytes of `path`, in whatever number of calls the store answers in.
-pub(crate) async fn read_all(fs: &dyn FileSystem, path: &Path, cap: u64) -> Result<Vec<u8>> {
-    let size = timed("stat", &path.to_string_lossy(), fs.stat(path), |s| s.size)
-        .await?
-        .size
-        .min(cap);
+/// Read `size` bytes of `path`, in whatever number of calls the store answers in.
+///
+/// The size is the caller's, not one this asks for. Every caller has just `stat`ed the file —
+/// to refuse a directory, to cap the read, to report a size — and on a remote store that stat
+/// is a request: a `head` against S3, a page render against Notion. Asking again here made
+/// every read cost two of them, which the `fs_timing` lines showed as exactly two `stat`s per
+/// `read` on both sources.
+async fn read_all(fs: &dyn FileSystem, path: &Path, size: u64) -> Result<Vec<u8>> {
     let mut buf = vec![0u8; size as usize];
     let mut filled = 0usize;
     while filled < buf.len() {
@@ -550,9 +553,17 @@ mod tests {
         );
         assert!(listing.contains("ms="), "{listing}");
 
-        // A read is two calls, and the split is the point: the `stat` that sizes the file and
-        // the body after it are timed apart.
+        // A read is a `stat` and then a body, and the split is the point: which of the two
+        // costs is what a cache would have to hold.
         assert!(line("stat").contains("path=\"/a.txt\""));
+        // One stat, not two. `read_all` used to ask for the size its caller had just paid a
+        // `head` (or a page render) for, which doubled the cost of every read on a remote
+        // store — the kind of waste that only shows up once something counts.
+        assert_eq!(
+            log.lines().filter(|l| l.contains("op=\"stat\"")).count(),
+            1,
+            "{log}"
+        );
         assert!(
             line("read").contains("n=5"),
             "the body's bytes: {}",

@@ -122,6 +122,27 @@ def main(argv):
             f"{human_ms(sum(times)):>8} {errors:>7}"
         )
 
+    # Cold is the first time a path is asked for, warm is every time after it — which is the
+    # shape of a cache's win. A source whose warm calls are already free (Notion's page render
+    # is cached for 15s) is one whose problem is how long that cache lives, not that it lacks one.
+    seen = set()
+    cold = defaultdict(list)
+    warm = defaultdict(list)
+    for c in calls:
+        mark = (c["op"], c.get("path", ""))
+        (warm if mark in seen else cold)[(c["op"], source_of(c.get("path", "")))].append(c["ms"])
+        seen.add(mark)
+
+    print(f"\n{'op':6} {'source':14} {'cold':>6} {'cold total':>11} {'warm':>6} {'warm total':>11}")
+    print("-" * 60)
+    for key in sorted(cold.keys() | warm.keys(), key=lambda k: -sum(cold.get(k, []))):
+        op, source = key
+        c, w = cold.get(key, []), warm.get(key, [])
+        print(
+            f"{op:6} {source:14} {len(c):>6} {human_ms(sum(c)):>11} "
+            f"{len(w):>6} {human_ms(sum(w)):>11}"
+        )
+
     print(f"\nslowest {top}:")
     for c in sorted(calls, key=lambda c: -c["ms"])[:top]:
         size = f" n={c['n']}" if "n" in c else ""
