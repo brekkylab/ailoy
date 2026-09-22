@@ -12,6 +12,8 @@ use std::{
 
 use ailoy::message::Part;
 
+use cortex::fs::FileSystem;
+
 use crate::{
     catalog::{self, Catalog, split_model_id},
     config::EngineConfig,
@@ -268,6 +270,19 @@ impl Engine {
 
     pub fn workspace_info(&self) -> WorkspaceInfo {
         self.workspace.info()
+    }
+
+    /// Tell the stores to ask their sources again.
+    ///
+    /// What a reader means by Refresh. A remote store keeps what it has read — a Notion page
+    /// render answers a listing without a request, which is what makes a tree quick — and
+    /// nothing about a page *deleted* at the source reaches it on its own. This is the one
+    /// way to say so, and it is a person saying it.
+    ///
+    /// Nothing is fetched here: the stores drop what they kept, and the next read pays for
+    /// what the reader is actually looking at.
+    pub async fn workspace_refresh(&self) {
+        self.workspace.fs().forget().await;
     }
 
     pub async fn fs_list(&self, path: &str) -> Result<Vec<Entry>> {

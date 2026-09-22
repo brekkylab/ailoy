@@ -19,6 +19,13 @@ pub async fn workspace_set_root(
     engine.workspace_set_root(&path).await
 }
 
+/// Drop what the stores have kept, so the next listing or read asks the source again.
+#[tauri::command]
+pub async fn workspace_refresh(engine: Eng<'_>) -> Result<(), EngineError> {
+    engine.workspace_refresh().await;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn fs_list(engine: Eng<'_>, path: String) -> Result<Vec<Entry>, EngineError> {
     engine.fs_list(&path).await

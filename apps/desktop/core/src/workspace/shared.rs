@@ -35,6 +35,13 @@ impl SharedFs {
 }
 
 impl FileSystem for SharedFs {
+    fn forget<'a>(&'a self) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let fs = self.0.read().await;
+            fs.forget().await;
+        })
+    }
+
     fn stat<'a>(&'a self, path: &'a Path) -> BoxFuture<'a, io::Result<Stat>> {
         Box::pin(async move {
             let fs = self.0.read().await;

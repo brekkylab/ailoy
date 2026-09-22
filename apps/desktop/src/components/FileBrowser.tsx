@@ -9,7 +9,7 @@
 // layout means something. Everything else is files: what you click is what you read, and
 // showing bytes as anything but themselves would be a guess about what they are.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCw } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -183,9 +183,16 @@ export function FileBrowser({
   // outside — a page edited in Notion, a key written to a bucket. There is no event for that,
   // so there is a button.
   const qc = useQueryClient();
-  const refresh = () => {
-    for (const key of [["fs"], ["file"], [BYTES_KEY]]) void qc.invalidateQueries({ queryKey: key });
-  };
+  const refresh = useMutation({
+    // The engine first, then this window: dropping the queries here without telling the
+    // stores would ask again and be told the same thing, from the render a listing is
+    // served out of. That is what a page deleted in Notion looked like — a refresh that
+    // could not reach the thing that was keeping it.
+    mutationFn: api.workspaceRefresh,
+    onSettled: () => {
+      for (const key of [["fs"], ["file"], [BYTES_KEY]]) void qc.invalidateQueries({ queryKey: key });
+    },
+  });
 
   const text = file.data?.text ?? null;
   // Markdown for a Notion page, the raw bytes for everything else — including a Notion
@@ -209,7 +216,8 @@ export function FileBrowser({
             className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
             aria-label={S.refresh}
             title={S.refresh}
-            onClick={refresh}
+            onClick={() => refresh.mutate()}
+            disabled={refresh.isPending}
           >
             <RotateCw className="size-3.5" />
           </button>

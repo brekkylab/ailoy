@@ -34,6 +34,14 @@ export const runCancel = (sessionId: string) => invoke<boolean>("run_cancel", { 
 
 export const workspaceInfo = () => invoke<T.WorkspaceInfo>("workspace_info");
 /**
+ * Tell the engine's stores to ask their sources again.
+ *
+ * What Refresh means past this window's own caches: a remote store keeps what it has read —
+ * a Notion listing is served from a page render rather than from a request — so a page
+ * deleted at the source stays in the tree until something says to look again.
+ */
+export const workspaceRefresh = () => invoke<void>("workspace_refresh");
+/**
  * A file's bytes, for the viewers that open a format. The command answers with
  * `tauri::ipc::Response`, so this resolves to the buffer itself rather than to a number
  * per byte.

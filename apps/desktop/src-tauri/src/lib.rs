@@ -92,6 +92,7 @@ pub fn run() {
             commands::runs::run_cancel,
             commands::client::client_log,
             commands::workspace::workspace_info,
+            commands::workspace::workspace_refresh,
             commands::workspace::workspace_set_root,
             commands::workspace::fs_list,
             commands::workspace::fs_read,
