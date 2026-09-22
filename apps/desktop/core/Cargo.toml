@@ -35,4 +35,7 @@ tempfile = "3"
 [dev-dependencies]
 # The offline run test serves a scripted chat-completion stream over loopback.
 axum = "0.8"
+# Captures the `fs_timing` lines in one test, which is what pins the shape
+# `scripts/fs-timings.py` parses.
+tracing-subscriber = "0.3"
 tokio = { version = "1", features = ["net"] }

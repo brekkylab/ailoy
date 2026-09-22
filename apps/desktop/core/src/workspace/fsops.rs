@@ -14,6 +14,19 @@
 //!   session that stops answering.
 //!
 //! [`Dirent::stat`]: cortex::fs::Dirent::stat
+//!
+//! # Timing
+//!
+//! Every store call this makes is timed onto the `fs_timing` target, one line each, because
+//! a remote source charges per call and a cache is only worth what the calls cost. The split
+//! matters as much as the total: a read is a `stat` and then a body, and which of the two
+//! dominates decides whether a cache should hold metadata, bytes, or both.
+//!
+//! These are the *window's* numbers. The agent reads through the FUSE mount, which serves
+//! the same `ContextFs` without passing through here, so nothing below sees it.
+//!
+//! `RUST_LOG=fs_timing=off` turns the lines off without a rebuild; `scripts/fs-timings.py`
+//! summarises a log that has them.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -33,6 +46,29 @@ const READ_CAP: u64 = 1 << 20;
 /// would take the engine down with the allocator rather than with an error anybody could read.
 const IMPORT_CAP: u64 = 64 << 20;
 
+/// Time one store call, and say what it cost.
+///
+/// `size` describes the answer in whatever unit the operation deals in — entries for a
+/// listing, bytes for a read — so one line says both how long a call took and how much it
+/// was for. A failure is logged too, at the same level: an error that took four seconds is
+/// a latency measurement like any other, and a source that is failing slowly is exactly what
+/// this is here to catch.
+async fn timed<T, E: std::fmt::Display>(
+    op: &'static str,
+    path: &str,
+    call: impl Future<Output = std::result::Result<T, E>>,
+    size: impl FnOnce(&T) -> u64,
+) -> std::result::Result<T, E> {
+    let started = std::time::Instant::now();
+    let out = call.await;
+    let ms = started.elapsed().as_millis();
+    match &out {
+        Ok(v) => tracing::info!(target: "fs_timing", op, path, ms, n = size(v)),
+        Err(e) => tracing::info!(target: "fs_timing", op, path, ms, err = %e),
+    }
+    out
+}
+
 /// A `SystemTime` as milliseconds since the epoch, or `None` for one that predates it.
 fn epoch_ms(t: std::time::SystemTime) -> Option<u64> {
     t.duration_since(std::time::UNIX_EPOCH)
@@ -43,7 +79,8 @@ fn epoch_ms(t: std::time::SystemTime) -> Option<u64> {
 /// The children of `path`.
 pub async fn list(fs: &dyn FileSystem, path: &str) -> Result<Vec<Entry>> {
     let mut entries = Vec::new();
-    for dirent in fs.list(Path::new(path)).await? {
+    let listed = timed("list", path, fs.list(Path::new(path)), |v| v.len() as u64).await?;
+    for dirent in listed {
         let (size, mtime_ms) = match dirent.stat() {
             Some(stat) => (Some(stat.size), stat.mtime.and_then(epoch_ms)),
             None => (None, None),
@@ -66,14 +103,19 @@ pub async fn list(fs: &dyn FileSystem, path: &str) -> Result<Vec<Entry>> {
 /// The contents of `path`, up to [`READ_CAP`].
 pub async fn read(fs: &dyn FileSystem, path: &str) -> Result<FileContent> {
     let target = Path::new(path);
-    let stat = fs.stat(target).await?;
+    let stat = timed("stat", path, fs.stat(target), |s| s.size).await?;
     if stat.kind == DirentKind::Dir {
         return Err(EngineError::Invalid(
             "A directory cannot be opened in the editor".into(),
         ));
     }
 
-    let buf = read_all(fs, target, READ_CAP).await?;
+    // The `stat` above and the one inside `read_all` are both timed, so a log that shows two
+    // per read is showing something real rather than double counting.
+    let buf = timed("read", path, read_all(fs, target, READ_CAP), |b| {
+        b.len() as u64
+    })
+    .await?;
     let truncated = stat.size > READ_CAP;
     let (text, encoding) = match as_text(buf, truncated) {
         Some((text, encoding)) => (Some(text), Some(encoding.to_string())),
@@ -103,7 +145,7 @@ const BYTES_CAP: u64 = 64 << 20;
 /// and decides nothing: what the bytes mean is the caller's to work out from the name.
 pub async fn read_bytes(fs: &dyn FileSystem, path: &str) -> Result<Vec<u8>> {
     let target = Path::new(path);
-    let stat = fs.stat(target).await?;
+    let stat = timed("stat", path, fs.stat(target), |s| s.size).await?;
     if stat.kind == DirentKind::Dir {
         return Err(EngineError::Invalid(
             "A directory cannot be opened in the editor".into(),
@@ -117,7 +159,10 @@ pub async fn read_bytes(fs: &dyn FileSystem, path: &str) -> Result<Vec<u8>> {
             BYTES_CAP >> 20
         )));
     }
-    read_all(fs, target, BYTES_CAP).await
+    timed("read", path, read_all(fs, target, BYTES_CAP), |b| {
+        b.len() as u64
+    })
+    .await
 }
 
 /// Replace the contents of `path`, creating the file if it is not there.
@@ -280,7 +325,10 @@ pub(crate) async fn write_file(fs: &dyn FileSystem, path: &Path, bytes: &[u8]) -
 
 /// Read up to `cap` bytes of `path`, in whatever number of calls the store answers in.
 pub(crate) async fn read_all(fs: &dyn FileSystem, path: &Path, cap: u64) -> Result<Vec<u8>> {
-    let size = fs.stat(path).await?.size.min(cap);
+    let size = timed("stat", &path.to_string_lossy(), fs.stat(path), |s| s.size)
+        .await?
+        .size
+        .min(cap);
     let mut buf = vec![0u8; size as usize];
     let mut filled = 0usize;
     while filled < buf.len() {
@@ -436,6 +484,82 @@ pub fn join(dir: &str, name: &str) -> String {
 mod tests {
     use super::as_text;
 
+    /// A `fmt` layer writing into a buffer this test can read back.
+    #[derive(Clone, Default)]
+    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+        type Writer = Captured;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// Every store call says what it cost, in the shape the summary script reads.
+    ///
+    /// `scripts/fs-timings.py` parses `op=`, `path=`, `ms=` and `n=` out of these lines, and
+    /// nothing else in the codebase would notice if a tracing upgrade — or a careless edit —
+    /// spelled them differently. A run that measures nothing looks exactly like a run that
+    /// was fast, which is the failure this is here to make loud.
+    #[test]
+    fn every_store_call_says_what_it_cost() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), b"hello").unwrap();
+        let fs = cortex::fs::PassthroughFs::new(dir.path());
+
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(captured.clone())
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        tracing::subscriber::with_default(subscriber, || {
+            rt.block_on(async {
+                super::list(&fs, "/").await.unwrap();
+                super::read(&fs, "/a.txt").await.unwrap();
+            });
+        });
+
+        let log = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+        let line = |op: &str| {
+            log.lines()
+                .find(|l| l.contains("fs_timing") && l.contains(&format!("op=\"{op}\"")))
+                .unwrap_or_else(|| panic!("no {op} line in:\n{log}"))
+                .to_string()
+        };
+
+        let listing = line("list");
+        assert!(listing.contains("path=\"/\""), "{listing}");
+        assert!(
+            listing.contains("n=1"),
+            "one entry in the directory: {listing}"
+        );
+        assert!(listing.contains("ms="), "{listing}");
+
+        // A read is two calls, and the split is the point: the `stat` that sizes the file and
+        // the body after it are timed apart.
+        assert!(line("stat").contains("path=\"/a.txt\""));
+        assert!(
+            line("read").contains("n=5"),
+            "the body's bytes: {}",
+            line("read")
+        );
+    }
+
     /// The bytes a Windows-hosted Korean export actually contains.
     fn cp949(text: &str) -> Vec<u8> {
         let (bytes, _, had_errors) = encoding_rs::EUC_KR.encode(text);
@@ -458,7 +582,10 @@ mod tests {
         // The file this was written for: Korean, CP949, not valid UTF-8 anywhere in it.
         let korean = "구분,고급휘발유\n에쓰오일,1798";
         let bytes = cp949(korean);
-        assert!(String::from_utf8(bytes.clone()).is_err(), "or it proves nothing");
+        assert!(
+            String::from_utf8(bytes.clone()).is_err(),
+            "or it proves nothing"
+        );
         assert_eq!(as_text(bytes, false), Some((korean.into(), "CP949")));
 
         // ASCII is the same bytes in both, so plain English is never "detected" as Korean.

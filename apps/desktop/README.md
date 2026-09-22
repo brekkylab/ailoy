@@ -58,8 +58,27 @@ Delete the directory to get back to a first-run state.
 
 The default level is `info`, and `RUST_LOG` overrides it
 (`RUST_LOG=ailoy_desktop_core=debug npm run tauri:dev`). Logs go to `logs/ailoy.log.<date>`
-above, and during development to stderr as well. In the app, **Settings → Open logs folder**
-opens that directory in Finder.
+above, and during development to stderr as well.
+
+### Filesystem timings
+
+Every store call the window makes is timed onto the `fs_timing` target — one line per
+`list`, `stat` and `read`, with how long it took and how much it was for. A remote source
+(S3, Notion) charges per call, so this is how a caching decision gets made on numbers rather
+than on a hunch:
+
+```sh
+npm run tauri:dev                     # drive it: walk the tree, open some files
+python3 scripts/fs-timings.py         # what it cost, by operation and by source
+```
+
+The summary groups by the mount a path is under, and lists the slowest individual calls. A
+read shows as two lines, a `stat` and a body, because which of the two dominates decides
+whether a cache should hold metadata, bytes, or both. `RUST_LOG=fs_timing=off` turns the
+lines off without a rebuild.
+
+These are the window's numbers only: the agent reads through the FUSE mount, which serves
+the same tree without passing through the engine's `fsops`.
 
 ## Tests
 
