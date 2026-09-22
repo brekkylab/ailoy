@@ -28,6 +28,7 @@
     "cn": "^0.2.6",
     "docx-preview": "^0.4.0",
     "exceljs": "^4.4.0",
+    "jszip": "^3.10.1",
     "lucide-react": "^1.45.0",
     "pdfjs-dist": "^6.3.289",
     "react": "^19.2.8",

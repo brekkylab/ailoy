@@ -7,6 +7,9 @@
 //
 // Rows past the cap are not rendered: every cell becomes DOM, and a sheet is allowed to
 // have a hundred thousand of them.
+//
+// A workbook exceljs refuses outright gets one more try with its drawings taken out. See
+// `withoutDrawings` for why, and for why that loses nothing this viewer was showing.
 
 import { useEffect, useState } from "react";
 
@@ -16,6 +19,38 @@ import { S } from "@/strings";
 
 /** Rows put in the DOM per sheet. */
 const LIMIT = 500;
+
+/** A worksheet's pointer at its drawing. Empty by schema, but closed either way. */
+const DRAWING_REF = /<drawing\b[^>]*\/>|<drawing\b[^>]*>[\s\S]*?<\/drawing>/g;
+
+/**
+ * The same workbook with every drawing removed — the parts and the worksheets' pointers at
+ * them.
+ *
+ * For a workbook exceljs will not open. It matches a drawing's root element as the literal
+ * tag `xdr:wsDr`, so a file that declares that namespace as the default and writes `<wsDr>`
+ * — valid XML, and what more than one generator emits — parses to nothing, and then two
+ * separate places read `.anchors` off the nothing without checking. One is reached by the
+ * worksheet's `<drawing/>` element alone, which is why the parts have to go *and* the
+ * pointers.
+ *
+ * Nothing is lost here: a drawing is a chart or an image, and this viewer has only ever
+ * shown cells. It is done on the failure and not on every workbook, because rewriting the
+ * archive costs a pass over the whole of it.
+ */
+async function withoutDrawings(bytes: ArrayBuffer): Promise<ArrayBuffer> {
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(bytes);
+  for (const name of Object.keys(zip.files)) {
+    if (name.startsWith("xl/drawings/")) zip.remove(name);
+  }
+  for (const name of Object.keys(zip.files)) {
+    if (!/^xl\/worksheets\/[^/]+\.xml$/.test(name)) continue;
+    const xml = await zip.files[name].async("string");
+    zip.file(name, xml.replace(DRAWING_REF, ""));
+  }
+  return zip.generateAsync({ type: "arraybuffer" });
+}
 
 interface Sheet {
   name: string;
@@ -54,8 +89,16 @@ export function XlsxViewer({ path }: { path: string }) {
     // mount and the state below starts where it should.
     void import("exceljs")
       .then(async (mod) => {
-        const wb = new mod.Workbook();
-        await wb.xlsx.load(bytes.bytes);
+        let wb = new mod.Workbook();
+        try {
+          await wb.xlsx.load(bytes.bytes);
+        } catch (err) {
+          report(`${path} has a drawing exceljs cannot read; opening it without`, err);
+          // A fresh workbook rather than the one that threw: it stopped part-way through
+          // loading, and what it holds is whatever it had got to.
+          wb = new mod.Workbook();
+          await wb.xlsx.load(await withoutDrawings(bytes.bytes));
+        }
         const read: Sheet[] = [];
         wb.eachSheet((ws) => {
           const rows: string[][] = [];
