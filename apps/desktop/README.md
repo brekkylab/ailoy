@@ -1,8 +1,7 @@
 # Ailoy Desktop
 
 A macOS desktop app: a Tauri 2 shell (`src-tauri`) around a React webview (`src`). The
-real work happens in the engine at `apps/desktop/core`. Its design and testing rules are in
-[`docs/desktop-development.md`](../../docs/desktop-development.md).
+real work happens in the engine at `apps/desktop/core`.
 
 ## Prerequisites
 
