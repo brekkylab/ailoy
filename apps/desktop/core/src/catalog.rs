@@ -5,7 +5,11 @@
 //! filter runs over a fresh `https://models.dev/api.json` and the result is cached under the
 //! app's data directory. A failed refresh leaves the embedded snapshot in place.
 
-use std::{collections::BTreeMap, path::Path, sync::RwLock};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+    sync::RwLock,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -154,6 +158,69 @@ pub fn filter_models_dev(full: &serde_json::Value) -> CatalogData {
     data
 }
 
+/// models.dev's marker for a row that is an alias rather than a snapshot of its own.
+const LATEST_MARKER: &str = " (latest)";
+
+/// Whether `id` is `alias` plus a date: `claude-sonnet-4-5-20250929` behind
+/// `claude-sonnet-4-5`, and not `gpt-4o-mini` behind `gpt-4o`.
+fn is_dated_snapshot_of(id: &str, alias: &str) -> bool {
+    id.strip_prefix(alias)
+        .and_then(|rest| rest.strip_prefix('-'))
+        .is_some_and(|date| {
+            !date.is_empty() && date.chars().all(|c| c.is_ascii_digit() || c == '-')
+        })
+}
+
+/// One provider's models as a picker should offer them.
+///
+/// models.dev lists a model once per API id, and for Claude's 4.5 generation that means
+/// twice: `claude-sonnet-4-5`, which Anthropic documents as "a convenience pointer that
+/// resolves to the dated ID", and `claude-sonnet-4-5-20250929`, the snapshot it resolves
+/// to. Same context, same prices, same capabilities — models.dev tells the two apart by
+/// naming the alias `Claude Sonnet 4.5 (latest)`, so the picker offered one model on two
+/// rows, one of them decorated. From the 4.6 generation on the dateless id *is* its own
+/// pinned snapshot and there is nothing to collapse.
+///
+/// So an alias row swallows the dated rows behind it: an id that is the alias's plus a
+/// date, carrying the alias's own name once the marker is off. Nothing else is touched —
+/// OpenAI names its snapshots `GPT-4o (2024-08-06)`, which is a row that says something
+/// the alias does not and keeps its place.
+///
+/// Only the listing collapses. The catalog still holds every id, and `lookup` still
+/// answers for a session pinned to a dated snapshot — which is where that session's
+/// context window and prices come from.
+pub fn listed_models(models: &BTreeMap<String, CatalogModel>) -> Vec<CatalogModel> {
+    let mut shadowed: BTreeSet<&str> = BTreeSet::new();
+    for alias in models.values() {
+        let Some(bare) = alias.name.strip_suffix(LATEST_MARKER) else {
+            continue;
+        };
+        for m in models.values() {
+            if is_dated_snapshot_of(&m.id, &alias.id) && m.name == bare {
+                shadowed.insert(m.id.as_str());
+            }
+        }
+    }
+
+    let mut out: Vec<CatalogModel> = models
+        .values()
+        .filter(|m| !shadowed.contains(m.id.as_str()))
+        .cloned()
+        .collect();
+    // With the row it was distinguishing itself from gone, the marker is noise. Left on
+    // where some other listed row already carries the bare name, so that collapsing ids
+    // never ends in two rows that read the same.
+    let taken: BTreeSet<String> = out.iter().map(|m| m.name.clone()).collect();
+    for m in &mut out {
+        if let Some(bare) = m.name.strip_suffix(LATEST_MARKER)
+            && !taken.contains(bare)
+        {
+            m.name = bare.to_string();
+        }
+    }
+    out
+}
+
 pub struct Catalog {
     data: RwLock<CatalogData>,
 }
@@ -190,6 +257,8 @@ impl Catalog {
             .cloned()
     }
 
+    /// What a picker offers for this provider. See [`listed_models`]: an alias and the
+    /// dated snapshot it points at are one model, and one row.
     pub fn models_for(&self, ailoy_prefix: &str) -> Vec<CatalogModel> {
         let Some(md) = models_dev_provider(ailoy_prefix) else {
             return vec![];
@@ -197,11 +266,7 @@ impl Catalog {
         self.data
             .read()
             .ok()
-            .and_then(|d| {
-                d.providers
-                    .get(md)
-                    .map(|p| p.models.values().cloned().collect())
-            })
+            .and_then(|d| d.providers.get(md).map(|p| listed_models(&p.models)))
             .unwrap_or_default()
     }
 
@@ -289,6 +354,140 @@ mod tests {
             Some(("bedrock", "anthropic.claude-opus-5"))
         );
         assert_eq!(models_dev_provider("bedrock"), Some("amazon-bedrock"));
+    }
+
+    fn model(id: &str, name: &str) -> (String, CatalogModel) {
+        (
+            id.to_string(),
+            CatalogModel {
+                id: id.to_string(),
+                name: name.to_string(),
+                reasoning: true,
+                tool_call: true,
+                context: Some(200_000),
+                output: Some(64_000),
+                cost: None,
+            },
+        )
+    }
+
+    #[test]
+    fn an_alias_and_the_snapshot_it_points_at_are_one_row() {
+        let models: BTreeMap<String, CatalogModel> = [
+            model("claude-sonnet-4-5", "Claude Sonnet 4.5 (latest)"),
+            model("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5"),
+            model("claude-opus-5", "Claude Opus 5"),
+        ]
+        .into_iter()
+        .collect();
+
+        let listed = listed_models(&models);
+        assert_eq!(
+            listed.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["claude-opus-5", "claude-sonnet-4-5"]
+        );
+        // And the marker comes off with the row it was distinguishing from.
+        assert_eq!(
+            listed
+                .iter()
+                .find(|m| m.id == "claude-sonnet-4-5")
+                .unwrap()
+                .name,
+            "Claude Sonnet 4.5"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_that_says_something_the_alias_does_not_keeps_its_row() {
+        let models: BTreeMap<String, CatalogModel> = [
+            // OpenAI's naming: the snapshot carries its date, so the two rows do not read
+            // as the same model and both stay.
+            model("gpt-4o", "GPT-4o"),
+            model("gpt-4o-2024-08-06", "GPT-4o (2024-08-06)"),
+            // Nor is a smaller model a snapshot of the one whose id it starts with.
+            model("gpt-4o-mini", "GPT-4o mini"),
+        ]
+        .into_iter()
+        .collect();
+
+        assert_eq!(listed_models(&models).len(), 3);
+        assert!(!is_dated_snapshot_of("gpt-4o-mini", "gpt-4o"));
+        assert!(is_dated_snapshot_of("gpt-4o-2024-08-06", "gpt-4o"));
+        assert!(is_dated_snapshot_of(
+            "claude-haiku-4-5-20251001",
+            "claude-haiku-4-5"
+        ));
+        assert!(!is_dated_snapshot_of(
+            "claude-haiku-4-5",
+            "claude-haiku-4-5"
+        ));
+    }
+
+    #[test]
+    fn a_marker_stays_when_dropping_it_would_double_a_name() {
+        // Nothing was collapsed here — the ids are unrelated — so taking the marker off
+        // would leave the list with two rows reading `Gemini Flash`.
+        let models: BTreeMap<String, CatalogModel> = [
+            model("gemini-flash-latest", "Gemini Flash (latest)"),
+            model("gemini-3.5-flash", "Gemini Flash"),
+        ]
+        .into_iter()
+        .collect();
+
+        let listed = listed_models(&models);
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().any(|m| m.name == "Gemini Flash (latest)"));
+    }
+
+    #[test]
+    fn the_catalog_still_answers_for_a_snapshot_that_is_not_listed() {
+        // A session pinned to the dated id keeps its context window and its prices.
+        let mut data = CatalogData::default();
+        data.providers.insert(
+            "anthropic".into(),
+            CatalogProvider {
+                name: "Anthropic".into(),
+                models: [
+                    model("claude-sonnet-4-5", "Claude Sonnet 4.5 (latest)"),
+                    model("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5"),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        );
+        let cat = Catalog::from_data(data);
+
+        assert_eq!(cat.models_for("anthropic").len(), 1);
+        assert_eq!(
+            cat.lookup("anthropic/claude-sonnet-4-5-20250929")
+                .unwrap()
+                .context,
+            Some(200_000)
+        );
+    }
+
+    #[test]
+    fn the_embedded_snapshot_offers_each_claude_4_5_once() {
+        let listed = Catalog::load(None).models_for("anthropic");
+        let dated: Vec<&str> = listed
+            .iter()
+            .map(|m| m.id.as_str())
+            .filter(|id| {
+                id.starts_with("claude-")
+                    && id
+                        .rsplit('-')
+                        .next()
+                        .is_some_and(|t| t.len() == 8 && t.chars().all(|c| c.is_ascii_digit()))
+            })
+            .collect();
+        assert!(
+            dated.is_empty(),
+            "alias rows should have swallowed {dated:?}"
+        );
+        assert!(
+            listed.iter().all(|m| !m.name.ends_with(LATEST_MARKER)),
+            "no row should still be marked as the latest of something"
+        );
     }
 
     #[test]
