@@ -97,3 +97,32 @@ export function expandTo(expanded: Set<string>, root: string, path: string): Set
   }
   return next;
 }
+
+/**
+ * Whether a row offers an expander.
+ *
+ * Three answers, and the third is why this is a function. A directory *is* expandable — that
+ * is what a directory is — so a source with nothing to say about a row gets a chevron. A
+ * source that knows the row holds nothing gets none. And a source that is still finding out
+ * gets none *yet*, which is the case this exists for: in a page tree a page is a directory
+ * because it may have sub-pages and usually has none, so assuming expandable while the answer
+ * is in flight put a chevron on nearly every row and then took it off again, one row at a time,
+ * as each page's json arrived.
+ *
+ * A row the reader has already opened keeps its expander whatever the source says. Its
+ * children are on screen; taking the chevron away while a fresh answer is fetched would close
+ * the subtree under them.
+ */
+export function expandable(row: {
+  isDir: boolean;
+  /** The source's answer: `true` holds nothing, `false` holds something, absent is no answer. */
+  leaf?: boolean;
+  /** The source is still finding out. */
+  pending?: boolean;
+  /** Whether this path is open already. */
+  open: boolean;
+}): boolean {
+  if (!row.isDir) return false;
+  if (row.open) return true;
+  return row.leaf !== true && !row.pending;
+}

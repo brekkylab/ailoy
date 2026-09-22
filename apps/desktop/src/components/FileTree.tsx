@@ -11,6 +11,7 @@ import { ChevronRight, File, Folder } from "lucide-react";
 import type { ReactNode } from "react";
 
 import * as api from "@/api";
+import { expandable } from "@/lib/treeState";
 import { S } from "@/strings";
 import type { Entry } from "@/types";
 
@@ -19,12 +20,20 @@ export type RowInfo = {
   /** Drawn where the folder or file icon would be. */
   icon?: ReactNode;
   /**
-   * True when a directory has nothing inside, so no expander is offered for it.
-   *
-   * `undefined` is "not known yet", and reads as expandable: a chevron that resolves away
-   * a moment later is a smaller lie than one that never appears over real children.
+   * True when a directory has nothing inside, so no expander is offered for it. Absent is
+   * "this source has no opinion", which leaves a directory expandable — it is one.
    */
   leaf?: boolean;
+  /**
+   * The source is still finding out, so no expander *yet*.
+   *
+   * Not the same as having no opinion, and the difference is what a page tree looks like:
+   * a page is a directory because it may have sub-pages and usually has none, so assuming
+   * expandable while the answer was in flight put a chevron on nearly every row and then
+   * took it off again as each page's json arrived. The space is reserved either way, so a
+   * chevron appearing costs no movement. See `lib/treeState`'s `expandable`.
+   */
+  pending?: boolean;
 };
 
 /** A source with nothing to add. Calls no hooks, which is what keeps `useRow` honest. */
@@ -133,11 +142,12 @@ function Row({
   expanded: Set<string>;
   onToggle: (path: string) => void;
 }) {
-  const { icon, leaf } = (adapter?.useRow ?? plainRow)(e);
-  // A directory known to hold nothing is drawn as what it is. For Notion that is most of
-  // them: a page is a directory because it *may* have sub-pages, and usually has none.
-  const expandable = e.kind === "dir" && leaf !== true;
-  const open = expandable && expanded.has(e.path);
+  const { icon, leaf, pending } = (adapter?.useRow ?? plainRow)(e);
+  // A directory known to hold nothing is drawn as what it is, and one whose source has not
+  // answered yet waits. For Notion that is most of them: a page is a directory because it
+  // *may* have sub-pages, and usually has none.
+  const open = expanded.has(e.path);
+  const isExpandable = expandable({ isDir: e.kind === "dir", leaf, pending, open });
 
   return (
     <li>
@@ -150,12 +160,12 @@ function Row({
         onClick={() => {
           // A directory that also opens does both on the one click: in a page tree the
           // children and the body are the same thing being asked for.
-          if (expandable) onToggle(e.path);
+          if (isExpandable) onToggle(e.path);
           if (e.kind !== "dir" || adapter?.openDirs) onOpen(e.path);
         }}
         title={e.size != null ? `${e.size} B` : undefined}
       >
-        {expandable ? (
+        {isExpandable ? (
           <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
         ) : (
           <span className="w-3 shrink-0" />
@@ -164,7 +174,7 @@ function Row({
           (e.kind === "dir" ? <Folder className="size-3.5 shrink-0" /> : <File className="size-3.5 shrink-0" />)}
         <span className="truncate">{adapter?.label?.(e) ?? e.name}</span>
       </button>
-      {open && (
+      {isExpandable && open && (
         <FileTree
           path={e.path}
           depth={depth + 1}

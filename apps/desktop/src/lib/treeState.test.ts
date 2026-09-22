@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { expandTo, isHidden, loadExpanded, saveExpanded, toggle } from "@/lib/treeState";
+import { expandTo, expandable, isHidden, loadExpanded, saveExpanded, toggle } from "@/lib/treeState";
 
 /** vitest runs in node, which has no `localStorage`. */
 function stubStorage() {
@@ -111,5 +111,30 @@ describe("expandTo", () => {
 
   it("has nothing to open for a direct child", () => {
     expect([...expandTo(new Set(), "/notion", "/notion/a__1")]).toEqual([]);
+  });
+});
+
+describe("expandable", () => {
+  it("offers an expander for a directory nothing has an opinion about", () => {
+    // Local and S3 rows: a directory is expandable because it is one.
+    expect(expandable({ isDir: true, open: false })).toBe(true);
+    expect(expandable({ isDir: false, open: false })).toBe(false);
+  });
+
+  it("takes the answer when the source has one", () => {
+    expect(expandable({ isDir: true, leaf: true, open: false })).toBe(false);
+    expect(expandable({ isDir: true, leaf: false, open: false })).toBe(true);
+  });
+
+  it("waits rather than showing a chevron it is about to take away", () => {
+    // The Notion case: most pages hold nothing, and the answer arrives a beat later.
+    expect(expandable({ isDir: true, pending: true, open: false })).toBe(false);
+    expect(expandable({ isDir: true, leaf: false, pending: true, open: false })).toBe(false);
+  });
+
+  it("leaves an open row alone", () => {
+    // Its children are on screen; taking the chevron away would close them.
+    expect(expandable({ isDir: true, pending: true, open: true })).toBe(true);
+    expect(expandable({ isDir: true, leaf: true, open: true })).toBe(true);
   });
 });

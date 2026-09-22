@@ -72,6 +72,11 @@ function useNotionRow(e: Entry): RowInfo {
     ),
     leaf:
       text === null ? undefined : db ? notionRowCount(text) === 0 : notionChildren(text).length === 0,
+    // Until the json lands there is no answer, and no expander: most pages hold nothing, so
+    // assuming otherwise showed a chevron on nearly every row and then took it away. A read
+    // that *failed* is not pending — the row keeps the expander, because a page whose json
+    // could not be read may still have sub-pages behind it.
+    pending: e.kind === "dir" && node.isPending,
   };
 }
 
