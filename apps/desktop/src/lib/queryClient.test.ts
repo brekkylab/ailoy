@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { BYTES_GC_MS, BYTES_KEY } from "./bytes";
-import { FS_GC_MS, FS_STALE_MS, makeQueryClient } from "./queryClient";
+import { changedByRun, FS_GC_MS, FS_STALE_MS, makeQueryClient } from "./queryClient";
 
 describe("the query client", () => {
   const qc = makeQueryClient();
@@ -27,5 +27,32 @@ describe("the query client", () => {
     // would show a conversation that has moved on.
     expect(defaultsFor(["sessions"]).staleTime).toBeUndefined();
     expect(defaultsFor(["messages", "abc"]).gcTime).toBeUndefined();
+  });
+});
+
+describe("changedByRun", () => {
+  it("takes the artifacts tree, which is where a run writes", () => {
+    expect(changedByRun(["fs", "/artifacts"])).toBe(true);
+    expect(changedByRun(["fs", "/artifacts/report"])).toBe(true);
+    expect(changedByRun(["file", "/artifacts/report/out.md", "plain"])).toBe(true);
+    expect(changedByRun(["bytes", "/artifacts/chart.png"])).toBe(true);
+  });
+
+  it("leaves the rest of the tree alone", () => {
+    // The agent's console mounts the workspace as context, which refuses its writes. A
+    // Notion row is a `file` query and a page render on the far side; re-reading every one
+    // of them at the end of a run was the whole reason for this rule.
+    expect(changedByRun(["file", "/notion/pages/A__1a2b/page.json", "notion"])).toBe(false);
+    expect(changedByRun(["fs", "/notion/pages"])).toBe(false);
+    expect(changedByRun(["fs", "/"])).toBe(false);
+    expect(changedByRun(["bytes", "/s3/report.pdf"])).toBe(false);
+  });
+
+  it("is not about queries that are not files", () => {
+    expect(changedByRun(["sessions"])).toBe(false);
+    expect(changedByRun(["messages", "/artifacts"])).toBe(false);
+    expect(changedByRun(["fs"])).toBe(false);
+    // A path that only looks like the artifacts root is not under it.
+    expect(changedByRun(["fs", "/artifacts-of-mine"])).toBe(false);
   });
 });

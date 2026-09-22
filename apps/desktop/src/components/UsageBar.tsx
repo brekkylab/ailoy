@@ -17,9 +17,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import * as api from "@/api";
-import { BYTES_KEY } from "@/lib/bytes";
 import { Progress } from "@/components/ui/progress";
 import { useRunStore, useRunTerminal, selectRun } from "@/store/runs";
+import { changedByRun } from "@/lib/queryClient";
 import { S } from "@/strings";
 import type { RateLimitWindow } from "@/types";
 
@@ -60,17 +60,15 @@ export function UsageBar({ sessionId }: { sessionId: string }) {
   // session's `updated_at` — as the run ends. Watching the status rather than the event
   // stream keeps this to one refetch per run.
   //
-  // `fs` and `file` are here for a different reason: the agent's `write_file`/`mkdir`
-  // tools change the workspace through the engine, not through this app's own mutations,
-  // so nothing in `WorkspacePanel` or `FileTree` ever hears about it and the tree sits on
-  // a listing from before the run. `["fs"]` with no path is every open directory level at
-  // once; `["file"]` refreshes whatever preview is showing, in case the run rewrote it.
+  // The files are here for a different reason: the agent writes through the engine, not
+  // through this app's own mutations, so nothing in `WorkspacePanel` or `FileTree` ever
+  // hears about it and the tree sits on a listing from before the run. Only where it
+  // writes, though — see `changedByRun`, which is what keeps a run from re-reading a whole
+  // Notion tree the agent cannot even write to.
   useRunTerminal(sessionId, () => {
     void qc.invalidateQueries({ queryKey: ["usage", sessionId] });
     void qc.invalidateQueries({ queryKey: ["sessions"] });
-    void qc.invalidateQueries({ queryKey: ["fs"] });
-    void qc.invalidateQueries({ queryKey: ["file"] });
-    void qc.invalidateQueries({ queryKey: [BYTES_KEY] });
+    void qc.invalidateQueries({ predicate: (q) => changedByRun(q.queryKey) });
   });
 
   const used = live.contextUsed ?? usage.data?.context_used ?? null;

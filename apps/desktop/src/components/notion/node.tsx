@@ -11,6 +11,7 @@
 // page. A row the user then clicks is already in hand, and nothing is fetched twice.
 
 import { useQuery, type UseQueryOptions } from "@tanstack/react-query";
+import { useEffect, useMemo } from "react";
 
 import * as api from "@/api";
 import type { RowInfo, TreeAdapter } from "@/components/FileTree";
@@ -23,6 +24,7 @@ import {
   notionRowCount,
   notionTitle,
 } from "@/lib/notion";
+import { recalledRow, rememberRow } from "@/lib/notionRows";
 import type { Entry, FileContent } from "@/types";
 
 /** The json behind a page or database directory. */
@@ -64,19 +66,30 @@ function useNotionRow(e: Entry): RowInfo {
   // simply missing; its children must read as unknown rather than as none, or a long page
   // would lose the sub-pages it does have.
   const text = node.data && !node.data.truncated ? node.data.text : null;
+  // What this row was last time, which is what it is drawn as until the read lands. A
+  // restart empties the query cache but not this, so the tree comes back with its icons and
+  // its chevrons rather than filling them in one row at a time. See `lib/notionRows`.
+  const recalled = useMemo(() => (e.kind === "dir" ? recalledRow(e.path) : null), [e.kind, e.path]);
+  const icon = text ? notionIcon(text) : null;
+  const leaf = text === null ? undefined : db ? notionRowCount(text) === 0 : notionChildren(text).length === 0;
+  // Written after the render, not during it: this is a side effect, and one that reads the
+  // same storage the row above it may be writing.
+  useEffect(() => {
+    if (leaf !== undefined) rememberRow(e.path, { icon, leaf });
+  }, [e.path, icon, leaf]);
   return {
     icon: (
       <span className="w-3.5 shrink-0 text-center text-[13px] leading-none">
-        {(text && notionIcon(text)) ?? (db ? DB_ICON : PAGE_ICON)}
+        {icon ?? recalled?.icon ?? (db ? DB_ICON : PAGE_ICON)}
       </span>
     ),
-    leaf:
-      text === null ? undefined : db ? notionRowCount(text) === 0 : notionChildren(text).length === 0,
-    // Until the json lands there is no answer, and no expander: most pages hold nothing, so
-    // assuming otherwise showed a chevron on nearly every row and then took it away. A read
-    // that *failed* is not pending — the row keeps the expander, because a page whose json
-    // could not be read may still have sub-pages behind it.
-    pending: e.kind === "dir" && node.isPending,
+    leaf: leaf ?? recalled?.leaf,
+    // Until there is an answer — from the read, or from the last time this row was seen —
+    // there is no expander: most pages hold nothing, so assuming otherwise showed a chevron
+    // on nearly every row and then took it away. A read that *failed* is not pending: the
+    // row keeps the expander, because a page whose json could not be read may still have
+    // sub-pages behind it.
+    pending: e.kind === "dir" && node.isPending && !recalled,
   };
 }
 

@@ -7,6 +7,7 @@
 import { QueryClient } from "@tanstack/react-query";
 
 import { BYTES_GC_MS, BYTES_KEY } from "@/lib/bytes";
+import { ARTIFACTS_ROOT } from "@/paths";
 
 /**
  * How long a listing or a file answer is taken as still true.
@@ -33,4 +34,26 @@ export function makeQueryClient(): QueryClient {
   // they are read, and their own bound, set where they are trimmed.
   qc.setQueryDefaults([BYTES_KEY], { gcTime: BYTES_GC_MS });
   return qc;
+}
+
+/**
+ * Whether a finished run could have changed what this query holds.
+ *
+ * A run writes to one place. The agent's console mounts the workspace as *context*, which
+ * cortex refuses writes under, and its output goes to the artifacts tree — so after a run
+ * the listings and files under `/artifacts` are the ones worth asking about again, and
+ * nothing else in the tree is.
+ *
+ * That distinction is not housekeeping. The rows of a Notion tree are `["file", …]` queries,
+ * one per visible page, and each is a page render on the far side: invalidating them all at
+ * the end of every run re-read the whole visible tree, over the network, for a source the
+ * agent cannot write to at all.
+ */
+export function changedByRun(key: readonly unknown[]): boolean {
+  const [kind, path] = key;
+  if (kind !== "fs" && kind !== "file" && kind !== BYTES_KEY) return false;
+  return (
+    typeof path === "string" &&
+    (path === ARTIFACTS_ROOT || path.startsWith(`${ARTIFACTS_ROOT}/`))
+  );
 }
