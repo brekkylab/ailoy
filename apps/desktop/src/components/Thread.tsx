@@ -8,10 +8,15 @@
 // message already carries `tool_calls` whose results do not exist yet, while the live run
 // holds those same calls with their real status.
 //
-// `claimed` is the seam. Every call id named by a stored assistant message belongs to its
-// bubble, which reads the live entry for that id when there is one; the live block below
-// renders only the ids storage has not claimed yet. Exactly one card per call, at every
-// moment of a run.
+// `claimed` is the seam. Every call id named by a stored assistant message belongs to the
+// group that message's calls fall into, which reads the live entry for that id when there
+// is one; the ids storage has not claimed yet are folded onto the end of that group, or
+// drawn by the live block below when there is streamed text above them. Exactly one card
+// per call, at every moment of a run.
+//
+// Which calls share a group is `lib/thread`'s question — adjacent calls collapse into one
+// row, and anything the model *says* closes it — and it answers it from the stored list
+// alone, which is why that half is tested without a webview.
 //
 // The engine owns the message list; this component owns exactly one query key,
 // `["messages", id]`. `["sessions"]` and `["usage", id]` belong to `Composer`/`UsageBar`,
@@ -24,11 +29,11 @@ import * as api from "@/api";
 import { Composer } from "@/components/Composer";
 import { Markdown } from "@/components/Markdown";
 import { AssistantBubble, UserBubble } from "@/components/MessageBubble";
-import { ToolCallCard } from "@/components/ToolCallCard";
+import { ToolGroup } from "@/components/ToolGroup";
 import { attachRun } from "@/events";
+import { buildThread, liveGroupKey, resolveCall, withLiveCalls, type GroupCall } from "@/lib/thread";
 import { selectRun, useRunStore } from "@/store/runs";
 import { S } from "@/strings";
-import type { StoredMessage } from "@/types";
 
 /**
  * How far from the end still counts as "at the end", in px. Wide enough to survive the
@@ -103,30 +108,7 @@ export function Thread({
     if (atBottom.current) bottom.current?.scrollIntoView({ block: "end" });
   }, [messages.data?.length, live.text, live.thinking, live.toolOrder.length]);
 
-  const { turns, toolResults, claimed, lastTurnSeq } = useMemo(() => {
-    const toolResults = new Map<string, StoredMessage>();
-    const turns: StoredMessage[] = [];
-    const claimed = new Set<string>();
-    for (const m of messages.data ?? []) {
-      if (m.depth !== 0) continue; // sub-agent internals stay hidden in v1
-      // A tool row is an answer to a call, never a turn of its own. One without an `id`
-      // cannot be matched to its call, but it is still not a bubble.
-      if (m.message.role === "tool") {
-        if (m.message.id) toolResults.set(m.message.id, m);
-        continue;
-      }
-      if (m.message.role === "system") continue;
-      if (m.message.role === "assistant") {
-        for (const p of m.message.tool_calls ?? []) if (p.type === "function") claimed.add(p.id);
-      }
-      turns.push(m);
-    }
-    // "Last turn", not "last assistant message": after a cancel the next user message sits
-    // behind the cancelled assistant row, and only a message that is still the very last
-    // turn can have calls that are genuinely in flight for the current run.
-    const lastTurnSeq = turns.length ? turns[turns.length - 1].seq : null;
-    return { turns, toolResults, claimed, lastTurnSeq };
-  }, [messages.data]);
+  const { segments: stored, results, claimed } = useMemo(() => buildThread(messages.data ?? []), [messages.data]);
 
   // A session id can outlive the session: the one in `localStorage` after the row was
   // deleted, or one the list has not dropped yet. The engine says `not_found`; there is
@@ -137,11 +119,27 @@ export function Thread({
 
   const streaming = live.status === "running";
   // Calls the engine announced before it wrote the message that names them. Once that
-  // message lands they move up into its bubble and this list empties.
+  // message lands they belong to a stored group and this list empties.
   const unclaimed = streaming ? live.toolOrder.filter((id) => !claimed.has(id)) : [];
+  const liveCalls: GroupCall[] = unclaimed.map((id) => {
+    const c = live.toolCalls[id];
+    return { id, name: c.name, args: c.arguments };
+  });
+  // Whether the live block has anything of its own. When it has, those calls came *after*
+  // that text and stay under it in a group of their own; when it has not — the usual case,
+  // because the engine writes the assistant message before running its tools and that
+  // resets the stream — they fold onto the end of the last stored group instead of opening
+  // a second one that merges into it a moment later.
+  const saidLive = !!live.text || !!live.thinking;
+  const segments = saidLive ? stored : withLiveCalls(stored, liveCalls);
+  const liveKey = liveGroupKey(segments, streaming);
   // A run that has produced nothing yet still says so.
   const pulse = streaming && !live.text && !live.thinking && live.toolOrder.length === 0;
-  const showLive = streaming && (pulse || !!live.text || !!live.thinking || unclaimed.length > 0);
+  const showLive = streaming && (pulse || saidLive);
+  // A call as its card needs it: the live run where it has an entry, storage where it does
+  // not, and `live` to tell a call still running from one nothing will ever answer.
+  const resolve = (calls: GroupCall[], inFlight: boolean) =>
+    calls.map((c) => resolveCall(c, live.toolCalls[c.id], results.get(c.id), inFlight));
   return (
     <>
       {/* `mask-fade-top` thins messages out as they pass under the title bar, which has no
@@ -159,16 +157,19 @@ export function Thread({
               {S.loadFailed} ({api.messageOf(messages.error)})
             </div>
           )}
-          {turns.map((m) =>
-            m.message.role === "user" ? (
-              <UserBubble key={m.seq} message={m.message} />
+          {segments.map((seg) =>
+            seg.kind === "turn" ? (
+              seg.message.message.role === "user" ? (
+                <UserBubble key={seg.key} message={seg.message.message} />
+              ) : (
+                <AssistantBubble key={seg.key} message={seg.message.message} />
+              )
             ) : (
-              <AssistantBubble
-                key={m.seq}
-                message={m.message}
-                toolResults={toolResults}
-                live={live}
-                isLatest={m.seq === lastTurnSeq}
+              <ToolGroup
+                key={seg.key}
+                calls={resolve(seg.calls, seg.key === liveKey)}
+                thinking={seg.thinking}
+                live={seg.key === liveKey}
               />
             ),
           )}
@@ -180,20 +181,7 @@ export function Thread({
                 </pre>
               )}
               {live.text && <Markdown text={live.text} />}
-              {unclaimed.map((id) => {
-                const c = live.toolCalls[id];
-                return (
-                  <ToolCallCard
-                    key={id}
-                    name={c.name}
-                    args={c.arguments}
-                    status={c.status}
-                    result={c.result}
-                    startedAt={c.startedAt}
-                    finishedAt={c.finishedAt}
-                  />
-                );
-              })}
+              {liveCalls.length > 0 && <ToolGroup calls={resolve(liveCalls, true)} thinking={[]} live />}
               {pulse && <span className="animate-pulse text-sm text-muted-foreground">…</span>}
             </div>
           )}
