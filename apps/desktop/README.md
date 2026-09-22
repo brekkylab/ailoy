@@ -69,8 +69,13 @@ than on a hunch:
 
 ```sh
 npm run tauri:dev                     # drive it: walk the tree, open some files
-python3 scripts/fs-timings.py         # what it cost, by operation and by source
+python3 scripts/fs-timings.py         # what *this run* cost, by operation and by source
+python3 scripts/fs-timings.py --all   # every run in the logs instead
 ```
+
+The newest run only, by default. A log outlives the build that wrote it, and the first
+comparison made here mixed two runs of two different binaries and read the average as a
+result; the app writes a marker at startup and the summary splits on it.
 
 The summary groups by the mount a path is under, and lists the slowest individual calls. A
 read shows as two lines, a `stat` and a body, because which of the two dominates decides

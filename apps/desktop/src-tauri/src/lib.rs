@@ -64,6 +64,10 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             logging::init(&data_dir);
+            // Where one run's timings end and the next begin. A log outlives the build that
+            // wrote it — the first measurement of the caching work compared two runs of two
+            // different binaries without noticing — so the summary script splits on this.
+            tracing::info!(target: "fs_timing", event = "start", version = env!("CARGO_PKG_VERSION"));
             let mut cfg = EngineConfig::new(data_dir);
             cfg.console_bin = sidecar::console_bin();
             // Setup runs on the main thread; the engine's start is short (open the DB,

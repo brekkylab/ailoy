@@ -3,8 +3,14 @@
 
     # 1. drive the app: open the sources, walk the tree, open a few files
     npm run tauri:dev
-    # 2. read what it cost
+    # 2. read what this run cost
     python3 scripts/fs-timings.py
+    python3 scripts/fs-timings.py --all        # every run in the logs instead
+
+Only the newest run is summarised by default, and that is not a detail: a log outlives the
+build that wrote it, and the first comparison made here mixed two runs of two different
+binaries and read the average as a result. The app writes a marker at startup, and runs are
+the stretches between them.
 
 Each line the engine writes is one call into a store — `list`, `stat`, or `read` — with how
 long it took and how much it was for. This groups them by operation and by the mount the
@@ -30,21 +36,32 @@ DEFAULT_LOGS = os.path.expanduser(
 FIELD = re.compile(r'(\w+)=(?:"([^"]*)"|([^\s]+))')
 
 
-def rows(paths):
+def runs(paths):
+    """The calls of each run, in order, as `(started, calls)`.
+
+    A run is the stretch after a `start` marker. Anything logged before the first one — by a
+    build that predates the marker — is a run of its own, so an old log still summarises.
+    """
+    out = [(None, [])]
     for path in paths:
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
                 if "fs_timing" not in line:
                     continue
+                stamp = TIMESTAMP.match(line)
                 # `findall` gives "" for the alternative that did not match, not None.
                 fields = {k: (q or b) for k, q, b in FIELD.findall(line)}
+                if fields.get("event") == "start":
+                    out.append((stamp.group(1) if stamp else "?", []))
+                    continue
                 if "op" not in fields or "ms" not in fields:
                     continue
                 try:
                     fields["ms"] = int(fields["ms"])
                 except ValueError:
                     continue
-                yield fields
+                out[-1][1].append(fields)
+    return [(started, calls) for started, calls in out if calls]
 
 
 def source_of(path):
@@ -85,11 +102,15 @@ def main(argv):
         i = argv.index("--top")
         top = int(argv[i + 1])
         del argv[i : i + 2]
+    every = "--all" in argv
+    if every:
+        argv.remove("--all")
     paths = argv[1:] or sorted(glob.glob(DEFAULT_LOGS))
     if not paths:
         sys.exit(f"no log files: pass them as arguments, or run the app first ({DEFAULT_LOGS})")
 
-    calls = list(rows(paths))
+    sessions = runs(paths)
+    calls = [c for _, run in sessions for c in run] if every else (sessions[-1][1] if sessions else [])
     if not calls:
         # The likeliest cause by far is an app that has not been restarted since the timing
         # lines landed, so say when the log last moved: a newest line older than the build is
@@ -109,7 +130,14 @@ def main(argv):
     for c in calls:
         groups[(c["op"], source_of(c.get("path", "")))].append(c)
 
-    print(f"{len(calls)} calls in {', '.join(os.path.basename(p) for p in paths)}\n")
+    if every:
+        scope = f"{len(sessions)} runs in " + ", ".join(os.path.basename(p) for p in paths)
+    else:
+        started = sessions[-1][0]
+        scope = f"the run started {started}" if started else "one run, from before the app marked its starts"
+        if len(sessions) > 1:
+            scope += f" ({len(sessions) - 1} earlier run(s) left out — `--all` for every one)"
+    print(f"{len(calls)} calls in {scope}\n")
     head = f"{'op':6} {'source':14} {'calls':>6} {'p50':>8} {'p90':>8} {'max':>8} {'total':>8} {'errors':>7}"
     print(head)
     print("-" * len(head))
