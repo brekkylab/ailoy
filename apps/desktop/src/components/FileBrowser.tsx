@@ -9,7 +9,8 @@
 // layout means something. Everything else is files: what you click is what you read, and
 // showing bytes as anything but themselves would be a guess about what they are.
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { RotateCw } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import * as api from "@/api";
@@ -20,6 +21,7 @@ import { CodeViewer } from "@/components/viewers/CodeViewer";
 import { TableViewer } from "@/components/viewers/TableViewer";
 import { NOTION, readNotionNode } from "@/components/notion/node";
 import { NotionPage } from "@/components/notion/NotionPage";
+import { BYTES_KEY } from "@/lib/bytes";
 import { notionMarkdown } from "@/lib/notion";
 import { expandTo, isHidden, loadExpanded, saveExpanded, toggle } from "@/lib/treeState";
 import { DocxViewer } from "@/components/viewers/DocxViewer";
@@ -176,6 +178,15 @@ export function FileBrowser({
     enabled: !!selected && !binary,
   });
 
+  // The way to ask again. A listing and a file answer are kept for a while (see `App`), which
+  // is right for a store across a network and wrong the moment something changed it from the
+  // outside — a page edited in Notion, a key written to a bucket. There is no event for that,
+  // so there is a button.
+  const qc = useQueryClient();
+  const refresh = () => {
+    for (const key of [["fs"], ["file"], [BYTES_KEY]]) void qc.invalidateQueries({ queryKey: key });
+  };
+
   const text = file.data?.text ?? null;
   // Markdown for a Notion page, the raw bytes for everything else — including a Notion
   // database, whose json has no body to render and is more use shown as what it is.
@@ -184,8 +195,8 @@ export function FileBrowser({
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex w-72 shrink-0 flex-col border-t border-r">
-        {hiddenFiles && (
-          <div className="flex shrink-0 justify-end px-2 pt-1">
+        <div className="flex shrink-0 items-center justify-end gap-1 px-2 pt-1">
+          {hiddenFiles && (
             <button
               className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
               aria-pressed={showHidden}
@@ -193,8 +204,16 @@ export function FileBrowser({
             >
               {showHidden ? S.hideHidden : S.showHidden}
             </button>
-          </div>
-        )}
+          )}
+          <button
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label={S.refresh}
+            title={S.refresh}
+            onClick={refresh}
+          >
+            <RotateCw className="size-3.5" />
+          </button>
+        </div>
         <ScrollArea className="min-h-0 flex-1 px-2 py-1">
           <FileTree
             path={root}

@@ -17,6 +17,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import * as api from "@/api";
+import { BYTES_KEY } from "@/lib/bytes";
 import { Progress } from "@/components/ui/progress";
 import { useRunStore, useRunTerminal, selectRun } from "@/store/runs";
 import { S } from "@/strings";
@@ -69,6 +70,7 @@ export function UsageBar({ sessionId }: { sessionId: string }) {
     void qc.invalidateQueries({ queryKey: ["sessions"] });
     void qc.invalidateQueries({ queryKey: ["fs"] });
     void qc.invalidateQueries({ queryKey: ["file"] });
+    void qc.invalidateQueries({ queryKey: [BYTES_KEY] });
   });
 
   const used = live.contextUsed ?? usage.data?.context_used ?? null;

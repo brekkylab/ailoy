@@ -14,6 +14,7 @@ import { FolderOpen, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import * as api from "@/api";
+import { BYTES_KEY } from "@/lib/bytes";
 import { SourceIcon } from "@/components/SourceIcon";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -49,6 +50,7 @@ function RootDirectory({ source, onDone }: { source: MountInfo; onDone: () => vo
       qc.invalidateQueries({ queryKey: ["workspace"] });
       qc.invalidateQueries({ queryKey: ["fs"] });
       qc.invalidateQueries({ queryKey: ["file"] });
+      qc.invalidateQueries({ queryKey: [BYTES_KEY] });
       onDone();
     },
   });
@@ -88,6 +90,7 @@ export function SourceDialog({ source, onClose }: { source: MountInfo | null; on
       qc.invalidateQueries({ queryKey: ["fs"] });
       // The preview may be showing a file inside the source that just went away.
       qc.invalidateQueries({ queryKey: ["file"] });
+      qc.invalidateQueries({ queryKey: [BYTES_KEY] });
       onClose();
     },
   });

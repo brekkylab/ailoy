@@ -10,6 +10,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { type ReactNode, useId, useState } from "react";
 
 import * as api from "@/api";
+import { BYTES_KEY } from "@/lib/bytes";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -117,6 +118,7 @@ function MountForm({ kind, onClose }: { kind: Kind; onClose: () => void }) {
       qc.invalidateQueries({ queryKey: ["mounts"] });
       qc.invalidateQueries({ queryKey: ["fs"] });
       qc.invalidateQueries({ queryKey: ["file"] });
+      qc.invalidateQueries({ queryKey: [BYTES_KEY] });
       onClose();
     },
   });

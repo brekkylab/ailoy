@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
@@ -11,12 +11,13 @@ import { Sidebar } from "@/components/Sidebar";
 import { Thread } from "@/components/Thread";
 import { TitleBar } from "@/components/TitleBar";
 import { WorkspacePanel } from "@/components/WorkspacePanel";
+import { makeQueryClient } from "@/lib/queryClient";
 import { sessionTitle } from "@/lib/sessionTitle";
 import { hasAnyKey } from "@/lib/settings";
 import { S } from "@/strings";
 import type { MainView } from "@/views";
 
-const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } } });
+const qc = makeQueryClient();
 const KEY = "ailoy.session";
 const SIDEBAR_KEY = "ailoy.sidebarCollapsed";
 /** One source for the sidebar's width: the grid column and the title bar's left segment. */

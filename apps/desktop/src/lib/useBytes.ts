@@ -10,10 +10,22 @@
 // The bridge is the transport this app already proves on every other call. `fs_read_bytes`
 // answers with `tauri::ipc::Response`, so the buffer crosses as bytes rather than as a JSON
 // array of numbers, and arrives here as an `ArrayBuffer`.
+//
+// A query and not a bare effect, so that reopening a file the reader has already opened costs
+// nothing: the same file used to be read again on every mount, which for a file on a remote
+// store is the whole round trip. See `lib/bytes` for what bounds that cache.
+//
+// **The buffer here is shared.** Every viewer holding this path is handed the same
+// `ArrayBuffer`, and the cache keeps it after they unmount, so a caller that hands it to
+// something which *transfers* it — a worker, `postMessage` — must pass a copy (`bytes.slice(0)`,
+// which `PdfViewer` and `PptxViewer` already do). Transferring the original detaches it, and
+// it would stay detached in the cache for every reader after.
 
-import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 
 import * as api from "@/api";
+import { BYTES_KEY, trimBytes } from "@/lib/bytes";
 import { report } from "@/lib/report";
 
 export type Bytes =
@@ -21,31 +33,31 @@ export type Bytes =
   | { state: "ready"; bytes: ArrayBuffer }
   | { state: "failed" };
 
-/**
- * The caller must key the component on `path`, so a different file arrives as a fresh
- * mount. That is what lets this start in `loading` and never go back to it: resetting the
- * state inside the effect would be a second render for every read, and the one case it
- * guards against — a path changing under a live instance — cannot happen when the
- * component is keyed.
- */
 export function useBytes(path: string): Bytes {
-  const [result, setResult] = useState<Bytes>({ state: "loading" });
+  const qc = useQueryClient();
+  const file = useQuery({
+    queryKey: [BYTES_KEY, path],
+    // Never stale on its own: a file's bytes change when something changes them, and the
+    // events that do — a run finishing, a source connected or removed — invalidate this key
+    // along with the rest of the file queries.
+    staleTime: Infinity,
+    queryFn: () => api.fsReadBytes(path),
+  });
+
+  // After a read lands, not during render: `trimBytes` writes to the same cache this is
+  // reading from.
+  const landed = file.dataUpdatedAt;
   useEffect(() => {
-    let live = true;
-    void api.fsReadBytes(path).then(
-      (bytes) => {
-        if (live) setResult({ state: "ready", bytes });
-      },
-      (err: unknown) => {
-        // The pane has room for one sentence and says it. The reason goes here, so a file
-        // that will not open leaves something to read rather than only a red line.
-        report(`${path} could not be read`, err);
-        if (live) setResult({ state: "failed" });
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [path]);
-  return result;
+    if (landed) trimBytes(qc);
+  }, [qc, landed]);
+
+  // The pane has room for one sentence and says it. The reason goes to the log, so a file
+  // that will not open leaves something to read rather than only a red line.
+  const failed = file.error;
+  useEffect(() => {
+    if (failed) report(`${path} could not be read`, failed);
+  }, [path, failed]);
+
+  if (file.data) return { state: "ready", bytes: file.data };
+  return file.isError ? { state: "failed" } : { state: "loading" };
 }
