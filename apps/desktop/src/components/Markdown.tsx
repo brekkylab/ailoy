@@ -25,7 +25,7 @@
 // the header there. It resolves asynchronously, so a fence renders as a plain block for
 // the frame or two before the grammars land.
 
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import ShikiHighlighter from "react-shiki/core";
 import remarkGfm from "remark-gfm";
@@ -147,84 +147,37 @@ const Piece = memo(function Piece({
 });
 
 /**
- * Roughly how tall a piece will be, per byte of markdown.
- *
- * Only ever a guess, and only until the piece has been on screen once: what it buys is a
- * scrollbar that is about the right length before anything below the fold has been rendered.
- * Measured on the document this was written for — prose with tables and fences, at this
- * app's prose width — and wrong for a file of nothing but one-word lines, where it will be
- * short and the scrollbar will settle as the reader goes.
+ * Roughly how tall a piece is, per byte of markdown. Only a hint, and only until the browser
+ * has laid the piece out once — see the `content-visibility` below.
  */
 const PX_PER_BYTE = 0.45;
 
 /**
- * One piece, rendered while it is near the viewport and a gap of its own height otherwise.
+ * How much of a long document is on screen, growing until all of it is.
  *
  * A markdown file in a workspace is not a chat message: one of the reports this is used to
- * read is 817 KiB, which is 130,000 nodes — measured here, with this renderer. Rendering all
- * of it blocked the window for two seconds, and *keeping* all of it makes every scroll and
- * every teardown pay for a document the reader is looking at one screen of.
+ * read is 817 KiB, which renders in about two seconds of blocked main thread and 130,000
+ * nodes — measured here, with this renderer. That is the window freezing, and it happens
+ * again every time the file is opened, because what is cached is the text and not the render.
  *
- * So a piece mounts when it comes near and unmounts when it leaves, and what stays behind is
- * a box of the height it had. The height is remembered from when it was last on screen, which
- * is why a reader scrolling back up lands where they left rather than somewhere near it.
- *
- * `IntersectionObserver` rather than the scroll container's own geometry, because this
- * component does not own the scroller: the thread scrolls, the file pane scrolls, and a
- * Notion page scrolls inside something else again.
+ * So a long one arrives in pieces and each frame renders one more. The first piece is on
+ * screen immediately, the rest fill in behind it, and nothing blocks for longer than a piece
+ * takes. Short documents — every assistant message — are one piece and go through unchanged.
  */
-function Window({
-  text,
-  resolveLink,
-  highlighter,
-}: {
-  text: string;
-  resolveLink?: (href: string) => (() => void) | null;
-  highlighter: ReturnType<typeof useHighlighter>;
-}) {
-  const box = useRef<HTMLDivElement>(null);
-  const [near, setNear] = useState(false);
-  // What it measured last time it was on screen, which is what the gap it leaves behind is
-  // made of. State rather than a ref because the render reads it, and a height that changed
-  // without a render would be a gap of the wrong size until something else caused one.
-  const [height, setHeight] = useState<number | null>(null);
-
+function useProgressive(text: string): string[] {
+  const pieces = useMemo(() => splitMarkdown(text), [text]);
+  // How many are on screen is state; *which document* they belong to is not. Another file —
+  // or another turn of a message still being written — starts again at one, and that is a
+  // fact about this render rather than something to catch up to in an effect.
+  const [counted, setCounted] = useState({ pieces, shown: 1 });
+  const shown = counted.pieces === pieces ? counted.shown : 1;
   useEffect(() => {
-    const el = box.current;
-    if (!el) return;
-    // A screenful either side, so a piece is rendered before the reader reaches it and kept
-    // for a moment after they pass it — scrolling back a little does not re-render anything.
-    const io = new IntersectionObserver(([entry]) => setNear(entry.isIntersecting), {
-      rootMargin: "1200px 0px",
-    });
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
-
-  // Measured while it is up, so the gap it leaves behind is the size it was. A resize
-  // observer rather than a read per render: the height settles as fences highlight and
-  // images load, and this catches that without anything asking.
-  useEffect(() => {
-    const el = box.current;
-    if (!el || !near) return;
-    // Settles quickly — a fence highlighting, an image landing — and then stops, so this is
-    // a handful of renders per piece and none of them change what is on screen while it is up.
-    const ro = new ResizeObserver(() => {
-      const measured = el.offsetHeight;
-      if (measured > 0) setHeight((was) => (was === measured ? was : measured));
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [near]);
-
-  return (
-    <div
-      ref={box}
-      style={near ? undefined : { height: height ?? Math.max(160, text.length * PX_PER_BYTE) }}
-    >
-      {near && <Piece text={text} resolveLink={resolveLink} highlighter={highlighter} />}
-    </div>
-  );
+    if (shown >= pieces.length) return;
+    // A turn of the loop between pieces, which is what lets the window answer between them.
+    const timer = setTimeout(() => setCounted({ pieces, shown: shown + 1 }), 0);
+    return () => clearTimeout(timer);
+  }, [pieces, shown]);
+  return useMemo(() => pieces.slice(0, shown), [pieces, shown]);
 }
 
 export function Markdown({
@@ -242,19 +195,21 @@ export function Markdown({
   resolveLink?: (href: string) => (() => void) | null;
 }) {
   const highlighter = useHighlighter();
-  const pieces = useMemo(() => splitMarkdown(text), [text]);
+  const pieces = useProgressive(text);
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none break-words">
-      {/* One piece is the overwhelming case — every assistant message, every note — and it
-          goes straight through: a document that fits on a few screens has nothing to gain
-          from a box that measures itself. */}
-      {pieces.length === 1 ? (
-        <Piece text={pieces[0]} resolveLink={resolveLink} highlighter={highlighter} />
-      ) : (
-        pieces.map((piece, i) => (
-          <Window key={i} text={piece} resolveLink={resolveLink} highlighter={highlighter} />
-        ))
-      )}
+      {pieces.map((piece, i) => (
+        <div
+          key={i}
+          // Mounted, and skipped while it is off screen: the browser does not lay out or
+          // paint what is not in view, and remembers the size of what it has. Rendering is
+          // still done once and kept — a piece that unmounted and came back would parse and
+          // highlight itself again, which is a hitch in the middle of a scroll.
+          style={{ contentVisibility: "auto", containIntrinsicSize: `auto ${PX_PER_BYTE * piece.length}px` }}
+        >
+          <Piece text={piece} resolveLink={resolveLink} highlighter={highlighter} />
+        </div>
+      ))}
     </div>
   );
 }
