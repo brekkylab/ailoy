@@ -74,6 +74,21 @@ export interface Cell {
   colSpan: number;
   rowSpan: number;
   style: Style;
+  /** The width of the columns this cell itself covers, in pixels. */
+  width: number;
+  /**
+   * How far the text may run past its own columns before it is cut, in pixels a side.
+   *
+   * A spreadsheet does not stop a label at its column edge: where the next cell holds
+   * nothing, the text simply carries on over it, and a form built in one is written on
+   * that assumption — a heading sits in a narrow column with a run of empty ones after
+   * it, and no merge anywhere. A table that clips at the column instead turns every such
+   * heading into two words and an ellipsis.
+   *
+   * Which side it runs to is the cell's own alignment, as in Excel: text left-aligned
+   * runs right, right-aligned runs left, centred runs both ways.
+   */
+  spill: { left: number; right: number };
 }
 
 export interface Row {
@@ -327,6 +342,35 @@ function heightOf(row: XRow, fallback: number): number {
   return Math.round(points * PX_PER_POINT);
 }
 
+/**
+ * How far `cell` may run into the empty columns beside it.
+ *
+ * Nothing for a cell that is empty, or one set to wrap: wrapping is the file saying the
+ * text belongs inside the column, and a wrapped cell in Excel does not spill either.
+ */
+function spillOf(
+  cell: Cell,
+  start: number,
+  free: boolean[],
+  widths: number[],
+  columnCount: number,
+): { left: number; right: number } {
+  const none = { left: 0, right: 0 };
+  if (cell.text === "" || cell.style.wrap) return none;
+
+  const align = cell.style.align;
+  let left = 0;
+  let right = 0;
+
+  if (align !== "right") {
+    for (let c = start + cell.colSpan; c <= columnCount && free[c - 1]; c += 1) right += widths[c - 1];
+  }
+  if (align === "right" || align === "center") {
+    for (let c = start - 1; c >= 1 && free[c - 1]; c -= 1) left += widths[c - 1];
+  }
+  return { left, right };
+}
+
 /** One worksheet as a grid of rows. */
 export function readSheet(sheet: Worksheet): Sheet {
   const rowCount = Math.min(sheet.rowCount, MAX_ROWS);
@@ -345,18 +389,40 @@ export function readSheet(sheet: Worksheet): Sheet {
   for (let r = 1; r <= rowCount; r += 1) {
     const source = sheet.getRow(r);
     const cells: Cell[] = [];
+    /** Where each emitted cell starts, 1-based, for working out its spill below. */
+    const starts: number[] = [];
+    /** Columns holding nothing: a cell of its own with no text, which a label runs over. */
+    const free: boolean[] = [];
 
     for (let c = 1; c <= columnCount; c += 1) {
       const cell = sheet.getCell(r, c);
-      // A cell a merge covers is not a cell in the table: the master carries it, and this
-      // one would push the rest of the row out by a column.
-      if (cell.master !== cell) continue;
+      const master = cell.master === cell;
+      const text = master ? cellText(cell.value, cell.numFmt) : "";
+      // A cell a merge covers is never free — the master's text is drawn across it
+      // already — and it is not a cell in the table either: the master carries it, and
+      // this one would push the rest of the row out by a column.
+      free[c - 1] = master && text === "";
+      if (!master) continue;
 
       const { colSpan, rowSpan } = spanOf(sheet, cell, r, c, rowCount, columnCount);
       // Asked of the value rather than of the text, so a figure that formatted to
       // something with a currency symbol in it still counts as one.
       const numeric = typeof cell.value === "number" || cell.value instanceof Date;
-      cells.push({ text: cellText(cell.value, cell.numFmt), colSpan, rowSpan, style: styleOf(cell, numeric) });
+      let width = 0;
+      for (let i = c; i < c + colSpan && i <= columnCount; i += 1) width += widths[i - 1];
+      starts.push(c);
+      cells.push({
+        text,
+        colSpan,
+        rowSpan,
+        width,
+        style: styleOf(cell, numeric),
+        spill: { left: 0, right: 0 },
+      });
+    }
+
+    for (let i = 0; i < cells.length; i += 1) {
+      cells[i].spill = spillOf(cells[i], starts[i], free, widths, columnCount);
     }
 
     rows.push({ height: heightOf(source, defaultPoints), cells });

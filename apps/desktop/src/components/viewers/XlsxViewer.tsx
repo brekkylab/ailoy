@@ -77,6 +77,40 @@ function border(side: Border | null): string | undefined {
   return side ? `${side.width}px ${side.style} ${side.color}` : undefined;
 }
 
+/** The cell padding below, in pixels, as the layout has to subtract it. */
+const PADDING = 5;
+
+/** Whether a cell's text has anywhere to run. */
+function spills(cell: Cell): boolean {
+  return cell.spill.left > 0 || cell.spill.right > 0;
+}
+
+/**
+ * A cell's text, cut where a spreadsheet would cut it.
+ *
+ * The `td` cannot do this itself: it is one column wide and clipping there is what put an
+ * ellipsis two words into every heading. So the text goes in a box of its own, as wide as
+ * the run of empty cells beside it, pulled left by whatever of that run is on that side —
+ * which is also what centres a centred label across the whole run, the way Excel does.
+ * Past the run it is cut, because the cell after it holds something.
+ */
+function Spilling({ cell }: { cell: Cell }) {
+  const { left, right } = cell.spill;
+  return (
+    <span
+      className="inline-block overflow-hidden text-ellipsis"
+      style={{
+        marginLeft: left ? -left : undefined,
+        // Less the padding either side, which is the cell's and not the run's. A cell
+        // with nowhere to run comes out exactly its own content box, and is cut there.
+        width: Math.max(0, left + cell.width + right - PADDING * 2),
+      }}
+    >
+      {cell.text}
+    </span>
+  );
+}
+
 function cellStyle(cell: Cell): React.CSSProperties {
   const s = cell.style;
   return {
@@ -156,12 +190,16 @@ export function XlsxViewer({ path }: { path: string }) {
                         // A spreadsheet does not wrap unless the cell says to, and a form's
                         // column widths are set on the assumption that it does not.
                         className={cn(
-                          "overflow-hidden px-[5px] py-[2px] align-bottom text-ellipsis",
+                          "px-[5px] py-[2px] align-bottom",
                           cell.style.wrap ? "break-words whitespace-pre-wrap" : "whitespace-pre",
+                          // Above the cells it runs over, which are empty but may still
+                          // carry the fill this one sits in — and a later sibling paints
+                          // after an earlier one.
+                          spills(cell) && "relative z-[1] overflow-visible",
                         )}
                         style={cellStyle(cell)}
                       >
-                        {cell.text}
+                        {cell.style.wrap ? cell.text : <Spilling cell={cell} />}
                       </td>
                     ))}
                   </tr>

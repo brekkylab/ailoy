@@ -10,6 +10,13 @@ function sheetWith(build: (ws: Worksheet) => void) {
   return readSheet(ws);
 }
 
+/** The cell holding `text`. An empty cell is a cell too, so position is not the way in. */
+function cellNamed(sheet: ReturnType<typeof readSheet>, text: string) {
+  const found = sheet.rows.flatMap((r) => r.cells).find((c) => c.text === text);
+  if (!found) throw new Error(`no cell holding ${text}`);
+  return found;
+}
+
 describe("readSheet", () => {
   it("takes the file's own column widths, in pixels", () => {
     const sheet = sheetWith((ws) => {
@@ -123,5 +130,80 @@ describe("cellText", () => {
   it("is empty for an empty cell", () => {
     expect(cellText(null)).toBe("");
     expect(cellText(undefined)).toBe("");
+  });
+});
+
+describe("spill", () => {
+  it("lets a label run over the empty cells after it", () => {
+    // What a spreadsheet does and a table does not: the heading of a form sits in a
+    // narrow column with a run of empty ones after it, and no merge anywhere.
+    const sheet = sheetWith((ws) => {
+      for (let c = 1; c <= 4; c += 1) ws.getColumn(c).width = 10;
+      ws.getCell("A1").value = "◆ 판교테크노밸리 입주기업 임직원 거주지, 통근수단";
+      ws.getCell("D1").value = "stop";
+    });
+    // B and C are free; D holds something, so the run ends there.
+    expect(cellNamed(sheet, "◆ 판교테크노밸리 입주기업 임직원 거주지, 통근수단").spill).toEqual({ left: 0, right: sheet.widths[1] + sheet.widths[2] });
+  });
+
+  it("runs the other way for a label aligned right", () => {
+    const sheet = sheetWith((ws) => {
+      for (let c = 1; c <= 3; c += 1) ws.getColumn(c).width = 10;
+      ws.getCell("C1").value = "a long label";
+      ws.getCell("C1").alignment = { horizontal: "right" };
+    });
+    expect(cellNamed(sheet, "a long label").spill).toEqual({
+      left: sheet.widths[0] + sheet.widths[1],
+      right: 0,
+    });
+  });
+
+  it("runs both ways for a centred one", () => {
+    const sheet = sheetWith((ws) => {
+      for (let c = 1; c <= 3; c += 1) ws.getColumn(c).width = 10;
+      ws.getCell("B1").value = "centred";
+      ws.getCell("B1").alignment = { horizontal: "center" };
+      // A column with nothing in it anywhere is not a column of the sheet; this puts one
+      // to the right of the label without putting anything beside it.
+      ws.getCell("C2").value = "elsewhere";
+    });
+    expect(cellNamed(sheet, "centred").spill).toEqual({
+      left: sheet.widths[0],
+      right: sheet.widths[2],
+    });
+  });
+
+  it("does not run out of a cell set to wrap", () => {
+    // Wrapping is the file saying the text belongs inside the column.
+    const sheet = sheetWith((ws) => {
+      ws.getCell("A1").value = "wrapped text";
+      ws.getCell("A1").alignment = { wrapText: true };
+    });
+    expect(cellNamed(sheet, "wrapped text").spill).toEqual({ left: 0, right: 0 });
+  });
+
+  it("stops at a cell a merge covers, which is not empty", () => {
+    const sheet = sheetWith((ws) => {
+      ws.getCell("A1").value = "label";
+      ws.getCell("B1").value = "merged";
+      ws.mergeCells("B1:C1");
+    });
+    expect(cellNamed(sheet, "label").spill.right).toBe(0);
+  });
+
+  it("gives an empty cell nowhere to run", () => {
+    const sheet = sheetWith((ws) => {
+      ws.getCell("A2").value = "x";
+    });
+    expect(sheet.rows[0].cells.every((c) => c.spill.left === 0 && c.spill.right === 0)).toBe(true);
+  });
+
+  it("measures a cell as the columns it covers", () => {
+    const sheet = sheetWith((ws) => {
+      for (let c = 1; c <= 3; c += 1) ws.getColumn(c).width = 10;
+      ws.getCell("A1").value = "merged";
+      ws.mergeCells("A1:B1");
+    });
+    expect(cellNamed(sheet, "merged").width).toBe(sheet.widths[0] + sheet.widths[1]);
   });
 });
