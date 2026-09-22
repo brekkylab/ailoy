@@ -53,6 +53,21 @@ def source_of(path):
     return "/" + parts[0] if parts else "/"
 
 
+TIMESTAMP = re.compile(r"^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)")
+
+
+def last_timestamp(paths):
+    """When these logs last moved, which is what says whether the app has run since."""
+    newest = None
+    for path in paths:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                found = TIMESTAMP.match(line)
+                if found:
+                    newest = max(newest or found.group(1), found.group(1))
+    return newest
+
+
 def pct(values, p):
     if not values:
         return 0
@@ -76,10 +91,18 @@ def main(argv):
 
     calls = list(rows(paths))
     if not calls:
+        # The likeliest cause by far is an app that has not been restarted since the timing
+        # lines landed, so say when the log last moved: a newest line older than the build is
+        # the whole answer.
+        newest = last_timestamp(paths)
         sys.exit(
             "no fs_timing lines in "
-            + ", ".join(paths)
-            + "\nthe app writes them as it reads; drive the file tree first"
+            + ", ".join(os.path.basename(p) for p in paths)
+            + (f"\nthe newest line in them is from {newest}" if newest else "")
+            + "\n\n  * restart the app if it has been running since before the timing lines"
+            + "\n    landed — `npm run tauri:dev` rebuilds the engine"
+            + "\n  * drive the file tree afterwards: the lines are written as it reads"
+            + "\n  * `RUST_LOG`, if you set it, has to leave `fs_timing` on"
         )
 
     groups = defaultdict(list)
