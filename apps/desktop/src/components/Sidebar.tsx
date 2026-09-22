@@ -5,10 +5,10 @@ import { FolderTree, MessageSquarePlus, MessagesSquare, Package, Pencil, Trash }
 import { useEffect, useState } from "react";
 
 import * as api from "@/api";
+import { SourcesList } from "@/components/sources/SourcesList";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SourcesList } from "@/components/SourcesList";
 import { formatRelativeTime } from "@/lib/time";
 import { S } from "@/strings";
 import type { MainView } from "@/views";

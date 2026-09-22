@@ -8,7 +8,7 @@
 
 import { useId, useState } from "react";
 
-import { ProviderIcon } from "@/components/ProviderIcon";
+import { ProviderIcon } from "@/components/icons/ProviderIcon";
 import { Choice } from "@/components/settings/fields";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

@@ -5,7 +5,7 @@
 // provider's initial, which is what a provider the engine learns about before we have its
 // mark will get. See `BrandMark` for where the marks come from and on what terms.
 
-import { BrandMark, LetterMark } from "@/components/BrandMark";
+import { BrandMark, LetterMark } from "@/components/icons/BrandMark";
 import { monogram } from "@/lib/providers";
 import { MARK_VIEW_BOX, PROVIDER_MARKS } from "@/lib/providerMarks";
 

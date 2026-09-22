@@ -15,7 +15,7 @@ import { useState } from "react";
 
 import * as api from "@/api";
 import { BYTES_KEY } from "@/lib/bytes";
-import { SourceIcon } from "@/components/SourceIcon";
+import { SourceIcon } from "@/components/icons/SourceIcon";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";

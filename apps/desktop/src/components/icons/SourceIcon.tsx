@@ -9,7 +9,7 @@
 import { Database, Folder, HardDrive } from "lucide-react";
 import { siNotion } from "simple-icons";
 
-import { BrandMark } from "@/components/BrandMark";
+import { BrandMark } from "@/components/icons/BrandMark";
 import type { MountKind } from "@/types";
 
 /**

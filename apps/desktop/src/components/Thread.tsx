@@ -26,10 +26,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef } from "react";
 
 import * as api from "@/api";
-import { Composer } from "@/components/Composer";
 import { Markdown } from "@/components/Markdown";
-import { AssistantBubble, UserBubble } from "@/components/MessageBubble";
-import { ToolGroup } from "@/components/ToolGroup";
+import { Composer } from "@/components/thread/Composer";
+import { AssistantBubble, UserBubble } from "@/components/thread/MessageBubble";
+import { ToolGroup } from "@/components/thread/ToolGroup";
 import { attachRun } from "@/events";
 import { buildThread, liveGroupKey, resolveCall, withLiveCalls, type GroupCall } from "@/lib/thread";
 import { selectRun, useRunStore } from "@/store/runs";

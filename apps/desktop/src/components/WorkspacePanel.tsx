@@ -14,7 +14,7 @@ import { useMemo } from "react";
 
 import * as api from "@/api";
 import { FileBrowser } from "@/components/FileBrowser";
-import { SourceIcon } from "@/components/SourceIcon";
+import { SourceIcon } from "@/components/icons/SourceIcon";
 import { ARTIFACTS_ROOT, WORKSPACE_ROOT } from "@/paths";
 import { S } from "@/strings";
 import type { Entry, MountInfo } from "@/types";

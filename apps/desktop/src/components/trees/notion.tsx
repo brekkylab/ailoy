@@ -7,7 +7,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 
-import type { RowInfo, TreeAdapter } from "@/components/FileTree";
+import type { RowInfo, TreeAdapter } from "@/components/trees/FileTree";
 import {
   DB_ICON,
   PAGE_ICON,

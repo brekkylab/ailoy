@@ -10,9 +10,9 @@ import { Cloud, FolderPlus, Globe, HardDrive, MoreHorizontal } from "lucide-reac
 import { useEffect, useState } from "react";
 
 import * as api from "@/api";
-import { MountDialog } from "@/components/MountDialogs";
-import { SourceDialog } from "@/components/SourceDialog";
-import { SourceIcon } from "@/components/SourceIcon";
+import { SourceIcon } from "@/components/icons/SourceIcon";
+import { MountDialog } from "@/components/sources/MountDialogs";
+import { SourceDialog } from "@/components/sources/SourceDialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,

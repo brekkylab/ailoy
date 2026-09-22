@@ -12,7 +12,7 @@
 import { Ban, CheckCircle2, ChevronRight, Loader2, XCircle } from "lucide-react";
 import { useState } from "react";
 
-import { ToolCallCard } from "@/components/ToolCallCard";
+import { ToolCallCard } from "@/components/thread/ToolCallCard";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { groupDuration, namedTools, summarizeGroup, type ResolvedCall } from "@/lib/thread";
 import { summarizeToolCall } from "@/lib/toolCall";

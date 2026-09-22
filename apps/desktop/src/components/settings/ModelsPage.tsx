@@ -8,7 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 
 import * as api from "@/api";
-import { ProviderIcon } from "@/components/ProviderIcon";
+import { ProviderIcon } from "@/components/icons/ProviderIcon";
 import { NumberSetting, Section } from "@/components/settings/fields";
 import { ProviderPane } from "@/components/settings/ProviderPane";
 import { Label } from "@/components/ui/label";

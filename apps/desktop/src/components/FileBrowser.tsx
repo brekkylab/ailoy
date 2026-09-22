@@ -14,8 +14,8 @@ import { RotateCw } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import * as api from "@/api";
-import { FileTree, type TreeAdapter } from "@/components/FileTree";
 import { Markdown } from "@/components/Markdown";
+import { FileTree, type TreeAdapter } from "@/components/trees/FileTree";
 import { NOTION } from "@/components/trees/notion";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { CodeViewer } from "@/components/viewers/CodeViewer";

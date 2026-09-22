@@ -19,7 +19,7 @@ import { SendHorizontal, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import * as api from "@/api";
-import { UsageBar } from "@/components/UsageBar";
+import { UsageBar } from "@/components/thread/UsageBar";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
