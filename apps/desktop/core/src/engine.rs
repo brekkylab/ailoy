@@ -10,7 +10,7 @@ use std::{path::PathBuf, sync::Arc};
 use ailoy::message::Part;
 
 use crate::{
-    catalog::{Catalog, split_model_id},
+    catalog::{self, Catalog, split_model_id},
     config::EngineConfig,
     console::{ConsoleFactory, resolve_console_bin},
     error::{EngineError, Result},
@@ -372,15 +372,33 @@ impl Engine {
             .set_root(std::path::PathBuf::from(path))
             .await?;
         let info = self.workspace.info();
-        self.store
-            .setting_set(crate::config::ROOT_SETTING, &info.files_root.to_string_lossy())?;
+        self.store.setting_set(
+            crate::config::ROOT_SETTING,
+            &info.files_root.to_string_lossy(),
+        )?;
         Ok(info)
     }
 
     // ── settings & catalog ──────────────────────────────────────────────────
 
     pub async fn settings_get(&self) -> Result<Settings> {
-        providers::read_settings(&self.store)
+        let mut settings = providers::read_settings(&self.store)?;
+        self.fill_routings(&mut settings);
+        Ok(settings)
+    }
+
+    /// What the settings pane offers as routings is the catalog's answer, not the store's:
+    /// `read_settings` reads what the user chose, and which profiles exist to choose from
+    /// is a fact about the provider's model list. See `catalog::region_routings`.
+    fn fill_routings(&self, settings: &mut Settings) {
+        for p in &mut settings.providers {
+            if p.routing.is_some() {
+                let Some(def) = providers::PROVIDERS.iter().find(|d| d.key == p.key) else {
+                    continue;
+                };
+                p.routings = catalog::region_routings(&self.catalog.models_for(def.ailoy_prefix));
+            }
+        }
     }
 
     /// Write, register, read back — all three under one lock, so the `Settings` returned is
@@ -389,7 +407,9 @@ impl Engine {
         let _guard = self.settings_lock.lock().await;
         providers::write_settings(&self.store, &patch)?;
         providers::apply(&self.store)?;
-        providers::read_settings(&self.store)
+        let mut settings = providers::read_settings(&self.store)?;
+        self.fill_routings(&mut settings);
+        Ok(settings)
     }
 
     /// Every model the catalog knows about, with the ones whose provider has a key first.
@@ -403,7 +423,18 @@ impl Engine {
                 .providers
                 .iter()
                 .any(|p| p.key == def.key && p.has_key);
-            for m in self.catalog.models_for(def.ailoy_prefix) {
+            let mut models = self.catalog.models_for(def.ailoy_prefix);
+            // Bedrock lists a model once per inference profile. One row, reached through
+            // the profile this provider's settings name.
+            if let Some(routing) = settings
+                .providers
+                .iter()
+                .find(|p| p.key == def.key)
+                .and_then(|p| p.routing.as_deref())
+            {
+                models = catalog::fold_region_profiles(&models, routing);
+            }
+            for m in models {
                 out.push(ModelInfo {
                     id: format!("{}/{}", def.ailoy_prefix, m.id),
                     provider: def.label.into(),

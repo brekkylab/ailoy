@@ -39,8 +39,12 @@ impl LangModelProvider {
 /// AWS regions where Bedrock is deployed, as listed on the Bedrock endpoints
 /// page. The id is the host label in `bedrock-runtime.<id>.amazonaws.com`, so
 /// a region is a closed set rather than free text; a region not listed here
-/// needs a new entry. `Display` and `FromStr` both use the id.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::Display, strum::EnumString)]
+/// needs a new entry. `Display` and `FromStr` both use the id, and
+/// `VariantNames` lists them — an interface that offers the set has to read it
+/// from here rather than keep a copy that drifts.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, strum::Display, strum::EnumString, strum::VariantNames,
+)]
 #[non_exhaustive]
 pub enum BedrockRegion {
     /// US East (N. Virginia)
@@ -151,6 +155,14 @@ pub enum BedrockRegion {
 }
 
 impl BedrockRegion {
+    /// Every region id, in the order they are declared above.
+    ///
+    /// An interface that offers the set — a settings pane with a region menu — reads it
+    /// from here; a copy kept anywhere else is a copy that drifts from the endpoints page.
+    pub fn ids() -> &'static [&'static str] {
+        <Self as strum::VariantNames>::VARIANTS
+    }
+
     /// Runtime base for the region, the registered `url` for the Bedrock schema.
     fn runtime_url(self) -> Url {
         Url::parse(&format!("https://bedrock-runtime.{self}.amazonaws.com")).unwrap()

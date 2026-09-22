@@ -31,10 +31,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
 import { modelsOf, type ProviderModels } from "@/lib/providers";
 import { S } from "@/strings";
-import type { ProviderSetting, SettingsPatch } from "@/types";
-
-/** Only a placeholder: the engine picks its own default when `bedrock_region` is unset. */
-const DEFAULT_BEDROCK_REGION = "us-east-1";
+import type { ProviderSetting, RegionRouting, SettingsPatch } from "@/types";
 
 /** How many model names a provider's pane lists before it counts the rest instead. */
 const NAMED_MODELS = 8;
@@ -52,7 +49,7 @@ function providerOf(patch: SettingsPatch | undefined): string | null {
   if (!patch) return null;
   const [first] = Object.keys(patch.provider_keys ?? {});
   if (first != null) return first;
-  return patch.bedrock_region != null ? "bedrock" : null;
+  return patch.bedrock_region != null || patch.bedrock_routing != null ? "bedrock" : null;
 }
 
 /** A section of the panel: a heading, and the rows under it. */
@@ -65,13 +62,72 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+/** One closed set, as a labelled menu that saves the moment it is picked. */
+function Choice({
+  label,
+  hint,
+  value,
+  options,
+  disabled,
+  onPick,
+}: {
+  label: string;
+  hint: string;
+  /** The stored choice, already defaulted by the engine. */
+  value: string | null;
+  options: RegionRouting[];
+  disabled: boolean;
+  onPick: (id: string) => void;
+}) {
+  const id = useId();
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <Select
+        value={value}
+        disabled={disabled}
+        onValueChange={(v) => {
+          if (typeof v === "string" && v && v !== value) onPick(v);
+        }}
+      >
+        <SelectTrigger id={id} className="w-full" aria-label={label}>
+          {/* Same reason as the model picker below: Base UI reads the trigger's text from
+              the selected item, which lives in a portal that has not mounted until the
+              list is opened. */}
+          <SelectValue>
+            {(picked: unknown) =>
+              options.find((o) => o.id === picked)?.label ?? (typeof picked === "string" ? picked : label)
+            }
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((o) => (
+            <SelectItem key={o.id} value={o.id}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <p className="text-xs text-muted-foreground">{hint}</p>
+    </div>
+  );
+}
+
 /**
- * One provider's settings: the key it is reached with, what that key unlocks, and — for
- * Bedrock alone — the region a Bedrock key is useless without.
+ * One provider's settings: the key it is reached with, where the call goes, and what that
+ * key unlocks.
  *
- * Unmounted with its tab, which is what resets the drafts below: a half-typed key left
- * behind on a pane the user has navigated away from is a key they cannot see and did not
- * save.
+ * Where it goes is two menus, and they are not the same question. The *region* is the
+ * endpoint — `bedrock-runtime.<region>.amazonaws.com`, one host, one set of credentials.
+ * The *routing* is the inference profile in front of the model: Bedrock offers the same
+ * model as `global.…` for dynamic routing and as `us.…`/`eu.…` for guaranteed data
+ * routing, and it is what decides which id the picker offers (see
+ * `catalog::fold_region_profiles`). Both are menus rather than fields because both are
+ * closed sets the engine already knows — the regions from ailoy, the profiles from the
+ * catalog — and a typo in either is a run that fails much later.
+ *
+ * Unmounted with its tab, which is what resets the key draft: a half-typed key left behind
+ * on a pane the user has navigated away from is a key they cannot see and did not save.
  */
 function ProviderPane({
   provider,
@@ -85,31 +141,12 @@ function ProviderPane({
   pending: boolean;
 }) {
   const keyId = useId();
-  const regionId = useId();
   const [key, setKey] = useState("");
-  const [region, setRegion] = useState("");
-  const isBedrock = provider.key === "bedrock";
   const typedKey = key.trim();
-  const typedRegion = region.trim();
 
   const saveKey = () => {
     if (!typedKey) return;
-    const patch: SettingsPatch = { provider_keys: { [provider.key]: typedKey } };
-    // A key and its region are one edit, so they go in one patch: the engine validates the
-    // whole thing or writes none of it.
-    if (isBedrock && typedRegion) patch.bedrock_region = typedRegion;
-    save(patch, () => {
-      setKey("");
-      setRegion("");
-    });
-  };
-
-  // A region typed on its own still has to land somewhere, so it saves on blur — but not
-  // while a key is sitting in the field above it, because that key's Save button is about
-  // to send both together and clearing the field out from under it would lose the key.
-  const saveRegion = () => {
-    if (!typedRegion || typedKey || typedRegion === (provider.region ?? "")) return;
-    save({ bedrock_region: typedRegion }, () => setRegion(""));
+    save({ provider_keys: { [provider.key]: typedKey } }, () => setKey(""));
   };
 
   const rest = models.names.length - NAMED_MODELS;
@@ -161,18 +198,27 @@ function ProviderPane({
         <p className="text-xs text-muted-foreground">{S.keyWriteOnly}</p>
       </div>
 
-      {isBedrock && (
-        <div className="space-y-2">
-          <Label htmlFor={regionId}>{S.region}</Label>
-          <Input
-            id={regionId}
-            placeholder={provider.region ?? DEFAULT_BEDROCK_REGION}
-            value={region}
-            onChange={(e) => setRegion(e.target.value)}
-            onBlur={saveRegion}
-          />
-          <p className="text-xs text-muted-foreground">{S.regionHint}</p>
-        </div>
+      {/* Both gated on the engine having somewhere to send the call *to* rather than on the
+          provider's name, so the next provider with regions needs nothing here. */}
+      {provider.regions.length > 0 && (
+        <Choice
+          label={S.region}
+          hint={S.regionHint}
+          value={provider.region}
+          options={provider.regions.map((r) => ({ id: r, label: r }))}
+          disabled={pending}
+          onPick={(r) => save({ bedrock_region: r })}
+        />
+      )}
+      {provider.routings.length > 0 && (
+        <Choice
+          label={S.routing}
+          hint={S.routingHint}
+          value={provider.routing}
+          options={provider.routings}
+          disabled={pending}
+          onPick={(r) => save({ bedrock_routing: r })}
+        />
       )}
 
       {/* What the key is for, which is the one question a key field cannot answer on its

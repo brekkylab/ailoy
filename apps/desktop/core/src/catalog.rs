@@ -13,7 +13,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::ModelCost;
+use crate::types::{ModelCost, RegionRouting};
 
 pub const MODELS_DEV_URL: &str = "https://models.dev/api.json";
 
@@ -216,6 +216,112 @@ pub fn listed_models(models: &BTreeMap<String, CatalogModel>) -> Vec<CatalogMode
             && !taken.contains(bare)
         {
             m.name = bare.to_string();
+        }
+    }
+    out
+}
+
+/// Bedrock's inference-profile prefixes, as they are spelled at the front of a model id.
+///
+/// A closed list because it is what tells `us.anthropic.claude-…` — one model reached
+/// through the US profile — from `anthropic.claude-…`, the plain on-demand id, without
+/// having to guess that `anthropic` is a vendor and `us` is not. A prefix models.dev starts
+/// using that is missing from here simply keeps its own row, which is the safe way to be
+/// wrong: nothing is merged that should not be.
+pub const REGION_PREFIXES: &[&str] = &[
+    "global", "us", "us-gov", "eu", "apac", "au", "jp", "in", "ca", "sa",
+];
+
+/// `"us.anthropic.claude-opus-5"` → `("us", "anthropic.claude-opus-5")`, and `None` for an
+/// id that is not reached through a profile.
+///
+/// The remainder has to carry a dot of its own: every Bedrock id is vendor-qualified, so
+/// `us.anthropic.…` splits and a hypothetical bare `global-something` does not.
+pub fn region_prefix(id: &str) -> Option<(&str, &str)> {
+    let (head, rest) = id.split_once('.')?;
+    (REGION_PREFIXES.contains(&head) && rest.contains('.')).then_some((head, rest))
+}
+
+/// The same model, whichever profile it is reached through.
+fn base_id(id: &str) -> &str {
+    region_prefix(id).map_or(id, |(_, base)| base)
+}
+
+/// The ways this provider will route a call, in the order a menu should show them.
+///
+/// Derived from the ids rather than declared: the label is the parenthesis models.dev puts
+/// on the name — `(GovCloud)` for `us-gov`, `(India)` for `in` — which is neither the
+/// prefix nor a mechanical uppercasing of it, and is not ours to invent. A profile whose
+/// models are all named without one falls back to the prefix itself.
+pub fn region_routings(models: &[CatalogModel]) -> Vec<RegionRouting> {
+    let mut out: Vec<RegionRouting> = Vec::new();
+    for m in models {
+        let Some((prefix, _)) = region_prefix(&m.id) else {
+            continue;
+        };
+        if out.iter().any(|r| r.id == prefix) {
+            continue;
+        }
+        let label = m
+            .name
+            .rsplit_once(" (")
+            .and_then(|(_, tail)| tail.strip_suffix(')'))
+            .map(str::to_string)
+            .unwrap_or_else(|| prefix.to_string());
+        out.push(RegionRouting {
+            id: prefix.to_string(),
+            label,
+        });
+    }
+    // `REGION_PREFIXES` order, so the menu reads the same whatever order the catalog is in.
+    out.sort_by_key(|r| {
+        REGION_PREFIXES
+            .iter()
+            .position(|p| *p == r.id)
+            .unwrap_or(usize::MAX)
+    });
+    out
+}
+
+/// One row per model, reached through the profile the user asked for.
+///
+/// Bedrock offers a model once per inference profile — global for dynamic routing, a
+/// regional one for guaranteed data routing — and models.dev lists each as its own model:
+/// 158 of them, most of which are `Nova Pro (US)`, `Nova Pro (EU)`, `Nova Pro (APAC)`.
+/// That is the provider's catalogue, not a menu.
+///
+/// So a model appears once, and `routing` decides which profile it is reached through.
+/// Failing that profile it is the plain id, which Bedrock serves in whatever region the
+/// client is pointed at; failing both, every profile there is, each keeping the region in
+/// its name — a model offered only in GovCloud is not silently a global one.
+///
+/// The name comes from the plain id where there is one, because the parenthesis models.dev
+/// adds is about the profile and not about the model, and `Pixtral Large (25.02)` shows
+/// that not every parenthesis is.
+pub fn fold_region_profiles(models: &[CatalogModel], routing: &str) -> Vec<CatalogModel> {
+    let mut bases: Vec<&str> = Vec::new();
+    for m in models {
+        let base = base_id(&m.id);
+        if !bases.contains(&base) {
+            bases.push(base);
+        }
+    }
+
+    let mut out = Vec::with_capacity(bases.len());
+    for base in bases {
+        let group: Vec<&CatalogModel> = models.iter().filter(|m| base_id(&m.id) == base).collect();
+        let plain = group.iter().find(|m| region_prefix(&m.id).is_none());
+        let routed = group
+            .iter()
+            .find(|m| region_prefix(&m.id).is_some_and(|(p, _)| p == routing));
+        match (routed, plain) {
+            (Some(r), Some(p)) => out.push(CatalogModel {
+                name: p.name.clone(),
+                ..(*r).clone()
+            }),
+            (Some(r), None) => out.push((*r).clone()),
+            (None, Some(p)) => out.push((*p).clone()),
+            (None, None) => out.extend(group.into_iter().cloned()),
         }
     }
     out
@@ -463,6 +569,146 @@ mod tests {
                 .unwrap()
                 .context,
             Some(200_000)
+        );
+    }
+
+    /// A Bedrock group: the plain id, then the profiles that carry it.
+    fn bedrock_group(base: &str, name: &str, prefixes: &[&str]) -> Vec<(String, CatalogModel)> {
+        let mut out = vec![model(base, name)];
+        for p in prefixes {
+            let label = match *p {
+                "us-gov" => "GovCloud".to_string(),
+                "in" => "India".to_string(),
+                "global" => "Global".to_string(),
+                other => other.to_uppercase(),
+            };
+            out.push(model(&format!("{p}.{base}"), &format!("{name} ({label})")));
+        }
+        out
+    }
+
+    #[test]
+    fn a_model_is_one_row_reached_through_the_routing_that_was_asked_for() {
+        let models: Vec<CatalogModel> = bedrock_group(
+            "anthropic.claude-opus-5",
+            "Claude Opus 5",
+            &["us", "eu", "global"],
+        )
+        .into_iter()
+        .map(|(_, m)| m)
+        .collect();
+
+        let global = fold_region_profiles(&models, "global");
+        assert_eq!(global.len(), 1);
+        assert_eq!(global[0].id, "global.anthropic.claude-opus-5");
+        // The parenthesis was about the profile, so the row takes the plain id's name.
+        assert_eq!(global[0].name, "Claude Opus 5");
+
+        let eu = fold_region_profiles(&models, "eu");
+        assert_eq!(eu[0].id, "eu.anthropic.claude-opus-5");
+        assert_eq!(eu[0].name, "Claude Opus 5");
+    }
+
+    #[test]
+    fn a_routing_the_model_does_not_offer_falls_back_to_the_plain_id() {
+        let models: Vec<CatalogModel> =
+            bedrock_group("amazon.nova-lite-v1:0", "Nova Lite", &["us", "eu", "apac"])
+                .into_iter()
+                .map(|(_, m)| m)
+                .collect();
+
+        let folded = fold_region_profiles(&models, "global");
+        assert_eq!(folded.len(), 1);
+        assert_eq!(
+            folded[0].id, "amazon.nova-lite-v1:0",
+            "Bedrock's own region serves it"
+        );
+        assert_eq!(folded[0].name, "Nova Lite");
+    }
+
+    #[test]
+    fn a_model_offered_in_one_region_only_keeps_that_region_in_its_name() {
+        // Neither the routing nor a plain id: hiding the row would hide the model, and
+        // renaming it would call a US-only profile a global one.
+        let models = vec![
+            model("us.amazon.nova-premier-v1:0", "Nova Premier (US)").1,
+            model("anthropic.claude-opus-5", "Claude Opus 5").1,
+        ];
+        let folded = fold_region_profiles(&models, "global");
+        assert_eq!(folded.len(), 2);
+        assert!(
+            folded
+                .iter()
+                .any(|m| m.id == "us.amazon.nova-premier-v1:0" && m.name == "Nova Premier (US)")
+        );
+    }
+
+    #[test]
+    fn a_profile_prefix_is_told_from_a_vendor_by_the_closed_list() {
+        assert_eq!(
+            region_prefix("us.anthropic.claude-opus-5"),
+            Some(("us", "anthropic.claude-opus-5"))
+        );
+        assert_eq!(
+            region_prefix("us-gov.anthropic.claude-opus-5"),
+            Some(("us-gov", "anthropic.claude-opus-5"))
+        );
+        // A vendor-qualified id is not a profile, and neither is a lone token.
+        assert_eq!(region_prefix("anthropic.claude-opus-5"), None);
+        assert_eq!(region_prefix("global-something"), None);
+        assert_eq!(
+            region_prefix("us.something"),
+            None,
+            "no vendor behind the prefix"
+        );
+    }
+
+    #[test]
+    fn the_routings_on_offer_are_named_the_way_the_catalog_names_them() {
+        let models: Vec<CatalogModel> = bedrock_group(
+            "amazon.nova-pro-v1:0",
+            "Nova Pro",
+            &["us", "in", "us-gov", "global"],
+        )
+        .into_iter()
+        .map(|(_, m)| m)
+        .collect();
+
+        let routings = region_routings(&models);
+        assert_eq!(
+            routings
+                .iter()
+                .map(|r| (r.id.as_str(), r.label.as_str()))
+                .collect::<Vec<_>>(),
+            // `REGION_PREFIXES` order, and the label is the provider's own word for it.
+            [
+                ("global", "Global"),
+                ("us", "US"),
+                ("us-gov", "GovCloud"),
+                ("in", "India"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_embedded_snapshot_offers_each_bedrock_model_once() {
+        let all = Catalog::load(None).models_for("bedrock");
+        let folded = fold_region_profiles(&all, "global");
+        assert!(
+            all.len() > folded.len() * 2,
+            "the snapshot lists {} bedrock rows; folding left {}",
+            all.len(),
+            folded.len()
+        );
+        // One row per model, so no two rows are the same model through two profiles.
+        let mut bases: Vec<&str> = folded.iter().map(|m| base_id(&m.id)).collect();
+        bases.sort_unstable();
+        let before = bases.len();
+        bases.dedup();
+        assert_eq!(bases.len(), before);
+        assert!(
+            !region_routings(&all).is_empty(),
+            "and the pane has profiles to offer"
         );
     }
 

@@ -10,6 +10,9 @@ const provider = (key: string, has_key: boolean): ProviderSetting => ({
   has_key,
   key_hint: has_key ? "abcd" : "",
   region: null,
+  regions: [],
+  routing: null,
+  routings: [],
 });
 
 const settings = (providers: ProviderSetting[]): Settings => ({

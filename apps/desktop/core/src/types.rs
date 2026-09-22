@@ -84,6 +84,14 @@ pub struct StoredMessage {
     pub created_at: i64,
 }
 
+/// One way a provider will route a call, for a menu: the id that goes into a model id, and
+/// the name the provider's own catalogue gives it. See `catalog::region_routings`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RegionRouting {
+    pub id: String,
+    pub label: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProviderSetting {
     pub key: String,
@@ -91,6 +99,15 @@ pub struct ProviderSetting {
     pub has_key: bool,
     pub key_hint: String,
     pub region: Option<String>,
+    /// The regions it can be called in, for a menu. Empty unless the provider has several.
+    #[serde(default)]
+    pub regions: Vec<String>,
+    /// Which inference profile this provider's models are reached through. Bedrock only;
+    /// `None` for a provider that has one endpoint.
+    pub routing: Option<String>,
+    /// The profiles it offers, from the catalog. Empty unless there are several.
+    #[serde(default)]
+    pub routings: Vec<RegionRouting>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -109,6 +126,7 @@ pub struct Settings {
 pub struct SettingsPatch {
     pub provider_keys: BTreeMap<String, Option<String>>,
     pub bedrock_region: Option<String>,
+    pub bedrock_routing: Option<String>,
     pub default_model: Option<String>,
     pub max_tokens: Option<u64>,
     pub max_turns: Option<u32>,

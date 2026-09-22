@@ -67,6 +67,14 @@ pub const PROVIDERS: &[ProviderDef] = &[
 ];
 
 pub const BEDROCK_REGION_KEY: &str = "provider.bedrock.region";
+pub const BEDROCK_ROUTING_KEY: &str = "provider.bedrock.routing";
+/// Where a Bedrock call goes when the user has not said. `us-east-1` has every model
+/// Bedrock offers on day one, which is the only defensible guess to make for someone.
+pub const DEFAULT_BEDROCK_REGION: &str = "us-east-1";
+/// Global routing by default: Bedrock sends the call wherever there is capacity, which is
+/// the choice a user who has not thought about data residency wants. Picking a region in
+/// settings is what says otherwise.
+pub const DEFAULT_BEDROCK_ROUTING: &str = "global";
 pub const DEFAULT_MODEL: &str = "anthropic/claude-opus-5";
 pub const DEFAULT_MAX_TOKENS: u64 = 32_000;
 pub const DEFAULT_MAX_TURNS: u32 = 50;
@@ -127,7 +135,7 @@ pub fn apply(store: &Store) -> Result<Vec<&'static str>> {
         Some(_) => {
             let stored_region = store
                 .setting_get(BEDROCK_REGION_KEY)?
-                .unwrap_or_else(|| "us-east-1".to_string());
+                .unwrap_or_else(|| DEFAULT_BEDROCK_REGION.to_string());
             Some(stored_region.parse().map_err(|_| {
                 EngineError::Invalid(format!("Unsupported Bedrock region: {stored_region}"))
             })?)
@@ -184,11 +192,34 @@ pub fn read_settings(store: &Store) -> Result<Settings> {
             label: def.label.into(),
             has_key: key.is_some(),
             key_hint: key.as_deref().map(key_hint).unwrap_or_default(),
+            // The effective value, not the stored one: unset means `apply` will use the
+            // default, and a pane that showed nothing there would be showing something
+            // other than where the call is going.
             region: if def.key == "bedrock" {
-                store.setting_get(BEDROCK_REGION_KEY)?
+                Some(
+                    store
+                        .setting_get(BEDROCK_REGION_KEY)?
+                        .unwrap_or_else(|| DEFAULT_BEDROCK_REGION.into()),
+                )
             } else {
                 None
             },
+            regions: if def.key == "bedrock" {
+                BedrockRegion::ids().iter().map(|r| r.to_string()).collect()
+            } else {
+                Vec::new()
+            },
+            routing: if def.key == "bedrock" {
+                Some(
+                    store
+                        .setting_get(BEDROCK_ROUTING_KEY)?
+                        .unwrap_or_else(|| DEFAULT_BEDROCK_ROUTING.into()),
+                )
+            } else {
+                None
+            },
+            // The catalog's, not the store's: `Engine` fills these in, where it has one.
+            routings: Vec::new(),
         });
     }
     Ok(Settings {
@@ -231,6 +262,18 @@ pub fn write_settings(store: &Store, patch: &SettingsPatch) -> Result<()> {
             "Unsupported Bedrock region: {r}"
         )));
     }
+    // A routing has to be a profile prefix the catalog could actually put in a model id;
+    // which of them Bedrock offers for a given model is the catalog's business, and a
+    // routing no model has simply falls back — see `catalog::fold_region_profiles`.
+    let bedrock_routing = patch.bedrock_routing.as_deref().map(str::trim);
+    if let Some(r) = bedrock_routing
+        && !r.is_empty()
+        && !crate::catalog::REGION_PREFIXES.contains(&r)
+    {
+        return Err(EngineError::Invalid(format!(
+            "Unknown Bedrock routing: {r}"
+        )));
+    }
     let default_model = patch.default_model.as_deref().map(str::trim);
     if let Some(m) = default_model
         && !m.is_empty()
@@ -253,6 +296,13 @@ pub fn write_settings(store: &Store, patch: &SettingsPatch) -> Result<()> {
             store.setting_delete(BEDROCK_REGION_KEY)?;
         } else {
             store.setting_set(BEDROCK_REGION_KEY, r)?;
+        }
+    }
+    if let Some(r) = bedrock_routing {
+        if r.is_empty() {
+            store.setting_delete(BEDROCK_ROUTING_KEY)?;
+        } else {
+            store.setting_set(BEDROCK_ROUTING_KEY, r)?;
         }
     }
     if let Some(m) = default_model {
@@ -374,6 +424,58 @@ mod tests {
 
         write_settings(&s, &region_patch("  ")).unwrap();
         assert_eq!(s.setting_get(BEDROCK_REGION_KEY).unwrap(), None);
+    }
+
+    #[test]
+    fn bedrock_routing_defaults_to_global_then_round_trips() {
+        let s = Store::open_in_memory().unwrap();
+        let bedrock = |s: &Store| {
+            read_settings(s)
+                .unwrap()
+                .providers
+                .into_iter()
+                .find(|p| p.key == "bedrock")
+                .unwrap()
+        };
+
+        let b = bedrock(&s);
+        assert_eq!(b.routing.as_deref(), Some(DEFAULT_BEDROCK_ROUTING));
+        assert_eq!(b.region.as_deref(), Some(DEFAULT_BEDROCK_REGION));
+        assert!(
+            b.regions.iter().any(|r| r == "us-east-1"),
+            "the pane offers the regions ailoy knows"
+        );
+        // The profiles on offer come from the catalog, which `Engine` holds and this does not.
+        assert!(b.routings.is_empty());
+        assert!(
+            read_settings(&s)
+                .unwrap()
+                .providers
+                .iter()
+                .all(|p| p.key == "bedrock" || (p.routing.is_none() && p.regions.is_empty())),
+            "one endpoint, nothing to choose"
+        );
+
+        let routing = |r: &str| SettingsPatch {
+            bedrock_routing: Some(r.into()),
+            ..SettingsPatch::default()
+        };
+        write_settings(&s, &routing("eu")).unwrap();
+        assert_eq!(bedrock(&s).routing.as_deref(), Some("eu"));
+
+        let err = write_settings(&s, &routing("mars")).unwrap_err();
+        assert!(matches!(err, EngineError::Invalid(_)), "{err:?}");
+        assert_eq!(
+            s.setting_get(BEDROCK_ROUTING_KEY).unwrap().as_deref(),
+            Some("eu"),
+            "a rejected patch must not touch the stored routing"
+        );
+
+        write_settings(&s, &routing("")).unwrap();
+        assert_eq!(
+            bedrock(&s).routing.as_deref(),
+            Some(DEFAULT_BEDROCK_ROUTING)
+        );
     }
 
     #[test]

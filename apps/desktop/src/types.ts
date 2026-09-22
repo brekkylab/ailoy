@@ -115,11 +115,27 @@ export interface FileContent {
 }
 export interface ImportReport { files: number; bytes: number; skipped: string[] }
 
-export interface ProviderSetting { key: string; label: string; has_key: boolean; key_hint: string; region: string | null }
+/** One way a provider will route a call: what goes into a model id, and its own name for it. */
+export interface RegionRouting { id: string; label: string }
+export interface ProviderSetting {
+  key: string;
+  label: string;
+  has_key: boolean;
+  key_hint: string;
+  /** The region a call goes to, already defaulted by the engine. `null` for a provider with one endpoint. */
+  region: string | null;
+  /** The regions on offer; empty unless there are several. */
+  regions: string[];
+  /** Which inference profile the provider's models are reached through, `null` where there is one. */
+  routing: string | null;
+  /** The profiles on offer, from the catalog; empty unless there are several. */
+  routings: RegionRouting[];
+}
 export interface Settings { providers: ProviderSetting[]; default_model: string; max_tokens: number; max_turns: number; catalog_refresh: boolean }
 export interface SettingsPatch {
   provider_keys?: Record<string, string | null>;
   bedrock_region?: string;
+  bedrock_routing?: string;
   default_model?: string;
   max_tokens?: number;
   max_turns?: number;
