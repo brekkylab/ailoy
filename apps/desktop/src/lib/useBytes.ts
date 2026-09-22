@@ -22,7 +22,7 @@
 // it would stay detached in the cache for every reader after.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 
 import * as api from "@/api";
 import { BYTES_KEY, trimBytes } from "@/lib/bytes";
@@ -53,11 +53,23 @@ export function useBytes(path: string): Bytes {
 
   // The pane has room for one sentence and says it. The reason goes to the log, so a file
   // that will not open leaves something to read rather than only a red line.
-  const failed = file.error;
+  const error = file.error;
   useEffect(() => {
-    if (failed) report(`${path} could not be read`, failed);
-  }, [path, failed]);
+    if (error) report(`${path} could not be read`, error);
+  }, [path, error]);
 
-  if (file.data) return { state: "ready", bytes: file.data };
-  return file.isError ? { state: "failed" } : { state: "loading" };
+  // One object per state, and not one per render.
+  //
+  // Every viewer keys an effect on this value — `[bytes, path]` — and opening a document sets
+  // state, so a value that changed identity on each render would open the document, re-render,
+  // tear it down, and open it again, forever. `PdfViewer` shows that as a blank pane: its
+  // cleanup destroys the pdf.js task and terminates the worker, so the document is destroyed
+  // the moment it arrives. A fresh object literal here did exactly that; the effect it
+  // replaced held its value in `useState`, which is stable by construction.
+  const data = file.data;
+  return useMemo<Bytes>(
+    () =>
+      data ? { state: "ready", bytes: data } : error ? { state: "failed" } : { state: "loading" },
+    [data, error],
+  );
 }
