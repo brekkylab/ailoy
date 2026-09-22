@@ -102,3 +102,27 @@ html, body, #root { height: 100%; margin: 0; }
   -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--fade-top));
   mask-image: linear-gradient(to bottom, transparent, black var(--fade-top));
 }
+
+/* A Word document is paper, and `docx-preview` will only paint the paper inside a wrapper
+   this app does not use.
+
+   Its stylesheet puts the page's white on `.docx-wrapper>section.docx` and nothing else,
+   while `color: black` goes on `.docx` unconditionally. `DocxViewer` renders with
+   `inWrapper: false` — the wrapper is grey page furniture built for a print preview — so
+   the section arrives transparent with black text on it. In the light theme that shows as
+   a document whose only white is the cells its own tables fill; in the dark theme it is
+   black text on a near-black pane, which is most of the document gone.
+
+   So the paper is drawn here instead. Unconditionally white, in both themes, because the
+   black text is the library's and is not ours to re-colour: a document renders as the
+   document, the way a PDF page does. */
+.docx-host section.docx {
+  background: #fff;
+  color: #000;
+  padding: 2.5rem 3rem;
+  border-radius: var(--radius);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+}
+
+/* A document with more than one section is more than one sheet. */
+.docx-host section.docx + section.docx { margin-top: 1rem; }

@@ -54,7 +54,10 @@ export function DocxViewer({ path }: { path: string }) {
   return (
     <>
       {bytes.state === "loading" && <p className="text-xs text-muted-foreground">{S.loading}</p>}
-      <div ref={host} className="docx-host prose prose-sm dark:prose-invert max-w-none" />
+      {/* No `dark:prose-invert`: the page below is paper in either theme — see
+          `.docx-host` in `index.css` — so inverting for the dark one would put light text
+          on white for every element Word's own stylesheet leaves to us. */}
+      <div ref={host} className="docx-host prose prose-sm max-w-none" />
     </>
   );
 }
