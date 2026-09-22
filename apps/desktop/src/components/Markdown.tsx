@@ -20,9 +20,10 @@
 // browser needs the opener plugin, which v1 does not ship.
 //
 // The highlighter is built in `lib/highlighter.ts` and not taken from `react-shiki`'s
-// default entry, because that entry's engine is WebAssembly and the packaged app's CSP
-// refuses it — see the header there. It resolves asynchronously, so a fence renders as a
-// plain block for the frame or two before the grammars land.
+// default entry, whose WebAssembly engine the packaged app's CSP refused before that
+// policy gained `'wasm-unsafe-eval'`, and which costs 11 MB of grammars either way — see
+// the header there. It resolves asynchronously, so a fence renders as a plain block for
+// the frame or two before the grammars land.
 
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import ShikiHighlighter from "react-shiki/core";

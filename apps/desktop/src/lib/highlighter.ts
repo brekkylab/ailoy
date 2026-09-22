@@ -1,14 +1,15 @@
 // The syntax highlighter, assembled by hand instead of taken off the shelf.
 //
 // Two reasons, and the first one is not an optimisation. `react-shiki`'s default export
-// carries shiki's Oniguruma engine, which is WebAssembly, and the packaged app's CSP has
-// no `script-src` — so `default-src 'self'` applies and WebKit refuses
-// `WebAssembly.instantiate` outright. Under `tauri dev` the dev server's own CSP is
-// looser and nothing goes wrong; in the `.app` every fence in the thread would fail to
-// highlight, in a webview whose console the user cannot open. shiki's JavaScript regex
-// engine compiles the same TextMate grammars to native `RegExp`, so there is no wasm for
-// the policy to refuse. (`tauri.conf.json` also grants `'wasm-unsafe-eval'` now, but that
-// is the belt; this is the braces, and it is the one that removes the failure mode.)
+// carries shiki's Oniguruma engine, which is WebAssembly. The packaged app's CSP used to
+// name no `script-src` at all, so `default-src 'self'` applied and WebKit refused
+// `WebAssembly.instantiate` outright — while under `tauri dev` the dev server's own policy
+// was looser and nothing went wrong, so it only ever appeared in the `.app`, in a webview
+// whose console the user cannot open, as every fence in the thread silently unhighlighted.
+// `tauri.conf.json` grants `'wasm-unsafe-eval'` now, so the policy is no longer what
+// stands in the way. This stays regardless: shiki's JavaScript regex engine compiles the
+// same TextMate grammars to native `RegExp`, so there is no wasm to be refused by any
+// policy, present or future, and nothing here rests on what a webview does with one.
 //
 // The second reason is size: the default bundle registers ~200 grammars and weighs 11 MB
 // of `dist`. `react-shiki/core` refuses to guess and demands a highlighter, which is what

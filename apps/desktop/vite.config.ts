@@ -12,11 +12,13 @@ export default defineConfig({
     alias: {
       "@": src,
       // shiki's WebAssembly engine, cut out of the graph. `lib/highlighter.ts` builds the
-      // highlighter on the JavaScript regex engine because the packaged app's CSP will not
-      // run wasm, but react-shiki references the Oniguruma one unconditionally — a static
-      // re-export plus a string-keyed `ENGINES` map — and neither reference can be
-      // tree-shaken. The stub keeps the module graph resolvable and throws if anything ever
-      // does reach for it. See `src/lib/onigurumaStub.ts`.
+      // highlighter on the JavaScript regex engine — first because the packaged app's CSP
+      // refused wasm outright, and still, now that it grants `'wasm-unsafe-eval'`, because
+      // it is smaller and depends on nothing a policy can withdraw. react-shiki references
+      // the Oniguruma one unconditionally all the same — a static re-export plus a
+      // string-keyed `ENGINES` map — and neither reference can be tree-shaken. The stub
+      // keeps the module graph resolvable and throws if anything ever does reach for it.
+      // See `src/lib/onigurumaStub.ts`.
       "shiki/engine/oniguruma": path.join(src, "lib/onigurumaStub.ts"),
       "shiki/wasm": path.join(src, "lib/onigurumaStub.ts"),
       // A Node addon `emf-converter` reaches for only where there is no canvas — never in
