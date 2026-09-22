@@ -11,10 +11,9 @@
 // queries with it — nothing here is shared state to thread through, and a page the user has
 // not opened has not mounted, so it costs nothing to add one.
 
-import { Cpu, Info, Palette } from "lucide-react";
+import { Cpu, Palette } from "lucide-react";
 
 import { AppearancePage } from "@/components/settings/AppearancePage";
-import { AppPage } from "@/components/settings/AppPage";
 import { ModelsPage } from "@/components/settings/ModelsPage";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
 import { S } from "@/strings";
@@ -22,7 +21,6 @@ import { S } from "@/strings";
 const PAGES = [
   { id: "models", label: S.modelsPage, Icon: Cpu, Page: ModelsPage },
   { id: "appearance", label: S.appearancePage, Icon: Palette, Page: AppearancePage },
-  { id: "app", label: S.appPage, Icon: Info, Page: AppPage },
 ];
 
 export function SettingsPanel() {
