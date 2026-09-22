@@ -18,8 +18,14 @@
 // literal. That is the price, it is small, and it is only paid by documents long enough to
 // need this.
 
-/** How much text a piece aims for. Small enough to paint quickly, large enough to be few. */
-export const CHUNK_BYTES = 48 * 1024;
+/**
+ * How much text a piece aims for.
+ *
+ * Small enough that one is quick to render and cheap to hold, large enough that a document
+ * is not thousands of them: at this size the 817 KiB report is about fifty pieces, and a
+ * reader sees two or three at a time.
+ */
+export const CHUNK_BYTES = 16 * 1024;
 
 /** Below this, a document is one piece and nothing here is doing anything. */
 export const CHUNK_ABOVE = 96 * 1024;
