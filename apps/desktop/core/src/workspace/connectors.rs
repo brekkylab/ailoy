@@ -89,7 +89,14 @@ pub fn describe(config: &MountConfig) -> (MountKind, String, bool) {
 }
 
 /// The store `config` names, once one request has proved it answers.
-pub async fn build_and_probe(config: &MountConfig) -> Result<Arc<dyn FileSystem>> {
+///
+/// `cache_dir` is where a store that keeps something between runs may keep it — Notion's
+/// rendered pages, today. A store that keeps nothing ignores it, and passing a directory that
+/// does not exist is fine: whoever writes there creates it.
+pub async fn build_and_probe(
+    config: &MountConfig,
+    cache_dir: &std::path::Path,
+) -> Result<Arc<dyn FileSystem>> {
     match config {
         MountConfig::Root => Err(EngineError::Invalid(
             "The root cannot be added as a connector".into(),
@@ -110,7 +117,12 @@ pub async fn build_and_probe(config: &MountConfig) -> Result<Arc<dyn FileSystem>
                     "Enter a Notion integration token".into(),
                 ));
             }
-            let store = NotionFs::new(&NotionConfig { api_key })?;
+            // A page render is a retrieve plus a walk of the page's whole block tree, which is
+            // most of what browsing a Notion tree costs; kept here, a restart revalidates
+            // instead of walking again. The pages' own json lands in the app's data directory,
+            // beside the database that already holds every message.
+            let store =
+                NotionFs::new(&NotionConfig { api_key })?.with_cache_dir(cache_dir.join("notion"));
             // The confirming request. A listing of the root is what the tree would ask for
             // first anyway, so a token that cannot do it is a connection worth refusing now.
             tokio::time::timeout(PROBE_TIMEOUT, store.list(Path::new("")))
@@ -177,17 +189,25 @@ mod tests {
     async fn local_connector_needs_a_directory() {
         let f = tempfile::NamedTempFile::new().unwrap();
         assert!(
-            build_and_probe(&MountConfig::Local {
-                host_root: f.path().to_path_buf()
-            })
+            // A local store keeps nothing between runs, so the cache directory is unused
+            // here — and is never created, which is what passing one that does not exist says.
+            build_and_probe(
+                &MountConfig::Local {
+                    host_root: f.path().to_path_buf()
+                },
+                Path::new("/nowhere")
+            )
             .await
             .is_err()
         );
         let d = tempfile::tempdir().unwrap();
         assert!(
-            build_and_probe(&MountConfig::Local {
-                host_root: d.path().to_path_buf()
-            })
+            build_and_probe(
+                &MountConfig::Local {
+                    host_root: d.path().to_path_buf()
+                },
+                Path::new("/nowhere")
+            )
             .await
             .is_ok()
         );

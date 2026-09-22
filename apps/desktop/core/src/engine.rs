@@ -5,7 +5,10 @@
 //! together and is the only one the Tauri layer ever sees: one `Arc<Engine>` in managed
 //! state, one method per command.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use ailoy::message::Part;
 
@@ -132,8 +135,9 @@ impl Engine {
             let store = engine.store.clone();
             let workspace = engine.workspace.clone();
             let restored = engine.restored.clone();
+            let cache_dir = engine.cfg.cache_dir();
             tokio::spawn(async move {
-                restore_connectors(&store, &workspace).await;
+                restore_connectors(&store, &workspace, &cache_dir).await;
                 let _ = restored.send(true);
             });
         }
@@ -325,7 +329,7 @@ impl Engine {
             .map(|l| l.trim().to_string())
             .filter(|l| !l.is_empty())
             .unwrap_or_else(|| path.rsplit('/').next().unwrap_or(&path).to_string());
-        let fs = connectors::build_and_probe(&req.config).await?;
+        let fs = connectors::build_and_probe(&req.config, &self.cfg.cache_dir()).await?;
         let info = MountInfo {
             id: uuid::Uuid::new_v4().to_string(),
             path: path.clone(),
@@ -505,7 +509,7 @@ fn lock_data_dir(data_dir: &std::path::Path) -> Result<std::fs::File> {
 /// Probed concurrently, attached in row order: the probes are what take 15 seconds each
 /// when a store does not answer, and the attaching takes the workspace's write lock, where
 /// order decides which of two rows on the same path wins.
-async fn restore_connectors(store: &Store, workspace: &WorkspaceManager) {
+async fn restore_connectors(store: &Store, workspace: &WorkspaceManager, cache_dir: &Path) {
     let rows = match store.mount_list() {
         Ok(rows) => rows,
         Err(e) => {
@@ -513,9 +517,11 @@ async fn restore_connectors(store: &Store, workspace: &WorkspaceManager) {
             return;
         }
     };
-    let probes =
-        futures::future::join_all(rows.iter().map(|r| connectors::build_and_probe(&r.config)))
-            .await;
+    let probes = futures::future::join_all(
+        rows.iter()
+            .map(|r| connectors::build_and_probe(&r.config, cache_dir)),
+    )
+    .await;
     for (row, probe) in rows.into_iter().zip(probes) {
         let (kind, detail, writable) = connectors::describe(&row.config);
         let mut info = MountInfo {
