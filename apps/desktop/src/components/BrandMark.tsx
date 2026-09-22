@@ -1,40 +1,46 @@
 // A published brand mark, and the letter that stands in for one that is not published.
 //
-// Brand marks come from the vendor rather than from us wherever one is actually published
-// for reuse: a hand-drawn "close enough" logo is both worse at being recognised and a
-// claim about someone else's mark that we are not the ones to make. `simple-icons` is
-// where the published ones live — the vendors' own artwork, CC0, kept up to date as brands
-// change — and what it does not carry, it does not carry for a reason:
+// Brand marks come from the vendor's own artwork rather than from us: a hand-drawn "close
+// enough" logo is both worse at being recognised and a claim about someone else's mark
+// that we are not the ones to make. Two sets supply them, and which one a caller reaches
+// for is about where the thing being named comes from:
 //
-//   * **OpenAI** was in it and is not any more. Removals happen when the brand owner asks
-//     for one (`removals@simpleicons.org`), and theirs went in a major release. Their
-//     developer terms license the OpenAI assets "solely to promote your apps", per brand
-//     guidelines we would have to be granted rather than assume — not to label a row in
-//     someone else's settings pane.
-//   * **Amazon Bedrock**: AWS's trademark guidelines allow a plain-text nominative
-//     reference ("works with Amazon Bedrock") and require prior written approval for the
-//     logos and the Architecture Icons. There is no version of vendoring their mark here
-//     that those guidelines permit, which is why `simple-icons` carries no Amazon family
-//     at all.
-//   * **xAI**: simply absent, with no published set to take it from.
+//   * **Model providers** take `lib/providerMarks`, which is models.dev's logo set — the
+//     same project the model catalog comes from, MIT, one path on one canvas per provider.
+//     That set is what makes OpenAI, xAI and Amazon Bedrock drawable at all: `simple-icons`
+//     carries none of the three. OpenAI's was in it and was removed, as it is when a brand
+//     owner asks; AWS's trademark guidelines allow a plain-text reference to a product name
+//     and require prior written approval for the logos and Architecture Icons, so no
+//     redistributable set carries an Amazon family.
+//   * **Connected sources** take `simple-icons` (Notion), which covers them and is already
+//     a dependency.
 //
-// So the alternative is not a drawing of the mark, and it is not a stand-in glyph either —
-// a wrench or a sparkle next to three real logos reads as the one that failed to load. It
-// is a letter on a plate, set in the app's own type on the marks' canvas, which claims
-// nothing and still tells the rows of a list apart. Everything renders in `currentColor`
-// so a column of them reads as one column rather than as a row of stickers; `simple-icons`
-// carries the official hex on each icon if that is ever wanted.
+// Either way a mark is its owner's trademark, used to name the provider or the service a
+// row *is* — in `currentColor`, at the size of every other row, with nothing about it
+// claiming endorsement. MIT covers the file; it is not a trademark licence, and this is the
+// one file to revisit if an owner ever asks us to stop.
 //
-// If the team would rather ship the real marks, that is a decision about someone else's
-// trademark and not a missing feature: `ProviderIcon`'s table is where it lands.
+// A provider the marks do not cover gets its initial instead. Not a stand-in glyph: a
+// wrench or a sparkle beside real logos reads as the one that failed to load.
 
 /**
- * A `simple-icons` entry as an inline SVG. Their paths are single filled shapes on a 24x24
- * canvas, unlike Lucide's strokes, which is why this sets `fill` and no stroke at all.
+ * One mark as an inline SVG. Both sets draw single filled shapes, unlike Lucide's strokes,
+ * which is why this sets `fill` and no stroke at all.
  */
-export function BrandMark({ path, title, className }: { path: string; title: string; className?: string }) {
+export function BrandMark({
+  path,
+  title,
+  className,
+  viewBox = "0 0 24 24",
+}: {
+  path: string;
+  title: string;
+  className?: string;
+  /** The canvas the path was drawn on. `simple-icons` uses 24; models.dev uses 40. */
+  viewBox?: string;
+}) {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className} role="img" aria-label={title}>
+    <svg viewBox={viewBox} fill="currentColor" className={className} role="img" aria-label={title}>
       <path d={path} />
     </svg>
   );
