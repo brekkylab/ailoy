@@ -23,6 +23,7 @@ import { NotionPage } from "@/components/notion/NotionPage";
 import { notionMarkdown } from "@/lib/notion";
 import { expandTo, isHidden, loadExpanded, saveExpanded, toggle } from "@/lib/treeState";
 import { DocxViewer } from "@/components/viewers/DocxViewer";
+import { HwpViewer } from "@/components/viewers/HwpViewer";
 import { ImageViewer } from "@/components/viewers/ImageViewer";
 import { PdfViewer } from "@/components/viewers/PdfViewer";
 import { XlsxViewer } from "@/components/viewers/XlsxViewer";
@@ -41,6 +42,8 @@ function BinaryView({ path, viewer }: { path: string; viewer: Viewer }) {
       return <DocxViewer path={path} />;
     case "xlsx":
       return <XlsxViewer path={path} />;
+    case "hwp":
+      return <HwpViewer path={path} />;
     default:
       return null;
   }

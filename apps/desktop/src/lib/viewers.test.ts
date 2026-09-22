@@ -49,6 +49,21 @@ describe("viewerFor", () => {
     expect(viewerFor("page.html")).toMatchObject({ kind: "code", lang: "html" });
   });
 
+  it("opens both Hangul containers with the one viewer", () => {
+    // `.hwp` is the binary container and `.hwpx` the zipped XML one; the same engine reads
+    // both, and neither is text, so neither may fall through to the text fallback.
+    expect(viewerFor("공고.hwp")).toMatchObject({ kind: "hwp", fills: true });
+    expect(viewerFor("공고.HWPX")).toMatchObject({ kind: "hwp", fills: true });
+  });
+
+  it("hands every page-shaped format the whole pane", () => {
+    // A document typeset onto paper brings its own margins; padding from the pane would
+    // land outside the page rather than around the content.
+    for (const name of ["a.pdf", "a.hwp", "a.hwpx"]) {
+      expect(viewerFor(name).fills, name).toBe(true);
+    }
+  });
+
   it("asks only for grammars the highlighter registers", () => {
     const registered = new Set([
       "typescript", "tsx", "javascript", "json", "bash", "rust", "toml", "python",

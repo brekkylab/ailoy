@@ -18,7 +18,8 @@ export type ViewerKind =
   | "image"
   | "pdf"
   | "docx"
-  | "xlsx";
+  | "xlsx"
+  | "hwp";
 
 /** Whether a viewer is given the decoded text or goes and gets the bytes. */
 export function readsText(kind: ViewerKind): boolean {
@@ -74,6 +75,13 @@ const IMAGE: Viewer = { label: "Image", kind: "image" };
 const PDF: Viewer = { label: "PDF", kind: "pdf", fills: true };
 const DOCX: Viewer = { label: "Word", kind: "docx" };
 const XLSX: Viewer = { label: "Spreadsheet", kind: "xlsx" };
+/**
+ * Hangul, the word processor most Korean public paperwork is written in.
+ *
+ * `fills`, like a PDF: it is typeset into pages with their own paper and margins, so
+ * anything this pane adds lands outside the page rather than around the content.
+ */
+const HWP: Viewer = { label: "Hangul", kind: "hwp", fills: true };
 
 const BY_EXT: Record<string, Viewer | undefined> = {
   png: IMAGE,
@@ -92,6 +100,8 @@ const BY_EXT: Record<string, Viewer | undefined> = {
   docm: DOCX,
   xlsx: XLSX,
   xlsm: XLSX,
+  hwp: HWP,
+  hwpx: HWP,
   md: MARKDOWN,
   markdown: MARKDOWN,
   mdown: MARKDOWN,
