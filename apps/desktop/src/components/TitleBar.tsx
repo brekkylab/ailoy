@@ -21,8 +21,10 @@
 // sits next to the lights rather than at the segment's far edge — it has to stay in the
 // same place in both states, or it moves out from under the cursor that just clicked it.
 //
-// The right segment is the session's: its title, and the app's settings. Settings used to
-// live in the sidebar, where hiding the sidebar would have taken it with it.
+// The right segment is the session's: its title, and the way into the app's settings.
+// Settings used to live in the sidebar, where hiding the sidebar would have taken it with
+// it. The gear opens a panel rather than a dialog, so it is a place the window can *be* —
+// hence `settingsActive`, which marks it the way the sidebar marks its own rows.
 
 import { cn } from "cn";
 import { PanelLeftClose, PanelLeftOpen, Settings as SettingsIcon } from "lucide-react";
@@ -63,12 +65,15 @@ export function TitleBar({
   title,
   collapsed,
   onToggleSidebar,
+  settingsActive,
   onOpenSettings,
 }: {
   /** The current session's title, or `null` when no session is open. */
   title: string | null;
   collapsed: boolean;
   onToggleSidebar: () => void;
+  /** Whether the settings panel is what the main panel is showing. */
+  settingsActive: boolean;
   onOpenSettings: () => void;
 }) {
   return (
@@ -96,9 +101,10 @@ export function TitleBar({
         <Button
           variant="ghost"
           size="icon"
-          className="ml-auto"
+          className={cn("ml-auto", settingsActive && "bg-accent text-accent-foreground")}
           onClick={onOpenSettings}
           aria-label={S.settings}
+          aria-pressed={settingsActive}
         >
           <SettingsIcon className="size-4" />
         </Button>

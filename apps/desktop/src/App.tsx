@@ -6,7 +6,7 @@ import type { CSSProperties } from "react";
 import * as api from "@/api";
 import { ArtifactsPanel } from "@/components/ArtifactsPanel";
 import { Banner } from "@/components/Banner";
-import { SettingsDialog } from "@/components/SettingsDialog";
+import { SettingsPanel } from "@/components/SettingsPanel";
 import { Sidebar } from "@/components/Sidebar";
 import { Thread } from "@/components/Thread";
 import { TitleBar } from "@/components/TitleBar";
@@ -61,7 +61,6 @@ function Shell() {
       return null;
     }
   });
-  const [settingsOpen, setSettingsOpen] = useState(false);
   // Not persisted, unlike the session and the sidebar: a relaunch should land on the
   // conversation, which is what the window is for.
   const [view, setView] = useState<MainView>("session");
@@ -153,7 +152,8 @@ function Shell() {
         title={title}
         collapsed={collapsed}
         onToggleSidebar={toggleSidebar}
-        onOpenSettings={() => setSettingsOpen(true)}
+        settingsActive={view === "settings"}
+        onOpenSettings={() => setView("settings")}
       />
       {/* Unmounted rather than hidden when collapsed: a sidebar of zero width still takes
           tab stops, and its session list would keep polling behind the fold. */}
@@ -179,8 +179,8 @@ function Shell() {
         )}
         {view === "workspace" && <WorkspacePanel source={source} />}
         {view === "artifacts" && <ArtifactsPanel />}
+        {view === "settings" && <SettingsPanel />}
       </main>
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   );
 }
