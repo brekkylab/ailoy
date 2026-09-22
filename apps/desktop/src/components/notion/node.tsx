@@ -20,6 +20,7 @@ import {
   PAGE_ICON,
   isNotionDatabase,
   notionChildren,
+  notionHeading,
   notionIcon,
   notionRowCount,
   notionTitle,
@@ -71,18 +72,24 @@ function useNotionRow(e: Entry): RowInfo {
   // its chevrons rather than filling them in one row at a time. See `lib/notionRows`.
   const recalled = useMemo(() => (e.kind === "dir" ? recalledRow(e.path) : null), [e.kind, e.path]);
   const icon = text ? notionIcon(text) : null;
+  // The page's own title, which is the one with the spaces in it: cortex names the directory
+  // `<sanitized-title>__<id>`, because that is a path component and a path component cannot
+  // hold every character a Notion title can. The json inside carries the real one, and this
+  // row is already reading it.
+  const title = text ? notionHeading(text) : null;
   const leaf = text === null ? undefined : db ? notionRowCount(text) === 0 : notionChildren(text).length === 0;
   // Written after the render, not during it: this is a side effect, and one that reads the
   // same storage the row above it may be writing.
   useEffect(() => {
-    if (leaf !== undefined) rememberRow(e.path, { icon, leaf });
-  }, [e.path, icon, leaf]);
+    if (leaf !== undefined) rememberRow(e.path, { icon, leaf, title });
+  }, [e.path, icon, leaf, title]);
   return {
     icon: (
       <span className="w-3.5 shrink-0 text-center text-[13px] leading-none">
         {icon ?? recalled?.icon ?? (db ? DB_ICON : PAGE_ICON)}
       </span>
     ),
+    label: title ?? recalled?.title ?? undefined,
     leaf: leaf ?? recalled?.leaf,
     // Until there is an answer — from the read, or from the last time this row was seen —
     // there is no expander: most pages hold nothing, so assuming otherwise showed a chevron

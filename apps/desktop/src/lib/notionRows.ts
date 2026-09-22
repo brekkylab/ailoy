@@ -18,16 +18,18 @@ const LIMIT = 1000;
 
 const KEY = "ailoy.notionRows";
 
-/** What a row draws with, apart from its name. */
+/** What a row draws with, apart from what its path says. */
 export interface RowMemo {
   /** The page's emoji, or `null` for one that has none. */
   icon: string | null;
   /** Whether the page holds nothing — no sub-pages, or no rows for a database. */
   leaf: boolean;
+  /** The page's own title, spaces and all, or `null` when the json did not carry one. */
+  title: string | null;
 }
 
 /** Stored compactly: this is one blob of every row a reader has seen. */
-type Stored = Record<string, [icon: string | null, leaf: boolean]>;
+type Stored = Record<string, [icon: string | null, leaf: boolean, title?: string | null]>;
 
 function read(): Stored {
   try {
@@ -44,10 +46,12 @@ function read(): Stored {
 
 export function recalledRow(path: string): RowMemo | null {
   const entry = read()[path];
-  if (!Array.isArray(entry) || entry.length !== 2) return null;
-  const [icon, leaf] = entry;
+  if (!Array.isArray(entry) || entry.length < 2) return null;
+  const [icon, leaf, title] = entry;
   if ((icon !== null && typeof icon !== "string") || typeof leaf !== "boolean") return null;
-  return { icon, leaf };
+  // A blob written before rows remembered their titles has two fields, not three. It is
+  // still a good answer to the two it has, and the title fills in with the next read.
+  return { icon, leaf, title: typeof title === "string" ? title : null };
 }
 
 /**
@@ -62,7 +66,7 @@ export function rememberRow(path: string, memo: RowMemo) {
     // Delete first, so re-seeing a row moves it to the end rather than leaving it where it
     // was — otherwise the cap would drop the rows a reader keeps coming back to.
     delete stored[path];
-    stored[path] = [memo.icon, memo.leaf];
+    stored[path] = [memo.icon, memo.leaf, memo.title];
     const keys = Object.keys(stored);
     for (const old of keys.slice(0, Math.max(0, keys.length - LIMIT))) delete stored[old];
     localStorage.setItem(KEY, JSON.stringify(stored));

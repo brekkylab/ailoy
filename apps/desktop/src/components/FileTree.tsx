@@ -20,6 +20,14 @@ export type RowInfo = {
   /** Drawn where the folder or file icon would be. */
   icon?: ReactNode;
   /**
+   * What to call the row, when the source knows better than its own path does.
+   *
+   * `TreeAdapter.label` is the same question asked of the *name*, and answers it for every
+   * row at once; this one is per row and may arrive later — a Notion page's real title is
+   * inside the page, while its directory is named with the spaces taken out.
+   */
+  label?: string;
+  /**
    * True when a directory has nothing inside, so no expander is offered for it. Absent is
    * "this source has no opinion", which leaves a directory expandable — it is one.
    */
@@ -142,7 +150,7 @@ function Row({
   expanded: Set<string>;
   onToggle: (path: string) => void;
 }) {
-  const { icon, leaf, pending } = (adapter?.useRow ?? plainRow)(e);
+  const { icon, label, leaf, pending } = (adapter?.useRow ?? plainRow)(e);
   // A directory known to hold nothing is drawn as what it is, and one whose source has not
   // answered yet waits. For Notion that is most of them: a page is a directory because it
   // *may* have sub-pages, and usually has none.
@@ -172,7 +180,7 @@ function Row({
         )}
         {icon ??
           (e.kind === "dir" ? <Folder className="size-3.5 shrink-0" /> : <File className="size-3.5 shrink-0" />)}
-        <span className="truncate">{adapter?.label?.(e) ?? e.name}</span>
+        <span className="truncate">{label ?? adapter?.label?.(e) ?? e.name}</span>
       </button>
       {isExpandable && open && (
         <FileTree
