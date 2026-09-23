@@ -197,9 +197,9 @@ impl Agent {
     /// top of a turn, which is `async` and takes that lock to
     /// [`start`](Self::start_console) anyway.
     ///
-    /// Only paths are said. What each tree is *for* is the caller's own and nowhere in the
+    /// Only paths are said. What each mount is *for* is the caller's own and nowhere in the
     /// protocol, so an instruction that needs to say it does, and this supplies the one
-    /// thing no instruction can know ahead of time: where the trees ended up.
+    /// thing no instruction can know ahead of time: where the mounts ended up.
     ///
     /// Appended to the system message rather than merged into
     /// [`AgentSpec::instruction`], and appended even to a system message the caller wrote
@@ -876,7 +876,7 @@ mod tests {
         system_text(agent)
     }
 
-    /// A console that mounted trees gets each one listed, under the path the server
+    /// A console with mounts gets each one listed, under the path the server
     /// answered, alongside the instruction rather than in place of it.
     #[tokio::test]
     async fn test_console_mounts_are_listed_in_the_system_message() {
@@ -975,7 +975,7 @@ mod tests {
     }
 
     /// The caller's own system message wins on instruction and still learns the paths:
-    /// where a tree ended up cannot be authored ahead of time.
+    /// where a mount ended up cannot be authored ahead of time.
     #[tokio::test]
     async fn test_mounts_are_appended_to_a_caller_supplied_system_message() {
         let provider = default_test_provider();
