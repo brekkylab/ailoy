@@ -35,9 +35,12 @@ pub fn run() {
             context::make_context_dir,
             context::add_context_files,
             context::remove_context_file,
+            context::export_context,
             agent::list_agents,
+            agent::get_helper_agent,
             agent::save_agent,
             agent::remove_agent,
+            agent::export_agent,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

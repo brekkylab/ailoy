@@ -6,4 +6,4 @@ export type MainView = "session" | "context" | "agent" | "artifacts" | "settings
 export type ContextCommand = "files";
 
 // The pages of the agent editor, listed under the agents in the sidebar.
-export type AgentSection = "general" | "prompt" | "tools" | "sandbox" | "spec";
+export type AgentSection = "general" | "prompt" | "tools" | "sandbox" | "advanced";

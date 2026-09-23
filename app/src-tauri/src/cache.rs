@@ -8,6 +8,7 @@
 //! contexts/{id}/             mounted as it stands, so nothing of ours goes inside
 //! contexts/{id}.json         its name, beside it
 //! agents/{id}/agent.json     see `agent.rs`
+//!   … context/, agentmaker/  the helpers, kept out of the collection
 //! messages/{id}/chat.json
 //! ```
 

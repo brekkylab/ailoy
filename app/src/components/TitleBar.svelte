@@ -6,10 +6,11 @@
   `data-tauri-drag-region="deep"` makes the whole bar draggable except its buttons.
 
   The left segment keeps the sidebar's width so the divider below it runs straight. The
-  right one names what the main panel is showing and holds the way into settings.
+  right one names what the main panel is showing, toggles its right-hand pane if it has
+  one, and holds the way into settings.
 -->
 <script lang="ts">
-  import { PanelLeftClose, PanelLeftOpen, Settings } from "@lucide/svelte";
+  import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Settings } from "@lucide/svelte";
 
   import { btn } from "@/lib/ui";
   import { S } from "@/strings";
@@ -20,12 +21,15 @@
     onToggleSidebar,
     settingsActive,
     onOpenSettings,
+    aside = null,
   }: {
     title: string;
     collapsed: boolean;
     onToggleSidebar: () => void;
     settingsActive: boolean;
     onOpenSettings: () => void;
+    /** A pane the main panel can show on its right, when it has one. */
+    aside?: { open: boolean; label: string; onToggle: () => void } | null;
   } = $props();
 </script>
 
@@ -46,8 +50,19 @@
     {#if title}
       <h1 class="min-w-0 truncate text-sm font-medium">{title}</h1>
     {/if}
+    {#if aside}
+      <button
+        class={[btn.ghostIcon, "ml-auto", aside.open && "bg-accent text-accent-foreground"]}
+        onclick={aside.onToggle}
+        aria-label={aside.label}
+        title={aside.label}
+        aria-expanded={aside.open}
+      >
+        {#if aside.open}<PanelRightClose class="size-4" />{:else}<PanelRightOpen class="size-4" />{/if}
+      </button>
+    {/if}
     <button
-      class={[btn.ghostIcon, "ml-auto", settingsActive && "bg-accent text-accent-foreground"]}
+      class={[btn.ghostIcon, !aside && "ml-auto", settingsActive && "bg-accent text-accent-foreground"]}
       onclick={onOpenSettings}
       aria-label={S.settings}
       aria-pressed={settingsActive}

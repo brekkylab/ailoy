@@ -58,4 +58,6 @@ export const makeDir = (id: string, path: Segments) => invoke<void>("make_contex
 /** Copies files or folders from anywhere on this machine into `path`. */
 export const addFiles = (id: string, path: Segments, sources: string[]) =>
   invoke<void>("add_context_files", { id, path, sources });
+/** Writes the whole tree to `to`, a `.tar.gz` outside the cache. */
+export const exportContext = (id: string, to: string) => invoke<void>("export_context", { id, to });
 export const removeFile = (id: string, path: Segments) => invoke<void>("remove_context_file", { id, path });

@@ -7,6 +7,7 @@
   import Thread from "@/components/Thread.svelte";
   import TitleBar from "@/components/TitleBar.svelte";
   import ContextPanel from "@/components/ContextPanel.svelte";
+  import HelperPane from "@/components/helper/HelperPane.svelte";
   import { agents } from "@/lib/agents.svelte";
   import { contexts } from "@/lib/contexts.svelte";
   import { store } from "@/lib/store.svelte";
@@ -16,6 +17,7 @@
 
   const KEY = "ailoy.session";
   const SIDEBAR_KEY = "ailoy.sidebarCollapsed";
+  const HELPER_KEY = "ailoy.helperOpen";
 
   function read(key: string): string | null {
     try {
@@ -34,6 +36,8 @@
   }
 
   $effect(() => syncDarkClass());
+  // Loaded at startup so the default context is already selected when the tab is first opened.
+  $effect(() => void contexts.refresh());
 
   let selected = $state<string | null>(read(KEY));
   // Not persisted: a relaunch should land on the conversation.
@@ -43,7 +47,10 @@
   let draft = $state<number | null>(null);
   let context = $state<string | null>(null);
   let command = $state<ContextCommand>("files");
-  const currentContext = $derived(contexts.list.find((c) => c.id === context) ?? null);
+  // Falls back to the default context, as the agent does to the default agent.
+  const currentContext = $derived(
+    contexts.list.find((c) => c.id === context) ?? contexts.list.find((c) => c.default) ?? null,
+  );
   let agentId = $state<string | null>(null);
   let section = $state<AgentSection>("general");
   // Falls back to the default while the choice is unmade or was just deleted.
@@ -54,6 +61,8 @@
       null,
   );
   let collapsed = $state(read(SIDEBAR_KEY) === "1");
+  // Open unless it was closed. One setting for every tab that has the helper.
+  let helperOpen = $state(read(HELPER_KEY) !== "0");
 
   // `selected` is the user's choice; `effective` is what the window shows. It falls back to
   // the most recent session while the choice is unknown or gone.
@@ -86,6 +95,11 @@
     collapsed = !collapsed;
     write(SIDEBAR_KEY, collapsed ? "1" : "0");
   }
+  function toggleHelper() {
+    helperOpen = !helperOpen;
+    write(HELPER_KEY, helperOpen ? "1" : "0");
+  }
+  const hasHelper = $derived((view === "context" && !!currentContext) || (view === "agent" && agents.loaded));
 </script>
 
 <div
@@ -101,6 +115,9 @@
     onToggleSidebar={toggleSidebar}
     settingsActive={view === "settings"}
     onOpenSettings={() => (view = "settings")}
+    aside={hasHelper
+      ? { open: helperOpen, label: helperOpen ? S.hideHelper : S.showHelper, onToggle: toggleHelper }
+      : null}
   />
   <!-- Unmounted rather than hidden when collapsed: a zero-width sidebar still takes tab stops. -->
   {#if !collapsed}
@@ -111,7 +128,7 @@
       drafting={draft !== null}
       {view}
       onSelectView={(v) => (view = v)}
-      {context}
+      context={currentContext?.id ?? null}
       onSelectContext={(id) => (context = id)}
       {command}
       onSelectCommand={(c) => (command = c)}
@@ -128,9 +145,27 @@
     {#if view === "session"}
       <Thread sessionId={effective} {draft} onCreated={selectSession} />
     {:else if view === "context"}
-      <ContextPanel context={currentContext} {command} />
+      <ContextPanel
+        context={currentContext}
+        {command}
+        {helperOpen}
+        onToggleHelper={toggleHelper}
+      />
     {:else if view === "agent"}
-      <AgentPanel agentId={currentAgent?.id ?? null} {section} onSelectAgent={(id) => (agentId = id)} />
+      <div class="flex min-h-0 min-w-0 flex-1">
+        <AgentPanel agentId={currentAgent?.id ?? null} {section} onSelectAgent={(id) => (agentId = id)} />
+        {#if agents.loaded}
+          <HelperPane
+            helper="agentmaker"
+            thread={currentAgent?.id ?? ""}
+            intro={S.agentHelperIntro}
+            starters={S.agentStarters}
+            placeholder={S.agentComposerPlaceholder}
+            open={helperOpen}
+            onToggle={toggleHelper}
+          />
+        {/if}
+      </div>
     {:else if view === "artifacts"}
       <ArtifactsPanel />
     {:else}

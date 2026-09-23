@@ -2,7 +2,7 @@
   import {
     Bot,
     Box,
-    Braces,
+    Cog,
     Files,
     Folder,
     FolderPlus,
@@ -73,7 +73,7 @@
     { id: "prompt", label: S.agentPrompt, icon: MessageSquareText },
     { id: "tools", label: S.agentTools, icon: Wrench },
     { id: "sandbox", label: S.agentSandbox, icon: Box },
-    { id: "spec", label: S.agentSpec, icon: Braces },
+    { id: "advanced", label: S.agentAdvanced, icon: Cog },
   ];
 
   let editing = $state<string | null>(null);
@@ -135,11 +135,11 @@
     />
     <NavRow
       icon={FolderTree}
-      label={S.context}
+      label={S.contexts}
       active={view === "context"}
       onclick={() => onSelectView("context")}
     />
-    <NavRow icon={Bot} label={S.agent} active={view === "agent"} onclick={() => onSelectView("agent")} />
+    <NavRow icon={Bot} label={S.agents} active={view === "agent"} onclick={() => onSelectView("agent")} />
     <NavRow
       icon={Package}
       label={S.artifacts}

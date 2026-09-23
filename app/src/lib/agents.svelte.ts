@@ -56,6 +56,12 @@ class Agents {
     });
   }
 
+  /** What an export writes: the document as it is on screen, without this install's default. */
+  exported(agent: Agent): Record<string, unknown> {
+    const { default: _, ...doc } = this.document(agent);
+    return doc;
+  }
+
   /** The document a save would send. */
   private document(agent: Agent): Record<string, unknown> {
     return { ...$state.snapshot(agent), default: agent.id === this.defaultId };

@@ -2,31 +2,54 @@
   A context's tree exactly as it is on disk: one directory at a time, re-read on every
   change, nothing hidden and nothing followed. What an agent sees mounted is this.
 -->
-<script lang="ts">
-  import { ChevronRight, File, Folder, FolderPlus, Link, Plus, Trash, Upload } from "@lucide/svelte";
-  import { open } from "@tauri-apps/plugin-dialog";
-  import { getCurrentWebview } from "@tauri-apps/api/webview";
+<script module lang="ts">
+  import type { Segments } from "@/lib/contexts.svelte";
+  import type { Entry } from "@/lib/viewers/entry";
 
+  /** Where each context was left: the view unmounts with its tab, and coming back finds it as it was. */
+  const kept = new Map<string, { cwd: Segments; viewing: Entry | null }>();
+</script>
+
+<script lang="ts">
+  import { ChevronRight, Download, File, Folder, FolderPlus, Globe, Link, Plus, Trash, Upload } from "@lucide/svelte";
+  import { open, save } from "@tauri-apps/plugin-dialog";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import { untrack } from "svelte";
+
+  import AddWebPageDialog from "@/components/context/AddWebPageDialog.svelte";
   import { confirm } from "@/lib/confirm";
-  import { addFiles, type Context, type FileEntry, listFiles, makeDir, removeFile, type Segments } from "@/lib/contexts.svelte";
+  import { helpers } from "@/lib/helpers.svelte";
+  import {
+    addFiles,
+    type Context,
+    exportContext,
+    type FileEntry,
+    listFiles,
+    makeDir,
+    removeFile,
+  } from "@/lib/contexts.svelte";
   import { formatSize } from "@/lib/files";
   import { btn } from "@/lib/ui";
-  import type { Entry } from "@/lib/viewers/entry";
   import FileViewer from "@/lib/viewers/FileViewer.svelte";
   import { contextSource } from "@/lib/viewers/source";
   import { S } from "@/strings";
 
   let { context }: { context: Context } = $props();
 
-  let cwd = $state<Segments>([]);
+  const left = untrack(() => kept.get(context.id));
+  let cwd = $state<Segments>(left?.cwd ?? []);
   /** The name of the entry the user clicked in this folder, if any. */
   let selected = $state<string | null>(null);
   let entries = $state<FileEntry[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let dragging = $state(false);
+  let askingUrl = $state(false);
   /** The file open in the viewer, if any. */
-  let viewing = $state<Entry | null>(null);
+  let viewing = $state<Entry | null>(left?.viewing ?? null);
+  $effect(() => {
+    kept.set(context.id, { cwd: $state.snapshot(cwd), viewing: $state.snapshot(viewing) });
+  });
   const source = $derived(contextSource(context));
 
   const asEntry = (e: FileEntry): Entry => ({
@@ -55,6 +78,16 @@
   $effect(() => {
     void cwd;
     selected = null;
+    void load();
+  });
+
+  // The helper beside this view may have changed the tree: show it as it now is. The view
+  // is keyed by context, so the count it starts from is read once.
+  let seen = untrack(() => helpers.context.revision[context.id] ?? 0);
+  $effect(() => {
+    const revision = helpers.context.revision[context.id] ?? 0;
+    if (revision === seen) return;
+    seen = revision;
     void load();
   });
 
@@ -87,6 +120,26 @@
     if (!picked) return;
     const sources = Array.isArray(picked) ? picked : [picked];
     if (sources.length) await change(() => addFiles(context.id, cwd, sources));
+  }
+
+  /** Saves the page at `url` into this folder as HTML. Not wired to the backend yet. */
+  function addWebPage(url: string) {
+    console.info("add web page", url, "into", [context.id, ...cwd].join("/"));
+  }
+
+  /** The whole tree, wherever the user picks, as one archive. */
+  async function exportTree() {
+    const to = await save({
+      defaultPath: `${context.name}.tar.gz`,
+      filters: [{ name: "Archive", extensions: ["tar.gz", "tgz"] }],
+    });
+    if (!to) return;
+    try {
+      await exportContext(context.id, to);
+      error = null;
+    } catch (e) {
+      error = S.exportFailed(messageOf(e));
+    }
   }
 
   async function remove(entry: FileEntry) {
@@ -137,6 +190,8 @@
     <button class={btn.outline} onclick={() => void newFolder()}><FolderPlus class="size-3.5" />{S.newFolder}</button>
     <button class={btn.outline} onclick={() => void pick(true)}><Plus class="size-3.5" />{S.addFolder}</button>
     <button class={btn.outline} onclick={() => void pick(false)}><Upload class="size-3.5" />{S.addFiles}</button>
+    <button class={btn.outline} onclick={() => (askingUrl = true)}><Globe class="size-3.5" />{S.addWebPage}</button>
+    <button class={btn.outline} onclick={() => void exportTree()}><Download class="size-3.5" />{S.export}</button>
   </header>
 
   {#if error}
@@ -208,6 +263,8 @@
   {#if viewing}
     <FileViewer entry={viewing} {source} onClose={() => (viewing = null)} />
   {/if}
+
+  <AddWebPageDialog bind:open={askingUrl} onAdd={addWebPage} />
 
   {#if dragging}
     <div class="pointer-events-none absolute inset-0 grid place-items-center bg-background/70 backdrop-blur-[2px]">

@@ -3,7 +3,9 @@
   agent's document and is saved as it is edited (see `lib/agents.svelte.ts`).
 -->
 <script lang="ts">
-  import { ArrowDown, ArrowUp, Bot, Check, Copy, Plus, Star, Trash, X } from "@lucide/svelte";
+  import { ArrowDown, ArrowUp, Bot, Check, Copy, Download, Plus, Star, Trash, X } from "@lucide/svelte";
+  import { invoke } from "@tauri-apps/api/core";
+  import { save } from "@tauri-apps/plugin-dialog";
 
   import EmptyState from "@/components/EmptyState.svelte";
   import Section from "@/components/settings/Section.svelte";
@@ -13,7 +15,6 @@
     STEP_KINDS,
     type StepKind,
     badNumber,
-    entry,
     newId,
     stepLine,
   } from "@/lib/agent";
@@ -47,7 +48,6 @@
 
   const inTauri = "__TAURI_INTERNALS__" in window;
   const others = $derived(agent ? agents.list.filter((a) => a.id !== agent.id) : []);
-  const json = $derived(agent ? JSON.stringify(entry(agent, agents.list), null, 2) : "");
   const provider = $derived.by(() => {
     const slash = agent?.model.indexOf("/") ?? -1;
     return slash > 0 ? (PROVIDERS.find((p) => p.key === agent!.model.slice(0, slash)) ?? null) : null;
@@ -56,7 +56,6 @@
   const strayContext = $derived(
     agent?.context && !contexts.list.some((c) => c.id === agent.context) ? agent.context : null,
   );
-  let copied = $state(false);
 
   function toggle(list: string[], value: string): string[] {
     return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
@@ -64,6 +63,20 @@
 
   function duplicate(a: Agent) {
     onSelectAgent(agents.duplicate(a, S.copyOf(a.name || S.untitled)).id);
+  }
+  let exportError = $state<string | null>(null);
+  async function exportAgent(a: Agent) {
+    const to = await save({
+      defaultPath: `${a.name || S.untitled}.json`,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!to) return;
+    try {
+      await invoke("export_agent", { agent: agents.exported(a), to });
+      exportError = null;
+    } catch (e) {
+      exportError = e instanceof Error ? e.message : String(e);
+    }
   }
   function addStep(a: Agent, kind: StepKind) {
     a.sandbox.steps = [...a.sandbox.steps, { id: newId("step"), kind, first: "", second: "" }];
@@ -76,16 +89,6 @@
     a.sandbox.steps = steps;
   }
   const fields = (kind: StepKind) => STEP_KINDS.find((k) => k.id === kind) ?? STEP_KINDS[0];
-
-  async function copySpec() {
-    try {
-      await navigator.clipboard.writeText(json);
-      copied = true;
-      setTimeout(() => (copied = false), 1500);
-    } catch {
-      /* no clipboard here; the text is selectable */
-    }
-  }
 
   const lede = "max-w-[66ch] text-sm leading-relaxed text-muted-foreground";
   const label = "text-xs font-medium text-muted-foreground";
@@ -222,26 +225,6 @@
             {/if}
           </Section>
 
-          <Section title="Sampling">
-            <p class={lede}>
-              Every one is optional; an empty field leaves the provider's own default in place. Top-k is honoured by
-              Anthropic and Gemini and ignored by OpenAI.
-            </p>
-            <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-              {#each [["temperature", "Temperature"], ["topP", "Top P"], ["topK", "Top K"], ["maxTokens", "Max tokens"]] as const as [key, name] (key)}
-                <label class="space-y-1.5">
-                  <span class={label}>{name}</span>
-                  <input
-                    class={[input, mono, badNumber(agent.options[key]) && "border-destructive"]}
-                    bind:value={agent.options[key]}
-                    placeholder="default"
-                    inputmode="decimal"
-                  />
-                </label>
-              {/each}
-            </div>
-          </Section>
-
           <Section title="This agent">
             <div class="flex flex-wrap items-center gap-2">
               <button
@@ -256,6 +239,10 @@
                 <Copy class="size-3.5" />
                 {S.duplicate}
               </button>
+              <button class={btn.outline} disabled={!inTauri} onclick={() => void exportAgent(agent)}>
+                <Download class="size-3.5" />
+                {S.export}
+              </button>
               <div class="flex-1"></div>
               <button
                 class={[btn.outline, "text-destructive"]}
@@ -267,7 +254,11 @@
                 {S.deleteAgent}
               </button>
             </div>
+            {#if exportError}
+              <p class="text-xs text-destructive">{S.exportFailed(exportError)}</p>
+            {/if}
           </Section>
+
         {:else if section === "prompt"}
           <Section title={S.agentPrompt}>
             <p class={lede}>
@@ -461,18 +452,25 @@
             {@const lines = [`FROM ${agent.sandbox.base || "…"}`, ...agent.sandbox.steps.map(stepLine)]}
             <pre class={[pre, "break-words whitespace-pre-wrap"]}>{lines.join("\n")}</pre>
           </Section>
-        {:else}
-          <Section title="What would be run">
-            <div class="flex items-start gap-3">
-              <p class={[lede, "flex-1"]}>
-                The <code class={code}>AgentSpec</code> ailoy would be constructed from, and beside it the sandbox recipe
-                and the context to mount. Separate objects: ailoy keeps runtime off the spec.
-              </p>
-              <button class={btn.outline} onclick={() => void copySpec()}>
-                {#if copied}<Check class="size-3.5" /> {S.copied}{:else}<Copy class="size-3.5" /> {S.copy}{/if}
-              </button>
+        {:else if section === "advanced"}
+          <Section title="Sampling">
+            <p class={lede}>
+              Sampling options. Every one is optional; an empty field leaves the provider's own default in place. Top-k
+              is honoured by Anthropic and Gemini and ignored by OpenAI.
+            </p>
+            <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+              {#each [["temperature", "Temperature"], ["topP", "Top P"], ["topK", "Top K"], ["maxTokens", "Max tokens"]] as const as [key, name] (key)}
+                <label class="space-y-1.5">
+                  <span class={label}>{name}</span>
+                  <input
+                    class={[input, mono, badNumber(agent.options[key]) && "border-destructive"]}
+                    bind:value={agent.options[key]}
+                    placeholder="default"
+                    inputmode="decimal"
+                  />
+                </label>
+              {/each}
             </div>
-            <pre class={[pre, "max-h-[560px] overflow-auto"]}>{json}</pre>
           </Section>
         {/if}
       </div>

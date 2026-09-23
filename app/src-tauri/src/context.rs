@@ -233,6 +233,47 @@ impl Context {
         }
     }
 
+    /// The tree written to `to` as a gzipped tar, under one folder named after the context.
+    /// Links are archived as links, never followed out of the tree. Written beside `to` and
+    /// renamed over it, so a failed export leaves no half an archive behind.
+    pub fn export(&self, to: &Path) -> io::Result<()> {
+        let root: String = self
+            .name
+            .chars()
+            .map(|c| {
+                if matches!(c, '/' | '\\' | '\0') {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let root = match root.trim() {
+            "" | "." | ".." => self.id.clone(),
+            name => name.to_owned(),
+        };
+        let mut tmp = to.as_os_str().to_owned();
+        tmp.push(".partial");
+        let tmp = PathBuf::from(tmp);
+        let result = (|| {
+            let gz = flate2::write::GzEncoder::new(
+                fs::File::create(&tmp)?,
+                flate2::Compression::default(),
+            );
+            let mut tar = tar::Builder::new(gz);
+            tar.follow_symlinks(false);
+            tar.append_dir_all(&root, &self.dir)?;
+            tar.into_inner()?.finish()?.sync_all()
+        })();
+        match result {
+            Ok(()) => fs::rename(&tmp, to),
+            Err(err) => {
+                let _ = fs::remove_file(&tmp);
+                Err(err)
+            }
+        }
+    }
+
     /// The tree mounted read-only at `at` in the guest.
     pub fn mount(&self, at: &str) -> Result<MountSpec, InvalidMount> {
         MountSpec::new(format!("file://{}", self.dir.display()), at).map(MountSpec::read_only)
@@ -330,6 +371,13 @@ pub fn remove_context_file(
         .map_err(|err| err.to_string())
 }
 
+#[tauri::command]
+pub fn export_context(cache: State<'_, Cache>, id: String, to: PathBuf) -> Result<(), String> {
+    find(&cache, &id)?
+        .export(&to)
+        .map_err(|err| err.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,6 +409,28 @@ mod tests {
 
         // Another context is not the default.
         assert!(!Context::create(&root, "Other").unwrap().is_default());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn export_archives_the_tree_under_its_name() {
+        let root = scratch("export");
+        let context = Context::create(&root, "Notes/2026").unwrap();
+        fs::create_dir(context.dir.join("sub")).unwrap();
+        fs::write(context.dir.join("sub/a.md"), "hello").unwrap();
+
+        let to = root.join("out.tar.gz");
+        context.export(&to).unwrap();
+        assert!(!root.join("out.tar.gz.partial").exists());
+
+        let gz = flate2::read::GzDecoder::new(fs::File::open(&to).unwrap());
+        let mut names: Vec<String> = tar::Archive::new(gz)
+            .entries()
+            .unwrap()
+            .map(|e| e.unwrap().path().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["Notes_2026/", "Notes_2026/sub", "Notes_2026/sub/a.md"]);
         fs::remove_dir_all(root).unwrap();
     }
 }
