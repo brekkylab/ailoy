@@ -4,6 +4,7 @@ extern crate self as ailoy;
 pub mod agent;
 pub mod console;
 pub mod datatype;
+pub mod image_model;
 pub mod lang_model;
 pub(crate) mod macros;
 pub mod memory;
