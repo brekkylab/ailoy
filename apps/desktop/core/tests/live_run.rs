@@ -1,8 +1,8 @@
-//! A run that calls the `shell` tool through a real `cortex-local-console`.
+//! A run that calls the `shell` tool through a real console — the local server cortex carries,
+//! so there is nothing to build or install first.
 //!
-//! Needs a built `cortex-local-console` (AILOY_CORTEX_BIN_DIR or ../cortex/target/debug);
-//! the second test also needs FUSE-T installed.
-//! Run: `AILOY_CORTEX_BIN_DIR=../cortex/target/debug cargo test -p ailoy-desktop-core --test live_run -- --ignored`
+//! The second test also needs FUSE-T installed, and is `#[ignore]`d for it:
+//! `cargo test -p ailoy-desktop-core --test live_run -- --ignored`
 //!
 //! The model is fake and the console is real: the point is the seam between them — a tool
 //! call the engine routes into a console holding the workspace as its artifacts tree, whose
@@ -157,7 +157,6 @@ async fn tool_stdout(engine: &Engine, session_id: &str) -> String {
 /// The unmounted path: the workspace is `files/` on the host, handed to the console as its
 /// artifacts tree, so the tool reads the root store straight off the disk.
 #[tokio::test]
-#[ignore]
 async fn a_run_reads_a_workspace_file_through_the_shell_tool() {
     let _serial = SERIAL.lock().await;
     let dir = tempfile::tempdir().unwrap();
@@ -170,6 +169,14 @@ async fn a_run_reads_a_workspace_file_through_the_shell_tool() {
     cfg.mount_workspace = false; // the console stands in files/ directly
     cfg.catalog_refresh = false;
     let engine = Engine::start(cfg).await.unwrap();
+    // The root defaults to `$HOME` — My Computer — so without this the write below would land
+    // in the home directory of whoever runs the test.
+    let files = dir.path().join("files");
+    std::fs::create_dir_all(&files).unwrap();
+    engine
+        .workspace_set_root(&files.to_string_lossy())
+        .await
+        .unwrap();
     engine
         .fs_write("/hello.txt", "hi from the workspace")
         .await

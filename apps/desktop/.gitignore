@@ -12,12 +12,10 @@ dist
 dist-ssr
 *.local
 
-# Tauri's build output and what it generates: `target/` is the Rust build, `gen/`
-# holds the schemas and the Xcode-side files tauri writes, and `binaries/` is where
-# the sidecar is staged before bundling.
+# Tauri's build output and what it generates: `target/` is the Rust build, and `gen/`
+# holds the schemas and the Xcode-side files tauri writes.
 src-tauri/target
 src-tauri/gen
-src-tauri/binaries
 
 # The repo-root ignore file excludes `lib/` (Python packaging); this project's
 # `src/lib/` is source and must stay tracked.

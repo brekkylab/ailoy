@@ -10,9 +10,9 @@ pub const ROOT_SETTING: &str = "workspace.root";
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
     pub data_dir: PathBuf,
-    /// The `cortex-local-console` binary. `None` searches `AILOY_CORTEX_BIN_DIR`, then the
-    /// sibling `cortex` checkout's `target/` — see `console::resolve_console_bin`.
-    pub console_bin: Option<PathBuf>,
+    /// `false` runs without a console: a run still starts, and only the tools that need a
+    /// shell fail, saying so. For tests that have no use for one.
+    pub console: bool,
     pub catalog_refresh: bool,
     /// `false` skips the FUSE-T mount (tests, machines without FUSE-T). The console then
     /// stands directly in `files_root()`.
@@ -23,7 +23,7 @@ impl EngineConfig {
     pub fn new(data_dir: impl Into<PathBuf>) -> Self {
         Self {
             data_dir: data_dir.into(),
-            console_bin: None,
+            console: true,
             catalog_refresh: true,
             mount_workspace: true,
         }
@@ -56,6 +56,13 @@ impl EngineConfig {
 
     pub fn cache_dir(&self) -> PathBuf {
         self.data_dir.join("cache")
+    }
+
+    /// What cortex writes for itself: the console server it carries, under `bin/`, written out
+    /// the first time a run needs it. The app's own rather than `~/.cortex`, so that deleting
+    /// the data directory is still all it takes to get back to a first run.
+    pub fn cortex_home(&self) -> PathBuf {
+        self.data_dir.join("cortex")
     }
 
     /// Where the agent's own output is kept.

@@ -17,7 +17,7 @@ use cortex::fs::FileSystem;
 use crate::{
     catalog::{self, Catalog, split_model_id},
     config::EngineConfig,
-    console::{ConsoleFactory, resolve_console_bin},
+    console::ConsoleFactory,
     error::{EngineError, Result},
     providers,
     run::{RunDeps, RunHandle, RunManager},
@@ -93,19 +93,12 @@ impl Engine {
             tracing::warn!("applying provider settings at start: {e}");
         }
 
-        // An empty `console_bin` is the caller saying "no console" — that is how the tests and
-        // a headless run ask for it. Otherwise the binary is looked for, and *not* finding one
-        // is still a start: a window with no console can list sessions, browse the workspace
-        // and change settings, and only the tools that need a shell fail, saying so.
-        let console = Arc::new(match cfg.console_bin.as_deref() {
-            Some(p) if p.as_os_str().is_empty() => ConsoleFactory::disabled(),
-            explicit => match resolve_console_bin(explicit) {
-                Ok(bin) => ConsoleFactory::new(bin),
-                Err(e) => {
-                    tracing::warn!("{e}");
-                    ConsoleFactory::disabled()
-                }
-            },
+        // Nothing is started here: the server is written out and run by the first run that
+        // needs a console, so a window with no run yet has spent nothing on one.
+        let console = Arc::new(if cfg.console {
+            ConsoleFactory::new(cfg.cortex_home())
+        } else {
+            ConsoleFactory::disabled()
         });
 
         let runs = RunManager::new(RunDeps {
@@ -689,7 +682,7 @@ mod tests {
         let mut cfg = EngineConfig::new(data_dir);
         cfg.mount_workspace = false;
         cfg.catalog_refresh = false;
-        cfg.console_bin = Some(PathBuf::new()); // disabled console
+        cfg.console = false;
         cfg
     }
 

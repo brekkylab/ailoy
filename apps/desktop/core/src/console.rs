@@ -1,115 +1,43 @@
-//! Starting a `cortex-local-console` for one run.
+//! Starting a console for one run.
+//!
+//! The server is cortex's own — `Backend::local`, which cortex builds and carries inside this
+//! binary, and writes out under the app's data directory the first time a run needs it. So
+//! there is no program to bundle beside the app, find at runtime, or keep at the version of
+//! the cortex this was built against. `$CORTEX_LOCAL_CONSOLE_BIN` runs another build of it,
+//! for working on the server itself.
 
-use std::{
-    path::{Path, PathBuf},
-    process::Stdio,
-};
+use std::path::PathBuf;
 
-use cortex::console::{Console, stdio::StdioClient};
-use tokio::process::Command;
+use cortex::console::{Backend, Console, LocalBackend};
 
 use crate::{
     error::{EngineError, Result},
     workspace::WorkspaceMount,
 };
 
-pub const CONSOLE_BIN_NAME: &str = "cortex-local-console";
-
-/// Where the console server binary is. In a bundle it sits beside the app binary (the Tauri
-/// layer passes that path explicitly); in development it is the sibling checkout's build.
-pub fn resolve_console_bin(explicit: Option<&Path>) -> Result<PathBuf> {
-    let env_dir = std::env::var_os("AILOY_CORTEX_BIN_DIR").map(PathBuf::from);
-    resolve_console_bin_in(explicit, env_dir.as_deref())
-}
-
-/// [`resolve_console_bin`] with `$AILOY_CORTEX_BIN_DIR` already read, so a test can hand in a
-/// directory without mutating the process environment.
-pub(crate) fn resolve_console_bin_in(
-    explicit: Option<&Path>,
-    env_dir: Option<&Path>,
-) -> Result<PathBuf> {
-    if let Some(p) = explicit {
-        return if p.is_file() {
-            Ok(p.to_path_buf())
-        } else {
-            Err(EngineError::ConsoleUnavailable(format!(
-                "{} does not exist",
-                p.display()
-            )))
-        };
-    }
-    if let Some(dir) = env_dir {
-        let p = dir.join(CONSOLE_BIN_NAME);
-        if p.is_file() {
-            return Ok(p);
-        }
-        // Setting the variable is an explicit instruction, so silently falling through to
-        // the development probes below would answer a different binary than the one asked
-        // for — or none, with nothing to say why the variable did not take.
-        tracing::warn!(
-            "AILOY_CORTEX_BIN_DIR is set to {}, but {CONSOLE_BIN_NAME} is not there; looking elsewhere",
-            dir.display()
-        );
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        for ancestor in cwd.ancestors() {
-            for profile in ["debug", "release"] {
-                let p = ancestor
-                    .join("cortex")
-                    .join("target")
-                    .join(profile)
-                    .join(CONSOLE_BIN_NAME);
-                if p.is_file() {
-                    // This probe walks up from the *working directory* into a sibling
-                    // checkout's build tree — a development convenience with no business
-                    // firing in a bundled app, where the Tauri layer passes the path. If
-                    // it is what answered, the app is running from a source tree.
-                    tracing::warn!(
-                        "using the development {CONSOLE_BIN_NAME} at {} (found by walking up from the working directory)",
-                        p.display()
-                    );
-                    return Ok(p);
-                }
-            }
-        }
-    }
-    if let Some(path) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&path) {
-            let p = dir.join(CONSOLE_BIN_NAME);
-            if p.is_file() {
-                return Ok(p);
-            }
-        }
-    }
-    Err(EngineError::ConsoleUnavailable(format!(
-        "{CONSOLE_BIN_NAME} not found; set AILOY_CORTEX_BIN_DIR or build it with `cargo build -p cortex-local-console` in ../cortex"
-    )))
-}
-
 #[derive(Clone, Debug)]
 pub struct ConsoleFactory {
-    bin: PathBuf,
+    /// `None` is a factory that never spawns.
+    backend: Option<LocalBackend>,
 }
 
 impl ConsoleFactory {
-    pub fn new(bin: PathBuf) -> Self {
-        Self { bin }
-    }
-
-    /// A factory that never spawns: runs proceed without a console (tools that need one fail
-    /// saying so). For tests and for a machine with no console binary.
-    pub fn disabled() -> Self {
+    /// Consoles on the local server, written out under `home` — cortex keeps its program in
+    /// `<home>/bin`.
+    pub fn new(home: PathBuf) -> Self {
         Self {
-            bin: PathBuf::new(),
+            backend: Some(Backend::local().home(home)),
         }
     }
 
-    pub fn is_disabled(&self) -> bool {
-        self.bin.as_os_str().is_empty()
+    /// A factory that never spawns: runs proceed without a console (tools that need one fail
+    /// saying so). For tests that have no use for one.
+    pub fn disabled() -> Self {
+        Self { backend: None }
     }
 
-    pub fn bin(&self) -> &Path {
-        &self.bin
+    pub fn is_disabled(&self) -> bool {
+        self.backend.is_none()
     }
 
     /// One console over the three trees a run works with.
@@ -122,40 +50,24 @@ impl ConsoleFactory {
     /// * `scratch` — the run's `/tmp`. The session *starts* here, so a relative path a command
     ///   writes lands in something thrown away rather than among the user's files.
     ///
-    /// Its `PATH` starts with the binary's own directory so sidecars beside it (`mem`, later)
-    /// are commands the agent can name.
+    /// The server's stderr is this process's, so its diagnostics go where the app's do.
     pub async fn spawn(
         &self,
         context: WorkspaceMount,
         artifacts: WorkspaceMount,
         scratch: WorkspaceMount,
     ) -> Result<Console> {
-        if self.is_disabled() {
+        let Some(backend) = self.backend.clone() else {
             return Err(EngineError::ConsoleUnavailable("console disabled".into()));
-        }
-        let mut cmd = Command::new(&self.bin);
-        // Deliberately inherited (tokio's default, spelled out): the server's diagnostics go
-        // where the app's do. Piping it into `tracing` is the later upgrade, not `null`.
-        cmd.stderr(Stdio::inherit());
-        if let Some(dir) = self.bin.parent().filter(|d| !d.as_os_str().is_empty()) {
-            let mut dirs = vec![dir.to_path_buf()];
-            if let Some(existing) = std::env::var_os("PATH") {
-                dirs.extend(std::env::split_paths(&existing));
-            }
-            if let Ok(path) = std::env::join_paths(dirs) {
-                cmd.env("PATH", path);
-            }
-        }
-        let client = StdioClient::new(cmd)
-            .map_err(|e| EngineError::ConsoleUnavailable(format!("{}: {e}", self.bin.display())))?;
+        };
         Console::builder()
-            .client(client)
+            .backend(backend)
             .context(context)
             .artifacts(artifacts)
             .scratch(scratch)
             .build()
             .await
-            .map_err(|e| EngineError::ConsoleUnavailable(format!("{}: {e:#}", self.bin.display())))
+            .map_err(|e| EngineError::ConsoleUnavailable(format!("{e:#}")))
     }
 }
 
@@ -164,34 +76,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn explicit_path_wins_when_it_exists() {
-        let f = tempfile::NamedTempFile::new().unwrap();
-        assert_eq!(resolve_console_bin(Some(f.path())).unwrap(), f.path());
-        assert!(matches!(
-            resolve_console_bin(Some(Path::new("/nonexistent/bin"))),
-            Err(EngineError::ConsoleUnavailable(_))
-        ));
-    }
-
-    #[test]
-    fn env_dir_is_honoured_and_loses_to_an_explicit_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let bin = dir.path().join(CONSOLE_BIN_NAME);
-        std::fs::write(&bin, b"").unwrap();
-        assert_eq!(resolve_console_bin_in(None, Some(dir.path())).unwrap(), bin);
-        let explicit = tempfile::NamedTempFile::new().unwrap();
-        assert_eq!(
-            resolve_console_bin_in(Some(explicit.path()), Some(dir.path())).unwrap(),
-            explicit.path()
-        );
-    }
-
-    #[test]
-    fn a_factory_with_a_binary_is_not_disabled() {
-        let f = tempfile::NamedTempFile::new().unwrap();
-        let factory = ConsoleFactory::new(f.path().to_path_buf());
-        assert!(!factory.is_disabled());
-        assert_eq!(factory.bin(), f.path());
+    fn a_factory_with_a_home_is_not_disabled() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(!ConsoleFactory::new(home.path().to_path_buf()).is_disabled());
     }
 
     #[tokio::test]

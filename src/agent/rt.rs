@@ -1168,10 +1168,8 @@ mod tests {
         roles: &[TreeRole],
     ) -> cortex::console::Console {
         dotenvy::dotenv().ok();
-        let program = std::env::var("AILOY_CORTEX_CONSOLE")
-            .unwrap_or_else(|_| "cortex-local-console".to_string());
-
-        let mut builder = cortex::console::Console::builder().stdio_client(&[&program]);
+        let mut builder =
+            cortex::console::Console::builder().backend(cortex::console::Backend::local());
         for role in roles {
             let dir = root.join(role.as_str());
             std::fs::create_dir_all(&dir).unwrap();
@@ -1185,7 +1183,7 @@ mod tests {
         let mut console = builder
             .build()
             .await
-            .unwrap_or_else(|e| panic!("starting `{program}`: {e:#}"));
+            .unwrap_or_else(|e| panic!("starting the local console: {e:#}"));
         console.start().await.expect("starting a test console");
         console
     }
@@ -2486,13 +2484,7 @@ mod tests {
     /// [`Agent::run_stream_controlled`]: `sleep 30` keeps running on the server after the
     /// `exec` future is dropped, and the console it ran on is not reusable until it ends.
     /// This test therefore drops that console rather than making a second call on it.
-    ///
-    /// `#[ignore]`d, unlike the other console-backed tests in this crate (which call
-    /// `crate::test_console()` unconditionally): it needs a `cortex-local-console`
-    /// binary, which lives in a sibling checkout rather than on `PATH`. Run it with
-    /// `AILOY_CORTEX_CONSOLE=<path> cargo test --lib -- --ignored cancel_during_a_console_tool`.
     #[tokio::test]
-    #[ignore = "needs a cortex-local-console binary; see crate::test_console and $AILOY_CORTEX_CONSOLE"]
     async fn cancel_during_a_console_tool_stubs_the_pending_call() {
         let (addr, _) = spawn_sse_server(
             vec![

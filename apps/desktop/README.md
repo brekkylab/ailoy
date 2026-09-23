@@ -11,11 +11,12 @@ real work happens in the engine at `apps/desktop/core`.
   no log and no error dialog. A development run (`tauri:dev`) behaves the same way.
 - **Rust ≥ 1.95** (the workspace `rust-version`) and **Node ≥ 22**.
 - **A `../cortex` checkout.** `cortex` is a path dependency, so it has to sit next to this
-  repository. Track `main`, at `#43` or later — that is the change that split workfs into
-  the context, artifacts and scratch layers, and before it there is no `ContextFs` and no
-  three-tree console. For timeouts you also want `#38` or later, which is where the shell
-  tool's `timeout_secs` starts being enforced and starts reaping the children a command
-  spawned.
+  repository. It has to carry the console `Backend` (`feat/console-backend`, not yet on
+  `main`): the app no longer ships `cortex-local-console` beside itself, and instead runs the
+  server cortex builds and embeds — see [the console](#the-console). That branch already
+  holds what the app needed from `main` before it: `#43`, which split workfs into the
+  context, artifacts and scratch layers, and `#38`, which enforces the shell tool's
+  `timeout_secs` and reaps what a command spawned.
 
 ## Running it
 
@@ -25,9 +26,20 @@ npm install
 npm run tauri:dev
 ```
 
-Do not call `tauri dev` directly. The sidecar (`cortex-local-console`) has to be built into
-`src-tauri/binaries/` first, and `npm run tauri:dev` is what does that, through
-`scripts/build-sidecar.sh`. If `../cortex` lives somewhere else, point `CORTEX_DIR` at it.
+Use `npm run tauri:dev` rather than a bare `tauri dev`: it merges `tauri.dev.conf.json`,
+which is what lets the debug build's MCP bridge be reached (see `src-tauri/src/lib.rs`).
+
+### The console
+
+A run's shell tool talks to a console server, and that server comes from cortex itself:
+`Backend::local()`, which cortex's `local` feature builds and carries inside the app's own
+binary. The first run that needs it writes it out to `cortex/bin/` in the data directory
+(below), so there is nothing to build, bundle or keep at the right version by hand.
+
+What it costs is build time. The embedded server is always a release build with fat LTO,
+made by cortex's build script the first time and again whenever cortex's sources change.
+Working on cortex itself, `CORTEX_EMBED_FAST=1` trades a few megabytes for minutes, and
+`CORTEX_LOCAL_CONSOLE_BIN=<path>` runs another build of the server without re-embedding one.
 
 For an `.app` bundle, run `npm run tauri:build`. The result lands at
 `src-tauri/target/release/bundle/macos/Ailoy.app`. It fetches the model list from
@@ -51,6 +63,7 @@ Everything lives under `~/Library/Application Support/com.brekkylab.ailoy/`.
 | `files/`       | The workspace root only when the process has no `HOME`; otherwise unused |
 | `workspace/`   | The FUSE-T mountpoint. The path the agent reads                         |
 | `cache/`       | The model list fetched from models.dev (`models.json`), and remote-source caches |
+| `cortex/`      | What cortex writes for itself: the console server, under `bin/`, on the first run that needs it |
 | `artifacts/`   | Files the agent produced. Inside the workspace these appear at `/artifacts` |
 | `scratch/`     | One temporary directory per run. The shell starts here, and it is deleted when the run ends |
 | `logs/`        | `ailoy.log.<date>`, rolled daily                                        |
@@ -102,14 +115,13 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml   # the Tauri comma
 Do not run a bare `cargo test` at the repository root. The root crate has tests that call
 real APIs with the keys in `.env`.
 
-Four tests need real machinery and are `#[ignore]`d: `live_workspace`, which needs FUSE-T,
-and `live_console` plus the two `live_run` tests, which need a built console (and, for the
-one that goes through a mounted workspace, FUSE-T as well). Again from the repository root:
+The console-backed tests (`live_console`, and the unmounted `live_run`) run with the rest:
+the console is the one cortex embeds, so they need nothing installed. The two that need
+FUSE-T are `#[ignore]`d — `live_workspace`, and the `live_run` test that goes through a
+mounted workspace. Again from the repository root:
 
 ```sh
-cargo build --manifest-path ../cortex/Cargo.toml -p cortex-local-console
-AILOY_CORTEX_BIN_DIR=$PWD/../cortex/target/debug \
-  cargo test -p ailoy-desktop-core --test live_run -- --ignored
+cargo test -p ailoy-desktop-core --test live_run -- --ignored
 ```
 
 ## Known limitations

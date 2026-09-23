@@ -1,10 +1,6 @@
-//! Needs a built `cortex-local-console` (AILOY_CORTEX_BIN_DIR or ../cortex/target/debug).
-//! Run: `cargo test -p ailoy-desktop-core --test live_console -- --ignored`
+//! A real console on the local server cortex carries — nothing to build or install first.
 
-use ailoy_desktop_core::{
-    console::{ConsoleFactory, resolve_console_bin},
-    workspace::WorkspaceMount,
-};
+use ailoy_desktop_core::{console::ConsoleFactory, workspace::WorkspaceMount};
 
 /// The three trees a run is given, and what each one is for.
 ///
@@ -15,14 +11,14 @@ use ailoy_desktop_core::{
 /// artifacts the wrong way round still starts a console — it fails at the first write, which
 /// is a whole run away from here.
 #[tokio::test]
-#[ignore]
 async fn the_three_trees_have_the_access_each_is_meant_to() {
     let workspace = tempfile::tempdir().unwrap();
     let artifacts = tempfile::tempdir().unwrap();
     let scratch = tempfile::tempdir().unwrap();
     std::fs::write(workspace.path().join("theirs.txt"), b"the user's").unwrap();
 
-    let factory = ConsoleFactory::new(resolve_console_bin(None).unwrap());
+    let home = tempfile::tempdir().unwrap();
+    let factory = ConsoleFactory::new(home.path().to_path_buf());
     let mut console = factory
         .spawn(
             WorkspaceMount(workspace.path().to_path_buf()),
