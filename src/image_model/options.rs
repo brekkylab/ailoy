@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 /// Each field carries one provider's parameter under that provider's own name
 /// and is read only by that provider; the others skip it. No field is
 /// translated into a different concept for a provider that lacks it, so a value
-/// always means what the owning provider's API says. A combination the model
-/// cannot honour fails in `marshal_request` rather than being sent.
+/// always means what the owning provider's API says. A combination the
+/// provider never accepts fails before anything is sent; anything else goes
+/// out as asked, and a refusal comes back as the provider's error.
 ///
 /// The groups describe the providers supported today, not a rule: the
 /// two current APIs happen to share no option (they describe even an image's
@@ -21,12 +22,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ImageModelOptions {
     // ── OpenAI ────────────────────────────────────────────────────────────
-    /// How many images to generate, sent as `n` (the API takes 1–10).  `None`
-    /// means one.
+    /// OpenAI's image count, sent as `n` (the API takes 1–10).  `None` means
+    /// one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub n: Option<u32>,
 
-    /// Pixel size, sent verbatim as `size` (e.g. `"1536x1024"`, `"auto"`).
+    /// OpenAI's pixel size, sent verbatim as `size` (e.g. `"1536x1024"`,
+    /// `"auto"`).
     ///
     /// A string so the sizes a model accepts, which differ by model, need no
     /// code change; a refused size comes back as an error listing the accepted
@@ -34,26 +36,26 @@ pub struct ImageModelOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
 
-    /// Render quality, sent as `quality`.
+    /// OpenAI's render quality, sent as `quality`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<ImageQuality>,
 
-    /// Encoding of the returned bytes, sent as `output_format`.
+    /// OpenAI's encoding of the returned bytes, sent as `output_format`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_format: Option<ImageFormat>,
 
-    /// Background, sent as `background`.  `Transparent` needs an alpha-capable
+    /// OpenAI's background, sent as `background`.  `Transparent` needs an alpha-capable
     /// format, so it is refused together with `output_format: jpeg`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub background: Option<ImageBackground>,
 
     // ── Gemini ────────────────────────────────────────────────────────────
-    /// Width-to-height ratio, sent as `imageConfig.aspectRatio`.  `None`
-    /// leaves the choice to the model.
+    /// Gemini's width-to-height ratio, sent as `imageConfig.aspectRatio`.
+    /// `None` leaves the choice to the model.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aspect_ratio: Option<AspectRatio>,
 
-    /// Output resolution, sent as `imageConfig.imageSize`.  The pixel
+    /// Gemini's output resolution, sent as `imageConfig.imageSize`.  The pixel
     /// dimensions follow from this and [`aspect_ratio`](Self::aspect_ratio)
     /// together: the size sets roughly the pixel count, the ratio its shape.
     ///
@@ -156,7 +158,7 @@ pub enum ImageQuality {
     Medium,
     High,
     /// Introduced with the `gpt-image-2.5` models; earlier models refuse it.
-    /// Named explicitly: `snake_case` would spell it `x_high`.
+    // Named explicitly: `snake_case` would spell it `x_high`.
     #[serde(rename = "xhigh")]
     #[strum(serialize = "xhigh")]
     XHigh,

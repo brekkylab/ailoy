@@ -18,8 +18,7 @@ pub struct ImageModel {
 /// The marshal-side view of one generate call.
 ///
 /// `pub(crate)` rather than `pub(super)` because it appears in
-/// [`ImageProviderApi::marshal_request`](crate::image_model::r#impl::api::ImageProviderApi::marshal_request),
-/// whose own reach is crate-wide; a narrower type there is a `private_interfaces`
+/// `ImageProviderApi::marshal_request`, whose own reach is crate-wide; a narrower type there is a `private_interfaces`
 /// warning. Nothing re-exports it, so it stays out of the public API either way.
 pub(crate) struct ImageModelRequest<'a> {
     pub model: &'a str,
@@ -32,12 +31,10 @@ pub(crate) struct ImageModelRequest<'a> {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ImageModelOutput {
     /// The generated images, never empty — a response that produced none is an
-    /// error, not an empty vector.  Normally
-    /// [`PartImage::Embedded`](crate::message::PartImage::Embedded) with the
+    /// error, not an empty vector.  Normally [`PartImage::Embedded`] with the
     /// mime type the provider reported. A provider that answers with a link
-    /// instead of bytes yields
-    /// [`PartImage::Url`](crate::message::PartImage::Url); those URLs expire
-    /// after an hour.
+    /// instead of bytes yields [`PartImage::Url`]; such links may be
+    /// short-lived.
     pub images: Vec<PartImage>,
 
     /// Text the model returned alongside the images, such as a caption or the
@@ -53,7 +50,7 @@ pub struct ImageModelOutput {
 
 impl ImageModel {
     /// Resolve `model` against the `"default"` entry of
-    /// [`get_im_providers`](crate::image_model::get_im_providers).  Convenience
+    /// [`get_im_providers`].  Convenience
     /// over [`try_from_provider`](Self::try_from_provider).
     ///
     /// Returns an error if the `"default"` provider is missing or has no entry
@@ -64,7 +61,7 @@ impl ImageModel {
 
     /// Resolve `model` against the [`ImageModelProvider`](super::ImageModelProvider)
     /// registered under `provider` in
-    /// [`get_im_providers`](crate::image_model::get_im_providers).
+    /// [`get_im_providers`].
     ///
     /// `model` is the spec-side name (e.g. `"openai/gpt-image-1"`) used to look
     /// up the registered pattern; the stored API-side id has any `provider/`
@@ -105,8 +102,9 @@ impl ImageModel {
     /// Contract: an `Ok` result carries at least one image.  A call that ends
     /// with no image — a safety filter, a text-only answer — is an `Err`
     /// quoting the reason the provider gave, so callers never inspect an empty
-    /// vector.  Options the target model cannot honour fail before anything is
-    /// sent; see [`ImageModelOptions`].
+    /// vector.  A combination the provider never accepts fails before anything
+    /// is sent; anything else goes out as asked, and a refusal comes back as
+    /// the provider's error.
     pub async fn generate(
         &self,
         prompt: &str,

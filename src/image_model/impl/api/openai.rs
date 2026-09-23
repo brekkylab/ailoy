@@ -121,8 +121,8 @@ impl super::ImageProviderApi for OpenAIImageApi {
                     .unwrap_or_else(|| "image/png".to_string());
                 images.push(PartImage::Embedded { mime_type, data });
             } else if let Some(url) = entry.pointer("/url").and_then(|v| v.as_str()) {
-                // A provider that returns a link instead of bytes; the URL
-                // expires in an hour, which is the caller's problem to notice.
+                // An OpenAI-compatible endpoint may return a link instead of
+                // bytes; how long it stays valid is up to that endpoint.
                 images.push(PartImage::Url {
                     url: url.to_owned(),
                 });

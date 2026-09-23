@@ -26,9 +26,8 @@ pub enum ImageModelProviderElem {
 /// Registry of image model endpoints, keyed by model-name patterns.
 ///
 /// The twin of [`LangModelProvider`](crate::lang_model::LangModelProvider), and
-/// deliberately a separate registry: the endpoints differ (OpenAI's image
-/// models live under `/v1/images/generations`, not `/v1/responses`) and a
-/// text model registered for chat must not resolve for
+/// deliberately a separate registry: image generation has its own endpoints,
+/// and a text model registered for chat must not resolve for
 /// [`ImageModel`](crate::image_model::ImageModel).
 ///
 /// Keys may be exact model names (e.g. `"openai/gpt-image-1"`) or globs

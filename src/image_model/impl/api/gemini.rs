@@ -15,9 +15,9 @@ impl ImageModelProvider {
     /// The Gemini API base, same as the text side: the model id and the
     /// `:generateContent` action are appended per request.
     ///
-    /// Only the Nano Banana (`gemini-*-image`) models answer with an image;
-    /// pointing this at a text model produces an error from the API, because
-    /// the request carries `responseModalities` and `imageConfig`.
+    /// Only image models answer with an image; pointing this at a text model
+    /// produces an error from the API, because the request asks for the
+    /// `IMAGE` response modality.
     pub fn gemini(api_key: String) -> ImageModelProviderElem {
         ImageModelProviderElem::API {
             schema: ImageModelAPISchema::Gemini,
@@ -54,13 +54,9 @@ impl super::ImageProviderApi for GeminiImageApi {
                 .unwrap()
                 .insert("aspectRatio".into(), <&str>::from(*aspect_ratio).into());
         }
-        // Models differ in which sizes they take, checked by
-        // calling each: `gemini-3.1-flash-image` takes 512/1K/2K;
-        // `gemini-3.1-flash-lite-image` takes 1K only; `gemini-3-pro-image`
-        // refuses 512 and honours 2K (2048x2048); `gemini-2.5-flash-image`
-        // refuses 512 and accepts 2K but still returns 1024x1024. That is
-        // deliberately not a table here: the model decides, and a refusal is
-        // explained by `explain_error`. `quality` is OpenAI's and not read.
+        // Models differ in which sizes they take. The request goes out as
+        // asked, the model decides, and a refusal is explained by
+        // `explain_error`.
         if let Some(image_size) = &options.image_size {
             image_config
                 .as_object_mut()

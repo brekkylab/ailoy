@@ -15,17 +15,14 @@ use crate::{
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageModelAPISchema {
-    /// OpenAI Images API (`POST /v1/images/generations`), serving the
-    /// `gpt-image-*` family. DALL·E 2/3 were removed from the API,
-    /// so this schema has no per-family branching.
+    /// OpenAI Images API (`POST /v1/images/generations`).
     #[default]
     #[serde(rename = "openai")]
     OpenAI,
 
-    /// Gemini API `POST {base}{model}:generateContent` with
-    /// `generationConfig.responseModalities` including `IMAGE` — the Nano
-    /// Banana (`gemini-*-image`) models.  Same base URL, auth header and
-    /// response skeleton as the text-side Gemini schema.
+    /// Gemini API `POST {base}{model}:generateContent`, asking for the `IMAGE`
+    /// response modality.  Same base URL, auth header and response skeleton as
+    /// the text-side Gemini schema.
     Gemini,
 }
 
@@ -43,11 +40,10 @@ pub trait ImageProviderApi {
     /// Build the wire request as the `{"url", "header", "body"}` object the
     /// runtime unpacks.
     ///
-    /// Fallible because option combinations that the target model cannot honour
-    /// (a transparent background on a JPEG, an `n` outside 1–10)
-    /// are better refused here than sent and silently ignored — or, worse,
-    /// answered with a 400 whose message says nothing about which option caused
-    /// it.
+    /// Fallible so that a combination the provider never accepts is refused
+    /// here, before anything is sent.  Anything else goes out as asked; what a
+    /// particular model refuses comes back as the provider's error (see
+    /// [`explain_error`](Self::explain_error)).
     fn marshal_request(&self, req: &ImageModelRequest<'_>) -> anyhow::Result<Value>;
 
     /// Decode a successful response body.
@@ -66,11 +62,10 @@ pub trait ImageProviderApi {
 
     /// Explains a failed response in terms of the options the caller set.
     ///
-    /// A provider's error names its own wire field, which may not be the
-    /// option the caller touched (Gemini rejects `imageSize`, which the caller
-    /// reached through `quality`). Returning `Some` puts that explanation in
-    /// front of the provider's body in the error; the body itself is always
-    /// kept. The model is left to decide what it accepts — this runs only
+    /// A provider's error names its own wire field, which may be spelled
+    /// differently from the option the caller set.  Returning `Some` puts that
+    /// explanation in front of the provider's body in the error; the body
+    /// itself is always kept. The model is left to decide what it accepts — this runs only
     /// after it has said no — so no per-model rule table has to be kept up to
     /// date. Defaults to no explanation.
     fn explain_error(
