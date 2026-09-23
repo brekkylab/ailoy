@@ -44,7 +44,7 @@ pub trait ImageProviderApi {
     /// runtime unpacks.
     ///
     /// Fallible because option combinations that the target model cannot honour
-    /// (`n > 1` on Gemini, a transparent background on a JPEG)
+    /// (a transparent background on a JPEG, an `n` outside 1–10)
     /// are better refused here than sent and silently ignored — or, worse,
     /// answered with a 400 whose message says nothing about which option caused
     /// it.

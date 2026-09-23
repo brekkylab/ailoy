@@ -1,34 +1,31 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Provider-neutral knobs for one image generation call.
+/// Options for one image generation call.
 ///
-/// Every field is optional and `None` leaves the provider's own default in
-/// place.  Fields are grouped by who reads them: a common block every provider
-/// maps, then one block per provider holding that provider's own parameters
-/// under its own names, which other providers skip.  No field is translated
-/// into a different concept for a provider that lacks it.  A combination the
-/// model cannot honour fails in `marshal_request` instead of quietly returning
-/// an image that ignores what was asked for.
+/// Every field is optional; `None` leaves the provider's own default in place.
+/// Each field carries one provider's parameter under that provider's own name
+/// and is read only by that provider; the others skip it. No field is
+/// translated into a different concept for a provider that lacks it, so a value
+/// always means what the owning provider's API says. A combination the model
+/// cannot honour fails in `marshal_request` rather than being sent.
 ///
-/// Kept flat, like [`LangModelOptions`](crate::lang_model::LangModelOptions),
-/// while there are two providers and few knobs only one of them has. If more
-/// providers are added and provider-specific options pile up, consider a
-/// common core plus one section per provider (`openai: {..}`, `gemini: {..}`,
-/// each read only by its provider) instead: past that point a flat struct
-/// grows fields most providers ignore, or tempts one shared field into
-/// meaning different things per provider.
+/// The "only" groups describe the providers supported today, not a rule: the
+/// two current APIs happen to share no option (they describe even an image's
+/// shape differently), which is why there is no common group. Adding a
+/// provider can change the grouping — a field another provider also takes
+/// under the same meaning becomes shared — and past a few providers, a common
+/// core plus one section per provider (`openai: {..}`, `gemini: {..}`) is
+/// worth considering over this flat layout, kept flat for now like
+/// [`LangModelOptions`](crate::lang_model::LangModelOptions).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ImageModelOptions {
-    // ── Common ────────────────────────────────────────────────────────────
-    /// How many images to generate.  `None` means one.
-    ///
-    /// A provider that cannot return that many from one request refuses the
-    /// count at marshal time rather than silently returning fewer.
+    // ── OpenAI only ───────────────────────────────────────────────────────
+    /// How many images to generate, sent as `n` (the API takes 1–10).  `None`
+    /// means one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub n: Option<u32>,
 
-    // ── OpenAI only ───────────────────────────────────────────────────────
     /// Pixel size, sent verbatim as `size` (e.g. `"1536x1024"`, `"auto"`).
     ///
     /// A string so the sizes a model accepts, which differ by model, need no
@@ -148,7 +145,7 @@ pub enum ImageSize {
     Size4K,
 }
 
-/// OpenAI's render quality.
+/// OpenAI's render quality, the values its `quality` accepts.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
 )]
@@ -167,7 +164,7 @@ pub enum ImageQuality {
     Max,
 }
 
-/// Encoding of the returned image bytes.
+/// OpenAI's output encoding, the values its `output_format` accepts.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
 )]
@@ -190,7 +187,7 @@ impl ImageFormat {
     }
 }
 
-/// Whether the generated image keeps an opaque background or an alpha channel.
+/// OpenAI's background, the values its `background` accepts.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
 )]

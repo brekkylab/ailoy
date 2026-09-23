@@ -35,15 +35,6 @@ impl super::ImageProviderApi for GeminiImageApi {
         let ImageModelProviderElem::API { url, api_key, .. } = req.provider;
         let options = req.options;
 
-        if let Some(n) = options.n
-            && n != 1
-        {
-            // `candidateCount` is not documented as working for image models, so
-            // asking for any count other than one is refused rather than
-            // silently answered with one image.
-            bail!("Gemini returns a single image per request; requested n = {n}");
-        }
-
         let url = format!("{}{}:generateContent", url, req.model);
 
         let mut header = to_value!({
@@ -404,38 +395,11 @@ mod tests {
     }
 
     #[test]
-    fn marshal_rejects_multiple_images() {
-        let options = ImageModelOptions {
-            n: Some(2),
-            ..Default::default()
-        };
-        let err = marshal("gemini-3.1-flash-image", &options)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("single image"), "unexpected message: {err}");
-
-        // Zero is not "leave it to the model" either; that is what `None` means.
-        let options = ImageModelOptions {
-            n: Some(0),
-            ..Default::default()
-        };
-        let err = marshal("gemini-3.1-flash-image", &options)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("single image"), "unexpected message: {err}");
-
-        let options = ImageModelOptions {
-            n: Some(1),
-            ..Default::default()
-        };
-        assert!(marshal("gemini-3.1-flash-image", &options).is_ok());
-    }
-
-    #[test]
     fn marshal_ignores_openai_only_options() {
         // OpenAI's fields have no Gemini counterpart; `quality` in particular
-        // must not be turned into a resolution.
+        // must not be turned into a resolution, nor `n` into a candidate count.
         let options = ImageModelOptions {
+            n: Some(2),
             size: Some("1536x1024".to_string()),
             quality: Some(ImageQuality::High),
             output_format: Some(ImageFormat::Jpeg),
