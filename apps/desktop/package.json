@@ -10,7 +10,7 @@
     "tauri": "tauri",
     "sidecar": "bash scripts/build-sidecar.sh release",
     "sidecar:debug": "bash scripts/build-sidecar.sh debug",
-    "tauri:dev": "npm run sidecar:debug && tauri dev",
+    "tauri:dev": "npm run sidecar:debug && tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:build": "npm run sidecar && tauri build",
     "lint": "oxlint",
     "test": "vitest run",

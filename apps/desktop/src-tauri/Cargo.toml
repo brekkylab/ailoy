@@ -27,3 +27,6 @@ tracing = "0.1"
 # Default features bring `tracing-log`, so ailoy's `log::` records reach the file too.
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
+# Lets an agent drive the window (DOM, screenshots, IPC) over MCP. Registered only in debug
+# builds (see `lib.rs`); `tauri.dev.conf.json` supplies the config it needs.
+tauri-plugin-mcp-bridge = "0.13"
