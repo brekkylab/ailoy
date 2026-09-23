@@ -22,7 +22,9 @@
     selected: string | null;
     /** `null` after the selected session is deleted: `App` then picks the next one. */
     onSelect: (id: string | null) => void;
+    /** Opens an unsaved chat. Nothing is stored until the user sends into it. */
     onNewChat: () => void;
+    /** Whether the thread on screen is that unsaved chat, which is New chat's row to mark. */
     drafting: boolean;
     view: MainView;
     onSelectView: (view: MainView) => void;
@@ -65,7 +67,6 @@
 
 <aside class="flex h-full min-h-0 flex-col border-r bg-muted/60">
   <nav class="space-y-0.5 px-2 pt-2 pb-3">
-    <NavRow icon={MessageSquarePlus} label={S.newChat} active={view === "session" && drafting} onclick={onNewChat} />
     <NavRow
       icon={MessagesSquare}
       label={S.chats}
@@ -109,6 +110,10 @@
       {/each}
     </div>
   {:else}
+    <!-- Heads the chat list, where a new conversation will land, rather than the nav. -->
+    <div class="px-2 pb-2">
+      <NavRow icon={MessageSquarePlus} label={S.newChat} active={view === "session" && drafting} onclick={onNewChat} />
+    </div>
     <div class="min-h-0 flex-1 overflow-y-auto px-2">
       {#each groups as group (group.label)}
         <section class="pb-3">
