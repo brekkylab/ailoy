@@ -64,7 +64,16 @@ export type EngineErrorKind =
 export interface EngineErrorPayload { kind: EngineErrorKind; message: string }
 
 export interface SessionSummary { id: string; title: string; model: string; created_at: number; updated_at: number; running: boolean }
-export interface StoredMessage { seq: number; depth: number; source_agent: string | null; message: Message; usage: TokenUsage | null; created_at: number }
+export interface StoredMessage {
+  seq: number;
+  depth: number;
+  source_agent: string | null;
+  message: Message;
+  usage: TokenUsage | null;
+  created_at: number;
+  /** On a tool result, when its call began (Unix ms): with `created_at`, how long it took. */
+  started_at: number | null;
+}
 export interface SessionUsage {
   input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number;
   estimated_cost_usd: number | null; context_used: number | null; context_limit: number | null;
@@ -74,6 +83,10 @@ export type RunEvent =
   | { type: "started"; run_id: string }
   | { type: "text_delta"; text: string }
   | { type: "thinking_delta"; text: string }
+  /** The model has named a call and is still writing its arguments; `tool_call_started` follows. */
+  | { type: "tool_call_preparing"; id: string; name: string }
+  /** More of a preparing call's arguments, as raw JSON text — the first few KiB only. */
+  | { type: "tool_call_args_delta"; id: string; chunk: string }
   | { type: "tool_call_started"; id: string; name: string; arguments: unknown }
   | { type: "message"; seq: number; depth: number; source_agent: string | null; message: Message; usage: TokenUsage | null }
   | { type: "usage"; usage: TokenUsage | null; rate_limit: RateLimitInfo | null; context_used: number | null; context_limit: number | null }

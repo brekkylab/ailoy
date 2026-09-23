@@ -55,6 +55,7 @@ impl Engine {
         std::fs::create_dir_all(&cfg.data_dir)?;
         let instance_lock = lock_data_dir(&cfg.data_dir)?;
         let store = Arc::new(Store::open(&cfg.db_path())?);
+        name_untitled_sessions(&store);
         // The chosen root, or the default when nothing has been chosen yet. Read before the
         // workspace is built rather than applied after: starting on one directory and
         // swapping to another would mount the wrong tree for as long as that took, and a
@@ -200,7 +201,7 @@ impl Engine {
             _ => providers::read_settings(&self.store)?.default_model,
         };
         let id = uuid::Uuid::new_v4().to_string();
-        let r = self.store.session_create(&id, "New chat", &model)?;
+        let r = self.store.session_create(&id, DEFAULT_TITLE, &model)?;
         Ok(SessionSummary {
             id: r.id,
             title: r.title,
@@ -244,7 +245,23 @@ impl Engine {
         if parts.is_empty() {
             return Err(EngineError::Invalid("The message is empty".into()));
         }
-        self.runs.start(session_id, parts).await
+        let title = title_from(&parts);
+        let handle = self.runs.start(session_id, parts).await?;
+        // A conversation is named by what started it, the way the chat apps name theirs, so
+        // the list is not a column of "New chat". Only while it still has the default: a
+        // title the user chose is theirs. After the start, so a refused start renames nothing.
+        if let Some(title) = title {
+            match self.store.session_get(session_id) {
+                Ok(s) if s.title == DEFAULT_TITLE => {
+                    if let Err(e) = self.store.session_name(session_id, &title) {
+                        tracing::warn!("naming session {session_id}: {e}");
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("naming session {session_id}: {e}"),
+            }
+        }
+        Ok(handle)
     }
 
     /// Re-subscribe to a run already in flight. The `String` is the assistant text streamed
@@ -501,6 +518,60 @@ impl Engine {
     }
 }
 
+/// What a session is called until someone — or its first message — names it.
+pub const DEFAULT_TITLE: &str = "New chat";
+
+/// How long a title taken from a message may run, in characters.
+const TITLE_MAX: usize = 48;
+
+/// A title for a conversation, from the message that started it.
+///
+/// Its first line, with the whitespace collapsed, cut back to a word boundary near
+/// [`TITLE_MAX`] characters with an ellipsis. `None` when there is no text to take one from
+/// — an image on its own keeps the default.
+pub fn title_from(parts: &[Part]) -> Option<String> {
+    let text = parts
+        .iter()
+        .find_map(|p| p.as_text().filter(|t| !t.trim().is_empty()))?;
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.chars().count() <= TITLE_MAX {
+        return Some(line);
+    }
+    let cut: String = line.chars().take(TITLE_MAX).collect();
+    // Back to the last space if there is one in the second half, so a word is not cut in two;
+    // a single long word (a URL, a path) is cut where it stands.
+    let cut = match cut.rfind(' ') {
+        Some(at) if cut[..at].chars().count() >= TITLE_MAX / 2 => cut[..at].to_string(),
+        _ => cut,
+    };
+    Some(format!("{}…", cut.trim_end()))
+}
+
+/// Name the sessions that still have the default title after their first message.
+///
+/// For conversations started before sessions were named on their first message, so the list
+/// does not keep a column of "New chat" rows from that time. Once per start, and cheap after
+/// the first: a session it names is no longer a default one.
+fn name_untitled_sessions(store: &Store) {
+    let Ok(sessions) = store.session_list() else {
+        return;
+    };
+    for s in sessions.into_iter().filter(|s| s.title == DEFAULT_TITLE) {
+        let first = store.message_history(&s.id).ok().and_then(|history| {
+            history
+                .into_iter()
+                .find(|m| m.role == ailoy::message::Role::User)
+                .and_then(|m| title_from(&m.contents))
+        });
+        if let Some(title) = first
+            && let Err(e) = store.session_name(&s.id, &title)
+        {
+            tracing::warn!("naming session {}: {e}", s.id);
+        }
+    }
+}
+
 /// Keeps the model list fresh for as long as the engine runs.
 ///
 /// Fetches when the list is older than [`catalog::REFRESH_EVERY`] — or missing, which on a
@@ -673,6 +744,71 @@ mod tests {
         .unwrap();
         let e = Engine::start(cfg).await.unwrap();
         (dir, e)
+    }
+
+    #[test]
+    fn a_title_is_the_first_line_of_the_first_message() {
+        let t = |s: &str| title_from(&[Part::text(s)]);
+        assert_eq!(
+            t("Summarize my workspace"),
+            Some("Summarize my workspace".into())
+        );
+        assert_eq!(t("\n\n  first   line  \nsecond"), Some("first line".into()));
+        assert_eq!(t("   "), None);
+        assert_eq!(title_from(&[]), None);
+        // Cut back to a word near the limit, with an ellipsis.
+        let long =
+            t("Please read every quarterly report in the finance folder and compare the margins")
+                .unwrap();
+        assert_eq!(long, "Please read every quarterly report in the…");
+        assert!(long.chars().count() <= TITLE_MAX + 1);
+        // One long word is cut where it stands.
+        let path = t(&"a".repeat(80)).unwrap();
+        assert_eq!(path.chars().count(), TITLE_MAX + 1);
+        // Counted in characters, so Hangul is not cut mid-syllable at a byte offset.
+        assert_eq!(
+            t("지금 워크스페이스에 있는 파일 현황들 요약해줘"),
+            Some("지금 워크스페이스에 있는 파일 현황들 요약해줘".into())
+        );
+    }
+
+    #[test]
+    fn an_old_untitled_session_is_named_without_moving_up_the_list() {
+        let store = Store::open_in_memory().unwrap();
+        let old = store
+            .session_create("old", DEFAULT_TITLE, "anthropic/m")
+            .unwrap();
+        let msg = ailoy::message::Message::new(ailoy::message::Role::User)
+            .with_contents(vec![Part::text("what is in my notion")]);
+        store
+            .message_append(
+                "old",
+                crate::store::NewMessage {
+                    depth: 0,
+                    source_agent: None,
+                    message: &msg,
+                    usage: None,
+                    started_at: None,
+                },
+            )
+            .unwrap();
+        let before = store.session_get("old").unwrap().updated_at;
+        store
+            .session_create("empty", DEFAULT_TITLE, "anthropic/m")
+            .unwrap();
+        store
+            .session_create("mine", "Named by hand", "anthropic/m")
+            .unwrap();
+
+        name_untitled_sessions(&store);
+
+        let s = store.session_get("old").unwrap();
+        assert_eq!(s.title, "what is in my notion");
+        assert_eq!(s.updated_at, before, "naming is not activity");
+        assert!(before >= old.updated_at);
+        // Nothing to take a name from, and a name someone chose: both left alone.
+        assert_eq!(store.session_get("empty").unwrap().title, DEFAULT_TITLE);
+        assert_eq!(store.session_get("mine").unwrap().title, "Named by hand");
     }
 
     fn config(data_dir: &std::path::Path) -> EngineConfig {

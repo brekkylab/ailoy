@@ -31,7 +31,7 @@ import { Composer } from "@/components/thread/Composer";
 import { AssistantBubble, UserBubble } from "@/components/thread/MessageBubble";
 import { ToolGroup } from "@/components/thread/ToolGroup";
 import { attachRun } from "@/events";
-import { buildThread, liveGroupKey, resolveCall, withLiveCalls, type GroupCall } from "@/lib/thread";
+import { buildThread, liveGroupKey, resolveCall, turnEnds, withLiveCalls, type GroupCall } from "@/lib/thread";
 import { selectRun, useRunStore } from "@/store/runs";
 import { S } from "@/strings";
 
@@ -144,6 +144,9 @@ export function Thread({
   const saidLive = !!live.text || !!live.thinking;
   const segments = saidLive ? stored : withLiveCalls(stored, liveCalls);
   const liveKey = liveGroupKey(segments, streaming);
+  // Where each finished answer's copy button and time go. The answer a run is still
+  // writing gets none until it ends.
+  const ends = turnEnds(segments, streaming);
   // A run that has produced nothing yet still says so.
   const pulse = streaming && !live.text && !live.thinking && live.toolOrder.length === 0;
   const showLive = streaming && (pulse || saidLive);
@@ -172,9 +175,9 @@ export function Thread({
           {segments.map((seg) =>
             seg.kind === "turn" ? (
               seg.message.message.role === "user" ? (
-                <UserBubble key={seg.key} message={seg.message.message} />
+                <UserBubble key={seg.key} message={seg.message.message} at={seg.message.created_at} />
               ) : (
-                <AssistantBubble key={seg.key} message={seg.message.message} />
+                <AssistantBubble key={seg.key} message={seg.message.message} end={ends.get(seg.key)} />
               )
             ) : (
               <ToolGroup

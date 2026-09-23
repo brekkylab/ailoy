@@ -7,6 +7,7 @@ import {
   namedTools,
   resolveCall,
   summarizeGroup,
+  turnEnds,
   withLiveCalls,
   type GroupCall,
   type ResolvedCall,
@@ -18,7 +19,7 @@ import type { Message, Part, StoredMessage } from "@/types";
 let nextSeq = 0;
 
 function stored(message: Message, depth = 0): StoredMessage {
-  return { seq: nextSeq++, depth, source_agent: null, message, usage: null, created_at: 0 };
+  return { seq: nextSeq++, depth, source_agent: null, message, usage: null, created_at: 0, started_at: null };
 }
 
 function fn(id: string, name: string, args: unknown = {}): Part {
@@ -192,11 +193,37 @@ describe("resolveCall", () => {
     expect(out.startedAt).toBe(1000);
   });
 
+  it("previews the arguments of a call still being written", () => {
+    const writing: ToolCallState = {
+      id: "w",
+      name: "write",
+      arguments: undefined,
+      status: "running",
+      startedAt: 1000,
+      preparing: true,
+      argsText: '{"path":"/tmp/rep',
+    };
+    const out = resolveCall({ id: "w", name: "write", args: undefined }, writing, undefined, true);
+    expect(out.preparing).toBe(true);
+    expect(out.args).toEqual({ path: "/tmp/rep" });
+    // Before any of the path has arrived there is nothing to show but the verb.
+    expect(resolveCall({ id: "w", name: "write", args: undefined }, { ...writing, argsText: "" }, undefined, true).args).toBeUndefined();
+  });
+
   it("prefers the live entry even once storage has an answer", () => {
     const done: ToolCallState = { ...runningLive, status: "done", result: { text: "live" }, finishedAt: 3000 };
     const out = resolveCall(call, done, answered("a", { text: "stored" }), false);
     expect(out.result).toEqual({ text: "live" });
     expect(out.finishedAt).toBe(3000);
+  });
+
+  it("reads how long a stored call took off its result row", () => {
+    const row = { ...answered("a", { text: "ok" }), started_at: 1_000, created_at: 4_500 };
+    const out = resolveCall(call, undefined, row, false);
+    expect([out.startedAt, out.finishedAt]).toEqual([1_000, 4_500]);
+    // A row from before the engine kept the start says nothing rather than guess.
+    const old = resolveCall(call, undefined, answered("a", { text: "ok" }), false);
+    expect([old.startedAt, old.finishedAt]).toEqual([undefined, undefined]);
   });
 
   it("reads a stored answer as done, and the engine's error shape as an error", () => {
@@ -273,3 +300,35 @@ describe("the closed row", () => {
     expect(groupDuration([])).toBeNull();
   });
 });
+
+describe("turnEnds", () => {
+  it("puts one answer's actions under the last thing it said, copying all of its prose", () => {
+    const { segments } = buildThread([
+      user("summarize my files"),
+      said("Let me look."),
+      called([fn("c1", "shell", { cmd: "ls" })]),
+      answered("c1", { stdout: "a b" }),
+      said("There are two files."),
+      user("thanks"),
+      said("Any time."),
+    ]);
+    const ends = turnEnds(segments);
+    const keyed = segments.filter((s) => ends.has(s.key)).map((s) => (s.kind === "turn" ? proseOf(s) : s.key));
+    expect(keyed).toEqual(["There are two files.", "Any time."]);
+    expect([...ends.values()].map((e) => e.text)).toEqual(["Let me look.\n\nThere are two files.", "Any time."]);
+  });
+
+  it("leaves the answer still being written without any", () => {
+    const { segments } = buildThread([user("q"), said("first"), user("again"), said("partial")]);
+    expect([...turnEnds(segments, true).values()].map((e) => e.text)).toEqual(["first"]);
+  });
+
+  it("gives a turn that said nothing — only calls — none at all", () => {
+    const { segments } = buildThread([user("q"), called([fn("c1", "shell")]), answered("c1", {})]);
+    expect(turnEnds(segments).size).toBe(0);
+  });
+});
+
+function proseOf(s: Segment): string {
+  return s.kind === "turn" ? s.message.message.contents.map((p) => (p.type === "text" ? p.text : "")).join("") : "";
+}

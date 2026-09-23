@@ -11,7 +11,22 @@ import { create } from "zustand";
 import type { Message, RateLimitInfo, RunEvent, TokenUsage } from "@/types";
 
 export type ToolStatus = "running" | "done" | "error" | "interrupted";
-export interface ToolCallState { id: string; name: string; arguments: unknown; status: ToolStatus; result?: unknown; startedAt: number; finishedAt?: number }
+export interface ToolCallState {
+  id: string;
+  name: string;
+  arguments: unknown;
+  status: ToolStatus;
+  result?: unknown;
+  startedAt: number;
+  finishedAt?: number;
+  /**
+   * The model is still writing this call's arguments: it has been named (`tool_call_preparing`)
+   * and has not started. `argsText` is the raw JSON so far — the start of it only — which is
+   * what a row previews its path or command from. Both go when `tool_call_started` lands.
+   */
+  preparing?: boolean;
+  argsText?: string;
+}
 
 export interface LiveRun {
   runId: string | null;
@@ -69,10 +84,33 @@ export function applyRunEvent(s: LiveRun, ev: RunEvent): LiveRun {
       return { ...s, text: s.text + ev.text };
     case "thinking_delta":
       return { ...s, thinking: s.thinking + ev.text };
+    // A call is on screen from the moment it is named, so a `write` does not sit behind a
+    // bare "…" for as long as the model takes to write the file out. Its clock starts here
+    // and keeps running through `tool_call_started`: what the row reports at the end is the
+    // whole of what the call cost, and for a `write` that is almost all the writing.
+    case "tool_call_preparing":
+      if (s.toolCalls[ev.id]) return s;
+      return {
+        ...s,
+        toolCalls: {
+          ...s.toolCalls,
+          [ev.id]: { id: ev.id, name: ev.name, arguments: undefined, status: "running", startedAt: Date.now(), preparing: true, argsText: "" },
+        },
+        toolOrder: s.toolOrder.includes(ev.id) ? s.toolOrder : [...s.toolOrder, ev.id],
+      };
+    case "tool_call_args_delta": {
+      const c = s.toolCalls[ev.id];
+      if (!c?.preparing) return s;
+      return { ...s, toolCalls: { ...s.toolCalls, [ev.id]: { ...c, argsText: (c.argsText ?? "") + ev.chunk } } };
+    }
     case "tool_call_started":
       return {
         ...s,
-        toolCalls: { ...s.toolCalls, [ev.id]: { id: ev.id, name: ev.name, arguments: ev.arguments, status: "running", startedAt: Date.now() } },
+        toolCalls: {
+          ...s.toolCalls,
+          // The clock of a call that was announced while it was written is kept, see above.
+          [ev.id]: { id: ev.id, name: ev.name, arguments: ev.arguments, status: "running", startedAt: s.toolCalls[ev.id]?.startedAt ?? Date.now() },
+        },
         toolOrder: s.toolOrder.includes(ev.id) ? s.toolOrder : [...s.toolOrder, ev.id],
       };
     case "message": {

@@ -12,7 +12,10 @@ use crate::{
     types::{MountConfig, MountKind, StoredMessage, now_ms},
 };
 
-const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_init.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("migrations/0001_init.sql"),
+    include_str!("migrations/0002_tool_started_at.sql"),
+];
 
 /// Narrow a store file to its owner. Best-effort on purpose: a file that is not there yet
 /// (the WAL sidecars before the first write) and a filesystem with no unix modes are both
@@ -64,6 +67,8 @@ pub struct NewMessage<'a> {
     pub source_agent: Option<&'a str>,
     pub message: &'a Message,
     pub usage: Option<&'a TokenUsage>,
+    /// On a tool result: when the call it answers began, in Unix ms. See the migration.
+    pub started_at: Option<i64>,
 }
 
 pub struct Store {
@@ -191,6 +196,23 @@ impl Store {
         Ok(())
     }
 
+    /// Name a session without moving it: `updated_at` is left alone, unlike
+    /// [`Store::session_rename`]. For a title the engine gives a conversation itself — a
+    /// rename the user made is news about the session; one the engine made is not, and must
+    /// not bring a months-old conversation to the top of the list.
+    pub fn session_name(&self, id: &str, title: &str) -> Result<()> {
+        let n = self.with(|c| {
+            c.execute(
+                "UPDATE sessions SET title = ?2 WHERE id = ?1",
+                params![id, title],
+            )
+        })?;
+        if n == 0 {
+            return Err(EngineError::NotFound(format!("session {id}")));
+        }
+        Ok(())
+    }
+
     pub fn session_set_model(&self, id: &str, model: &str) -> Result<()> {
         let n = self.with(|c| {
             c.execute(
@@ -243,8 +265,8 @@ impl Store {
                 |r| r.get(0),
             )?;
             c.execute(
-                "INSERT INTO messages (session_id, seq, depth, source_agent, role, content, usage, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![session_id, seq, m.depth as i64, m.source_agent, role, content, usage, now_ms()],
+                "INSERT INTO messages (session_id, seq, depth, source_agent, role, content, usage, created_at, started_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![session_id, seq, m.depth as i64, m.source_agent, role, content, usage, now_ms(), m.started_at],
             )?;
             Ok(seq)
         })
@@ -292,13 +314,14 @@ impl Store {
             message: parsed.message,
             usage,
             created_at: r.get(5)?,
+            started_at: r.get(6)?,
         })
     }
 
     pub fn message_list(&self, session_id: &str) -> Result<Vec<StoredMessage>> {
         self.with(|c| {
             let mut st = c.prepare(
-                "SELECT seq, depth, source_agent, content, usage, created_at FROM messages WHERE session_id = ?1 ORDER BY seq",
+                "SELECT seq, depth, source_agent, content, usage, created_at, started_at FROM messages WHERE session_id = ?1 ORDER BY seq",
             )?;
             st.query_map(params![session_id], Self::stored_from_row)?
                 .collect()
@@ -449,6 +472,7 @@ mod tests {
                     source_agent: None,
                     message: &text(Role::User, "hi"),
                     usage: None,
+                    started_at: None,
                 },
             )
             .unwrap();
@@ -460,6 +484,7 @@ mod tests {
                     source_agent: None,
                     message: &text(Role::Assistant, "hello"),
                     usage: Some(&u),
+                    started_at: None,
                 },
             )
             .unwrap();
@@ -471,6 +496,7 @@ mod tests {
                     source_agent: Some("sub"),
                     message: &text(Role::Assistant, "inner"),
                     usage: None,
+                    started_at: None,
                 },
             )
             .unwrap();
@@ -508,6 +534,7 @@ mod tests {
                     source_agent: None,
                     message: &text(Role::Assistant, "hello"),
                     usage: None,
+                    started_at: None,
                 },
             )
             .unwrap();
@@ -586,5 +613,64 @@ mod tests {
         );
         s.setting_delete("default_model").unwrap();
         assert_eq!(s.setting_get("default_model").unwrap(), None);
+    }
+
+    #[test]
+    fn a_tool_row_keeps_when_its_call_began() {
+        let store = Store::open_in_memory().unwrap();
+        store.session_create("s", "t", "anthropic/m").unwrap();
+        let result = Message::new(Role::Tool)
+            .with_id("c1")
+            .with_contents([ailoy::message::Part::text("ok")]);
+        store
+            .message_append(
+                "s",
+                NewMessage {
+                    depth: 0,
+                    source_agent: None,
+                    message: &result,
+                    usage: None,
+                    started_at: Some(1_000),
+                },
+            )
+            .unwrap();
+        let rows = store.message_list("s").unwrap();
+        assert_eq!(rows[0].started_at, Some(1_000));
+        assert!(rows[0].created_at >= 1_000, "finished after it began");
+    }
+
+    #[test]
+    fn a_database_from_before_started_at_opens_with_the_column_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.sqlite");
+        {
+            // The schema as the first migration left it, with a row in it.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&format!(
+                "BEGIN; {} PRAGMA user_version = 1; COMMIT;",
+                MIGRATIONS[0]
+            ))
+            .unwrap();
+            conn.execute(
+                "INSERT INTO sessions (id, title, model, created_at, updated_at) VALUES ('s', 't', 'm', 1, 1)",
+                [],
+            )
+            .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        let msg = Message::new(Role::User).with_contents([ailoy::message::Part::text("hi")]);
+        store
+            .message_append(
+                "s",
+                NewMessage {
+                    depth: 0,
+                    source_agent: None,
+                    message: &msg,
+                    usage: None,
+                    started_at: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(store.message_list("s").unwrap()[0].started_at, None);
     }
 }

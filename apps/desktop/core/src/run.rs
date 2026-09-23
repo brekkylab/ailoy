@@ -161,6 +161,7 @@ impl RunManager {
                 source_agent: None,
                 message: &user_msg,
                 usage: None,
+                started_at: None,
             },
         )?;
         self.deps.store.session_touch(session_id)?;
@@ -480,6 +481,10 @@ async fn drive(
     // usage trailer (see `AssembledItem::UsageTrailer`) belongs to. Replaced by the next
     // top-level message, and cleared if that one fails to persist.
     let mut last_top_level: Option<(i64, Option<TokenUsage>, Option<RateLimitInfo>)> = None;
+    // When each top-level call began, by id, until its result is written with it: from the
+    // moment the model named it, or — for a provider that never announced it — when the
+    // message holding it completed. See the `started_at` migration.
+    let mut call_started: HashMap<String, i64> = HashMap::new();
     let mut end: Option<RunEnd> = None;
     {
         let mut stream = agent.run_stream_controlled(user_msg, ctl);
@@ -542,6 +547,15 @@ async fn drive(
                     AssembledItem::Thinking(t) => {
                         let _ = tx.send(RunEvent::ThinkingDelta { text: t });
                     }
+                    AssembledItem::ToolCallBegan { id, name } => {
+                        call_started
+                            .entry(id.clone())
+                            .or_insert_with(crate::types::now_ms);
+                        let _ = tx.send(RunEvent::ToolCallPreparing { id, name });
+                    }
+                    AssembledItem::ToolCallArgs { id, chunk } => {
+                        let _ = tx.send(RunEvent::ToolCallArgsDelta { id, chunk });
+                    }
                     AssembledItem::Completed(out) => {
                         lock_partial(&partial).clear();
                         // Depth ≥ 1 is a sub-agent's own turn. Its usage is already inside
@@ -563,6 +577,9 @@ async fn drive(
                         {
                             for c in calls {
                                 if let Some((id, name, args)) = c.as_function() {
+                                    call_started
+                                        .entry(id.to_string())
+                                        .or_insert_with(crate::types::now_ms);
                                     let _ = tx.send(RunEvent::ToolCallStarted {
                                         id: id.into(),
                                         name: name.into(),
@@ -572,7 +589,16 @@ async fn drive(
                             }
                         }
                         let (u, rl) = (out.usage.clone(), out.rate_limit.clone());
-                        let seq = persist(&deps.store, session_id, &tx, *out);
+                        // A top-level tool result carries when its call began.
+                        let started_at = (top_level && out.message.role == Role::Tool)
+                            .then(|| {
+                                out.message
+                                    .id
+                                    .as_ref()
+                                    .and_then(|id| call_started.remove(id))
+                            })
+                            .flatten();
+                        let seq = persist(&deps.store, session_id, &tx, *out, started_at);
                         if top_level {
                             // `None` when the write failed: there is no row for a later
                             // trailer to amend, so it has nowhere to land either.
@@ -632,7 +658,7 @@ async fn drive(
                     context_limit,
                 });
             }
-            persist(&deps.store, session_id, &tx, out);
+            persist(&deps.store, session_id, &tx, out, None);
         }
         Ok(None) => {}
         Err(e) => tracing::error!("finalizing the trailing message for {session_id}: {e}"),
@@ -653,6 +679,7 @@ fn persist(
     session_id: &str,
     tx: &broadcast::Sender<RunEvent>,
     out: ailoy::message::MessageOutput,
+    started_at: Option<i64>,
 ) -> Option<i64> {
     let depth = out.depth.unwrap_or(0);
     match store.message_append(
@@ -662,6 +689,7 @@ fn persist(
             source_agent: out.source_agent.as_deref(),
             message: &out.message,
             usage: out.usage.as_ref(),
+            started_at,
         },
     ) {
         Ok(seq) => {

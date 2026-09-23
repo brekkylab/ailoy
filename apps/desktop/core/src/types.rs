@@ -82,6 +82,9 @@ pub struct StoredMessage {
     pub message: ailoy::message::Message,
     pub usage: Option<ailoy::message::TokenUsage>,
     pub created_at: i64,
+    /// On a tool result, when the call began (Unix ms); with `created_at`, how long it took.
+    /// `None` everywhere else, and on tool rows from before this was kept.
+    pub started_at: Option<i64>,
 }
 
 /// One way a provider will route a call, for a menu: the id that goes into a model id, and

@@ -31,3 +31,22 @@ export function formatRelativeTime(ms: number, now: number): string {
   if (delta < RELATIVE_LIMIT) return `${Math.floor(delta / DAY)}d ago`;
   return isoDate(new Date(ms));
 }
+
+/**
+ * When a message was written, as the time beside it says it: `15:04` today, `Sep 22, 15:04`
+ * on another day this year, `Sep 22, 2025, 15:04` before that. A clock rather than "3h ago",
+ * because a message's time is read to place it in the day, not to measure a gap.
+ */
+export function formatMessageTime(ms: number, now: number): string {
+  if (!Number.isFinite(ms)) return "";
+  const d = new Date(ms);
+  const n = new Date(now);
+  const clock = d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  if (d.toDateString() === n.toDateString()) return clock;
+  const date = d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(d.getFullYear() === n.getFullYear() ? {} : { year: "numeric" }),
+  });
+  return `${date}, ${clock}`;
+}

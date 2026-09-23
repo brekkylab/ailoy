@@ -19,7 +19,7 @@
 // What `Thread` adds on top is the live run, which is ahead of storage for the whole
 // stretch between a call starting and its result row being written — see `resolveCall`.
 
-import { interruptedNote, isErrorResult } from "@/lib/toolCall";
+import { interruptedNote, isErrorResult, previewArgs } from "@/lib/toolCall";
 import type { ToolCallState, ToolStatus } from "@/store/runs";
 import type { Message, StoredMessage } from "@/types";
 
@@ -153,8 +153,14 @@ export function liveGroupKey(segments: Segment[], running: boolean): string | nu
 /** A call and how it ended — what a card needs and where each part came from. */
 export interface ResolvedCall extends GroupCall {
   status: ToolStatus;
+  /** The model is still writing the arguments; `args` is a preview of them. See `ToolCallState`. */
+  preparing?: boolean;
   result?: unknown;
-  /** Only the live run carries the clock; a call read back from storage has none. */
+  /**
+   * When the call began and ended. The live run's own clock while it has one; read back from
+   * storage, when its result row says the call began and when that row was written — absent
+   * for a row from before the engine kept it.
+   */
   startedAt?: number;
   finishedAt?: number;
 }
@@ -202,6 +208,9 @@ export function resolveCall(
   if (liveCall) {
     return {
       ...call,
+      // What there is of the arguments while they are written — the one that names the call.
+      args: liveCall.preparing ? previewArgs(call.name, liveCall.argsText) : call.args,
+      preparing: liveCall.preparing,
       status: liveCall.status,
       result: liveCall.result,
       startedAt: liveCall.startedAt,
@@ -210,7 +219,9 @@ export function resolveCall(
   }
   const value = resultOf(stored);
   const status = stored === undefined && live ? "running" : storedStatus(value, stored !== undefined);
-  return { ...call, status, result: status === "done" || status === "error" ? value : undefined };
+  const clock =
+    stored?.started_at != null ? { startedAt: stored.started_at, finishedAt: stored.created_at } : {};
+  return { ...call, ...clock, status, result: status === "done" || status === "error" ? value : undefined };
 }
 
 /** How many names a closed row lists before it counts the rest instead. */
@@ -250,10 +261,10 @@ export function summarizeGroup(calls: ResolvedCall[]): GroupSummary {
  * How long a finished group took, in seconds, or `null` when it cannot be known.
  *
  * Wall clock and not the sum of the calls: the engine runs a turn's calls together, so
- * three calls of two seconds each are two seconds of waiting, not six. Only the live run
- * carries the timestamps — a group rebuilt from storage after a reload says nothing rather
- * than guessing from the message clocks, which measure something else — so one call
- * without them is enough to withhold the number for the whole group.
+ * three calls of two seconds each are two seconds of waiting, not six. The live run carries
+ * the timestamps, and a stored call carries them on its result row (`started_at`, and the
+ * row's own `created_at`); a row from before the engine kept them has none, and one call
+ * without them is enough to withhold the number for the whole group rather than guess.
  */
 export function groupDuration(calls: ResolvedCall[]): number | null {
   if (!calls.length) return null;
@@ -265,4 +276,46 @@ export function groupDuration(calls: ResolvedCall[]): number | null {
     last = Math.max(last, c.finishedAt);
   }
   return Math.max(0, Math.round((last - first) / 1000));
+}
+
+/** What a finished answer's actions work on: its prose, and when it was done. */
+export interface TurnEnd {
+  text: string;
+  at: number;
+}
+
+/**
+ * Where each answer's actions go, keyed on the segment that ends it.
+ *
+ * An answer is everything the assistant said between one user message and the next — often
+ * a line, a run of tool calls, then the reply — and it gets its copy button and its time
+ * once, under the last thing it said, the way the chat apps draw one reply as one thing.
+ * Copying takes the whole of its prose, not only the last line of it. A reply that is still
+ * being written (`open`, for the last one) gets none yet: it is not finished, and the time it
+ * would show is not when it was.
+ */
+export function turnEnds(segments: Segment[], open = false): Map<string, TurnEnd> {
+  const out = new Map<string, TurnEnd>();
+  let texts: string[] = [];
+  let last: { key: string; at: number } | null = null;
+  const close = () => {
+    if (last) out.set(last.key, { text: texts.join("\n\n"), at: last.at });
+    texts = [];
+    last = null;
+  };
+  for (const seg of segments) {
+    if (seg.kind !== "turn") continue;
+    const { message, created_at } = seg.message;
+    if (message.role === "user") {
+      close();
+    } else if (message.role === "assistant") {
+      const text = textOf(message);
+      if (text.trim()) {
+        texts.push(text);
+        last = { key: seg.key, at: created_at };
+      }
+    }
+  }
+  if (!open) close();
+  return out;
 }

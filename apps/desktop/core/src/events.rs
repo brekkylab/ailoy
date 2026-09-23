@@ -18,6 +18,13 @@ pub enum RunEvent {
     TextDelta { text: String },
     /// Newly streamed reasoning text, to append to the live thinking region.
     ThinkingDelta { text: String },
+    /// The model has begun writing a tool call: it is named, and its arguments are still
+    /// streaming. `tool_call_started` follows with the same `id` once they are complete —
+    /// see `AssembledItem::ToolCallBegan` for why the gap is worth showing.
+    ToolCallPreparing { id: String, name: String },
+    /// More of a preparing call's arguments, as raw JSON text to append — the first few KiB
+    /// only (`assembler::ARGS_PREVIEW_MAX`), which is where what names a call is written.
+    ToolCallArgsDelta { id: String, chunk: String },
     /// A tool call began executing (already approved, or not gated).
     ToolCallStarted {
         id: String,
@@ -97,6 +104,20 @@ mod tests {
         assert_eq!(
             v(RunEvent::ThinkingDelta { text: "hmm".into() }),
             json!({ "type": "thinking_delta", "text": "hmm" })
+        );
+        assert_eq!(
+            v(RunEvent::ToolCallPreparing {
+                id: "c1".into(),
+                name: "write".into(),
+            }),
+            json!({ "type": "tool_call_preparing", "id": "c1", "name": "write" })
+        );
+        assert_eq!(
+            v(RunEvent::ToolCallArgsDelta {
+                id: "c1".into(),
+                chunk: "{\"pa".into(),
+            }),
+            json!({ "type": "tool_call_args_delta", "id": "c1", "chunk": "{\"pa" })
         );
         assert_eq!(
             v(RunEvent::ToolCallStarted {

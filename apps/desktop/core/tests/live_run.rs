@@ -184,6 +184,23 @@ async fn a_run_reads_a_workspace_file_through_the_shell_tool() {
 
     let s = engine.session_create(Some("fake/m".into())).await.unwrap();
     run_to_done(&engine, &s.id, "what does hello.txt say?").await;
+    // The tool row knows when its call began, so a reload can say how long it took.
+    let tool_row = engine
+        .message_list(&s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.message.role == Role::Tool)
+        .expect("a tool result was stored");
+    let began = tool_row
+        .started_at
+        .expect("started_at is kept on a tool row");
+    assert!(began <= tool_row.created_at);
+    // Named by what started it, not left as "New chat".
+    assert_eq!(
+        engine.session_list().await.unwrap()[0].title,
+        "what does hello.txt say?"
+    );
 
     let stdout = tool_stdout(&engine, &s.id).await;
     assert!(

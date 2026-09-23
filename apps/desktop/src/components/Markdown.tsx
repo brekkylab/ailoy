@@ -190,6 +190,8 @@ function useProgressive(text: string): string[] {
  * the way the chat apps this sits beside do it.
  *
  * - `chat` — a turn in the thread: 15px body, headings from 18px down, tight vertical rhythm.
+ *   A rule is a pause, not a page break: Typography gives an `hr` almost 3em each side, which
+ *   in a chat turn left ~90px of nothing around one line.
  * - `document` — a file or a page opened on its own: a larger body at a line length a person
  *   reads comfortably (~72 characters), centred in whatever pane it is given.
  */
@@ -201,6 +203,7 @@ const MEASURE = {
     "prose-h2:mt-6 prose-h2:mb-2 prose-h2:text-[17px]",
     "prose-h3:mt-5 prose-h3:mb-2 prose-h3:text-[15px]",
     "prose-p:my-2.5 prose-li:my-0.5 prose-table:text-[13px] prose-th:font-medium",
+    "prose-hr:my-5",
   ),
   document: cn(
     "prose mx-auto max-w-[72ch] text-[15px] leading-[1.75]",
@@ -209,6 +212,7 @@ const MEASURE = {
     "prose-h2:mt-8 prose-h2:mb-3 prose-h2:text-xl",
     "prose-h3:mt-6 prose-h3:mb-2 prose-h3:text-[17px]",
     "prose-table:text-[13px] prose-th:font-medium",
+    "prose-hr:my-8",
   ),
 } as const;
 

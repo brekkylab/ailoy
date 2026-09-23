@@ -8,17 +8,9 @@ import * as api from "@/api";
 import { SourcesList } from "@/components/sources/SourcesList";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { formatRelativeTime } from "@/lib/time";
+import { groupSessions } from "@/lib/sessionGroups";
 import { S } from "@/strings";
 import type { MainView } from "@/views";
-
-/**
- * The model id without its provider prefix. A row is ~180px wide and every id in the
- * catalog is `provider/name`, so the prefix is the half that repeats down the whole list
- * and the name is the half that tells two sessions apart. An id with no slash is already
- * short and is left alone.
- */
-const shortModel = (id: string) => id.slice(id.lastIndexOf("/") + 1);
 
 /** One row of the panel nav, styled to match a session row so the list reads as one column. */
 function NavRow({
@@ -79,8 +71,7 @@ export function Sidebar({
   const [draft, setDraft] = useState("");
   // One instant for the whole list, advanced on its own clock. The query above refetches
   // every 5s but only re-renders when the rows actually change, so without this a session
-  // would sit at "just now" for as long as nothing else happened in the app — which is exactly
-  // the case where the reading matters.
+  // would stay under Today past midnight for as long as nothing else happened in the app.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60_000);
@@ -169,69 +160,70 @@ export function Sidebar({
         <SourcesList selected={source} onSelect={onSelectSource} />
       ) : (
         <>
-      <p className="px-4 pb-1 text-xs font-medium text-muted-foreground">{S.recents}</p>
       {error && <p className="px-3 pb-2 text-xs text-destructive">{error}</p>}
       <ScrollArea className="min-h-0 flex-1 px-2">
-        {(sessions.data ?? []).map((s) => (
-          <div
-            key={s.id}
-            className={cn(
-              "group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm hover:bg-accent",
-              // Only while the thread is what the main panel is actually showing: a
-              // highlighted row next to an open workspace would claim the window.
-              view === "session" && selected === s.id && "bg-accent",
-            )}
-          >
-            {editing === s.id ? (
-              <Input
-                autoFocus
-                aria-label={S.rename}
-                className="h-6 flex-1"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commitRename(s.id, s.title);
-                  else if (e.key === "Escape") setEditing(null);
-                }}
-                onBlur={() => setEditing(null)}
-              />
-            ) : (
-              <>
-                <button className="min-w-0 flex-1 text-left" onClick={() => onSelect(s.id)} title={s.model}>
-                  <div className="truncate">
-                    {s.running && (
-                      <>
-                        {/* The dot is the only thing that says a session is working; a
-                            screen reader gets the word instead of a bare bullet. */}
-                        <span className="sr-only">{S.running}</span>
-                        <span className="mr-1 inline-block size-2 animate-pulse rounded-full bg-emerald-500" />
-                      </>
-                    )}
-                    {s.title}
-                  </div>
-                  {/* Which model this conversation is pinned to, and when it last moved —
-                      the two things that tell apart a list of rows all titled "New chat".
-                      The full id is still on the row's `title` attribute. */}
-                  <div className="truncate text-xs text-muted-foreground">
-                    {shortModel(s.model)} · {formatRelativeTime(s.updated_at, now)}
-                  </div>
-                </button>
-                <button
-                  className={rowAction}
-                  aria-label={S.rename}
-                  onClick={() => {
-                    setDraft(s.title);
-                    setEditing(s.id);
-                  }}
-                >
-                  <Pencil className="size-3.5" />
-                </button>
-                <button className={rowAction} aria-label={S.delete} onClick={() => void askDelete(s.id)}>
-                  <Trash className="size-3.5" />
-                </button>
-              </>
-            )}
-          </div>
+        {/* Under headed stretches of time rather than with a date on every row — see
+            `groupSessions`. A row is its title alone: the model is the composer's to show,
+            and still on the row's tooltip. */}
+        {groupSessions(sessions.data ?? [], now).map((group) => (
+          <section key={group.label} className="pb-3">
+            <h3 className="px-2 pb-1 text-xs font-medium text-muted-foreground">{group.label}</h3>
+            {group.sessions.map((s) => (
+              <div
+                key={s.id}
+                className={cn(
+                  "group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm hover:bg-accent",
+                  // Only while the thread is what the main panel is actually showing: a
+                  // highlighted row next to an open workspace would claim the window.
+                  view === "session" && selected === s.id && "bg-accent",
+                )}
+              >
+                {editing === s.id ? (
+                  <Input
+                    autoFocus
+                    aria-label={S.rename}
+                    className="h-6 flex-1"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitRename(s.id, s.title);
+                      else if (e.key === "Escape") setEditing(null);
+                    }}
+                    onBlur={() => setEditing(null)}
+                  />
+                ) : (
+                  <>
+                    <button className="min-w-0 flex-1 text-left" onClick={() => onSelect(s.id)} title={`${s.title}\n${s.model}`}>
+                      <div className="truncate">
+                        {s.running && (
+                          <>
+                            {/* The dot is the only thing that says a session is working; a
+                                screen reader gets the word instead of a bare bullet. */}
+                            <span className="sr-only">{S.running}</span>
+                            <span className="mr-1 inline-block size-2 animate-pulse rounded-full bg-emerald-500" />
+                          </>
+                        )}
+                        {s.title}
+                      </div>
+                    </button>
+                    <button
+                      className={rowAction}
+                      aria-label={S.rename}
+                      onClick={() => {
+                        setDraft(s.title);
+                        setEditing(s.id);
+                      }}
+                    >
+                      <Pencil className="size-3.5" />
+                    </button>
+                    <button className={rowAction} aria-label={S.delete} onClick={() => void askDelete(s.id)}>
+                      <Trash className="size-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+          </section>
         ))}
         {/* A list that failed to load is not an empty list: saying "Empty" there would
             invite the user to start typing into a storage layer that is not answering. */}

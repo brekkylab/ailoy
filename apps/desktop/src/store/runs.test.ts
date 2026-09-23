@@ -16,6 +16,40 @@ function runFrom(state: LiveRun, events: RunEvent[]) {
 }
 
 describe("applyRunEvent", () => {
+  it("shows a call from when it is named, and swaps the preview for the real arguments", () => {
+    const writing = run([
+      { type: "started", run_id: "r1" },
+      { type: "tool_call_preparing", id: "c1", name: "write" },
+      { type: "tool_call_args_delta", id: "c1", chunk: '{"path":"/tmp/' },
+      { type: "tool_call_args_delta", id: "c1", chunk: 'a.md","content":"' },
+    ]);
+    expect(writing.toolOrder).toEqual(["c1"]);
+    expect(writing.toolCalls.c1).toMatchObject({ name: "write", status: "running", preparing: true, arguments: undefined });
+    expect(writing.toolCalls.c1.argsText).toBe('{"path":"/tmp/a.md","content":"');
+
+    const started = runFrom(writing, [
+      { type: "tool_call_started", id: "c1", name: "write", arguments: { path: "/tmp/a.md", content: "hi" } },
+      // A late chunk for a call that has started is dropped: the arguments are final.
+      { type: "tool_call_args_delta", id: "c1", chunk: "noise" },
+    ]);
+    expect(started.toolOrder).toEqual(["c1"]);
+    expect(started.toolCalls.c1.preparing).toBeUndefined();
+    expect(started.toolCalls.c1.argsText).toBeUndefined();
+    expect(started.toolCalls.c1.arguments).toEqual({ path: "/tmp/a.md", content: "hi" });
+    // One clock from when it was named to when it ends, so the time it reports is the time
+    // the call took — writing the file out included.
+    expect(started.toolCalls.c1.startedAt).toBe(writing.toolCalls.c1.startedAt);
+  });
+
+  it("marks a call cancelled while it was being written as interrupted", () => {
+    const s = run([
+      { type: "started", run_id: "r1" },
+      { type: "tool_call_preparing", id: "c1", name: "write" },
+      { type: "cancelled" },
+    ]);
+    expect(s.toolCalls.c1.status).toBe("interrupted");
+  });
+
   it("accumulates text and thinking while running", () => {
     const s = run([
       { type: "started", run_id: "r1" },

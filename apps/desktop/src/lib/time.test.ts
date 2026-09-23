@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatRelativeTime } from "@/lib/time";
+import { formatMessageTime, formatRelativeTime } from "@/lib/time";
 
 const NOW = new Date("2026-09-14T12:00:00").getTime();
 const ago = (ms: number) => formatRelativeTime(NOW - ms, NOW);
@@ -40,5 +40,15 @@ describe("formatRelativeTime", () => {
 
   it("says nothing for a timestamp that is not one", () => {
     expect(formatRelativeTime(Number.NaN, NOW)).toBe("");
+  });
+});
+
+describe("formatMessageTime", () => {
+  const now = new Date("2026-09-23T15:30:00").getTime();
+  it("is a clock today, and carries the date otherwise", () => {
+    expect(formatMessageTime(new Date("2026-09-23T09:05:00").getTime(), now)).toBe("09:05");
+    expect(formatMessageTime(new Date("2026-09-22T23:59:00").getTime(), now)).toBe("Sep 22, 23:59");
+    expect(formatMessageTime(new Date("2025-12-31T08:00:00").getTime(), now)).toBe("Dec 31, 2025, 08:00");
+    expect(formatMessageTime(Number.NaN, now)).toBe("");
   });
 });

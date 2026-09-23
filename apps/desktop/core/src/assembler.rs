@@ -12,9 +12,17 @@
 //! loudly via `accumulate` rather than being silently healed.
 
 use ailoy::message::{
-    Delta as _, FinishReason, MessageDeltaOutput, MessageOutput, PartDelta, RateLimitInfo, Role,
-    TokenUsage,
+    Delta as _, FinishReason, MessageDeltaOutput, MessageOutput, PartDelta, PartDeltaFunction,
+    RateLimitInfo, Role, TokenUsage,
 };
+
+/// How much of a call's arguments is passed through while the model writes them.
+///
+/// Enough for what names a call — a path, a command, a query — which the model writes near
+/// the start; not the file body a `write` carries after it, which nothing live draws and
+/// which can run to hundreds of kilobytes. The whole of the arguments still arrives with
+/// the finished message.
+pub const ARGS_PREVIEW_MAX: usize = 4096;
 
 /// One actionable item derived from the raw delta stream.
 #[derive(Debug)]
@@ -48,6 +56,16 @@ pub enum AssembledItem {
     /// Boxed for the same reason as [`AssembledItem::Completed`]: `RateLimitInfo`
     /// alone is four windows wide, and this variant is rare.
     UsageTrailer(Box<UsageTrailer>),
+    /// A top-level tool call the model has begun writing: its id and name are known, its
+    /// arguments are not yet. Providers name a call before they stream what goes in it —
+    /// Anthropic's `content_block_start`, the ChatCompletion call's first chunk, Bedrock's
+    /// `contentBlockStart` — and a `write` spends almost all of its time in between, writing
+    /// out the file body. Without this the window shows nothing for that whole stretch and
+    /// then, all at once, a call that has already finished.
+    ToolCallBegan { id: String, name: String },
+    /// More of a begun call's arguments, as the model writes them: raw JSON text, in order,
+    /// up to [`ARGS_PREVIEW_MAX`] bytes a call.
+    ToolCallArgs { id: String, chunk: String },
 }
 
 /// Accounting that belongs to the message before it — see
@@ -67,6 +85,9 @@ pub struct UsageTrailer {
 pub struct MessageAssembler {
     /// The message currently being streamed, accumulated across deltas.
     acc: MessageDeltaOutput,
+    /// Per tool call of the message being streamed, by position: its id once it has been
+    /// announced, and how many bytes of its arguments have been passed through.
+    announced: Vec<(String, usize)>,
 }
 
 impl MessageAssembler {
@@ -126,9 +147,19 @@ impl MessageAssembler {
         let acc = std::mem::take(&mut self.acc);
         self.acc = acc.accumulate(delta).map_err(|e| e.to_string())?;
 
+        // 2b. Tool calls being written — top-level assistant calls only, for the reason
+        //     step 1 gives. Read off the accumulated message rather than off the delta, so
+        //     which call a fragment belongs to is decided exactly as `accumulate` decided it
+        //     (a fragment without an id continues the last call) and never a second way.
+        let is_top_level = matches!(self.acc.depth, None | Some(0));
+        if is_top_level && !matches!(self.acc.delta.role, Some(Role::Tool)) {
+            self.announce_calls(&mut items);
+        }
+
         // 3. A delta carrying finish_reason finalizes the message — per ailoy's
         //    stream contract, this is the message boundary.
         if self.acc.finish_reason.is_some() {
+            self.announced.clear();
             let done = std::mem::take(&mut self.acc);
             items.push(AssembledItem::Completed(Box::new(
                 done.finish().map_err(|e| e.to_string())?,
@@ -149,9 +180,52 @@ impl MessageAssembler {
         if self.acc.delta.role.is_none() {
             return Ok(None);
         }
+        self.announced.clear();
         let mut done = std::mem::take(&mut self.acc);
         done.finish_reason.get_or_insert(FinishReason::Stop {});
         Ok(Some(done.finish().map_err(|e| e.to_string())?))
+    }
+
+    /// Emit what is new about the calls the running message holds: a call that now has an
+    /// id and a name, and the arguments written since the last delta, up to the cap.
+    fn announce_calls(&mut self, items: &mut Vec<AssembledItem>) {
+        for (i, part) in self.acc.delta.tool_calls.iter().enumerate() {
+            let PartDelta::Function {
+                id: Some(id),
+                function: PartDeltaFunction::WithStringArgs { name, arguments },
+            } = part
+            else {
+                // Positions are what tie a call to what was sent about it, so a call this
+                // cannot read yet holds back the ones after it rather than shifting them.
+                break;
+            };
+            if i == self.announced.len() {
+                // A call is announced once it can be named; one whose first fragment came
+                // without a name waits for the fragment that has it.
+                if name.is_empty() {
+                    break;
+                }
+                items.push(AssembledItem::ToolCallBegan {
+                    id: id.clone(),
+                    name: name.clone(),
+                });
+                self.announced.push((id.clone(), 0));
+            }
+            let Some((_, sent)) = self.announced.get_mut(i) else {
+                break;
+            };
+            let mut end = arguments.len().min(ARGS_PREVIEW_MAX);
+            while !arguments.is_char_boundary(end) {
+                end -= 1;
+            }
+            if end > *sent {
+                items.push(AssembledItem::ToolCallArgs {
+                    id: id.clone(),
+                    chunk: arguments[*sent..end].to_string(),
+                });
+                *sent = end;
+            }
+        }
     }
 
     /// Whether no message is being built right now — i.e. the last one was cut
@@ -406,5 +480,103 @@ mod tests {
         let items = a.push(delta(None, "answer", true)).unwrap();
         assert!(matches!(&items[0], AssembledItem::Text(t) if t == "answer"));
         assert!(matches!(&items[1], AssembledItem::Completed(_)));
+    }
+
+    /// A fragment of a tool call, the way the providers stream one: the first carries the
+    /// id and the name, the rest only more of the arguments.
+    fn call(id: Option<&str>, name: &str, args: &str) -> MessageDeltaOutput {
+        let mut out = MessageDeltaOutput::new();
+        out.delta = MessageDelta::new().with_tool_calls([PartDelta::Function {
+            id: id.map(str::to_string),
+            function: PartDeltaFunction::WithStringArgs {
+                name: name.into(),
+                arguments: args.into(),
+            },
+        }]);
+        out.depth = Some(0);
+        out
+    }
+
+    fn began(items: &[AssembledItem]) -> Vec<(String, String)> {
+        items
+            .iter()
+            .filter_map(|i| match i {
+                AssembledItem::ToolCallBegan { id, name } => Some((id.clone(), name.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn args(items: &[AssembledItem]) -> String {
+        items
+            .iter()
+            .filter_map(|i| match i {
+                AssembledItem::ToolCallArgs { chunk, .. } => Some(chunk.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_call_is_announced_when_it_is_named_and_its_arguments_follow() {
+        let mut a = MessageAssembler::new();
+        let first = a.push(delta(Some(Role::Assistant), "", false)).unwrap();
+        assert!(began(&first).is_empty());
+
+        let named = a.push(call(Some("c1"), "write", "")).unwrap();
+        assert_eq!(began(&named), [("c1".into(), "write".into())]);
+        assert_eq!(args(&named), "");
+
+        let mut streamed = String::new();
+        for piece in [r#"{"pa"#, r#"th":"/tmp/a.md","#, r#""content":"hello"}"#] {
+            let items = a.push(call(None, "", piece)).unwrap();
+            assert!(began(&items).is_empty(), "announced once");
+            streamed.push_str(&args(&items));
+        }
+        assert_eq!(streamed, r#"{"path":"/tmp/a.md","content":"hello"}"#);
+
+        // The message ends; the next one starts announcing from scratch.
+        let mut end = call(None, "", "");
+        end.finish_reason = Some(FinishReason::ToolCall {});
+        let items = a.push(end).unwrap();
+        assert!(matches!(items.last(), Some(AssembledItem::Completed(_))));
+        a.push(delta(Some(Role::Assistant), "", false)).unwrap();
+        let again = a
+            .push(call(Some("c2"), "shell", r#"{"cmd":"ls"}"#))
+            .unwrap();
+        assert_eq!(began(&again), [("c2".into(), "shell".into())]);
+        assert_eq!(args(&again), r#"{"cmd":"ls"}"#);
+    }
+
+    #[test]
+    fn only_the_start_of_a_long_argument_is_passed_through() {
+        let mut a = MessageAssembler::new();
+        a.push(delta(Some(Role::Assistant), "", false)).unwrap();
+        a.push(call(Some("c1"), "write", r#"{"path":"a","content":""#))
+            .unwrap();
+        let mut total = r#"{"path":"a","content":""#.len();
+        // Multi-byte text, so the cap has to land on a character boundary.
+        for _ in 0..400 {
+            let items = a.push(call(None, "", "한글로 된 본문 ")).unwrap();
+            total += args(&items).len();
+        }
+        assert!(total <= ARGS_PREVIEW_MAX);
+        assert!(
+            total > ARGS_PREVIEW_MAX - 8,
+            "up to the cap, less at most one character"
+        );
+    }
+
+    #[test]
+    fn a_sub_agents_calls_are_not_announced() {
+        let mut a = MessageAssembler::new();
+        let mut d = delta(Some(Role::Assistant), "", false);
+        d.depth = Some(1);
+        a.push(d).unwrap();
+        let mut c = call(Some("c1"), "shell", r#"{"cmd":"ls"}"#);
+        c.depth = Some(1);
+        let items = a.push(c).unwrap();
+        assert!(began(&items).is_empty());
+        assert!(args(&items).is_empty());
     }
 }
