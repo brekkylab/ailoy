@@ -90,14 +90,6 @@ impl super::ImageProviderApi for GeminiImageApi {
                 .unwrap()
                 .insert("imageConfig".into(), image_config);
         }
-        if options.include_drafts == Some(true) {
-            // The model thinks either way; this only makes it return the
-            // thought parts, draft images included.
-            generation_config.as_object_mut().unwrap().insert(
-                "thinkingConfig".into(),
-                to_value!({"includeThoughts": true}),
-            );
-        }
 
         let body = to_value!({
             "contents": [{"parts": [{"text": req.prompt}]}],
@@ -119,14 +111,13 @@ impl super::ImageProviderApi for GeminiImageApi {
         let mut images = Vec::new();
         let mut texts: Vec<&str> = Vec::new();
         let mut undecodable = 0usize;
-        let mut drafts = Vec::new();
-        let mut thoughts: Vec<&str> = Vec::new();
+        let mut drafts = 0usize;
         for part in parts.into_iter().flatten() {
-            // Thinking image models (Nano Banana Pro, and the flash models with
-            // thinking on) mark their interim work with `thought: true`: text
-            // summaries, and also draft images of the composition. Neither is
-            // the answer: they go to `drafts` / `thoughts`, never `images` or
-            // `text`. They only arrive when `include_drafts` asked for them.
+            // Thinking models mark their interim work with `thought: true`:
+            // reasoning text, and also draft images of the composition. Neither
+            // is the answer, so both are skipped. The request does not ask for
+            // thoughts (`thinkingConfig.includeThoughts`), so they are not
+            // expected; this keeps a draft out of `images` if one arrives anyway.
             let is_thought = part.pointer("/thought").and_then(|v| v.as_bool()) == Some(true);
             // REST answers in camelCase; the snake_case spelling is accepted
             // too because that is what the request side uses.
@@ -153,18 +144,15 @@ impl super::ImageProviderApi for GeminiImageApi {
                     .map(|m| m.to_owned())
                     .or_else(|| infer::get(data.as_ref()).map(|t| t.mime_type().to_string()))
                     .unwrap_or_else(|| "image/png".to_string());
-                let image = PartImage::Embedded { mime_type, data };
                 if is_thought {
-                    drafts.push(image);
+                    drafts += 1;
                 } else {
-                    images.push(image);
+                    images.push(PartImage::Embedded { mime_type, data });
                 }
-            } else if let Some(part_text) = part.pointer("/text").and_then(|v| v.as_str()) {
-                if is_thought {
-                    thoughts.push(part_text);
-                } else {
-                    texts.push(part_text);
-                }
+            } else if let Some(part_text) = part.pointer("/text").and_then(|v| v.as_str())
+                && !is_thought
+            {
+                texts.push(part_text);
             }
         }
         // Separate parts are separate lines; concatenating them runs sentences
@@ -189,10 +177,9 @@ impl super::ImageProviderApi for GeminiImageApi {
             }
             // Drafts are not the answer, so a response carrying only drafts is
             // still a failure.
-            if !drafts.is_empty() {
+            if drafts > 0 {
                 reasons.push(format!(
-                    "{} draft image(s) marked `thought` and no final image",
-                    drafts.len()
+                    "{drafts} draft image(s) marked `thought` and no final image"
                 ));
             }
             if undecodable > 0 {
@@ -209,10 +196,7 @@ impl super::ImageProviderApi for GeminiImageApi {
             bail!("Gemini returned no image ({})", reasons.join("; "));
         }
 
-        let thoughts = thoughts.join("\n");
         Ok(ImageModelOutput {
-            drafts,
-            thoughts: (!thoughts.is_empty()).then_some(thoughts),
             images,
             text: (!text.is_empty()).then_some(text),
             usage: parse_usage(&val),
@@ -585,32 +569,19 @@ mod tests {
     }
 
     #[test]
-    fn marshal_asks_for_thoughts_only_when_drafts_are_wanted() {
-        let default = marshal("gemini-3-pro-image", &ImageModelOptions::default()).unwrap();
+    fn marshal_does_not_ask_for_thoughts() {
+        let marshaled = marshal("gemini-3-pro-image", &ImageModelOptions::default()).unwrap();
         assert!(
-            default
-                .pointer("/body/generationConfig/thinkingConfig")
-                .is_none(),
-            "thoughts are not requested by default"
-        );
-
-        let options = ImageModelOptions {
-            include_drafts: Some(true),
-            ..Default::default()
-        };
-        let marshaled = marshal("gemini-3-pro-image", &options).unwrap();
-        assert_eq!(
             marshaled
-                .pointer("/body/generationConfig/thinkingConfig/includeThoughts")
-                .and_then(|v| v.as_bool()),
-            Some(true)
+                .pointer("/body/generationConfig/thinkingConfig")
+                .is_none()
         );
     }
 
     #[test]
-    fn unmarshal_separates_drafts_from_the_final_image() {
-        // The part order a real gemini-3-pro-image response with
-        // `includeThoughts` had: thought text, draft, thought text, final.
+    fn unmarshal_keeps_thought_parts_out_of_the_result() {
+        // The part order a real gemini-3-pro-image response had when thoughts
+        // were requested: thought text, draft, thought text, final.
         let response = to_value!({
             "candidates": [{
                 "content": {"parts": [
@@ -630,15 +601,6 @@ mod tests {
         assert_eq!(
             mime_type, "image/png",
             "the one in images is the final render"
-        );
-        assert_eq!(out.drafts.len(), 1, "the draft is kept apart");
-        let PartImage::Embedded { mime_type, .. } = &out.drafts[0] else {
-            panic!("expected an embedded draft");
-        };
-        assert_eq!(mime_type, "image/jpeg");
-        assert_eq!(
-            out.thoughts.as_deref(),
-            Some("Defining the visual parameters.\nChecking the draft against the prompt.")
         );
         assert_eq!(out.text, None, "thought text is not the caption");
 

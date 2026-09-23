@@ -69,19 +69,6 @@ pub struct ImageModelOptions {
     /// model uses its own default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_size: Option<String>,
-
-    /// Also return the model's draft images and reasoning text.
-    ///
-    /// Thinking image models draw interim versions, check them against the
-    /// prompt, and then render the final image. The drafts are hidden unless
-    /// asked for; `Some(true)` sends `thinkingConfig.includeThoughts`, and they come back
-    /// in [`ImageModelOutput::drafts`] and [`ImageModelOutput::thoughts`],
-    /// never in `images`. Roughly doubles the response size.
-    ///
-    /// [`ImageModelOutput::drafts`]: crate::image_model::ImageModelOutput::drafts
-    /// [`ImageModelOutput::thoughts`]: crate::image_model::ImageModelOutput::thoughts
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub include_drafts: Option<bool>,
 }
 
 impl ImageModelOptions {
@@ -158,7 +145,6 @@ mod tests {
             output_format: Some(ImageFormat::Webp),
             background: Some(ImageBackground::Transparent),
             aspect_ratio: Some("16:9".to_string()),
-            include_drafts: Some(true),
         };
         let json = serde_json::to_value(&options).unwrap();
         assert_eq!(
@@ -170,8 +156,7 @@ mod tests {
                 "aspect_ratio": "16:9",
                 "image_size": "2K",
                 "output_format": "webp",
-                "background": "transparent",
-                "include_drafts": true
+                "background": "transparent"
             })
         );
         let restored: ImageModelOptions = serde_json::from_value(json).unwrap();
@@ -182,7 +167,6 @@ mod tests {
         assert_eq!(restored.output_format, options.output_format);
         assert_eq!(restored.background, options.background);
         assert_eq!(restored.n, options.n);
-        assert_eq!(restored.include_drafts, options.include_drafts);
     }
 
     #[test]

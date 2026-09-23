@@ -147,8 +147,6 @@ impl super::ImageProviderApi for OpenAIImageApi {
             .map(|s| s.to_owned());
 
         Ok(ImageModelOutput {
-            drafts: Vec::new(),
-            thoughts: None,
             images,
             text,
             usage: parse_usage(&val),
@@ -257,7 +255,6 @@ mod tests {
             // Gemini's fields; none may leak onto the OpenAI wire.
             aspect_ratio: Some("16:9".to_string()),
             image_size: Some("2K".to_string()),
-            include_drafts: Some(true),
         };
         let marshaled = marshal("gpt-image-1", &options).unwrap();
         let body = body_of(&marshaled);
