@@ -25,6 +25,7 @@
 // the header there. It resolves asynchronously, so a fence renders as a plain block for
 // the frame or two before the grammars land.
 
+import { cn } from "cn";
 import { memo, useEffect, useMemo, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import ShikiHighlighter from "react-shiki/core";
@@ -180,11 +181,45 @@ function useProgressive(text: string): string[] {
   return useMemo(() => pieces.slice(0, shown), [pieces, shown]);
 }
 
+/**
+ * The two reading measures, as `prose` modifiers.
+ *
+ * Tailwind Typography's own heading scale is set for articles: in `prose-sm` an `h1` is
+ * more than twice the body, which in a chat turn makes every answer with a heading read as
+ * a poster. Headings here stay within a few steps of the body and are told apart by weight,
+ * the way the chat apps this sits beside do it.
+ *
+ * - `chat` — a turn in the thread: 15px body, headings from 18px down, tight vertical rhythm.
+ * - `document` — a file or a page opened on its own: a larger body at a line length a person
+ *   reads comfortably (~72 characters), centred in whatever pane it is given.
+ */
+const MEASURE = {
+  chat: cn(
+    "prose prose-sm max-w-none text-[15px] leading-[1.7]",
+    "prose-headings:font-semibold prose-headings:tracking-tight",
+    "prose-h1:mt-6 prose-h1:mb-3 prose-h1:text-lg",
+    "prose-h2:mt-6 prose-h2:mb-2 prose-h2:text-[17px]",
+    "prose-h3:mt-5 prose-h3:mb-2 prose-h3:text-[15px]",
+    "prose-p:my-2.5 prose-li:my-0.5 prose-table:text-[13px] prose-th:font-medium",
+  ),
+  document: cn(
+    "prose mx-auto max-w-[72ch] text-[15px] leading-[1.75]",
+    "prose-headings:font-semibold prose-headings:tracking-tight",
+    "prose-h1:mt-2 prose-h1:mb-4 prose-h1:text-2xl",
+    "prose-h2:mt-8 prose-h2:mb-3 prose-h2:text-xl",
+    "prose-h3:mt-6 prose-h3:mb-2 prose-h3:text-[17px]",
+    "prose-table:text-[13px] prose-th:font-medium",
+  ),
+} as const;
+
 export function Markdown({
   text,
   resolveLink,
+  measure = "chat",
 }: {
   text: string;
+  /** Which reading measure — see `MEASURE`. A turn in the thread unless said otherwise. */
+  measure?: keyof typeof MEASURE;
   /**
    * Turns a link that points inside the app into what to do about it, or answers `null`
    * to leave it as an ordinary outbound link.
@@ -197,7 +232,7 @@ export function Markdown({
   const highlighter = useHighlighter();
   const pieces = useProgressive(text);
   return (
-    <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+    <div className={cn(MEASURE[measure], "break-words dark:prose-invert")}>
       {pieces.map((piece, i) => (
         <div
           key={i}

@@ -14,7 +14,10 @@ import type { Message } from "@/types";
 
 export function UserBubble({ message }: { message: Message }) {
   return (
-    <div className="ml-auto max-w-[80%] rounded-2xl bg-primary px-4 py-2 whitespace-pre-wrap text-primary-foreground">
+    // A tint of the text colour rather than the brand colour: lighter than the page in the
+    // dark theme and darker in the light one, and quiet in both. The accent is kept for the
+    // send button, so the most colourful thing on screen is not what the user already said.
+    <div className="ml-auto max-w-[80%] rounded-2xl bg-foreground/[0.07] px-4 py-2.5 whitespace-pre-wrap">
       {textOf(message)}
     </div>
   );

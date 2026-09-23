@@ -21,7 +21,9 @@
 // sits next to the lights rather than at the segment's far edge — it has to stay in the
 // same place in both states, or it moves out from under the cursor that just clicked it.
 //
-// The right segment is the session's: its title, and the way into the app's settings.
+// The right segment is the main panel's: what it is showing, and the way into the app's
+// settings. It is the only heading a panel gets — a second, larger one under the bar was
+// two headers for one thing, and cost every panel a band of its height.
 // Settings used to live in the sidebar, where hiding the sidebar would have taken it with
 // it. The gear opens a panel rather than a dialog, so it is a place the window can *be* —
 // hence `settingsActive`, which marks it the way the sidebar marks its own rows.
@@ -68,8 +70,8 @@ export function TitleBar({
   settingsActive,
   onOpenSettings,
 }: {
-  /** The current session's title, or `null` when no session is open. */
-  title: string | null;
+  /** What the main panel is showing — a session's title, a source, a page — or `null`. */
+  title: React.ReactNode;
   collapsed: boolean;
   onToggleSidebar: () => void;
   /** Whether the settings panel is what the main panel is showing. */
@@ -95,9 +97,9 @@ export function TitleBar({
         </Button>
       </div>
       <div className={cn("flex min-w-0 flex-1 items-center gap-2 pr-2 pl-3", !collapsed && "border-l")}>
-        {/* Empty until a session is open. A heading with nothing in it is still a heading,
-            so it is only rendered when it has something to name. */}
-        {title && <h1 className="truncate text-sm font-medium">{title}</h1>}
+        {/* Empty on a draft, which has no name yet. A heading with nothing in it is still a
+            heading, so it is only rendered when it has something to name. */}
+        {title && <h1 className="flex min-w-0 items-center gap-2 truncate text-sm font-medium">{title}</h1>}
         <Button
           variant="ghost"
           size="icon"

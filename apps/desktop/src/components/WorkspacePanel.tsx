@@ -58,17 +58,7 @@ export function WorkspacePanel({ source }: { source: string | null }) {
   return (
     // `min-h-0 flex-1` rather than `h-full`: the banners above this in `main` are part of
     // the same column, and a full-height panel would push itself off the bottom by theirs.
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex items-center gap-2 px-6 pt-3 pb-4">
-        {open && (
-          <SourceIcon
-            kind={open.kind}
-            root={open.path === WORKSPACE_ROOT}
-            className="size-5 shrink-0 text-muted-foreground"
-          />
-        )}
-        <h1 className="truncate text-xl font-semibold">{open?.label ?? S.workspace}</h1>
-      </div>
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col border-t">
       {/* Keyed on the root so switching sources drops the open file with the tree it came
           from: a selection under the old root names nothing under the new one. */}
       <FileBrowser
@@ -85,5 +75,20 @@ export function WorkspacePanel({ source }: { source: string | null }) {
         hiddenFiles={open?.kind === "local"}
       />
     </section>
+  );
+}
+
+/** The title bar's heading for this panel: the open source, by its icon and name. */
+export function WorkspaceTitle({ source }: { source: string | null }) {
+  const mounts = useQuery({ queryKey: ["mounts"], queryFn: api.mountList });
+  const path = source ?? WORKSPACE_ROOT;
+  const open = mounts.data?.find((m) => m.path === path) ?? null;
+  return (
+    <>
+      {open && (
+        <SourceIcon kind={open.kind} root={open.path === WORKSPACE_ROOT} className="size-4 shrink-0 text-muted-foreground" />
+      )}
+      <span className="truncate">{open?.label ?? S.workspace}</span>
+    </>
   );
 }

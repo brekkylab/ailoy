@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 
 import * as api from "@/api";
 import { SourcesList } from "@/components/sources/SourcesList";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatRelativeTime } from "@/lib/time";
@@ -52,6 +51,7 @@ export function Sidebar({
   selected,
   onSelect,
   onNewChat,
+  drafting,
   view,
   onSelectView,
   source,
@@ -62,6 +62,8 @@ export function Sidebar({
   onSelect: (id: string | null) => void;
   /** Opens an unsaved chat. Nothing is stored until the user sends into it. */
   onNewChat: () => void;
+  /** Whether the thread on screen is that unsaved chat, which is `New chat`'s row to mark. */
+  drafting: boolean;
   /** Which of the three the main panel is showing, so this can mark the active row. */
   view: MainView;
   onSelectView: (view: MainView) => void;
@@ -123,24 +125,29 @@ export function Sidebar({
   const rowAction = "rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100";
 
   return (
-    <aside className="flex h-full flex-col border-r bg-muted/30">
-      <div className="flex items-center p-3 pb-2">
-        <Button className="flex-1" onClick={onNewChat}>
-          <MessageSquarePlus className="size-4" /> {S.newChat}
-        </Button>
-      </div>
+    <aside className="flex h-full flex-col border-r bg-muted/60">
       {/* What the window can show. One row each, above the list below, because that list
           is unbounded — under it they would be the first thing to scroll away.
 
           `Chats` is a destination rather than the action `New chat` is, and it is what
           makes the list below safe to swap: with the workspace open the sessions are not
           on screen, and without a way back the only route to an existing conversation
-          would be to start a new one. */}
-      <nav className="space-y-0.5 px-2 pb-2">
+          would be to start a new one.
+
+          `New chat` heads the list as a row like the others rather than as a filled button:
+          it is the most used action here, and it still does not need the one colour the
+          window keeps for sending. */}
+      <nav className="space-y-0.5 px-2 pt-2 pb-3">
+        <NavRow
+          icon={<MessageSquarePlus className="size-4" />}
+          label={S.newChat}
+          active={view === "session" && drafting}
+          onClick={onNewChat}
+        />
         <NavRow
           icon={<MessagesSquare className="size-4" />}
           label={S.chats}
-          active={view === "session"}
+          active={view === "session" && !drafting}
           onClick={() => onSelectView("session")}
         />
         <NavRow
@@ -162,6 +169,7 @@ export function Sidebar({
         <SourcesList selected={source} onSelect={onSelectSource} />
       ) : (
         <>
+      <p className="px-4 pb-1 text-xs font-medium text-muted-foreground">{S.recents}</p>
       {error && <p className="px-3 pb-2 text-xs text-destructive">{error}</p>}
       <ScrollArea className="min-h-0 flex-1 px-2">
         {(sessions.data ?? []).map((s) => (

@@ -30,9 +30,9 @@ export function SettingsPanel() {
           relaunch, and the panel is rebuilt each time it opens — which lands on the models
           page, the one a new install has to visit. */}
       <Tabs defaultValue={PAGES[0].id} className="flex min-h-0 flex-1 flex-col">
-        <div className="border-b px-6 pt-3">
-          <h1 className="text-xl font-semibold">{S.settings}</h1>
-          <TabsList aria-label={S.settings} className="mt-3 gap-1">
+        {/* The page strip is all this bar holds: the panel's name is the title bar's. */}
+        <div className="border-b px-6 pb-2">
+          <TabsList aria-label={S.settings} className="gap-1">
             {PAGES.map(({ id, label, Icon }) => (
               <TabsTab key={id} value={id}>
                 <Icon className="size-4 shrink-0" />

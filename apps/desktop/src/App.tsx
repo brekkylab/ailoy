@@ -10,7 +10,7 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { Sidebar } from "@/components/Sidebar";
 import { Thread } from "@/components/Thread";
 import { TitleBar } from "@/components/TitleBar";
-import { WorkspacePanel } from "@/components/WorkspacePanel";
+import { WorkspacePanel, WorkspaceTitle } from "@/components/WorkspacePanel";
 import { useCatalogEvents } from "@/lib/catalog";
 import { makeQueryClient } from "@/lib/queryClient";
 import { sessionTitle } from "@/lib/sessionTitle";
@@ -114,9 +114,17 @@ function Shell() {
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspaceInfo });
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settingsGet });
   const noKey = !hasAnyKey(settings.data);
-  // Only a conversation is named up here. The other two panels carry their own heading,
-  // where there is room to set it larger than a title bar allows.
-  const title = view === "session" ? sessionTitle(effective, list) : null;
+  // Every panel is named up here, and only here — see `TitleBar`.
+  const title =
+    view === "session" ? (
+      sessionTitle(effective, list)
+    ) : view === "workspace" ? (
+      <WorkspaceTitle source={source} />
+    ) : view === "artifacts" ? (
+      S.artifacts
+    ) : (
+      S.settings
+    );
 
   // Picking a session is also how you get back out of the workspace and artifacts views,
   // and out of an unsent draft: there is no other way back, and a click on a conversation
@@ -164,6 +172,7 @@ function Shell() {
           selected={effective}
           onSelect={selectSession}
           onNewChat={newChat}
+          drafting={draft !== null}
           view={view}
           onSelectView={setView}
           source={source}

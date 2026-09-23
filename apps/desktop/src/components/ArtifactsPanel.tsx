@@ -10,14 +10,10 @@
 
 import { FileBrowser } from "@/components/FileBrowser";
 import { ARTIFACTS_ROOT } from "@/paths";
-import { S } from "@/strings";
 
 export function ArtifactsPanel() {
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="px-6 pt-3 pb-4">
-        <h1 className="text-xl font-semibold">{S.artifacts}</h1>
-      </div>
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col border-t">
       <FileBrowser root={ARTIFACTS_ROOT} />
     </section>
   );

@@ -88,19 +88,21 @@ html, body, #root { height: 100%; margin: 0; }
   html {
     @apply font-sans; } }
 
-/* Fades a scrolling column out at its top edge, so content thins away as it goes under
-   the title bar instead of being cut off by a line. A mask rather than a gradient overlay
-   on purpose: it fades to transparent against whatever is actually behind, so it needs no
-   second copy of the background colour and stays right in both themes.
+/* Fades the thread out at both ends, so content thins away as it goes under the title bar
+   or into the composer instead of being cut off at an edge — neither has a rule of its own.
+   A mask rather than a gradient overlay on purpose: it fades to transparent against
+   whatever is actually behind, so it needs no second copy of the background colour and
+   stays right in both themes.
 
-   `--fade-top` is published so the column can pad itself clear of the fade: anything
-   inside this distance is dimmed even when the column is scrolled to the top, which on a
-   thread means the first message is greyed out for no reason. Pad by at least this much
-   and the fade only ever catches content on its way out. */
-@utility mask-fade-top {
+   `--fade-top` and `--fade-bottom` are published so the column can pad itself clear of the
+   fades: anything inside that distance is dimmed even at rest, which on a thread means the
+   first message — or the last — is greyed out for no reason. Pad by at least this much and
+   a fade only ever catches content on its way out. */
+@utility mask-fade-y {
   --fade-top: 2.5rem;
-  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--fade-top));
-  mask-image: linear-gradient(to bottom, transparent, black var(--fade-top));
+  --fade-bottom: 1.5rem;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--fade-top), black calc(100% - var(--fade-bottom)), transparent);
+  mask-image: linear-gradient(to bottom, transparent, black var(--fade-top), black calc(100% - var(--fade-bottom)), transparent);
 }
 
 /* A Word document is paper, and `docx-preview` will only paint the paper inside a wrapper

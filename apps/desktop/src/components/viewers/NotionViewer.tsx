@@ -91,17 +91,18 @@ export function NotionViewer({
   const icon = notionIcon(text);
 
   return (
-    <>
+    // One measure for the title and the body under it, so the two start at the same edge.
+    <div className="mx-auto max-w-[72ch] text-[15px]">
       {/* The title lives beside the body rather than in it: cortex renders the blocks, and
           a page's name is not one of them. */}
       {heading && (
-        <h2 className="mb-2 flex items-baseline gap-2 text-lg font-semibold">
+        <h2 className="mb-4 flex items-baseline gap-2 text-[1.6em] font-semibold tracking-tight">
           <span>{icon ?? PAGE_ICON}</span>
           <span>{heading}</span>
         </h2>
       )}
-      <Markdown text={withChildLinks(body, links)} resolveLink={resolveLink} />
+      <Markdown text={withChildLinks(body, links)} resolveLink={resolveLink} measure="document" />
       {truncated && <p className="mt-2 text-xs text-muted-foreground">… {S.fileTooLarge}</p>}
-    </>
+    </div>
   );
 }

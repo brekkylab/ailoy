@@ -15,13 +15,13 @@
 // session that exists without the message that caused it is the thing being avoided.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { SendHorizontal, Square } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import * as api from "@/api";
+import { ModelPicker } from "@/components/thread/ModelPicker";
 import { UsageBar } from "@/components/thread/UsageBar";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cancelRun, startRun } from "@/events";
 import { catalogQuery, useRefreshModels } from "@/lib/catalog";
@@ -54,7 +54,6 @@ export function Composer({
   const live = useRunStore(selectRun(sessionId));
   const running = live.status === "running";
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessionList });
-  const models = useQuery({ queryKey: ["models"], queryFn: api.modelsList });
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settingsGet });
   // An empty list is a first start that has not reached models.dev yet: the picker would
   // open onto nothing, so the row says which of the two it is waiting on.
@@ -127,71 +126,62 @@ export function Composer({
 
   const authFailed = live.status === "error" && live.error?.kind === "model" && live.error.status === 401;
 
+  const noticeRow =
+    noModels || send.isError || setModel.isError || authFailed || (live.status === "error" && live.error?.kind === "max_turns");
+
   return (
-    <div className="border-t px-6 py-3">
+    <div className="px-6 pt-2 pb-4">
       <div className="mx-auto max-w-3xl">
-        {/* Nothing has been spent on a draft, and the bar is also what refetches a
-            session's state when a run ends — neither applies until there is a session. */}
-        {sessionId && <UsageBar sessionId={sessionId} />}
-        <div className="flex items-end gap-2 rounded-xl border bg-background p-2">
+        {/* One card, the way Claude and ChatGPT draw it: the box you type in, and under it the
+            row of what the message will be sent with — the model on the left, the context
+            it has used and the send button on the right. The textarea wears no field chrome
+            of its own; the card is the field, and it is what lights up on focus. */}
+        <div className="rounded-2xl border bg-card shadow-sm transition-colors focus-within:border-ring/60">
           <Textarea
             ref={box}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKey}
             placeholder={noKey ? S.noKey : S.composerPlaceholder}
-            rows={2}
+            rows={1}
             aria-label={S.messageInput}
-            className="min-h-10 flex-1 resize-none border-0 shadow-none focus-visible:ring-0"
+            className="max-h-60 min-h-12 resize-none border-0 bg-transparent px-4 pt-3.5 pb-1 text-[15px] shadow-none focus-visible:ring-0 dark:bg-transparent"
           />
-          {running ? (
-            <Button variant="destructive" size="icon" onClick={() => cancel.mutate()} aria-label={S.stop}>
-              <Square className="size-4" />
-            </Button>
-          ) : (
-            <Button size="icon" onClick={() => send.mutate()} disabled={!canSend} aria-label={S.send}>
-              <SendHorizontal className="size-4" />
-            </Button>
-          )}
+          <div className="flex items-center gap-1 px-2 pb-2">
+            <ModelPicker
+              value={model}
+              onChange={(m) => {
+                // A draft has no row to update, so its choice is just remembered until the
+                // send that creates the session passes it to `session_create`.
+                if (sessionId) setModel.mutate(m);
+                else setDraftModel(m);
+              }}
+              disabled={running}
+            />
+            <div className="ml-auto flex items-center gap-2">
+              {/* Nothing has been spent on a draft, and the bar is also what refetches a
+                  session's state when a run ends — neither applies until there is a session. */}
+              {sessionId && <UsageBar sessionId={sessionId} />}
+              {running ? (
+                <Button size="icon" className="size-8 rounded-full" onClick={() => cancel.mutate()} aria-label={S.stop}>
+                  <Square className="size-3.5 fill-current" />
+                </Button>
+              ) : (
+                <Button
+                  size="icon"
+                  className="size-8 rounded-full"
+                  onClick={() => send.mutate()}
+                  disabled={!canSend}
+                  aria-label={S.send}
+                >
+                  <ArrowUp className="size-4" />
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
-        <div className="mt-1 flex items-center gap-3">
-          <Select
-            value={model}
-            onValueChange={(m) => {
-              if (!m) return;
-              // A draft has no row to update, so its choice is just remembered until the
-              // send that creates the session passes it to `session_create`.
-              if (sessionId) setModel.mutate(m);
-              else setDraftModel(m);
-            }}
-            disabled={running}
-          >
-            <SelectTrigger size="sm" className="w-72 text-xs" aria-label={S.model}>
-              {/* Base UI takes the trigger's text from the selected *item*, and the items
-                  live in a portal that only mounts once the list has been opened — so a
-                  session restored from storage would show its bare model id until then.
-                  Formatting from the catalog here is what makes the closed trigger read
-                  the same as the open list. The lookup spans every model, not just the
-                  available ones, so a session pinned to a model whose key was removed
-                  still shows a name. */}
-              <SelectValue>
-                {(id: unknown) => {
-                  if (typeof id !== "string" || !id) return S.model;
-                  const m = models.data?.find((x) => x.id === id);
-                  return m ? `${m.provider} · ${m.name}` : id;
-                }}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {(models.data ?? [])
-                .filter((m) => m.available)
-                .map((m) => (
-                  <SelectItem key={m.id} value={m.id} className="text-xs">
-                    {m.provider} · {m.name}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
+        {noticeRow && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-3 px-2">
           {noModels &&
             (catalog.data?.error && !catalog.data.refreshing ? (
               <>
@@ -218,7 +208,27 @@ export function Composer({
               {S.continueRun}
             </Button>
           )}
-        </div>
+          </div>
+        )}
+        {sessionId === null && !text && (
+          // A draft is a blank page; these are a way onto it. Picking one only fills the box —
+          // the user still reads it and sends it, because a starter that ran on click would
+          // spend a model call on a guess.
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
+            {S.starters.map((starter) => (
+              <button
+                key={starter}
+                className="rounded-full border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                onClick={() => {
+                  setText(starter);
+                  box.current?.focus();
+                }}
+              >
+                {starter}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

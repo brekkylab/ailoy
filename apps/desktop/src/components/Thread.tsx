@@ -116,6 +116,17 @@ export function Thread({
   // A draft is empty on purpose and has a composer; "no session" is the state with neither.
   const gone = messages.isError && api.kindOf(messages.error) === "not_found";
   if ((!sessionId && draft === null) || gone) return <EmptyState text={S.noSession} />;
+  // A draft has nothing to scroll, so the box is the page: the greeting and the composer
+  // sit together in the middle of it, rather than an empty column over a box at the foot.
+  // Sending creates the session and the thread takes the usual shape, composer at the end.
+  if (!sessionId) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col justify-center pb-[12vh]">
+        <h2 className="mb-6 text-center text-[26px] font-semibold tracking-tight">{S.greeting}</h2>
+        <Composer sessionId={null} draft={draft} onCreated={onCreated} />
+      </div>
+    );
+  }
 
   const streaming = live.status === "running";
   // Calls the engine announced before it wrote the message that names them. Once that
@@ -142,14 +153,15 @@ export function Thread({
     calls.map((c) => resolveCall(c, live.toolCalls[c.id], results.get(c.id), inFlight));
   return (
     <>
-      {/* `mask-fade-top` thins messages out as they pass under the title bar, which has no
-          rule of its own to stop them at. The top padding is derived from the fade rather
-          than picked: the mask dims everything within `--fade-top` of the edge, scrolled
-          or not, so anything less would leave the first message greyed out at rest. */}
+      {/* `mask-fade-y` thins messages out as they pass under the title bar and into the
+          composer, neither of which has a rule of its own to stop them at. The padding at
+          each end is derived from its fade rather than picked: the mask dims everything
+          within that distance of the edge, scrolled or not, so anything less would leave the
+          first message — or the last — greyed out at rest. */}
       <div
         ref={scroller}
         onScroll={onScroll}
-        className="mask-fade-top min-h-0 flex-1 overflow-y-auto px-6 pt-[calc(var(--fade-top)+0.5rem)] pb-4"
+        className="mask-fade-y min-h-0 flex-1 overflow-y-auto px-6 pt-[calc(var(--fade-top)+0.5rem)] pb-[calc(var(--fade-bottom)+0.5rem)]"
       >
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
           {messages.isError && (

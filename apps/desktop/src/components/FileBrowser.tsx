@@ -69,7 +69,7 @@ function TypedView({
     case "markdown":
       return (
         <>
-          <Markdown text={text} />
+          <Markdown text={text} measure="document" />
           {truncated && (
             <p className="mt-2 text-xs text-muted-foreground">
               … {S.fileTooLarge}
