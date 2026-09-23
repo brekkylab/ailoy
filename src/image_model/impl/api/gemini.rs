@@ -47,6 +47,25 @@ const SUPPORTED_ASPECT_RATIOS: &[(&str, u32, u32)] = &[
     ("21:9", 21, 9),
 ];
 
+/// The Gemini `imageSize` a quality level maps to, with the quality's own
+/// spelling for messages. `imageSize` is the only resolution knob the API
+/// exposes; its `4K` step is out of reach of the three-step quality option.
+///
+/// Models differ in which sizes they take, checked by calling each:
+/// `gemini-3.1-flash-image` takes all three;
+/// `gemini-3.1-flash-lite-image` takes `1K` only; `gemini-3-pro-image` refuses
+/// `512` and honours `2K` (2048x2048); `gemini-2.5-flash-image` refuses `512`
+/// and accepts `2K` but still returns 1024x1024. That is deliberately not
+/// encoded as a table here — the request goes out as asked and a refusal is
+/// explained by [`GeminiImageApi::explain_error`].
+fn image_size_for(quality: ImageQuality) -> (&'static str, &'static str) {
+    match quality {
+        ImageQuality::Low => ("low", "512"),
+        ImageQuality::Medium => ("medium", "1K"),
+        ImageQuality::High => ("high", "2K"),
+    }
+}
+
 /// Picks the supported ratio closest to `ratio`, comparing in log space so the
 /// distance is relative: 2.0 is as far from 1.0 as 0.5 is, which a plain
 /// subtraction would get wrong and which matters because the table is nearly
@@ -102,13 +121,7 @@ impl super::ImageProviderApi for GeminiImageApi {
             );
         }
         if let Some(quality) = options.quality {
-            // `imageSize` is the only resolution knob the API exposes; its `4K`
-            // step is out of reach of the three-step quality option.
-            let image_size = match quality {
-                ImageQuality::Low => "512",
-                ImageQuality::Medium => "1K",
-                ImageQuality::High => "2K",
-            };
+            let (_, image_size) = image_size_for(quality);
             image_config
                 .as_object_mut()
                 .unwrap()
@@ -257,6 +270,27 @@ impl super::ImageProviderApi for GeminiImageApi {
         })
     }
 
+    fn explain_error(
+        &self,
+        req: &ImageModelRequest<'_>,
+        status: u16,
+        body: &str,
+    ) -> Option<String> {
+        // The live 400 reads "Image size 512 is not supported for this model".
+        // It names `imageSize`, which the caller never set.
+        let quality = req.options.quality?;
+        if status != 400 || !body.contains("Image size") || !body.contains("not supported") {
+            return None;
+        }
+        let (quality_name, image_size) = image_size_for(quality);
+        Some(format!(
+            "`quality: {quality_name}` was sent as Gemini imageSize {image_size}, which '{}' \
+             does not accept; try another quality, or leave quality unset to use the \
+             model's default size",
+            req.model
+        ))
+    }
+
     fn is_permanent_quota_error(&self, body: &str) -> bool {
         let Ok(json) = serde_json::from_str::<serde_json::Value>(body) else {
             return false;
@@ -370,6 +404,73 @@ mod tests {
                 "{quality:?}"
             );
         }
+    }
+
+    #[test]
+    fn marshal_sends_image_size_to_every_model() {
+        // No per-model table: the model decides, and a refusal is explained
+        // afterwards. Even a size lite rejects goes out as asked.
+        let options = ImageModelOptions {
+            quality: Some(ImageQuality::Low),
+            ..Default::default()
+        };
+        let marshaled = marshal("gemini-3.1-flash-lite-image", &options).unwrap();
+        assert_eq!(
+            marshaled
+                .pointer("/body/generationConfig/imageConfig/imageSize")
+                .and_then(|v| v.as_str()),
+            Some("512")
+        );
+    }
+
+    #[test]
+    fn explain_error_ties_an_image_size_refusal_to_quality() {
+        // The body a real gemini-3.1-flash-lite-image 400 carried.
+        const REFUSAL: &str = r#"{"error":{"code":400,"message":"Image size 512 is not supported for this model","status":"INVALID_ARGUMENT"}}"#;
+        let provider = ImageModelProvider::gemini("AIza-test".to_string());
+        let with_quality = ImageModelOptions {
+            quality: Some(ImageQuality::Low),
+            ..Default::default()
+        };
+        let req = |options| ImageModelRequest {
+            model: "gemini-3.1-flash-lite-image",
+            prompt: "a red cube",
+            provider: &provider,
+            options,
+        };
+
+        let hint = GeminiImageApi
+            .explain_error(&req(&with_quality), 400, REFUSAL)
+            .expect("an imageSize refusal is explained");
+        assert!(hint.contains("`quality: low`"), "{hint}");
+        assert!(hint.contains("imageSize 512"), "{hint}");
+        assert!(hint.contains("gemini-3.1-flash-lite-image"), "{hint}");
+        assert!(
+            hint.contains("leave quality unset"),
+            "the advice must hold for any model, not name a size: {hint}"
+        );
+        assert!(!hint.contains("medium"), "{hint}");
+
+        // Nothing to explain: another status, another error, or no quality set.
+        assert!(
+            GeminiImageApi
+                .explain_error(&req(&with_quality), 429, REFUSAL)
+                .is_none()
+        );
+        assert!(
+            GeminiImageApi
+                .explain_error(
+                    &req(&with_quality),
+                    400,
+                    r#"{"error":{"message":"API key not valid"}}"#
+                )
+                .is_none()
+        );
+        assert!(
+            GeminiImageApi
+                .explain_error(&req(&ImageModelOptions::default()), 400, REFUSAL)
+                .is_none()
+        );
     }
 
     #[test]

@@ -46,7 +46,7 @@ impl super::ImageProviderApi for OpenAIImageApi {
 
         // Every model this endpoint still serves belongs to the gpt-image
         // family, so there is no per-family branching: DALL·E 2/3 were removed
-        // from the API in 2026-09. `response_format` is never sent either — the
+        // from the API. `response_format` is never sent either — the
         // endpoint answers it with `unknown_parameter` whatever the model.
         let mut body = to_value!({
             "model": req.model,

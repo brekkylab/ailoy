@@ -143,7 +143,8 @@ impl ImageModel {
         let (url, header_map, body) = wire_parts(&api.marshal_request(&req)?)?;
 
         let client = reqwest::Client::new();
-        let response = send_with_retry(&client, &url, header_map, &body, api.as_ref()).await?;
+        let response =
+            send_with_retry(&client, &url, header_map, &body, api.as_ref(), &req).await?;
         let response_text = response.text().await?;
 
         let response_value: Value =
@@ -196,6 +197,7 @@ async fn send_with_retry(
     headers: HeaderMap,
     body: &serde_json::Value,
     provider: &(dyn api::ImageProviderApi + Send + Sync),
+    req: &ImageModelRequest<'_>,
 ) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
     const MAX_WAIT_SECS: u64 = 10;
@@ -235,7 +237,12 @@ async fn send_with_retry(
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        anyhow::bail!("API request failed with status {status}: {text}");
+        // Unlike lang_model's copy, a provider may add a sentence tying the
+        // failure to the caller's options; the body is kept either way.
+        match provider.explain_error(req, status.as_u16(), &text) {
+            Some(hint) => anyhow::bail!("API request failed with status {status} ({hint}): {text}"),
+            None => anyhow::bail!("API request failed with status {status}: {text}"),
+        }
     }
     unreachable!("retry loop returns or bails on every path")
 }
@@ -388,6 +395,59 @@ mod tests {
             "should have made 3 total attempts (2x 429 retried + 1 success)"
         );
         assert_eq!(out.images.len(), 1);
+    }
+
+    /// A non-retryable failure keeps the provider's body and gains the
+    /// provider's explanation in front of it. The mock answers with the body a
+    /// real `gemini-3.1-flash-lite-image` 400 carried for `imageSize: 512`.
+    #[tokio::test]
+    async fn generate_explains_a_refusal_in_terms_of_the_option_set() {
+        use axum::{Router, body::Body, response::Response};
+
+        const REFUSAL: &str = r#"{"error":{"code":400,"message":"Image size 512 is not supported for this model","status":"INVALID_ARGUMENT"}}"#;
+        // Gemini puts the model id and `:generateContent` in the path, so any
+        // path is answered.
+        let app = Router::new().fallback(|| async {
+            Response::builder()
+                .status(400)
+                .header("content-type", "application/json")
+                .body(Body::from(REFUSAL))
+                .unwrap()
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let model = build_test_model(
+            "test_image_explain_mock",
+            "gemini-3.1-flash-lite-image",
+            ImageModelProviderElem::API {
+                schema: ImageModelAPISchema::Gemini,
+                url: format!("http://{addr}/").parse().unwrap(),
+                api_key: None,
+            },
+        );
+        let options = ImageModelOptions {
+            quality: Some(ImageQuality::Low),
+            ..Default::default()
+        };
+        let err = model
+            .generate("a red cube", &options)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("400"), "{err}");
+        assert!(
+            err.contains("`quality: low`"),
+            "the explanation names the option: {err}"
+        );
+        assert!(
+            err.contains("Image size 512 is not supported"),
+            "the provider's own body is kept: {err}"
+        );
     }
 
     /// Verifies a permanent quota 429 (`insufficient_quota`) is not retried.

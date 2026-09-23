@@ -41,6 +41,12 @@ pub struct ImageModelOptions {
     /// Render quality, coarsely.  Maps to OpenAI's `quality` and to Gemini's
     /// `imageConfig.imageSize` (`low` → `512`, `medium` → `1K`, `high` → `2K`),
     /// which is the only resolution knob that API exposes.
+    ///
+    /// Not every Gemini model takes every size: `gemini-3.1-flash-lite-image`
+    /// takes `1K` only, and `gemini-3-pro-image` / `gemini-2.5-flash-image`
+    /// refuse `512`. The request is sent as asked and the
+    /// model's refusal comes back as an error that names this option. Leaving
+    /// `quality` unset sends no size at all, so the model uses its own default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<ImageQuality>,
 

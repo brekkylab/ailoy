@@ -16,7 +16,7 @@ use crate::{
 #[serde(rename_all = "snake_case")]
 pub enum ImageModelAPISchema {
     /// OpenAI Images API (`POST /v1/images/generations`), serving the
-    /// `gpt-image-*` family. DALL·E 2/3 were removed from the API in 2026-09,
+    /// `gpt-image-*` family. DALL·E 2/3 were removed from the API,
     /// so this schema has no per-family branching.
     #[default]
     #[serde(rename = "openai")]
@@ -62,6 +62,24 @@ pub trait ImageProviderApi {
     /// transient rate limit. Defaults to transient.
     fn is_permanent_quota_error(&self, _body: &str) -> bool {
         false
+    }
+
+    /// Explains a failed response in terms of the options the caller set.
+    ///
+    /// A provider's error names its own wire field, which may not be the
+    /// option the caller touched (Gemini rejects `imageSize`, which the caller
+    /// reached through `quality`). Returning `Some` puts that explanation in
+    /// front of the provider's body in the error; the body itself is always
+    /// kept. The model is left to decide what it accepts — this runs only
+    /// after it has said no — so no per-model rule table has to be kept up to
+    /// date. Defaults to no explanation.
+    fn explain_error(
+        &self,
+        _req: &ImageModelRequest<'_>,
+        _status: u16,
+        _body: &str,
+    ) -> Option<String> {
+        None
     }
 }
 
