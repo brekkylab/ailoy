@@ -1,9 +1,5 @@
 mod apply_patch;
-mod docread;
 mod edit;
-mod glob;
-mod grep;
-mod net_guard;
 mod read;
 mod shell;
 mod web_fetch;
@@ -13,10 +9,7 @@ mod write;
 use std::sync::Arc;
 
 pub use apply_patch::*;
-pub use docread::*;
 pub use edit::*;
-pub use glob::*;
-pub use grep::*;
 pub use read::*;
 pub use shell::*;
 pub use web_fetch::*;
@@ -33,22 +26,16 @@ type BuiltinFactory = Arc<dyn Fn(&ToolDesc) -> ToolFunc + Send + Sync + 'static>
 pub fn get_builtin_tool_factories() -> Vec<(&'static str, BuiltinFactory)> {
     let shell = get_shell_tool_func();
     let read = get_read_tool_func();
-    let docread = get_docread_tool_func();
     let write = get_write_tool_func();
     let edit = get_edit_tool_func();
     let apply_patch = get_apply_patch_tool_func();
-    let glob = get_glob_tool_func();
-    let grep = get_grep_tool_func();
 
     vec![
         ("shell", Arc::new(move |_| shell.clone())),
         ("read", Arc::new(move |_| read.clone())),
-        ("docread", Arc::new(move |_| docread.clone())),
         ("write", Arc::new(move |_| write.clone())),
         ("edit", Arc::new(move |_| edit.clone())),
         ("apply_patch", Arc::new(move |_| apply_patch.clone())),
-        ("glob", Arc::new(move |_| glob.clone())),
-        ("grep", Arc::new(move |_| grep.clone())),
         ("web_search", Arc::new(get_web_search_tool_factory(vec![]))),
         ("web_fetch", Arc::new(get_web_fetch_tool_factory())),
     ]

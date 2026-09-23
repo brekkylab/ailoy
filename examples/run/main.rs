@@ -13,8 +13,8 @@
 //! names another one.
 //! Both subdirectories are created if missing, so a first run works on an empty context.
 //!
-//! The agent has the filesystem tools (`read`, `docread`, `write`, `edit`, `glob`,
-//! `grep` — `apply_patch` in place of `write`/`edit` on `openai/*`) and the network
+//! The agent has the filesystem tools (`read`, `write`, `edit`, `glob`, `grep` —
+//! `apply_patch` in place of `write`/`edit` on `openai/*`) and the network
 //! tools (`web_search`, `web_fetch`). Not `shell`: every tool it has goes through a
 //! named file or a URL.
 //!
