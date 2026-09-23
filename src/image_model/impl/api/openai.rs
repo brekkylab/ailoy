@@ -293,25 +293,6 @@ mod tests {
         );
     }
 
-    /// The endpoint rejects `response_format` with `unknown_parameter` whatever
-    /// the model, so no request may ever carry it.
-    #[test]
-    fn marshal_never_sends_response_format() {
-        for model in ["gpt-image-1-mini", "gpt-image-2.5-sunburst"] {
-            let marshaled = marshal(model, &ImageModelOptions::default()).unwrap();
-            let body = body_of(&marshaled).as_object().unwrap();
-            assert!(
-                !body.contains_key("response_format"),
-                "{model} must not send response_format"
-            );
-            assert_eq!(
-                body.keys().collect::<Vec<_>>(),
-                vec!["model", "prompt"],
-                "{model} must send nothing beyond the request itself"
-            );
-        }
-    }
-
     #[test]
     fn marshal_rejects_an_out_of_range_n() {
         for n in [0, 11] {

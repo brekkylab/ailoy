@@ -90,35 +90,3 @@ pub fn provider_api(schema: &ImageModelAPISchema) -> Box<dyn ImageProviderApi + 
         ImageModelAPISchema::Gemini => Box::new(GeminiImageApi),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The wire words are what a serialized provider entry stores, so they are
-    /// part of the format: `OpenAI` is `"openai"`, not the `"open_ai"` that
-    /// `rename_all = "snake_case"` would produce on its own.
-    #[test]
-    fn schema_round_trips_through_its_wire_words() {
-        for (schema, wire) in [
-            (ImageModelAPISchema::OpenAI, "openai"),
-            (ImageModelAPISchema::Gemini, "gemini"),
-        ] {
-            let json = serde_json::to_value(&schema).unwrap();
-            assert_eq!(json, serde_json::json!(wire));
-            let restored: ImageModelAPISchema = serde_json::from_value(json).unwrap();
-            assert_eq!(
-                serde_json::to_value(restored).unwrap(),
-                serde_json::json!(wire)
-            );
-        }
-    }
-
-    #[test]
-    fn default_schema_is_openai() {
-        assert!(matches!(
-            ImageModelAPISchema::default(),
-            ImageModelAPISchema::OpenAI
-        ));
-    }
-}

@@ -269,7 +269,9 @@ fn parse_usage(root: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::{super::ImageProviderApi as _, *};
-    use crate::image_model::{AspectRatio, ImageModelOptions, ImageQuality, ImageSize};
+    use crate::image_model::{
+        AspectRatio, ImageBackground, ImageFormat, ImageModelOptions, ImageQuality, ImageSize,
+    };
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
@@ -315,51 +317,14 @@ mod tests {
         let modalities: Vec<&str> = modalities.iter().filter_map(|v| v.as_str()).collect();
         assert_eq!(modalities, vec!["TEXT", "IMAGE"]);
 
-        assert!(
-            marshaled
-                .pointer("/body/generationConfig/imageConfig")
-                .is_none(),
-            "an empty imageConfig must not be sent"
-        );
-    }
-
-    #[test]
-    fn marshal_sends_image_size_to_every_model() {
-        // No per-model table: every size goes out, even one a model refuses,
-        // and the model decides.
-        for (size, wire) in [
-            (ImageSize::Size512, "512"),
-            (ImageSize::Size1K, "1K"),
-            (ImageSize::Size2K, "2K"),
-            (ImageSize::Size4K, "4K"),
-        ] {
-            let options = ImageModelOptions {
-                image_size: Some(size),
-                ..Default::default()
-            };
-            let marshaled = marshal("gemini-3.1-flash-lite-image", &options).unwrap();
-            assert_eq!(
-                marshaled
-                    .pointer("/body/generationConfig/imageConfig/imageSize")
-                    .and_then(|v| v.as_str()),
-                Some(wire)
-            );
-        }
-    }
-
-    #[test]
-    fn marshal_does_not_turn_quality_into_a_resolution() {
-        // `quality` is OpenAI's; Gemini has no equivalent and must not get one.
-        let options = ImageModelOptions {
-            quality: Some(ImageQuality::High),
-            ..Default::default()
-        };
-        let marshaled = marshal("gemini-3.1-flash-image", &options).unwrap();
-        assert!(
-            marshaled
-                .pointer("/body/generationConfig/imageConfig")
-                .is_none(),
-            "{marshaled:?}"
+        // Nothing else: no empty imageConfig, and thoughts are not requested.
+        let config = marshaled
+            .pointer("/body/generationConfig")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(
+            config.keys().collect::<Vec<_>>(),
+            vec!["responseModalities"]
         );
     }
 
@@ -413,24 +378,29 @@ mod tests {
     }
 
     #[test]
-    fn marshal_sends_aspect_ratio() {
-        for (ratio, wire) in [
-            (AspectRatio::Ratio1x1, "1:1"),
-            (AspectRatio::Ratio16x9, "16:9"),
-            (AspectRatio::Ratio8x1, "8:1"),
-        ] {
-            let options = ImageModelOptions {
-                aspect_ratio: Some(ratio),
-                ..Default::default()
-            };
-            let marshaled = marshal("gemini-3.1-flash-image", &options).unwrap();
-            assert_eq!(
-                marshaled
-                    .pointer("/body/generationConfig/imageConfig/aspectRatio")
-                    .and_then(|v| v.as_str()),
-                Some(wire)
-            );
-        }
+    fn marshal_sends_aspect_ratio_and_image_size() {
+        // No per-model table: a size lite refuses still goes out as asked, and
+        // the model decides. The enum-to-string mapping itself is covered in
+        // options.rs.
+        let options = ImageModelOptions {
+            aspect_ratio: Some(AspectRatio::Ratio16x9),
+            image_size: Some(ImageSize::Size512),
+            ..Default::default()
+        };
+        let marshaled = marshal("gemini-3.1-flash-lite-image", &options).unwrap();
+        let image_config = marshaled
+            .pointer("/body/generationConfig/imageConfig")
+            .unwrap();
+        assert_eq!(
+            image_config
+                .pointer("/aspectRatio")
+                .and_then(|v| v.as_str()),
+            Some("16:9")
+        );
+        assert_eq!(
+            image_config.pointer("/imageSize").and_then(|v| v.as_str()),
+            Some("512")
+        );
     }
 
     #[test]
@@ -463,9 +433,13 @@ mod tests {
 
     #[test]
     fn marshal_ignores_openai_only_options() {
+        // OpenAI's fields have no Gemini counterpart; `quality` in particular
+        // must not be turned into a resolution.
         let options = ImageModelOptions {
-            output_format: Some(crate::image_model::ImageFormat::Jpeg),
-            background: Some(crate::image_model::ImageBackground::Transparent),
+            size: Some("1536x1024".to_string()),
+            quality: Some(ImageQuality::High),
+            output_format: Some(ImageFormat::Jpeg),
+            background: Some(ImageBackground::Transparent),
             ..Default::default()
         };
         let marshaled = marshal("gemini-3.1-flash-image", &options).unwrap();
@@ -549,44 +523,6 @@ mod tests {
     }
 
     #[test]
-    fn unmarshal_skips_thought_parts_in_text() {
-        let response = to_value!({
-            "candidates": [{
-                "content": {"parts": [
-                    {"text": "thinking about cubes", "thought": true},
-                    {"text": "A red cube."},
-                    {"text": "Rendered at 16:9."},
-                    {"inlineData": {"mimeType": "image/webp", "data": PNG_HEADER_B64}}
-                ]}
-            }]
-        });
-
-        let out = GeminiImageApi.unmarshal_response(response).unwrap();
-        assert_eq!(
-            out.text.as_deref(),
-            Some("A red cube.\nRendered at 16:9."),
-            "separate text parts are separate lines"
-        );
-        let PartImage::Embedded { mime_type, .. } = &out.images[0] else {
-            panic!("expected an embedded image");
-        };
-        assert_eq!(
-            mime_type, "image/webp",
-            "the response's own mimeType wins over sniffing"
-        );
-    }
-
-    #[test]
-    fn marshal_does_not_ask_for_thoughts() {
-        let marshaled = marshal("gemini-3-pro-image", &ImageModelOptions::default()).unwrap();
-        assert!(
-            marshaled
-                .pointer("/body/generationConfig/thinkingConfig")
-                .is_none()
-        );
-    }
-
-    #[test]
     fn unmarshal_keeps_thought_parts_out_of_the_result() {
         // The part order a real gemini-3-pro-image response had when thoughts
         // were requested: thought text, draft, thought text, final.
@@ -596,7 +532,9 @@ mod tests {
                     {"text": "Defining the visual parameters.", "thought": true},
                     {"inlineData": {"mimeType": "image/jpeg", "data": PNG_HEADER_B64}, "thought": true},
                     {"text": "Checking the draft against the prompt.", "thought": true},
-                    {"inlineData": {"mimeType": "image/png", "data": PNG_HEADER_B64}}
+                    {"text": "A red cube."},
+                    {"text": "Rendered at 16:9."},
+                    {"inlineData": {"mimeType": "image/webp", "data": PNG_HEADER_B64}}
                 ]}
             }]
         });
@@ -606,11 +544,14 @@ mod tests {
         let PartImage::Embedded { mime_type, .. } = &out.images[0] else {
             panic!("expected an embedded image");
         };
+        // PNG bytes labelled webp: the final render, and the response's own
+        // mimeType wins over sniffing.
+        assert_eq!(mime_type, "image/webp");
         assert_eq!(
-            mime_type, "image/png",
-            "the one in images is the final render"
+            out.text.as_deref(),
+            Some("A red cube.\nRendered at 16:9."),
+            "thought text is left out; separate parts are separate lines"
         );
-        assert_eq!(out.text, None, "thought text is not the caption");
 
         // Drafts alone are not a result: the call fails and says why.
         let drafts_only = to_value!({

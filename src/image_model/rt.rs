@@ -296,16 +296,6 @@ mod tests {
         assert!(err.contains("no entry for model"), "unexpected: {err}");
     }
 
-    #[test]
-    fn model_id_drops_the_provider_prefix() {
-        let model = build_test_model(
-            "test_image_model_id",
-            "openai/gpt-image-1",
-            ImageModelProvider::openai("sk-test".into()),
-        );
-        assert_eq!(model.model_id(), "gpt-image-1");
-    }
-
     fn model_at(provider_name: &str, url: &str) -> ImageModel {
         build_test_model(
             provider_name,

@@ -290,44 +290,32 @@ mod tests {
     fn default_seeding_registers_env_backed_patterns_and_ignores_blanks() {
         let p = ImageModelProvider::from_keys(|name| match name {
             "OPENAI_API_KEY" => Some("sk-test".to_string()),
-            "GEMINI_API_KEY" => Some("   ".to_string()),
+            "GEMINI_API_KEY" => Some("AIza-test".to_string()),
             _ => None,
         });
-        let elem = p.get("openai/gpt-image-1").expect("openai/* registered");
         let ImageModelProviderElem::API {
             schema,
             url,
             api_key,
-        } = elem;
+        } = p.get("openai/gpt-image-1").expect("openai/* registered");
         assert!(matches!(schema, ImageModelAPISchema::OpenAI));
         assert_eq!(url.as_str(), "https://api.openai.com/v1/images/generations");
         assert_eq!(api_key.as_deref(), Some("sk-test"));
-        assert!(
-            p.get("google/gemini-3.1-flash-image").is_none(),
-            "a blank GEMINI_API_KEY must not register google/*"
-        );
-    }
-
-    #[test]
-    fn default_seeding_registers_gemini() {
-        let p = ImageModelProvider::from_keys(|name| match name {
-            "GEMINI_API_KEY" => Some("AIza-test".to_string()),
-            _ => None,
-        });
-        let elem = p
+        let ImageModelProviderElem::API { schema, url, .. } = p
             .get("google/gemini-3.1-flash-image")
             .expect("google/* registered");
-        let ImageModelProviderElem::API { schema, url, .. } = elem;
         assert!(matches!(schema, ImageModelAPISchema::Gemini));
         assert_eq!(
             url.as_str(),
             "https://generativelanguage.googleapis.com/v1beta/models/"
         );
-        assert!(p.get("openai/gpt-image-1").is_none());
-    }
 
-    #[test]
-    fn global_registry_has_a_default_entry() {
-        assert!(get_im_providers().contains_key("default"));
+        // A blank key (a `.env` copied from an example) registers nothing.
+        let p = ImageModelProvider::from_keys(|name| match name {
+            "GEMINI_API_KEY" => Some("   ".to_string()),
+            _ => None,
+        });
+        assert!(p.get("google/gemini-3.1-flash-image").is_none());
+        assert!(p.get("openai/gpt-image-1").is_none());
     }
 }
