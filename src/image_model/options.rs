@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// always means what the owning provider's API says. A combination the model
 /// cannot honour fails in `marshal_request` rather than being sent.
 ///
-/// The "only" groups describe the providers supported today, not a rule: the
+/// The groups describe the providers supported today, not a rule: the
 /// two current APIs happen to share no option (they describe even an image's
 /// shape differently), which is why there is no common group. Adding a
 /// provider can change the grouping — a field another provider also takes
@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 /// [`LangModelOptions`](crate::lang_model::LangModelOptions).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ImageModelOptions {
-    // ── OpenAI only ───────────────────────────────────────────────────────
+    // ── OpenAI ────────────────────────────────────────────────────────────
     /// How many images to generate, sent as `n` (the API takes 1–10).  `None`
     /// means one.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,7 +47,7 @@ pub struct ImageModelOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub background: Option<ImageBackground>,
 
-    // ── Gemini only ───────────────────────────────────────────────────────
+    // ── Gemini ────────────────────────────────────────────────────────────
     /// Width-to-height ratio, sent as `imageConfig.aspectRatio`.  `None`
     /// leaves the choice to the model.
     #[serde(skip_serializing_if = "Option::is_none")]
