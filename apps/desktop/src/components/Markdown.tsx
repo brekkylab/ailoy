@@ -31,6 +31,7 @@ import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import ShikiHighlighter from "react-shiki/core";
 import remarkGfm from "remark-gfm";
 
+import { rehypeFadeWords } from "@/lib/fadeWords";
 import { splitMarkdown } from "@/lib/markdownChunks";
 import { useHighlighter } from "@/lib/useHighlighter";
 
@@ -58,18 +59,25 @@ function isFence(className: string | undefined, code: string): boolean {
  * replaced. Each piece's props are stable (`resolveLink` is the caller's, and callers hold it
  * across renders), so React skips the ones that have not changed.
  */
+/** Plugins by whether the text is still arriving — constant, so a render passes the same array. */
+const STREAMING = [rehypeFadeWords];
+const SETTLED: [] = [];
+
 const Piece = memo(function Piece({
   text,
   resolveLink,
   highlighter,
+  streaming,
 }: {
   text: string;
   resolveLink?: (href: string) => (() => void) | null;
   highlighter: ReturnType<typeof useHighlighter>;
+  streaming?: boolean;
 }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      rehypePlugins={streaming ? STREAMING : SETTLED}
       // react-markdown drops every scheme but the handful it considers safe, which is
       // right for a model's output and would silently empty the href of a link this app
       // handles itself. One a `resolveLink` claims is not going anywhere, so it is kept;
@@ -220,8 +228,14 @@ export function Markdown({
   text,
   resolveLink,
   measure = "chat",
+  streaming = false,
 }: {
   text: string;
+  /**
+   * The text is still arriving — the live reply. Each word fades in as it lands, see
+   * `lib/fadeWords`; a stored message is drawn plain.
+   */
+  streaming?: boolean;
   /** Which reading measure — see `MEASURE`. A turn in the thread unless said otherwise. */
   measure?: keyof typeof MEASURE;
   /**
@@ -236,7 +250,16 @@ export function Markdown({
   const highlighter = useHighlighter();
   const pieces = useProgressive(text);
   return (
-    <div className={cn(MEASURE[measure], "break-words dark:prose-invert")}>
+    // The outer margins go: Typography drops them off a first and last child, but here the
+    // children are the pieces below, one wrapper deep, so its rule never reaches the
+    // paragraph — and every message opened and closed with a line of nothing, which is most
+    // of what stood between a tool call and the answer under it.
+    <div
+      className={cn(
+        MEASURE[measure],
+        "break-words dark:prose-invert [&>div:first-child>:first-child]:mt-0 [&>div:last-child>:last-child]:mb-0",
+      )}
+    >
       {pieces.map((piece, i) => (
         <div
           key={i}
@@ -246,7 +269,7 @@ export function Markdown({
           // highlight itself again, which is a hitch in the middle of a scroll.
           style={{ contentVisibility: "auto", containIntrinsicSize: `auto ${PX_PER_BYTE * piece.length}px` }}
         >
-          <Piece text={piece} resolveLink={resolveLink} highlighter={highlighter} />
+          <Piece text={piece} resolveLink={resolveLink} highlighter={highlighter} streaming={streaming} />
         </div>
       ))}
     </div>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatMessageTime, formatRelativeTime } from "@/lib/time";
+import { formatElapsed, formatRelativeTime } from "@/lib/time";
 
 const NOW = new Date("2026-09-14T12:00:00").getTime();
 const ago = (ms: number) => formatRelativeTime(NOW - ms, NOW);
@@ -43,12 +43,21 @@ describe("formatRelativeTime", () => {
   });
 });
 
-describe("formatMessageTime", () => {
+describe("formatElapsed", () => {
   const now = new Date("2026-09-23T15:30:00").getTime();
-  it("is a clock today, and carries the date otherwise", () => {
-    expect(formatMessageTime(new Date("2026-09-23T09:05:00").getTime(), now)).toBe("09:05");
-    expect(formatMessageTime(new Date("2026-09-22T23:59:00").getTime(), now)).toBe("Sep 22, 23:59");
-    expect(formatMessageTime(new Date("2025-12-31T08:00:00").getTime(), now)).toBe("Dec 31, 2025, 08:00");
-    expect(formatMessageTime(Number.NaN, now)).toBe("");
+  const back = (ms: number) => formatElapsed(now - ms, now);
+  it("spells out how long ago, in the largest unit that fits", () => {
+    expect(back(0)).toBe("just now");
+    expect(back(59_000)).toBe("just now");
+    expect(back(MINUTE)).toBe("1 minute ago");
+    expect(back(5 * MINUTE)).toBe("5 minutes ago");
+    expect(back(HOUR)).toBe("1 hour ago");
+    expect(back(23 * HOUR)).toBe("23 hours ago");
+    expect(back(DAY)).toBe("1 day ago");
+    expect(back(29 * DAY)).toBe("29 days ago");
+    expect(back(60 * DAY)).toBe("2 months ago");
+    expect(back(400 * DAY)).toBe("1 year ago");
+    expect(back(-5 * MINUTE)).toBe("just now");
+    expect(formatElapsed(Number.NaN, now)).toBe("");
   });
 });

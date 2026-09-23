@@ -105,6 +105,23 @@ html, body, #root { height: 100%; margin: 0; }
   mask-image: linear-gradient(to bottom, transparent, black var(--fade-top), black calc(100% - var(--fade-bottom)), transparent);
 }
 
+/* A word of the live reply, as it arrives — see `lib/fadeWords`, which wraps each word in
+   one of these, and why only the words that have just arrived play it. Opacity alone: a
+   blur or a rise per word is a paint per word, and a reply is thousands of them. */
+.fade-word {
+  animation: fade-word 400ms ease-out both;
+}
+@keyframes fade-word {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fade-word {
+    animation: none;
+  }
+}
+
 /* A Word document is paper, and `docx-preview` will only paint the paper inside a wrapper
    this app does not use.
 

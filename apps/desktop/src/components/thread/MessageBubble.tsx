@@ -14,21 +14,21 @@ import { Markdown } from "@/components/Markdown";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { copyText } from "@/lib/clipboard";
 import { textOf, type TurnEnd } from "@/lib/thread";
-import { formatMessageTime } from "@/lib/time";
+import { formatElapsed } from "@/lib/time";
+import { useNow } from "@/lib/useNow";
 import { S } from "@/strings";
 import type { Message } from "@/types";
 
 /**
- * What can be done with a message once it is written: copy it, and see when it was. Under a
+ * What can be done with a message once it is written: copy it, and see how long ago it was
+ * (the exact time on hover). Under a
  * user's message, and once under a finished answer — not under every line the assistant
  * said on the way to it. Only while hovered or focused, the way the chat apps keep a thread
  * free of controls nobody is reaching for.
  */
 function MessageActions({ text, at, end }: { text: string; at?: number; end?: boolean }) {
   const [copied, setCopied] = useState(false);
-  // Read once, at mount: which day "today" is only decides whether a date is written out,
-  // and a thread left open past midnight showing a bare clock for yesterday is harmless.
-  const [now] = useState(() => Date.now());
+  const now = useNow();
   useEffect(() => {
     if (!copied) return;
     const timer = setTimeout(() => setCopied(false), 1500);
@@ -51,7 +51,7 @@ function MessageActions({ text, at, end }: { text: string; at?: number; end?: bo
       </button>
       {at != null && (
         <time className="px-1 text-[11px] tabular-nums" dateTime={new Date(at).toISOString()} title={new Date(at).toLocaleString()}>
-          {formatMessageTime(at, now)}
+          {formatElapsed(at, now)}
         </time>
       )}
     </div>

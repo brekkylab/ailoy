@@ -33,20 +33,20 @@ export function formatRelativeTime(ms: number, now: number): string {
 }
 
 /**
- * When a message was written, as the time beside it says it: `15:04` today, `Sep 22, 15:04`
- * on another day this year, `Sep 22, 2025, 15:04` before that. A clock rather than "3h ago",
- * because a message's time is read to place it in the day, not to measure a gap.
+ * How long ago a message was written, in words: `just now`, `1 minute ago`, `5 hours ago`,
+ * `3 days ago`, `2 months ago`, `1 year ago`. Spelled out rather than the sidebar's `5m ago`:
+ * under a message there is the room, and it is read as a sentence. The exact time is the
+ * element's tooltip. A time ahead of `now` is `just now`, for the reason `formatRelativeTime`
+ * gives.
  */
-export function formatMessageTime(ms: number, now: number): string {
+export function formatElapsed(ms: number, now: number): string {
   if (!Number.isFinite(ms)) return "";
-  const d = new Date(ms);
-  const n = new Date(now);
-  const clock = d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-  if (d.toDateString() === n.toDateString()) return clock;
-  const date = d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    ...(d.getFullYear() === n.getFullYear() ? {} : { year: "numeric" }),
-  });
-  return `${date}, ${clock}`;
+  const delta = now - ms;
+  const count = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"} ago`;
+  if (delta < MINUTE) return "just now";
+  if (delta < HOUR) return count(Math.floor(delta / MINUTE), "minute");
+  if (delta < DAY) return count(Math.floor(delta / HOUR), "hour");
+  if (delta < 30 * DAY) return count(Math.floor(delta / DAY), "day");
+  if (delta < 365 * DAY) return count(Math.floor(delta / (30 * DAY)), "month");
+  return count(Math.floor(delta / (365 * DAY)), "year");
 }
