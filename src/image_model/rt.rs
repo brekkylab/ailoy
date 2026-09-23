@@ -40,14 +40,13 @@ pub struct ImageModelOutput {
     /// after an hour.
     pub images: Vec<PartImage>,
 
-    /// Text the model returned alongside the images: Gemini's own text parts,
-    /// or the rewritten prompt OpenAI reports back as `revised_prompt`.
+    /// Text the model returned alongside the images, such as a caption or the
+    /// prompt as the provider rewrote it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
 
-    /// Tokens billed for the call, when the provider reports them
-    /// (OpenAI `gpt-image-*`, Gemini). `None` when the response carries no
-    /// usage block.
+    /// Tokens billed for the call, when the provider reports them. `None` when
+    /// the response carries no usage block.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
 
@@ -57,11 +56,9 @@ pub struct ImageModelOutput {
     /// pictures. Kept apart from `images` so that `images` is always the
     /// answer.
     ///
-    /// When the model is satisfied with its last draft, the final render is
-    /// that same picture: a live `gemini-3-pro-image` call returned one draft
-    /// that differed from the final image only by JPEG re-encoding noise.
-    /// Models that do not think in pictures (e.g. `gemini-3.1-flash-lite-image`)
-    /// return no drafts even when asked.
+    /// When the model is satisfied with its last draft, the final render can be
+    /// that same picture. Models that do not think in pictures return no drafts
+    /// even when asked.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub drafts: Vec<PartImage>,
 
@@ -430,7 +427,7 @@ mod tests {
             },
         );
         let options = ImageModelOptions {
-            quality: Some(ImageQuality::Low),
+            image_size: Some("512".to_string()),
             ..Default::default()
         };
         let err = model
@@ -441,7 +438,7 @@ mod tests {
 
         assert!(err.contains("400"), "{err}");
         assert!(
-            err.contains("`quality: low`"),
+            err.contains("`image_size: 512`"),
             "the explanation names the option: {err}"
         );
         assert!(

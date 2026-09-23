@@ -268,17 +268,31 @@ mod tests {
             quality: Some(ImageQuality::High),
             output_format: Some(ImageFormat::Webp),
             background: Some(ImageBackground::Transparent),
-            // OpenAI has no drafts; the option must not leak onto the wire.
+            // Gemini's fields; neither may leak onto the OpenAI wire.
+            image_size: Some("2K".to_string()),
             include_drafts: Some(true),
         };
         let marshaled = marshal("gpt-image-1", &options).unwrap();
         let body = body_of(&marshaled);
-        assert!(
-            body.as_object()
-                .unwrap()
-                .keys()
-                .all(|k| !k.contains("thought") && !k.contains("draft")),
-            "include_drafts is ignored by OpenAI: {body:?}"
+        let mut keys: Vec<&str> = body
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|k| k.as_str())
+            .collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            [
+                "background",
+                "model",
+                "n",
+                "output_format",
+                "prompt",
+                "quality",
+                "size"
+            ],
+            "only OpenAI's own fields reach the wire"
         );
 
         assert_eq!(body.pointer("/n").and_then(|v| v.as_integer()), Some(3));

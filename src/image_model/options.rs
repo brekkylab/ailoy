@@ -6,72 +6,70 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// Provider-neutral knobs for one image generation call.
 ///
 /// Every field is optional and `None` leaves the provider's own default in
-/// place.  The wire mapping is per-provider and deliberately lossy: a knob the
-/// target model has no equivalent for is dropped silently (each field documents
-/// where that happens), while a combination the model cannot honour fails in
-/// `marshal_request` instead of quietly returning an image that ignores what
-/// was asked for.
+/// place.  Fields are grouped by who reads them: a common block every provider
+/// maps, then one block per provider holding that provider's own parameters
+/// under its own names, which other providers skip.  No field is translated
+/// into a different concept for a provider that lacks it.  A combination the
+/// model cannot honour fails in `marshal_request` instead of quietly returning
+/// an image that ignores what was asked for.
 ///
 /// Kept flat, like [`LangModelOptions`](crate::lang_model::LangModelOptions),
 /// while there are two providers and few knobs only one of them has. If more
 /// providers are added and provider-specific options pile up, consider a
 /// common core plus one section per provider (`openai: {..}`, `gemini: {..}`,
 /// each read only by its provider) instead: past that point a flat struct
-/// either grows fields most providers ignore or forces one shared field to
-/// mean different things per provider, as `quality` already does here.
+/// grows fields most providers ignore, or tempts one shared field into
+/// meaning different things per provider.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ImageModelOptions {
+    // ── Common ────────────────────────────────────────────────────────────
     /// How many images to generate.  `None` means one.
     ///
-    /// Only OpenAI's `gpt-image-*` family honours values above 1 (1–10);
-    /// Gemini rejects them at marshal time rather than silently returning a
-    /// single image.
+    /// A provider that cannot return that many from one request refuses the
+    /// count at marshal time rather than silently returning fewer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub n: Option<u32>,
 
     /// Desired width-to-height ratio.
     ///
-    /// Neither provider takes a ratio literally: OpenAI picks the closest of
-    /// its fixed `size` values (square / landscape / portrait) and Gemini picks
-    /// the nearest of the ratios its `imageConfig.aspectRatio` accepts.  `None`
-    /// leaves the choice to the model.
+    /// Providers accept concrete sizes or a fixed list of ratios, not an
+    /// arbitrary ratio, so this snaps to the closest one the provider accepts.
+    /// `None` leaves the choice to the model.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aspect_ratio: Option<AspectRatio>,
 
-    /// Render quality, coarsely.  Maps to OpenAI's `quality` and to Gemini's
-    /// `imageConfig.imageSize` (`low` → `512`, `medium` → `1K`, `high` → `2K`),
-    /// which is the only resolution knob that API exposes.
-    ///
-    /// Not every Gemini model takes every size: `gemini-3.1-flash-lite-image`
-    /// takes `1K` only, and `gemini-3-pro-image` / `gemini-2.5-flash-image`
-    /// refuse `512`. The request is sent as asked and the
-    /// model's refusal comes back as an error that names this option. Leaving
-    /// `quality` unset sends no size at all, so the model uses its own default.
+    // ── OpenAI only ───────────────────────────────────────────────────────
+    /// Render quality, sent as `quality`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<ImageQuality>,
 
-    /// Encoding of the returned bytes.  Honoured by OpenAI's `gpt-image-*`
-    /// only; Gemini decides for itself (the response's own mime type is what
-    /// [`ImageModelOutput`] carries), so the field is ignored there.
-    ///
-    /// [`ImageModelOutput`]: crate::image_model::ImageModelOutput
+    /// Encoding of the returned bytes, sent as `output_format`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_format: Option<ImageFormat>,
 
-    /// Whether the image background should be transparent.  Honoured by
-    /// OpenAI's `gpt-image-*` only; ignored by Gemini.
+    /// Background, sent as `background`.  `Transparent` needs an alpha-capable
+    /// format, so it is refused together with `output_format: jpeg`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub background: Option<ImageBackground>,
 
+    // ── Gemini only ───────────────────────────────────────────────────────
+    /// Output resolution, sent verbatim as `imageConfig.imageSize` (the API
+    /// documents `"512"`, `"1K"`, `"2K"`, `"4K"`).
+    ///
+    /// A string rather than an enum so a size Google adds needs no code
+    /// change. Models differ in which sizes they take; a refused size comes
+    /// back as an error that names this field. `None` sends no size, so the
+    /// model uses its own default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_size: Option<String>,
+
     /// Also return the model's draft images and reasoning text.
     ///
-    /// Thinking image models (Gemini's Nano Banana Pro, and the flash models
-    /// that think) draw interim versions, check them against the prompt, and
-    /// then render the final image. The drafts are hidden unless asked for;
-    /// `Some(true)` asks for them, and they come back in
-    /// [`ImageModelOutput::drafts`] and [`ImageModelOutput::thoughts`], never
-    /// in `images`. Roughly doubles the response size. Ignored by OpenAI,
-    /// which has no drafts.
+    /// Thinking image models draw interim versions, check them against the
+    /// prompt, and then render the final image. The drafts are hidden unless asked for;
+    /// `Some(true)` sends `thinkingConfig.includeThoughts`, and they come back
+    /// in [`ImageModelOutput::drafts`] and [`ImageModelOutput::thoughts`],
+    /// never in `images`. Roughly doubles the response size.
     ///
     /// [`ImageModelOutput::drafts`]: crate::image_model::ImageModelOutput::drafts
     /// [`ImageModelOutput::thoughts`]: crate::image_model::ImageModelOutput::thoughts
@@ -161,8 +159,7 @@ impl JsonSchema for AspectRatio {
     }
 }
 
-/// Coarse render-quality request, three steps wide because that is the
-/// granularity every supported provider agrees on.
+/// OpenAI's render quality.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageQuality {
@@ -253,6 +250,7 @@ mod tests {
             n: Some(2),
             aspect_ratio: Some(AspectRatio { w: 16, h: 9 }),
             quality: Some(ImageQuality::High),
+            image_size: Some("2K".to_string()),
             output_format: Some(ImageFormat::Webp),
             background: Some(ImageBackground::Transparent),
             include_drafts: Some(true),
@@ -264,6 +262,7 @@ mod tests {
                 "n": 2,
                 "aspect_ratio": "16:9",
                 "quality": "high",
+                "image_size": "2K",
                 "output_format": "webp",
                 "background": "transparent",
                 "include_drafts": true
@@ -272,6 +271,7 @@ mod tests {
         let restored: ImageModelOptions = serde_json::from_value(json).unwrap();
         assert_eq!(restored.aspect_ratio, options.aspect_ratio);
         assert_eq!(restored.quality, options.quality);
+        assert_eq!(restored.image_size, options.image_size);
         assert_eq!(restored.output_format, options.output_format);
         assert_eq!(restored.background, options.background);
         assert_eq!(restored.n, options.n);
