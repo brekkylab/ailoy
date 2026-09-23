@@ -56,6 +56,21 @@ pub struct ImageModelOptions {
     /// OpenAI's `gpt-image-*` only; ignored by Gemini.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub background: Option<ImageBackground>,
+
+    /// Also return the model's draft images and reasoning text.
+    ///
+    /// Thinking image models (Gemini's Nano Banana Pro, and the flash models
+    /// that think) draw interim versions, check them against the prompt, and
+    /// then render the final image. The drafts are hidden unless asked for;
+    /// `Some(true)` asks for them, and they come back in
+    /// [`ImageModelOutput::drafts`] and [`ImageModelOutput::thoughts`], never
+    /// in `images`. Roughly doubles the response size. Ignored by OpenAI,
+    /// which has no drafts.
+    ///
+    /// [`ImageModelOutput::drafts`]: crate::image_model::ImageModelOutput::drafts
+    /// [`ImageModelOutput::thoughts`]: crate::image_model::ImageModelOutput::thoughts
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_drafts: Option<bool>,
 }
 
 impl ImageModelOptions {
@@ -234,6 +249,7 @@ mod tests {
             quality: Some(ImageQuality::High),
             output_format: Some(ImageFormat::Webp),
             background: Some(ImageBackground::Transparent),
+            include_drafts: Some(true),
         };
         let json = serde_json::to_value(&options).unwrap();
         assert_eq!(
@@ -243,7 +259,8 @@ mod tests {
                 "aspect_ratio": "16:9",
                 "quality": "high",
                 "output_format": "webp",
-                "background": "transparent"
+                "background": "transparent",
+                "include_drafts": true
             })
         );
         let restored: ImageModelOptions = serde_json::from_value(json).unwrap();
@@ -252,6 +269,7 @@ mod tests {
         assert_eq!(restored.output_format, options.output_format);
         assert_eq!(restored.background, options.background);
         assert_eq!(restored.n, options.n);
+        assert_eq!(restored.include_drafts, options.include_drafts);
     }
 
     #[test]

@@ -128,6 +128,14 @@ impl super::ImageProviderApi for GeminiImageApi {
                 .unwrap()
                 .insert("imageConfig".into(), image_config);
         }
+        if options.include_drafts == Some(true) {
+            // The model thinks either way; this only makes it return the
+            // thought parts, draft images included.
+            generation_config.as_object_mut().unwrap().insert(
+                "thinkingConfig".into(),
+                to_value!({"includeThoughts": true}),
+            );
+        }
 
         let body = to_value!({
             "contents": [{"parts": [{"text": req.prompt}]}],
@@ -149,7 +157,15 @@ impl super::ImageProviderApi for GeminiImageApi {
         let mut images = Vec::new();
         let mut texts: Vec<&str> = Vec::new();
         let mut undecodable = 0usize;
+        let mut drafts = Vec::new();
+        let mut thoughts: Vec<&str> = Vec::new();
         for part in parts.into_iter().flatten() {
+            // Thinking image models (Nano Banana Pro, and the flash models with
+            // thinking on) mark their interim work with `thought: true`: text
+            // summaries, and also draft images of the composition. Neither is
+            // the answer: they go to `drafts` / `thoughts`, never `images` or
+            // `text`. They only arrive when `include_drafts` asked for them.
+            let is_thought = part.pointer("/thought").and_then(|v| v.as_bool()) == Some(true);
             // REST answers in camelCase; the snake_case spelling is accepted
             // too because that is what the request side uses.
             let inline = part
@@ -175,11 +191,16 @@ impl super::ImageProviderApi for GeminiImageApi {
                     .map(|m| m.to_owned())
                     .or_else(|| infer::get(data.as_ref()).map(|t| t.mime_type().to_string()))
                     .unwrap_or_else(|| "image/png".to_string());
-                images.push(PartImage::Embedded { mime_type, data });
+                let image = PartImage::Embedded { mime_type, data };
+                if is_thought {
+                    drafts.push(image);
+                } else {
+                    images.push(image);
+                }
             } else if let Some(part_text) = part.pointer("/text").and_then(|v| v.as_str()) {
-                // Thought summaries are model bookkeeping, not the caption that
-                // accompanies the image.
-                if part.pointer("/thought").and_then(|v| v.as_bool()) != Some(true) {
+                if is_thought {
+                    thoughts.push(part_text);
+                } else {
                     texts.push(part_text);
                 }
             }
@@ -204,6 +225,14 @@ impl super::ImageProviderApi for GeminiImageApi {
             {
                 reasons.push(format!("promptFeedback.blockReason: {reason}"));
             }
+            // Drafts are not the answer, so a response carrying only drafts is
+            // still a failure.
+            if !drafts.is_empty() {
+                reasons.push(format!(
+                    "{} draft image(s) marked `thought` and no final image",
+                    drafts.len()
+                ));
+            }
             if undecodable > 0 {
                 reasons.push(format!(
                     "{undecodable} inlineData part(s) had no decodable data"
@@ -218,7 +247,10 @@ impl super::ImageProviderApi for GeminiImageApi {
             bail!("Gemini returned no image ({})", reasons.join("; "));
         }
 
+        let thoughts = thoughts.join("\n");
         Ok(ImageModelOutput {
+            drafts,
+            thoughts: (!thoughts.is_empty()).then_some(thoughts),
             images,
             text: (!text.is_empty()).then_some(text),
             usage: parse_usage(&val),
@@ -510,6 +542,81 @@ mod tests {
             mime_type, "image/webp",
             "the response's own mimeType wins over sniffing"
         );
+    }
+
+    #[test]
+    fn marshal_asks_for_thoughts_only_when_drafts_are_wanted() {
+        let default = marshal("gemini-3-pro-image", &ImageModelOptions::default()).unwrap();
+        assert!(
+            default
+                .pointer("/body/generationConfig/thinkingConfig")
+                .is_none(),
+            "thoughts are not requested by default"
+        );
+
+        let options = ImageModelOptions {
+            include_drafts: Some(true),
+            ..Default::default()
+        };
+        let marshaled = marshal("gemini-3-pro-image", &options).unwrap();
+        assert_eq!(
+            marshaled
+                .pointer("/body/generationConfig/thinkingConfig/includeThoughts")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn unmarshal_separates_drafts_from_the_final_image() {
+        // The part order a real gemini-3-pro-image response with
+        // `includeThoughts` had: thought text, draft, thought text, final.
+        let response = to_value!({
+            "candidates": [{
+                "content": {"parts": [
+                    {"text": "Defining the visual parameters.", "thought": true},
+                    {"inlineData": {"mimeType": "image/jpeg", "data": PNG_HEADER_B64}, "thought": true},
+                    {"text": "Checking the draft against the prompt.", "thought": true},
+                    {"inlineData": {"mimeType": "image/png", "data": PNG_HEADER_B64}}
+                ]}
+            }]
+        });
+
+        let out = GeminiImageApi.unmarshal_response(response).unwrap();
+        assert_eq!(out.images.len(), 1, "images holds the final render only");
+        let PartImage::Embedded { mime_type, .. } = &out.images[0] else {
+            panic!("expected an embedded image");
+        };
+        assert_eq!(
+            mime_type, "image/png",
+            "the one in images is the final render"
+        );
+        assert_eq!(out.drafts.len(), 1, "the draft is kept apart");
+        let PartImage::Embedded { mime_type, .. } = &out.drafts[0] else {
+            panic!("expected an embedded draft");
+        };
+        assert_eq!(mime_type, "image/jpeg");
+        assert_eq!(
+            out.thoughts.as_deref(),
+            Some("Defining the visual parameters.\nChecking the draft against the prompt.")
+        );
+        assert_eq!(out.text, None, "thought text is not the caption");
+
+        // Drafts alone are not a result: the call fails and says why.
+        let drafts_only = to_value!({
+            "candidates": [{
+                "content": {"parts": [
+                    {"inlineData": {"mimeType": "image/jpeg", "data": PNG_HEADER_B64}, "thought": true}
+                ]},
+                "finishReason": "STOP"
+            }]
+        });
+        let err = GeminiImageApi
+            .unmarshal_response(drafts_only)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("1 draft image(s) marked `thought`"), "{err}");
+        assert!(err.contains("finishReason: STOP"), "{err}");
     }
 
     #[test]

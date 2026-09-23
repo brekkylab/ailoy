@@ -50,6 +50,25 @@ pub struct ImageModelOutput {
     /// usage block.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
+
+    /// Interim images a thinking model drew before the final render, in the
+    /// order it drew them. Empty unless
+    /// [`ImageModelOptions::include_drafts`] was set and the model thought in
+    /// pictures. Kept apart from `images` so that `images` is always the
+    /// answer.
+    ///
+    /// When the model is satisfied with its last draft, the final render is
+    /// that same picture: a live `gemini-3-pro-image` call returned one draft
+    /// that differed from the final image only by JPEG re-encoding noise.
+    /// Models that do not think in pictures (e.g. `gemini-3.1-flash-lite-image`)
+    /// return no drafts even when asked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drafts: Vec<PartImage>,
+
+    /// The model's reasoning text that accompanied the drafts, one part per
+    /// line. `None` unless [`ImageModelOptions::include_drafts`] was set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thoughts: Option<String>,
 }
 
 impl ImageModel {
