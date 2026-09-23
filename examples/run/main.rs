@@ -38,7 +38,7 @@ use ailoy::{
     message::{Message, Part, Role},
 };
 use anyhow::{Context as _, bail};
-use cortex::{console::Console, rootfs::RootFs};
+use cortex::{console::Console, image::Image};
 use futures::StreamExt as _;
 
 const CONTEXT_AT: &str = "/context";
@@ -97,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
 
     let console = Console::builder()
         .stdio_client(&[&program])
-        .rootfs(RootFs::new().base(&rootfs))
+        .image(Image::new().base(&rootfs))
         .mount_readonly(context.clone(), CONTEXT_AT)
         .mount(artifacts.clone(), ARTIFACTS_AT)
         .build()
