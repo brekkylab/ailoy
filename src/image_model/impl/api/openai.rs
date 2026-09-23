@@ -62,22 +62,8 @@ impl super::ImageProviderApi for OpenAIImageApi {
                 body.insert("n".into(), u64::from(n).into());
             }
 
-            // The API takes concrete pixel sizes, not ratios, so the requested
-            // ratio only selects between square / landscape / portrait. The
-            // arbitrary `WxH` sizes gpt-image-2 and 2.5 accept are not wired up.
-            if let Some(aspect) = options.aspect_ratio {
-                let ratio = aspect.ratio();
-                if !(ratio.is_finite() && ratio > 0.0) {
-                    bail!("invalid aspect ratio '{aspect}'");
-                }
-                let size = if ratio > 1.0 {
-                    "1536x1024"
-                } else if ratio < 1.0 {
-                    "1024x1536"
-                } else {
-                    "1024x1024"
-                };
-                body.insert("size".into(), size.into());
+            if let Some(size) = &options.size {
+                body.insert("size".into(), size.as_str().into());
             }
 
             if let Some(quality) = options.quality {
@@ -203,7 +189,7 @@ fn parse_usage(root: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::{super::ImageProviderApi as _, *};
-    use crate::image_model::{AspectRatio, ImageModelOptions};
+    use crate::image_model::ImageModelOptions;
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
@@ -264,11 +250,12 @@ mod tests {
     fn marshal_maps_every_option_for_gpt_image() {
         let options = ImageModelOptions {
             n: Some(3),
-            aspect_ratio: Some(AspectRatio { w: 16, h: 9 }),
+            size: Some("1536x1024".to_string()),
             quality: Some(ImageQuality::High),
             output_format: Some(ImageFormat::Webp),
             background: Some(ImageBackground::Transparent),
-            // Gemini's fields; neither may leak onto the OpenAI wire.
+            // Gemini's fields; none may leak onto the OpenAI wire.
+            aspect_ratio: Some("16:9".to_string()),
             image_size: Some("2K".to_string()),
             include_drafts: Some(true),
         };
@@ -389,23 +376,19 @@ mod tests {
     }
 
     #[test]
-    fn marshal_maps_aspect_ratio_onto_the_three_sizes() {
-        let cases = [
-            (AspectRatio { w: 1, h: 1 }, "1024x1024"),
-            (AspectRatio { w: 16, h: 9 }, "1536x1024"),
-            (AspectRatio { w: 9, h: 16 }, "1024x1536"),
-        ];
-        for (aspect, expected) in cases {
+    fn marshal_sends_size_verbatim() {
+        // No ratio mapping and no size table: whatever the caller wrote goes
+        // out, including sizes only some models accept, and the model decides.
+        for size in ["1024x1024", "1920x1088", "auto"] {
             let options = ImageModelOptions {
-                aspect_ratio: Some(aspect),
+                size: Some(size.to_string()),
                 ..Default::default()
             };
             assert_eq!(
-                body_of(&marshal("gpt-image-1", &options).unwrap())
+                body_of(&marshal("gpt-image-2.5-flare", &options).unwrap())
                     .pointer("/size")
                     .and_then(|v| v.as_str()),
-                Some(expected),
-                "size for {aspect}"
+                Some(size)
             );
         }
     }

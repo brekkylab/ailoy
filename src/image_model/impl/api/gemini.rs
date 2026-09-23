@@ -27,40 +27,6 @@ impl ImageModelProvider {
     }
 }
 
-/// The ratios `imageConfig.aspectRatio` accepts, in the reference's own order.
-/// A requested ratio is snapped to the nearest of these; the API takes no other
-/// value.
-const SUPPORTED_ASPECT_RATIOS: &[(&str, u32, u32)] = &[
-    ("1:1", 1, 1),
-    ("1:4", 1, 4),
-    ("4:1", 4, 1),
-    ("1:8", 1, 8),
-    ("8:1", 8, 1),
-    ("2:3", 2, 3),
-    ("3:2", 3, 2),
-    ("3:4", 3, 4),
-    ("4:3", 4, 3),
-    ("4:5", 4, 5),
-    ("5:4", 5, 4),
-    ("9:16", 9, 16),
-    ("16:9", 16, 9),
-    ("21:9", 21, 9),
-];
-
-/// Picks the supported ratio closest to `ratio`, comparing in log space so the
-/// distance is relative: 2.0 is as far from 1.0 as 0.5 is, which a plain
-/// subtraction would get wrong and which matters because the table is nearly
-/// symmetric around square.
-fn nearest_supported_aspect_ratio(ratio: f64) -> &'static str {
-    let distance =
-        |&(_, w, h): &(&str, u32, u32)| (ratio / (f64::from(w) / f64::from(h))).ln().abs();
-    SUPPORTED_ASPECT_RATIOS
-        .iter()
-        .min_by(|a, b| distance(a).total_cmp(&distance(b)))
-        .map(|&(name, _, _)| name)
-        .expect("SUPPORTED_ASPECT_RATIOS is never empty")
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct GeminiImageApi;
 
@@ -91,15 +57,11 @@ impl super::ImageProviderApi for GeminiImageApi {
         }
 
         let mut image_config = Value::object_empty();
-        if let Some(aspect) = options.aspect_ratio {
-            let ratio = aspect.ratio();
-            if !(ratio.is_finite() && ratio > 0.0) {
-                bail!("invalid aspect ratio '{aspect}'");
-            }
-            image_config.as_object_mut().unwrap().insert(
-                "aspectRatio".into(),
-                nearest_supported_aspect_ratio(ratio).into(),
-            );
+        if let Some(aspect_ratio) = &options.aspect_ratio {
+            image_config
+                .as_object_mut()
+                .unwrap()
+                .insert("aspectRatio".into(), aspect_ratio.as_str().into());
         }
         // Sent verbatim. Models differ in which sizes they take, checked by
         // calling each: `gemini-3.1-flash-image` takes 512/1K/2K;
@@ -322,7 +284,7 @@ fn parse_usage(root: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::{super::ImageProviderApi as _, *};
-    use crate::image_model::{AspectRatio, ImageModelOptions, ImageQuality};
+    use crate::image_model::{ImageModelOptions, ImageQuality};
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
@@ -461,21 +423,12 @@ mod tests {
     }
 
     #[test]
-    fn marshal_snaps_aspect_ratio_to_a_supported_value() {
-        let cases = [
-            (AspectRatio { w: 1, h: 1 }, "1:1"),
-            (AspectRatio { w: 16, h: 9 }, "16:9"),
-            (AspectRatio { w: 9, h: 16 }, "9:16"),
-            // 1.777… and 0.5625, arrived at from pixel dimensions.
-            (AspectRatio { w: 1920, h: 1080 }, "16:9"),
-            (AspectRatio { w: 1080, h: 1920 }, "9:16"),
-            // Not in the table: snapped to the nearest entry.
-            (AspectRatio { w: 5, h: 3 }, "16:9"),
-            (AspectRatio { w: 7, h: 1 }, "8:1"),
-        ];
-        for (aspect, expected) in cases {
+    fn marshal_sends_aspect_ratio_verbatim() {
+        // No ratio table and no snapping: the value goes out as written, even
+        // one the API will refuse, and the API's error lists what it accepts.
+        for ratio in ["1:1", "16:9", "8:1", "7:1"] {
             let options = ImageModelOptions {
-                aspect_ratio: Some(aspect),
+                aspect_ratio: Some(ratio.to_string()),
                 ..Default::default()
             };
             let marshaled = marshal("gemini-3.1-flash-image", &options).unwrap();
@@ -483,8 +436,7 @@ mod tests {
                 marshaled
                     .pointer("/body/generationConfig/imageConfig/aspectRatio")
                     .and_then(|v| v.as_str()),
-                Some(expected),
-                "{aspect} must snap to {expected}"
+                Some(ratio)
             );
         }
     }

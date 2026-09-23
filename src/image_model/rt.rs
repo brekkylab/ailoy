@@ -249,8 +249,7 @@ mod tests {
     use super::*;
     use crate::{
         image_model::{
-            AspectRatio, ImageModelAPISchema, ImageModelProvider, ImageQuality,
-            get_im_providers_mut,
+            ImageModelAPISchema, ImageModelProvider, ImageQuality, get_im_providers_mut,
         },
         to_value,
     };
@@ -547,7 +546,7 @@ mod tests {
             ImageModelProvider::gemini(api_key),
         );
         let options = ImageModelOptions {
-            aspect_ratio: Some(AspectRatio { w: 16, h: 9 }),
+            aspect_ratio: Some("16:9".to_string()),
             ..Default::default()
         };
 
