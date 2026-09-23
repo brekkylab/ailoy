@@ -29,7 +29,11 @@ pub fn load() {
         return;
     }
     let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    if let Some(path) = here.ancestors().map(|d| d.join(".env")).find(|p| p.is_file()) {
+    if let Some(path) = here
+        .ancestors()
+        .map(|d| d.join(".env"))
+        .find(|p| p.is_file())
+    {
         if let Err(err) = dotenvy::from_path(&path) {
             eprintln!("could not read {}: {err}", path.display());
         }
@@ -54,4 +58,3 @@ pub fn dev_env_keys() -> DevEnvKeys {
         bedrock_region: var("AWS_REGION").or_else(|| var("AWS_DEFAULT_REGION")),
     }
 }
-

@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Core surface, the two window commands the custom title bar needs, and the confirm dialog.",
+  "description": "Core surface, the two window commands the custom title bar needs, the confirm dialog, and the file picker that adds to a context.",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "dialog:allow-confirm",
+    "dialog:allow-open",
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize"
   ]

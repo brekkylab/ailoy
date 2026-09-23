@@ -7,10 +7,12 @@
   import Thread from "@/components/Thread.svelte";
   import TitleBar from "@/components/TitleBar.svelte";
   import ContextPanel from "@/components/ContextPanel.svelte";
+  import { agents } from "@/lib/agents.svelte";
+  import { contexts } from "@/lib/contexts.svelte";
   import { store } from "@/lib/store.svelte";
   import { syncDarkClass } from "@/lib/theme";
   import { S } from "@/strings";
-  import type { MainView } from "@/views";
+  import type { AgentSection, ContextCommand, MainView } from "@/views";
 
   const KEY = "ailoy.session";
   const SIDEBAR_KEY = "ailoy.sidebarCollapsed";
@@ -39,7 +41,18 @@
   // A new chat not sent into yet. A counter rather than a flag, so a second click on
   // New chat still changes it and the composer can take focus again.
   let draft = $state<number | null>(null);
-  let source = $state<string | null>(null);
+  let context = $state<string | null>(null);
+  let command = $state<ContextCommand>("files");
+  const currentContext = $derived(contexts.list.find((c) => c.id === context) ?? null);
+  let agentId = $state<string | null>(null);
+  let section = $state<AgentSection>("general");
+  // Falls back to the default while the choice is unmade or was just deleted.
+  const currentAgent = $derived(
+    agents.list.find((a) => a.id === agentId) ??
+      agents.list.find((a) => a.id === agents.defaultId) ??
+      agents.list[0] ??
+      null,
+  );
   let collapsed = $state(read(SIDEBAR_KEY) === "1");
 
   // `selected` is the user's choice; `effective` is what the window shows. It falls back to
@@ -54,8 +67,8 @@
 
   const title = $derived.by(() => {
     if (view === "session") return store.sessions.find((s) => s.id === effective)?.title ?? "";
-    if (view === "context") return S.context;
-    if (view === "agent") return S.agent;
+    if (view === "context") return currentContext?.name ?? S.context;
+    if (view === "agent") return currentAgent?.name || S.agent;
     if (view === "artifacts") return S.artifacts;
     return S.settings;
   });
@@ -98,8 +111,14 @@
       drafting={draft !== null}
       {view}
       onSelectView={(v) => (view = v)}
-      {source}
-      onSelectSource={(p) => (source = p)}
+      {context}
+      onSelectContext={(id) => (context = id)}
+      {command}
+      onSelectCommand={(c) => (command = c)}
+      agent={currentAgent?.id ?? null}
+      onSelectAgent={(id) => (agentId = id)}
+      {section}
+      onSelectSection={(s) => (section = s)}
     />
   {/if}
   <main class="flex h-full min-w-0 flex-col">
@@ -109,9 +128,9 @@
     {#if view === "session"}
       <Thread sessionId={effective} {draft} onCreated={selectSession} />
     {:else if view === "context"}
-      <ContextPanel />
+      <ContextPanel context={currentContext} {command} />
     {:else if view === "agent"}
-      <AgentPanel />
+      <AgentPanel agentId={currentAgent?.id ?? null} {section} onSelectAgent={(id) => (agentId = id)} />
     {:else if view === "artifacts"}
       <ArtifactsPanel />
     {:else}

@@ -14,7 +14,12 @@
     "@brekkylab/ui": "github:brekkylab/ui#main",
     "@lucide/svelte": "^1.47.0",
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-dialog": "^2"
+    "@tauri-apps/plugin-dialog": "^2",
+    "docx-preview": "^0.4.1",
+    "exceljs": "^4.4.0",
+    "jszip": "^3.10.2",
+    "pdfjs-dist": "^6.3.289",
+    "unique-names-generator": "^4.7.1"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
@@ -27,5 +32,8 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
     "vite": "^8.3.0"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
   }
 }

@@ -93,3 +93,38 @@ html, body, #app { height: 100%; margin: 0; }
   -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--fade-top), black calc(100% - var(--fade-bottom)), transparent);
   mask-image: linear-gradient(to bottom, transparent, black var(--fade-top), black calc(100% - var(--fade-bottom)), transparent);
 }
+
+/*
+ * The file viewers (`src/lib/viewers`) come from agent-s and are written against its token
+ * names. Those are brekkylab's tokens under shorter names, so this maps them one to one,
+ * scoped to the viewer so they never meet the shadcn names above.
+ */
+.viewer-tokens {
+  --bg: var(--bl-color-bg);
+  --bg-panel: var(--bl-color-bg-panel);
+  --bg-sunken: var(--bl-color-bg-sunken);
+  --bg-hover: var(--bl-color-bg-hover);
+  --bg-active: var(--bl-color-bg-active);
+  --border: var(--bl-color-border);
+  --border-strong: var(--bl-color-border-strong);
+  --text: var(--bl-color-text);
+  --text-muted: var(--bl-color-text-muted);
+  --text-faint: var(--bl-color-text-faint);
+  --accent: var(--bl-color-accent);
+  --accent-soft: var(--bl-color-accent-soft);
+  --accent-text: var(--bl-color-accent-text);
+  --amber: var(--bl-color-tint-amber);
+  --radius: var(--bl-radius-md);
+  --radius-lg: var(--bl-radius-lg);
+  --shadow-sm: var(--bl-shadow-sm);
+  --shadow-md: var(--bl-shadow-md);
+  --font-mono: var(--bl-font-family-mono);
+  --fs-2xs: var(--bl-font-size-2xs);
+  --fs-xs: var(--bl-font-size-xs);
+  --fs-sm: var(--bl-font-size-sm);
+  --fs-md: var(--bl-font-size-md);
+  --fs-lg: var(--bl-font-size-lg);
+  --fs-xl: var(--bl-font-size-xl);
+  --fs-2xl: var(--bl-font-size-2xl);
+  --fs-3xl: var(--bl-font-size-3xl);
+}
