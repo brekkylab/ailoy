@@ -292,22 +292,28 @@ impl super::ImageProviderApi for GeminiImageApi {
     }
 }
 
-/// Parses Gemini `usageMetadata` (`promptTokenCount` / `candidatesTokenCount`).
-/// `promptTokenCount` includes any cached-content tokens (folded into `input_tokens`).
+/// Parses Gemini `usageMetadata`.
+///
+/// `input_tokens` is `promptTokenCount`, which includes any cached-content
+/// tokens. `output_tokens` is `totalTokenCount - promptTokenCount`, so it
+/// counts everything billed as output: Gemini reports thinking separately in
+/// `thoughtsTokenCount`, outside `candidatesTokenCount`, and taking the
+/// difference also covers any output category added later. Without a usable
+/// total it falls back to `candidatesTokenCount`.
 fn parse_usage(root: &Value) -> Option<TokenUsage> {
     let usage = root
         .pointer("/usageMetadata")
         .filter(|u| !u.is_null())?
         .as_object()?;
+    let count = |key: &str| usage.get(key).and_then(|v| v.as_unsigned());
+    let input_tokens = count("promptTokenCount").unwrap_or(0);
+    let output_tokens = match count("totalTokenCount") {
+        Some(total) if total >= input_tokens => total - input_tokens,
+        _ => count("candidatesTokenCount").unwrap_or(0),
+    };
     Some(TokenUsage {
-        input_tokens: usage
-            .get("promptTokenCount")
-            .and_then(|v| v.as_unsigned())
-            .unwrap_or(0),
-        output_tokens: usage
-            .get("candidatesTokenCount")
-            .and_then(|v| v.as_unsigned())
-            .unwrap_or(0),
+        input_tokens,
+        output_tokens,
         cache_creation_input_tokens: None,
         cache_read_input_tokens: None,
     })
@@ -758,5 +764,31 @@ mod tests {
             "a RetryInfo detail marks a transient limit"
         );
         assert!(!GeminiImageApi.is_permanent_quota_error("not json"));
+    }
+
+    #[test]
+    fn usage_counts_thinking_tokens_as_output() {
+        // The usageMetadata a real gemini-3-pro-image call returned: thinking
+        // is reported apart from the candidates, and is billed as output.
+        let with_thoughts = to_value!({
+            "usageMetadata": {
+                "promptTokenCount": 14,
+                "candidatesTokenCount": 1227,
+                "thoughtsTokenCount": 135,
+                "totalTokenCount": 1376
+            }
+        });
+        let usage = parse_usage(&with_thoughts).unwrap();
+        assert_eq!(usage.input_tokens, 14);
+        assert_eq!(usage.output_tokens, 1227 + 135);
+
+        // No total, or one that makes no sense: fall back to the candidates.
+        for metadata in [
+            to_value!({"promptTokenCount": 14, "candidatesTokenCount": 1227}),
+            to_value!({"promptTokenCount": 14, "candidatesTokenCount": 1227, "totalTokenCount": 3}),
+        ] {
+            let usage = parse_usage(&to_value!({"usageMetadata": metadata})).unwrap();
+            assert_eq!(usage.output_tokens, 1227);
+        }
     }
 }
