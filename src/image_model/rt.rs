@@ -232,7 +232,8 @@ mod tests {
     use super::*;
     use crate::{
         image_model::{
-            ImageModelAPISchema, ImageModelProvider, ImageQuality, get_im_providers_mut,
+            AspectRatio, ImageModelAPISchema, ImageModelProvider, ImageQuality, ImageSize,
+            get_im_providers_mut,
         },
         to_value,
     };
@@ -409,7 +410,7 @@ mod tests {
             },
         );
         let options = ImageModelOptions {
-            image_size: Some("512".to_string()),
+            image_size: Some(ImageSize::Size512),
             ..Default::default()
         };
         let err = model
@@ -529,7 +530,7 @@ mod tests {
             ImageModelProvider::gemini(api_key),
         );
         let options = ImageModelOptions {
-            aspect_ratio: Some("16:9".to_string()),
+            aspect_ratio: Some(AspectRatio::Ratio16x9),
             ..Default::default()
         };
 

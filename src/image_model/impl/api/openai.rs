@@ -5,7 +5,7 @@ use crate::{
     datatype::{Bytes, Value},
     image_model::{
         ImageBackground, ImageFormat, ImageModelAPISchema, ImageModelOutput, ImageModelProvider,
-        ImageModelProviderElem, ImageModelRequest, ImageQuality,
+        ImageModelProviderElem, ImageModelRequest,
     },
     message::{PartImage, TokenUsage},
     to_value,
@@ -67,12 +67,7 @@ impl super::ImageProviderApi for OpenAIImageApi {
             }
 
             if let Some(quality) = options.quality {
-                let wire = match quality {
-                    ImageQuality::Low => "low",
-                    ImageQuality::Medium => "medium",
-                    ImageQuality::High => "high",
-                };
-                body.insert("quality".into(), wire.into());
+                body.insert("quality".into(), <&str>::from(quality).into());
             }
 
             if options.background == Some(ImageBackground::Transparent)
@@ -84,14 +79,10 @@ impl super::ImageProviderApi for OpenAIImageApi {
                 );
             }
             if let Some(format) = options.output_format {
-                body.insert("output_format".into(), format.as_wire_str().into());
+                body.insert("output_format".into(), <&str>::from(format).into());
             }
             if let Some(background) = options.background {
-                let wire = match background {
-                    ImageBackground::Transparent => "transparent",
-                    ImageBackground::Opaque => "opaque",
-                };
-                body.insert("background".into(), wire.into());
+                body.insert("background".into(), <&str>::from(background).into());
             }
         }
 
@@ -187,7 +178,7 @@ fn parse_usage(root: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::{super::ImageProviderApi as _, *};
-    use crate::image_model::ImageModelOptions;
+    use crate::image_model::{AspectRatio, ImageModelOptions, ImageQuality, ImageSize};
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
@@ -253,8 +244,8 @@ mod tests {
             output_format: Some(ImageFormat::Webp),
             background: Some(ImageBackground::Transparent),
             // Gemini's fields; none may leak onto the OpenAI wire.
-            aspect_ratio: Some("16:9".to_string()),
-            image_size: Some("2K".to_string()),
+            aspect_ratio: Some(AspectRatio::Ratio16x9),
+            image_size: Some(ImageSize::Size2K),
         };
         let marshaled = marshal("gpt-image-1", &options).unwrap();
         let body = body_of(&marshaled);

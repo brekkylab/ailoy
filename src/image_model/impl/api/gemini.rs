@@ -61,9 +61,9 @@ impl super::ImageProviderApi for GeminiImageApi {
             image_config
                 .as_object_mut()
                 .unwrap()
-                .insert("aspectRatio".into(), aspect_ratio.as_str().into());
+                .insert("aspectRatio".into(), <&str>::from(*aspect_ratio).into());
         }
-        // Sent verbatim. Models differ in which sizes they take, checked by
+        // Models differ in which sizes they take, checked by
         // calling each: `gemini-3.1-flash-image` takes 512/1K/2K;
         // `gemini-3.1-flash-lite-image` takes 1K only; `gemini-3-pro-image`
         // refuses 512 and honours 2K (2048x2048); `gemini-2.5-flash-image`
@@ -74,7 +74,7 @@ impl super::ImageProviderApi for GeminiImageApi {
             image_config
                 .as_object_mut()
                 .unwrap()
-                .insert("imageSize".into(), image_size.as_str().into());
+                .insert("imageSize".into(), <&str>::from(*image_size).into());
         }
 
         // `output_format` and `background` have no `generateContent` equivalent
@@ -217,8 +217,9 @@ impl super::ImageProviderApi for GeminiImageApi {
             return None;
         }
         Some(format!(
-            "`image_size: {image_size}` is not accepted by '{}'; try another size, or leave \
+            "`image_size: {}` is not accepted by '{}'; try another size, or leave \
              it unset to use the model's default size",
+            <&str>::from(*image_size),
             req.model
         ))
     }
@@ -268,7 +269,7 @@ fn parse_usage(root: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::{super::ImageProviderApi as _, *};
-    use crate::image_model::{ImageModelOptions, ImageQuality};
+    use crate::image_model::{AspectRatio, ImageModelOptions, ImageQuality, ImageSize};
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
@@ -323,12 +324,17 @@ mod tests {
     }
 
     #[test]
-    fn marshal_sends_image_size_verbatim() {
-        // No mapping and no per-model table: the value goes out as written,
-        // even one a model refuses, and the model decides.
-        for size in ["512", "1K", "2K", "4K"] {
+    fn marshal_sends_image_size_to_every_model() {
+        // No per-model table: every size goes out, even one a model refuses,
+        // and the model decides.
+        for (size, wire) in [
+            (ImageSize::Size512, "512"),
+            (ImageSize::Size1K, "1K"),
+            (ImageSize::Size2K, "2K"),
+            (ImageSize::Size4K, "4K"),
+        ] {
             let options = ImageModelOptions {
-                image_size: Some(size.to_string()),
+                image_size: Some(size),
                 ..Default::default()
             };
             let marshaled = marshal("gemini-3.1-flash-lite-image", &options).unwrap();
@@ -336,7 +342,7 @@ mod tests {
                 marshaled
                     .pointer("/body/generationConfig/imageConfig/imageSize")
                     .and_then(|v| v.as_str()),
-                Some(size)
+                Some(wire)
             );
         }
     }
@@ -363,7 +369,7 @@ mod tests {
         const REFUSAL: &str = r#"{"error":{"code":400,"message":"Image size 512 is not supported for this model","status":"INVALID_ARGUMENT"}}"#;
         let provider = ImageModelProvider::gemini("AIza-test".to_string());
         let with_size = ImageModelOptions {
-            image_size: Some("512".to_string()),
+            image_size: Some(ImageSize::Size512),
             ..Default::default()
         };
         let req = |options| ImageModelRequest {
@@ -407,12 +413,14 @@ mod tests {
     }
 
     #[test]
-    fn marshal_sends_aspect_ratio_verbatim() {
-        // No ratio table and no snapping: the value goes out as written, even
-        // one the API will refuse, and the API's error lists what it accepts.
-        for ratio in ["1:1", "16:9", "8:1", "7:1"] {
+    fn marshal_sends_aspect_ratio() {
+        for (ratio, wire) in [
+            (AspectRatio::Ratio1x1, "1:1"),
+            (AspectRatio::Ratio16x9, "16:9"),
+            (AspectRatio::Ratio8x1, "8:1"),
+        ] {
             let options = ImageModelOptions {
-                aspect_ratio: Some(ratio.to_string()),
+                aspect_ratio: Some(ratio),
                 ..Default::default()
             };
             let marshaled = marshal("gemini-3.1-flash-image", &options).unwrap();
@@ -420,7 +428,7 @@ mod tests {
                 marshaled
                     .pointer("/body/generationConfig/imageConfig/aspectRatio")
                     .and_then(|v| v.as_str()),
-                Some(ratio)
+                Some(wire)
             );
         }
     }
