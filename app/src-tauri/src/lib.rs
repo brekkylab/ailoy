@@ -4,6 +4,7 @@ mod agent;
 mod cache;
 mod context;
 mod dev_env;
+mod web;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -41,6 +42,7 @@ pub fn run() {
             agent::save_agent,
             agent::remove_agent,
             agent::export_agent,
+            web::peek_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
