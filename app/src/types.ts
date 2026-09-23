@@ -1,7 +1,8 @@
 export interface SessionSummary {
   id: string;
   title: string;
-  model: string;
+  /** The agent it runs with; `null` means the default agent. */
+  agent: string | null;
   updated_at: number;
   running?: boolean;
 }

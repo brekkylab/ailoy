@@ -92,6 +92,12 @@
     if (view === "context") void contexts.refresh();
   });
 
+  /** A chat's agent as the sidebar names it; `null` or a deleted id runs with the default. */
+  function agentName(id: string | null): string {
+    const a = agents.list.find((x) => x.id === id) ?? agents.list.find((x) => x.id === agents.defaultId);
+    return a ? a.name || S.untitled : S.agent;
+  }
+
   /** A new agent inherits the open one's model, which is likelier than the first in the list. */
   function createAgent() {
     const model = agents.list.find((a) => a.id === agent)?.model ?? store.defaultModel;
@@ -255,7 +261,7 @@
                   onblur={() => (editing = null)}
                 />
               {:else}
-                <button class="min-w-0 flex-1 text-left" onclick={() => onSelect(s.id)} title={`${s.title}\n${s.model}`}>
+                <button class="min-w-0 flex-1 text-left" onclick={() => onSelect(s.id)} title={`${s.title}\n${agentName(s.agent)}`}>
                   <div class="truncate">
                     {#if store.running[s.id]}
                       <span class="sr-only">Running</span>

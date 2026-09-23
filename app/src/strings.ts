@@ -20,6 +20,7 @@ export const S = {
   stop: "Stop",
   model: "Model",
   chooseModel: "Choose a model",
+  chooseAgent: "Choose an agent",
   collapseSidebar: "Hide sidebar",
   expandSidebar: "Show sidebar",
   rename: "Rename",

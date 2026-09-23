@@ -2,7 +2,7 @@
   import { ArrowUp, Square } from "@lucide/svelte";
   import { tick } from "svelte";
 
-  import ModelPicker from "@/components/thread/ModelPicker.svelte";
+  import AgentPicker from "@/components/thread/AgentPicker.svelte";
   import { store } from "@/lib/store.svelte";
   import { btn } from "@/lib/ui";
   import { S } from "@/strings";
@@ -15,11 +15,12 @@
 
   let text = $state("");
   let box = $state<HTMLTextAreaElement>();
-  // A draft has no session to hold its model yet, so it keeps one here until the first send.
-  let draftModel = $state(store.defaultModel);
+  // A draft has no session to hold its agent yet, so it keeps one here until the first send.
+  // `null` is the default agent, whichever that is by then.
+  let draftAgent = $state<string | null>(null);
 
   const session = $derived(sessionId ? store.sessions.find((s) => s.id === sessionId) : undefined);
-  const model = $derived(session?.model ?? draftModel);
+  const agent = $derived(session ? session.agent : draftAgent);
   const running = $derived(sessionId ? !!store.running[sessionId] : false);
   const canSend = $derived(text.trim().length > 0 && !running);
 
@@ -40,7 +41,7 @@
 
   function send() {
     if (!canSend) return;
-    const id = store.send(sessionId, text.trim(), model);
+    const id = store.send(sessionId, text.trim(), agent);
     text = "";
     if (!sessionId) onCreated(id);
   }
@@ -66,11 +67,11 @@
         class="block max-h-60 min-h-12 w-full resize-none border-0 bg-transparent px-4 pt-3.5 pb-1 text-[15px] outline-none placeholder:text-muted-foreground"
       ></textarea>
       <div class="flex items-center gap-1 px-2 pb-2">
-        <ModelPicker
-          value={model}
-          onChange={(m) => {
-            if (sessionId) store.setModel(sessionId, m);
-            else draftModel = m;
+        <AgentPicker
+          value={agent}
+          onChange={(a) => {
+            if (sessionId) store.setAgent(sessionId, a);
+            else draftAgent = a;
           }}
           disabled={running}
         />

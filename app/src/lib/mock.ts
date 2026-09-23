@@ -44,11 +44,11 @@ export const DEFAULT_BEDROCK_REGION = "us-east-1";
 
 export function seedSessions(now = Date.now()): SessionSummary[] {
   return [
-    { id: "s1", title: "Quarterly report outline", model: MODELS[0].id, updated_at: now - 20 * 60 * 1000 },
-    { id: "s2", title: "Rust borrow checker question", model: MODELS[1].id, updated_at: now - 3 * HOUR },
-    { id: "s3", title: "Trip itinerary to Jeju", model: MODELS[2].id, updated_at: now - DAY - HOUR },
-    { id: "s4", title: "Summarize meeting notes", model: MODELS[0].id, updated_at: now - 4 * DAY },
-    { id: "s5", title: "Regex for Korean phone numbers", model: MODELS[4].id, updated_at: now - 12 * DAY },
+    { id: "s1", title: "Quarterly report outline", agent: null, updated_at: now - 20 * 60 * 1000 },
+    { id: "s2", title: "Rust borrow checker question", agent: null, updated_at: now - 3 * HOUR },
+    { id: "s3", title: "Trip itinerary to Jeju", agent: null, updated_at: now - DAY - HOUR },
+    { id: "s4", title: "Summarize meeting notes", agent: null, updated_at: now - 4 * DAY },
+    { id: "s5", title: "Regex for Korean phone numbers", agent: null, updated_at: now - 12 * DAY },
   ];
 }
 

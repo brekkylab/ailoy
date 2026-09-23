@@ -25,12 +25,12 @@ class Store {
   }
 
   /** Sends into `sessionId`, or creates a session from a draft when it is `null`. */
-  send(sessionId: string | null, text: string, model: string): string {
+  send(sessionId: string | null, text: string, agent: string | null): string {
     let id = sessionId;
     if (!id) {
       id = uid("s");
       const title = text.length > 40 ? `${text.slice(0, 40)}…` : text;
-      this.sessions = [{ id, title, model, updated_at: Date.now() }, ...this.sessions];
+      this.sessions = [{ id, title, agent, updated_at: Date.now() }, ...this.sessions];
     }
     const sid = id;
     this.messages[sid] = [...(this.messages[sid] ?? []), { id: uid("m"), role: "user", text, created_at: Date.now() }];
@@ -61,9 +61,9 @@ class Store {
     delete this.messages[id];
   }
 
-  setModel(id: string, model: string) {
+  setAgent(id: string, agent: string) {
     const s = this.sessions.find((x) => x.id === id);
-    if (s) s.model = model;
+    if (s) s.agent = agent;
   }
 }
 
