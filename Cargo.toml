@@ -1,9 +1,19 @@
 [workspace]
 members = [
-    "./"
+    "./",
+    "apps/desktop/core",
 ]
+# A bare `cargo build`/`cargo check`/`cargo test` at the root builds the root crate only.
+# `ailoy-desktop-core` enables cortex's `fuse-t` feature, whose build script panics on a
+# machine without FUSE-T installed — so leaving the engine in the default set would stop
+# every contributor who only works on `ailoy` itself. The engine is built explicitly, with
+# `-p ailoy-desktop-core`.
+default-members = ["./"]
 exclude = [
     ".worktrees",
+    # Tauri pulls the whole webview stack; it is its own workspace so a root `cargo test`
+    # does not pay for it. See apps/desktop/src-tauri/Cargo.toml.
+    "apps/desktop/src-tauri",
 ]
 
 [workspace.package]
@@ -37,13 +47,19 @@ base64 = "0.23"
 # crate in a sibling checkout, so it is a path dependency until it is published
 # — moving it to a version or git pin is what makes this crate buildable
 # elsewhere.
-cortex = { path = "../cortex/cortex" }
+#
+# Without cortex's defaults: its one default, `local`, carries a console server
+# inside whatever links it, and this crate never starts a console — its caller
+# hands one in, and picks the backend. The tests do start one, so `local` comes
+# back under `[dev-dependencies]`.
+cortex = { path = "../cortex/cortex", default-features = false }
 dedent = "0.1.1"
 derive_builder = "0.20.2"
 fancy-regex = "0.18"
 futures = "0.3"
 hex = "0.4"
 html-to-markdown-rs = { version = "3.4", features = ["metadata"] }
+humantime = "2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 indexmap = { version = "2", features = ["serde"] }
 infer = "0.22"
@@ -72,6 +88,7 @@ tar = "0.4"
 strum_macros = "0.28"
 thiserror = "2.0.15"
 tokio = { version = "1.0", default-features = false, features = ["macros", "process", "rt-multi-thread", "sync", "time"] }
+tokio-util = "0.7"
 unicode-segmentation = "1.12.0"
 url = { version = "2.5", features = ["serde"] }
 urlencoding = "2.1"
@@ -93,6 +110,9 @@ wreq-util = { version = "=3.0.0-rc.14", features = ["emulation-compression"] }
 
 [dev-dependencies]
 axum = "0.8"
+# The console the tests start (`crate::test_console`): `Backend::local`, the
+# server cortex builds and carries, so a test needs no program installed.
+cortex = { path = "../cortex/cortex", features = ["local"] }
 dotenvy = "0.15"
 # The MCP *server* half, used only to stand up an in-process server for the
 # `mcp` tests. Feature unification means the lib picks these up under

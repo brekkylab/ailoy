@@ -1,0 +1,41 @@
+[package]
+name = "ailoy-desktop-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Headless session engine for Ailoy Desktop: sessions, workspace, runs"
+
+[[bin]]
+name = "gen-catalog"
+path = "src/bin/gen_catalog.rs"
+
+[dependencies]
+ailoy = { path = "../../.." }
+# The workspace, its stores, and the FUSE-T binding that puts it where a kernel answers.
+cortex = { path = "../../../../cortex/cortex", features = ["fuse-t", "notion", "s3"] }
+anyhow = "1"
+# Decoding a file that is not UTF-8. See `fsops::as_text`.
+encoding_rs = "0.8"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "fs", "time"] }
+tokio-util = "0.7"
+futures = "0.3"
+reqwest = { version = "0.13", features = ["json"] }
+chrono = "0.4"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+# A run's scratch directory is a `TempDir`, so it is removed however the run ends.
+tempfile = "3"
+
+[dev-dependencies]
+# The offline run test serves a scripted chat-completion stream over loopback.
+axum = "0.8"
+# Captures the `fs_timing` lines in one test, which is what pins the shape
+# `scripts/fs-timings.py` parses.
+tracing-subscriber = "0.3"
+tokio = { version = "1", features = ["net"] }

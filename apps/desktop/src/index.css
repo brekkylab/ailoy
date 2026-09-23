@@ -1,0 +1,147 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+/*
+ * The shared design system: brekkylab's tokens and palette. Tokens and theme only,
+ * not `index.css`, because that also pulls in `base.css` — a second reset on top of
+ * Tailwind's preflight, whose unlayered `button { background: none; border: none }`
+ * would outrank every utility class on every button in the app. The package says as
+ * much: skip the base and own the `color-scheme` rules yourself, which is what the
+ * block below does. The primitives are left out too — `.bl-btn` and friends have a
+ * shadcn counterpart here already, and both drawing from the same tokens is the
+ * point rather than having two of each.
+ */
+@import "@brekkylab/ui/tokens.css";
+@import "@brekkylab/ui/theme/brekkylab.css";
+/* `prose` for rendered assistant markdown (`components/Markdown.tsx`). */
+@plugin "@tailwindcss/typography";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * The scheme switch. Ours because we skipped the package's `base.css`: `light-dark()`
+ * resolves off the used `color-scheme`, so without these every colour would sit on the
+ * light half forever. No `data-theme` means "follow the OS"; the two attribute rules pin
+ * it, and `useSystemTheme` in `App.tsx` keeps Tailwind's `.dark` class agreeing with
+ * whichever of the three applies.
+ */
+:root { color-scheme: light dark; }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+/*
+ * shadcn's token names, pointed at the shared palette.
+ *
+ * Every component in `components/ui` and every `bg-*`/`text-*`/`border-*` utility in this
+ * app is written against these names, so re-pointing them is what puts the whole window
+ * in brekkylab's colours without a component being touched. It also retires the `.dark`
+ * block that used to sit below: each `--bl-color-*` is a `light-dark()` pair, so one
+ * declaration now carries both palettes and they cannot drift apart.
+ *
+ * Two of the names do not mean what they sound like. shadcn's `--accent` is the hover and
+ * selected surface, not the brand colour — that is `--primary` — and its `--input` is a
+ * border, not a fill.
+ */
+:root {
+  --background: var(--bl-color-bg);
+  --foreground: var(--bl-color-text);
+  --card: var(--bl-color-bg-panel);
+  --card-foreground: var(--bl-color-text);
+  --popover: var(--bl-color-bg-panel);
+  --popover-foreground: var(--bl-color-text);
+  --primary: var(--bl-color-accent);
+  --primary-foreground: var(--bl-color-accent-fg);
+  --secondary: var(--bl-color-bg-sunken);
+  --secondary-foreground: var(--bl-color-text);
+  --muted: var(--bl-color-bg-sunken);
+  --muted-foreground: var(--bl-color-text-muted);
+  --accent: var(--bl-color-bg-hover);
+  --accent-foreground: var(--bl-color-text);
+  --destructive: var(--bl-color-tint-red);
+  --border: var(--bl-color-border);
+  --input: var(--bl-color-border);
+  --ring: var(--bl-color-focus);
+  --chart-1: var(--bl-color-tint-blue);
+  --chart-2: var(--bl-color-tint-green);
+  --chart-3: var(--bl-color-tint-purple);
+  --chart-4: var(--bl-color-tint-amber);
+  --chart-5: var(--bl-color-tint-red);
+  --radius: var(--bl-radius-lg);
+  --sidebar: var(--bl-color-bg-panel);
+  --sidebar-foreground: var(--bl-color-text);
+  --sidebar-primary: var(--bl-color-accent);
+  --sidebar-primary-foreground: var(--bl-color-accent-fg);
+  --sidebar-accent: var(--bl-color-bg-hover);
+  --sidebar-accent-foreground: var(--bl-color-text);
+  --sidebar-border: var(--bl-color-border);
+  --sidebar-ring: var(--bl-color-focus);
+}
+html, body, #root { height: 100%; margin: 0; }
+
+@theme inline { --font-heading: var(--font-sans); --font-sans: var(--bl-font-family-sans); --font-mono: var(--bl-font-family-mono); --text-xs: var(--bl-font-size-xs); --text-sm: var(--bl-font-size-sm); --text-base: var(--bl-font-size-md); --text-lg: var(--bl-font-size-lg); --text-xl: var(--bl-font-size-xl); --text-2xl: var(--bl-font-size-2xl); --text-3xl: var(--bl-font-size-3xl); --color-sidebar-ring: var(--sidebar-ring); --color-sidebar-border: var(--sidebar-border); --color-sidebar-accent-foreground: var(--sidebar-accent-foreground); --color-sidebar-accent: var(--sidebar-accent); --color-sidebar-primary-foreground: var(--sidebar-primary-foreground); --color-sidebar-primary: var(--sidebar-primary); --color-sidebar-foreground: var(--sidebar-foreground); --color-sidebar: var(--sidebar); --color-chart-5: var(--chart-5); --color-chart-4: var(--chart-4); --color-chart-3: var(--chart-3); --color-chart-2: var(--chart-2); --color-chart-1: var(--chart-1); --color-ring: var(--ring); --color-input: var(--input); --color-border: var(--border); --color-destructive: var(--destructive); --color-accent-foreground: var(--accent-foreground); --color-accent: var(--accent); --color-muted-foreground: var(--muted-foreground); --color-muted: var(--muted); --color-secondary-foreground: var(--secondary-foreground); --color-secondary: var(--secondary); --color-primary-foreground: var(--primary-foreground); --color-primary: var(--primary); --color-popover-foreground: var(--popover-foreground); --color-popover: var(--popover); --color-card-foreground: var(--card-foreground); --color-card: var(--card); --color-foreground: var(--foreground); --color-background: var(--background); --radius-sm: calc(var(--radius) * 0.6); --radius-md: calc(var(--radius) * 0.8); --radius-lg: var(--radius); --radius-xl: calc(var(--radius) * 1.4); --radius-2xl: calc(var(--radius) * 1.8); --radius-3xl: calc(var(--radius) * 2.2); --radius-4xl: calc(var(--radius) * 2.6); }
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50; }
+  body {
+    @apply bg-background text-foreground; }
+  html {
+    @apply font-sans; } }
+
+/* Fades the thread out at both ends, so content thins away as it goes under the title bar
+   or into the composer instead of being cut off at an edge — neither has a rule of its own.
+   A mask rather than a gradient overlay on purpose: it fades to transparent against
+   whatever is actually behind, so it needs no second copy of the background colour and
+   stays right in both themes.
+
+   `--fade-top` and `--fade-bottom` are published so the column can pad itself clear of the
+   fades: anything inside that distance is dimmed even at rest, which on a thread means the
+   first message — or the last — is greyed out for no reason. Pad by at least this much and
+   a fade only ever catches content on its way out. */
+@utility mask-fade-y {
+  --fade-top: 2.5rem;
+  --fade-bottom: 1.5rem;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--fade-top), black calc(100% - var(--fade-bottom)), transparent);
+  mask-image: linear-gradient(to bottom, transparent, black var(--fade-top), black calc(100% - var(--fade-bottom)), transparent);
+}
+
+/* A word of the live reply, as it arrives — see `lib/fadeWords`, which wraps each word in
+   one of these, and why only the words that have just arrived play it. Opacity alone: a
+   blur or a rise per word is a paint per word, and a reply is thousands of them. */
+.fade-word {
+  animation: fade-word 400ms ease-out both;
+}
+@keyframes fade-word {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fade-word {
+    animation: none;
+  }
+}
+
+/* A Word document is paper, and `docx-preview` will only paint the paper inside a wrapper
+   this app does not use.
+
+   Its stylesheet puts the page's white on `.docx-wrapper>section.docx` and nothing else,
+   while `color: black` goes on `.docx` unconditionally. `DocxViewer` renders with
+   `inWrapper: false` — the wrapper is grey page furniture built for a print preview — so
+   the section arrives transparent with black text on it. In the light theme that shows as
+   a document whose only white is the cells its own tables fill; in the dark theme it is
+   black text on a near-black pane, which is most of the document gone.
+
+   So the paper is drawn here instead. Unconditionally white, in both themes, because the
+   black text is the library's and is not ours to re-colour: a document renders as the
+   document, the way a PDF page does. */
+.docx-host section.docx {
+  background: #fff;
+  color: #000;
+  padding: 2.5rem 3rem;
+  border-radius: var(--radius);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+}
+
+/* A document with more than one section is more than one sheet. */
+.docx-host section.docx + section.docx { margin-top: 1rem; }

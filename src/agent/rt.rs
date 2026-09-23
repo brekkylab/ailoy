@@ -4,7 +4,8 @@ use futures::{FutureExt as _, Stream, StreamExt as _, stream::FuturesUnordered};
 
 use crate::{
     agent::{
-        AgentProvider, AgentSpec, AgentState, ContextManager, get_agent_providers,
+        AgentError, AgentProvider, AgentSpec, AgentState, ContextManager, RunControl,
+        ToolCallRequest, ToolDecision, get_agent_providers,
         subagent::{get_subagent_tool_desc, get_subagent_tool_func},
     },
     lang_model::{LangModel, LangModelOptions},
@@ -17,6 +18,70 @@ use crate::{
         },
     },
 };
+
+/// What a tool call that never got to answer is answered with, so the history it sits in
+/// stays one a provider accepts (every `tool_use` matched by a `tool_result`).
+pub const INTERRUPTED_BY_CANCEL: &str = "[Interrupted: cancelled before this tool call completed]";
+pub const INTERRUPTED_BY_FAILURE: &str =
+    "[Interrupted: tool execution failed before this tool call completed]";
+
+/// Answer every tool call of the last assistant message that has no [`Role::Tool`]
+/// result after it, with a stub carrying `note` ([`INTERRUPTED_BY_CANCEL`] or
+/// [`INTERRUPTED_BY_FAILURE`]). A no-op when nothing is pending, so it is safe to call on
+/// every exit path.
+///
+/// Public because a history is not always this crate's to repair: one replayed from a
+/// caller's own store can end in an unanswered tool call (the process died mid-batch),
+/// and sending it back to a provider as-is is rejected — a `tool_use` with no
+/// `tool_result`. Call this on it before the next run.
+pub fn close_dangling_tool_calls(history: &mut Vec<Message>, note: &str) {
+    let Some(pos) = history.iter().rposition(|m| {
+        m.role == Role::Assistant && m.tool_calls.as_ref().is_some_and(|c| !c.is_empty())
+    }) else {
+        return;
+    };
+    let answered: std::collections::HashSet<String> = history[pos + 1..]
+        .iter()
+        .filter(|m| m.role == Role::Tool)
+        .filter_map(|m| m.id.clone())
+        .collect();
+    let pending: Vec<String> = history[pos]
+        .tool_calls
+        .as_ref()
+        .map(|calls| {
+            calls
+                .iter()
+                .filter_map(|p| p.as_function().map(|(id, _, _)| id.to_string()))
+                .filter(|id| !answered.contains(id))
+                .collect()
+        })
+        .unwrap_or_default();
+    for id in pending {
+        history.push(
+            Message::new(Role::Tool)
+                .with_id(id)
+                .with_contents([Part::text(note)]),
+        );
+    }
+}
+
+/// Unwrap an [`AgentError`] back into the `anyhow` error a pre-`AgentError` caller
+/// expects from [`Agent::run_stream`].
+///
+/// The layers that already carry an `anyhow` error hand theirs straight back (with a
+/// context line where the variant's own message would otherwise be lost), so a
+/// `downcast_ref::<ModelError>()` — or any other downcast the caller was doing — still
+/// resolves. Only the two variants that *are* the error (`Cancelled`, `MaxTurns`) are
+/// boxed as themselves.
+fn flatten_agent_error(err: AgentError) -> anyhow::Error {
+    match err {
+        AgentError::Model(m) => anyhow::Error::new(m),
+        AgentError::Tool(e) => e.context("tool execution failed"),
+        AgentError::Console(e) => e.context("console unavailable"),
+        AgentError::Other(e) => e,
+        other => anyhow::Error::new(other),
+    }
+}
 
 /// An agent that drives a language model through multi-turn, tool-augmented conversations.
 ///
@@ -541,6 +606,7 @@ impl Agent {
                             usage: None,
                             depth: Some(0),
                             source_agent: None,
+                            rate_limit: None,
                         }));
                     }
                 }
@@ -600,6 +666,13 @@ impl Agent {
         self.context_manager.as_ref()
     }
 
+    /// The sampling options this agent sends with every model call — resolved once at
+    /// construction from [`AgentSpec::model_options`], so what is read here is what the
+    /// provider sees.
+    pub fn model_options(&self) -> &LangModelOptions {
+        &self.model_options
+    }
+
     /// Stream all events for a single agent turn.
     pub fn run(
         &mut self,
@@ -636,9 +709,15 @@ impl Agent {
                     }
                 };
 
-                // Capture token usage for next iteration's truncation check.
+                // Capture token usage for next iteration's truncation check. The whole
+                // prompt is what has to fit, so the cached parts count: `input_tokens` is
+                // the uncached remainder and the two cache counters are its siblings.
                 if let Some(u) = &output.usage {
-                    self.state.last_input_tokens = Some(u.input_tokens);
+                    self.state.last_input_tokens = Some(
+                        u.input_tokens
+                            + u.cache_read_input_tokens.unwrap_or(0)
+                            + u.cache_creation_input_tokens.unwrap_or(0),
+                    );
                 }
 
                 output.depth = Some(0);
@@ -658,12 +737,29 @@ impl Agent {
                     }
                 };
 
-                self.start_console().await?;
+                if let Err(e) = self.start_console().await {
+                    // Nothing booted, so there is nothing to stop — but the assistant's
+                    // calls are already in history and still owe results.
+                    close_dangling_tool_calls(&mut self.state.history, INTERRUPTED_BY_FAILURE);
+                    Err(e)?;
+                }
 
                 // Drained to the end even on failure, so the console is released
-                // before the error leaves this scope — a `?` here would step over the
-                // `stop` and leave the backend booted with nobody driving it.
-                let mut tool_stream = self.execute_tool_calls(tool_calls)?;
+                // before the error leaves this scope — a bare `?` below would step over
+                // the `stop` and leave the backend booted with nobody driving it. Same
+                // for the launch failure: the batch never started, so none of its calls
+                // will ever answer and every one of them needs a stub.
+                let mut tool_stream = match self.execute_tool_calls(tool_calls) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        close_dangling_tool_calls(
+                            &mut self.state.history,
+                            INTERRUPTED_BY_FAILURE,
+                        );
+                        let _ = self.stop_console().await;
+                        Err(e)?
+                    }
+                };
                 let mut failure = None;
                 while let Some(event) = tool_stream.next().await {
                     match event {
@@ -687,6 +783,10 @@ impl Agent {
                 // The tools' failure first: it is what the caller asked about, and a
                 // console that would not stop is the less useful of the two.
                 if let Some(e) = failure {
+                    // The batch died mid-flight, so some of its calls never answered.
+                    // Stub them, or a caller that retries on this history sends a
+                    // `tool_use` with no `tool_result` and the provider rejects it.
+                    close_dangling_tool_calls(&mut self.state.history, INTERRUPTED_BY_FAILURE);
                     Err(e)?;
                 }
                 stopped?;
@@ -694,131 +794,288 @@ impl Agent {
         })
     }
 
-    /// Token-streaming counterpart to [`run`](Self::run). Drives the same
-    /// agentic loop but calls [`LangModel::run_stream`] per turn, yielding a
-    /// uniform stream of [`MessageDeltaOutput`]: the model's incremental deltas
-    /// for live rendering, then each tool result as a complete one-shot delta.
-    /// A `finish_reason` (or a role change) marks a message boundary; the
-    /// blocking [`run`](Self::run) is the accumulate-and-finish counterpart.
+    /// Token-streaming counterpart to [`run`](Self::run) with the default
+    /// [`RunControl`] — no cancellation, no turn bound, every tool call allowed.
+    ///
+    /// Drives the same agentic loop but calls [`LangModel::run_stream`] per turn,
+    /// yielding a uniform stream of [`MessageDeltaOutput`]: the model's incremental
+    /// deltas for live rendering, then each tool result as a complete one-shot delta.
+    /// A `finish_reason` (or a role change) marks a message boundary; the blocking
+    /// [`run`](Self::run) is the accumulate-and-finish counterpart.
+    ///
+    /// See [`run_stream_controlled`](Self::run_stream_controlled), which this is a
+    /// thin wrapper over, for what a caller can steer.
+    ///
+    /// The error is flattened rather than wrapped, so this keeps the shape it had before
+    /// [`AgentError`] existed: a model failure arrives as the [`ModelError`] itself, which
+    /// is what a caller's `downcast_ref::<ModelError>()` looks for — wrapping it in
+    /// `AgentError` would bury it one level down and that downcast would stop resolving.
+    ///
+    /// [`ModelError`]: crate::lang_model::ModelError
     pub fn run_stream(
         &mut self,
         query: Message,
     ) -> Pin<Box<impl Stream<Item = anyhow::Result<MessageDeltaOutput>> + Send + '_>> {
-        Box::pin(async_stream::try_stream! {
+        Box::pin(
+            self.run_stream_controlled(query, RunControl::default())
+                .map(|item| item.map_err(flatten_agent_error)),
+        )
+    }
 
+    /// Drive one agent turn as a stream of deltas under `ctl`.
+    ///
+    /// Invariants on every exit, success or not: the history never ends with a tool call
+    /// nobody answered, and a cancelled run keeps whatever answer text had arrived.
+    /// Ends in `Err(AgentError::Cancelled)` / `MaxTurns` / `Model` / `Tool` / `Console`
+    /// / `Other` (a delta that would not accumulate or finish).
+    ///
+    /// # What a cancelled run leaves on the console
+    ///
+    /// Cancel stops *this* run, not the command a tool had already started. Dropping an
+    /// in-flight `exec` drops the client side of the call only: the command keeps running
+    /// on the console server until it exits on its own or its timeout kills it (the shell
+    /// tool's default is 600 s), and the console answers one call at a time — so the
+    /// *next* call on that console blocks behind the abandoned one, for up to that long,
+    /// with nothing to show for the wait.
+    ///
+    /// A consumer that cancels a run should therefore drop that console (give the next
+    /// run a fresh one) rather than reuse it. The history invariants above hold either
+    /// way; this is about the machine, not the transcript.
+    pub fn run_stream_controlled(
+        &mut self,
+        query: Message,
+        ctl: RunControl,
+    ) -> Pin<Box<impl Stream<Item = Result<MessageDeltaOutput, AgentError>> + Send + '_>> {
+        Box::pin(async_stream::try_stream! {
             self.state.history.push(query);
-            // If a turn fails before its assistant message commits, pop the
-            // dangling user query so the reused agent's next run doesn't push a
-            // second consecutive User message (which most providers reject).
+            // If a turn fails before its assistant message commits, pop the dangling user
+            // query so a reused agent's next run doesn't send two consecutive User messages.
             let mut committed = false;
+            let mut turns: u32 = 0;
 
             self.seed_console_trees().await;
 
             loop {
+                // Checked here — after the previous batch's tool results committed — so a
+                // run that stops on the bound stops on a history a provider will accept.
+                if let Some(max) = ctl.max_turns
+                    && turns >= max
+                {
+                    // `Some(0)` trips on the first iteration, the one time this is
+                    // reached before anything committed — pop like every other early
+                    // exit, or the query dangles ahead of the next run's.
+                    if !committed {
+                        self.state.history.pop();
+                    }
+                    Err(AgentError::MaxTurns { turns })?;
+                }
+                turns += 1;
+
                 // Truncation check based on previous call's token usage.
                 if let Some(cm) = &self.context_manager
-                    && self.state.last_input_tokens.unwrap_or(0) > cm.max_input_tokens {
-                        cm.truncate_history(&mut self.state.history);
-                    }
+                    && self.state.last_input_tokens.unwrap_or(0) > cm.max_input_tokens
+                {
+                    cm.truncate_history(&mut self.state.history);
+                }
 
-                // Stream the model's deltas, forwarding each while accumulating
-                // the full turn for loop control (history / tool dispatch).
+                // ── model phase ─────────────────────────────────────────────
+                // Stream the model's deltas, forwarding each while accumulating the full
+                // turn for loop control (history / tool dispatch).
                 let mut acc = MessageDeltaOutput::new();
+                let mut cancelled = false;
                 {
                     let mut delta_stream = self.model.run_stream(
                         &self.state.history,
                         &self.tool_descs,
                         &self.model_options,
                     );
-                    while let Some(item) = delta_stream.next().await {
+                    loop {
+                        let next = tokio::select! {
+                            biased;
+                            _ = ctl.cancel.cancelled() => { cancelled = true; break; }
+                            item = delta_stream.next() => item,
+                        };
+                        let Some(item) = next else { break };
                         let mut delta = match item {
                             Ok(d) => d,
                             Err(e) => {
-                                if !committed {
-                                    self.state.history.pop();
-                                }
-                                Err(e)?
+                                if !committed { self.state.history.pop(); }
+                                Err(AgentError::from_anyhow(e))?
                             }
                         };
                         acc = match acc.accumulate(delta.clone()) {
                             Ok(a) => a,
                             Err(e) => {
-                                if !committed {
-                                    self.state.history.pop();
-                                }
-                                Err(e)?
+                                if !committed { self.state.history.pop(); }
+                                Err(AgentError::Other(e))?
                             }
                         };
-                        // Tag with the top-level metadata so accumulating these
-                        // deltas reconstructs the same MessageOutput `run` yields.
+                        // Tag with the top-level metadata so accumulating these deltas
+                        // reconstructs the same MessageOutput `run` yields.
                         delta.depth = Some(0);
                         self.stamp_source_agent(&mut delta.source_agent);
                         yield delta;
                     }
                 }
-                // LangModel::run_stream closes the contract — every message ends
-                // with a finish_reason delta (a synthesized Stop if the provider
-                // sent none) — so acc always carries one here. finish() promotes
-                // Stop to ToolCall if tool calls were produced.
+
+                if cancelled {
+                    // Taken out rather than consumed in place: `Err(..)?` below is a
+                    // return the borrow checker can't see, so `acc` has to stay live.
+                    let mut acc = std::mem::replace(&mut acc, MessageDeltaOutput::new());
+                    // Keep the words that arrived; a half-built tool call is not a call.
+                    acc.delta.tool_calls.clear();
+                    acc.finish_reason = Some(FinishReason::Stop {});
+                    let partial = if acc.delta.role.is_some() { acc.finish().ok() } else { None };
+                    match partial {
+                        Some(out) if !out.message.contents.is_empty() || out.message.thinking.is_some() => {
+                            self.state.history.push(out.message);
+                        }
+                        _ => {
+                            if !committed { self.state.history.pop(); }
+                        }
+                    }
+                    Err(AgentError::Cancelled)?;
+                }
+
+                // LangModel::run_stream closes the contract — every message ends with a
+                // finish_reason delta (a synthesized Stop if the provider sent none) — so
+                // acc always carries one here. finish() promotes Stop to ToolCall if tool
+                // calls were produced.
                 let mut output = match acc.finish() {
                     Ok(o) => o,
                     Err(e) => {
-                        if !committed {
-                            self.state.history.pop();
-                        }
-                        Err(e)?
+                        if !committed { self.state.history.pop(); }
+                        Err(AgentError::Other(e))?
                     }
                 };
 
-                // Capture token usage for next iteration's truncation check.
+                // Capture token usage for next iteration's truncation check. The whole
+                // prompt is what has to fit, so the cached parts count: `input_tokens` is
+                // the uncached remainder and the two cache counters are its siblings.
                 if let Some(u) = &output.usage {
-                    self.state.last_input_tokens = Some(u.input_tokens);
+                    self.state.last_input_tokens = Some(
+                        u.input_tokens
+                            + u.cache_read_input_tokens.unwrap_or(0)
+                            + u.cache_creation_input_tokens.unwrap_or(0),
+                    );
                 }
 
                 output.depth = Some(0);
                 self.state.history.push(output.message.clone());
                 committed = true;
 
-                // The assistant turn was already streamed as deltas above; drive
-                // the loop off its finish_reason without re-emitting it.
+                // The assistant turn was already streamed as deltas above; drive the loop
+                // off its finish_reason without re-emitting it.
                 let tool_calls = match &output.finish_reason {
-                    FinishReason::ToolCall {} => {
-                        output.message.tool_calls.clone().unwrap_or_default()
-                    }
+                    FinishReason::ToolCall {} => output.message.tool_calls.clone().unwrap_or_default(),
                     _ => break,
                 };
 
-                self.start_console().await?;
-
-                // See `run`: drained to the end even on failure, so `stop` is not
-                // stepped over by an early `?`.
-                let mut tool_stream = self.execute_tool_calls(tool_calls)?;
-                let mut failure = None;
-                while let Some(event) = tool_stream.next().await {
-                    match event {
-                        Err(e) => {
-                            failure = Some(e);
-                            break;
-                        }
-                        Ok(mut output) => {
-                            // Tool results are complete MessageOutputs; commit to
-                            // history, stamp, then re-emit on the delta stream.
-                            if output.message.role == Role::Tool && output.depth == Some(0) {
-                                output.message = Self::cap_tool_result(output.message);
-                                self.state.history.push(output.message.clone());
-                            }
-                            self.stamp_source_agent(&mut output.source_agent);
-                            yield output.into();
+                // ── gate ────────────────────────────────────────────────────
+                // The review is raced against cancel, not awaited on its own: a gate
+                // "may await a person" (see `control.rs`), so without the race a run
+                // waiting on an approval nobody gives would ignore its own cancel
+                // token for as long as the gate deliberates.
+                let mut allowed = Vec::with_capacity(tool_calls.len());
+                for call in tool_calls {
+                    let Some((id, name, args)) = call.as_function() else { continue };
+                    let decision = tokio::select! {
+                        biased;
+                        _ = ctl.cancel.cancelled() => { cancelled = true; break; }
+                        d = ctl.tool_gate.review(ToolCallRequest { id, name, arguments: args }) => d,
+                    };
+                    match decision {
+                        ToolDecision::Allow => allowed.push(call.clone()),
+                        ToolDecision::Deny { reason } => {
+                            // A refusal is a result the model reads, not an error the run dies of.
+                            let denied = Message::new(Role::Tool).with_id(id).with_contents([Part::value(
+                                crate::to_value!({ "error": format!("denied by user: {reason}"), "phase": "policy" }),
+                            )]);
+                            // Capped like any other tool result: the reason is a gate's
+                            // string, and history has the same size budget for it.
+                            let denied = Self::cap_tool_result(denied);
+                            self.state.history.push(denied.clone());
+                            let mut out = MessageOutput {
+                                message: denied,
+                                finish_reason: FinishReason::Stop {},
+                                usage: None,
+                                depth: Some(0),
+                                source_agent: None,
+                                rate_limit: None,
+                            };
+                            self.stamp_source_agent(&mut out.source_agent);
+                            yield out.into();
                         }
                     }
                 }
+                if cancelled {
+                    // Nothing of this batch ran and nothing more will, so every call the
+                    // gate had not yet answered — and the one it was deliberating on —
+                    // owes a stub, exactly as in the tool phase. The console is not
+                    // started until after the gate, so there is none to release here.
+                    close_dangling_tool_calls(&mut self.state.history, INTERRUPTED_BY_CANCEL);
+                    Err(AgentError::Cancelled)?;
+                }
+                if allowed.is_empty() {
+                    continue;
+                }
+
+                // ── tool phase ──────────────────────────────────────────────
+                if let Err(e) = self.start_console().await {
+                    close_dangling_tool_calls(&mut self.state.history, INTERRUPTED_BY_FAILURE);
+                    Err(AgentError::Console(e))?;
+                }
+                // See `run`: drained to the end even on failure, so `stop` is not stepped
+                // over by an early `?`.
+                let mut tool_stream = match self.execute_tool_calls(allowed) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        close_dangling_tool_calls(&mut self.state.history, INTERRUPTED_BY_FAILURE);
+                        let _ = self.stop_console().await;
+                        Err(AgentError::Tool(e))?
+                    }
+                };
+                let mut failure: Option<AgentError> = None;
+                loop {
+                    let next = tokio::select! {
+                        biased;
+                        _ = ctl.cancel.cancelled() => { cancelled = true; break; }
+                        ev = tool_stream.next() => ev,
+                    };
+                    let Some(event) = next else { break };
+                    match event {
+                        Err(e) => {
+                            failure = Some(AgentError::Tool(e));
+                            break;
+                        }
+                        Ok(mut out) => {
+                            // Tool results are complete MessageOutputs; commit to history,
+                            // stamp, then re-emit on the delta stream.
+                            if out.message.role == Role::Tool && out.depth == Some(0) {
+                                out.message = Self::cap_tool_result(out.message);
+                                self.state.history.push(out.message.clone());
+                            }
+                            self.stamp_source_agent(&mut out.source_agent);
+                            yield out.into();
+                        }
+                    }
+                }
+                // Dropping the stream aborts whatever tool futures are still running.
                 drop(tool_stream);
 
+                if cancelled {
+                    close_dangling_tool_calls(&mut self.state.history, INTERRUPTED_BY_CANCEL);
+                    let _ = self.stop_console().await;
+                    Err(AgentError::Cancelled)?;
+                }
                 let stopped = self.stop_console().await;
                 if let Some(e) = failure {
+                    close_dangling_tool_calls(&mut self.state.history, INTERRUPTED_BY_FAILURE);
                     Err(e)?;
                 }
-                stopped?;
+                if let Err(e) = stopped {
+                    Err(AgentError::Console(e))?;
+                }
             }
         })
     }
@@ -911,10 +1168,8 @@ mod tests {
         roles: &[TreeRole],
     ) -> cortex::console::Console {
         dotenvy::dotenv().ok();
-        let program = std::env::var("AILOY_CORTEX_CONSOLE")
-            .unwrap_or_else(|_| "cortex-local-console".to_string());
-
-        let mut builder = cortex::console::Console::builder().stdio_client(&[&program]);
+        let mut builder =
+            cortex::console::Console::builder().backend(cortex::console::Backend::local());
         for role in roles {
             let dir = root.join(role.as_str());
             std::fs::create_dir_all(&dir).unwrap();
@@ -928,7 +1183,7 @@ mod tests {
         let mut console = builder
             .build()
             .await
-            .unwrap_or_else(|e| panic!("starting `{program}`: {e:#}"));
+            .unwrap_or_else(|e| panic!("starting the local console: {e:#}"));
         console.start().await.expect("starting a test console");
         console
     }
@@ -1809,5 +2064,473 @@ mod tests {
 
         assert!(agent.tool_descs.is_empty(), "{:?}", agent.tool_descs);
         assert!(agent.tools.is_empty());
+    }
+
+    // ── controlled runs ───────────────────────────────────────────────────────
+
+    use crate::agent::{
+        AgentError, RunControl, ToolCallRequest, ToolDecision, ToolGate, test_support::*,
+    };
+
+    /// A tool that never finishes in the life of a test — what a cancel has to cut short.
+    fn slow_tool(secs: u64) -> (&'static str, ToolDesc, ToolFunc) {
+        let desc = ToolDescBuilder::new("slow")
+            .description("sleeps")
+            .parameters(to_value!({"type":"object","properties":{}}))
+            .build();
+        let func = crate::tool_func!(async |_args: Value| -> Value {
+            tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+            Value::string("slept")
+        });
+        ("slow", desc, func)
+    }
+
+    fn fast_tool() -> (&'static str, ToolDesc, ToolFunc) {
+        let desc = ToolDescBuilder::new("fast")
+            .description("returns")
+            .parameters(to_value!({"type":"object","properties":{}}))
+            .build();
+        let func = tool_func!(|_args: Value| -> Value { Value::string("ok") });
+        ("fast", desc, func)
+    }
+
+    async fn drain(
+        stream: impl Stream<Item = Result<MessageDeltaOutput, AgentError>>,
+    ) -> Result<Vec<MessageDeltaOutput>, AgentError> {
+        let mut out = Vec::new();
+        let mut s = std::pin::pin!(stream);
+        while let Some(item) = s.next().await {
+            out.push(item?);
+        }
+        Ok(out)
+    }
+
+    /// The history-repair helper and its two stub notes are reachable from outside this
+    /// crate, spelled as a consumer would spell them. A history replayed from a
+    /// consumer's own store can end in an unanswered tool call, and repairing it before
+    /// the next run is that consumer's to do — so this pins the path, not just the
+    /// visibility keyword.
+    #[test]
+    fn the_repair_helper_is_reachable_from_outside_the_crate() {
+        let repair: fn(&mut Vec<Message>, &str) = ailoy::agent::close_dangling_tool_calls;
+        let mut h = vec![
+            Message::new(Role::Assistant).with_tool_calls([Part::function(
+                "c1",
+                "shell",
+                to_value!({}),
+            )]),
+        ];
+        repair(&mut h, ailoy::agent::INTERRUPTED_BY_CANCEL);
+        assert_eq!(h.len(), 2);
+        assert_eq!(
+            h[1].contents[0].as_text(),
+            Some(ailoy::agent::INTERRUPTED_BY_CANCEL)
+        );
+        assert_ne!(
+            ailoy::agent::INTERRUPTED_BY_FAILURE,
+            ailoy::agent::INTERRUPTED_BY_CANCEL
+        );
+    }
+
+    #[test]
+    fn close_dangling_stubs_only_unanswered_calls_of_the_last_batch() {
+        let mut h = vec![
+            Message::new(Role::User).with_contents([Part::text("q")]),
+            Message::new(Role::Assistant).with_tool_calls([
+                Part::function("c1", "shell", to_value!({})),
+                Part::function("c2", "shell", to_value!({})),
+            ]),
+            Message::new(Role::Tool)
+                .with_id("c1")
+                .with_contents([Part::text("done")]),
+        ];
+        close_dangling_tool_calls(&mut h, INTERRUPTED_BY_CANCEL);
+        assert_eq!(h.len(), 4);
+        assert_eq!(h[3].role, Role::Tool);
+        assert_eq!(h[3].id.as_deref(), Some("c2"));
+        assert_eq!(h[3].contents[0].as_text(), Some(INTERRUPTED_BY_CANCEL));
+        // Idempotent.
+        close_dangling_tool_calls(&mut h, INTERRUPTED_BY_CANCEL);
+        assert_eq!(h.len(), 4);
+    }
+
+    /// A permanent HTTP failure reaches both callers intact: `run_stream_controlled`
+    /// names the layer with `AgentError::Model`, and the legacy `run_stream` hands back
+    /// the `ModelError` itself rather than an `AgentError` wrapping it — a caller written
+    /// before `AgentError` existed downcasts to `ModelError`, and that has to keep
+    /// resolving.
+    #[tokio::test]
+    async fn a_model_failure_surfaces_as_model_error_on_both_entry_points() {
+        let addr = spawn_status_server(401, r#"{"error":{"message":"bad key"}}"#).await;
+        let p = register_fake_provider("ctl_model_error", addr, vec![]);
+
+        let mut agent = Agent::try_with_provider(AgentSpec::new("fake/m"), p).unwrap();
+        let err = drain(agent.run_stream_controlled(user("hi"), RunControl::default()))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, AgentError::Model(m) if m.status == Some(401) && !m.retryable),
+            "{err:?}"
+        );
+
+        let mut agent = Agent::try_with_provider(AgentSpec::new("fake/m"), p).unwrap();
+        let legacy = {
+            let mut stream = agent.run_stream(user("hi"));
+            let mut ended = None;
+            while let Some(item) = stream.next().await {
+                if let Err(e) = item {
+                    ended = Some(e);
+                    break;
+                }
+            }
+            ended.expect("a 401 must end the legacy stream in Err")
+        };
+        let downcast = legacy
+            .downcast_ref::<crate::lang_model::ModelError>()
+            .expect("run_stream must keep the ModelError downcastable");
+        assert_eq!(downcast.status, Some(401));
+        assert!(!downcast.retryable);
+    }
+
+    #[tokio::test]
+    async fn cancel_during_model_stream_commits_partial_text() {
+        let (addr, _) = spawn_sse_server(
+            vec![sse_text(&["Hel", "lo", " world"])],
+            Some(std::time::Duration::from_millis(150)),
+        )
+        .await;
+        let p = register_fake_provider("ctl_cancel_model", addr, vec![]);
+        let mut agent = Agent::try_with_provider(AgentSpec::new("fake/m"), p).unwrap();
+        let ctl = RunControl::default();
+        let cancel = ctl.cancel.clone();
+        let mut stream = agent.run_stream_controlled(user("hi"), ctl);
+        let mut saw_text = false;
+        let mut ended = None;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(d) => {
+                    if d.delta
+                        .contents
+                        .iter()
+                        .any(|p| matches!(p, crate::message::PartDelta::Text { .. }))
+                        && !saw_text
+                    {
+                        saw_text = true;
+                        cancel.cancel();
+                    }
+                }
+                Err(e) => {
+                    ended = Some(e);
+                    break;
+                }
+            }
+        }
+        drop(stream);
+        assert!(matches!(ended, Some(AgentError::Cancelled)), "{ended:?}");
+        let h = agent.get_history();
+        assert_eq!(h.len(), 2, "{h:?}");
+        assert_eq!(h[1].role, Role::Assistant);
+        let text = h[1].contents[0].as_text().unwrap();
+        assert!(
+            text.starts_with("Hel") && text.len() < "Hello world".len(),
+            "{text:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_during_tool_execution_stubs_the_pending_call() {
+        let (addr, _) = spawn_sse_server(
+            vec![sse_tool_call("call_1", "slow", "{}"), sse_text(&["never"])],
+            None,
+        )
+        .await;
+        let p = register_fake_provider("ctl_cancel_tool", addr, vec![slow_tool(30)]);
+        let spec = AgentSpec::new("fake/m").tool(slow_tool(30).1);
+        let mut agent = Agent::try_with_provider(spec, p).unwrap();
+        let ctl = RunControl::default();
+        let cancel = ctl.cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            cancel.cancel();
+        });
+        let started = std::time::Instant::now();
+        let err = drain(agent.run_stream_controlled(user("go"), ctl))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::Cancelled));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let h = agent.get_history();
+        let last = h.last().unwrap();
+        assert_eq!(last.role, Role::Tool);
+        assert_eq!(last.id.as_deref(), Some("call_1"));
+        assert_eq!(last.contents[0].as_text(), Some(INTERRUPTED_BY_CANCEL));
+    }
+
+    /// A gate that never answers — the shape of an approval prompt nobody is in front of.
+    struct NeverAnswers(std::sync::Arc<tokio::sync::Notify>);
+
+    #[async_trait::async_trait]
+    impl ToolGate for NeverAnswers {
+        async fn review(&self, _c: ToolCallRequest<'_>) -> ToolDecision {
+            // Nothing ever notifies this, so the review is the await a cancel has to cut.
+            self.0.notified().await;
+            ToolDecision::Allow
+        }
+    }
+
+    /// `control.rs` promises cancel "at any await point" and says a gate may await a
+    /// person — so the review has to be raced against the token like the model and tool
+    /// phases are. Without the race, a run waiting on an approval nobody gives would
+    /// ignore its own cancel until the gate answered, which here is never.
+    #[tokio::test]
+    async fn cancel_while_the_gate_deliberates_ends_the_run_and_stubs_the_call() {
+        let (addr, _) = spawn_sse_server(
+            vec![sse_tool_call("call_g", "fast", "{}"), sse_text(&["never"])],
+            None,
+        )
+        .await;
+        let p = register_fake_provider("ctl_cancel_gate", addr, vec![fast_tool()]);
+        let spec = AgentSpec::new("fake/m").tool(fast_tool().1);
+        let mut agent = Agent::try_with_provider(spec, p).unwrap();
+        let ctl = RunControl {
+            tool_gate: std::sync::Arc::new(NeverAnswers(std::sync::Arc::new(
+                tokio::sync::Notify::new(),
+            ))),
+            ..Default::default()
+        };
+        let cancel = ctl.cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            cancel.cancel();
+        });
+        let started = std::time::Instant::now();
+        let err = drain(agent.run_stream_controlled(user("go"), ctl))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::Cancelled), "{err:?}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let h = agent.get_history();
+        let last = h.last().unwrap();
+        assert_eq!(last.role, Role::Tool, "{h:?}");
+        assert_eq!(last.id.as_deref(), Some("call_g"));
+        assert_eq!(last.contents[0].as_text(), Some(INTERRUPTED_BY_CANCEL));
+    }
+
+    #[tokio::test]
+    async fn max_turns_stops_with_a_consistent_history() {
+        let (addr, calls) =
+            spawn_sse_server(vec![sse_tool_call("call_x", "fast", "{}")], None).await;
+        let p = register_fake_provider("ctl_max_turns", addr, vec![fast_tool()]);
+        let spec = AgentSpec::new("fake/m").tool(fast_tool().1);
+        let mut agent = Agent::try_with_provider(spec, p).unwrap();
+        let ctl = RunControl {
+            max_turns: Some(2),
+            ..Default::default()
+        };
+        let err = drain(agent.run_stream_controlled(user("loop"), ctl))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::MaxTurns { turns: 2 }), "{err:?}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let h = agent.get_history();
+        // user, assistant(tool_call), tool, assistant(tool_call), tool
+        assert_eq!(h.len(), 5, "{h:?}");
+        assert_eq!(h.last().unwrap().role, Role::Tool);
+    }
+
+    struct DenyAll;
+    #[async_trait::async_trait]
+    impl ToolGate for DenyAll {
+        async fn review(&self, _c: ToolCallRequest<'_>) -> ToolDecision {
+            ToolDecision::Deny {
+                reason: "policy says no".into(),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn denied_tool_call_becomes_a_tool_result_and_the_run_continues() {
+        let (addr, calls) = spawn_sse_server(
+            vec![sse_tool_call("call_d", "fast", "{}"), sse_text(&["fine"])],
+            None,
+        )
+        .await;
+        let p = register_fake_provider("ctl_deny", addr, vec![fast_tool()]);
+        let spec = AgentSpec::new("fake/m").tool(fast_tool().1);
+        let mut agent = Agent::try_with_provider(spec, p).unwrap();
+        let ctl = RunControl {
+            tool_gate: std::sync::Arc::new(DenyAll),
+            ..Default::default()
+        };
+        let deltas = drain(agent.run_stream_controlled(user("try"), ctl))
+            .await
+            .unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let h = agent.get_history();
+        assert_eq!(h[2].role, Role::Tool);
+        assert_eq!(h[2].id.as_deref(), Some("call_d"));
+        let v = h[2].contents[0].as_value().unwrap();
+        assert!(
+            v.pointer("/error")
+                .and_then(|e| e.as_str())
+                .unwrap()
+                .contains("policy says no")
+        );
+        assert_eq!(h[3].role, Role::Assistant);
+        assert!(
+            deltas.iter().any(|d| d.delta.role == Some(Role::Tool)),
+            "the denial is emitted on the stream too"
+        );
+    }
+
+    /// [`sse_text`] plus the usage-only final frame ChatCompletion sends when
+    /// `stream_options.include_usage` is on: empty `choices` and the counts, right
+    /// before `[DONE]`.
+    fn sse_text_with_usage(chunks: &[&str], prompt: u64, completion: u64, cached: u64) -> String {
+        let frame = format!(
+            "data: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":{prompt},\
+             \"completion_tokens\":{completion},\
+             \"prompt_tokens_details\":{{\"cached_tokens\":{cached}}}}}}}\n\n"
+        );
+        sse_text(chunks).replace("data: [DONE]\n\n", &format!("{frame}data: [DONE]\n\n"))
+    }
+
+    /// The truncation trigger measures the whole prompt, cached prefix included.
+    /// `TokenUsage::input_tokens` counts only the uncached part, so reading it alone
+    /// would under-count a cached turn and let the history grow past the bound.
+    #[tokio::test]
+    async fn last_input_tokens_counts_cached_prompt_too() {
+        let (addr, _) =
+            spawn_sse_server(vec![sse_text_with_usage(&["hi"], 100, 5, 80)], None).await;
+        let p = register_fake_provider("ctl_usage_cached", addr, vec![]);
+        let mut agent = Agent::try_with_provider(AgentSpec::new("fake/m"), p).unwrap();
+        drain(agent.run_stream_controlled(user("hi"), RunControl::default()))
+            .await
+            .unwrap();
+        // 20 uncached + 80 read from the cache.
+        assert_eq!(agent.state.last_input_tokens, Some(100));
+    }
+
+    /// A whole (non-streaming) ChatCompletion response carrying one tool call — what
+    /// the blocking [`Agent::run`] reads, since it posts with `stream: false`. The
+    /// scripted server serves any body verbatim, SSE framing or not.
+    fn json_tool_call(id: &str, name: &str, args_json: &str) -> String {
+        let args = args_json.replace('"', "\\\"");
+        format!(
+            "{{\"choices\":[{{\"finish_reason\":\"tool_calls\",\"message\":{{\
+             \"role\":\"assistant\",\"tool_calls\":[{{\"id\":\"{id}\",\"type\":\"function\",\
+             \"function\":{{\"name\":\"{name}\",\"arguments\":\"{args}\"}}}}]}}}}]}}"
+        )
+    }
+
+    /// The blocking [`Agent::run`] owes the same invariant as the controlled stream:
+    /// an unknown tool name fails the batch *before* anything launches, so the
+    /// assistant's calls sit unanswered unless the exit stubs them.
+    #[tokio::test]
+    async fn run_stubs_pending_calls_when_a_tool_is_unknown() {
+        let (addr, _) = spawn_sse_server(vec![json_tool_call("c9", "nope", "{}")], None).await;
+        let p = register_fake_provider("ctl_run_unknown_tool", addr, vec![]);
+        let mut agent = Agent::try_with_provider(AgentSpec::new("fake/m"), p).unwrap();
+        let mut ended = None;
+        {
+            let mut stream = agent.run(user("go"));
+            while let Some(item) = stream.next().await {
+                if let Err(e) = item {
+                    ended = Some(e);
+                    break;
+                }
+            }
+        }
+        let err = ended.expect("an unknown tool name must end the run in Err");
+        assert!(err.to_string().contains("No tool found"), "{err:?}");
+        let h = agent.get_history();
+        let last = h.last().unwrap();
+        assert_eq!(last.role, Role::Tool, "{h:?}");
+        assert_eq!(last.id.as_deref(), Some("c9"));
+        assert_eq!(last.contents[0].as_text(), Some(INTERRUPTED_BY_FAILURE));
+    }
+
+    /// `max_turns: Some(0)` trips on the first iteration, the one early exit that
+    /// happens while nothing has committed — so it owes the same `pop` every other
+    /// early exit performs, or the next run on this agent sends two `User` messages.
+    #[tokio::test]
+    async fn max_turns_zero_pops_the_dangling_query() {
+        let (addr, calls) = spawn_sse_server(vec![sse_text(&["never"])], None).await;
+        let p = register_fake_provider("ctl_max_turns_zero", addr, vec![]);
+        let mut agent = Agent::try_with_provider(AgentSpec::new("fake/m"), p).unwrap();
+        let before = agent.get_history().len();
+        let ctl = RunControl {
+            max_turns: Some(0),
+            ..Default::default()
+        };
+        let err = drain(agent.run_stream_controlled(user("go"), ctl))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::MaxTurns { turns: 0 }), "{err:?}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(
+            agent.get_history().len(),
+            before,
+            "{:?}",
+            agent.get_history()
+        );
+    }
+
+    /// Cancel reaches a tool that is waiting on the console, not just one sleeping in
+    /// process: the run ends `Cancelled`, the abandoned call is stubbed, and neither
+    /// waits for the command.
+    ///
+    /// What the command itself does is the other half of the contract documented on
+    /// [`Agent::run_stream_controlled`]: `sleep 30` keeps running on the server after the
+    /// `exec` future is dropped, and the console it ran on is not reusable until it ends.
+    /// This test therefore drops that console rather than making a second call on it.
+    #[tokio::test]
+    async fn cancel_during_a_console_tool_stubs_the_pending_call() {
+        let (addr, _) = spawn_sse_server(
+            vec![
+                sse_tool_call("call_sh", "shell", r#"{"cmd":"sleep 30"}"#),
+                sse_text(&["never"]),
+            ],
+            None,
+        )
+        .await;
+        let shell_desc = crate::tool::r#impl::get_shell_tool_desc();
+        let p = register_fake_provider(
+            "ctl_cancel_console",
+            addr,
+            vec![(
+                "shell",
+                shell_desc.clone(),
+                crate::tool::r#impl::get_shell_tool_func(),
+            )],
+        );
+        let spec = AgentSpec::new("fake/m").tool(shell_desc);
+        let state = AgentState::new().with_console(crate::test_console().await);
+        let mut agent = Agent::try_with_provider_and_state(spec, p, state).unwrap();
+
+        let ctl = RunControl::default();
+        let cancel = ctl.cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            cancel.cancel();
+        });
+        let started = std::time::Instant::now();
+        let err = drain(agent.run_stream_controlled(user("go"), ctl))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::Cancelled), "{err:?}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "the cancel must not wait out the sleep: {:?}",
+            started.elapsed()
+        );
+        let h = agent.get_history();
+        let last = h.last().unwrap();
+        assert_eq!(last.role, Role::Tool, "{h:?}");
+        assert_eq!(last.id.as_deref(), Some("call_sh"));
+        assert_eq!(last.contents[0].as_text(), Some(INTERRUPTED_BY_CANCEL));
+
+        // The console is left behind rather than reused: `sleep 30` still has it.
+        drop(agent);
     }
 }

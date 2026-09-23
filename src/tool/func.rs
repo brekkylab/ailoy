@@ -123,6 +123,7 @@ pub mod __private {
             usage: None,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         }))
         .boxed()
     }
@@ -134,6 +135,7 @@ pub mod __private {
             usage: None,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         }))
         .boxed()
     }
@@ -151,6 +153,7 @@ pub mod __private {
                 usage: None,
                 depth: None,
                 source_agent: None,
+                rate_limit: None,
             }
         }))
     }
@@ -163,6 +166,7 @@ pub mod __private {
                 usage: None,
                 depth: None,
                 source_agent: None,
+                rate_limit: None,
             }
         }))
     }
@@ -180,6 +184,7 @@ pub mod __private {
                 usage: None,
                 depth: None,
                 source_agent: None,
+                rate_limit: None,
             }
         }))
     }
@@ -193,6 +198,7 @@ pub mod __private {
             usage: None,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         }))
     }
 }

@@ -184,6 +184,13 @@ impl AgentBuilder {
         self
     }
 
+    /// Cap on tokens per model response. The provider default (8192 on Anthropic) is too
+    /// low for answers that ride inside tool-call arguments — a written file is one.
+    pub fn max_tokens(mut self, max_tokens: u64) -> Self {
+        self.spec = self.spec.max_tokens(max_tokens);
+        self
+    }
+
     /// Sampling temperature forwarded to the language model on every call.
     pub fn temperature(mut self, temperature: f64) -> Self {
         self.spec = self.spec.temperature(temperature);
@@ -352,6 +359,17 @@ mod tests {
             .build()
             .unwrap();
         assert!(agent.get_context_manager().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_builder_max_tokens_reaches_the_spec() {
+        ensure_dummy_provider();
+        let agent = AgentBuilder::new(TEST_MODEL)
+            .agent_provider(TEST_PROVIDER_NAME)
+            .max_tokens(32_000)
+            .build()
+            .unwrap();
+        assert_eq!(agent.model_options().max_tokens, Some(32_000));
     }
 
     fn msg(role: Role, text: &str) -> Message {
