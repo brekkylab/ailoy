@@ -14,8 +14,6 @@ pub enum EngineError {
     AlreadyRunning,
     #[error("{0}")]
     Invalid(String),
-    #[error("console unavailable: {0}")]
-    ConsoleUnavailable(String),
     #[error("workspace: {0}")]
     Workspace(String),
     #[error("storage: {0}")]
@@ -34,7 +32,6 @@ impl EngineError {
             EngineError::NotFound(_) => "not_found",
             EngineError::AlreadyRunning => "already_running",
             EngineError::Invalid(_) => "invalid",
-            EngineError::ConsoleUnavailable(_) => "console_unavailable",
             EngineError::Workspace(_) => "workspace",
             EngineError::Storage(_) => "storage",
             EngineError::Io(_) => "io",

@@ -17,6 +17,7 @@ use ailoy::{
     agent::{AgentBuilder, AgentError, RunControl},
     message::{Message, Part, RateLimitInfo, Role, TokenUsage},
 };
+use cortex::console::{Console, LocalBackend};
 use futures::{FutureExt as _, StreamExt as _};
 use tokio::sync::{Mutex, broadcast};
 use tokio_util::sync::CancellationToken;
@@ -24,13 +25,12 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     assembler::{AssembledItem, MessageAssembler},
     catalog::Catalog,
-    console::ConsoleFactory,
     error::{EngineError, Result},
     events::RunEvent,
     prompt, providers,
     store::{NewMessage, Store},
     usage,
-    workspace::{WorkspaceManager, WorkspaceMount},
+    workspace::WorkspaceManager,
 };
 
 /// Everything a run needs from the engine around it. All `Arc`s, so cloning it per run is
@@ -38,7 +38,9 @@ use crate::{
 #[derive(Clone)]
 pub struct RunDeps {
     pub store: Arc<Store>,
-    pub console: Arc<ConsoleFactory>,
+    /// The console server each run starts its own console on; `None` runs without one, and
+    /// only the tools that need a shell fail, saying so.
+    pub console: Option<LocalBackend>,
     pub workspace: Arc<WorkspaceManager>,
     pub catalog: Arc<Catalog>,
     /// Where each run's scratch directory is made. Cortex starts the session in it, so a
@@ -406,16 +408,16 @@ async fn drive(
         deps.workspace.info().status,
         crate::types::WorkspaceStatus::Degraded { .. }
     );
-    let ws_mount = deps.workspace.console_mount();
-    let artifacts_mount = deps.workspace.artifacts_mount();
+    let context = deps.workspace.console_context();
+    let artifacts = deps.workspace.console_artifacts();
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let extra = deps
         .store
         .setting_get("extra_instruction")
         .map_err(|e| fail("storage", e.to_string()))?;
     let preamble = prompt::build(&prompt::PromptInput {
-        workfs_path: &ws_mount.0,
-        artifacts_path: &artifacts_mount.0,
+        workfs_path: &context,
+        artifacts_path: &artifacts,
         mounts: &mounts,
         today: &today,
         os: std::env::consts::OS,
@@ -424,34 +426,29 @@ async fn drive(
         extra: extra.as_deref(),
     });
 
-    // No console binary means no console: the pure tools still work, and a tool that
-    // needs a shell answers "needs a console" instead of the run failing outright.
+    // No backend means no console: the pure tools still work, and a tool that needs a shell
+    // answers "needs a console" instead of the run failing outright.
     //
     // The scratch directory is this run's alone and goes away with it: kept as a `TempDir`
     // for the length of this function so it is removed however the run ends — done,
     // cancelled, failed or panicking — rather than on a path only the happy ending reaches.
-    let scratch_dir = if deps.console.is_disabled() {
-        None
-    } else {
-        std::fs::create_dir_all(&deps.scratch_root)
-            .map_err(|e| fail("console_unavailable", e.to_string()))?;
-        Some(
-            tempfile::TempDir::new_in(&deps.scratch_root)
-                .map_err(|e| fail("console_unavailable", e.to_string()))?,
-        )
-    };
-    let console = match &scratch_dir {
-        None => None,
-        Some(scratch) => Some(
-            deps.console
-                .spawn(
-                    ws_mount,
-                    artifacts_mount,
-                    WorkspaceMount(scratch.path().to_path_buf()),
-                )
-                .await
-                .map_err(|e| fail("console_unavailable", e.to_string()))?,
-        ),
+    let (console, _scratch) = match &deps.console {
+        None => (None, None),
+        Some(backend) => {
+            std::fs::create_dir_all(&deps.scratch_root)
+                .map_err(|e| fail("console_unavailable", e.to_string()))?;
+            let scratch = tempfile::TempDir::new_in(&deps.scratch_root)
+                .map_err(|e| fail("console_unavailable", e.to_string()))?;
+            let console = open_console(
+                backend.clone(),
+                context,
+                artifacts,
+                scratch.path().to_path_buf(),
+            )
+            .await
+            .map_err(|e| fail("console_unavailable", format!("{e:#}")))?;
+            (Some(console), Some(scratch))
+        }
     };
 
     let mut builder = AgentBuilder::new(model)
@@ -684,6 +681,34 @@ fn persist(
     }
 }
 
+/// One console over the three trees a run works with.
+///
+/// * `context` — the user's own files and their connectors. Cortex refuses a write that
+///   lands here, which is the point: this tree is managed outside the agent's life and an
+///   agent reads it.
+/// * `artifacts` — what this agent produces. Part of the workspace the user sees, and the
+///   one tree here the agent may write.
+/// * `scratch` — the run's `/tmp`. The session *starts* here, so a relative path a command
+///   writes lands in something thrown away rather than among the user's files.
+///
+/// Its own function only so that `tests::the_three_trees_have_the_access_each_is_meant_to`
+/// can hold this arrangement to account: swapping two of these still starts a console, and
+/// fails a whole run away, at the first write.
+async fn open_console(
+    backend: LocalBackend,
+    context: PathBuf,
+    artifacts: PathBuf,
+    scratch: PathBuf,
+) -> anyhow::Result<Console> {
+    Console::builder()
+        .backend(backend)
+        .context(context)
+        .artifacts(artifacts)
+        .scratch(scratch)
+        .build()
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -699,7 +724,6 @@ mod tests {
     use super::*;
     use crate::{
         catalog::{Catalog, CatalogData},
-        console::ConsoleFactory,
         store::Store,
         workspace::WorkspaceManager,
     };
@@ -798,11 +822,10 @@ mod tests {
             )
             .await,
         );
-        // No console binary: a text-only run never needs one, and `drive` skips the spawn.
-        let console = Arc::new(ConsoleFactory::disabled());
+        // No console: a text-only run never needs one, and `drive` skips the spawn.
         RunDeps {
             store,
-            console,
+            console: None,
             workspace,
             catalog: Arc::new(Catalog::from_data(CatalogData::default())),
             scratch_root: dir.join("scratch"),
@@ -1210,5 +1233,84 @@ mod tests {
             1
         );
         assert!(merge_usage(None, None).is_none());
+    }
+
+    /// The three trees a run is given, and what each one is for.
+    ///
+    /// This is the arrangement the whole desktop rests on, and every part of it fails quietly if
+    /// the roles are swapped: the user's workspace goes in as the *context*, which cortex refuses
+    /// to let the agent write; what the agent produces goes in its *artifacts*; and the session
+    /// stands in its *scratch*, so a relative path is a throwaway one. Getting context and
+    /// artifacts the wrong way round still starts a console — it fails at the first write, which
+    /// is a whole run away from here.
+    #[tokio::test]
+    async fn the_three_trees_have_the_access_each_is_meant_to() {
+        let workspace = tempfile::tempdir().unwrap();
+        let artifacts = tempfile::tempdir().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("theirs.txt"), b"the user's").unwrap();
+
+        // A real console: the local server cortex carries, written out under a home of its own.
+        let home = tempfile::tempdir().unwrap();
+        let mut console = open_console(
+            cortex::console::Backend::local().home(home.path()),
+            workspace.path().to_path_buf(),
+            artifacts.path().to_path_buf(),
+            scratch.path().to_path_buf(),
+        )
+        .await
+        .unwrap();
+
+        // Where it stands: a relative path is the scratch, not the user's files.
+        let out = console.exec(["pwd"], Some(5_000)).await.unwrap();
+        let cwd = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        assert_eq!(
+            std::fs::canonicalize(&cwd).unwrap(),
+            std::fs::canonicalize(scratch.path()).unwrap(),
+            "the session should start in its scratch"
+        );
+
+        // The workspace is readable.
+        let theirs = workspace.path().join("theirs.txt");
+        let out = console
+            .exec(["cat", &theirs.display().to_string()], Some(5_000))
+            .await
+            .unwrap();
+        assert_eq!(
+            out.code,
+            0,
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.stdout, b"the user's".to_vec());
+
+        // And not writable: the user's tree is managed outside the agent's life.
+        let refused = console
+            .write(
+                workspace.path().join("mine.txt").display().to_string(),
+                b"no".to_vec(),
+                None,
+            )
+            .await;
+        assert!(
+            refused.is_err(),
+            "a write into the context should be refused"
+        );
+        assert!(
+            !workspace.path().join("mine.txt").exists(),
+            "the refused write must not have landed"
+        );
+
+        // The artifacts tree is where the agent's own files go, and it takes the write.
+        let mine = artifacts.path().join("mine.txt");
+        console
+            .write(
+                mine.display().to_string(),
+                b"from the session".to_vec(),
+                None,
+            )
+            .await
+            .expect("the artifacts tree takes a write");
+        assert_eq!(std::fs::read_to_string(&mine).unwrap(), "from the session");
     }
 }

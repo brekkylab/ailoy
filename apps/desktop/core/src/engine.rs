@@ -17,7 +17,6 @@ use cortex::fs::FileSystem;
 use crate::{
     catalog::{self, Catalog, split_model_id},
     config::EngineConfig,
-    console::ConsoleFactory,
     error::{EngineError, Result},
     providers,
     run::{RunDeps, RunHandle, RunManager},
@@ -95,11 +94,9 @@ impl Engine {
 
         // Nothing is started here: the server is written out and run by the first run that
         // needs a console, so a window with no run yet has spent nothing on one.
-        let console = Arc::new(if cfg.console {
-            ConsoleFactory::new(cfg.cortex_home())
-        } else {
-            ConsoleFactory::disabled()
-        });
+        let console = cfg
+            .console
+            .then(|| cortex::console::Backend::local().home(cfg.cortex_home()));
 
         let runs = RunManager::new(RunDeps {
             store: store.clone(),

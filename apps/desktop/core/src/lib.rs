@@ -3,7 +3,6 @@
 pub mod assembler;
 pub mod catalog;
 pub mod config;
-pub mod console;
 pub mod engine;
 pub mod error;
 pub mod events;

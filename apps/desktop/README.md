@@ -115,7 +115,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml   # the Tauri comma
 Do not run a bare `cargo test` at the repository root. The root crate has tests that call
 real APIs with the keys in `.env`.
 
-The console-backed tests (`live_console`, and the unmounted `live_run`) run with the rest:
+The console-backed tests (`run::tests::the_three_trees_…`, and the unmounted `live_run`) run with the rest:
 the console is the one cortex embeds, so they need nothing installed. The two that need
 FUSE-T are `#[ignore]`d — `live_workspace`, and the `live_run` test that goes through a
 mounted workspace. Again from the repository root:

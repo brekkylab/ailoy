@@ -19,7 +19,7 @@ use tokio::sync::RwLock;
 use crate::{
     error::{EngineError, Result},
     types::{MountInfo, MountKind, MountStatus, WorkspaceInfo, WorkspaceStatus},
-    workspace::{mount::WorkspaceMount, shared::SharedFs},
+    workspace::shared::SharedFs,
 };
 
 /// Where the agent's output is grafted into the workspace, one segment under its root.
@@ -54,9 +54,9 @@ pub struct WorkspaceManager {
     /// once, from `start`) and `shutdown`. That is what keeps `info()`'s `try_read` fallback
     /// unreachable in practice — outside startup and shutdown nothing contends with a reader.
     /// A third writer (a remount command, a watchdog) would make it reachable, and a healthy
-    /// mounted workspace would report `Degraded { reason: "busy" }` — and `console_mount()`
+    /// mounted workspace would report `Degraded { reason: "busy" }` — and `console_context()`
     /// would hand back `files_root` — for the length of the write. Adding one means revisiting
-    /// `info()` and `console_mount()` first.
+    /// `info()` and `console_context()` first.
     status: RwLock<WorkspaceStatus>,
     mounts: RwLock<Vec<MountInfo>>,
 }
@@ -224,10 +224,10 @@ impl WorkspaceManager {
     /// Degraded is the lesser tree on purpose: without the mount the connectors exist only
     /// inside this process, so a separate console can reach the passthrough root and nothing
     /// else.
-    pub fn console_mount(&self) -> WorkspaceMount {
+    pub fn console_context(&self) -> PathBuf {
         match self.info().status {
-            WorkspaceStatus::Mounted => WorkspaceMount(self.mountpoint.clone()),
-            WorkspaceStatus::Degraded { .. } => WorkspaceMount(self.root()),
+            WorkspaceStatus::Mounted => self.mountpoint.clone(),
+            WorkspaceStatus::Degraded { .. } => self.root(),
         }
     }
 
@@ -237,8 +237,8 @@ impl WorkspaceManager {
     /// under the context, and `/artifacts` is visible there — so a console handed the mounted
     /// spelling would be refused on the one tree it is supposed to fill. The two paths are
     /// the same directory; the user reaches it through the workspace, the agent through this.
-    pub fn artifacts_mount(&self) -> WorkspaceMount {
-        WorkspaceMount(self.artifacts_root.clone())
+    pub fn console_artifacts(&self) -> PathBuf {
+        self.artifacts_root.clone()
     }
 
     pub fn fs(&self) -> SharedFs {
@@ -294,7 +294,7 @@ impl WorkspaceManager {
 
     /// Take the mount down, and say so first.
     ///
-    /// The status is written *before* the unmount because `console_mount()` reads it: a
+    /// The status is written *before* the unmount because `console_context()` reads it: a
     /// caller that asked for a console between the unmount and the status change would be
     /// handed a mount point the kernel no longer serves, and every command in it would
     /// fail with `ENOENT` on the working directory rather than with anything a user could
@@ -481,7 +481,7 @@ mod tests {
         // And everything that reports the root agrees with the tree.
         let canonical = std::fs::canonicalize(&second).unwrap();
         assert_eq!(ws.info().files_root, canonical);
-        assert_eq!(ws.console_mount().0, canonical, "degraded serves the root itself");
+        assert_eq!(ws.console_context(), canonical, "degraded serves the root itself");
         let row = ws.mounts().await.into_iter().find(|m| m.path == "/").unwrap();
         assert_eq!(row.detail, canonical.display().to_string());
         assert!(matches!(row.kind, MountKind::Local), "the root is a local mount");
@@ -501,7 +501,7 @@ mod tests {
         let ws =
             WorkspaceManager::start(files.clone(), dir.path().join("artifacts"), mp, false).await;
         assert!(matches!(ws.info().status, WorkspaceStatus::Degraded { .. }));
-        assert_eq!(ws.console_mount().0, files);
+        assert_eq!(ws.console_context(), files);
         assert_eq!(ws.mounts().await.len(), 1, "the root row");
 
         // Root is the real directory: a write shows up on disk.

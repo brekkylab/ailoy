@@ -23,7 +23,7 @@ describe("messageOf", () => {
 describe("kindOf", () => {
   it("returns the tag to branch on", () => {
     expect(kindOf({ kind: "already_running", message: "session is already running" })).toBe("already_running");
-    expect(kindOf({ kind: "console_unavailable", message: "console unavailable: no kernel" })).toBe("console_unavailable");
+    expect(kindOf({ kind: "workspace", message: "workspace: not mounted" })).toBe("workspace");
   });
 
   it("is null for a failure that did not come from the engine", () => {

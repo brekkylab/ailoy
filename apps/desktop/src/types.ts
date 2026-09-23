@@ -55,7 +55,6 @@ export type EngineErrorKind =
   | "not_found"
   | "already_running"
   | "invalid"
-  | "console_unavailable"
   | "workspace"
   | "storage"
   | "io"
