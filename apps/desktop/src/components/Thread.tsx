@@ -78,21 +78,38 @@ export function Thread({
   // A ref and not state — nothing renders differently, and a scroll event per frame
   // should not cost a render.
   const atBottom = useRef(true);
-  // Where the last scroll event left the view, to tell which way the next one went.
-  const lastTop = useRef(0);
-  // Only the reader lets go of the end, by scrolling up. Reading the distance from the end
-  // alone was the first version, and it let go by itself: a scroll this component makes is
-  // reported a frame later, and a long answer that lays out a piece per frame has grown by
-  // then — so its own scroll to the end read as one that had stopped short, and the view
-  // stayed where the answer started. Growth never moves `scrollTop` up; the reader does.
+  // Only the reader lets go of the end, and what says they did is their input — a wheel or
+  // a trackpad going up, a finger, the scroll bar — never a scroll event on its own.
+  //
+  // Two versions read it off the scroll events and both let go by themselves. A scroll event
+  // is reported a frame after the scroll, and by then the thread may have moved under it:
+  // this component's own scroll to the end, read after a long answer had grown, looked like
+  // one that stopped short; and when the thread shrinks for a moment — the streamed text is
+  // gone before the stored answer has come back — the browser pulls `scrollTop` down to fit,
+  // which read as the reader going up. Measured, coming back to a session whose run had
+  // finished left the view 1,009px above the answer. Input has neither problem.
+  const dragging = useRef(false);
+  const letGo = () => {
+    atBottom.current = false;
+  };
+  const onWheel = (e: React.WheelEvent) => {
+    if (e.deltaY < 0) letGo();
+  };
+  // A press on the scroller itself, not on anything inside it, is a press on its scroll bar.
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (e.target === e.currentTarget) dragging.current = true;
+  };
+  const onPointerUp = () => {
+    dragging.current = false;
+  };
+  // Scroll events still say when the reader has come back to the end, which is what puts
+  // the view back on it — and while the bar is held, they are the reader's.
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
-    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (gap <= 2) atBottom.current = true;
-    else if (el.scrollTop < lastTop.current) atBottom.current = false;
-    else if (gap < BOTTOM_SLACK) atBottom.current = true;
-    lastTop.current = el.scrollTop;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
+    if (near) atBottom.current = true;
+    else if (dragging.current) letGo();
   };
   // Another session starts at its own end, whatever the user had done to this one's.
   useEffect(() => {
@@ -220,6 +237,11 @@ export function Thread({
       <div
         ref={scroller}
         onScroll={onScroll}
+        onWheel={onWheel}
+        onTouchMove={letGo}
+        onPointerDown={onPointerDown}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
         className="mask-fade-y min-h-0 flex-1 overflow-y-auto px-6 pt-[calc(var(--fade-top)+0.5rem)] pb-[calc(var(--fade-bottom)+0.5rem)]"
       >
         {/* Tight between the steps of one answer — a line, its tool calls, the reply — and
