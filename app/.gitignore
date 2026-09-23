@@ -1,0 +1,14 @@
+node_modules
+dist
+*.local
+.DS_Store
+
+# Tauri's build output and generated schemas.
+src-tauri/target
+src-tauri/gen
+
+# The repo-root ignore file excludes `lib/` (Python packaging); `src/lib/` here is source.
+!src/lib/
+
+# Dev-only API keys, read by `tauri dev` (see `src-tauri/src/dev_env.rs`).
+.env

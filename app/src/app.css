@@ -1,0 +1,95 @@
+@import "tailwindcss";
+/*
+ * brekkylab's shared tokens and palette. Tokens and theme only, not `index.css`: that also
+ * pulls in `base.css`, a second reset on top of Tailwind's preflight whose unlayered
+ * `button` rules would outrank every utility class. So the `color-scheme` rules it would
+ * have supplied live below instead.
+ */
+@import "@brekkylab/ui/tokens.css";
+@import "@brekkylab/ui/theme/brekkylab.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* No `data-theme` follows the OS; the two attribute rules pin it (see `lib/theme.ts`). */
+:root { color-scheme: light dark; }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+/*
+ * shadcn-style token names, pointed at the shared palette, so the utilities read the same
+ * as in feat/desktop. `--accent` is the hover/selected surface, not the brand colour —
+ * that is `--primary` — and `--input` is a border, not a fill.
+ */
+:root {
+  --background: var(--bl-color-bg);
+  --foreground: var(--bl-color-text);
+  --card: var(--bl-color-bg-panel);
+  --card-foreground: var(--bl-color-text);
+  --popover: var(--bl-color-bg-panel);
+  --popover-foreground: var(--bl-color-text);
+  --primary: var(--bl-color-accent);
+  --primary-foreground: var(--bl-color-accent-fg);
+  --secondary: var(--bl-color-bg-sunken);
+  --secondary-foreground: var(--bl-color-text);
+  --muted: var(--bl-color-bg-sunken);
+  --muted-foreground: var(--bl-color-text-muted);
+  --accent: var(--bl-color-bg-hover);
+  --accent-foreground: var(--bl-color-text);
+  --destructive: var(--bl-color-tint-red);
+  --border: var(--bl-color-border);
+  --input: var(--bl-color-border);
+  --ring: var(--bl-color-focus);
+  --radius: var(--bl-radius-lg);
+}
+
+@theme inline {
+  --font-sans: var(--bl-font-family-sans);
+  --font-mono: var(--bl-font-family-mono);
+  --text-xs: var(--bl-font-size-xs);
+  --text-sm: var(--bl-font-size-sm);
+  --text-base: var(--bl-font-size-md);
+  --text-lg: var(--bl-font-size-lg);
+  --text-xl: var(--bl-font-size-xl);
+  --text-2xl: var(--bl-font-size-2xl);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+}
+
+html, body, #app { height: 100%; margin: 0; }
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html { @apply font-sans; }
+  body { @apply bg-background text-foreground; }
+}
+
+/* Fades the thread out at both ends, so content thins away under the title bar and into
+   the composer instead of being cut off. `--fade-*` are published so the column can pad
+   itself clear of them. */
+@utility mask-fade-y {
+  --fade-top: 2.5rem;
+  --fade-bottom: 1.5rem;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--fade-top), black calc(100% - var(--fade-bottom)), transparent);
+  mask-image: linear-gradient(to bottom, transparent, black var(--fade-top), black calc(100% - var(--fade-bottom)), transparent);
+}
