@@ -142,4 +142,14 @@ export interface SettingsPatch {
   catalog_refresh?: boolean;
 }
 export interface ModelCost { input: number | null; output: number | null; cache_read: number | null; cache_write: number | null }
+/** Where the model list came from, and whether a newer one is on its way. See `lib/catalog`. */
+export interface CatalogStatus {
+  /** When the list in use was fetched from models.dev, Unix ms; `null` when there is none yet. */
+  fetched_at: number | null;
+  /** Models in the list, every provider counted. Zero is a first start that has not fetched. */
+  models: number;
+  refreshing: boolean;
+  /** Why the last fetch failed, until one succeeds. */
+  error: string | null;
+}
 export interface ModelInfo { id: string; provider: string; name: string; context: number | null; output: number | null; cost: ModelCost | null; reasoning: boolean; tool_call: boolean; available: boolean }

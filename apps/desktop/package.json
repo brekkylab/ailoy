@@ -11,7 +11,8 @@
     "sidecar": "bash scripts/build-sidecar.sh release",
     "sidecar:debug": "bash scripts/build-sidecar.sh debug",
     "tauri:dev": "npm run sidecar:debug && tauri dev --config src-tauri/tauri.dev.conf.json",
-    "tauri:build": "npm run sidecar && tauri build",
+    "catalog": "cargo run --quiet --manifest-path core/Cargo.toml --bin gen-catalog",
+    "tauri:build": "npm run catalog && npm run sidecar && tauri build",
     "lint": "oxlint",
     "test": "vitest run",
     "typecheck": "tsc -b --noEmit"

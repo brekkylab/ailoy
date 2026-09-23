@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cancelRun, startRun } from "@/events";
+import { catalogQuery, useRefreshModels } from "@/lib/catalog";
 import { hasAnyKey } from "@/lib/settings";
 import { selectRun, useRunStore } from "@/store/runs";
 import { S } from "@/strings";
@@ -55,6 +56,11 @@ export function Composer({
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessionList });
   const models = useQuery({ queryKey: ["models"], queryFn: api.modelsList });
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settingsGet });
+  // An empty list is a first start that has not reached models.dev yet: the picker would
+  // open onto nothing, so the row says which of the two it is waiting on.
+  const catalog = useQuery(catalogQuery);
+  const refreshModels = useRefreshModels();
+  const noModels = catalog.data?.models === 0;
   const session = sessions.data?.find((s) => s.id === sessionId);
   // No key anywhere means the engine cannot build a model and would fail the run at
   // `build()`; say so in the place the user is about to type instead.
@@ -186,6 +192,24 @@ export function Composer({
                 ))}
             </SelectContent>
           </Select>
+          {noModels &&
+            (catalog.data?.error && !catalog.data.refreshing ? (
+              <>
+                <span className="text-xs text-destructive" title={catalog.data.error}>
+                  {S.modelsLoadFailed}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => refreshModels.mutate()}
+                  disabled={refreshModels.isPending}
+                >
+                  {S.retry}
+                </Button>
+              </>
+            ) : (
+              <span className="text-xs text-muted-foreground">{S.modelsLoading}</span>
+            ))}
           {send.isError && <span className="text-xs text-destructive">{api.messageOf(send.error)}</span>}
           {setModel.isError && <span className="text-xs text-destructive">{api.messageOf(setModel.error)}</span>}
           {authFailed && <span className="text-xs text-destructive">{S.authFailed}</span>}

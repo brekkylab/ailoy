@@ -31,6 +31,10 @@ pub struct Engine {
     store: Arc<Store>,
     workspace: Arc<WorkspaceManager>,
     catalog: Arc<Catalog>,
+    /// Where the fetched catalog is kept between starts.
+    catalog_cache: PathBuf,
+    /// Wakes the background refresh loop early: the setting was just turned on.
+    catalog_wake: Arc<tokio::sync::Notify>,
     runs: RunManager,
     /// The exclusive lock on `<data_dir>/engine.lock`, held for the engine's whole life.
     /// Never read — the value *is* the lock, and the OS releases it when this file closes
@@ -70,20 +74,16 @@ impl Engine {
             .await,
         );
 
-        let cache = cfg.cache_dir().join("models.json");
-        let catalog = Arc::new(Catalog::load(Some(&cache)));
-        // Read through `read_settings` rather than off the raw row, so "is the catalog
-        // allowed to refresh" has exactly one definition. Reading it here as `!= "false"`
-        // while `read_settings` reads it as `== "true"` made the settings pane and the
-        // startup path disagree about any value that is neither.
-        let refresh = cfg.catalog_refresh && providers::read_settings(&store)?.catalog_refresh;
-        if refresh {
-            let catalog = catalog.clone();
-            tokio::spawn(async move {
-                if let Err(e) = catalog.refresh(&cache).await {
-                    tracing::warn!("catalog refresh failed: {e}");
-                }
-            });
+        let catalog_cache = cfg.cache_dir().join("models.json");
+        let catalog = Arc::new(Catalog::load(Some(&catalog_cache)));
+        let catalog_wake = Arc::new(tokio::sync::Notify::new());
+        if cfg.catalog_refresh {
+            tokio::spawn(refresh_catalog(
+                catalog.clone(),
+                store.clone(),
+                catalog_cache.clone(),
+                catalog_wake.clone(),
+            ));
         }
 
         // Not fatal: a legacy or hand-edited settings row that fails to parse would otherwise
@@ -120,6 +120,8 @@ impl Engine {
             store,
             workspace,
             catalog,
+            catalog_cache,
+            catalog_wake,
             runs,
             _instance_lock: instance_lock,
             restored: Arc::new(tokio::sync::watch::channel(false).0),
@@ -426,9 +428,33 @@ impl Engine {
         let _guard = self.settings_lock.lock().await;
         providers::write_settings(&self.store, &patch)?;
         providers::apply(&self.store)?;
+        // Turned on after a long while off, the list may be months old: look now rather
+        // than when the loop's last sleep happens to end.
+        if patch.catalog_refresh == Some(true) {
+            self.catalog_wake.notify_one();
+        }
         let mut settings = providers::read_settings(&self.store)?;
         self.fill_routings(&mut settings);
         Ok(settings)
+    }
+
+    pub fn catalog_status(&self) -> CatalogStatus {
+        self.catalog.status()
+    }
+
+    /// Every change to [`Engine::catalog_status`], for the Tauri layer to pass on.
+    pub fn catalog_subscribe(&self) -> tokio::sync::watch::Receiver<CatalogStatus> {
+        self.catalog.subscribe()
+    }
+
+    /// Fetch the model list now, whether or not refreshing is on — this is the user asking.
+    /// Answers with the status either way: a failure is the list staying as it was, and
+    /// `error` says why.
+    pub async fn models_refresh(&self) -> CatalogStatus {
+        if let Err(e) = self.catalog.refresh(&self.catalog_cache).await {
+            tracing::warn!("catalog refresh failed: {e:#}");
+        }
+        self.catalog.status()
     }
 
     /// Every model the catalog knows about, with the ones whose provider has a key first.
@@ -482,6 +508,42 @@ impl Engine {
 
     pub fn config(&self) -> &EngineConfig {
         &self.cfg
+    }
+}
+
+/// Keeps the model list fresh for as long as the engine runs.
+///
+/// Fetches when the list is older than [`catalog::REFRESH_EVERY`] — or missing, which on a
+/// first start is right away — and then sleeps until it next will be, sooner after a
+/// failure. The setting is read on every pass rather than once, so switching it off stops
+/// the next fetch and switching it on (see `settings_set`) wakes the loop.
+async fn refresh_catalog(
+    catalog: Arc<Catalog>,
+    store: Arc<Store>,
+    cache: PathBuf,
+    wake: Arc<tokio::sync::Notify>,
+) {
+    loop {
+        // Read through `read_settings` rather than off the raw row, so "is the catalog
+        // allowed to refresh" has exactly one definition — the one the settings pane shows.
+        let enabled = providers::read_settings(&store).map_or(true, |s| s.catalog_refresh);
+        let mut failed = false;
+        if enabled
+            && catalog::is_due(catalog.age())
+            && let Err(e) = catalog.refresh(&cache).await
+        {
+            tracing::warn!("catalog refresh failed: {e:#}");
+            failed = true;
+        }
+        match catalog::next_check(enabled, catalog.age(), failed) {
+            Some(wait) => {
+                tokio::select! {
+                    _ = tokio::time::sleep(wait) => {}
+                    _ = wake.notified() => {}
+                }
+            }
+            None => wake.notified().await,
+        }
     }
 }
 
@@ -608,10 +670,18 @@ mod tests {
     use super::*;
 
     /// An engine with nothing outside the temp directory: no FUSE-T mount, no catalog
-    /// refresh over the network, no console process.
+    /// refresh over the network, no console process. Its model list is the catalog
+    /// fixture, put where a fetch would have cached it — a test build embeds none.
     async fn engine() -> (tempfile::TempDir, Arc<Engine>) {
         let dir = tempfile::tempdir().unwrap();
-        let e = Engine::start(config(dir.path())).await.unwrap();
+        let cfg = config(dir.path());
+        std::fs::create_dir_all(cfg.cache_dir()).unwrap();
+        std::fs::write(
+            cfg.cache_dir().join("models.json"),
+            include_str!("../testdata/catalog.json"),
+        )
+        .unwrap();
+        let e = Engine::start(cfg).await.unwrap();
         (dir, e)
     }
 

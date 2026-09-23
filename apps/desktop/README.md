@@ -30,7 +30,12 @@ Do not call `tauri dev` directly. The sidecar (`cortex-local-console`) has to be
 `scripts/build-sidecar.sh`. If `../cortex` lives somewhere else, point `CORTEX_DIR` at it.
 
 For an `.app` bundle, run `npm run tauri:build`. The result lands at
-`src-tauri/target/release/bundle/macos/Ailoy.app`.
+`src-tauri/target/release/bundle/macos/Ailoy.app`. It fetches the model list from
+[models.dev](https://models.dev) first (`npm run catalog`, into the untracked
+`core/assets/models.json`) and embeds it, for a first start that cannot reach models.dev. A
+dev build embeds none: its model picker is empty until the app's first fetch lands, a
+second or two after it starts. From then on the app keeps its own copy under `cache/` and
+fetches again every six hours.
 
 The first run has no keys. Open **Settings** and enter an API key for the provider you want
 before the model list turns `available` and a chat can start. The engine holds the keys and
@@ -45,7 +50,7 @@ Everything lives under `~/Library/Application Support/com.brekkylab.ailoy/`.
 | `ailoy.sqlite` | Chats, messages, settings, mounts. Keys too, at file mode 0600          |
 | `files/`       | The workspace root only when the process has no `HOME`; otherwise unused |
 | `workspace/`   | The FUSE-T mountpoint. The path the agent reads                         |
-| `cache/`       | The model catalog cache                                                 |
+| `cache/`       | The model list fetched from models.dev (`models.json`), and remote-source caches |
 | `artifacts/`   | Files the agent produced. Inside the workspace these appear at `/artifacts` |
 | `scratch/`     | One temporary directory per run. The shell starts here, and it is deleted when the run ends |
 | `logs/`        | `ailoy.log.<date>`, rolled daily                                        |

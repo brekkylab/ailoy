@@ -1,0 +1,6 @@
+# Fetched from models.dev by `npm run catalog` when a release is built, never committed:
+# a snapshot in the tree goes stale the day after, and reads as the source of truth when
+# the app's own cache (`<data dir>/cache/models.json`) is. `build.rs` embeds it when it is
+# here and embeds nothing when it is not. This file keeps the directory, which `build.rs`
+# watches, in every checkout.
+models.json

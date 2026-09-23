@@ -5,18 +5,21 @@
 // place to land (`api.messageOf`, under the section that sent it).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import * as api from "@/api";
 import { ProviderIcon } from "@/components/icons/ProviderIcon";
 import { NumberSetting, Section } from "@/components/settings/fields";
 import { ProviderPane } from "@/components/settings/ProviderPane";
+import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
+import { catalogQuery, useRefreshModels } from "@/lib/catalog";
 import { modelsOf } from "@/lib/providers";
 import { providerOf, type Save } from "@/lib/settingsPatch";
+import { formatRelativeTime } from "@/lib/time";
 import { S } from "@/strings";
 import type { SettingsPatch } from "@/types";
 
@@ -24,6 +27,15 @@ export function ModelsPage() {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settingsGet });
   const models = useQuery({ queryKey: ["models"], queryFn: api.modelsList });
+  const catalog = useQuery(catalogQuery);
+  const refreshModels = useRefreshModels();
+  const fetching = refreshModels.isPending || !!catalog.data?.refreshing;
+  // The clock "updated 3h ago" is read against, ticking like the sidebar's.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
   const refreshId = useId();
   // Which provider the pane is showing. Derived during render rather than corrected in an
   // effect: the list arrives one query after this component, so the choice is unknown for
@@ -155,6 +167,24 @@ export function ModelsPage() {
                 onCheckedChange={(c) => commit({ catalog_refresh: c })}
               />
               <Label htmlFor={refreshId}>{S.catalogRefresh}</Label>
+            </div>
+            {/* How old the list is, so a model missing from it reads as "not fetched since"
+                rather than "does not exist" — and the way to fetch it, whether or not the
+                switch above is on. */}
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:col-span-2">
+              <span>
+                {catalog.data?.fetched_at == null
+                  ? S.catalogNever
+                  : `${S.catalogUpdated} ${formatRelativeTime(catalog.data.fetched_at, now)} · ${catalog.data.models} ${S.modelsCount}`}
+              </span>
+              <Button size="sm" variant="outline" onClick={() => refreshModels.mutate()} disabled={fetching}>
+                {fetching ? S.refreshing : S.refreshNow}
+              </Button>
+              {catalog.data?.error && !fetching && (
+                <span className="text-destructive" title={catalog.data.error}>
+                  {S.modelsLoadFailed}
+                </span>
+              )}
             </div>
           </div>
         </Section>

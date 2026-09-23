@@ -8,7 +8,7 @@ mod sidecar;
 use std::sync::Arc;
 
 use ailoy_desktop_core::{Engine, EngineConfig};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// Wraps a string as an AppleScript string literal.
 ///
@@ -57,6 +57,25 @@ fn fail_to_start(e: &dyn std::fmt::Display) -> ! {
     std::process::exit(1);
 }
 
+/// Tells the window whenever the model list changes, or starts or stops being fetched, as
+/// the `catalog` event carrying the new `CatalogStatus`.
+///
+/// The engine refreshes on a timer of its own, so without this a window would keep the list
+/// it first read: after a first start with no cache, that is an empty picker until restart.
+/// An event rather than a channel the window opens, because nothing asked — every window
+/// wants it, and a reload must not need to ask again.
+fn forward_catalog_status(app: tauri::AppHandle, engine: &Arc<Engine>) {
+    let mut rx = engine.catalog_subscribe();
+    tauri::async_runtime::spawn(async move {
+        while rx.changed().await.is_ok() {
+            let status = rx.borrow_and_update().clone();
+            if let Err(e) = app.emit("catalog", status) {
+                tracing::warn!("telling the window about the model list: {e}");
+            }
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
@@ -84,6 +103,7 @@ pub fn run() {
                 Ok(engine) => engine,
                 Err(e) => fail_to_start(&e),
             };
+            forward_catalog_status(app.handle().clone(), &engine);
             app.manage(engine);
             Ok(())
         })
@@ -116,6 +136,8 @@ pub fn run() {
             commands::settings::settings_get,
             commands::settings::settings_set,
             commands::settings::models_list,
+            commands::settings::catalog_status,
+            commands::settings::models_refresh,
             commands::settings::open_logs,
         ])
         .build(tauri::generate_context!())

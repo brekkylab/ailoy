@@ -1,4 +1,4 @@
-use ailoy_desktop_core::{EngineError, ModelInfo, Settings, SettingsPatch};
+use ailoy_desktop_core::{CatalogStatus, EngineError, ModelInfo, Settings, SettingsPatch};
 
 use super::Eng;
 
@@ -15,6 +15,20 @@ pub async fn settings_set(engine: Eng<'_>, patch: SettingsPatch) -> Result<Setti
 #[tauri::command]
 pub fn models_list(engine: Eng<'_>) -> Result<Vec<ModelInfo>, EngineError> {
     engine.models_list()
+}
+
+/// Where the model list came from. Changes arrive as the `catalog` event (see `lib.rs`);
+/// this is for the window's first paint, which may come before any of them.
+#[tauri::command]
+pub fn catalog_status(engine: Eng<'_>) -> CatalogStatus {
+    engine.catalog_status()
+}
+
+/// Fetch the model list now. Resolves once the fetch has ended either way; `error` in the
+/// status is how a failure shows.
+#[tauri::command]
+pub async fn models_refresh(engine: Eng<'_>) -> Result<CatalogStatus, EngineError> {
+    Ok(engine.models_refresh().await)
 }
 
 /// Reveal the log directory in Finder.

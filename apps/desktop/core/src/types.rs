@@ -155,6 +155,20 @@ pub struct ModelInfo {
     pub available: bool,
 }
 
+/// Where the model list the window shows came from, and whether a newer one is on its way.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CatalogStatus {
+    /// When the list in use was fetched from models.dev, in Unix milliseconds — by this
+    /// install, or by the release build that embedded it. `None` when there is no list yet.
+    pub fetched_at: Option<i64>,
+    /// How many models it holds, across every provider. Zero is the first-run case the
+    /// window has to explain, since there is nothing to pick.
+    pub models: usize,
+    pub refreshing: bool,
+    /// Why the last refresh failed; cleared by the next one that succeeds.
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionUsage {
     pub input_tokens: u64,

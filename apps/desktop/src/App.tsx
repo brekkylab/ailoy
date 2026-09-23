@@ -11,6 +11,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { Thread } from "@/components/Thread";
 import { TitleBar } from "@/components/TitleBar";
 import { WorkspacePanel } from "@/components/WorkspacePanel";
+import { useCatalogEvents } from "@/lib/catalog";
 import { makeQueryClient } from "@/lib/queryClient";
 import { sessionTitle } from "@/lib/sessionTitle";
 import { hasAnyKey } from "@/lib/settings";
@@ -188,6 +189,7 @@ function Shell() {
 
 export default function App() {
   useSystemTheme();
+  useCatalogEvents(qc);
   return (
     <QueryClientProvider client={qc}>
       <Shell />

@@ -69,6 +69,10 @@ export const mountRemove = (path: string) => invoke<void>("mount_remove", { path
 export const settingsGet = () => invoke<T.Settings>("settings_get");
 export const settingsSet = (patch: T.SettingsPatch) => invoke<T.Settings>("settings_set", { patch });
 export const modelsList = () => invoke<T.ModelInfo[]>("models_list");
+/** Changes arrive as the `catalog` event; see `lib/catalog`. */
+export const catalogStatus = () => invoke<T.CatalogStatus>("catalog_status");
+/** Fetch the model list now. Resolves either way; a failure is `error` in the status. */
+export const modelsRefresh = () => invoke<T.CatalogStatus>("models_refresh");
 export const openLogs = () => invoke<void>("open_logs");
 
 export { kindOf, messageOf } from "./lib/errors";
