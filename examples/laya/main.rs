@@ -46,15 +46,11 @@ use futures::StreamExt as _;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-
-    let prompt = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
-    let program =
-        std::env::var("AILOY_CORTEX_CONSOLE").unwrap_or_else(|_| "cortex-krun".to_string());
-
-    // Absolute, because a mount is named to the server as a `file://` URL.
     let project_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/laya");
+    let prompt = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
+
     prepare(&project_path).await?;
-    // `skill` too, which is empty on the host: it is where the skill is mounted from memory.
+
     for dir in ["context", "artifacts", "skill"] {
         let dir = project_path.join(dir);
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
@@ -81,7 +77,8 @@ async fn main() -> anyhow::Result<()> {
     .web_search_tool(vec![])
     .console(
         Console::builder()
-            .stdio_client(&[&program])
+            .stdio_client(&[&std::env::var("AILOY_CORTEX_CONSOLE")
+                .unwrap_or_else(|_| "cortex-krun".to_string())])
             .image(
                 Image::new()
                     .base("python:3.12-slim-trixie")
@@ -115,9 +112,10 @@ async fn main() -> anyhow::Result<()> {
             .gpu(true)
             .vcpus(2)
             .memory_mib(4096)
+            .gpu_memory_mib(12288)
             .build()
             .await
-            .with_context(|| format!("starting the console `{program}`"))?,
+            .with_context(|| format!("starting the console"))?,
     )
     .skill("/skills/laya")
     .build()

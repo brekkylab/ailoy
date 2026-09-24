@@ -1,0 +1,13 @@
+[project]
+name = "offshore-leaks-data"
+version = "0.1.0"
+description = "Downloads ICIJ's Offshore Leaks database and loads it into DuckDB for examples/offshore_leaks, on the host."
+requires-python = ">=3.10"
+dependencies = [
+    # The guest opens the file this writes, so it installs the same version: see main.rs.
+    "duckdb==1.5.5",
+]
+
+[tool.uv]
+# Scripts, not a package: `uv run` only needs the environment.
+package = false

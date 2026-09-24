@@ -1,25 +1,25 @@
-//! Encode images and text prompts with SAM3 through ncnn on the guest's Vulkan device, as an
-//! agent's skill.
+//! Segment images and videos with SAM3 through ncnn on the guest's Vulkan device, as an agent's
+//! skill.
 //!
 //! ```sh
 //! cargo run --example sam3
-//! cargo run --example sam3 -- "Encode the images in context with the prompt 'a red car'"
+//! cargo run --example sam3 -- "Find every cat in the photos in context and mask them"
 //! ```
 //!
-//! [SAM3](https://huggingface.co/facebook/sam3) segments what a text prompt names in an image.
-//! Only its encoders are here: the image encoder's features and the language encoder's text
-//! features, which its decoder would take, saved as an `.npz`. `prepare_model.py` says why the
-//! decoder is not.
+//! [SAM3](https://huggingface.co/facebook/sam3) is one ViT backbone and three heads on it, all
+//! of them here, converted from the checkpoint by `prepare_model.py`:
 //!
-//! The skill is `SKILL.md` and `run_encoders.py`, mounted at `/skills/sam3` from memory, which
-//! the agent runs with its `shell` tool.
+//! * the detector, which finds every instance of a text prompt or of example boxes;
+//! * the tracker, SAM 2's mask decoder, which segments one object from points, a box or a mask;
+//! * the video tracker, the same decoder on a memory of earlier frames, which follows objects
+//!   through a video from a prompt on one of its frames.
 //!
-//! * `context/` at `/context`, read-only — what to run on, when it is not in the prompt.
+//! The skill is `SKILL.md` and `run_sam3.py`, mounted at `/skills/sam3` from memory, which the
+//! agent runs with its `shell` tool.
+//!
+//! * `context/` at `/context`, read-only — the images and frames to segment, when they are not
+//!   in the prompt.
 //! * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes.
-//!
-//! bf16 takes cortex-krun's bfloat16 and cooperative matrix patches to MoltenVK and
-//! SPIRV-Cross on the host; without them ncnn quietly runs fp32 instead, which the `bf16-p/s`
-//! and `bf16-cm` lines on stderr say.
 //!
 //! The image is Debian rather than Alpine because PyPI's ncnn wheels are manylinux
 //! (glibc) only. `mesa-vulkan-drivers` carries the venus ICD the guest needs — from
@@ -52,8 +52,6 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
     let prompt = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
-    let program =
-        std::env::var("AILOY_CORTEX_CONSOLE").unwrap_or_else(|_| "cortex-krun".to_string());
 
     // Absolute, because a mount is named to the server as a `file://` URL.
     let project_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sam3");
@@ -70,22 +68,23 @@ async fn main() -> anyhow::Result<()> {
     .instruction(concat!(
         "# Context\n\n",
         "Path: /context\n\n",
-        "Holds what you were given to encode, such as images and lists of prompts. ",
-        "When the request refers to something that is not in it, look here first. List the ",
-        "folder, and pass SAM3 the paths of the images that bear on the request. ",
+        "Holds what you were given to segment, such as images, and videos as folders of ",
+        "frames. When the request refers to something that is not in it, look here first. ",
+        "List the folder, and pass SAM3 the paths that bear on the request. ",
         "This folder is read-only.\n\n",
         "# Artifacts\n\n",
         "Path: /artifacts\n\n",
-        "Where the files the user asks for go, such as the features SAM3 saves or a report ",
-        "on them. Write them here and name them so the user can tell what they are. ",
-        "A result that is only in your reply is not delivered as a file.",
+        "Where the files the user asks for go, such as the masks and overlays SAM3 writes or a ",
+        "report on them. Have SAM3 write into a folder here named so the user can tell what it ",
+        "is. A result that is only in your reply is not delivered as a file.",
     ))
     .system_tools()
     .web_fetch_tool()
     .web_search_tool(vec![])
     .console(
         Console::builder()
-            .stdio_client(&[&program])
+            .stdio_client(&[&std::env::var("AILOY_CORTEX_CONSOLE")
+                .unwrap_or_else(|_| "cortex-krun".to_string())])
             .image(
                 Image::new()
                     .base("python:3.12-slim-trixie")
@@ -99,17 +98,14 @@ async fn main() -> anyhow::Result<()> {
                         && apt-get install -y --no-install-recommends libvulkan1 \
                         && rm -rf /var/lib/apt/lists/*",
                     )
-                    .step("pip install --no-cache-dir ncnn numpy pillow tokenizers"),
+                    .step("pip install --no-cache-dir av ncnn numpy pillow tokenizers"),
             )
             .mount_readonly(project_path.join("data/ncnn"), "/models")
             .mount_readonly(
                 cortex::fs::FuseTMount::try_new(
                     cortex::fs::Directory::new()
                         .with_file("SKILL.md", include_str!("SKILL.md").as_bytes())?
-                        .with_file(
-                            "run_encoders.py",
-                            include_str!("run_encoders.py").as_bytes(),
-                        )?,
+                        .with_file("run_sam3.py", include_str!("run_sam3.py").as_bytes())?,
                     &project_path.join("skill"),
                 )
                 .with_context(|| "mounting the skill")?,
@@ -122,9 +118,10 @@ async fn main() -> anyhow::Result<()> {
             .gpu(true)
             .vcpus(2)
             .memory_mib(4096)
+            .gpu_memory_mib(12288)
             .build()
             .await
-            .with_context(|| format!("starting the console `{program}`"))?,
+            .with_context(|| format!("starting the console"))?,
     )
     .skill("/skills/sam3")
     .build()
@@ -145,8 +142,8 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
             }
-            // A run prints a summary of what it saved, not the features, and ncnn's device
-            // log: shown whole.
+            // A run prints a summary of what it found and where the masks went, and ncnn's
+            // device log: shown whole.
             Role::Tool => {
                 for part in &message.contents {
                     println!("  ← {}", serde_json::to_string_pretty(part)?);

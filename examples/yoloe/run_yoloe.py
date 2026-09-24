@@ -1,18 +1,31 @@
-"""Find the classes YOLOE was converted with in the image under /models, on the Vulkan device.
+"""Find the classes YOLOE was converted with in images, with the ncnn model under /models on
+the Vulkan device.
 
-Run inside the guest as `python3 -c RUN MODE`, so it has no file of its own there; MODE is one
-of MODES below. `YOLOE_MODELS` names another directory than /models, to run it on the host.
-The class names, the input size and the NMS thresholds are in `yoloe.json`, which
-`prepare_model.py` wrote beside the model; what Ultralytics found in the image with the
-PyTorch model is in `yoloe.reference.json`.
+Run inside the guest as `python3 run_yoloe.py MODE REQUEST`, from the yoloe skill mounted at
+/skills/yoloe; MODE is one of MODES below. `YOLOE_MODELS` names another directory than
+/models, to run it on the host. The class names, the input size and the NMS thresholds are in
+`yoloe.json`, which `prepare_model.py` wrote beside the model.
+
+REQUEST is a JSON `{"images": [path, ...], "classes": [name, ...], "conf": threshold,
+"annotate": dir}`, of which only `images` is required. Each image is looked in, and stdout is
+one JSON object with what was found in each, of `classes` when it is given: the class, the confidence and the box, in the image's pixels. With
+`annotate`, each image is also written to that directory with its boxes drawn. An image that
+could not be taken is answered with `{"error": ...}`, and all else goes to stderr.
+
+Run as `python3 run_yoloe.py check MODE`, it checks the model instead: it looks in the image
+`prepare_model.py` took its reference on, and matches each detection to what Ultralytics found
+there with the PyTorch model, in `yoloe.reference.json`.
 
 The steps around the model are Ultralytics' own, in numpy and OpenCV: the image letterboxed
 to the square the model takes, and the boxes of the anchors that clear the confidence
-threshold kept by class-wise NMS and scaled back to the image. Each detection is then matched
-to the reference's.
+threshold kept by class-wise NMS and scaled back to the image.
 
-Exits 2 if the wheel has no Vulkan, 3 if it finds no device, 5 on a non-finite output, or on a
-detection the reference does not have or one it has that is missing or too far off.
+One mode a process: ncnn does not take a net in one precision after one in another in the
+same process.
+
+Exits 2 if the wheel has no Vulkan, 3 if it finds no device, 5 on a non-finite output or, when
+checking, on a detection the reference does not have or one it has that is missing or too far
+off.
 """
 
 import json
@@ -45,12 +58,12 @@ MARGIN = 0.1
 def device():
     """The Vulkan device ncnn will run on, or the reason there is none."""
     if not hasattr(ncnn, "get_gpu_count"):
-        print("vulkan: NOT BUILT IN (no ncnn.get_gpu_count)")
+        print("vulkan: NOT BUILT IN (no ncnn.get_gpu_count)", file=sys.stderr)
         sys.exit(2)
     if ncnn.get_gpu_count() == 0:
-        print("vulkan: no device")
+        print("vulkan: no device", file=sys.stderr)
         sys.exit(3)
-    print(f"ncnn {getattr(ncnn, '__version__', '?')} on {ncnn.get_gpu_info(0).device_name()}")
+    print(f"ncnn {getattr(ncnn, '__version__', '?')} on {ncnn.get_gpu_info(0).device_name()}", file=sys.stderr)
 
 
 def load(mode: str):
@@ -63,7 +76,7 @@ def load(mode: str):
     t = time.time()
     assert net.load_param(f"{MODELS}/yoloe.ncnn.param") == 0, "load_param failed"
     assert net.load_model(f"{MODELS}/yoloe.ncnn.bin") == 0, "load_model failed"
-    print(f"yoloe [{mode}]: loaded in {time.time() - t:.1f}s")
+    print(f"yoloe [{mode}]: loaded in {time.time() - t:.1f}s", file=sys.stderr)
     return net
 
 
@@ -102,7 +115,7 @@ def nms(boxes: np.ndarray, scores: np.ndarray, classes: np.ndarray, threshold: f
     return keep
 
 
-def detect(net, io: dict, image: np.ndarray) -> tuple[list[dict], float]:
+def detect(net, io: dict, image: np.ndarray, conf: float) -> tuple[list[dict] | None, float]:
     size, names = io["imgsz"], io["names"]
     boxed, r, (left, top) = letterbox(image, size)
     x = np.ascontiguousarray(boxed[:, :, ::-1].transpose(2, 0, 1), np.float32) / 255.0
@@ -119,7 +132,7 @@ def detect(net, io: dict, image: np.ndarray) -> tuple[list[dict], float]:
     scores_all = pred[4 : 4 + len(names)].T
     classes = scores_all.argmax(1)
     scores = scores_all.max(1)
-    kept = scores > io["conf"]
+    kept = scores > conf
     cxcywh, classes, scores = pred[:4].T[kept], classes[kept], scores[kept]
     boxes = np.concatenate([cxcywh[:, :2] - cxcywh[:, 2:] / 2, cxcywh[:, :2] + cxcywh[:, 2:] / 2], 1)
     found = []
@@ -166,23 +179,83 @@ def compare(found: list[dict], reference: dict, conf: float, min_iou: float, max
     return ok
 
 
-mode = sys.argv[1]
-assert mode in MODES, f"unknown mode {mode}, not in {list(MODES)}"
+def annotate(image: np.ndarray, found: list[dict], path: str):
+    image = image.copy()
+    for d in found:
+        x0, y0, x1, y1 = (int(round(v)) for v in d["box"])
+        cv2.rectangle(image, (x0, y0), (x1, y1), (0, 255, 0), 2)
+        label = f"{d['class']} {d['confidence']:.2f}"
+        (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        top = max(y0 - h - 4, 0)
+        cv2.rectangle(image, (x0, top), (x0 + w + 4, top + h + 4), (0, 255, 0), -1)
+        cv2.putText(image, label, (x0 + 2, top + h + 1), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+    assert cv2.imwrite(path, image), f"writing {path} failed"
 
-device()
+
+def look(mode: str, io: dict, request: dict) -> tuple[dict, int]:
+    """Look in each image of `request`, and say what was found."""
+    images = request.get("images") or []
+    assert images, "the request has no images"
+    conf = float(request.get("conf", io["conf"]))
+    wanted = request.get("classes") or io["names"]
+    out_dir = request.get("annotate")
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    net = load(mode)
+    report, code = {"mode": mode, "classes": io["names"], "conf": conf, "images": []}, 0
+    unknown = [c for c in wanted if c not in io["names"]]
+    if unknown:
+        report["unknown_classes"] = unknown
+    for i, path in enumerate(images):
+        try:
+            image = cv2.imread(path)
+            assert image is not None, f"cannot read {path} as an image"
+            found, ms = detect(net, io, image, conf)
+            if found is None:
+                code = 5
+                report["images"].append({"path": path, "error": "non-finite output"})
+                continue
+            found = [d for d in found if d["class"] in wanted]
+            entry = {"path": path, "size": [image.shape[1], image.shape[0]], "ms": round(ms), "detections": found}
+            if out_dir:
+                # Numbered as well, so two images of the same name do not overwrite each other.
+                stem = os.path.splitext(os.path.basename(path))[0]
+                entry["annotated"] = os.path.join(out_dir, f"{i}_{stem}.jpg")
+                annotate(image, found, entry["annotated"])
+            report["images"].append(entry)
+        except Exception as e:
+            report["images"].append({"path": path, "error": str(e) or type(e).__name__})
+    return report, code
+
+
+def check(mode: str, io: dict) -> int:
+    with open(f"{MODELS}/yoloe.reference.json") as f:
+        reference = json.load(f)
+    image = cv2.imread(f"{MODELS}/image.jpg")
+    print(f"looking for {io['names']} in a {image.shape[1]}x{image.shape[0]} image")
+    net = load(mode)
+    found, ms = detect(net, io, image, io["conf"])
+    if found is None:
+        print(f"yoloe [{mode}]: NON-FINITE OUTPUT")
+        return 5
+    print(f"yoloe [{mode}]: {len(found)} found in {ms:.0f} ms")
+    ok = compare(found, reference, io["conf"], MIN_IOU[mode], MAX_CONF_DIFF[mode])
+    print(f"yoloe [{mode}]:", "OK" if ok else "DETECTIONS DIFFER FROM THE REFERENCE")
+    return 0 if ok else 5
+
+
 with open(f"{MODELS}/yoloe.json") as f:
     io = json.load(f)
-with open(f"{MODELS}/yoloe.reference.json") as f:
-    reference = json.load(f)
-image = cv2.imread(f"{MODELS}/image.jpg")
-print(f"looking for {io['names']} in a {image.shape[1]}x{image.shape[0]} image")
-net = load(mode)
 
-found, ms = detect(net, io, image)
-if found is None:
-    print(f"yoloe [{mode}]: NON-FINITE OUTPUT")
-    sys.exit(5)
-print(f"yoloe [{mode}]: {len(found)} found in {ms:.0f} ms")
-ok = compare(found, reference, io["conf"], MIN_IOU[mode], MAX_CONF_DIFF[mode])
-print(f"yoloe [{mode}]:", "OK" if ok else "DETECTIONS DIFFER FROM THE REFERENCE")
-sys.exit(0 if ok else 5)
+if sys.argv[1] == "check":
+    mode = sys.argv[2]
+    assert mode in MODES, f"unknown mode {mode}, not in {list(MODES)}"
+    device()
+    sys.exit(check(mode, io))
+
+mode, request = sys.argv[1], json.loads(sys.argv[2])
+assert mode in MODES, f"unknown mode {mode}, not in {list(MODES)}"
+device()
+report, code = look(mode, io, request)
+print(json.dumps(report, ensure_ascii=False))
+sys.exit(code)

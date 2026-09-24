@@ -570,7 +570,3 @@ test_*
 examples/company_analysis/workspace/
 examples/company_analysis/live/
 
-# examples/run run state: context/ is what the agent reads, artifacts/ what it writes.
-examples/run/context/
-examples/run/artifacts/
-
