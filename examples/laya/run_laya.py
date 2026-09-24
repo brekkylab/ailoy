@@ -1,7 +1,7 @@
-"""Answer the reference request with the ncnn Laya model under /models, on the Vulkan device.
+"""Answer a request with the ncnn Laya model under /models, on the Vulkan device.
 
-Run inside the guest as `python3 -c RUN MODE`, so it has no file of its own there; MODE is one
-of MODES below. `LAYA_MODELS` names another directory than /models, to run it on the host.
+Run inside the guest as `python3 -c RUN MODE [REQUEST]`, so it has no file of its own there; MODE
+is one of MODES below. `LAYA_MODELS` names another directory than /models, to run it on the host.
 What the model takes and gives back, and the constants the
 steps around it need, are in `laya.json`, which `prepare_model.py` wrote beside it; the request
 and laya's own answers to it, from PyTorch on the host, are in `laya.reference.json`.
@@ -14,6 +14,10 @@ built, and the answers against laya's.
 
 Exits 2 if the wheel has no Vulkan, 3 if it finds no device, 4 if a question's tokens are not
 laya's, 5 on a non-finite answer or one too far from laya's.
+
+Given REQUEST, a JSON `{"state": ..., "questions": {id: question}}` in the shape laya takes, it
+answers that instead, with nothing to check against: stdout is the answers as one JSON object,
+a question laya cannot take answered with `{"error": ...}`, and all else goes to stderr.
 """
 
 import json
@@ -47,12 +51,12 @@ MODES = {"fp32": False, "bf16": True}
 def device():
     """The Vulkan device ncnn will run on, or the reason there is none."""
     if not hasattr(ncnn, "get_gpu_count"):
-        print("vulkan: NOT BUILT IN (no ncnn.get_gpu_count)")
+        print("vulkan: NOT BUILT IN (no ncnn.get_gpu_count)", file=sys.stderr)
         sys.exit(2)
     if ncnn.get_gpu_count() == 0:
-        print("vulkan: no device")
+        print("vulkan: no device", file=sys.stderr)
         sys.exit(3)
-    print(f"ncnn {getattr(ncnn, '__version__', '?')} on {ncnn.get_gpu_info(0).device_name()}")
+    print(f"ncnn {getattr(ncnn, '__version__', '?')} on {ncnn.get_gpu_info(0).device_name()}", file=sys.stderr)
 
 
 def load(mode: str):
@@ -67,7 +71,7 @@ def load(mode: str):
     t = time.time()
     assert net.load_param(f"{MODELS}/laya.ncnn.param") == 0, "load_param failed"
     assert net.load_model(f"{MODELS}/laya.ncnn.bin") == 0, "load_model failed"
-    print(f"laya [{mode}]: loaded in {time.time() - t:.1f}s")
+    print(f"laya [{mode}]: loaded in {time.time() - t:.1f}s", file=sys.stderr)
     return net
 
 
@@ -198,6 +202,7 @@ def answer(io: dict, head: dict, q: dict, scores: np.ndarray, pooled: np.ndarray
                 "probabilities": {c: round(float(v), 4) for c, v in zip(keys, p)}, **common}
     if q["t"] == "score":
         return {"type": "score", "score": round(float((np.arange(k) * p).sum()), 4),
+                "legend": {str(i): criterion(c) for i, c in enumerate(q["crit"])},
                 "probabilities": {str(i): round(float(v), 4) for i, v in enumerate(p)}, **common}
     return {"type": "noul", "noul": round(float(p[1]), 4), **common, "confidence": round(max(p[1], 1 - p[1]), 4)}
 
@@ -206,8 +211,37 @@ def probabilities(a: dict) -> list[float]:
     return list(a["probabilities"].values()) if "probabilities" in a else [a["noul"]]
 
 
+def check(question: dict) -> None:
+    """Refuse a question laya cannot be asked, as laya's own validation would."""
+    t, crit = question.get("type"), question.get("criteria")
+    assert t in QTYPES, f"type must be one of {list(QTYPES)}, not {t!r}"
+    assert question.get("instructions"), "instructions are missing"
+    if t == "choice":
+        assert isinstance(crit, (list, dict)) and len(crit) >= 2, "a choice needs two or more criteria"
+    elif t == "score":
+        assert isinstance(crit, list) and len(crit) >= 2, "a score needs a list of two or more levels"
+    else:
+        assert crit is None or isinstance(crit, dict), "a noul's criteria is an optional {true, false}"
+
+
+def ask(net, io: dict, request: dict) -> dict:
+    """Laya's answer to each question of `request` about its state."""
+    state, answers = request.get("state", ""), {}
+    for qid, qdef in (request.get("questions") or {}).items():
+        try:
+            check(qdef)
+            q = internal(qdef)
+            ids, markers = sequence(tok, io, state, q)
+            out = extract(net, io, feeds(io, table, types, ids, QTYPES[q["t"]]))
+            answers[qid] = answer(io, head, q, out["scores"], out["pooled"], markers)
+        except Exception as e:
+            answers[qid] = {"error": str(e) or type(e).__name__}
+    return answers
+
+
 mode = sys.argv[1]
 assert mode in MODES, f"unknown mode {mode}, not in {list(MODES)}"
+request = json.loads(sys.argv[2]) if len(sys.argv) > 2 else None
 
 device()
 with open(f"{MODELS}/laya.json") as f:
@@ -219,6 +253,10 @@ table = np.load(f"{MODELS}/laya.embeddings.npy")
 types = np.load(f"{MODELS}/laya.type_embed.npy")
 head = dict(np.load(f"{MODELS}/laya.act_head.npz"))
 net = load(mode)
+
+if request is not None:
+    print(json.dumps(ask(net, io, request), ensure_ascii=False))
+    sys.exit(0)
 
 state = reference["state"]
 print(f"state: {serialize(state)}")

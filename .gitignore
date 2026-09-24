@@ -574,11 +574,3 @@ examples/company_analysis/live/
 examples/run/context/
 examples/run/artifacts/
 
-# examples/sam3: the downloaded ONNX models and the ncnn models converted from them.
-examples/sam3/data/
-
-# examples/laya: the downloaded checkpoint and the ncnn model converted from it.
-examples/laya/data/
-
-# examples/yoloe: the downloaded weights and text encoder, and the ncnn model converted from them.
-examples/yoloe/data/
