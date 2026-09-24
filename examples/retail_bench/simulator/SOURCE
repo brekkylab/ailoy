@@ -1,0 +1,18 @@
+# The one point this module is pinned to.
+#
+# Read by `sim` for both halves of what it sets up — the code under `upstream/`
+# and the dataset under `.cache/data` — because the two have to come from the
+# same commit. The simulator reads its data by file name and by shape, so a
+# store built from one commit's code and another commit's data is a result that
+# cannot be compared with anything, including itself.
+#
+# To move to another commit: edit COMMIT here, then
+#
+#     ./simulator/sim restore --force     # the code, re-downloaded
+#     ./simulator/sim fetch --force       # the data, re-downloaded
+#
+# Both say what they changed. `sim status` afterwards confirms the two agree.
+
+REPO=linghuazhang01/RetailBench
+COMMIT=f1d37b35abfa60ef5599e56d2cdbdaa4fd9b8bf3
+COMMITTED=2026-07-08

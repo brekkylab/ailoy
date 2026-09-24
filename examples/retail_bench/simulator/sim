@@ -1,0 +1,1053 @@
+#!/usr/bin/env python3
+"""Set up, check, and run the RetailBench simulator this benchmark scores.
+
+    ./simulator/sim setup           from nothing to a store that answers
+    ./simulator/sim status          what is here, what is missing, is it running
+    ./simulator/sim run  end_today  take one action        (the three: place_order,
+    ./simulator/sim view view_inventory                     modify_sku_price, end_today)
+    ./simulator/sim checkpoint      where the store last saved itself
+    ./simulator/sim stop            shut the store down
+
+    ./simulator/sim restore         the upstream code, back to the pinned commit
+    ./simulator/sim fetch           the dataset, at that same commit
+    ./simulator/sim python          the interpreter the simulator runs in
+    ./simulator/sim serve           the store's REST server, for this run
+
+The store runs as a server (`server.py`) because booting it reads six hundred
+megabytes and a run takes thousands of actions: the boot is paid once, and
+anyone — the harness, this CLI, a browser — can ask it what it looks like while
+it works. `run` and `view` here are thin clients over that API.
+
+Nothing is clever and that is the point: every command says what it is about to
+do, does it, and says what changed. `status` is the one to run when it is not
+obvious what state the module is in.
+
+Run with the system `python3`. This script imports nothing outside the standard
+library on purpose: it is what *builds* the interpreter the simulator needs, so
+it cannot be the thing that needs it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from typing import Any, Callable, Iterable
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
+UPSTREAM = HERE / "upstream"
+MANIFEST = HERE / "MANIFEST.sha256"
+CACHE = ROOT / ".cache"
+DATA = CACHE / "data"
+VENV = CACHE / "venv"
+
+STORE = "15"
+
+# ── what the upstream half is ─────────────────────────────────────
+
+# The simulator, file by file. Written out rather than discovered, because a
+# list is what makes a restore reproducible: a walk of the upstream repository
+# would pull in its agent runners, its analysis scripts, and its paper.
+UPSTREAM_FILES = [
+    "LICENSE",
+    "retail_environment.py",
+    "module/customer_manager.py",
+    "module/inventory.py",
+    "module/news_manager.py",
+    "module/order_manager.py",
+    "module/record_manager.py",
+    "module/review_manager.py",
+    "module/sku.py",
+    "module/supplier_manager.py",
+    "model/return_rate_model.py",
+    "model/review_distribution.py",
+    "model/review_star.py",
+    "model/sku_model.py",
+    "util/__init__.py",
+    "util/default_config.py",
+    "util/file.py",
+    "util/logger.py",
+    "util/map_date_to_week.py",
+    "util/sql_formatter.py",
+    "util/tool_call_parser.py",
+    "util/very_easy_config.py",
+]
+
+# Empty files that are ours, not upstream's: `module/` and `model/` are imported
+# as packages here and upstream has no `__init__.py` in either. Listed apart
+# from the manifest so that a checksum mismatch always means upstream's code
+# changed under us, never that we added a file.
+OURS = ["module/__init__.py", "model/__init__.py"]
+
+# Upstream files deliberately left out, and why. Both are the LLM-runner half:
+# nothing the environment imports reaches them, and `stream_chat` would put
+# `openai` in this module's requirements for code that never runs.
+SKIPPED = {
+    "module/stream_chat.py": "an OpenAI client, for upstream's own agent runners",
+    "module/strategy_manager.py": "plan-and-act strategy formatting, used by those runners",
+}
+
+# ── what the data half is ─────────────────────────────────────────
+
+# Store-level files, relative to the dataset root. `{set}` is `dynamic` or
+# `still`; the config names these paths and `serve.py` only prefixes them.
+STORE_FILES = [
+    "data/{set}/simulate_data/{store}/sku_model_parameter.json",
+    "data/{set}/simulate_data/{store}/upc.json",
+    "data/{set}/simulate_data/{store}/store.json",
+    "data/{set}/simulate_data/{store}/records.sql",
+    "data/{set}/simulate_data/{store}/news_merged.jsonl",
+    "data/{set}/review/all_category_reviews.jsonl",
+    "data/{set}/review/review_star_smooth_params.json",
+    "data/{set}/customer_number/{store}/data.json",
+]
+
+# Per SKU, under its category directory. The `.csv` beside these is the source
+# series and the `.png`s are plots made from it; the simulator reads neither.
+SKU_FILES = ["{sku}_suppliers.json", "{sku}_daily.json"]
+
+
+# ── the pin ───────────────────────────────────────────────────────
+
+
+def source() -> dict[str, str]:
+    """`SOURCE`, as the two names everything else is built from.
+
+    A `KEY=value` file rather than JSON or TOML so that it can be read by a
+    shell as well, and commented so that the reason the two halves share one
+    commit is where the commit is.
+    """
+    pin: dict[str, str] = {}
+    for line in (HERE / "SOURCE").read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, value = line.partition("=")
+            pin[key.strip()] = value.strip()
+    for required in ("REPO", "COMMIT"):
+        if required not in pin:
+            die(f"SOURCE has no {required}")
+    return pin
+
+
+def urls(path: str) -> tuple[str, str]:
+    """Where one repository path is, on the two hosts it can be on.
+
+    Large files in that repository are Git LFS pointers on `raw` and their
+    contents are on `media`, and which is which is documented nowhere — so
+    every fetch takes both and checks what it got.
+    """
+    pin = source()
+    repo, commit = pin["REPO"], pin["COMMIT"]
+    return (
+        f"https://raw.githubusercontent.com/{repo}/{commit}/{path}",
+        f"https://media.githubusercontent.com/media/{repo}/{commit}/{path}",
+    )
+
+
+# ── the plumbing ──────────────────────────────────────────────────
+
+LFS_POINTER = b"version https://git-lfs"
+
+
+def download(path: str, out: Path) -> int:
+    """One repository path to one local file. Returns the bytes written.
+
+    Written to a neighbouring `.part` and moved into place, so that an
+    interrupted fetch leaves nothing that a later run would mistake for done.
+    """
+    out.parent.mkdir(parents=True, exist_ok=True)
+    part = out.with_suffix(out.suffix + ".part")
+    raw, media = urls(path)
+    for attempt, url in enumerate((raw, media)):
+        try:
+            with urllib.request.urlopen(url, timeout=120) as response:
+                body = response.read()
+        except urllib.error.HTTPError as exc:
+            if attempt == 0:
+                continue
+            raise RuntimeError(f"{path}: HTTP {exc.code}") from exc
+        if body.startswith(LFS_POINTER):
+            continue  # a pointer: the contents are on the other host
+        # An empty body is a file, not a miss: `util/__init__.py` is zero bytes
+        # upstream, and `media` answers 404 for it because it was never in LFS.
+        part.write_bytes(body)
+        part.replace(out)
+        return len(body)
+    raise RuntimeError(f"{path}: neither raw nor media had its contents")
+
+
+def digest(path: Path) -> str:
+    sha = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            sha.update(block)
+    return sha.hexdigest()
+
+
+def in_parallel(jobs: int, items: Iterable[Any], work: Callable[[Any], Any]) -> list[Any]:
+    """`work` over `items`, a few at a time, in the order they were given.
+
+    Downloads are almost all waiting, so the pool is wide and the work is not
+    CPU-bound; exceptions come back with their item rather than as a traceback
+    from a thread nobody named.
+    """
+    items = list(items)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        futures = [pool.submit(work, item) for item in items]
+        out = []
+        for item, future in zip(items, futures):
+            try:
+                out.append((item, future.result(), None))
+            except Exception as exc:  # reported, not raised: one 404 is not the run
+                out.append((item, None, exc))
+        return out
+
+
+def human(count: float) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if count < 1024 or unit == "GB":
+            return f"{count:,.1f} {unit}" if unit != "B" else f"{int(count)} B"
+        count /= 1024
+    return f"{count:.1f} GB"
+
+
+def tree_size(path: Path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+def say(*parts: str) -> None:
+    print(*parts, file=sys.stderr, flush=True)
+
+
+def die(message: str) -> None:
+    say(f"error: {message}")
+    raise SystemExit(1)
+
+
+def row(label: str, *rest: str) -> None:
+    """One line of a `status` table: a label in a fixed column, then the facts."""
+    say(f"  {label:<9} " + "  ".join(r for r in rest if r))
+
+
+# ── restore: the upstream code ────────────────────────────────────
+
+
+def read_manifest() -> dict[str, str]:
+    if not MANIFEST.exists():
+        return {}
+    entries = {}
+    for line in MANIFEST.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            sha, _, name = line.partition("  ")
+            entries[name.strip()] = sha.strip()
+    return entries
+
+
+def write_manifest(entries: dict[str, str]) -> None:
+    pin = source()
+    lines = [
+        "# sha256 of every file under upstream/, as downloaded from the pinned commit.",
+        f"# {pin['REPO']} @ {pin['COMMIT']}",
+        "#",
+        "# Written by `sim restore --force` and checked by `sim restore --check`.",
+        "# A mismatch means the file changed after it was vendored — not that",
+        "# upstream changed, which can only happen by moving COMMIT in SOURCE.",
+        "",
+    ]
+    lines += [f"{entries[name]}  {name}" for name in sorted(entries)]
+    MANIFEST.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def code_state() -> tuple[list[str], list[str], list[str]]:
+    """What the upstream tree is: (matching, missing, changed)."""
+    wanted = read_manifest()
+    matching, missing, changed = [], [], []
+    for name in UPSTREAM_FILES:
+        path = UPSTREAM / name
+        if not path.exists():
+            missing.append(name)
+        elif not wanted:
+            changed.append(name)  # nothing to check against is not a pass
+        elif wanted.get(name) != digest(path):
+            changed.append(name)
+        else:
+            matching.append(name)
+    return matching, missing, changed
+
+
+def cmd_restore(args: argparse.Namespace) -> int:
+    pin = source()
+    say(f"upstream code — {pin['REPO']} @ {pin['COMMIT'][:12]}")
+
+    if args.check:
+        matching, missing, changed = code_state()
+        for name in missing:
+            say(f"  missing  {name}")
+        for name in changed:
+            say(f"  changed  {name}")
+        if not MANIFEST.exists():
+            say("  no MANIFEST.sha256 — run `sim restore --force` to write one")
+            return 1
+        say(f"  {len(matching)} of {len(UPSTREAM_FILES)} files match")
+        return 0 if not (missing or changed) else 1
+
+    if args.force or not MANIFEST.exists():
+        todo = list(UPSTREAM_FILES)
+        why = "re-downloading every file" if args.force else "no manifest yet, downloading everything"
+    else:
+        _, missing, changed = code_state()
+        todo = missing + changed
+        why = f"{len(todo)} file(s) missing or changed" if todo else "nothing to do"
+    say(f"  {why}")
+
+    written = 0
+    if todo:
+        results = in_parallel(args.jobs, todo, lambda name: download(name, UPSTREAM / name))
+        for name, size, error in results:
+            if error:
+                die(f"{name}: {error}")
+            written += size or 0
+            say(f"  fetched  {name}")
+
+    # Ours, and empty: `module/` and `model/` are packages here.
+    for name in OURS:
+        path = UPSTREAM / name
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("", encoding="utf-8")
+            say(f"  created  {name}  (ours, empty — makes the directory a package)")
+
+    entries = read_manifest()
+    if args.force or not entries:
+        entries = {name: digest(UPSTREAM / name) for name in UPSTREAM_FILES}
+        write_manifest(entries)
+        say(f"  wrote    MANIFEST.sha256  ({len(entries)} files)")
+
+    matching, missing, changed = code_state()
+    if missing or changed:
+        die(f"still {len(missing)} missing and {len(changed)} changed after restoring")
+    # The files on the list, not the tree: stray bytecode under `upstream/`
+    # would otherwise show up as the simulator having grown.
+    listed = sum((UPSTREAM / name).stat().st_size for name in UPSTREAM_FILES)
+    say(f"  ok       {len(matching)} files, {human(listed)}" + (f", {human(written)} downloaded" if written else ""))
+    return 0
+
+
+# ── fetch: the dataset ────────────────────────────────────────────
+
+
+def config_for(which: str) -> dict[str, Any]:
+    """The upstream config for a set, read from the vendored code itself.
+
+    Imported rather than copied so that the roster this fetches and the roster
+    the environment builds cannot drift: both come from
+    `upstream/util/default_config.py`.
+    """
+    sys.path.insert(0, str(UPSTREAM))
+    try:
+        from util.default_config import (  # noqa: PLC0415  (after the path is set)
+            create_dynamic_hard_config,
+            create_still_hard_config,
+        )
+    except ImportError as exc:
+        die(f"cannot read the upstream config ({exc}); run `sim restore` first")
+    maker = create_dynamic_hard_config if which == "dynamic" else create_still_hard_config
+    return maker()
+
+
+def roster(which: str, limit: int) -> list[tuple[str, str]]:
+    """The SKUs the store trades, as `(sku_id, category_directory)`.
+
+    The same intersection the simulator takes: a SKU needs demand parameters
+    *and* a category the config selected. Both files have to be fetched first,
+    which is why the store files come before this in every command below.
+    """
+    base = DATA / f"data/{which}/simulate_data/{STORE}"
+    params_path, upc_path = base / "sku_model_parameter.json", base / "upc.json"
+    if not params_path.exists() or not upc_path.exists():
+        return []
+
+    selected = {c.replace("_", " ") for c in config_for(which).get("selected_categories", [])}
+    params = json.loads(params_path.read_text(encoding="utf-8"))
+    upc = json.loads(upc_path.read_text(encoding="utf-8"))
+    entries = list(upc.values()) if isinstance(upc, dict) else upc
+    category = {str(e.get("UPC")): (e.get("CATEGORY") or "") for e in entries}
+
+    picked = [s for s in params if not selected or category.get(s) in selected]
+    if limit > 0:
+        # Round-robin across categories rather than the first N of one: a smoke
+        # test that is all frozen entrees is not a smaller store, it is a
+        # different one.
+        rings: dict[str, list[str]] = {}
+        for sku in picked:
+            rings.setdefault(category.get(sku, ""), []).append(sku)
+        taken: list[str] = []
+        queues = list(rings.values())
+        while len(taken) < limit and any(queues):
+            for queue in queues:
+                if queue and len(taken) < limit:
+                    taken.append(queue.pop(0))
+        picked = taken
+    return [(sku, (category.get(sku) or "unknown").replace(" ", "_")) for sku in picked]
+
+
+def manifest_data(which: str, skus: list[str], full: bool, without: list[str] | None = None) -> None:
+    """What was fetched, beside the data, for `serve.py` to hold the run to.
+
+    A partial fetch has to become a partial store: without this the environment
+    builds every SKU the parameter file names, and the ones whose supplier file
+    was never fetched have nobody quoting them.
+    """
+    pin = source()
+    (DATA / "manifest.json").write_text(
+        json.dumps(
+            {
+                "repo": pin["REPO"],
+                "commit": pin["COMMIT"],
+                "set": which,
+                "store": STORE,
+                "skus": skus,
+                "full": full,
+                "skus_without_data": without or [],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def cmd_fetch(args: argparse.Namespace) -> int:
+    pin = source()
+    which = args.set
+    say(f"dataset — {pin['REPO']} @ {pin['COMMIT'][:12]}, {which} set, store {STORE}")
+    say(f"  into     {DATA}")
+
+    def get(path: str) -> int:
+        out = DATA / path
+        if not args.force and out.exists() and out.stat().st_size > 0:
+            return 0
+        return download(path, out)
+
+    store_paths = [p.format(set=which, store=STORE) for p in STORE_FILES]
+    say(f"  store    {len(store_paths)} files…")
+    for path, size, error in in_parallel(args.jobs, store_paths, get):
+        if error:
+            die(f"{path}: {error}")
+        if size:
+            say(f"    + {Path(path).name}  {human(size)}")
+
+    skus = roster(which, args.skus)
+    if not skus:
+        die("no SKUs — the store files above did not arrive")
+    say(f"  roster   {len(skus)} SKUs" + (f" (of {len(roster(which, 0))}, limited by --skus)" if args.skus else ""))
+
+    per_sku = []
+    for sku, category in skus:
+        for pattern in SKU_FILES:
+            per_sku.append(f"data/{which}/simulate_data/{STORE}/{category}/{pattern.format(sku=sku)}")
+        per_sku.append(f"data/{which}/simulate_data/{STORE}/{category}/category.json")
+    per_sku = sorted(set(per_sku))
+
+    say(f"  per-SKU  {len(per_sku)} files, {args.jobs} at a time…")
+    downloaded = 0
+    for path, size, error in in_parallel(args.jobs, per_sku, get):
+        if error:
+            say(f"    ! {path}: {error}")
+        downloaded += size or 0
+
+    # Which roster SKUs ended up with no market data. Five of the ninety-six do
+    # not have their files in the upstream repository at all — they are in the
+    # parameter file and the item master, and nothing else. The store still
+    # trades them, so the agent can see them and can never buy them: every
+    # `place_order` comes back "No quote found". Left in rather than filtered
+    # out, because upstream's own runs had the same store; reported here because
+    # a silent hole in a benchmark's data is worse than a loud one.
+    without = [
+        sku
+        for sku, category in skus
+        if not (DATA / f"data/{which}/simulate_data/{STORE}/{category}/{sku}_suppliers.json").exists()
+    ]
+    manifest_data(which, [sku for sku, _ in skus], full=args.skus == 0, without=without)
+    if without:
+        say("")
+        say(f"  NOTE: {len(without)} SKU(s) have no supplier or cost files upstream:")
+        say(f"        {', '.join(without)}")
+        say("        The store trades them and no supplier ever quotes them, so an order")
+        say("        for one is always refused. This is upstream's data, not a failed fetch.")
+    say(f"  ok       {human(tree_size(DATA))} on disk" + (f", {human(downloaded)} downloaded" if downloaded else ", nothing new"))
+    if args.skus:
+        say("")
+        say(f"  NOTE: --skus {args.skus} fetched a subset, and the run will be held to those")
+        say("        SKUs. That makes it a smoke test, not a benchmark result.")
+    return 0
+
+
+# ── python: the interpreter the simulator runs in ─────────────────
+
+
+def venv_python() -> Path:
+    return VENV / "bin" / "python"
+
+
+def cmd_python(args: argparse.Namespace) -> int:
+    if venv_python().exists() and not args.force:
+        say(f"interpreter — {VENV} exists; --force to rebuild it")
+        return 0
+    if args.force and VENV.exists():
+        shutil.rmtree(VENV)
+
+    base = args.python or "python3"
+    say(f"interpreter — {VENV}")
+    say(f"  base     {base}")
+    subprocess.run([base, "-m", "venv", str(VENV)], check=True)
+    install = subprocess.run(
+        [
+            str(VENV / "bin" / "pip"),
+            "install",
+            "-q",
+            "--disable-pip-version-check",
+            "-r",
+            str(HERE / "requirements.txt"),
+        ]
+    )
+    if install.returncode != 0:
+        shutil.rmtree(VENV, ignore_errors=True)
+        die(
+            f"could not install numpy, pandas and matplotlib with {base}. A very new "
+            "python often has no wheels yet; name an older one with "
+            "`sim python --python python3.12`."
+        )
+    say(f"  ok       {describe_python()}")
+    return 0
+
+
+def describe_python() -> str:
+    """The interpreter and the three versions that matter, or why not."""
+    if not venv_python().exists():
+        return "missing"
+    probe = (
+        "import sys, numpy, pandas, matplotlib;"
+        "print('.'.join(map(str, sys.version_info[:3])), numpy.__version__,"
+        "pandas.__version__, matplotlib.__version__)"
+    )
+    try:
+        out = subprocess.run(
+            [str(venv_python()), "-c", probe], capture_output=True, text=True, timeout=120
+        )
+    except Exception as exc:
+        return f"unusable ({exc})"
+    if out.returncode != 0:
+        return f"incomplete ({out.stderr.strip().splitlines()[-1] if out.stderr.strip() else 'import failed'})"
+    version, numpy, pandas, matplotlib = out.stdout.split()
+    return f"python {version}, numpy {numpy}, pandas {pandas}, matplotlib {matplotlib}"
+
+
+# ── status ────────────────────────────────────────────────────────
+
+
+def parse_date(value: Any) -> date | None:
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str):
+        return None
+    for fmt in ("%Y-%m-%d", "%m/%d/%y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(value.strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def span(rows: Iterable[dict[str, Any]]) -> tuple[date | None, date | None, int]:
+    """The first and last date in a series of the dataset's rows, and how many."""
+    dates = [d for d in (parse_date(r.get("date")) for r in rows) if d]
+    return (min(dates), max(dates), len(dates)) if dates else (None, None, 0)
+
+
+def covers(first: date | None, last: date | None, start: date, end: date) -> str:
+    if first is None:
+        return "no dates"
+    if first <= start and last >= end:
+        return "covered"
+    return "SHORT"
+
+
+def data_state(which: str) -> dict[str, Any]:
+    """Everything `status` says about the dataset half, gathered once."""
+    root = DATA / f"data/{which}"
+    base = root / f"simulate_data/{STORE}"
+    manifest_path = DATA / "manifest.json"
+    state: dict[str, Any] = {
+        "root": root,
+        "manifest": json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.exists()
+        else None,
+        "store_missing": [
+            p.format(set=which, store=STORE)
+            for p in STORE_FILES
+            if not (DATA / p.format(set=which, store=STORE)).exists()
+        ],
+        "pools": {},
+    }
+    for label, path in (
+        ("news pool", base / "news_merged.jsonl"),
+        ("review pool", root / "review/all_category_reviews.jsonl"),
+        ("record seed", base / "records.sql"),
+    ):
+        state["pools"][label] = path.stat().st_size if path.exists() else 0
+    return state
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    pin = source()
+    which = args.set
+    say("")
+
+    # ── the code
+    matching, missing, changed = code_state()
+    if missing or changed:
+        verdict = f"{len(missing)} missing, {len(changed)} changed — run `sim restore`"
+    elif not MANIFEST.exists():
+        verdict = "no manifest — run `sim restore --force`"
+    else:
+        verdict = f"{len(matching)} files, all matching MANIFEST.sha256"
+    row("code", verdict, f"{pin['REPO']} @ {pin['COMMIT'][:12]}")
+
+    # ── the interpreter
+    row("python", describe_python(), str(venv_python()) if venv_python().exists() else "run `sim python`")
+
+    # ── the data
+    state = data_state(which)
+    manifest = state["manifest"]
+    if manifest is None:
+        row("data", "not fetched — run `sim fetch`")
+    else:
+        total = len(roster(which, 0))
+        count = len(manifest.get("skus", []))
+        whole = "every SKU" if manifest.get("full") else f"{count} of {total} SKUs (partial fetch)"
+        blind = manifest.get("skus_without_data") or []
+        stale = "" if manifest.get("commit") == pin["COMMIT"] else "  ← fetched at another commit"
+        row("data", f"{manifest.get('set')} set, store {manifest.get('store')}, {whole}", human(tree_size(DATA)) + stale)
+        if blind:
+            row("", f"{len(blind)} SKU(s) with no supplier or cost files upstream — never orderable",
+                ", ".join(blind[:4]) + ("…" if len(blind) > 4 else ""))
+        if state["store_missing"]:
+            for path in state["store_missing"]:
+                row("", f"missing  {path}")
+
+    # ── the server
+    url = base_url(args)
+    if url is None:
+        row("server", "not running", "start one with `sim serve`")
+    else:
+        code, body = call(args, "GET", "/state", soft=True)
+        if code == 0:
+            row("server", "not running", f"{url} {body} — the port file was stale and is gone")
+            url = None
+        elif code == 200 and isinstance(body, dict):
+            row("server", url, f"day {body.get('day')} of {body.get('max_days')}   {body.get('date')}",
+                f"funds {body.get('funds', 0):,.2f}")
+        else:
+            row("server", url, f"not answering ({code}) — the port file may be stale")
+
+    # ── the horizon
+    config = config_for(which) if UPSTREAM.exists() else {}
+    start = parse_date(args.start) or parse_date(config.get("store_begin_time")) or date(1991, 9, 7)
+    end = start + timedelta(days=args.days)
+    say("")
+    row("horizon", f"{start.isoformat()} → {end.isoformat()}", f"({args.days} days"
+        + (", from the config's store_begin_time" if not args.start else "") + ")")
+
+    if manifest is not None and not state["store_missing"]:
+        base = DATA / f"data/{which}/simulate_data/{STORE}"
+
+        # Cost prices, every fetched SKU: the files are small enough to read.
+        firsts, lasts, thin = [], [], []
+        for sku, category in roster(which, args.skus if args.skus else 0):
+            path = base / category / f"{sku}_daily.json"
+            if not path.exists():
+                continue
+            first, last, _ = span(json.loads(path.read_text(encoding="utf-8")))
+            if first:
+                firsts.append(first)
+                lasts.append(last)
+                if covers(first, last, start, end) != "covered":
+                    thin.append(sku)
+        if firsts:
+            verdict = "covered" if not thin else f"SHORT for {len(thin)} SKU(s)"
+            row("", f"cost prices     {verdict}", f"{max(firsts)} → {min(lasts)}", f"({len(firsts)} SKUs)")
+
+        # Supplier quotes, one SKU as a sample: six megabytes each, and every
+        # one of them was generated over the same span.
+        sample = next(iter(roster(which, 1)), None)
+        if sample:
+            sku, category = sample
+            path = base / category / f"{sku}_suppliers.json"
+            if path.exists():
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                # The file carries four `_`-prefixed keys of its own beside the
+                # suppliers — a correlation, and three per-supplier tables —
+                # so the suppliers are the list-valued ones.
+                series = {k: v for k, v in payload.items() if isinstance(v, list)}
+                first, last, _ = span([r for rows in series.values() for r in rows])
+                row("", f"supplier quotes {covers(first, last, start, end)}", f"{first} → {last}",
+                    f"({len(series)} suppliers, sample {sku})")
+
+        customers = DATA / f"data/{which}/customer_number/{STORE}/data.json"
+        if customers.exists():
+            first, last, count = span(json.loads(customers.read_text(encoding="utf-8")))
+            row("", f"customer count  {covers(first, last, start, end)}", f"{first} → {last}")
+
+        for label, size in state["pools"].items():
+            row("", f"{label:<15} {'present' if size else 'MISSING'}", human(size) if size else "")
+
+    # ── the verdict
+    ready = not (missing or changed) and manifest is not None and not state["store_missing"] \
+        and venv_python().exists() and "python " in describe_python()
+    say("")
+    if ready and url:
+        row("ready", "yes", "`sim run end_today`  ·  `sim view view_inventory`  ·  " + url)
+    elif ready:
+        row("ready", "almost", "run `./simulator/sim serve`")
+    else:
+        row("ready", "no", "run `./simulator/sim setup`")
+    say("")
+    return 0 if ready else 1
+
+
+# ── setup: all of it, in order ────────────────────────────────────
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """Code, interpreter, data — and then a server, because that is what "set up" means.
+
+    `--no-serve` stops after the data, for a machine that is only being
+    provisioned.
+    """
+    say("setting up the simulator: code, interpreter, data")
+    say("")
+    for step in (cmd_restore, cmd_python, cmd_fetch):
+        code = step(args)
+        if code != 0:
+            return code
+        say("")
+    if not args.no_serve:
+        code = cmd_serve(args)
+        if code != 0:
+            return code
+        say("")
+    return cmd_status(args)
+
+
+# ── the server, and talking to it ─────────────────────────────────
+
+RUN = CACHE / "run"
+
+
+def run_dir(args: argparse.Namespace) -> Path:
+    return Path(getattr(args, "run", None) or RUN).resolve()
+
+
+def base_url(args: argparse.Namespace) -> str | None:
+    """Where the server for this run is listening, if it is.
+
+    The port file is written by the server once it is bound and removed when it
+    exits, so its presence is the closest thing to a liveness check that costs
+    nothing. A stale one from a killed process shows up as a refused connection
+    on the next call, which says so plainly enough.
+    """
+    port_file = run_dir(args) / "sim.port"
+    if not port_file.exists():
+        return None
+    return f"http://127.0.0.1:{port_file.read_text().strip()}"
+
+
+def call(
+    args: argparse.Namespace, method: str, path: str, payload: Any = None, soft: bool = False
+) -> tuple[int, Any]:
+    """One request to this run's server. Returns the status and the parsed body.
+
+    `soft` is for the callers that are *asking whether* there is a server —
+    `status` and `serve` — rather than expecting one. They get `(0, reason)` and
+    the stale port file is cleared, which is what makes the next `serve` start a
+    new one instead of trying to reuse a process that is gone.
+    """
+    url = base_url(args)
+    if url is None:
+        if soft:
+            return 0, "no server"
+        die("no server for this run — start one with `sim serve`")
+    request = urllib.request.Request(
+        url + path,
+        method=method,
+        data=json.dumps(payload).encode() if payload is not None else None,
+        headers={"Content-Type": "application/json"} if payload is not None else {},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=600) as response:
+            return response.status, decode(response.read(), response.headers.get_content_type())
+    except urllib.error.HTTPError as exc:
+        return exc.code, decode(exc.read(), exc.headers.get_content_type())
+    except urllib.error.URLError as exc:
+        if soft:
+            (run_dir(args) / "sim.port").unlink(missing_ok=True)
+            return 0, f"not answering ({exc.reason})"
+        die(f"cannot reach {url}: {exc.reason}. The server may have died; `sim serve` starts another.")
+
+
+def decode(raw: bytes, content_type: str) -> Any:
+    body = raw.decode("utf-8", "replace")
+    if content_type == "application/json":
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError:
+            return body
+    return body
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Start the server for this run, and wait until it answers.
+
+    In the background by default, because the thing a caller wants next is the
+    URL and not a terminal held open. `--foreground` is for watching its log.
+    """
+    if not venv_python().exists():
+        die("no interpreter yet — run `sim python`")
+
+    run = run_dir(args)
+    if base_url(args) and not args.force:
+        status, body = call(args, "GET", "/state", soft=True)
+        if status == 200:
+            say(f"already running — {base_url(args)}  (day {body.get('day')}, {body.get('date')})")
+            return 0
+
+    run.mkdir(parents=True, exist_ok=True)
+    if getattr(args, "resume", None) == "":
+        args.resume = str(run / "checkpoint")
+    context_dir = Path(args.context).resolve()
+    argv = [
+        str(venv_python()), str(HERE / "server.py"),
+        "--data", str(DATA),
+        "--run", str(run),
+        "--context", str(context_dir),
+        "--config", args.config,
+        "--days", str(args.days),
+        "--port", str(args.port),
+    ]
+    if getattr(args, "resume", None):
+        argv += ["--resume", args.resume]
+    environ = dict(os.environ)
+    # Keep the vendored tree byte-clean: without this, importing the simulator
+    # leaves `__pycache__` under `upstream/` and `sim restore --check` has to
+    # explain it.
+    environ.setdefault("PYTHONPYCACHEPREFIX", str(CACHE / "pycache"))
+
+    if args.foreground:
+        return subprocess.run(argv, env=environ).returncode
+
+    log = run / "server.log"
+    say(f"starting the server — {log}")
+    with log.open("a", encoding="utf-8") as handle:
+        process = subprocess.Popen(argv, env=environ, stdout=subprocess.PIPE, stderr=handle, text=True)
+
+    # The server prints one JSON line when it is bound and ready, or one when it
+    # cannot start. Booting reads about six hundred megabytes, so this waits.
+    line = process.stdout.readline() if process.stdout else ""
+    if not line:
+        say(f"the server exited before it was ready — see {log}")
+        return 1
+    try:
+        hello = json.loads(line)
+    except json.JSONDecodeError:
+        say(line.strip())
+        return 1
+    if not hello.get("ok"):
+        say(f"could not start: {hello.get('error')}")
+        for missing in hello.get("missing", [])[:5]:
+            say(f"  missing {missing}")
+        return 1
+
+    state = hello.get("state", {})
+    say(f"  url      {hello['url']}")
+    say(f"  day      {state.get('day')} of {state.get('max_days')}   {state.get('date')}")
+    say(f"  funds    {state.get('funds'):,.2f}   {state.get('skus')} SKUs")
+    say(f"  context  {context_dir}")
+    return 0
+
+
+def cmd_checkpoint(args: argparse.Namespace) -> int:
+    """Save the store now, or say when it last saved itself.
+
+    It saves after every day on its own; this is for stopping in the middle of
+    one, and for reading back what a stopped run is holding.
+    """
+    if args.save:
+        status, body = call(args, "POST", "/checkpoint", {})
+    else:
+        status, body = call(args, "GET", "/checkpoint")
+    print(json.dumps(body, indent=2, ensure_ascii=False, default=str))
+    return 0 if status == 200 else 1
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    if base_url(args) is None:
+        say("no server for this run")
+        return 0
+    status, body = call(args, "POST", "/stop", {})
+    say("stopped" if status == 200 else f"{status}: {body}")
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """Take one action. Exit 0 taken, 1 refused — and print what the store said.
+
+    The arguments are one JSON object, because that is what the tool schema is
+    (`GET /actions` prints them). A refusal is not an error in this program: it
+    is the store answering, and the answer is on stdout like any other.
+    """
+    arguments: dict[str, Any] = {}
+    if args.arguments:
+        try:
+            arguments = json.loads(args.arguments)
+        except json.JSONDecodeError as exc:
+            die(f"the arguments are not JSON: {exc}")
+    status, body = call(args, "POST", f"/actions/{args.action}", arguments)
+    if status == 200:
+        print(body.get("formatted") or json.dumps(body, indent=2, default=str))
+        return 0
+    print(f"REFUSED: {body.get('error') if isinstance(body, dict) else body}")
+    return 1
+
+
+def cmd_view(args: argparse.Namespace) -> int:
+    """What one read-only tool says now. `k=v` pairs become its arguments."""
+    query = "&".join(pair for pair in args.arguments or [])
+    status, body = call(args, "GET", f"/views/{args.view}" + (f"?{query}" if query else ""))
+    print(body if isinstance(body, str) else json.dumps(body, indent=2, ensure_ascii=False, default=str))
+    return 0 if status == 200 else 1
+
+
+# ── the command line ──────────────────────────────────────────────
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="sim",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def server(p: argparse.ArgumentParser) -> None:
+        """Which run a command is about, and how a new one is set up."""
+        p.add_argument("--run", metavar="DIR", help="this run's directory (default: .cache/run)")
+        p.add_argument("--context", default="./context", metavar="DIR",
+                       help="where to write the tree the agent reads (default: ./context)")
+        p.add_argument("--config", default="dynamic_hard",
+                       choices=("dynamic_hard", "dynamic_middle", "still_hard", "still_middle"))
+        p.add_argument("--days", type=int, default=180, metavar="N",
+                       help="the horizon: how many days the run may last")
+        p.add_argument("--port", type=int, default=0, metavar="N", help="0 lets the kernel pick")
+        p.add_argument("--resume", metavar="DIR", nargs="?", const="",
+                       help="start from a checkpoint instead of day one (default: <run>/checkpoint)")
+        p.add_argument("--foreground", action="store_true", help="run the server here instead of in the background")
+
+    def shared(p: argparse.ArgumentParser, *, horizon: bool = False) -> None:
+        p.add_argument("--set", default="dynamic", choices=("dynamic", "still"),
+                       help="which dataset: dynamic (prices move) or still")
+        p.add_argument("--skus", type=int, default=0, metavar="N",
+                       help="only N SKUs, spread across categories — a smoke test, not a result")
+        p.add_argument("--jobs", type=int, default=8, metavar="N", help="downloads at a time")
+        p.add_argument("--force", action="store_true", help="re-download and rewrite rather than skip")
+        p.add_argument("--python", metavar="EXE", help="interpreter to build the venv from")
+        if horizon:
+            # `--days` is on `server` below, because the horizon is a property of
+            # the run and not only of the coverage check this reads it for.
+            p.add_argument("--from", dest="start", metavar="YYYY-MM-DD",
+                           help="the first day of the run (default: the config's store_begin_time)")
+
+    p = sub.add_parser("status", help="what is here, what is missing, is it runnable")
+    shared(p, horizon=True)
+    server(p)
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("setup", help="code, interpreter, data — and a server")
+    shared(p, horizon=True)
+    server(p)
+    p.add_argument("--no-serve", action="store_true", help="stop after the data; do not start a server")
+    p.add_argument("--check", action="store_true", help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_setup)
+
+    p = sub.add_parser("restore", help="the upstream code, back to the pinned commit")
+    shared(p)
+    p.add_argument("--check", action="store_true", help="verify against the manifest and change nothing")
+    p.set_defaults(func=cmd_restore)
+
+    p = sub.add_parser("fetch", help="the dataset, at the pinned commit")
+    shared(p)
+    p.set_defaults(func=cmd_fetch)
+
+    p = sub.add_parser("python", help="the interpreter the simulator runs in")
+    shared(p)
+    p.set_defaults(func=cmd_python)
+
+    p = sub.add_parser("serve", help="start the store's REST server for this run")
+    shared(p)
+    server(p)
+    p.set_defaults(func=cmd_serve)
+
+    p = sub.add_parser("run", help="take one action: place_order, modify_sku_price, end_today")
+    server(p)
+    p.add_argument("action", help="which action")
+    p.add_argument("arguments", nargs="?", help="its arguments, as one JSON object")
+    p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("view", help="what one read-only tool says now")
+    server(p)
+    p.add_argument("view", help="e.g. view_inventory")
+    p.add_argument("arguments", nargs="*", metavar="K=V", help="query arguments")
+    p.set_defaults(func=cmd_view)
+
+    p = sub.add_parser("checkpoint", help="where the store last saved itself, or save it now")
+    server(p)
+    p.add_argument("--save", action="store_true", help="save now instead of reporting")
+    p.set_defaults(func=cmd_checkpoint)
+
+    p = sub.add_parser("stop", help="shut this run's server down")
+    server(p)
+    p.set_defaults(func=cmd_stop)
+
+    args = parser.parse_args()
+    # Commands declare only the flags they take; the rest fall back here so that
+    # a shared helper can read `args.days` without every subparser listing it.
+    for name, value in (
+        ("start", None), ("days", 180), ("check", False), ("force", False),
+        ("set", "dynamic"), ("skus", 0), ("jobs", 8), ("python", None),
+        ("run", None), ("context", "./context"),
+        ("config", "dynamic_hard"), ("port", 0),
+        ("foreground", False), ("no_serve", False), ("resume", None),
+    ):
+        if not hasattr(args, name):
+            setattr(args, name, value)
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        say("interrupted")
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
