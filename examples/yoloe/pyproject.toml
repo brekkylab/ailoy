@@ -1,0 +1,19 @@
+[project]
+name = "yoloe-ncnn"
+version = "0.1.0"
+description = "Downloads YOLOE and converts it to ncnn for examples/yoloe, on the host."
+requires-python = ">=3.10"
+dependencies = [
+    # YOLOE's text encoder (MobileCLIP) goes through it; ultralytics would pip-install it itself.
+    "clip @ git+https://github.com/ultralytics/CLIP.git@a13192f8cb767260d7dfd98c843b0716593169e7",
+    "ncnn",
+    "numpy",
+    "pillow",
+    "pnnx",
+    "torch",
+    "ultralytics==8.3.200",
+]
+
+[tool.uv]
+# Scripts, not a package: `uv run` only needs the environment.
+package = false

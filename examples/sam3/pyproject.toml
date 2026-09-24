@@ -1,0 +1,16 @@
+[project]
+name = "sam3-ncnn"
+version = "0.1.0"
+description = "Downloads the SAM3 ONNX encoders and converts them to ncnn for examples/sam3, on the host."
+requires-python = ">=3.10"
+dependencies = [
+    "huggingface_hub",
+    "numpy",
+    "onnx",
+    "onnxruntime",
+    "pnnx",
+]
+
+[tool.uv]
+# Scripts, not a package: `uv run` only needs the environment.
+package = false
