@@ -41,7 +41,8 @@ use crate::{
 ///         .parameters(to_value!({ "type": "object", "properties": {} }))
 ///         .build()
 ///     )
-///     .build()?;
+///     .build()
+///     .await?;
 /// #   Ok(())
 /// # }
 /// ```
@@ -178,6 +179,12 @@ impl AgentBuilder {
         self
     }
 
+    /// Give this agent the skill in `dir`. See [`AgentSpec::skill`].
+    pub fn skill(mut self, dir: impl Into<String>) -> Self {
+        self.spec = self.spec.skill(dir);
+        self
+    }
+
     /// Set the context window management spec.
     pub fn context_manager(mut self, spec: ContextManager) -> Self {
         self.context_manager = Some(spec);
@@ -208,7 +215,9 @@ impl AgentBuilder {
     /// Materialise the agent by dispatching to
     /// [`Agent::try_with_provider_name_and_state`] with a state assembled from
     /// the optional machine and history.
-    pub fn build(self) -> anyhow::Result<Agent> {
+    ///
+    /// Async as [`Agent::try_with_provider_and_state`] is, which reads the skills.
+    pub async fn build(self) -> anyhow::Result<Agent> {
         let Self {
             spec,
             agent_provider,
@@ -229,7 +238,7 @@ impl AgentBuilder {
             state = state.with_history(history);
         }
 
-        let mut agent = Agent::try_with_provider_and_state(spec, &agent_provider, state)?;
+        let mut agent = Agent::try_with_provider_and_state(spec, &agent_provider, state).await?;
         if context_manager.is_some() {
             agent.set_context_manager(context_manager);
         }
@@ -284,6 +293,7 @@ mod tests {
             .agent_provider(TEST_PROVIDER_NAME)
             .instruction("You are a test agent.")
             .build()
+            .await
             .unwrap();
 
         let history = agent.get_history();
@@ -297,6 +307,7 @@ mod tests {
         let agent = AgentBuilder::new(TEST_MODEL)
             .agent_provider(TEST_PROVIDER_NAME)
             .build()
+            .await
             .unwrap();
         assert!(agent.get_history().is_empty());
     }
@@ -310,6 +321,7 @@ mod tests {
             .agent_provider(TEST_PROVIDER_NAME)
             .console(test_console().await)
             .build()
+            .await
             .unwrap();
 
         let mut guard = agent.state.console.lock().await;
@@ -336,6 +348,7 @@ mod tests {
             .agent_provider(TEST_PROVIDER_NAME)
             .subagent(sub_spec)
             .build()
+            .await
             .unwrap();
     }
 
@@ -350,6 +363,7 @@ mod tests {
             .agent_provider(TEST_PROVIDER_NAME)
             .context_manager(cm)
             .build()
+            .await
             .unwrap();
         assert!(agent.get_context_manager().is_some());
     }
@@ -366,6 +380,7 @@ mod tests {
             .instruction("You are a test agent.")
             .history([msg(Role::User, "hello"), msg(Role::Assistant, "hi")])
             .build()
+            .await
             .unwrap();
 
         let history = agent.get_history();
@@ -389,6 +404,7 @@ mod tests {
                 msg(Role::User, "hello"),
             ])
             .build()
+            .await
             .unwrap();
 
         let history = agent.get_history();
@@ -407,6 +423,7 @@ mod tests {
             .agent_provider(TEST_PROVIDER_NAME)
             .memory(Memory::new("/work/notes.sqlite"))
             .build()
+            .await
             .unwrap();
 
         assert_eq!(
@@ -426,6 +443,7 @@ mod tests {
             .agent_provider(TEST_PROVIDER_NAME)
             .memory(std::path::Path::new("/work/notes.sqlite"))
             .build()
+            .await
             .unwrap();
 
         assert_eq!(agent.state.memory, Some(Memory::new("/work/notes.sqlite")));

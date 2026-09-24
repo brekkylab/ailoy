@@ -119,7 +119,8 @@ async fn main() -> anyhow::Result<()> {
         spec,
         "default",
         AgentState::new().with_console(console),
-    )?;
+    )
+    .await?;
 
     println!("  model      {model}");
     println!("  context    {} -> {CONTEXT_AT} (ro)", context.display());

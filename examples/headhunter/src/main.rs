@@ -197,8 +197,6 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    // Only `Console::builder().build()` is awaited — `AgentBuilder::build()` is not async.
-    //
     // **Without `system_tools()` the agent can do nothing.** Attaching a console and
     // registering tools are separate things: the console is where a tool runs a command,
     // and with no tools there is nobody to run it.
@@ -242,7 +240,7 @@ async fn main() -> Result<()> {
         spec,
         "default",
         AgentState::new().with_console(console),
-    )?;
+    ).await?;
 
     println!("  posting  {}", args.jd.display());
     println!("  model    {}", args.model);

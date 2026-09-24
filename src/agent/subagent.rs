@@ -104,7 +104,7 @@ pub fn get_subagent_tool_func(
             // Build a fresh Agent for this invocation, sharing the parent's console
             // slot so filesystem state stays consistent across the call.
             let state = AgentState::new().with_console_slot(console);
-            let mut agent = match Agent::try_with_provider_and_state(spec, &provider, state) {
+            let mut agent = match Agent::try_with_provider_and_state(spec, &provider, state).await {
                 Ok(a) => a,
                 Err(e) => {
                     yield MessageOutput {

@@ -1,8 +1,8 @@
 """Answer a request with the ncnn Laya model under /models, on the Vulkan device.
 
-Run inside the guest as `python3 -c RUN MODE [REQUEST]`, so it has no file of its own there; MODE
-is one of MODES below. `LAYA_MODELS` names another directory than /models, to run it on the host.
-What the model takes and gives back, and the constants the
+Run inside the guest as `python3 run_laya.py MODE [REQUEST]`, from the laya skill mounted at
+/skills/laya; MODE is one of MODES below. `LAYA_MODELS` names another directory than /models, to
+run it on the host. What the model takes and gives back, and the constants the
 steps around it need, are in `laya.json`, which `prepare_model.py` wrote beside it; the request
 and laya's own answers to it, from PyTorch on the host, are in `laya.reference.json`.
 

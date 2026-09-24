@@ -67,6 +67,11 @@ pub struct AgentSpec {
     /// all available engines. Only meaningful when `web_search` is listed in `tools`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_search_engines: Option<Vec<WebSearchEngineKind>>,
+
+    /// Skill directories in the console, each holding a `SKILL.md`. See
+    /// [`skill`](Self::skill).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
 }
 
 impl AgentSpec {
@@ -79,11 +84,26 @@ impl AgentSpec {
             card: None,
             model_options: None,
             web_search_engines: None,
+            skills: Vec::new(),
         }
     }
 
     pub fn instruction(mut self, inst: impl Into<String>) -> Self {
         self.instruction = Some(inst.into());
+        self
+    }
+
+    /// Give this agent the skill in `dir`, a directory in the console holding a `SKILL.md`.
+    ///
+    /// When the agent is made, the `name` and `description` in the file's frontmatter are
+    /// read through the console and listed in the system message, with where the skill
+    /// is. The rest of the file is left for the agent to read when it uses the skill, so
+    /// an agent with skills needs a console and a tool that reads files.
+    ///
+    /// Only alongside the instruction: a history that already leads with a system message
+    /// keeps its own, and the skills are not added to it.
+    pub fn skill(mut self, dir: impl Into<String>) -> Self {
+        self.skills.push(dir.into());
         self
     }
 

@@ -1,5 +1,5 @@
-//! Answer typed questions with Laya through ncnn on the guest's Vulkan device, alone or as an
-//! agent's tool.
+//! Answer typed questions with Laya through ncnn on the guest's Vulkan device, as an agent's
+//! skill.
 //!
 //! ```sh
 //! cargo run --example laya
@@ -10,12 +10,16 @@
 //! (a text, an email, a ticket) and typed questions — a choice, a score, a yes/no — it answers
 //! each with calibrated probabilities in one forward pass, and generates no text.
 //!
+//! The skill is `SKILL.md` and `run_laya.py`, mounted at `/skills/laya` from memory, which the
+//! agent runs with its `shell` tool.
+//!
 //! * `context/` at `/context`, read-only — what to decide on, when it is not in the prompt.
 //! * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes.
 //!
-//! The image is Alpine: ncnn, numpy and tokenizers all ship musllinux wheels.
-//! `mesa-vulkan-virtio` carries the venus ICD the guest needs — Mesa 26.1 on 3.24, for
-//! bf16 — and `vulkan-loader` the loader the wheel opens.
+//! The image is Debian rather than Alpine. PyPI's ncnn has a musllinux wheel, but it crashes
+//! freeing the first `Mat` it allocates, where the manylinux (glibc) one runs laya.
+//! `mesa-vulkan-drivers` carries the venus ICD the guest needs — from trixie-backports, for
+//! bf16 — and `libvulkan1` the loader the wheel opens.
 //!
 //! Environment:
 //!
@@ -25,7 +29,6 @@
 //! * `UV` — the `uv` binary `prepare_model.py` runs with, `uv` on `PATH` by default.
 //! * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its provider's
 //!   API key has to be set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …).
-//! * `LAYA_MODE` — what the `laya` tool runs in, `fp32` (the default) or `bf16`.
 //!
 //! Read from `.env` as well.
 
@@ -34,11 +37,7 @@ use std::{io::Write as _, path::Path};
 use ailoy::{
     agent::AgentBuilder,
     console::Console,
-    datatype::Value,
     message::{Message, Part, Role},
-    to_value,
-    tool::{ToolDesc, ToolDescBuilder, ToolFunc, get_tool_providers_mut},
-    tool_func,
 };
 use anyhow::Context as _;
 use cortex::{console::NetworkAccess, image::Image};
@@ -55,21 +54,11 @@ async fn main() -> anyhow::Result<()> {
     // Absolute, because a mount is named to the server as a `file://` URL.
     let project_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/laya");
     prepare(&project_path).await?;
-    for dir in ["context", "artifacts"] {
+    // `skill` too, which is empty on the host: it is where the skill is mounted from memory.
+    for dir in ["context", "artifacts", "skill"] {
         let dir = project_path.join(dir);
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     }
-
-    let mode = std::env::var("LAYA_MODE").unwrap_or_else(|_| "fp32".to_string());
-    anyhow::ensure!(
-        ["fp32", "bf16"].contains(&mode.as_str()),
-        "LAYA_MODE is fp32 or bf16, not {mode}"
-    );
-
-    get_tool_providers_mut()
-        .get_mut("default")
-        .context("no default tool provider")?
-        .insert_func("laya", laya_tool_func(mode.clone()));
 
     let mut agent = AgentBuilder::new(
         std::env::var("AILOY_MODEL").unwrap_or_else(|_| "anthropic/claude-sonnet-5".to_string()),
@@ -88,22 +77,40 @@ async fn main() -> anyhow::Result<()> {
         "is. A result that is only in your reply is not delivered as a file.",
     ))
     .system_tools()
-    .tool(laya_tool_desc())
+    .web_fetch_tool()
+    .web_search_tool(vec![])
     .console(
         Console::builder()
             .stdio_client(&[&program])
             .image(
                 Image::new()
-                    .base("python:3.12-alpine3.24")
-                    // Alpine 3.24 ships Mesa 26.1: venus passes VK_KHR_shader_bfloat16 through from
-                    // 26.0 on.
-                    .step("apk add --no-cache vulkan-loader mesa-vulkan-virtio")
+                    .base("python:3.12-slim-trixie")
+                    // Mesa from backports: venus passes VK_KHR_shader_bfloat16 through from 26.0
+                    // on, and trixie itself has 25.0.
+                    .step(
+                        "echo 'deb http://deb.debian.org/debian trixie-backports main' \
+                        > /etc/apt/sources.list.d/backports.list \
+                        && apt-get update && apt-get install -y --no-install-recommends \
+                        -t trixie-backports mesa-vulkan-drivers \
+                        && apt-get install -y --no-install-recommends libvulkan1 \
+                        && rm -rf /var/lib/apt/lists/*",
+                    )
                     .step("pip install --no-cache-dir ncnn numpy tokenizers"),
             )
             .mount_readonly(project_path.join("data/ncnn"), "/models")
+            .mount_readonly(
+                cortex::fs::FuseTMount::try_new(
+                    cortex::fs::Directory::new()
+                        .with_file("SKILL.md", include_str!("SKILL.md").as_bytes())?
+                        .with_file("run_laya.py", include_str!("run_laya.py").as_bytes())?,
+                    &project_path.join("skill"),
+                )
+                .with_context(|| "mounting the skill")?,
+                "/skills/laya",
+            )
             .mount_readonly(project_path.join("context"), "/context")
             .mount(project_path.join("artifacts"), "/artifacts")
-            // The build's `apk` and `pip` run with the session's reach.
+            // The build's `apt-get` and `pip` run with the session's reach.
             .network(NetworkAccess::public())
             .gpu(true)
             .vcpus(2)
@@ -112,7 +119,9 @@ async fn main() -> anyhow::Result<()> {
             .await
             .with_context(|| format!("starting the console `{program}`"))?,
     )
-    .build()?;
+    .skill("/skills/laya")
+    .build()
+    .await?;
 
     let query = Message::new(Role::User).with_contents([Part::text(prompt)]);
     let mut stream = agent.run(query);
@@ -158,79 +167,4 @@ async fn prepare(project: &Path) -> anyhow::Result<()> {
         .with_context(|| format!("running `{uv}`. Install uv, or point $UV at it."))?;
     anyhow::ensure!(status.success(), "preparing the model: {status}");
     Ok(())
-}
-
-fn laya_tool_desc() -> ToolDesc {
-    ToolDescBuilder::new("laya")
-        .description(
-            "Laya is a machine learning model for decisions. Given a text, such as a message, \
-            an email or a ticket, it answers typed questions about it with calibrated \
-            probabilities. It picks one of several options, rates on an ordered scale, or \
-            answers yes or no, and it generates no text.",
-        )
-        .parameters(to_value!({
-            "type": "object",
-            "properties": {
-                "state": {
-                    "type": "string",
-                    "description": "The text the questions are about, passed verbatim."
-                },
-                "questions": {
-                    "type": "object",
-                    "description": "The questions, keyed by an id of your choosing such as department or urgency.",
-                    "additionalProperties": {
-                        "type": "object",
-                        "properties": {
-                            "type": {
-                                "type": "string",
-                                "enum": ["choice", "score", "noul"],
-                                "description": "A choice picks one of the criteria and gives a probability for each. A score picks a level on an ordered scale and is answered as its expected value. A noul is a yes or no question and is answered as the probability of yes."
-                            },
-                            "instructions": {
-                                "type": "string",
-                                "description": "The question in one sentence."
-                            },
-                            "criteria": {
-                                "description": "For a choice, the options as a list of labels or as an object from each label to what it covers. For a score, the levels as a list of descriptions from lowest to highest. For a noul, optionally an object that says what true and false mean."
-                            }
-                        },
-                        "required": ["type", "instructions"]
-                    }
-                }
-            },
-            "required": ["state", "questions"]
-        }))
-        .build()
-}
-
-/// `run_laya.py` on the call's request, in the console the agent was given.
-fn laya_tool_func(mode: String) -> ToolFunc {
-    tool_func!(async |args: Value, console: &mut Console| -> Value
-        with [mode = mode.clone()]
-        {
-            let request = match serde_json::to_string(&args) {
-                Ok(request) => request,
-                Err(e) => return to_value!({ "error": format!("encoding the request: {e}") }),
-            };
-            match console
-                .exec(["python3", "-c", include_str!("run_laya.py"), &mode, &request], Some(600_000))
-                .await
-            {
-                Ok(out) if out.code == 0 => {
-                    match serde_json::from_slice::<serde_json::Value>(&out.stdout) {
-                        Ok(answers) => Value::from(answers),
-                        Err(e) => to_value!({ "error": format!("reading laya's answers: {e}") }),
-                    }
-                }
-                Ok(out) => to_value!({
-                    "error": format!(
-                        "laya exited {}: {}",
-                        out.code,
-                        String::from_utf8_lossy(&out.stderr).trim()
-                    )
-                }),
-                Err(e) => to_value!({ "error": format!("running laya: {e}") }),
-            }
-        }
-    )
 }

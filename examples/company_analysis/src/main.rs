@@ -521,6 +521,7 @@ async fn main() -> Result<()> {
         .python_repl_tool()
         .console(console)
         .build()
+        .await
         .context("assembling the agent")?;
 
     println!("model    {}", args.model);

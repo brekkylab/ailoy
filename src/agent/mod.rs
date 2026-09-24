@@ -3,6 +3,7 @@ mod card;
 mod context;
 mod provider;
 mod rt;
+mod skill;
 mod spec;
 mod state;
 mod subagent;

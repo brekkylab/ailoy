@@ -37,7 +37,7 @@ base64 = "0.23"
 # crate in a sibling checkout, so it is a path dependency until it is published
 # — moving it to a version or git pin is what makes this crate buildable
 # elsewhere.
-cortex = { path = "../cortex/cortex" }
+cortex = { path = "../cortex/cortex", features = ["fuse-t"] }
 dedent = "0.1.1"
 derive_builder = "0.20.2"
 fancy-regex = "0.18"

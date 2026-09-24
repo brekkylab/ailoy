@@ -5,6 +5,7 @@ use futures::{FutureExt as _, Stream, StreamExt as _, stream::FuturesUnordered};
 use crate::{
     agent::{
         AgentProvider, AgentSpec, AgentState, ContextManager, get_agent_providers,
+        skill::render_skills,
         subagent::{get_subagent_tool_desc, get_subagent_tool_func},
     },
     lang_model::{LangModel, LangModelOptions},
@@ -56,20 +57,23 @@ pub struct Agent {
 impl Agent {
     /// Create an agent using the `"default"` entry of the process-wide
     /// [`get_agent_providers`] registry and a fresh [`AgentState`].
-    pub fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_state(spec, "default", AgentState::new())
+    pub async fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
+        Self::try_with_provider_and_state(spec, "default", AgentState::new()).await
     }
 
     /// Create an agent using the [`AgentProvider`] registered under `provider`
     /// in [`get_agent_providers`] and a fresh [`AgentState`].
-    pub fn try_with_provider(spec: AgentSpec, provider: impl AsRef<str>) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_state(spec, provider, AgentState::new())
+    pub async fn try_with_provider(
+        spec: AgentSpec,
+        provider: impl AsRef<str>,
+    ) -> anyhow::Result<Self> {
+        Self::try_with_provider_and_state(spec, provider, AgentState::new()).await
     }
 
     /// Create an agent using the `"default"` entry of the process-wide
     /// [`get_agent_providers`] registry and an explicit [`AgentState`].
-    pub fn try_with_state(spec: AgentSpec, state: AgentState) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_state(spec, "default", state)
+    pub async fn try_with_state(spec: AgentSpec, state: AgentState) -> anyhow::Result<Self> {
+        Self::try_with_provider_and_state(spec, "default", state).await
     }
 
     /// Create an agent using the [`AgentProvider`] registered under `provider`
@@ -85,7 +89,11 @@ impl Agent {
     /// Unless `state.history` already leads with a [`Role::System`] message, one
     /// built from `spec.instruction` is inserted at the front; a history that leads
     /// with one is taken as-is, so the caller's own system message wins.
-    pub fn try_with_provider_and_state(
+    ///
+    /// Async for [`AgentSpec::skills`], which are read through the console to go into
+    /// that message. A console server boots its session when the console is built, so
+    /// this is a read and not a boot.
+    pub async fn try_with_provider_and_state(
         spec: AgentSpec,
         provider: impl AsRef<str>,
         mut state: AgentState,
@@ -166,7 +174,16 @@ impl Agent {
         // A system message is expected only at index 0; `any` covers a stray one too,
         // since seeding a second would either shadow theirs or ship both.
         if !state.history.iter().any(|m| m.role == Role::System) {
-            if let Some(text) = spec.instruction.as_deref() {
+            let skills = if spec.skills.is_empty() {
+                None
+            } else {
+                Some(render_skills(&spec.skills, &state.console, &spec.model).await?)
+            };
+            let text = match (spec.instruction.as_deref(), skills) {
+                (Some(instruction), Some(skills)) => Some(format!("{instruction}\n\n{skills}")),
+                (instruction, skills) => skills.or(instruction.map(str::to_string)),
+            };
+            if let Some(text) = text {
                 // Front: that is where every schema expects a system message, whether
                 // it extracts the first one or sends them in place.
                 state.history.insert(
@@ -888,7 +905,9 @@ mod tests {
 
         let spec = AgentSpec::new("openai/gpt-4o-mini").instruction("Be brief.");
         let state = AgentState::new().with_console(console);
-        let mut agent = Agent::try_with_provider_and_state(spec, provider, state).unwrap();
+        let mut agent = Agent::try_with_provider_and_state(spec, provider, state)
+            .await
+            .unwrap();
 
         let text = seeded(&mut agent).await;
         assert!(
@@ -931,7 +950,9 @@ mod tests {
 
         let spec = AgentSpec::new("openai/gpt-4o-mini").instruction("Be brief.");
         let state = AgentState::new().with_console(console);
-        let mut agent = Agent::try_with_provider_and_state(spec, provider, state).unwrap();
+        let mut agent = Agent::try_with_provider_and_state(spec, provider, state)
+            .await
+            .unwrap();
         agent.seed_console_mounts().await;
 
         let system = agent
@@ -957,7 +978,7 @@ mod tests {
     async fn test_no_console_leaves_the_system_message_alone() {
         let provider = default_test_provider();
         let spec = AgentSpec::new("openai/gpt-4o-mini").instruction("Be brief.");
-        let mut agent = Agent::try_with_provider(spec, provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, provider).await.unwrap();
 
         assert_eq!(seeded(&mut agent).await, "Be brief.");
     }
@@ -969,7 +990,9 @@ mod tests {
         let provider = default_test_provider();
         let spec = AgentSpec::new("openai/gpt-4o-mini").instruction("Be brief.");
         let state = AgentState::new().with_console(crate::test_console().await);
-        let mut agent = Agent::try_with_provider_and_state(spec, provider, state).unwrap();
+        let mut agent = Agent::try_with_provider_and_state(spec, provider, state)
+            .await
+            .unwrap();
 
         assert_eq!(seeded(&mut agent).await, "Be brief.");
     }
@@ -986,7 +1009,9 @@ mod tests {
         let state = AgentState::new()
             .with_history([Message::new(Role::System).with_contents([Part::text("Mine.")])])
             .with_console(console);
-        let mut agent = Agent::try_with_provider_and_state(spec, provider, state).unwrap();
+        let mut agent = Agent::try_with_provider_and_state(spec, provider, state)
+            .await
+            .unwrap();
 
         let text = seeded(&mut agent).await;
         assert!(text.contains("Mine."));
@@ -1004,7 +1029,9 @@ mod tests {
 
         let spec = AgentSpec::new("openai/gpt-4o-mini").instruction("Be brief.");
         let state = AgentState::new().with_console(console);
-        let mut agent = Agent::try_with_provider_and_state(spec, provider, state).unwrap();
+        let mut agent = Agent::try_with_provider_and_state(spec, provider, state)
+            .await
+            .unwrap();
 
         agent.seed_console_mounts().await;
         let text = seeded(&mut agent).await;
@@ -1022,6 +1049,7 @@ mod tests {
             provider,
             rebuilt.with_console_slot(agent.state.console.clone()),
         )
+        .await
         .unwrap();
         assert_eq!(seeded(&mut rebuilt).await.matches("# Mounts").count(), 1);
     }
@@ -1040,6 +1068,7 @@ mod tests {
             provider,
             AgentState::new().with_console(console),
         )
+        .await
         .unwrap();
 
         // Materialised the way the sub-agent ToolFunc does it: the parent's slot, and
@@ -1049,6 +1078,7 @@ mod tests {
             provider,
             AgentState::new().with_console_slot(parent.state.console.clone()),
         )
+        .await
         .unwrap();
 
         assert!(seeded(&mut child).await.contains("# Mounts"));
@@ -1061,7 +1091,7 @@ mod tests {
     async fn test_run_stream_emits_text_deltas() {
         let provider = default_test_provider();
         let spec = AgentSpec::new("openai/gpt-4o-mini");
-        let mut agent = Agent::try_with_provider(spec, provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, provider).await.unwrap();
 
         let query =
             Message::new(Role::User).with_contents([Part::text("Reply with a short greeting.")]);
@@ -1094,7 +1124,7 @@ mod tests {
 
     /// A model whose endpoint refuses connection, so the first model call fails
     /// deterministically and offline (no API key needed).
-    fn unreachable_agent() -> Agent {
+    async fn unreachable_agent() -> Agent {
         use crate::lang_model::{LangModelAPISchema, LangModelProvider, get_lm_providers_mut};
 
         // Register a lang-model provider whose endpoint refuses connection, so
@@ -1112,7 +1142,9 @@ mod tests {
             "unreachable_agent".into(),
             AgentProvider::new("unreachable_lm", "default"),
         );
-        Agent::try_with_provider(AgentSpec::new("test/model"), "unreachable_agent").unwrap()
+        Agent::try_with_provider(AgentSpec::new("test/model"), "unreachable_agent")
+            .await
+            .unwrap()
     }
 
     /// A first model call that fails must roll the just-pushed user query back
@@ -1121,7 +1153,7 @@ mod tests {
     /// message, which most providers reject.
     #[tokio::test]
     async fn test_run_stream_rolls_back_query_on_failure() {
-        let mut agent = unreachable_agent();
+        let mut agent = unreachable_agent().await;
         let query = Message::new(Role::User).with_contents([Part::text("hi")]);
         let mut errored = false;
         {
@@ -1144,7 +1176,7 @@ mod tests {
     /// Same rollback guarantee for the non-streaming `run`.
     #[tokio::test]
     async fn test_run_rolls_back_query_on_failure() {
-        let mut agent = unreachable_agent();
+        let mut agent = unreachable_agent().await;
         let query = Message::new(Role::User).with_contents([Part::text("hi")]);
         let mut errored = false;
         {
@@ -1187,7 +1219,7 @@ mod tests {
         });
 
         let spec = AgentSpec::new("openai/gpt-4o-mini").tool(temperature_desc);
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the temperature in Seoul?")]);
@@ -1245,7 +1277,7 @@ mod tests {
             )
             .subagent(sub_spec);
 
-        let mut main_agent = Agent::try_with_provider(main_spec, provider).unwrap();
+        let mut main_agent = Agent::try_with_provider(main_spec, provider).await.unwrap();
 
         let query =
             Message::new(Role::User).with_contents([Part::text("What is 123 multiplied by 7?")]);
@@ -1295,7 +1327,7 @@ mod tests {
 
         let main_spec = AgentSpec::new("openai/gpt-4o-mini").subagent(sub_spec);
 
-        let mut main_agent = Agent::try_with_provider(main_spec, provider).unwrap();
+        let mut main_agent = Agent::try_with_provider(main_spec, provider).await.unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text("What is 99 plus 1?")]);
 
@@ -1376,7 +1408,7 @@ mod tests {
                     .to_string(),
             );
 
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text(
             "Tell me about Seoul. Use get_weather for weather and get_traffic for traffic.",
@@ -1457,7 +1489,7 @@ mod tests {
             .instruction("Reply with exactly 'OK'. Do not call any tools.")
             .tool(dummy_desc);
 
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let old_id = "call_old";
         let recent_id = "call_recent";
@@ -1542,7 +1574,7 @@ mod tests {
             .instruction("Reply with exactly 'OK'. Do not call any tools.")
             .tool(dummy_desc);
 
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let old_id = "call_old_b";
         let recent_id = "call_recent_b";
@@ -1661,6 +1693,7 @@ mod tests {
         let state = AgentState::new().with_memory(Memory::new("/work/notes.sqlite"));
         let agent =
             Agent::try_with_provider_and_state(AgentSpec::new(DUMMY_MODEL), provider, state)
+                .await
                 .unwrap();
 
         let names: Vec<&str> = agent.tool_descs.iter().map(|d| d.name.as_str()).collect();
@@ -1679,6 +1712,7 @@ mod tests {
             provider,
             AgentState::new(),
         )
+        .await
         .unwrap();
 
         assert!(agent.tool_descs.is_empty(), "{:?}", agent.tool_descs);
