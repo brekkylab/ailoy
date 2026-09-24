@@ -11,6 +11,10 @@ of `sam3_image_encoder` and `sam3_language_encoder` this writes into `DATA_DIR/n
 * `NAME.TENSOR.npy` -- a lookup table the caller runs before the model, or an output that
   is the same for every input.
 
+and `tokenizer.json`, CLIP's tokenizer for the language encoder's prompts, from
+`openai/clip-vit-base-patch32` at a pinned revision. It gives the same ids as the
+`SimpleTokenizer` SAM3 tokenizes with, and needs `tokenizers` alone.
+
 The decoder is neither downloaded nor converted: it takes scalar and bool inputs pnnx does not accept, and
 answers with as many masks as it found (`NonZero`), which ncnn has no shape for.
 
@@ -55,6 +59,8 @@ MODELS = ["sam3_language_encoder", "sam3_image_encoder"]
 
 REPO = "wkentaro/sam3-onnx-models"
 REVISION = "8e0e8d84459144ad442e1ef514b4f29a221f5097"
+TOKENIZER_REPO = "openai/clip-vit-base-patch32"
+TOKENIZER_REVISION = "3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268"
 
 # The activation bytes one piece may hold during pnnx's shape inference. An image-encoder
 # block is ~1.9 GB and a global-attention one ~4.4 GB, so this is one or two blocks a piece;
@@ -615,6 +621,7 @@ def main():
         if name not in todo:
             print(f"{name}: already converted")
     download(todo, onnx_dir)
+    hf_hub_download(TOKENIZER_REPO, "tokenizer.json", revision=TOKENIZER_REVISION, local_dir=ncnn_dir)
     for name in todo:
         print(f"{name}: converting", flush=True)
         shutil.rmtree(work, ignore_errors=True)
