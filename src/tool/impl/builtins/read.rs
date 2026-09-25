@@ -1,5 +1,5 @@
+use super::imgread::image_mime;
 use crate::{
-    datatype::Bytes,
     message::{Message, Part, Role},
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
@@ -8,24 +8,15 @@ use crate::{
 const DEFAULT_LIMIT: usize = 2000;
 const MAX_LINE_CHARS: usize = 10000;
 const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
-const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 
-enum FileKind {
-    Image(&'static str),
-    Text,
-}
-
-fn classify(bytes: &[u8]) -> Result<FileKind, String> {
-    let Some(kind) = infer::get(bytes) else {
-        return Ok(FileKind::Text);
-    };
-    match kind.mime_type() {
-        "image/png" => Ok(FileKind::Image("image/png")),
-        "image/jpeg" => Ok(FileKind::Image("image/jpeg")),
-        "image/gif" => Ok(FileKind::Image("image/gif")),
-        "image/webp" => Ok(FileKind::Image("image/webp")),
-        mime if mime.starts_with("text/") => Ok(FileKind::Text),
-        mime => Err(format!("unsupported file type: {mime}")),
+fn check_text(bytes: &[u8]) -> Result<(), String> {
+    if image_mime(bytes).is_some() {
+        return Err("file is an image; use `imgread` to read images".to_string());
+    }
+    match infer::get(bytes) {
+        None => Ok(()),
+        Some(kind) if kind.mime_type().starts_with("text/") => Ok(()),
+        Some(kind) => Err(format!("unsupported file type: {}", kind.mime_type())),
     }
 }
 
@@ -63,10 +54,9 @@ pub fn get_read_tool_desc() -> ToolDesc {
     ToolDescBuilder::new("read")
         .description(
             concat!(
-                "Reads a file from the local filesystem. ",
-                "It can read text files or images(PNG/JPEG/GIF/WEBP). ",
+                "Reads a text file from the local filesystem. ",
                 "When you already know which part of the file you need, only read that part. This can be important for larger files. ",
-                "For text files, results are returned using cat -n format, with line numbers starting at 1. ",
+                "Results are returned using cat -n format, with line numbers starting at 1. ",
                 "Lines longer than 10000 characters are truncated. ",
                 "Binary or unsupported file types return an error. ",
             )
@@ -80,12 +70,12 @@ pub fn get_read_tool_desc() -> ToolDesc {
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "The line number to start reading from. Only provide if the file is too large to read at once. Ignored for images.",
+                    "description": "The line number to start reading from. Only provide if the file is too large to read at once.",
                     "default": 0,
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "The number of lines to read. Only provide if the file is too large to read at once. Ignored for images.",
+                    "description": "The number of lines to read. Only provide if the file is too large to read at once.",
                     "default": 2000,
                 }
             },
@@ -119,61 +109,40 @@ pub fn get_read_tool_func() -> ToolFunc {
                 Err(e) => return error_message(id, format!("read {path_str}: {e}"), "io"),
             };
 
-            let kind = match classify(&bytes) {
-                Ok(k) => k,
-                Err(e) => return error_message(id, e, "validation"),
-            };
-
-            match kind {
-                FileKind::Image(mime) => {
-                    if bytes.len() > MAX_IMAGE_BYTES {
-                        return error_message(
-                            id,
-                            format!(
-                                "image too large: {} bytes (limit: {})",
-                                bytes.len(),
-                                MAX_IMAGE_BYTES
-                            ),
-                            "validation",
-                        );
-                    }
-                    let part = Part::image_embedded(mime, Bytes::from(bytes))
-                        .expect("image_embedded always succeeds");
-                    Message::new(Role::Tool).with_contents([part]).with_id(id)
-                }
-                FileKind::Text => {
-                    if bytes.len() > MAX_FILE_BYTES {
-                        return error_message(
-                            id,
-                            format!(
-                                "file too large: {} bytes (limit: {}); use offset/limit to read in chunks",
-                                bytes.len(),
-                                MAX_FILE_BYTES
-                            ),
-                            "validation",
-                        );
-                    }
-                    let (cow, _, _) = encoding_rs::UTF_8.decode(&bytes);
-                    let text = cow.into_owned();
-                    let offset = args
-                        .pointer("/offset")
-                        .and_then(|v| v.as_integer())
-                        .map(|n| n.max(0) as usize)
-                        .unwrap_or(0);
-                    let limit = args
-                        .pointer("/limit")
-                        .and_then(|v| v.as_integer())
-                        .map(|n| n.max(0) as usize)
-                        .unwrap_or(DEFAULT_LIMIT);
-                    let (content, total) = format_text(&text, offset, limit);
-                    Message::new(Role::Tool)
-                        .with_contents([Part::value(crate::to_value!({
-                            "content": content.as_str(),
-                            "total_lines": total as i64,
-                        }))])
-                        .with_id(id)
-                }
+            if let Err(e) = check_text(&bytes) {
+                return error_message(id, e, "validation");
             }
+
+            if bytes.len() > MAX_FILE_BYTES {
+                return error_message(
+                    id,
+                    format!(
+                        "file too large: {} bytes (limit: {}); use offset/limit to read in chunks",
+                        bytes.len(),
+                        MAX_FILE_BYTES
+                    ),
+                    "validation",
+                );
+            }
+            let (cow, _, _) = encoding_rs::UTF_8.decode(&bytes);
+            let text = cow.into_owned();
+            let offset = args
+                .pointer("/offset")
+                .and_then(|v| v.as_integer())
+                .map(|n| n.max(0) as usize)
+                .unwrap_or(0);
+            let limit = args
+                .pointer("/limit")
+                .and_then(|v| v.as_integer())
+                .map(|n| n.max(0) as usize)
+                .unwrap_or(DEFAULT_LIMIT);
+            let (content, total) = format_text(&text, offset, limit);
+            Message::new(Role::Tool)
+                .with_contents([Part::value(crate::to_value!({
+                    "content": content.as_str(),
+                    "total_lines": total as i64,
+                }))])
+                .with_id(id)
         }
     )
 }
@@ -328,18 +297,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_image_returns_image_part() {
-        // Minimal 1x1 red PNG (valid PNG bytes)
-        let png: &[u8] = &[
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
-            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
-            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
-            0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC,
-            0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
-        ];
+    async fn test_read_image_points_to_imgread() {
+        // PNG signature is enough for content sniffing.
+        let png: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00];
         let tmp = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
         std::fs::write(tmp.path(), png).unwrap();
         let msg = call(to_value!({ "path": tmp.path().to_string_lossy().to_string() })).await;
-        assert!(msg.contents[0].is_image(), "expected image part");
+        let err = msg.contents[0]
+            .as_value()
+            .unwrap()
+            .pointer("/error")
+            .and_then(|v| v.as_str())
+            .unwrap();
+        assert!(err.contains("imgread"), "got: {err}");
     }
 }

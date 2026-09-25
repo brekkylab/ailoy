@@ -173,13 +173,9 @@ async fn main() -> anyhow::Result<()> {
             Console::builder()
                 .stdio_client(&[&std::env::var("AILOY_CORTEX_CONSOLE")
                     .unwrap_or_else(|_| "cortex-krun".to_string())])
-                // Python for the agent's own arithmetic over the CSVs: nothing else is
-                // installed, and nothing can be, since the session has no network.
                 .image(Image::new().base("python:3.12-slim-trixie"))
-                // Rewritten by the store every morning; the guest reads it as it stands.
                 .mount_readonly(context.clone(), "/context")
                 .mount(artifacts.clone(), "/artifacts")
-                // `/context` is the dataset, and a benchmark run has nothing to fetch.
                 .network(NetworkAccess::none())
                 .vcpus(2)
                 .memory_mib(2048)
@@ -224,7 +220,11 @@ async fn main() -> anyhow::Result<()> {
 
     drop(agent);
     if args.keep_store {
-        println!("the store is still up at {} — `sim stop --run {}` ends it", store.base, run_dir.display());
+        println!(
+            "the store is still up at {} — `sim stop --run {}` ends it",
+            store.base,
+            run_dir.display()
+        );
     } else {
         store.post("/stop", json!({})).await.ok();
     }
@@ -300,7 +300,9 @@ async fn run_day(
         }
         println!("{day:>3}   closed by the harness: the agent did not call end_today");
         let call = store.act("end_today", json!({})).await?;
-        record.tool_call("end_today", &json!({"forced": true}), &call, store, 0.0).await;
+        record
+            .tool_call("end_today", &json!({"forced": true}), &call, store, 0.0)
+            .await;
         ended = call.terminated;
     }
 
@@ -392,7 +394,10 @@ async fn register_actions(
         );
     }
     get_tool_providers_mut().insert(PROVIDER.to_string(), provider);
-    get_agent_providers_mut().insert(PROVIDER.to_string(), AgentProvider::new("default", PROVIDER));
+    get_agent_providers_mut().insert(
+        PROVIDER.to_string(),
+        AgentProvider::new("default", PROVIDER),
+    );
     Ok(descs)
 }
 
@@ -481,7 +486,10 @@ impl Store {
             http: reqwest::Client::new(),
             base: format!("http://127.0.0.1:{}", port.trim()),
         };
-        store.get("/state").await.context("the store did not answer")?;
+        store
+            .get("/state")
+            .await
+            .context("the store did not answer")?;
         Ok(store)
     }
 
@@ -620,5 +628,9 @@ fn unix_now() -> u64 {
 
 /// A sortable name for this run: when it started, which model, which configuration.
 fn slug(model: &str, config: &str) -> String {
-    format!("{}_{}_{config}", unix_now(), model.replace(['/', ':', ' '], "-"))
+    format!(
+        "{}_{}_{config}",
+        unix_now(),
+        model.replace(['/', ':', ' '], "-")
+    )
 }

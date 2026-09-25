@@ -7,8 +7,9 @@ use crate::{
     tool::{
         ToolDesc, WebSearchEngineKind,
         r#impl::{
-            get_apply_patch_tool_desc, get_edit_tool_desc, get_read_tool_desc, get_shell_tool_desc,
-            get_web_fetch_tool_desc, get_web_search_tool_desc, get_write_tool_desc,
+            get_apply_patch_tool_desc, get_edit_tool_desc, get_imgread_tool_desc,
+            get_read_tool_desc, get_shell_tool_desc, get_web_fetch_tool_desc,
+            get_web_search_tool_desc, get_write_tool_desc,
         },
     },
 };
@@ -118,25 +119,26 @@ impl AgentSpec {
     }
 
     /// Append the canonical local-execution toolset for the spec's model family.
-    ///
-    /// * `openai/*`: `shell`, `read`, `apply_patch`. `apply_patch` is preferred
-    ///   over `write`+`edit`.
-    /// * others: `shell`, `read`, `write`, `edit`.
     pub fn system_tools(mut self) -> Self {
-        self.tools.extend(if self.model.starts_with("openai/") {
-            vec![
-                get_shell_tool_desc(),
-                get_read_tool_desc(),
-                get_apply_patch_tool_desc(),
-            ]
+        self.tools.push(get_shell_tool_desc());
+
+        if self.model.starts_with("openai/") {
+            self.tools.push(get_read_tool_desc());
+            self.tools.push(get_apply_patch_tool_desc());
         } else {
-            vec![
-                get_shell_tool_desc(),
-                get_read_tool_desc(),
-                get_write_tool_desc(),
-                get_edit_tool_desc(),
-            ]
-        });
+            self.tools.push(get_read_tool_desc());
+            self.tools.push(get_write_tool_desc());
+            self.tools.push(get_edit_tool_desc());
+        }
+
+        // Text-only models (no image input) get no `imgread`.
+        if !self.model.starts_with("deepseek/")
+            || self.model.starts_with("moonshotai/kimi-k2-")
+            || (self.model.starts_with("moonshotai/moonshot-v1-") && !self.model.contains("vision"))
+        {
+            self.tools.push(get_imgread_tool_desc());
+        }
+
         self
     }
 

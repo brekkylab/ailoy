@@ -125,9 +125,6 @@ async fn main() -> anyhow::Result<()> {
             )
             .mount_readonly(project_path.join("context"), "/context")
             .mount(project_path.join("artifacts"), "/artifacts")
-            // The build's `apt-get` and `pip` run with the session's reach.
-            .network(NetworkAccess::public())
-            // Booleans on toothed solids and the drawing are all CPU.
             .vcpus(4)
             .memory_mib(4096)
             .build()
