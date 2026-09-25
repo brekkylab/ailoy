@@ -98,7 +98,11 @@ async fn main() -> anyhow::Result<()> {
                         && apt-get install -y --no-install-recommends libvulkan1 \
                         && rm -rf /var/lib/apt/lists/*",
                     )
-                    .step("pip install --no-cache-dir av ncnn numpy pillow tokenizers"),
+                    // Headless OpenCV: `opencv-python` needs libGL, which the slim image lacks.
+                    .step(
+                        "pip install --no-cache-dir av ncnn numpy opencv-python-headless \
+                        pillow tokenizers",
+                    ),
             )
             .mount_readonly(project_path.join("data/ncnn"), "/models")
             .mount_readonly(
@@ -138,7 +142,7 @@ async fn main() -> anyhow::Result<()> {
                 }
                 for call in message.tool_calls.iter().flatten() {
                     if let Some((_, name, args)) = call.as_function() {
-                        println!("  → {name} {}", serde_json::to_string_pretty(args)?);
+                        println!("→ {name} {}", serde_json::to_string_pretty(args)?);
                     }
                 }
             }
@@ -146,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
             // device log: shown whole.
             Role::Tool => {
                 for part in &message.contents {
-                    println!("  ← {}", serde_json::to_string_pretty(part)?);
+                    println!("← {}", serde_json::to_string_pretty(part)?);
                 }
             }
             _ => {}

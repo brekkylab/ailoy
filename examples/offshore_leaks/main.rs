@@ -123,8 +123,6 @@ async fn main() -> anyhow::Result<()> {
     .build()
     .await?;
 
-    println!("  query  {prompt}\n");
-
     let query = Message::new(Role::User).with_contents([Part::text(prompt)]);
     let mut stream = agent.run(query);
     while let Some(output) = stream.next().await {
@@ -136,13 +134,13 @@ async fn main() -> anyhow::Result<()> {
                 }
                 for call in message.tool_calls.iter().flatten() {
                     if let Some((_, name, args)) = call.as_function() {
-                        println!("  → {name} {}", serde_json::to_string_pretty(args)?);
+                        println!("→ {name} {}", serde_json::to_string_pretty(args)?);
                     }
                 }
             }
             Role::Tool => {
                 for part in &message.contents {
-                    println!("  ← {}", serde_json::to_string_pretty(part)?);
+                    println!("← {}", serde_json::to_string_pretty(part)?);
                 }
             }
             _ => {}

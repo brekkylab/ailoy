@@ -27,8 +27,7 @@ async fn main() -> anyhow::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "openai/gpt-5.4-mini".to_string());
     let mut agent = Agent::try_new(AgentSpec::new(&model)).await?;
-
-    println!("  model  {model}\n");
+    println!("model  {model}\n");
 
     let query = Message::new(Role::User).with_contents([Part::text(QUERY)]);
     let mut stream = agent.run(query);
