@@ -16,11 +16,13 @@ answers.
 Run `run_laya.py` from this directory with the mode and the request as its two arguments.
 
 ```sh
-python3 run_laya.py fp32 '{"state": "...", "questions": {...}}'
+python3 run_laya.py bf16 '{"state": "...", "questions": {...}}'
 ```
 
-The mode is `fp32`, or `bf16` for a faster run that is less exact. The model is read from
-`/models`, or from the directory `LAYA_MODELS` names. Each run loads the model again, which
+The mode is `bf16`, which is faster and good enough for almost every request, so use it. Use
+`fp32`, which is exact but slower, only when a bf16 run's answers are clearly wrong, or when you
+are asked for exact output. The model is read from `/models`, or from the directory
+`LAYA_MODELS` names. Each run loads the model again, which
 takes about a second, so put every question about one text in a single run.
 
 The answers are printed to stdout as one JSON object, keyed by the ids of the questions. What

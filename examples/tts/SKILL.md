@@ -22,8 +22,9 @@ Run `run_tts.py` from this directory with the mode and the request as its two ar
 python3 run_tts.py fp16 '{"text_file": "/context/text.txt", "instruct_file": "/context/instruct.txt", "out": "/artifacts/speech.wav"}'
 ```
 
-The mode is `fp16`, or `fp32` for a run that is slower and a little more exact; the speech is
-as good in either. The models are read from `/models`, or from the directory `TTS_MODELS`
+The mode is `fp16`, which is faster and sounds as good, so use it. Use `fp32`, which is slower
+and a little more exact, only when an fp16 run's speech is clearly wrong, or when you are asked
+for exact output. The models are read from `/models`, or from the directory `TTS_MODELS`
 names.
 
 Each run loads the models again, which takes several seconds, and then makes the speech a
