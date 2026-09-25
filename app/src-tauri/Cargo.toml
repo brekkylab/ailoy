@@ -17,7 +17,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 ailoy = { path = "../.." }
-cortex = { path = "../../../cortex/cortex" }
+cortex = { path = "../../../cortex" }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }

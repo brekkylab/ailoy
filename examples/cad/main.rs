@@ -44,9 +44,9 @@ use ailoy::{
 use anyhow::Context as _;
 use cortex::{fs::Directory, image::Image};
 // One host binding per platform, each mounting on `try_new` and unmounting on `Drop`, so
-// the tree below is written once. Three arms and not `not(windows)`: `fuse-t` is macOS
-// only, and its build script probes pkg-config for FUSE-T on whatever host it runs, so
-// naming it on Linux fails at build time. Cargo.toml splits the feature the same way.
+// the tree below is written once. Three arms and not `not(windows)` because the guards are
+// three distinct types: cortex's default `mount` feature compiles the one binding its target
+// has — Dokany on Windows, `fuser` on Linux, FUSE-T on macOS — and names the guard after it.
 #[cfg(windows)]
 use cortex::fs::DokanMount as HostMount;
 #[cfg(target_os = "linux")]

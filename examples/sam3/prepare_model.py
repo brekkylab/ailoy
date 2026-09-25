@@ -175,6 +175,19 @@ class Vision(nn.Module):
         x = x + h
         return x + layer.mlp(layer.layer_norm2(x))
 
+    def neck(self, layer, x):
+        """`Sam3FPNLayer.forward`, less the `.to(self.proj1.weight.dtype)` it opens with.
+
+        The cast is a no-op in an fp32 trace and pnnx has no ncnn spelling for it, so it
+        survives into the graph as an `aten::to` with two `pnnx.Expression` constants feeding
+        it -- neither a layer ncnn has, and the net then refuses to build at all rather than
+        at the cast: `layer pnnx.Expression not exists or registered`, and no blob to extract.
+        Six FPN layers here, so six of them.
+        """
+        for scale in layer.scale_layers:
+            x = scale(x)
+        return layer.proj2(layer.proj1(x))
+
     def forward(self, pixels):
         x = pixels / 127.5 - 1.0
         x = self.patch(x).permute(0, 2, 3, 1) + self.pos
@@ -182,8 +195,8 @@ class Vision(nn.Module):
         for i in range(len(self.layers)):
             x = self.block(i, x)
         x = x.permute(0, 3, 1, 2)
-        det = [layer(x) for layer in self.det_neck]
-        trk = [layer(x) for layer in self.trk_neck]
+        det = [self.neck(layer, x) for layer in self.det_neck]
+        trk = [self.neck(layer, x) for layer in self.trk_neck]
         return det[0], det[1], det[2], self.conv_s0(trk[0]), self.conv_s1(trk[1]), trk[2]
 
 
@@ -580,8 +593,74 @@ def pieces(video) -> dict:
     }
 
 
+def _patch_pnnx_on_windows() -> None:
+    r"""Stop pnnx from importing the `*_pnnx.py` it generates.
+
+    `pnnx.export` writes what this script is after -- the ncnn param and bin -- and then, as
+    the last thing `convert()` does, imports the Python transcript of the graph it wrote
+    beside them, so as to hand the caller back a torch module. Nothing here wants that
+    module: the call below drops the return value and takes the files off disk.
+
+    That import is where a conversion stops on Windows. pnnx writes the paths it was handed
+    into the transcript as ordinary string literals, so `zipfile.ZipFile('C:\Users\...')`
+    reaches the parser as escapes and `\U` in `C:\Users` is a SyntaxError before a line of
+    the module runs. The paths that do parse are the worse half, since `\a`, `\b`, `\n` and
+    `\t` become control characters and the module then opens a file nobody wrote.
+
+    Repairing the literals only moves the wall: the transcript is not always Python at all,
+    because an op pnnx has no Python spelling for is written out verbatim, and a line like
+    `v_1103 = aten::to(v_1100, v_1102, v_1101, v_1101)` parses nowhere. Neither is worth
+    fixing for a module that is thrown away, so the import is made to produce nothing
+    instead. `convert()` reaches it through `importlib.util.spec_from_file_location`, which
+    is wrapped here to hand a `_pnnx.py` back with a loader that never reads the source and
+    defines the one name `convert()` goes on to touch. Every other module keeps the loader it
+    would have had.
+
+    Windows only, and gated rather than unconditional because a host where the import works
+    gets a real torch module out of it -- worth keeping for anything that comes to want one.
+
+    An op ncnn cannot run is a separate matter and is not hidden by this: it stays in the
+    `.param` as an unregistered layer, and the check against PyTorch at the end is what
+    catches it.
+    """
+    if sys.platform != "win32":
+        return
+
+    import importlib.abc
+    import importlib.util
+
+    # The wrapper goes on once, however often this is called: wrapping a wrapper would work,
+    # and would also leave a chain as long as the model has pieces.
+    if getattr(importlib.util.spec_from_file_location, "_pnnx_skips_transcript", False):
+        return
+
+    class _TranscriptLoader(importlib.abc.Loader):
+        """Loader that gives the module a `Model` and never looks at the file."""
+
+        def create_module(self, spec):
+            return None  # the default module object is enough
+
+        def exec_module(self, module):
+            # `convert()` ends in `return foo.Model()`, which is the whole of what it asks
+            # the transcript for, and the caller here discards it.
+            module.Model = lambda *args, **kwargs: None
+
+    spec_from_file_location = importlib.util.spec_from_file_location
+
+    def patched(name, location=None, *args, **kwargs):
+        spec = spec_from_file_location(name, location, *args, **kwargs)
+        if spec is not None and str(location).endswith("_pnnx.py"):
+            spec.loader = _TranscriptLoader()
+        return spec
+
+    patched._pnnx_skips_transcript = True
+    importlib.util.spec_from_file_location = patched
+
+
 def export(name: str, spec: dict, ncnn_dir: Path, work: Path) -> dict:
     import pnnx
+
+    _patch_pnnx_on_windows()
 
     stem = f"sam3_{name}"
     with torch.no_grad():
@@ -694,32 +773,59 @@ def cos(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def check(ncnn_dir: Path, specs: dict, ios: dict):
-    """Each piece, on its example inputs, against the PyTorch module it was traced from."""
+    """Each piece, on its example inputs, against the PyTorch module it was traced from.
+
+    Vulkan is taken down by hand here, and in `finally` blocks. ncnn's GPU instance is a
+    global whose destructor runs at interpreter exit, by which time the `Net`s holding
+    devices on it may or may not have been collected, and on Windows that order segfaults.
+    Measured on this machine, one piece loaded: leaving both to the interpreter crashes,
+    releasing the nets and leaving the instance crashes, and destroying the instance with a
+    net still up crashes. Releasing the nets and then destroying the instance is the one
+    order that exits cleanly, so it is the one spelled out.
+
+    It is worth the three blocks because the caller is a `cargo run` that reads the exit
+    code. A crash on the way out reports 139 whether the checks passed or a piece failed
+    one -- so the run that has something to say is the run that cannot say it.
+    """
     import ncnn
 
-    for name, spec in specs.items():
-        net = ncnn.Net()
-        net.opt.use_vulkan_compute = ncnn.get_gpu_count() > 0
-        net.opt.use_fp16_storage = False
-        net.opt.use_fp16_packed = False
-        net.opt.use_fp16_arithmetic = False
-        net.load_param(str(ncnn_dir / f"sam3_{name}.ncnn.param"))
-        net.load_model(str(ncnn_dir / f"sam3_{name}.ncnn.bin"))
-        for example in [spec["example"], spec.get("example2")]:
-            if example is None:
-                continue
-            with torch.no_grad():
-                want = spec["module"](*example)
-            ex = net.create_extractor()
-            for inp, x in zip(ios[name]["inputs"], example):
-                a = np.ascontiguousarray(x.numpy()[0], np.float32)
-                ex.input(inp["name"], ncnn.Mat(a).clone())
-            line = []
-            for out, w in zip(ios[name]["outputs"], want):
-                ret, m = ex.extract(out["name"])
-                assert ret == 0, f"{name}: extract {out['name']} failed: {ret}"
-                line.append(f"{out['role']} {cos(np.array(m), w.numpy()):.5f}")
-            print(f"  {name}: " + ", ".join(line), flush=True)
+    gpu = ncnn.get_gpu_count() > 0
+    try:
+        for name, spec in specs.items():
+            net = ncnn.Net()
+            net.opt.use_vulkan_compute = gpu
+            net.opt.use_fp16_storage = False
+            net.opt.use_fp16_packed = False
+            net.opt.use_fp16_arithmetic = False
+            net.load_param(str(ncnn_dir / f"sam3_{name}.ncnn.param"))
+            net.load_model(str(ncnn_dir / f"sam3_{name}.ncnn.bin"))
+            ex = None
+            try:
+                for example in [spec["example"], spec.get("example2")]:
+                    if example is None:
+                        continue
+                    with torch.no_grad():
+                        want = spec["module"](*example)
+                    ex = net.create_extractor()
+                    for inp, x in zip(ios[name]["inputs"], example):
+                        a = np.ascontiguousarray(x.numpy()[0], np.float32)
+                        ex.input(inp["name"], ncnn.Mat(a).clone())
+                    line = []
+                    for out, w in zip(ios[name]["outputs"], want):
+                        ret, m = ex.extract(out["name"])
+                        assert ret == 0, f"{name}: extract {out['name']} failed: {ret}"
+                        line.append(f"{out['role']} {cos(np.array(m), w.numpy()):.5f}")
+                    print(f"  {name}: " + ", ".join(line), flush=True)
+            finally:
+                # However this piece ended, its device resources go before the next piece
+                # asks for any and before the instance is destroyed below.
+                ex = None
+                net.clear()
+                net = None
+    finally:
+        # Only if there was one to destroy.
+        if gpu:
+            ncnn.destroy_gpu_instance()
 
 
 def download(checkpoint: Path):

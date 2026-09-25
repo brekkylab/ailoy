@@ -174,9 +174,75 @@ def check(ncnn_dir: Path, io: dict, model, tok, items: list[dict], window: int):
             raise SystemExit(f"{item['id']}: ncnn is too far from PyTorch")
 
 
+def _patch_pnnx_on_windows() -> None:
+    r"""Stop pnnx from importing the `*_pnnx.py` it generates.
+
+    `pnnx.export` writes what this script is after -- the ncnn param and bin -- and then, as
+    the last thing `convert()` does, imports the Python transcript of the graph it wrote
+    beside them, so as to hand the caller back a torch module. Nothing here wants that
+    module: the call below drops the return value and takes the files off disk.
+
+    That import is where a conversion stops on Windows. pnnx writes the paths it was handed
+    into the transcript as ordinary string literals, so `zipfile.ZipFile('C:\Users\...')`
+    reaches the parser as escapes and `\U` in `C:\Users` is a SyntaxError before a line of
+    the module runs. The paths that do parse are the worse half, since `\a`, `\b`, `\n` and
+    `\t` become control characters and the module then opens a file nobody wrote.
+
+    Repairing the literals only moves the wall: the transcript is not always Python at all,
+    because an op pnnx has no Python spelling for is written out verbatim, and a line like
+    `v_1103 = aten::to(v_1100, v_1102, v_1101, v_1101)` parses nowhere. Neither is worth
+    fixing for a module that is thrown away, so the import is made to produce nothing
+    instead. `convert()` reaches it through `importlib.util.spec_from_file_location`, which
+    is wrapped here to hand a `_pnnx.py` back with a loader that never reads the source and
+    defines the one name `convert()` goes on to touch. Every other module keeps the loader it
+    would have had.
+
+    Windows only, and gated rather than unconditional because a host where the import works
+    gets a real torch module out of it -- worth keeping for anything that comes to want one.
+
+    An op ncnn cannot run is a separate matter and is not hidden by this: it stays in the
+    `.param` as an unregistered layer, and the check against PyTorch at the end is what
+    catches it.
+    """
+    if sys.platform != "win32":
+        return
+
+    import importlib.abc
+    import importlib.util
+
+    # The wrapper goes on once, however often this is called: wrapping a wrapper would work,
+    # and would also leave a chain as long as the model has pieces.
+    if getattr(importlib.util.spec_from_file_location, "_pnnx_skips_transcript", False):
+        return
+
+    class _TranscriptLoader(importlib.abc.Loader):
+        """Loader that gives the module a `Model` and never looks at the file."""
+
+        def create_module(self, spec):
+            return None  # the default module object is enough
+
+        def exec_module(self, module):
+            # `convert()` ends in `return foo.Model()`, which is the whole of what it asks
+            # the transcript for, and the caller here discards it.
+            module.Model = lambda *args, **kwargs: None
+
+    spec_from_file_location = importlib.util.spec_from_file_location
+
+    def patched(name, location=None, *args, **kwargs):
+        spec = spec_from_file_location(name, location, *args, **kwargs)
+        if spec is not None and str(location).endswith("_pnnx.py"):
+            spec.loader = _TranscriptLoader()
+        return spec
+
+    patched._pnnx_skips_transcript = True
+    importlib.util.spec_from_file_location = patched
+
+
 def convert(checkpoint: Path, ncnn_dir: Path, work: Path):
     import laya
     import pnnx
+
+    _patch_pnnx_on_windows()
 
     agent = laya.load(str(checkpoint), device="cpu")
     model = agent.model.float().eval()
