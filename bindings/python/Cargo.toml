@@ -1,0 +1,52 @@
+[package]
+name = "ailoy-python"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# The native half of the `ailoy` package, imported as `ailoy._ailoy` and re-exported by
+# `python/ailoy/__init__.py`. The name here is what the `#[pymodule]` is called, and the
+# two have to agree or the import finds a library with no init function in it.
+name = "_ailoy"
+crate-type = ["cdylib"]
+
+[build-dependencies]
+# The rpath libfuse-t needs on macOS — see `build.rs`.
+pkg-config = "0.3"
+
+[dependencies]
+ailoy = { path = "../.." }
+# For `Failure`, which is how a console's refusal arrives inside an agent's error. The same
+# crate as `ailoy`'s own dependency on it, so the type is the one ailoy's errors carry.
+cortex = { path = "../../../cortex", default-features = false }
+# cortex's Python classes, linked into this extension rather than imported from cortex's
+# own. A `Console` has to be one this module can take apart to hand to an agent, and a
+# `Console` built by another extension module is a copy of cortex this one cannot see into
+# — see the `rlib` in that crate's manifest.
+cortex-python = { path = "../../../cortex/bindings/python", default-features = false }
+# `abi3-py310`: one wheel per platform rather than one per interpreter. `extension-module`
+# is not here but in `pyproject.toml`, because it leaves libpython unlinked, which is right
+# for a module the interpreter loads and wrong for `cargo test`.
+pyo3 = { version = "0.29", features = ["abi3-py310"] }
+# An agent's turn is a stream of futures on tokio, and asyncio has no reactor for them — so
+# Python's awaitables are bridged onto the runtime this crate keeps. The same runtime
+# `cortex-python` uses, since the two are one extension.
+pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
+# Messages, specs and tool arguments cross as the dicts their serde form already is, rather
+# than as a mirror of each type — ailoy's JSON shape *is* its interface.
+pythonize = "0.29"
+anyhow = "1"
+async-stream = "0.3"
+futures = "0.3"
+serde = "1"
+tokio = { version = "1", features = ["sync", "rt"] }
+url = "2.5"
+
+[features]
+# `mount` by default, as cortex's own binding has it: `HostMount` is what gives an agent a
+# directory held in memory, and it needs the host's FUSE provider — see cortex's README.
+default = ["mount"]
+mount = ["cortex-python/mount"]

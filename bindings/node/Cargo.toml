@@ -1,0 +1,43 @@
+[package]
+name = "ailoy-node"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[build-dependencies]
+napi-build = "2"
+# The rpath libfuse-t needs on macOS — see `build.rs`.
+pkg-config = "0.3"
+
+[dependencies]
+ailoy = { path = "../.." }
+# For `Failure`, which is how a console's refusal arrives inside an agent's error. The same
+# crate as `ailoy`'s own dependency on it, so the type is the one ailoy's errors carry.
+cortex = { path = "../../../cortex", default-features = false }
+# cortex's JavaScript classes, linked into this addon rather than loaded from cortex's own. A
+# `Console` has to be one this addon can take apart to hand to an agent, and a `Console` built
+# by another addon is a copy of cortex this one cannot see into — see the `rlib` in that
+# crate's manifest. napi registers its classes here just by its being linked.
+cortex-node = { path = "../../../cortex/bindings/node", default-features = false }
+# `serde-json` for `Env::to_js_value`/`from_js_value`: messages, specs and tool arguments cross
+# as the objects their serde form already is, rather than as a mirror of each type — ailoy's
+# JSON shape *is* its interface. The rest is what cortex's binding asks for, so the two agree.
+napi = { version = "3", default-features = false, features = ["napi8", "async", "tokio_rt", "serde-json"] }
+napi-derive = "3"
+anyhow = "1"
+async-stream = "0.3"
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["sync", "rt"] }
+url = "2.5"
+
+[features]
+# `mount` by default, as cortex's own binding has it: `HostMount` is what gives an agent a
+# directory held in memory, and it needs the host's FUSE provider — see cortex's README.
+default = ["mount"]
+mount = ["cortex-node/mount"]

@@ -1,6 +1,8 @@
 [workspace]
 members = [
-    "./"
+    "./",
+    "bindings/node",
+    "bindings/python",
 ]
 exclude = [
     ".worktrees",

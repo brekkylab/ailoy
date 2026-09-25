@@ -84,6 +84,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "ailoy-node"
+version = "0.3.0"
+dependencies = [
+ "ailoy",
+ "anyhow",
+ "async-stream",
+ "cortex",
+ "cortex-node",
+ "futures",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "pkg-config",
+ "serde",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "ailoy-python"
+version = "0.3.0"
+dependencies = [
+ "ailoy",
+ "anyhow",
+ "async-stream",
+ "cortex",
+ "cortex-python",
+ "futures",
+ "pkg-config",
+ "pyo3",
+ "pyo3-async-runtimes",
+ "pythonize",
+ "serde",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "alloc-no-stdlib"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -517,7 +555,7 @@ checksum = "157a8ba7b480713b56f4c09fd13fc3e0a22a5dfab8097ba61cbc5feef950788a"
 dependencies = [
  "glob",
  "libc",
- "libloading",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -580,6 +618,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "convert_case"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1af709f1f33454bf52eadfc8c78b3b9ef9cb26fb54d16dc9cd9a7299f899fd1b"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -629,6 +676,31 @@ dependencies = [
  "tokio",
  "widestring",
  "winapi",
+]
+
+[[package]]
+name = "cortex-node"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cortex",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "pkg-config",
+ "tokio",
+]
+
+[[package]]
+name = "cortex-python"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cortex",
+ "pkg-config",
+ "pyo3",
+ "pyo3-async-runtimes",
+ "tokio",
 ]
 
 [[package]]
@@ -696,6 +768,12 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "ctor"
+version = "1.0.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "914a755b7c2d4af2bdcff7ce1739e2db9a1b81a9b07123d8015786ae03c0980d"
 
 [[package]]
 name = "darling"
@@ -1850,6 +1928,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "libloading"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2030,6 +2118,67 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
+name = "napi"
+version = "3.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b12638855cec016784a7e17cc4ecbdee7ca8b0a3456aa50640d0ee5ed1a42f8"
+dependencies = [
+ "bitflags 2.13.1",
+ "ctor",
+ "futures",
+ "libc",
+ "napi-build",
+ "napi-sys",
+ "nohash-hasher",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "napi-build"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0941983559cd62bfa7f04646a16428967a847365adeef27711e4e3927046bbed"
+
+[[package]]
+name = "napi-derive"
+version = "3.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b1d232c24dc6754979b27efdf2047a5849efc7c92c1245de87e6bedbb9f5c3c"
+dependencies = [
+ "convert_case",
+ "ctor",
+ "napi-derive-backend",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "napi-derive-backend"
+version = "6.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd6856fe1686867da90ed0dc292d7c0c87a695eb7c578b913360f33619ee01e3"
+dependencies = [
+ "convert_case",
+ "proc-macro2",
+ "quote",
+ "semver",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "napi-sys"
+version = "3.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6801fc65ba4d7035636e93635e281113f00410401a237dcd4f55b1565ead2115"
+dependencies = [
+ "libloading 0.9.0",
+]
+
+[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2059,6 +2208,12 @@ dependencies = [
  "cfg_aliases",
  "libc",
 ]
+
+[[package]]
+name = "nohash-hasher"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 
 [[package]]
 name = "nom"
@@ -2399,6 +2554,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "portable-atomic"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
+
+[[package]]
 name = "potential_utf"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2465,6 +2626,87 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
+name = "pyo3"
+version = "0.29.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4688ddedf473e32662b9b067670129a8afb8c18e351482c70d62ba4a88171e8b"
+dependencies = [
+ "libc",
+ "once_cell",
+ "portable-atomic",
+ "pyo3-build-config",
+ "pyo3-ffi",
+ "pyo3-macros",
+]
+
+[[package]]
+name = "pyo3-async-runtimes"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3ef68daa7316a3fac65e5e18b2203f010346de1c1c53456811a2624673ab046"
+dependencies = [
+ "futures-channel",
+ "futures-util",
+ "once_cell",
+ "pin-project-lite",
+ "pyo3",
+ "tokio",
+]
+
+[[package]]
+name = "pyo3-build-config"
+version = "0.29.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f41027e41b4bd03f6e60f9f417fe24a6341a6bb744edd62b6f709f2a52ea30e9"
+dependencies = [
+ "target-lexicon",
+]
+
+[[package]]
+name = "pyo3-ffi"
+version = "0.29.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e591a95526fead067432c3b3a33fc74770b87b1e04e73671090d9c2055a2b327"
+dependencies = [
+ "libc",
+ "pyo3-build-config",
+]
+
+[[package]]
+name = "pyo3-macros"
+version = "0.29.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73225868fc1cd84eef2c3c230ddb91273bf1de46aeb8a4248da76d32a0924a1c"
+dependencies = [
+ "proc-macro2",
+ "pyo3-macros-backend",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "pyo3-macros-backend"
+version = "0.29.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "571575aa3749fa6216757dd47d2a3e7ef360f329a40f0666a9fbd14889024952"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "pythonize"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ec376e1216e0c929a74964ce2020012a1a39f32d80e78aa688721219ea7fb89"
+dependencies = [
+ "pyo3",
+ "serde",
+]
 
 [[package]]
 name = "quick-error"
@@ -3435,6 +3677,12 @@ dependencies = [
  "libc",
  "xattr",
 ]
+
+[[package]]
+name = "target-lexicon"
+version = "0.13.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
 name = "tempfile"
