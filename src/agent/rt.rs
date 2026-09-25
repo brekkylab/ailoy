@@ -302,23 +302,34 @@ impl Agent {
                 Part::Value { value } => {
                     let serialised = serde_json::to_string(value).unwrap_or_default();
                     if serialised.len() > Self::MAX_TOOL_RESULT_CHARS {
-                        let truncated = crate::util::truncate::middle_truncate(
-                            serialised,
-                            Self::MAX_TOOL_RESULT_CHARS,
-                        );
+                        let truncated =
+                            Self::middle_truncate(serialised, Self::MAX_TOOL_RESULT_CHARS);
                         *value = crate::datatype::Value::string(truncated);
                     }
                 }
                 Part::Text { text } if text.len() > Self::MAX_TOOL_RESULT_CHARS => {
-                    *text = crate::util::truncate::middle_truncate(
-                        std::mem::take(text),
-                        Self::MAX_TOOL_RESULT_CHARS,
-                    );
+                    *text =
+                        Self::middle_truncate(std::mem::take(text), Self::MAX_TOOL_RESULT_CHARS);
                 }
                 _ => {}
             }
         }
         msg
+    }
+
+    /// Truncate `s` to at most `max_chars` characters, keeping equal-sized head and
+    /// tail and inserting an omission notice in the middle.
+    fn middle_truncate(s: String, max_chars: usize) -> String {
+        let chars: Vec<char> = s.chars().collect();
+        if chars.len() <= max_chars {
+            return s;
+        }
+        let head = max_chars / 2;
+        let tail = max_chars - head;
+        let omitted = chars.len() - head - tail;
+        let head_str: String = chars[..head].iter().collect();
+        let tail_str: String = chars[chars.len() - tail..].iter().collect();
+        format!("{head_str}\n\n... [{omitted} characters omitted] ...\n\n{tail_str}")
     }
 
     /// Boot the console's backend for a batch of tool calls.

@@ -3,10 +3,24 @@ use cortex::console::Error;
 use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
-    util::truncate::middle_truncate,
 };
 
 const MAX_OUTPUT_CHARS: usize = 30_000; // same as Claude Code
+
+/// Truncate `s` to at most `max_chars` characters, keeping equal-sized head and
+/// tail and inserting an omission notice in the middle.
+fn middle_truncate(s: String, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars {
+        return s;
+    }
+    let head = max_chars / 2;
+    let tail = max_chars - head;
+    let omitted = chars.len() - head - tail;
+    let head_str: String = chars[..head].iter().collect();
+    let tail_str: String = chars[chars.len() - tail..].iter().collect();
+    format!("{head_str}\n\n... [{omitted} characters omitted] ...\n\n{tail_str}")
+}
 
 pub fn get_shell_tool_desc() -> ToolDesc {
     ToolDescBuilder::new("shell")
@@ -153,7 +167,11 @@ mod tests {
         let f = funcs.get("shell").unwrap();
         let mut console = test_console().await;
         let msg = f
-            .call(to_value!({ "cmd": "sleep 30", "timeout_secs": 1 }), "", &mut console)
+            .call(
+                to_value!({ "cmd": "sleep 30", "timeout_secs": 1 }),
+                "",
+                &mut console,
+            )
             .next()
             .await
             .unwrap()
