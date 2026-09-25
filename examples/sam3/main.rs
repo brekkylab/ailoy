@@ -109,9 +109,14 @@ async fn main() -> anyhow::Result<()> {
                         && rm -rf /var/lib/apt/lists/*",
                     )
                     // Headless OpenCV: `opencv-python` needs libGL, which the slim image lacks.
+                    // `ncnn` asks for it by name, and both wheels install the same `cv2`
+                    // package, so naming the headless one alongside `ncnn` is not enough --
+                    // whichever lands second wins. Hence `--no-deps` on `ncnn` and its own
+                    // dependencies spelled out, opencv aside.
                     .step(
-                        "pip install --no-cache-dir av ncnn numpy opencv-python-headless \
-                        pillow tokenizers",
+                        "pip install --no-cache-dir av numpy opencv-python-headless pillow \
+                        portalocker requests tokenizers tqdm \
+                        && pip install --no-cache-dir --no-deps ncnn",
                     ),
             )
             .mount_readonly(project_path.join("data/ncnn"), "/models")
