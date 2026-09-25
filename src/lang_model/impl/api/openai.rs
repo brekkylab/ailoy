@@ -26,9 +26,11 @@ impl LangModelProvider {
 }
 
 /// Returns whether `model` is an OpenAI reasoning model that does not accept
-/// the `temperature` / `top_p` / `top_k` sampling parameters.
+/// the `temperature` / `top_p` / `top_k` sampling parameters. Takes the id as
+/// OpenAI names it (`gpt-5`) or as OpenRouter does (`openai/gpt-5`).
 pub(super) fn is_openai_reasoning_model(model: &str) -> bool {
     let m = model.to_ascii_lowercase();
+    let m = m.strip_prefix("openai/").unwrap_or(&m);
     if m.starts_with("gpt-5") {
         return true;
     }

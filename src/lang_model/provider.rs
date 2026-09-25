@@ -42,9 +42,9 @@ pub enum LangModelProviderElem {
 ///
 /// [`Default::default`] returns a registry pre-populated from the environment:
 /// registers `openai/*`, `anthropic/*`, `google/*`, `x-ai/*`, `deepseek/*`,
-/// and/or `moonshotai/kimi-*` for every `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
-/// / `GEMINI_API_KEY` / `XAI_API_KEY` / `DEEPSEEK_API_KEY` / `KIMI_API_KEY`
-/// that is set, plus `bedrock/*` (Converse) for `AWS_BEARER_TOKEN_BEDROCK`
+/// `moonshotai/kimi-*` and/or `openrouter/*` for every `OPENAI_API_KEY` /
+/// `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `XAI_API_KEY` / `DEEPSEEK_API_KEY` /
+/// `KIMI_API_KEY` / `OPENROUTER_API_KEY` that is set, plus `bedrock/*` (Converse) for `AWS_BEARER_TOKEN_BEDROCK`
 /// (region from `AWS_REGION`, then `AWS_DEFAULT_REGION`, defaulting to
 /// `us-east-1`).  The default is what the global [`lang_model_providers`]
 /// registry stores under the `"default"` key.  Use [`new`](Self::new) for an
@@ -85,6 +85,9 @@ impl Default for LangModelProvider {
         }
         if let Some(key) = env_key("KIMI_API_KEY") {
             p.insert("moonshotai/*".into(), Self::kimi(key));
+        }
+        if let Some(key) = env_key("OPENROUTER_API_KEY") {
+            p.insert("openrouter/*".into(), Self::openrouter(key));
         }
         if let Some(key) = env_key("AWS_BEARER_TOKEN_BEDROCK") {
             // Same precedence the AWS SDKs use, so a shell already configured
@@ -167,6 +170,13 @@ impl LangModelProvider {
             .unwrap_or_else(|| spec_model.to_string());
         Ok(model_id)
     }
+}
+
+/// The model name as its vendor serves it, with any aggregator prefix removed:
+/// `openrouter/openai/gpt-5` → `openai/gpt-5`. For code that picks behaviour by
+/// model family (`openai/`, `deepseek/`, ...), whichever provider routes to it.
+pub fn model_family(model: &str) -> &str {
+    model.strip_prefix("openrouter/").unwrap_or(model)
 }
 
 /// Process-wide named registry of [`LangModelProvider`] instances.
@@ -268,5 +278,21 @@ mod tests {
         let mut p = LangModelProvider::new();
         p.insert("openai/*".into(), dummy());
         assert_eq!(p.resolve_model_id("openai/gpt-4o").unwrap(), "gpt-4o");
+    }
+
+    #[test]
+    fn resolve_model_id_keeps_openrouter_vendor() {
+        let mut p = LangModelProvider::new();
+        p.insert("openrouter/*".into(), dummy());
+        assert_eq!(
+            p.resolve_model_id("openrouter/openai/gpt-5").unwrap(),
+            "openai/gpt-5"
+        );
+    }
+
+    #[test]
+    fn model_family_strips_openrouter() {
+        assert_eq!(model_family("openrouter/openai/gpt-5"), "openai/gpt-5");
+        assert_eq!(model_family("openai/gpt-5"), "openai/gpt-5");
     }
 }

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     agent::AgentCard,
-    lang_model::LangModelOptions,
+    lang_model::{LangModelOptions, model_family},
     tool::{
         ToolDesc, WebSearchEngineKind,
         r#impl::{
@@ -122,7 +122,8 @@ impl AgentSpec {
     pub fn system_tools(mut self) -> Self {
         self.tools.push(get_shell_tool_desc());
 
-        if self.model.starts_with("openai/") {
+        let model = model_family(&self.model);
+        if model.starts_with("openai/") {
             self.tools.push(get_read_tool_desc());
             self.tools.push(get_apply_patch_tool_desc());
         } else {
@@ -132,9 +133,9 @@ impl AgentSpec {
         }
 
         // Text-only models (no image input) get no `imgread`.
-        if !self.model.starts_with("deepseek/")
-            || self.model.starts_with("moonshotai/kimi-k2-")
-            || (self.model.starts_with("moonshotai/moonshot-v1-") && !self.model.contains("vision"))
+        if !model.starts_with("deepseek/")
+            || model.starts_with("moonshotai/kimi-k2-")
+            || (model.starts_with("moonshotai/moonshot-v1-") && !model.contains("vision"))
         {
             self.tools.push(get_imgread_tool_desc());
         }

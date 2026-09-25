@@ -41,7 +41,8 @@ asyncio.run(main())
 
 The model's provider is found by its prefix, from the API keys in the environment —
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`,
-`KIMI_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK` — read the first time an agent is built.
+`KIMI_API_KEY`, `OPENROUTER_API_KEY` (as `openrouter/<vendor>/<model>`),
+`AWS_BEARER_TOKEN_BEDROCK` — read the first time an agent is built.
 
 ## Data is dicts
 

@@ -40,6 +40,15 @@ impl LangModelProvider {
         }
     }
 
+    /// Its model ids are `<vendor>/<model>` (`openai/gpt-5`), so they are registered as `openrouter/<vendor>/<model>`.
+    pub fn openrouter(api_key: String) -> LangModelProviderElem {
+        LangModelProviderElem::API {
+            schema: LangModelAPISchema::ChatCompletion,
+            url: Url::parse("https://openrouter.ai/api/v1/chat/completions").unwrap(),
+            api_key: Some(api_key),
+        }
+    }
+
     pub fn chat_completion(
         url: &str,
         api_key: Option<String>,

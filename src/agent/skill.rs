@@ -61,7 +61,7 @@ const PREAMBLE: &str = "# Skills\n\n\
 /// Whether `model` is a Claude model, whichever provider serves it: `anthropic/*` by
 /// name, and on Bedrock and the like by the model id, `bedrock/global.anthropic.claude-*`.
 fn is_claude(model: &str) -> bool {
-    model.starts_with("anthropic/") || model.to_ascii_lowercase().contains("claude")
+    crate::lang_model::model_family(model).starts_with("anthropic/") || model.to_ascii_lowercase().contains("claude")
 }
 
 fn render_xml(skills: &[Skill]) -> String {
