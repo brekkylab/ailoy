@@ -4,6 +4,8 @@ use anyhow::Context as _;
 use cortex::console::Console;
 use tokio::sync::Mutex;
 
+use crate::lang_model::model_family;
+
 /// The skills in `dirs`, as the section of the system message that lists them.
 ///
 /// The catalog the Agent Skills integration guide describes: each skill's `name`,
@@ -37,7 +39,7 @@ pub(super) async fn render_skills(
             location,
         });
     }
-    Ok(if is_claude(model) {
+    Ok(if model_family(model).0 == "anthropic" {
         render_xml(&skills)
     } else {
         render_markdown(&skills)
@@ -57,12 +59,6 @@ const PREAMBLE: &str = "# Skills\n\n\
     matches a skill's description, read the SKILL.md at its location in full before \
     proceeding. When a skill refers to a relative path, resolve it against the skill's \
     directory, the one that holds its SKILL.md.\n\n";
-
-/// Whether `model` is a Claude model, whichever provider serves it: `anthropic/*` by
-/// name, and on Bedrock and the like by the model id, `bedrock/global.anthropic.claude-*`.
-fn is_claude(model: &str) -> bool {
-    crate::lang_model::model_family(model).starts_with("anthropic/") || model.to_ascii_lowercase().contains("claude")
-}
 
 fn render_xml(skills: &[Skill]) -> String {
     let mut out = format!("{PREAMBLE}<available_skills>\n");
@@ -173,11 +169,6 @@ mod tests {
 
     #[test]
     fn test_skill_format_follows_the_model() {
-        assert!(is_claude("anthropic/claude-sonnet-5"));
-        assert!(is_claude("bedrock/global.anthropic.claude-sonnet-5"));
-        assert!(!is_claude("openai/gpt-5"));
-        assert!(!is_claude("google/gemini-3-pro"));
-
         let skills = [Skill {
             name: "laya".into(),
             description: "Decide with Laya.".into(),

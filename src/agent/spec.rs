@@ -7,7 +7,7 @@ use crate::{
     tool::{
         ToolDesc, WebSearchEngineKind,
         r#impl::{
-            get_apply_patch_tool_desc, get_edit_tool_desc, get_imgread_tool_desc,
+            ReadStyle, get_apply_patch_tool_desc, get_edit_tool_desc, get_imgread_tool_desc,
             get_read_tool_desc, get_shell_tool_desc, get_web_fetch_tool_desc,
             get_web_search_tool_desc, get_write_tool_desc,
         },
@@ -122,21 +122,31 @@ impl AgentSpec {
     pub fn system_tools(mut self) -> Self {
         self.tools.push(get_shell_tool_desc());
 
-        let model = model_family(&self.model);
+        let (family, name) = model_family(&self.model);
         // OpenAI models read files through `shell`, as in Codex.
-        if model.starts_with("openai/") {
+        if family == "openai" {
             self.tools.push(get_apply_patch_tool_desc());
         } else {
-            self.tools.push(get_read_tool_desc());
+            let style = if family == "anthropic" {
+                ReadStyle::Claude
+            } else {
+                ReadStyle::Gemini
+            };
+            self.tools.push(get_read_tool_desc(style));
             self.tools.push(get_write_tool_desc());
             self.tools.push(get_edit_tool_desc());
         }
 
         // Text-only models (no image input) get no `imgread`.
-        if !(model.starts_with("deepseek/")
-            || model.starts_with("moonshotai/kimi-k2-")
-            || (model.starts_with("moonshotai/moonshot-v1-") && !model.contains("vision")))
-        {
+        let text_only = match family {
+            "deepseek" => true,
+            "moonshotai" => {
+                name.starts_with("kimi-k2-")
+                    || (name.starts_with("moonshot-v1-") && !name.contains("vision"))
+            }
+            _ => false,
+        };
+        if !text_only {
             self.tools.push(get_imgread_tool_desc());
         }
 
