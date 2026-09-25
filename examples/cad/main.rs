@@ -42,10 +42,17 @@ use ailoy::{
     message::{FinishReason, Message, Part, Role},
 };
 use anyhow::Context as _;
-use cortex::{
-    fs::{Directory, FuseTMount},
-    image::Image,
-};
+use cortex::{fs::Directory, image::Image};
+// One host binding per platform, each mounting on `try_new` and unmounting on `Drop`, so
+// the tree below is written once. Three arms and not `not(windows)`: `fuse-t` is macOS
+// only, and its build script probes pkg-config for FUSE-T on whatever host it runs, so
+// naming it on Linux fails at build time. Cargo.toml splits the feature the same way.
+#[cfg(windows)]
+use cortex::fs::DokanMount as HostMount;
+#[cfg(target_os = "linux")]
+use cortex::fs::FuseMount as HostMount;
+#[cfg(target_os = "macos")]
+use cortex::fs::FuseTMount as HostMount;
 use futures::StreamExt as _;
 
 /// The request when none is given.
@@ -113,7 +120,7 @@ async fn main() -> anyhow::Result<()> {
                     ),
             )
             .mount_readonly(
-                FuseTMount::try_new(
+                HostMount::try_new(
                     Directory::new()
                         .with_file("SKILL.md", include_str!("SKILL.md").as_bytes())?
                         .with_file("render.py", include_str!("render.py").as_bytes())?,

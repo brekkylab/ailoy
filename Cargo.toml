@@ -37,7 +37,8 @@ base64 = "0.23"
 # crate in a sibling checkout, so it is a path dependency until it is published
 # — moving it to a version or git pin is what makes this crate buildable
 # elsewhere.
-cortex = { path = "../cortex/cortex", features = ["fuse-t"] }
+# Platform-split below, under `[target.*.dependencies]`: the host mount binding is
+# FUSE-T on macOS and Dokany on Windows.
 dedent = "0.1.1"
 derive_builder = "0.20.2"
 fancy-regex = "0.18"
@@ -97,3 +98,21 @@ rmcp = { version = "3", default-features = false, features = ["server"] }
 test-with = { version = "0.17", default-features = false, features = ["executable"] }
 tokio = { version = "1.0", features = ["net"] }
 
+
+# One `cortex`, one binding per host. Every guard has the same shape — `try_new`
+# mounts, `Drop` unmounts — so a use site differs only in the type name; the
+# console examples alias it as `HostMount`.
+#
+# Three targets and not `not(windows)`, because `fuse-t` is macOS only: its build
+# script probes pkg-config for FUSE-T whatever the host is, so a Linux build that
+# named it would fail there rather than at a mount. Linux takes `fuse`, which needs
+# no provider — `fuser` opens `/dev/fuse` itself. Untried so far; macOS and Windows
+# are the two that have been run.
+[target.'cfg(windows)'.dependencies]
+cortex = { path = "../cortex/cortex", features = ["dokan"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cortex = { path = "../cortex/cortex", features = ["fuse-t"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+cortex = { path = "../cortex/cortex", features = ["fuse"] }
