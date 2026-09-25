@@ -130,12 +130,11 @@ impl AgentSpec {
             // DeepSeek, Kimi and GLM are served behind Anthropic-compatible APIs
             // for Claude Code, so they likely follow the Claude style.
             // Qwen Code is a fork of Gemini CLI.
-            let read = match family {
+            self.tools.push(match family {
                 "anthropic" | "deepseek" | "moonshotai" | "z-ai" => get_read_tool_desc(),
                 "google" | "qwen" => get_read_file_tool_desc(),
-                _ => get_read_file_tool_desc(),
-            };
-            self.tools.push(read);
+                _ => get_read_tool_desc(),
+            });
             self.tools.push(get_write_tool_desc());
             self.tools.push(get_edit_tool_desc());
         }
