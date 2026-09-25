@@ -34,8 +34,10 @@
 //! * `OFFSHORE_LEAKS_URL` — the archive `prepare_data.py` downloads, ICIJ's latest by default.
 //! * `AILOY_CORTEX_CONSOLE` — the console server binary, `cortex-krun` by default.
 //! * `UV` — the `uv` binary `prepare_data.py` runs with, `uv` on `PATH` by default.
-//! * `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its provider's
-//!   API key has to be set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …).
+//! * `AILOY_MODEL` — the agent's model, `bedrock/global.openai.gpt-6-astra` by default; its
+//!   provider's credentials have to be set — for Bedrock `AWS_BEARER_TOKEN_BEDROCK`, with the
+//!   region from `AWS_REGION` / `AWS_DEFAULT_REGION` (`us-east-1` by default), and for a direct
+//!   provider its API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …).
 //!
 //! Read from `.env` as well.
 
@@ -85,7 +87,8 @@ async fn main() -> anyhow::Result<()> {
     prepare(&project_path).await?;
 
     let mut agent = AgentBuilder::new(
-        std::env::var("AILOY_MODEL").unwrap_or_else(|_| "openai/gpt-6-astra".to_string()),
+        std::env::var("AILOY_MODEL")
+            .unwrap_or_else(|_| "bedrock/global.openai.gpt-6-astra".to_string()),
     )
     .instruction(concat!(
         "# Context\n\n",
