@@ -123,8 +123,8 @@ impl AgentSpec {
         self.tools.push(get_shell_tool_desc());
 
         let model = model_family(&self.model);
+        // OpenAI models read files through `shell`, as in Codex.
         if model.starts_with("openai/") {
-            self.tools.push(get_read_tool_desc());
             self.tools.push(get_apply_patch_tool_desc());
         } else {
             self.tools.push(get_read_tool_desc());
@@ -133,9 +133,9 @@ impl AgentSpec {
         }
 
         // Text-only models (no image input) get no `imgread`.
-        if !model.starts_with("deepseek/")
+        if !(model.starts_with("deepseek/")
             || model.starts_with("moonshotai/kimi-k2-")
-            || (model.starts_with("moonshotai/moonshot-v1-") && !model.contains("vision"))
+            || (model.starts_with("moonshotai/moonshot-v1-") && !model.contains("vision")))
         {
             self.tools.push(get_imgread_tool_desc());
         }
