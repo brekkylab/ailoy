@@ -127,10 +127,13 @@ impl AgentSpec {
         if family == "openai" {
             self.tools.push(get_apply_patch_tool_desc());
         } else {
-            let style = if family == "anthropic" {
-                ReadStyle::Claude
-            } else {
-                ReadStyle::Gemini
+            // DeepSeek, Kimi and GLM are served behind Anthropic-compatible APIs
+            // for Claude Code, so they likely follow the Claude style.
+            // Qwen Code is a fork of Gemini CLI.
+            let style = match family {
+                "anthropic" | "deepseek" | "moonshotai" | "z-ai" => ReadStyle::Claude,
+                "google" | "qwen" => ReadStyle::Gemini,
+                _ => ReadStyle::Gemini,
             };
             self.tools.push(get_read_tool_desc(style));
             self.tools.push(get_write_tool_desc());
