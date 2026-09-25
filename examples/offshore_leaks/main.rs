@@ -34,7 +34,7 @@
 //! * `OFFSHORE_LEAKS_URL` — the archive `prepare_data.py` downloads, ICIJ's latest by default.
 //! * `AILOY_CORTEX_CONSOLE` — the console server binary, `cortex-krun` by default.
 //! * `UV` — the `uv` binary `prepare_data.py` runs with, `uv` on `PATH` by default.
-//! * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its provider's
+//! * `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its provider's
 //!   API key has to be set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …).
 //!
 //! Read from `.env` as well.
@@ -47,7 +47,11 @@ use ailoy::{
     message::{Message, Part, Role},
 };
 use anyhow::Context as _;
-use cortex::{console::NetworkAccess, image::Image};
+use cortex::{
+    console::NetworkAccess,
+    fs::{Directory, FuseTMount},
+    image::Image,
+};
 use futures::StreamExt as _;
 
 /// The request when none is given.
@@ -100,8 +104,8 @@ async fn main() -> anyhow::Result<()> {
                 "pip install --no-cache-dir duckdb==1.5.5 pandas matplotlib networkx",
             ))
             .mount_readonly(
-                cortex::fs::FuseTMount::try_new(
-                    cortex::fs::Directory::new()
+                FuseTMount::try_new(
+                    Directory::new()
                         .with_file("SKILL.md", include_str!("SKILL.md").as_bytes())?
                         .with_file("oldb.py", include_str!("oldb.py").as_bytes())?,
                     &project_path.join("skill"),
@@ -111,7 +115,6 @@ async fn main() -> anyhow::Result<()> {
             )
             .mount_readonly(project_path.join("context"), "/context")
             .mount(project_path.join("artifacts"), "/artifacts")
-            // The build's `pip` runs with the session's reach.
             .network(NetworkAccess::none())
             .vcpus(2)
             .memory_mib(2048)

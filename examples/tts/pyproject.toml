@@ -1,0 +1,18 @@
+[project]
+name = "tts-ncnn"
+version = "0.1.0"
+description = "Downloads Qwen3-TTS and converts it to ncnn for examples/tts, on the host."
+requires-python = ">=3.10"
+dependencies = [
+    "huggingface_hub",
+    "ncnn",
+    "numpy",
+    "pnnx",
+    "qwen-tts",
+    "soundfile",
+    "torch",
+]
+
+[tool.uv]
+# Scripts, not a package: `uv run` only needs the environment.
+package = false

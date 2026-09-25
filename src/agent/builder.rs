@@ -191,6 +191,12 @@ impl AgentBuilder {
         self
     }
 
+    /// The most tokens one reply may have, forwarded to the language model on every call.
+    pub fn max_tokens(mut self, max_tokens: u64) -> Self {
+        self.spec = self.spec.max_tokens(max_tokens);
+        self
+    }
+
     /// Sampling temperature forwarded to the language model on every call.
     pub fn temperature(mut self, temperature: f64) -> Self {
         self.spec = self.spec.temperature(temperature);

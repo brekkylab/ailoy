@@ -1,25 +1,33 @@
-//! Answer typed questions with Laya through ncnn on the guest's Vulkan device, as an agent's
-//! skill.
+//! Speak a text in a voice described in words with Qwen3-TTS, through ncnn on the guest's Vulkan
+//! device, as an agent's skill.
 //!
 //! ```sh
-//! cargo run --example laya
-//! cargo run --example laya -- "Triage this ticket: we were billed twice for March …"
+//! cargo run --example tts
 //! ```
 //!
-//! [Laya](https://huggingface.co/convaiinnovations/laya) is a decision model: given a state
-//! (a text, an email, a ticket) and typed questions — a choice, a score, a yes/no — it answers
-//! each with calibrated probabilities in one forward pass, and generates no text.
+//! [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) 1.7B VoiceDesign speaks ten languages,
+//! Korean among them, in a voice an instruction describes, such as "a calm woman in her thirties,
+//! speaking slowly". It is three models, all of them here, converted from the checkpoint by
+//! `prepare_model.py`: the talker, a Qwen3 LM that reads the instruction and the text and makes
+//! each frame's first code; the code predictor, which makes the frame's other 15; and the codec's
+//! decoder, which turns the frames into a 24 kHz waveform.
 //!
-//! The skill is `SKILL.md` and `run_laya.py`, mounted at `/skills/laya` from memory, which the
+//! There is no prompt. What to say and how are two files in the context folder, `text.txt` and
+//! `instruct.txt`, and the agent reads them, speaks the text in that voice and hands back the
+//! WAV.
+//!
+//! The skill is `SKILL.md` and `run_tts.py`, mounted at `/skills/tts` from memory, which the
 //! agent runs with its `shell` tool.
 //!
-//! * `context/` at `/context`, read-only — what to decide on, when it is not in the prompt.
+//! * `context/` at `/context`, read-only — the text and the instruction. When it is empty or
+//!   missing, `context_example/` is copied into it first.
 //! * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes.
 //!
-//! The image is Debian rather than Alpine. PyPI's ncnn has a musllinux wheel, but it crashes
-//! freeing the first `Mat` it allocates, where the manylinux (glibc) one runs laya.
-//! `mesa-vulkan-drivers` carries the venus ICD the guest needs — from trixie-backports, for
-//! bf16 — and `libvulkan1` the loader the wheel opens.
+//! The image is Debian rather than Alpine because PyPI's ncnn wheels are manylinux (glibc)
+//! only. `mesa-vulkan-drivers` carries the venus ICD the guest needs — from trixie-backports,
+//! as the other ncnn examples have it — and `libvulkan1` the loader the wheel opens.
+//!
+//! Qwen3-TTS and its weights are the Qwen team's, under Apache-2.0.
 //!
 //! Environment:
 //!
@@ -50,14 +58,23 @@ use futures::StreamExt as _;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    let project_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/laya");
-    let prompt = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
 
+    // Absolute, because a mount is named to the server as a `file://` URL.
+    let project_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/tts");
     prepare(&project_path).await?;
-
+    // `skill` too, which is empty on the host: it is where the skill is mounted from memory.
     for dir in ["context", "artifacts", "skill"] {
         let dir = project_path.join(dir);
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    // Something to say, for a first run.
+    let context = project_path.join("context");
+    if std::fs::read_dir(&context)?.next().is_none() {
+        for entry in std::fs::read_dir(project_path.join("context_example"))? {
+            let entry = entry?;
+            std::fs::copy(entry.path(), context.join(entry.file_name()))
+                .with_context(|| "copying context_example into context")?;
+        }
     }
 
     let mut agent = AgentBuilder::new(
@@ -66,19 +83,16 @@ async fn main() -> anyhow::Result<()> {
     .instruction(concat!(
         "# Context\n\n",
         "Path: /context\n\n",
-        "Holds what you were given to decide on, such as the user's messages, ",
-        "tickets and documents. When the request refers to something that is not in it, look ",
-        "here first. List the folder, read what bears on the request, and pass that text to Laya ",
-        "as the state. This folder is read-only.\n\n",
+        "Holds what you are to say and how: `text.txt`, the text to speak, and ",
+        "`instruct.txt`, the voice and the manner to speak it in. ",
+        "This folder is read-only.\n\n",
         "# Artifacts\n\n",
         "Path: /artifacts\n\n",
-        "Where the files the user asks for go. When they ask for a file, such as ",
-        "a report or a table of decisions, write it here and name it so they can tell what it ",
-        "is. A result that is only in your reply is not delivered as a file.",
+        "Where the files the user asks for go, such as the speech Qwen3-TTS makes. Write them ",
+        "here and name them so the user can tell what they are. A result that is only in your ",
+        "reply is not delivered as a file.",
     ))
     .system_tools()
-    .web_fetch_tool()
-    .web_search_tool(vec![])
     .console(
         Console::builder()
             .stdio_client(&[&std::env::var("AILOY_CORTEX_CONSOLE")
@@ -86,8 +100,8 @@ async fn main() -> anyhow::Result<()> {
             .image(
                 Image::new()
                     .base("python:3.12-slim-trixie")
-                    // Mesa from backports: venus passes VK_KHR_shader_bfloat16 through from 26.0
-                    // on, and trixie itself has 25.0.
+                    // Mesa from backports, 26.0 against trixie's 25.0, as the other ncnn examples
+                    // have it.
                     .step(
                         "echo 'deb http://deb.debian.org/debian trixie-backports main' \
                         > /etc/apt/sources.list.d/backports.list \
@@ -103,29 +117,34 @@ async fn main() -> anyhow::Result<()> {
                 FuseTMount::try_new(
                     Directory::new()
                         .with_file("SKILL.md", include_str!("SKILL.md").as_bytes())?
-                        .with_file("run_laya.py", include_str!("run_laya.py").as_bytes())?,
+                        .with_file("run_tts.py", include_str!("run_tts.py").as_bytes())?,
                     &project_path.join("skill"),
                 )
                 .with_context(|| "mounting the skill")?,
-                "/skills/laya",
+                "/skills/tts",
             )
-            .mount_readonly(project_path.join("context"), "/context")
+            .mount_readonly(context, "/context")
             .mount(project_path.join("artifacts"), "/artifacts")
             // The build's `apt-get` and `pip` run with the session's reach.
             .network(NetworkAccess::public())
             .gpu(true)
             .vcpus(2)
+            // The talker is 2.8 GB on the device in fp16, and its cache and the codec's buffers
+            // come on top of it there; the run itself takes under 1 GB of memory.
             .memory_mib(4096)
-            .gpu_memory_mib(12288)
+            .gpu_memory_mib(8192)
             .build()
             .await
             .with_context(|| format!("starting the console"))?,
     )
-    .skill("/skills/laya")
+    .skill("/skills/tts")
     .build()
     .await?;
 
-    let query = Message::new(Role::User).with_contents([Part::text(prompt)]);
+    let query = Message::new(Role::User).with_contents([Part::text(
+        "Speak the text in /context in the voice and manner its instruction describes, \
+         and hand back the speech as a WAV file.",
+    )]);
     let mut stream = agent.run(query);
     while let Some(output) = stream.next().await {
         let message = output?.message;
@@ -140,7 +159,8 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
             }
-            // Laya's answers are small, and they are what the reply is made from: shown whole.
+            // A run prints where the speech went and how long it is, and ncnn's device log
+            // and its progress: shown whole.
             Role::Tool => {
                 for part in &message.contents {
                     println!("← {}", serde_json::to_string_pretty(part)?);
@@ -154,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Download and convert the model into `project/data`
+/// Download and convert the models into `project/data`
 async fn prepare(project: &Path) -> anyhow::Result<()> {
     let uv = std::env::var("UV").unwrap_or_else(|_| "uv".to_string());
     let status = tokio::process::Command::new(&uv)
@@ -162,11 +182,9 @@ async fn prepare(project: &Path) -> anyhow::Result<()> {
         .current_dir(project)
         // An activated environment elsewhere is not this project's, and uv says so.
         .env_remove("VIRTUAL_ENV")
-        // `transformers` probes for TensorFlow at import, which can hang model construction.
-        .env("USE_TF", "0")
         .status()
         .await
         .with_context(|| format!("running `{uv}`. Install uv, or point $UV at it."))?;
-    anyhow::ensure!(status.success(), "preparing the model: {status}");
+    anyhow::ensure!(status.success(), "preparing the models: {status}");
     Ok(())
 }

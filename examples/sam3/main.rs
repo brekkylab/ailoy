@@ -44,7 +44,11 @@ use ailoy::{
     message::{Message, Part, Role},
 };
 use anyhow::Context as _;
-use cortex::{console::NetworkAccess, image::Image};
+use cortex::{
+    console::NetworkAccess,
+    fs::{Directory, FuseTMount},
+    image::Image,
+};
 use futures::StreamExt as _;
 
 #[tokio::main]
@@ -106,8 +110,8 @@ async fn main() -> anyhow::Result<()> {
             )
             .mount_readonly(project_path.join("data/ncnn"), "/models")
             .mount_readonly(
-                cortex::fs::FuseTMount::try_new(
-                    cortex::fs::Directory::new()
+                FuseTMount::try_new(
+                    Directory::new()
                         .with_file("SKILL.md", include_str!("SKILL.md").as_bytes())?
                         .with_file("run_sam3.py", include_str!("run_sam3.py").as_bytes())?,
                     &project_path.join("skill"),

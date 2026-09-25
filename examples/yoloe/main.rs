@@ -50,7 +50,11 @@ use ailoy::{
     message::{Message, Part, Role},
 };
 use anyhow::Context as _;
-use cortex::{console::NetworkAccess, image::Image};
+use cortex::{
+    console::NetworkAccess,
+    fs::{Directory, FuseTMount},
+    image::Image,
+};
 use futures::StreamExt as _;
 
 #[tokio::main]
@@ -70,8 +74,11 @@ async fn main() -> anyhow::Result<()> {
     // Something to look in, for a first run.
     let context = project_path.join("context");
     if std::fs::read_dir(&context)?.next().is_none() {
-        std::fs::copy(project_path.join("data/ncnn/image.jpg"), context.join("image.jpg"))
-            .with_context(|| "copying the reference image into context")?;
+        std::fs::copy(
+            project_path.join("data/ncnn/image.jpg"),
+            context.join("image.jpg"),
+        )
+        .with_context(|| "copying the reference image into context")?;
     }
 
     let mut agent = AgentBuilder::new(
@@ -117,8 +124,8 @@ async fn main() -> anyhow::Result<()> {
             )
             .mount_readonly(project_path.join("data/ncnn"), "/models")
             .mount_readonly(
-                cortex::fs::FuseTMount::try_new(
-                    cortex::fs::Directory::new()
+                FuseTMount::try_new(
+                    Directory::new()
                         .with_file("SKILL.md", include_str!("SKILL.md").as_bytes())?
                         .with_file("run_yoloe.py", include_str!("run_yoloe.py").as_bytes())?,
                     &project_path.join("skill"),

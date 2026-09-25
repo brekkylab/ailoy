@@ -44,9 +44,17 @@ pub fn get_shell_tool_func() -> ToolFunc {
             }
         };
 
+        // Seconds, whole or not, as the model gives them; 0 or none is no bound of the call's
+        // own, which leaves it to whatever the console was built with.
+        let timeout_ms = args
+            .pointer("/timeout_secs")
+            .and_then(|v| v.as_float().or_else(|| v.as_unsigned().map(|u| u as f64)))
+            .filter(|secs| *secs > 0.0)
+            .map(|secs| (secs * 1000.0).ceil() as u64);
+
         // cortex consults no shell, so asking for shell semantics means asking for a
-        // shell. `None` leaves the bound to whatever the console was built with.
-        let out = match console.exec(["sh", "-c", cmd.as_str()], None).await {
+        // shell.
+        let out = match console.exec(["sh", "-c", cmd.as_str()], timeout_ms).await {
             Ok(out) => out,
             // A killed command has no result — no exit code, and whatever it wrote is
             // gone with it — so cortex refuses the execution instead of inventing one.
@@ -136,6 +144,27 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap();
         assert!(stdout.contains("ailoy"), "stdout: {stdout:?}");
+    }
+
+    #[tokio::test]
+    async fn test_timeout_secs_bounds_the_command() {
+        let provider = provider().await;
+        let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
+        let f = funcs.get("shell").unwrap();
+        let mut console = test_console().await;
+        let msg = f
+            .call(to_value!({ "cmd": "sleep 30", "timeout_secs": 1 }), "", &mut console)
+            .next()
+            .await
+            .unwrap()
+            .message;
+        let timed_out = msg.contents[0]
+            .as_value()
+            .unwrap()
+            .pointer("/timed_out")
+            .and_then(|v| v.as_bool())
+            .unwrap();
+        assert!(timed_out);
     }
 
     #[tokio::test]
