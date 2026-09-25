@@ -1,5 +1,6 @@
 use super::imgread::image_mime;
 use crate::{
+    console::Console,
     message::{Message, Part, Role},
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
@@ -20,6 +21,45 @@ fn check_text(bytes: &[u8]) -> Result<(), String> {
     }
 }
 
+/// The text of the file at `path`, for both `read` styles. An error comes with
+/// its phase, `"io"` or `"validation"`.
+pub(super) async fn load_text(
+    console: &mut Console,
+    path: &str,
+) -> Result<String, (String, &'static str)> {
+    // One `read`. `size` is the whole file's, so a short answer means the
+    // file is bigger than one message — reported rather than returned as if
+    // it were the file, which is what `MAX_FILE_BYTES` below also guards.
+    let bytes = match console.read(path, None, None).await {
+        Ok(r) if (r.data.len() as u64) < r.size => {
+            return Err((
+                format!(
+                    "read {path}: file is {} bytes, more than one message carries",
+                    r.size
+                ),
+                "io",
+            ));
+        }
+        Ok(r) => r.data,
+        Err(e) => return Err((format!("read {path}: {e}"), "io")),
+    };
+
+    check_text(&bytes).map_err(|e| (e, "validation"))?;
+
+    if bytes.len() > MAX_FILE_BYTES {
+        return Err((
+            format!(
+                "file too large: {} bytes (limit: {}); read it in chunks",
+                bytes.len(),
+                MAX_FILE_BYTES
+            ),
+            "validation",
+        ));
+    }
+    let (cow, _, _) = encoding_rs::UTF_8.decode(&bytes);
+    Ok(cow.into_owned())
+}
+
 fn error_message(id: String, msg: impl Into<String>, phase: &str) -> Message {
     Message::new(Role::Tool)
         .with_contents([Part::value(crate::to_value!({
@@ -29,24 +69,15 @@ fn error_message(id: String, msg: impl Into<String>, phase: &str) -> Message {
         .with_id(id)
 }
 
-/// The output format of `read`, after the agent whose file tools the model knows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReadStyle {
-    /// Claude Code: each line prefixed with its number, `cat -n` style.
-    Claude,
-    /// Gemini CLI: the raw text, with a note of the line range shown when it is
-    /// not the whole file.
-    Gemini,
-}
-
-/// Lines `offset..offset + limit` of `text` (1-based `offset`) in `style`, plus
-/// the file's line count.
-fn format_text(text: &str, offset: usize, limit: usize, style: ReadStyle) -> (String, usize) {
+fn format_text(text: &str, offset: usize, limit: usize) -> (String, usize) {
     let total = text.lines().count();
-    let start = offset.saturating_sub(1);
     let mut out = String::new();
-    let mut shown = 0;
-    for (idx, line) in text.lines().enumerate().skip(start).take(limit) {
+    for (idx, line) in text
+        .lines()
+        .enumerate()
+        .skip(offset.saturating_sub(1))
+        .take(limit)
+    {
         let line_no = idx + 1;
         let display: String = if line.chars().count() > MAX_LINE_CHARS {
             let truncated: String = line.chars().take(MAX_LINE_CHARS).collect();
@@ -54,49 +85,24 @@ fn format_text(text: &str, offset: usize, limit: usize, style: ReadStyle) -> (St
         } else {
             line.to_string()
         };
-        if style == ReadStyle::Claude {
-            out.push_str(&format!("{line_no:>6}\t{display}\n"));
-        } else {
-            out.push_str(&display);
-            out.push('\n');
-        }
-        shown += 1;
-    }
-    if style == ReadStyle::Gemini && shown > 0 && (start > 0 || start + shown < total) {
-        let (first, last) = (start + 1, start + shown);
-        let mut note = format!("[Showing lines {first}-{last} of {total} total lines.");
-        if last < total {
-            note.push_str(&format!(" To read more, use offset: {}.", last + 1));
-        }
-        note.push_str("]\n\n");
-        out.insert_str(0, &note);
+        out.push_str(&format!("{line_no:>6}\t{display}\n"));
     }
     (out, total)
 }
 
-const DESC_HEAD: &str = concat!(
-    "Reads a text file from the local filesystem. ",
-    "When you already know which part of the file you need, only read that part. This can be important for larger files. ",
-);
-const DESC_CLAUDE: &str =
-    "Results are returned using cat -n format, with line numbers starting at 1. ";
-const DESC_GEMINI: &str = concat!(
-    "Results are returned as the file's raw text, without line numbers. ",
-    "When only part of the file is returned, a note at the top gives the line range shown and the offset to read the rest. ",
-);
-const DESC_TAIL: &str = concat!(
-    "Lines longer than 10000 characters are truncated. ",
-    "Binary or unsupported file types return an error. ",
-);
-
-/// The function bound to the desc follows its `style`; see [`read_style_of`].
-pub fn get_read_tool_desc(style: ReadStyle) -> ToolDesc {
-    let format = match style {
-        ReadStyle::Claude => DESC_CLAUDE,
-        ReadStyle::Gemini => DESC_GEMINI,
-    };
+/// `read` after Claude Code's `Read`: lines numbered `cat -n` style. See
+/// [`super::get_read_file_tool_desc`] for Gemini CLI's.
+pub fn get_read_tool_desc() -> ToolDesc {
     ToolDescBuilder::new("read")
-        .description(format!("{DESC_HEAD}{format}{DESC_TAIL}"))
+        .description(
+            concat!(
+                "Reads a text file from the local filesystem. ",
+                "When you already know which part of the file you need, only read that part. This can be important for larger files. ",
+                "Results are returned using cat -n format, with line numbers starting at 1. ",
+                "Lines longer than 10000 characters are truncated. ",
+                "Binary or unsupported file types return an error. ",
+            )
+        )
         .parameters(crate::to_value!({
             "type": "object",
             "properties": {
@@ -120,58 +126,16 @@ pub fn get_read_tool_desc(style: ReadStyle) -> ToolDesc {
         .build()
 }
 
-/// The style `desc` asks for. Only the Gemini desc from [`get_read_tool_desc`]
-/// selects [`ReadStyle::Gemini`], so a caller-written desc gets the Claude style.
-pub fn read_style_of(desc: &ToolDesc) -> ReadStyle {
-    if desc.description == get_read_tool_desc(ReadStyle::Gemini).description {
-        ReadStyle::Gemini
-    } else {
-        ReadStyle::Claude
-    }
-}
-
-pub fn get_read_tool_func(style: ReadStyle) -> ToolFunc {
+pub fn get_read_tool_func() -> ToolFunc {
     tool_func!(
-        async |args: Value, id: String, console: &mut Console| -> Message with [style = style] {
+        async |args: Value, id: String, console: &mut Console| -> Message {
             let Some(path_str) = args.pointer("/path").and_then(|v| v.as_str()) else {
                 return error_message(id, "missing required parameter: path", "validation");
             };
-
-            // One `read`. `size` is the whole file's, so a short answer means the
-            // file is bigger than one message — reported rather than returned as if
-            // it were the file, which is what `MAX_FILE_BYTES` below also guards.
-            let bytes = match console.read(path_str, None, None).await {
-                Ok(r) if (r.data.len() as u64) < r.size => {
-                    return error_message(
-                        id,
-                        format!(
-                            "read {path_str}: file is {} bytes, more than one message carries",
-                            r.size
-                        ),
-                        "io",
-                    );
-                }
-                Ok(r) => r.data,
-                Err(e) => return error_message(id, format!("read {path_str}: {e}"), "io"),
+            let text = match load_text(console, path_str).await {
+                Ok(text) => text,
+                Err((e, phase)) => return error_message(id, e, phase),
             };
-
-            if let Err(e) = check_text(&bytes) {
-                return error_message(id, e, "validation");
-            }
-
-            if bytes.len() > MAX_FILE_BYTES {
-                return error_message(
-                    id,
-                    format!(
-                        "file too large: {} bytes (limit: {}); use offset/limit to read in chunks",
-                        bytes.len(),
-                        MAX_FILE_BYTES
-                    ),
-                    "validation",
-                );
-            }
-            let (cow, _, _) = encoding_rs::UTF_8.decode(&bytes);
-            let text = cow.into_owned();
             let offset = args
                 .pointer("/offset")
                 .and_then(|v| v.as_integer())
@@ -182,7 +146,7 @@ pub fn get_read_tool_func(style: ReadStyle) -> ToolFunc {
                 .and_then(|v| v.as_integer())
                 .map(|n| n.max(0) as usize)
                 .unwrap_or(DEFAULT_LIMIT);
-            let (content, total) = format_text(&text, offset, limit, style);
+            let (content, total) = format_text(&text, offset, limit);
             Message::new(Role::Tool)
                 .with_contents([Part::value(crate::to_value!({
                     "content": content.as_str(),
@@ -200,19 +164,15 @@ mod tests {
     use super::*;
     use crate::{datatype::Value, test_console, to_value, tool::ToolProvider};
 
-    fn provider(style: ReadStyle) -> ToolProvider {
+    fn provider() -> ToolProvider {
         let mut p = ToolProvider::new();
-        p.insert_func("read", get_read_tool_func(style));
+        p.insert_func("read", get_read_tool_func());
         p
     }
 
     async fn call(args: Value) -> Message {
-        call_with(args, ReadStyle::Claude).await
-    }
-
-    async fn call_with(args: Value, style: ReadStyle) -> Message {
-        let provider = provider(style);
-        let funcs = provider.provide(&[get_read_tool_desc(style)]).unwrap();
+        let provider = provider();
+        let funcs = provider.provide(&[get_read_tool_desc()]).unwrap();
         let f = funcs.get("read").unwrap();
         let mut console = test_console().await;
         f.call(args, "1", &mut console)
@@ -360,43 +320,5 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap();
         assert!(err.contains("imgread"), "got: {err}");
-    }
-
-    #[tokio::test]
-    async fn test_read_gemini_has_no_line_numbers() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "alpha\nbeta\n").unwrap();
-        let msg = call_with(
-            to_value!({ "path": tmp.path().to_string_lossy().to_string() }),
-            ReadStyle::Gemini,
-        )
-        .await;
-        assert_eq!(read_content(&msg), "alpha\nbeta\n");
-    }
-
-    #[tokio::test]
-    async fn test_read_gemini_notes_partial_range() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "a\nb\nc\nd\ne\n").unwrap();
-        let msg = call_with(
-            to_value!({
-                "path": tmp.path().to_string_lossy().to_string(),
-                "offset": 2,
-                "limit": 2,
-            }),
-            ReadStyle::Gemini,
-        )
-        .await;
-        assert_eq!(
-            read_content(&msg),
-            "[Showing lines 2-3 of 5 total lines. To read more, use offset: 4.]\n\nb\nc\n"
-        );
-    }
-
-    #[test]
-    fn test_read_desc_selects_format() {
-        for style in [ReadStyle::Claude, ReadStyle::Gemini] {
-            assert_eq!(read_style_of(&get_read_tool_desc(style)), style);
-        }
     }
 }

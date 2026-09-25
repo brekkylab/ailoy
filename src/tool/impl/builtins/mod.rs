@@ -2,6 +2,7 @@ mod apply_patch;
 mod edit;
 mod imgread;
 mod read;
+mod read_file;
 mod shell;
 mod web_fetch;
 mod web_search;
@@ -13,6 +14,7 @@ pub use apply_patch::*;
 pub use edit::*;
 pub use imgread::*;
 pub use read::*;
+pub use read_file::*;
 pub use shell::*;
 pub use web_fetch::*;
 pub use web_search::*;
@@ -27,8 +29,8 @@ type BuiltinFactory = Arc<dyn Fn(&ToolDesc) -> ToolFunc + Send + Sync + 'static>
 /// to bind to it.
 pub fn get_builtin_tool_factories() -> Vec<(&'static str, BuiltinFactory)> {
     let shell = get_shell_tool_func();
-    let read_claude = get_read_tool_func(ReadStyle::Claude);
-    let read_gemini = get_read_tool_func(ReadStyle::Gemini);
+    let read = get_read_tool_func();
+    let read_file = get_read_file_tool_func();
     let imgread = get_imgread_tool_func();
     let write = get_write_tool_func();
     let edit = get_edit_tool_func();
@@ -36,13 +38,8 @@ pub fn get_builtin_tool_factories() -> Vec<(&'static str, BuiltinFactory)> {
 
     vec![
         ("shell", Arc::new(move |_| shell.clone())),
-        (
-            "read",
-            Arc::new(move |desc| match read_style_of(desc) {
-                ReadStyle::Claude => read_claude.clone(),
-                ReadStyle::Gemini => read_gemini.clone(),
-            }),
-        ),
+        ("read", Arc::new(move |_| read.clone())),
+        ("read_file", Arc::new(move |_| read_file.clone())),
         ("imgread", Arc::new(move |_| imgread.clone())),
         ("write", Arc::new(move |_| write.clone())),
         ("edit", Arc::new(move |_| edit.clone())),
