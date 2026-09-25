@@ -16,7 +16,9 @@
 
 use ailoy::{
     agent::{AgentProvider, get_agent_providers_mut},
-    lang_model::{LangModelAPISchema, LangModelProvider, LangModelProviderElem, get_lm_providers_mut},
+    lang_model::{
+        LangModelAPISchema, LangModelProvider, LangModelProviderElem, get_lm_providers_mut,
+    },
     tool::{
         ToolDesc, ToolProvider, get_tool_providers_mut, register_a2a as register_a2a_rs,
         register_mcp_stdio as register_mcp_stdio_rs,
@@ -93,7 +95,10 @@ pub fn register_lang_model(
     let schema: LangModelAPISchema = from_js(env, schema, "an API schema")?;
     let url = parse_url(&url)?;
     let (api_key, provider) = match options {
-        Some(o) => (o.api_key, o.provider.unwrap_or_else(|| "default".to_string())),
+        Some(o) => (
+            o.api_key,
+            o.provider.unwrap_or_else(|| "default".to_string()),
+        ),
         None => (None, "default".to_string()),
     };
     let mut registry = get_lm_providers_mut();

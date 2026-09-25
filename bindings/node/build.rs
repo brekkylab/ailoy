@@ -18,7 +18,9 @@ fn main() {
     let fuse_t = pkg_config::Config::new()
         .cargo_metadata(false)
         .probe("fuse-t")
-        .expect("cortex's `mount` feature on macOS needs FUSE-T installed: brew install --cask fuse-t");
+        .expect(
+            "cortex's `mount` feature on macOS needs FUSE-T installed: brew install --cask fuse-t",
+        );
     for path in &fuse_t.link_paths {
         println!("cargo::rustc-link-arg=-Wl,-rpath,{}", path.display());
     }

@@ -72,8 +72,11 @@ async fn main() -> anyhow::Result<()> {
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     }
 
+    // `build()` below builds the image before it starts the console, which takes a while.
+    println!("building the image ...");
     let mut agent = AgentBuilder::new(
-        std::env::var("AILOY_MODEL").unwrap_or_else(|_| "anthropic/claude-sonnet-5".to_string()),
+        std::env::var("AILOY_MODEL")
+            .unwrap_or_else(|_| "bedrock/global.openai.gpt-6-astra".to_string()),
     )
     .instruction(concat!(
         "# Context\n\n",

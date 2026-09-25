@@ -287,7 +287,11 @@ impl JsAgentBuilder {
     /// reads the skills through the console.
     #[napi(ts_return_type = "Promise<Agent>")]
     pub fn build<'env>(&mut self, env: &'env Env) -> napi::Result<PromiseRaw<'env, JsAgent>> {
-        let builder = self.0.take().ok_or_else(built).map_err(|e| thrown(env, e))?;
+        let builder = self
+            .0
+            .take()
+            .ok_or_else(built)
+            .map_err(|e| thrown(env, e))?;
         promise(env, async move {
             let agent = builder.build().await.map_err(error::anyhow)?;
             Ok(JsAgent::new(agent))
@@ -496,7 +500,9 @@ const DONE: Step = Step {
 
 #[napi]
 impl JsAgentRun {
-    #[napi(ts_return_type = "Promise<IteratorResult<MessageOutput | MessageDeltaOutput, undefined>>")]
+    #[napi(
+        ts_return_type = "Promise<IteratorResult<MessageOutput | MessageDeltaOutput, undefined>>"
+    )]
     pub fn next<'env>(&self, env: &'env Env) -> napi::Result<PromiseRaw<'env, Json<Step>>> {
         let stream = self.stream.clone();
         promise(env, async move {
@@ -519,7 +525,10 @@ impl JsAgentRun {
     }
 
     /// End the turn where it stands, as breaking out of `for await` does.
-    #[napi(js_name = "return", ts_return_type = "Promise<IteratorResult<MessageOutput | MessageDeltaOutput, undefined>>")]
+    #[napi(
+        js_name = "return",
+        ts_return_type = "Promise<IteratorResult<MessageOutput | MessageDeltaOutput, undefined>>"
+    )]
     pub fn finish<'env>(&self, env: &'env Env) -> napi::Result<PromiseRaw<'env, Json<Step>>> {
         let stream = self.stream.clone();
         promise(env, async move {
