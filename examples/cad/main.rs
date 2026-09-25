@@ -43,7 +43,6 @@ use ailoy::{
 };
 use anyhow::Context as _;
 use cortex::{
-    console::NetworkAccess,
     fs::{Directory, FuseTMount},
     image::Image,
 };
