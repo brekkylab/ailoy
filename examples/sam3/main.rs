@@ -80,16 +80,15 @@ async fn main() -> anyhow::Result<()> {
     )
     .instruction(concat!(
         "# Context\n\n",
-        "Path: /context\n\n",
-        "Holds what you were given to segment, such as images, and videos as folders of ",
-        "frames. When the request refers to something that is not in it, look here first. ",
-        "List the folder, and pass SAM3 the paths that bear on the request. ",
-        "This folder is read-only.\n\n",
+        "Path: `/context`\n\n",
+        "This folder holds the data and context the user wants to share with you. ",
+        "When the user refers to something whose context you cannot figure out, the files in this folder might help. ",
+        "The information that settles the answer may be here too, and so may hints toward it, so look through this folder for them.\n\n",
         "# Artifacts\n\n",
-        "Path: /artifacts\n\n",
-        "Where the files the user asks for go, such as the masks and overlays SAM3 writes or a ",
-        "report on them. Have SAM3 write into a folder here named so the user can tell what it ",
-        "is. A result that is only in your reply is not delivered as a file.",
+        "Path: `/artifacts`\n\n",
+        "This folder is where what the user asked for goes. ",
+        "Write every result here, such as a report, a figure, or the file the user came for. ",
+        "Everything in this folder is collected and handed back to the user, and a result left anywhere else is not delivered.",
     ))
     .system_tools()
     .web_fetch_tool()

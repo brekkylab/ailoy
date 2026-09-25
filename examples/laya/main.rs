@@ -71,16 +71,15 @@ async fn main() -> anyhow::Result<()> {
     )
     .instruction(concat!(
         "# Context\n\n",
-        "Path: /context\n\n",
-        "Holds what you were given to decide on, such as the user's messages, ",
-        "tickets and documents. When the request refers to something that is not in it, look ",
-        "here first. List the folder, read what bears on the request, and pass that text to Laya ",
-        "as the state. This folder is read-only.\n\n",
+        "Path: `/context`\n\n",
+        "This folder holds the data and context the user wants to share with you. ",
+        "When the user refers to something whose context you cannot figure out, the files in this folder might help. ",
+        "The information that settles the answer may be here too, and so may hints toward it, so look through this folder for them.\n\n",
         "# Artifacts\n\n",
-        "Path: /artifacts\n\n",
-        "Where the files the user asks for go. When they ask for a file, such as ",
-        "a report or a table of decisions, write it here and name it so they can tell what it ",
-        "is. A result that is only in your reply is not delivered as a file.",
+        "Path: `/artifacts`\n\n",
+        "This folder is where what the user asked for goes. ",
+        "Write every result here, such as a report, a figure, or the file the user came for. ",
+        "Everything in this folder is collected and handed back to the user, and a result left anywhere else is not delivered.",
     ))
     .system_tools()
     .web_fetch_tool()

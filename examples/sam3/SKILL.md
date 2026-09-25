@@ -19,11 +19,13 @@ SAM3 finds and segments objects. It does three tasks.
 Run `run_sam3.py` from this directory with the mode and the request as its two arguments.
 
 ```sh
-python3 run_sam3.py fp32 '{"task": "detect", "image": "/context/street.jpg", "text": "car", "out": "/artifacts/street-cars"}'
+python3 run_sam3.py bf16 '{"task": "detect", "image": "/context/street.jpg", "text": "car", "out": "/artifacts/street-cars"}'
 ```
 
-The mode is `fp32`, or `bf16` for a run that is less exact. The models are read from
-`/models`, or from the directory `SAM3_MODELS` names.
+The mode is `bf16`, which is faster and good enough for almost every request, so use it. Use
+`fp32`, which is exact but slower, only when a bf16 run's result is clearly wrong, or when you
+are asked for exact output. The models are read from `/models`, or from the directory
+`SAM3_MODELS` names.
 
 Every run loads the image model again and runs it once for each image or frame, which takes
 several seconds each. So put every text for one image in a single request, and track every
