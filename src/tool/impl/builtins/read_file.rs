@@ -97,7 +97,7 @@ pub fn get_read_file_tool_desc() -> ToolDesc {
 
 pub fn get_read_file_tool_func() -> ToolFunc {
     tool_func!(
-        async |args: Value, id: String, console: &mut Console| -> Message {
+        async |args: Value, id: String, console: &mut ConsoleClient| -> Message {
             let path = args
                 .pointer("/file_path")
                 .and_then(|v| v.as_str())

@@ -20,7 +20,7 @@ ailoy = { path = "../.." }
 # crate as `ailoy`'s own dependency on it, so the type is the one ailoy's errors carry.
 cortex = { path = "../../../cortex", default-features = false }
 # cortex's JavaScript classes, linked into this addon rather than loaded from cortex's own. A
-# `Console` has to be one this addon can take apart to hand to an agent, and a `Console` built
+# `ConsoleClient` has to be one this addon can take apart to hand to an agent, and a `ConsoleClient` built
 # by another addon is a copy of cortex this one cannot see into — see the `rlib` in that
 # crate's manifest. napi registers its classes here just by its being linked.
 cortex-node = { path = "../../../cortex/bindings/node", default-features = false }

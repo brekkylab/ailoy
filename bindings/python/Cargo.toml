@@ -23,8 +23,8 @@ ailoy = { path = "../.." }
 # crate as `ailoy`'s own dependency on it, so the type is the one ailoy's errors carry.
 cortex = { path = "../../../cortex", default-features = false }
 # cortex's Python classes, linked into this extension rather than imported from cortex's
-# own. A `Console` has to be one this module can take apart to hand to an agent, and a
-# `Console` built by another extension module is a copy of cortex this one cannot see into
+# own. A `ConsoleClient` has to be one this module can take apart to hand to an agent, and a
+# `ConsoleClient` built by another extension module is a copy of cortex this one cannot see into
 # — see the `rlib` in that crate's manifest.
 cortex-python = { path = "../../../cortex/bindings/python", default-features = false }
 # `abi3-py310`: one wheel per platform rather than one per interpreter. `extension-module`

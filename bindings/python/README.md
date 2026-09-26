@@ -8,14 +8,14 @@ comes built in, as `ailoy.cortex`, for the console an agent's tools run in.
 import asyncio
 
 from ailoy import AgentBuilder
-from ailoy.cortex import Console, Image, NetworkAccess
+from ailoy.cortex import ConsoleClient, NetworkAccess, Recipe
 
 
 async def main() -> None:
     console = await (
-        Console.builder()
-        .stdio_client(["cortex-krun"])
-        .image(Image().base("python:3.12-slim-trixie"))
+        ConsoleClient.builder()
+        .cmd(["cortex-krun"])
+        .image(Recipe("python:3.12-slim-trixie"))
         .mount("./artifacts", "/artifacts")
         .network(NetworkAccess.none())
         .build()
@@ -90,12 +90,12 @@ api_key)`.
 ## The console
 
 `AgentBuilder.console(console)` shares the console's session with the agent rather than
-taking it: the `Console` stays usable, its calls and the agent's tools take turns, and
+taking it: the `ConsoleClient` stays usable, its calls and the agent's tools take turns, and
 `console.close()` ends it for both. The agent starts the console's backend for each batch of
 tool calls and stops it afterwards, so it is not started beforehand.
 
 Use `ailoy.cortex` rather than the `cortex-py` package for it. Each extension links its own
-copy of cortex, and a `Console` from another one is not a type this one can hand an agent.
+copy of cortex, and a `ConsoleClient` from another one is not a type this one can hand an agent.
 
 ## Building
 

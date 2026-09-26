@@ -9,9 +9,9 @@
 // Messages, specs and tool descriptions are the objects their JSON form is; `types.d.ts`
 // spells out their shapes.
 //
-// Where the tools run commands is a cortex console — `Console`, `Directory`, `Image` and the
+// Where the tools run commands is a cortex console — `ConsoleClient`, `Directory`, `Recipe` and the
 // rest, exported from here too. They are the `cortex-node` classes built into this addon, not
-// the same types as that package's: a `Console` built by `cortex-node` cannot be handed to an
+// the same types as that package's: a `ConsoleClient` built by `cortex-node` cannot be handed to an
 // `AgentBuilder`, so build the console from here.
 //
 // `binding.js` is the loader `napi build` generates. What this file adds is what napi cannot

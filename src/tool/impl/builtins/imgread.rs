@@ -49,7 +49,7 @@ pub fn get_imgread_tool_desc() -> ToolDesc {
 
 pub fn get_imgread_tool_func() -> ToolFunc {
     tool_func!(
-        async |args: Value, id: String, console: &mut Console| -> Message {
+        async |args: Value, id: String, console: &mut ConsoleClient| -> Message {
             let Some(path_str) = args.pointer("/path").and_then(|v| v.as_str()) else {
                 return error_message(id, "missing required parameter: path", "validation");
             };

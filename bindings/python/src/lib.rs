@@ -13,7 +13,7 @@
 //!
 //! cortex comes along whole. Its classes are registered into this module from
 //! `cortex-python` rather than imported from cortex's own extension, because an agent has to
-//! take a `Console` apart to share its session, and two extension modules cannot see into
+//! take a `ConsoleClient` apart to share its session, and two extension modules cannot see into
 //! each other's — see [`agent`] for the sharing.
 
 use pyo3::prelude::*;

@@ -273,8 +273,8 @@ pub fn get_tool_providers_mut() -> RwLockWriteGuard<'static, HashMap<String, Too
 /// [`get_tool_providers_mut`] across the `.await` — compiles but poisons the
 /// future for [`tokio::spawn`].
 ///
-/// The server runs on the host, outside the [`Console`](crate::console::Console)
-/// sandbox that the built-in tools use: `Console::exec` is one-shot, so there is
+/// The server runs on the host, outside the [`ConsoleClient`](crate::console::ConsoleClient)
+/// sandbox that the built-in tools use: `ConsoleClient::exec` is one-shot, so there is
 /// nowhere inside it to keep a process that must hold its stdio open. An MCP
 /// server therefore has whatever access this process has — register only servers
 /// the caller trusts.

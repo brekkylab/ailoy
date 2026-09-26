@@ -1,6 +1,6 @@
 use super::imgread::image_mime;
 use crate::{
-    console::Console,
+    console::ConsoleClient,
     message::{Message, Part, Role},
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
@@ -24,7 +24,7 @@ fn check_text(bytes: &[u8]) -> Result<(), String> {
 /// The text of the file at `path`, for both `read` styles. An error comes with
 /// its phase, `"io"` or `"validation"`.
 pub(super) async fn load_text(
-    console: &mut Console,
+    console: &mut ConsoleClient,
     path: &str,
 ) -> Result<String, (String, &'static str)> {
     // One `read`. `size` is the whole file's, so a short answer means the
@@ -128,7 +128,7 @@ pub fn get_read_tool_desc() -> ToolDesc {
 
 pub fn get_read_tool_func() -> ToolFunc {
     tool_func!(
-        async |args: Value, id: String, console: &mut Console| -> Message {
+        async |args: Value, id: String, console: &mut ConsoleClient| -> Message {
             let Some(path_str) = args.pointer("/path").and_then(|v| v.as_str()) else {
                 return error_message(id, "missing required parameter: path", "validation");
             };

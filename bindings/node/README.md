@@ -27,14 +27,14 @@ sends; `types.d.ts` spells them out. Bytes — an embedded image — are a `Buff
 
 ## cortex, built in
 
-`Console`, `Directory`, `Image`, `HostMount` and the rest of cortex are exported from here
+`ConsoleClient`, `Directory`, `Recipe`, `HostMount` and the rest of cortex are exported from here
 too: they are [cortex-node](../../../cortex/bindings/node)'s classes, linked into this addon
 so that an agent can share a console's session.
 
 ```js
-const { AgentBuilder, Console, Image } = require('ailoy-node')
+const { AgentBuilder, ConsoleClient, Recipe } = require('ailoy-node')
 
-const console_ = await Console.builder().stdioClient(['cortex-krun']).image(new Image('python:3.12-slim-trixie')).build()
+const console_ = await ConsoleClient.builder().cmd(['cortex-krun']).image(new Recipe('python:3.12-slim-trixie')).build()
 const agent = await new AgentBuilder('anthropic/claude-sonnet-5').shellTool().console(console_).build()
 ```
 
@@ -57,7 +57,7 @@ Every error carries a `code`:
 |---|---|
 | `AILOY_ERROR` | anything ailoy reports — a model no provider serves, a tool not registered, an API error |
 | `INVALID_ARG` | an object that does not fit, a spent builder, a negative number |
-| `TIMED_OUT`, `CONSOLE_BROKEN`, … | a console's failure, with cortex's code, whether from `Console` or inside a turn |
+| `TIMED_OUT`, `CONSOLE_BROKEN`, … | a console's failure, with cortex's code, whether from `ConsoleClient` or inside a turn |
 
 ## Building
 

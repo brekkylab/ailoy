@@ -9,7 +9,7 @@ import pytest
 
 import ailoy
 from ailoy import AgentBuilder, AiloyError
-from ailoy.cortex import Console, CortexError, ErrorCode, Image, NetworkAccess
+from ailoy.cortex import ConsoleClient, CortexError, ErrorCode, NetworkAccess, Recipe
 
 
 def content_text(content):
@@ -131,7 +131,7 @@ async def run(agent, query):
 
 def test_cortex_is_built_in():
     assert ErrorCode.TIMED_OUT == -32000
-    assert "python:3.12-slim" in repr(Image().base("python:3.12-slim"))
+    assert "python:3.12-slim" in repr(Recipe("python:3.12-slim"))
 
 
 def test_register_tool_hands_back_its_desc():
@@ -283,9 +283,9 @@ SERVER = os.environ.get("AILOY_CORTEX_CONSOLE")
 )
 async def test_the_agent_shares_the_console(tmp_path):
     console = await (
-        Console.builder()
-        .stdio_client([SERVER])
-        .image(Image().base("python:3.12-slim-trixie"))
+        ConsoleClient.builder()
+        .cmd([SERVER])
+        .image(Recipe("python:3.12-slim-trixie"))
         .mount(tmp_path, "/work")
         .network(NetworkAccess.none())
         .build()

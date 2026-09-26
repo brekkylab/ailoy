@@ -10,10 +10,10 @@
 //!
 //! # Where the console lives
 //!
-//! `AgentBuilder.console` takes a cortex `Console` and puts its slot in the agent's state —
-//! the slot itself, not what is in it. The `Console` object stays usable: its calls and the
+//! `AgentBuilder.console` takes a cortex `ConsoleClient` and puts its slot in the agent's state —
+//! the slot itself, not what is in it. The `ConsoleClient` object stays usable: its calls and the
 //! agent's tools take turns on the one lock, and the agent starts and stops its backend
-//! around each batch of tool calls, as the Rust agent does. `Console.close()` ends the session
+//! around each batch of tool calls, as the Rust agent does. `ConsoleClient.close()` ends the session
 //! for both.
 //!
 //! # How a turn is iterated
@@ -40,7 +40,7 @@ use ailoy::{
     message::{Message, MessageDeltaOutput, MessageOutput},
     tool::{ToolDesc, WebSearchEngineKind},
 };
-use cortex_node::console::{JsConsole, promise, thrown};
+use cortex_node::console::{JsConsoleClient, promise, thrown};
 use futures::{StreamExt as _, stream::BoxStream};
 use napi::{
     Env,
@@ -79,7 +79,7 @@ impl<T> Drop for OnRuntime<T> {
 
 /// An [`AgentBuilder`], filled in place and emptied by `build()`.
 ///
-/// In place rather than by value, as cortex's `ConsoleBuilder` is: the Rust builder is
+/// In place rather than by value, as cortex's `ConsoleClientBuilder` is: the Rust builder is
 /// consumed by each call and is not `Clone`, so there is exactly one of it to hand along.
 /// Each method returns the same object so calls chain as they do in Rust.
 #[napi(js_name = "AgentBuilder")]
@@ -210,7 +210,7 @@ impl JsAgentBuilder {
     pub fn console<'env>(
         &mut self,
         this: This<'env>,
-        #[napi(ts_arg_type = "Console")] console: &JsConsole,
+        #[napi(ts_arg_type = "ConsoleClient")] console: &JsConsoleClient,
     ) -> Result<This<'env>> {
         let slot = console.slot();
         self.update(this, |b| Ok(b.shared_console(slot)))
@@ -380,7 +380,7 @@ impl JsAgent {
     /// `options` may name the `agentProvider` (`'default'` unless it does), the `history` to
     /// start from, the `console` to share and the `memory` file to remember into.
     #[napi(
-        ts_args_type = "spec: AgentSpec, options?: { agentProvider?: string; history?: Array<Message>; console?: Console; memory?: string }",
+        ts_args_type = "spec: AgentSpec, options?: { agentProvider?: string; history?: Array<Message>; console?: ConsoleClient; memory?: string }",
         ts_return_type = "Promise<Agent>"
     )]
     pub fn from_spec<'env>(
@@ -405,7 +405,7 @@ impl JsAgent {
                     )?);
                 }
                 if let Some(console) = options
-                    .get::<ClassInstance<JsConsole>>("console")
+                    .get::<ClassInstance<JsConsoleClient>>("console")
                     .map_err(get)?
                 {
                     state = state.with_console_slot(console.slot());

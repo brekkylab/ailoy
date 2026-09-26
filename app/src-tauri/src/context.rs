@@ -14,7 +14,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use cortex::console::{InvalidMount, MountSpec};
+use cortex::protocol::{InvalidMount, MountSpec};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 

@@ -1,7 +1,7 @@
 //! Memories, as `mem` keeps them.
 //!
 //! A memory store is one file — the same file `mem init` makes — and reading or writing it
-//! is a command run on a [`Console`]. That is the whole of what this module is: `mem`
+//! is a command run on a [`ConsoleClient`]. That is the whole of what this module is: `mem`
 //! already holds the store, so nothing here opens a database, links `rusqlite`, or knows
 //! what a row looks like. It spells one command line and reads the lines that come back.
 //!
@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::console::Console;
+use crate::console::ConsoleClient;
 
 /// One memory store, named by the file it is.
 ///
@@ -30,7 +30,7 @@ use crate::console::Console;
 ///
 /// ```rust,no_run
 /// # use ailoy::memory::Memory;
-/// # async fn f(console: &mut ailoy::console::Console) -> anyhow::Result<()> {
+/// # async fn f(console: &mut ailoy::console::ConsoleClient) -> anyhow::Result<()> {
 /// let memory = Memory::new("/work/notes.sqlite");
 /// memory.insert(console, ["User switched to oat milk"]).await?;
 /// let found = memory.search(console, "what does the user drink?").await?;
@@ -67,7 +67,7 @@ impl Memory {
     /// rather than an error — the store was read and holds nothing near this, which is an
     /// answer.
     ///
-    /// The argv goes to [`Console::exec`] as three arguments, so no shell sees them and
+    /// The argv goes to [`ConsoleClient::exec`] as three arguments, so no shell sees them and
     /// neither the path nor the query needs quoting or escaping.
     ///
     /// # Errors
@@ -78,7 +78,7 @@ impl Memory {
     /// all.
     pub async fn search(
         &self,
-        console: &mut Console,
+        console: &mut ConsoleClient,
         query: impl AsRef<str>,
     ) -> anyhow::Result<Vec<String>> {
         self.run(console, "search", [query.as_ref()]).await
@@ -108,7 +108,7 @@ impl Memory {
     /// so either every memory here is written or none is.
     pub async fn insert(
         &self,
-        console: &mut Console,
+        console: &mut ConsoleClient,
         memories: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> anyhow::Result<Vec<String>> {
         let memories: Vec<String> = memories
@@ -129,7 +129,7 @@ impl Memory {
     /// a refusal is read and how output becomes memories is written once, here.
     async fn run(
         &self,
-        console: &mut Console,
+        console: &mut ConsoleClient,
         subcommand: &str,
         rest: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> anyhow::Result<Vec<String>> {
@@ -209,7 +209,7 @@ mod tests {
 
     /// An empty store, made through the same console the test then uses — so what is
     /// asserted is a store `mem` wrote, not a fixture that resembles one.
-    async fn store(console: &mut Console) -> Memory {
+    async fn store(console: &mut ConsoleClient) -> Memory {
         let dir = tempfile::tempdir().unwrap();
         // Leaked rather than dropped: the file has to outlive this function, and the
         // directory goes when the test process does.
@@ -227,7 +227,7 @@ mod tests {
 
     /// A store with memories in it, put there by `mem` itself rather than by
     /// [`Memory::insert`] — so a search test that fails is a search that failed.
-    async fn filled(console: &mut Console, memories: &[&str]) -> Memory {
+    async fn filled(console: &mut ConsoleClient, memories: &[&str]) -> Memory {
         let memory = store(console).await;
 
         let mut argv = vec![

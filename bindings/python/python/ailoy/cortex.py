@@ -1,24 +1,28 @@
 """cortex, as built into ailoy: the console an agent's tools run in, and what it sees.
 
 The same classes as the ``cortex-py`` package, but not the same types. Each extension module
-links its own copy of cortex, so a ``Console`` built by ``cortex-py`` cannot be handed to an
-``AgentBuilder`` — build the console from here.
+links its own copy of cortex, so a ``ConsoleClient`` built by ``cortex-py`` cannot be handed to
+an ``AgentBuilder`` — build the console from here.
 """
 
 from enum import IntEnum
 
 from . import _ailoy
 from ._ailoy import (
-    Console,
+    BuildImageResult,
     ConsoleBroken,
-    ConsoleBuilder,
+    ConsoleClient,
+    ConsoleClientBuilder,
     ConsoleRefused,
     CortexError,
     Directory,
     ExecResult,
-    Image,
+    ImageClient,
+    ImageEntry,
+    ImageSource,
     NetworkAccess,
     ReadResult,
+    Recipe,
     Step,
 )
 
@@ -26,17 +30,21 @@ from ._ailoy import (
 ErrorCode = IntEnum("ErrorCode", _ailoy.ERROR_CODES)
 
 __all__ = [
-    "Console",
+    "BuildImageResult",
     "ConsoleBroken",
-    "ConsoleBuilder",
+    "ConsoleClient",
+    "ConsoleClientBuilder",
     "ConsoleRefused",
     "CortexError",
     "Directory",
     "ErrorCode",
     "ExecResult",
-    "Image",
+    "ImageClient",
+    "ImageEntry",
+    "ImageSource",
     "NetworkAccess",
     "ReadResult",
+    "Recipe",
     "Step",
 ]
 

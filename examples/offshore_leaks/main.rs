@@ -45,11 +45,11 @@ use std::{io::Write as _, path::Path};
 
 use ailoy::{
     agent::AgentBuilder,
-    console::Console,
+    console::ConsoleClient,
     message::{Message, Part, Role},
 };
 use anyhow::Context as _;
-use cortex::{console::NetworkAccess, fs::Directory, image::Image};
+use cortex::{fs::Directory, image::Recipe, protocol::NetworkAccess};
 // One host binding per platform, each mounting on `try_new` and unmounting on `Drop`, so
 // the tree below is written once. Three arms and not `not(windows)` because the guards are
 // three distinct types: cortex's default `mount` feature compiles the one binding its target
@@ -104,10 +104,10 @@ async fn main() -> anyhow::Result<()> {
     ))
     .system_tools()
     .console(
-        Console::builder()
-            .stdio_client(&[&std::env::var("AILOY_CORTEX_CONSOLE")
+        ConsoleClient::builder()
+            .cmd(&[&std::env::var("AILOY_CORTEX_CONSOLE")
                 .unwrap_or_else(|_| "cortex-krun".to_string())])
-            .image(Image::new().base("python:3.12-slim-trixie").step(
+            .image(Recipe::new("python:3.12-slim-trixie").step(
                 // The DuckDB `prepare_data.py` wrote the file with, in pyproject.toml: an
                 // older one may not read it.
                 "pip install --no-cache-dir duckdb==1.5.5 pandas matplotlib networkx",

@@ -10,10 +10,10 @@
 //!
 //! # Where the console lives
 //!
-//! `AgentBuilder.console` takes a cortex `Console` and puts its slot in the agent's state —
-//! the slot itself, not what is in it. The `Console` object stays usable: its calls and the
+//! `AgentBuilder.console` takes a cortex `ConsoleClient` and puts its slot in the agent's state —
+//! the slot itself, not what is in it. The `ConsoleClient` object stays usable: its calls and the
 //! agent's tools take turns on the one lock, and the agent starts and stops its backend
-//! around each batch of tool calls, as the Rust agent does. `Console.close()` ends the session
+//! around each batch of tool calls, as the Rust agent does. `ConsoleClient.close()` ends the session
 //! for both.
 //!
 //! # How it ends
@@ -25,7 +25,7 @@
 
 use std::sync::Arc;
 
-use _cortex::console::PyConsole;
+use _cortex::console::PyConsoleClient;
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     datatype::Value,
@@ -59,7 +59,7 @@ impl<T> Drop for OnRuntime<T> {
 
 /// An [`AgentBuilder`], filled in place and emptied by `build()`.
 ///
-/// In place rather than by value, as cortex's `ConsoleBuilder` is: the Rust builder is
+/// In place rather than by value, as cortex's `ConsoleClientBuilder` is: the Rust builder is
 /// consumed by each call and is not `Clone`, so there is exactly one of it to hand along.
 /// Each method returns the same object so calls chain as they do in Rust.
 #[pyclass(name = "AgentBuilder", module = "ailoy")]
@@ -152,7 +152,7 @@ impl PyAgentBuilder {
     /// Run the agent's console tools in `console`'s session, which the agent then shares.
     fn console<'py>(
         slf: PyRef<'py, Self>,
-        console: PyRef<'py, PyConsole>,
+        console: PyRef<'py, PyConsoleClient>,
     ) -> PyResult<PyRef<'py, Self>> {
         let slot = console.slot();
         Self::update(slf, |b| Ok(b.shared_console(slot)))
@@ -288,7 +288,7 @@ impl PyAgent {
         spec: Bound<'py, PyAny>,
         agent_provider: String,
         history: Option<Bound<'py, PyAny>>,
-        console: Option<PyRef<'py, PyConsole>>,
+        console: Option<PyRef<'py, PyConsoleClient>>,
         memory: Option<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let spec: AgentSpec = from_py(&spec, "an agent spec")?;

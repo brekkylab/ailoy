@@ -22,7 +22,7 @@
 //! work, and it is the one that can try differently.
 //!
 //! A JavaScript tool is pure — it is not handed the console. One that needs to run a command
-//! does it through a `Console` it holds itself.
+//! does it through a `ConsoleClient` it holds itself.
 
 use std::sync::Arc;
 

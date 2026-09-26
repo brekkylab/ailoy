@@ -12,9 +12,9 @@
 /// [`AgentState`](crate::agent::AgentState) holds — so it sits in a module of its own
 /// rather than under [`tool`](crate::tool).
 ///
-/// Nothing is added to it. A tool calls [`Console::exec`], [`Console::read`] and
-/// [`Console::write`] as cortex defines them — argv in, bytes out, milliseconds, and
+/// Nothing is added to it. A tool calls [`ConsoleClient::exec`], [`ConsoleClient::read`] and
+/// [`ConsoleClient::write`] as cortex defines them — argv in, bytes out, milliseconds, and
 /// a timeout that arrives as an error rather than a flag. ailoy ships no convenience
 /// layer over that on purpose: a helper here would become a second interface that
 /// tool authors have to learn and that has to be kept in step with cortex's.
-pub use cortex::console::Console;
+pub use cortex::console::ConsoleClient;

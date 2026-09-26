@@ -1,9 +1,9 @@
 use std::path::Path;
 
-use cortex::console::Error;
+use cortex::protocol::Error;
 
 use crate::{
-    console::Console,
+    console::ConsoleClient,
     datatype::Value,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
@@ -202,7 +202,7 @@ fn apply_hunks(path: &str, mut content: String, hunks: &[Hunk]) -> anyhow::Resul
 /// only after cortex says the write missed, since `write` creates the file but
 /// nothing above it.
 async fn write_creating_dirs(
-    console: &mut Console,
+    console: &mut ConsoleClient,
     path: &str,
     bytes: Vec<u8>,
 ) -> anyhow::Result<()> {
@@ -227,7 +227,7 @@ async fn write_creating_dirs(
     Ok(())
 }
 
-async fn remove(console: &mut Console, path: &str) -> anyhow::Result<()> {
+async fn remove(console: &mut ConsoleClient, path: &str) -> anyhow::Result<()> {
     let result = console.exec(["rm", "-f", path], None).await?;
     if result.code != 0 {
         anyhow::bail!(
@@ -238,7 +238,7 @@ async fn remove(console: &mut Console, path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn apply_op(op: &PatchOp, console: &mut Console) -> anyhow::Result<String> {
+async fn apply_op(op: &PatchOp, console: &mut ConsoleClient) -> anyhow::Result<String> {
     match op {
         // `Add` and a move may name a path whose directories are not there yet.
         PatchOp::Add { path, content } => {
@@ -369,7 +369,7 @@ It is important to remember:
 }
 
 pub fn get_apply_patch_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &mut Console| -> Value {
+    tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value {
         let Some(patch_text) = args.pointer("/input").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: input",

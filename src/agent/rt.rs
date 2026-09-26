@@ -207,7 +207,7 @@ impl Agent {
     /// Tell the model which directories it has been given.
     ///
     /// **Asked of the console, not kept beside it.** Cortex already answers
-    /// [`mounts`](cortex::console::Console::mounts), so a copy on this side would be a
+    /// [`mounts`](cortex::console::ConsoleClient::mounts), so a copy on this side would be a
     /// second answer to a settled question. The only thing that ever made one tempting is
     /// that [`try_with_provider_and_state`](Self::try_with_provider_and_state) is a `fn`
     /// and the console sits behind a lock — so the question is asked here instead, at the
@@ -865,12 +865,12 @@ mod tests {
     async fn console_with_mounts(
         root: &std::path::Path,
         names: &[&str],
-    ) -> cortex::console::Console {
+    ) -> cortex::console::ConsoleClient {
         dotenvy::dotenv().ok();
         let program = std::env::var("AILOY_CORTEX_CONSOLE")
             .unwrap_or_else(|_| "cortex-local-console".to_string());
 
-        let mut builder = cortex::console::Console::builder().stdio_client(&[&program]);
+        let mut builder = cortex::console::ConsoleClient::builder().cmd(&[&program]);
         for name in names {
             let dir = root.join(name);
             std::fs::create_dir_all(&dir).unwrap();

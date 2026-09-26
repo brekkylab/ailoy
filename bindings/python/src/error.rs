@@ -3,10 +3,10 @@
 //! One exception, `AiloyError`, for everything ailoy itself reports — a model that no
 //! provider serves, a tool that is not registered, an API that answered with an error. What
 //! a console reports keeps cortex's own classes: a refusal inside an agent's turn is the
-//! same `ConsoleRefused`, with the same `code`, as one from `Console.exec`, so a caller
+//! same `ConsoleRefused`, with the same `code`, as one from `ConsoleClient.exec`, so a caller
 //! handles it once.
 
-use cortex::console::Failure;
+use cortex::protocol::Failure;
 use pyo3::{create_exception, exceptions::PyException, prelude::*};
 
 create_exception!(ailoy, AiloyError, PyException);

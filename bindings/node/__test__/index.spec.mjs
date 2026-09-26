@@ -4,16 +4,16 @@ import { createRequire } from 'node:module'
 import { test } from 'node:test'
 
 const ailoy = createRequire(import.meta.url)('../index.js')
-const { Agent, AgentBuilder, Console, Image, registerLangModel, registerTool } = ailoy
+const { Agent, AgentBuilder, ConsoleClient, Recipe, registerLangModel, registerTool } = ailoy
 
 // ---- cortex, built in ----------------------------------------------------------------------
 
 test('cortex comes along', () => {
-  assert.match(new Image('python:3.12-slim').step('pip install duckdb').toString(), /duckdb/)
+  assert.match(new Recipe('python:3.12-slim').step('pip install duckdb').toString(), /duckdb/)
 })
 
 test('a console without a server fails with cortex’s code', async () => {
-  await assert.rejects(Console.builder().build(), { code: 'CORTEX_ERROR' })
+  await assert.rejects(ConsoleClient.builder().build(), { code: 'CORTEX_ERROR' })
 })
 
 // ---- the builder and the registries --------------------------------------------------------
@@ -178,9 +178,9 @@ test('breaking out of a turn ends it where it stands', async (t) => {
 const SERVER = process.env.CORTEX_CONSOLE
 
 test('an agent shares its console, and closing the agent leaves it open', { skip: !SERVER && 'set $CORTEX_CONSOLE' }, async () => {
-  const console_ = await Console.builder()
-    .stdioClient([SERVER])
-    .image(new Image('python:3.12-slim-trixie'))
+  const console_ = await ConsoleClient.builder()
+    .cmd([SERVER])
+    .image(new Recipe('python:3.12-slim-trixie'))
     .network(ailoy.NetworkAccess.none())
     .build()
   try {

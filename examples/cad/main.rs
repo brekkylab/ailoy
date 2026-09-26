@@ -38,11 +38,11 @@ use std::{io::Write as _, path::Path};
 
 use ailoy::{
     agent::AgentBuilder,
-    console::Console,
+    console::ConsoleClient,
     message::{FinishReason, Message, Part, Role},
 };
 use anyhow::Context as _;
-use cortex::{fs::Directory, image::Image};
+use cortex::{fs::Directory, image::Recipe};
 // One host binding per platform, each mounting on `try_new` and unmounting on `Drop`, so
 // the tree below is written once. Three arms and not `not(windows)` because the guards are
 // three distinct types: cortex's default `mount` feature compiles the one binding its target
@@ -101,12 +101,11 @@ async fn main() -> anyhow::Result<()> {
     .max_tokens(64000)
     .system_tools()
     .console(
-        Console::builder()
-            .stdio_client(&[&std::env::var("AILOY_CORTEX_CONSOLE")
+        ConsoleClient::builder()
+            .cmd(&[&std::env::var("AILOY_CORTEX_CONSOLE")
                 .unwrap_or_else(|_| "cortex-krun".to_string())])
             .image(
-                Image::new()
-                    .base("python:3.12-slim-trixie")
+                Recipe::new("python:3.12-slim-trixie")
                     .step(
                         "apt-get update && apt-get install -y --no-install-recommends \
                         libgl1 libx11-6 && rm -rf /var/lib/apt/lists/*",

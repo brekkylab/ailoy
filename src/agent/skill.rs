@@ -1,7 +1,7 @@
 //! Skills: directories in the console, each with a `SKILL.md` saying how to use it.
 
 use anyhow::Context as _;
-use cortex::console::Console;
+use cortex::console::ConsoleClient;
 use tokio::sync::Mutex;
 
 use crate::lang_model::model_family;
@@ -17,7 +17,7 @@ use crate::lang_model::model_family;
 /// trained on XML-tagged prompts, and a Markdown list for every other model.
 pub(super) async fn render_skills(
     dirs: &[String],
-    console: &Mutex<Option<Console>>,
+    console: &Mutex<Option<ConsoleClient>>,
     model: &str,
 ) -> anyhow::Result<String> {
     let mut guard = console.lock().await;
@@ -96,7 +96,7 @@ fn escape(text: &str) -> String {
 
 /// The whole of the file at `path` in the console, asked for again from where the last
 /// piece ended for as long as the file is longer than what has arrived.
-async fn read_to_string(console: &mut Console, path: &str) -> anyhow::Result<String> {
+async fn read_to_string(console: &mut ConsoleClient, path: &str) -> anyhow::Result<String> {
     let mut data = Vec::new();
     loop {
         let resp = console.read(path, Some(data.len() as u64), None).await?;

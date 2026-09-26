@@ -71,13 +71,13 @@ use std::{
 
 use ailoy::{
     agent::{AgentBuilder, AgentProvider, get_agent_providers_mut},
-    console::Console,
+    console::ConsoleClient,
     message::{Message, Part, Role},
     tool::{ToolDesc, ToolDescBuilder, get_tool_providers, get_tool_providers_mut},
     tool_func,
 };
 use anyhow::{Context as _, bail};
-use cortex::{console::NetworkAccess, image::Image};
+use cortex::{image::Recipe, protocol::NetworkAccess};
 use futures::StreamExt as _;
 use serde_json::{Value as Json, json};
 
@@ -170,10 +170,10 @@ async fn main() -> anyhow::Result<()> {
         .system_tools()
         .tools(tools)
         .console(
-            Console::builder()
-                .stdio_client(&[&std::env::var("AILOY_CORTEX_CONSOLE")
+            ConsoleClient::builder()
+                .cmd(&[&std::env::var("AILOY_CORTEX_CONSOLE")
                     .unwrap_or_else(|_| "cortex-krun".to_string())])
-                .image(Image::new().base("python:3.12-slim-trixie"))
+                .image(Recipe::new("python:3.12-slim-trixie"))
                 .mount_readonly(context.clone(), "/context")
                 .mount(artifacts.clone(), "/artifacts")
                 .network(NetworkAccess::none())

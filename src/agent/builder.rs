@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use cortex::console::Console;
+use cortex::console::ConsoleClient;
 use tokio::sync::Mutex;
 
 use crate::{
@@ -55,7 +55,7 @@ pub struct AgentBuilder {
 
     history: Vec<Message>,
 
-    console: Option<Arc<Mutex<Option<Console>>>>,
+    console: Option<Arc<Mutex<Option<ConsoleClient>>>>,
 
     memory: Option<Memory>,
 
@@ -149,13 +149,13 @@ impl AgentBuilder {
     /// own, because building one means choosing a console server to start, and that
     /// is the caller's decision. Without it, pure tools still run and a console tool
     /// fails saying so.
-    pub fn console(mut self, console: Console) -> Self {
+    pub fn console(mut self, console: ConsoleClient) -> Self {
         self.console = Some(Arc::new(Mutex::new(Some(console))));
         self
     }
 
     /// Share a console slot with another `Agent` built elsewhere.
-    pub fn shared_console(mut self, console: Arc<Mutex<Option<Console>>>) -> Self {
+    pub fn shared_console(mut self, console: Arc<Mutex<Option<ConsoleClient>>>) -> Self {
         self.console = Some(console);
         self
     }

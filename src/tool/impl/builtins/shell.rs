@@ -1,4 +1,4 @@
-use cortex::console::Error;
+use cortex::protocol::Error;
 
 use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
@@ -45,7 +45,7 @@ pub fn get_shell_tool_desc() -> ToolDesc {
 }
 
 pub fn get_shell_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &mut Console| -> Value {
+    tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value {
         let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {

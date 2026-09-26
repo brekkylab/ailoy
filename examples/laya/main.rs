@@ -36,11 +36,11 @@ use std::{io::Write as _, path::Path};
 
 use ailoy::{
     agent::AgentBuilder,
-    console::Console,
+    console::ConsoleClient,
     message::{Message, Part, Role},
 };
 use anyhow::Context as _;
-use cortex::{console::NetworkAccess, fs::Directory, image::Image};
+use cortex::{fs::Directory, image::Recipe, protocol::NetworkAccess};
 // One host binding per platform, each mounting on `try_new` and unmounting on `Drop`, so
 // the tree below is written once. Three arms and not `not(windows)` because the guards are
 // three distinct types: cortex's default `mount` feature compiles the one binding its target
@@ -85,12 +85,11 @@ async fn main() -> anyhow::Result<()> {
     .web_fetch_tool()
     .web_search_tool(vec![])
     .console(
-        Console::builder()
-            .stdio_client(&[&std::env::var("AILOY_CORTEX_CONSOLE")
+        ConsoleClient::builder()
+            .cmd(&[&std::env::var("AILOY_CORTEX_CONSOLE")
                 .unwrap_or_else(|_| "cortex-krun".to_string())])
             .image(
-                Image::new()
-                    .base("python:3.12-slim-trixie")
+                Recipe::new("python:3.12-slim-trixie")
                     // Mesa from backports: venus passes VK_KHR_shader_bfloat16 through from 26.0
                     // on, and trixie itself has 25.0.
                     .step(

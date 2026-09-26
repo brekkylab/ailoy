@@ -40,7 +40,7 @@ use std::{io::Write as _, path::Path};
 
 use ailoy::{
     agent::AgentBuilder,
-    console::Console,
+    console::ConsoleClient,
     message::{Message, Part, Role},
 };
 use anyhow::Context as _;
@@ -54,7 +54,7 @@ use cortex::fs::DokanMount as HostMount;
 use cortex::fs::FuseMount as HostMount;
 #[cfg(target_os = "macos")]
 use cortex::fs::FuseTMount as HostMount;
-use cortex::{console::NetworkAccess, fs::Directory, image::Image};
+use cortex::{fs::Directory, image::Recipe, protocol::NetworkAccess};
 use futures::StreamExt as _;
 
 #[tokio::main]
@@ -94,12 +94,11 @@ async fn main() -> anyhow::Result<()> {
     .web_fetch_tool()
     .web_search_tool(vec![])
     .console(
-        Console::builder()
-            .stdio_client(&[&std::env::var("AILOY_CORTEX_CONSOLE")
+        ConsoleClient::builder()
+            .cmd(&[&std::env::var("AILOY_CORTEX_CONSOLE")
                 .unwrap_or_else(|_| "cortex-krun".to_string())])
             .image(
-                Image::new()
-                    .base("python:3.12-slim-trixie")
+                Recipe::new("python:3.12-slim-trixie")
                     // Mesa from backports: venus passes VK_KHR_shader_bfloat16 and
                     // VK_KHR_cooperative_matrix through from 26.0 on, and trixie itself has 25.0.
                     .step(

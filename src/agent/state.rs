@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use cortex::console::Console;
+use cortex::console::ConsoleClient;
 use tokio::sync::Mutex;
 
 use crate::{memory::Memory, message::Message};
@@ -18,10 +18,10 @@ pub struct AgentState {
     /// a second one, so it is owed exactly once, by whoever built the console.
     ///
     /// `Arc<Mutex<..>>` because tool execution hands out `'static` streams that each
-    /// carry a handle, and because every `Console` method takes `&mut self` — the
+    /// carry a handle, and because every `ConsoleClient` method takes `&mut self` — the
     /// protocol has one outstanding request at a time, and the lock is how that is
     /// spelled across concurrent tool futures.
-    pub console: Arc<Mutex<Option<Console>>>,
+    pub console: Arc<Mutex<Option<ConsoleClient>>>,
 
     /// The memory store this agent remembers into, if it has one.
     ///
@@ -61,14 +61,14 @@ impl AgentState {
     }
 
     /// Run console tools in `console`, which must already be started.
-    pub fn with_console(mut self, console: Console) -> Self {
+    pub fn with_console(mut self, console: ConsoleClient) -> Self {
         self.console = Arc::new(Mutex::new(Some(console)));
         self
     }
 
     /// Share an existing slot — the way a sub-agent is put in its parent's console
     /// rather than given one of its own.
-    pub fn with_console_slot(mut self, console: Arc<Mutex<Option<Console>>>) -> Self {
+    pub fn with_console_slot(mut self, console: Arc<Mutex<Option<ConsoleClient>>>) -> Self {
         self.console = console;
         self
     }

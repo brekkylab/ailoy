@@ -49,11 +49,11 @@ if (
 
 import ailoy
 from ailoy.cortex import (  # noqa: E402
-    Console,
+    ConsoleClient,
     Directory,
     HostMount,
-    Image,
     NetworkAccess,
+    Recipe,
 )
 from dotenv import load_dotenv  # noqa: E402
 
@@ -97,11 +97,10 @@ async def main(prompt: str) -> None:
 
     print("building the image ...", flush=True)
     console = await (
-        Console.builder()
-        .stdio_client([os.environ.get("AILOY_CORTEX_CONSOLE", "cortex-krun")])
+        ConsoleClient.builder()
+        .cmd([os.environ.get("AILOY_CORTEX_CONSOLE", "cortex-krun")])
         .image(
-            Image()
-            .base("python:3.12-slim-trixie")
+            Recipe("python:3.12-slim-trixie")
             # Mesa from backports: venus passes VK_KHR_shader_bfloat16 and VK_KHR_cooperative_matrix
             # through from 26.0 on, and trixie itself has 25.0.
             .step(

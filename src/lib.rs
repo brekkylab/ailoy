@@ -20,14 +20,14 @@ pub mod tool;
 /// Panics rather than returning an error: a test with no console is meaningless, so
 /// a missing server binary should stop the run and say so.
 #[cfg(test)]
-pub(crate) async fn test_console() -> cortex::console::Console {
+pub(crate) async fn test_console() -> cortex::console::ConsoleClient {
     dotenvy::dotenv().ok();
 
     let program = std::env::var("AILOY_CORTEX_CONSOLE")
         .unwrap_or_else(|_| "cortex-local-console".to_string());
 
-    let mut console = cortex::console::Console::builder()
-        .stdio_client(&[&program])
+    let mut console = cortex::console::ConsoleClient::builder()
+        .cmd(&[&program])
         .build()
         .await
         .unwrap_or_else(|e| panic!("starting `{program}`: {e:#}"));
