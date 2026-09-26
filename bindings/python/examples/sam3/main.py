@@ -16,8 +16,6 @@ the agent runs with its `shell` tool. `prepare_model.py` downloads and converts 
 
 Environment:
 
-* `AILOY_CORTEX_CONSOLE` — the console server binary, `cortex-krun` by default. It has to be
-  built with the `gpu` feature, or the session is refused with `UNSUPPORTED_MACHINE`.
 * `AILOY_MODEL` — the agent's model, `bedrock/global.openai.gpt-6-astra` by default; its
   provider's API key has to be set (`AWS_BEARER_TOKEN_BEDROCK`, `ANTHROPIC_API_KEY`, ...).
 
@@ -98,7 +96,6 @@ async def main(prompt: str) -> None:
     print("building the image ...", flush=True)
     console = await (
         ConsoleClient.builder()
-        .cmd([os.environ.get("AILOY_CORTEX_CONSOLE", "cortex-krun")])
         .image(
             Recipe("python:3.12-slim-trixie")
             # Mesa from backports: venus passes VK_KHR_shader_bfloat16 and VK_KHR_cooperative_matrix

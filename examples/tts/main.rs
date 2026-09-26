@@ -31,9 +31,6 @@
 //!
 //! Environment:
 //!
-//! * `AILOY_CORTEX_CONSOLE` — the console server binary, `cortex-krun` by default.
-//!   It has to be built with the `gpu` feature, or the session is refused with
-//!   `UNSUPPORTED_MACHINE`.
 //! * `UV` — the `uv` binary `prepare_model.py` runs with, `uv` on `PATH` by default.
 //! * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its provider's
 //!   API key has to be set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …).
@@ -101,8 +98,6 @@ async fn main() -> anyhow::Result<()> {
     .system_tools()
     .console(
         ConsoleClient::builder()
-            .cmd(&[&std::env::var("AILOY_CORTEX_CONSOLE")
-                .unwrap_or_else(|_| "cortex-krun".to_string())])
             .image(
                 Recipe::new("python:3.12-slim-trixie")
                     // Mesa from backports, 26.0 against trixie's 25.0, as the other ncnn examples

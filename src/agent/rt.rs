@@ -867,10 +867,7 @@ mod tests {
         names: &[&str],
     ) -> cortex::console::ConsoleClient {
         dotenvy::dotenv().ok();
-        let program = std::env::var("AILOY_CORTEX_CONSOLE")
-            .unwrap_or_else(|_| "cortex-local-console".to_string());
-
-        let mut builder = cortex::console::ConsoleClient::builder().cmd(&[&program]);
+        let mut builder = cortex::console::ConsoleClient::builder();
         for name in names {
             let dir = root.join(name);
             std::fs::create_dir_all(&dir).unwrap();
@@ -880,7 +877,7 @@ mod tests {
         let mut console = builder
             .build()
             .await
-            .unwrap_or_else(|e| panic!("starting `{program}`: {e:#}"));
+            .unwrap_or_else(|e| panic!("starting the console server: {e:#}"));
         console.start().await.expect("starting a test console");
         console
     }

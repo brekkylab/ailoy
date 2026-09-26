@@ -27,7 +27,6 @@
 //!
 //! Environment:
 //!
-//! * `AILOY_CORTEX_CONSOLE` — the console server binary, `cortex-krun` by default.
 //! * `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its provider's
 //!   API key has to be set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …). It has to take images,
 //!   or it cannot see what it built.
@@ -102,8 +101,6 @@ async fn main() -> anyhow::Result<()> {
     .system_tools()
     .console(
         ConsoleClient::builder()
-            .cmd(&[&std::env::var("AILOY_CORTEX_CONSOLE")
-                .unwrap_or_else(|_| "cortex-krun".to_string())])
             .image(
                 Recipe::new("python:3.12-slim-trixie")
                     .step(

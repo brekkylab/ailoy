@@ -53,7 +53,6 @@
 //!
 //! Environment:
 //!
-//! * `AILOY_CORTEX_CONSOLE` — the console server binary, `cortex-krun` by default.
 //! * `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its provider's API
 //!   key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …).
 //!
@@ -171,8 +170,6 @@ async fn main() -> anyhow::Result<()> {
         .tools(tools)
         .console(
             ConsoleClient::builder()
-                .cmd(&[&std::env::var("AILOY_CORTEX_CONSOLE")
-                    .unwrap_or_else(|_| "cortex-krun".to_string())])
                 .image(Recipe::new("python:3.12-slim-trixie"))
                 .mount_readonly(context.clone(), "/context")
                 .mount(artifacts.clone(), "/artifacts")

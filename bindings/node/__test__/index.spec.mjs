@@ -173,13 +173,10 @@ test('breaking out of a turn ends it where it stands', async (t) => {
   assert.ok(Array.isArray(agent.history))
 })
 
-// ---- a shared console, against a real console server named by `$CORTEX_CONSOLE` ------------
+// ---- a shared console, against the console server cortex starts by default ---------------
 
-const SERVER = process.env.CORTEX_CONSOLE
-
-test('an agent shares its console, and closing the agent leaves it open', { skip: !SERVER && 'set $CORTEX_CONSOLE' }, async () => {
+test('an agent shares its console, and closing the agent leaves it open', async () => {
   const console_ = await ConsoleClient.builder()
-    .cmd([SERVER])
     .image(new Recipe('python:3.12-slim-trixie'))
     .network(ailoy.NetworkAccess.none())
     .build()

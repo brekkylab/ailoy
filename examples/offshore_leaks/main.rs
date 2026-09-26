@@ -32,7 +32,6 @@
 //! Environment:
 //!
 //! * `OFFSHORE_LEAKS_URL` — the archive `prepare_data.py` downloads, ICIJ's latest by default.
-//! * `AILOY_CORTEX_CONSOLE` — the console server binary, `cortex-krun` by default.
 //! * `UV` — the `uv` binary `prepare_data.py` runs with, `uv` on `PATH` by default.
 //! * `AILOY_MODEL` — the agent's model, `bedrock/global.openai.gpt-6-astra` by default; its
 //!   provider's credentials have to be set — for Bedrock `AWS_BEARER_TOKEN_BEDROCK`, with the
@@ -105,8 +104,6 @@ async fn main() -> anyhow::Result<()> {
     .system_tools()
     .console(
         ConsoleClient::builder()
-            .cmd(&[&std::env::var("AILOY_CORTEX_CONSOLE")
-                .unwrap_or_else(|_| "cortex-krun".to_string())])
             .image(Recipe::new("python:3.12-slim-trixie").step(
                 // The DuckDB `prepare_data.py` wrote the file with, in pyproject.toml: an
                 // older one may not read it.

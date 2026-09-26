@@ -1,7 +1,5 @@
 import asyncio
 import json
-import os
-import shutil
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -273,18 +271,12 @@ async def test_from_spec_and_closing():
         await run(agent, "hi")
 
 
-# ---- against a real console server, named by `$AILOY_CORTEX_CONSOLE` ------------------
-
-SERVER = os.environ.get("AILOY_CORTEX_CONSOLE")
+# ---- against the console server cortex starts by default ----------------------------
 
 
-@pytest.mark.skipif(
-    not SERVER or not shutil.which(SERVER), reason="set $AILOY_CORTEX_CONSOLE"
-)
 async def test_the_agent_shares_the_console(tmp_path):
     console = await (
         ConsoleClient.builder()
-        .cmd([SERVER])
         .image(Recipe("python:3.12-slim-trixie"))
         .mount(tmp_path, "/work")
         .network(NetworkAccess.none())

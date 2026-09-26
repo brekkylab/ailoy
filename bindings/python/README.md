@@ -14,7 +14,6 @@ from ailoy.cortex import ConsoleClient, NetworkAccess, Recipe
 async def main() -> None:
     console = await (
         ConsoleClient.builder()
-        .cmd(["cortex-krun"])
         .image(Recipe("python:3.12-slim-trixie"))
         .mount("./artifacts", "/artifacts")
         .network(NetworkAccess.none())
@@ -112,5 +111,5 @@ uv run pytest
 
 `uv run maturin build --release` makes a wheel.
 
-The tests that talk to a model need its API key, and the ones that run a console need a
-console server, named by `$AILOY_CORTEX_CONSOLE`; without them they are skipped.
+The tests that talk to a model need its API key, and the ones that run a console need the
+console server cortex starts by default.
