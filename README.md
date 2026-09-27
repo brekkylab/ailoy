@@ -21,9 +21,7 @@
 
 <br>
 
-Ailoy is a next-gen AI agent development library.
-
-Most agent development frameworks provide a way to connect an LLM to tools (e.g. MCP).
+Most agent development frameworks focuses on how to connect an LLM to tools (e.g. MCP).
 Ailoy can do that too, but it also offers a way to make agents far more powerful: give the agent a computer of its own.
 
 This lets you build agents that do more than call predefined tools: they can install and use software, create their own scripts, and operate in a general-purpose computing environment—without touching the host system beyond what you explicitly expose.
