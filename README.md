@@ -179,7 +179,6 @@ async fn main() -> anyhow::Result<()> {
 Rust examples are in [`examples/`](./examples) and run with `cargo run --example <name>`.
 
 > You'll need a GPU (any GPU that supports Vulkan, or Metal on Macs) for the examples that run ML models.
-> You'll need a GPU (any GPU that supports Vulkan or Metal for mac machines) for the examples that run ML models.
 
 | Example | Description | Requirements |
 | --- | --- | :---: |
