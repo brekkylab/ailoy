@@ -25,7 +25,7 @@ Ailoy can do that too, but it also offers a way to make agents far more powerful
 
 This lets you build agents that do more than call predefined tools: they can install and use software, create their own scripts, and operate in a general-purpose computing environment—without touching the host system beyond what you explicitly expose.
 
-To make this possible, Ailoy gives each agent a virtual machine of its own.
+To make this possible, Ailoy **gives each agent a virtual machine of its own**.
 Inside this isolated Linux VM, the agent can freely install packages, run code, work with files, use the network, and even run ML models on the GPU, regardless of your host OS.
 
 Modern coding and research agents increasingly work this way: instead of relying only on predefined tools, they operate inside general-purpose computing environments.
