@@ -127,8 +127,6 @@ cortex = { git = "https://github.com/brekkylab/cortex" }
 ```
 
 ```rust
-use std::path::PathBuf;
-
 use ailoy::{
     agent::AgentBuilder,
     console::ConsoleClient,
@@ -141,7 +139,7 @@ use futures::StreamExt as _;
 async fn main() -> anyhow::Result<()> {
     let console = ConsoleClient::builder()
         .image(Recipe::new("python:3.12-slim-trixie").step("pip install matplotlib"))
-        .mount(PathBuf::from("./artifacts"), "/artifacts")
+        .mount(std::path::absolute("./artifacts")?, "/artifacts")
         .network(NetworkAccess::public())
         .build()
         .await?;
@@ -170,18 +168,11 @@ async fn main() -> anyhow::Result<()> {
 
 `agent.run` yields one complete message for each step of the tool loop, and `run_stream` yields token deltas as the model writes them.
 
-## Key Features
-
-- **One agent loop, many models.** OpenAI, Anthropic, Gemini, xAI, DeepSeek, Kimi, OpenRouter, AWS Bedrock, or any OpenAI-compatible endpoint, chosen by a model name such as `anthropic/claude-haiku-4-5`.
-- **Tools fitted to the model.** `system_tools()` gives each model family the toolset it was trained on: `apply_patch` for OpenAI models, `read`/`write`/`edit` for Claude, `read_file` for Gemini and Qwen, and `shell` and `imgread` for all of them.
-- **Sandboxed by default.** Tools run in the console, not on the host. You choose its image, mounts, network access, CPU, memory and GPU.
-- **Skills.** A folder with a `SKILL.md`, mounted in the console, which the agent reads when it needs it.
-- **Extensible.** Custom tools in Rust, Python or JavaScript, MCP servers (stdio and streamable HTTP), A2A agents, sub-agents, and a searchable memory store.
-
-## Examples
+## What can a agent do?
 
 Rust examples are in [`examples/`](./examples) and run with `cargo run --example <name>`.
-Most of them mount a `SKILL.md`, read-only inputs at `/context` and writable outputs at `/artifacts`.
+
+> Some examples, especially those that run ML models, need a GPU. Either an integrated or a discrete GPU works. (on macOS, it must support Metal.)
 
 | Example | Description |
 | --- | --- |
@@ -194,8 +185,6 @@ Most of them mount a `SKILL.md`, read-only inputs at `/context` and writable out
 | [laya](./examples/laya) | Answers typed decision questions with a local model on the GPU |
 
 Python examples are in [`bindings/python/examples`](./bindings/python/examples), and Node examples are in [`bindings/node/examples`](./bindings/node/examples).
-
-> Local models no longer run inside the library. As the `sam3`, `tts` and `laya` examples show, they run in the console as skills, on the guest's Vulkan GPU.
 
 ## Concepts
 
