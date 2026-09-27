@@ -40,7 +40,7 @@ Ailoy works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width=
 
 Basically **none**.
 
-You don't need to run a heavy VM daemon such as Docker.
+You don't need to install and run a VM daemon such as Docker.
 
 The only exception is cortex's virtual filesystem feature, which relies on host mounts and therefore needs FUSE support:
 install [FUSE-T](https://www.fuse-t.org/) on macOS or [Dokany](https://github.com/dokan-dev/dokany) on Windows.
