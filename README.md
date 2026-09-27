@@ -31,6 +31,8 @@ Inside this isolated Linux VM, the agent can freely install packages, run code, 
 This is how modern agents (ChatGPT, Claude, etc.) actually work: instead of relying only on predefined tools, they operate inside general-purpose computing environments.
 **Ailoy brings that architecture to your own applications**.
 
+Ailoy works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width="16"/> Linux, <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/windows11/windows11-original.svg" width="16"/> Windows, and <img src="https://cdn.simpleicons.org/apple/000000/ffffff" width="16"/> macOS.
+
 > [!WARNING]
 > Ailoy is under active development, and its API may change between versions.
 
