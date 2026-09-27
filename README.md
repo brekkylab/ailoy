@@ -44,7 +44,8 @@ export ANTHROPIC_API_KEY=...
 export GEMINI_API_KEY=...
 ```
 
-### Python
+<details open>
+<summary><b>Python</b></summary>
 
 ```sh
 pip install ailoy-py
@@ -83,7 +84,10 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-### Node.js
+</details>
+
+<details>
+<summary><b>Node.js</b></summary>
 
 ```sh
 npm install ailoy-node
@@ -115,7 +119,10 @@ try {
 }
 ```
 
-### Rust
+</details>
+
+<details>
+<summary><b>Rust</b></summary>
 
 ```toml
 [dependencies]
@@ -162,6 +169,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 ```
+
+</details>
 
 `agent.run` yields one complete message for each step of the tool loop, and `run_stream` yields token deltas as the model writes them.
 
