@@ -28,9 +28,6 @@ This lets you build agents that do more than call predefined tools: they can ins
 To make this possible, Ailoy **gives each agent a virtual machine of its own**.
 Inside this isolated Linux VM, the agent can freely install packages, run code, work with files, use the network, and even run ML models on the GPU, regardless of your host OS.
 
-This is how modern agents (ChatGPT, Claude, etc.) actually work: instead of relying only on predefined tools, they operate inside general-purpose computing environments.
-**Ailoy brings that architecture to your own applications**.
-
 Ailoy works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width="16"/> Linux, <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/windows11/windows11-original.svg" width="16"/> Windows, and <img src="https://cdn.simpleicons.org/apple/000000/ffffff" width="16"/> macOS.
 
 > [!WARNING]
