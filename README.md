@@ -178,18 +178,18 @@ async fn main() -> anyhow::Result<()> {
 
 Rust examples are in [`examples/`](./examples) and run with `cargo run --example <name>`.
 
-> [!WARNING]
-> You'll need a GPU (either an integrated or a discrete GPU) for running some examples those that run ML models. (on macOS, it must support Metal.)
+> You'll need a GPU (any GPU that supports Vulkan, or Metal on Macs) for the examples that run ML models.
+> You'll need a GPU (any GPU that supports Vulkan or Metal for mac machines) for the examples that run ML models.
 
-| Example | Description |
-| --- | --- |
-| [hello](./examples/hello) | One turn with no tools and no console |
-| [cad](./examples/cad) | Writes CadQuery, renders the model from four sides, looks at the renders and iterates |
-| [offshore_leaks](./examples/offshore_leaks) | Analyses the ICIJ Offshore Leaks database with SQL and Python that the agent writes itself |
-| [retail_bench](./examples/retail_bench) | Runs a supermarket simulator, one day per turn |
-| [sam3](./examples/sam3) | Segments images and videos with SAM3 on the guest GPU (ncnn + Vulkan) |
-| [tts](./examples/tts) | Speaks text in a voice described in words, using Qwen3-TTS |
-| [laya](./examples/laya) | Answers typed decision questions with a local model on the GPU |
+| Example | Description | Requirements |
+| --- | --- | :---: |
+| [hello](./examples/hello) | One turn with no tools and no console | |
+| [cad](./examples/cad) | Writes CadQuery, renders the model from four sides, looks at the renders and iterates | |
+| [offshore_leaks](./examples/offshore_leaks) | Analyses the ICIJ Offshore Leaks database with SQL and Python that the agent writes itself | |
+| [retail_bench](./examples/retail_bench) | Runs a supermarket simulator, one day per turn | |
+| [sam3](./examples/sam3) | Segments images and videos with SAM3 on the guest GPU (ncnn + Vulkan) | GPU |
+| [tts](./examples/tts) | Speaks text in a voice described in words, using Qwen3-TTS | GPU |
+| [laya](./examples/laya) | Answers typed decision questions with a local model on the GPU | GPU |
 
 Python examples are in [`bindings/python/examples`](./bindings/python/examples), and Node examples are in [`bindings/node/examples`](./bindings/node/examples).
 
