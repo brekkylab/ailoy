@@ -21,147 +21,68 @@
 
 <br>
 
-## 🚀 Quick Start
+Ailoy is a library for building modern AI agents, in your computer.
 
-See how easy to use Ailoy through below examples.
+Most AI agent libraries focus on connecting an LLM to tools (usually MCP tools).
+Ailoy supports that too.
 
-### Get your agent just in _a single line of code_
+But our core idea is that you can hand an agent far more work by taking a different approach: giving it a virtual machine of its own.
 
-Check out the simplest python example to build your agent with local models.
+This is done through the **console system**, a disposable VM from [cortex](https://github.com/brekkylab/cortex): the agent can install packages, run code, read and write files and use the GPU there, and none of it touches your machine except through the folders you mount.
+
+This is the same approach the Claude and OpenAI apps take, and you can get it there too.
+But if you want to customize it yourself or deploy it on your own, give Ailoy a try.
+
+> [!WARNING]
+> Ailoy is under active development, and its API may change between versions.
+
+## Quick start
+
+Set the API key for your model's provider, either in the environment or in a `.env` file:
+
+```sh
+export OPENAI_API_KEY=...
+export ANTHROPIC_API_KEY=...
+export GEMINI_API_KEY=...
+```
+
+### Python
 
 ```sh
 pip install ailoy-py
 ```
 
 ```python
-import ailoy as ai
+import asyncio
 
-# Create an agent with a local model in a single line of code.
-agent = ai.Agent(ai.LangModel.new_local_sync("Qwen/Qwen3-8B"))
+from ailoy import AgentBuilder
+from ailoy.cortex import ConsoleClient, NetworkAccess, Recipe
 
-# Get the response from the agent simply by calling the `run` method.
-response = agent.run("Explain quantum computing in one sentence")
-print(response.contents[0].text)
-```
 
-### Easy to integrate LLM APIs
+async def main() -> None:
+    console = await (
+        ConsoleClient.builder()
+        .image(Recipe("alpine:latest"))
+        .mount("./artifacts", "/artifacts")
+        .network(NetworkAccess.none())
+        .build()
+    )
 
-Here's the simple javascript example with LLM APIs.
+    agent = await (
+        # For openai, use "openai/gpt-5.6-luna"
+        AgentBuilder("anthropic/claude-haiku-4-5")
+        .instruction("Write what you are asked for into /artifacts.")
+        .system_tools()
+        .console(console)
+        .build()
+    )
 
-```sh
-npm install ailoy-node
-```
+    async for output in agent.run("What is the meaning of hello world?"):
+        for part in output["message"]["contents"]:
+            if part["type"] == "text":
+                print(part["text"])
 
-```js
-import * as ai from "ailoy-node";
-
-async function main() {
-  const lm = await ai.LangModel.newStreamAPI(
-    "OpenAI", // spec
-    "gpt-5", // modelName
-    "YOUR_OPENAI_API_KEY" // apiKey
-  );
-  const agent = new ai.Agent(lm);
-  for await (const resp of agent.run("Please give me a short poem about AI")) {
-    if (resp.message.contents[0].type === "text") {
-      console.log(resp.message.contents[0].text);
-    }
-  }
-}
-
-main().catch((err) => {
-  console.error("Error:", err);
-});
-```
-
-### Browser-Native AI (WebAssembly)
-
-You can build your agent entirely in the browser using WebAssembly just in a few lines of code.
-
-```sh
-npm install ailoy-web
-```
-
-```typescript
-import * as ai from "ailoy-web";
-
-// Check WebGPU support
-const { supported } = await ai.isWebGPUSupported();
-
-// Run AI entirely in the browser - no server needed!
-const agent = new ai.Agent(await ai.LangModel.newLocal("Qwen/Qwen3-0.6B"));
-```
-
-### Quick-customizable Web Agent UI Template
-
-Just **Clone** to build your own web agent in minutes.
-
-- https://github.com/brekkylab/ailoy-web-ui
-
-<br/>
-
-## 🔥 Key Features
-
-### Simple Framework and Powerful Features for AI Agents
-
-- No boilerplate, no complex setup
-- **Reasoning**: Extend thinking effortlessly
-- **Multi-Modal Inputs**: Process both text and images
-- **Extensible Tool Calling**: User-defined functions and **Model Context Protocol (MCP)** tools
-- **Retrieval-Augmented Generation (RAG)**: Integrates external knowledge bases without boilerplate
-
-### Cross-Platform & Multi-Language APIs
-
-- Provide <img src="https://cdn.simpleicons.org/python" width="16"/> **Python** and <img src="https://cdn.simpleicons.org/javascript" width="16"/> **JavaScript** APIs
-
-- Support <img src="https://www.microsoft.com/favicon.ico?v2" width="16"/> **Windows**, <img src="https://upload.wikimedia.org/wikipedia/commons/3/35/Tux.svg" width="16"/> **Linux**, and <img src="https://www.apple.com/favicon.ico" width="16"/> **macOS**
-
-- Support Synchronous and Asynchronous APIs
-
-### Support Web-browser Native AI (WebAssembly)
-
-- Run AI entirely in the browser - no server needed!
-
-### Flexible Model Adoption
-
-- Supports both **local AI** execution and **cloud AI** providers
-- Effortlessly switch between open-source and AI services
-- Minimal software dependencies — deploy anywhere, from **cloud** to **edge**
-
-### Rust-Powered <img src="https://cdn.simpleicons.org/rust" width="16"/>
-
-- Fast, memory-safe, minimal dependencies
-- Best choice for edge computing and low-resource devices
-
-### Documentation & Community
-
-- [Documentation (Eng.)](https://brekkylab.github.io/ailoy/)
-- [Documentation (Kor.)](https://brekkylab.github.io/ailoy/ko/)
-
-- [Discord Community](https://discord.gg/27rx3EJy3P) - Join to ask questions, share your projects, and get help.
-
-<br/>
-
-## Example Projects
-
-| Project                                            | Description                          |
-| -------------------------------------------------- | ------------------------------------ |
-| [Gradio Chatbot](./examples/gradio_chatbot)        | Web UI chatbot with tool integration |
-| [Web Assistant](./examples/web-assistant-ui)       | Browser-based AI assistant (WASM)    |
-| [RAG Electron App](./examples/simple_rag_electron) | Desktop app with document Q&A        |
-| [MCP Integration](./examples/mcp_examples)         | GitHub & Playwright tools via MCP    |
-
-<br/>
-
-## Installation
-
-> [!WARNING]
-> Ailoy is under active development. APIs may change with version updates.
-
-### Python
-
-```sh
-pip install ailoy-py
+asyncio.run(main())
 ```
 
 ### Node.js
@@ -170,36 +91,226 @@ pip install ailoy-py
 npm install ailoy-node
 ```
 
-### Browser (WebAssembly)
+```js
+const { AgentBuilder, ConsoleClient, NetworkAccess, Recipe } = require('ailoy-node')
 
-```sh
-npm install ailoy-web
+const console_ = await ConsoleClient.builder()
+  .image(new Recipe('alpine:latest'))
+  .mount('./artifacts', '/artifacts')
+  .network(NetworkAccess.none())
+  .build()
+// For openai, use "openai/gpt-5.6-luna"
+const agent = await new AgentBuilder('anthropic/claude-haiku-4-5')
+  .instruction('Write what you are asked for into /artifacts.')
+  .systemTools()
+  .console(console_)
+  .build()
+
+try {
+  for await (const { message } of agent.run('What is the meaning of hello world?')) {
+    for (const part of message.contents) {
+      if (part.type === 'text') console.log(part.text)
+    }
+  }
+} finally {
+  await agent.close()
+}
 ```
 
-## Support Specifications
+### Rust
 
-### Supported AI Models
+```toml
+[dependencies]
+ailoy = "0.3"
+cortex = { git = "https://github.com/brekkylab/cortex" }
+```
 
-| Type        | Provider & Models                                                                                                                                  |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Local Model | <img src="https://assets.alicdn.com/g/qwenweb/qwen-webui-fe/0.0.239/static/favicon.png" width="16"/> Qwen3 (0.6B, 1.7B, 4B, 8B, 14B, 32B, 30B-A3B) |
-| Cloud API   | <img src="https://openai.com/favicon.svg" width="16"/> OpenAI (GPT)                                                                                |
-| Cloud API   | <img src="https://claude.ai/favicon.ico" width="16"/> Anthropic (Claude)                                                                           |
-| Cloud API   | <img src="https://gemini.google/images/spark_4c.png" width="16"/> Google (Gemini)                                                                  |
-| Cloud API   | <img src="https://console.x.ai/_next/static/media/favicon.20ac9181.ico" width="16"/> xAI (Grok)                                                    |
+```rust
+use std::path::PathBuf;
 
-### Supported Languags
+use ailoy::{
+    agent::AgentBuilder,
+    console::ConsoleClient,
+    message::{Message, Part, Role},
+};
+use cortex::{image::Recipe, protocol::NetworkAccess};
+use futures::StreamExt as _;
 
-| Language   | Version           |
-| ---------- | ----------------- |
-| Python     | 3.10+             |
-| JavaScript | ES5+, Node.js 20+ |
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let console = ConsoleClient::builder()
+        .image(Recipe::new("alpine:latest"))
+        .mount(PathBuf::from("./artifacts"), "/artifacts")
+        .network(NetworkAccess::none())
+        .build()
+        .await?;
 
-### Supported Platforms
+    // For openai, use "openai/gpt-5.6-luna"
+    let mut agent = AgentBuilder::new("anthropic/claude-haiku-4-5")
+        .instruction("Write what you are asked for into /artifacts.")
+        .system_tools()
+        .console(console)
+        .build()
+        .await?;
 
-| Supported Platform | System Requirements (for Local AI) |
-| ------------------ | ---------------------------------- |
-| Windows            | Vulkan 1.4 compatible GPU          |
-| Linux              | Vulkan 1.4 compatible GPU          |
-| macOS              | Apple Silicon with Metal           |
-| Web Browser        | WebGPU with shader-f16 support     |
+    let query = Message::new(Role::User).with_contents([Part::text("What is the meaning of hello world?")]);
+    let mut stream = agent.run(query);
+    while let Some(output) = stream.next().await {
+        let message = output?.message;
+        if message.role == Role::Assistant {
+            for text in message.contents.iter().filter_map(Part::as_text) {
+                println!("{text}");
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+`agent.run` yields one complete message for each step of the tool loop, and `run_stream` yields token deltas as the model writes them.
+
+## Key Features
+
+- **One agent loop, many models.** OpenAI, Anthropic, Gemini, xAI, DeepSeek, Kimi, OpenRouter, AWS Bedrock, or any OpenAI-compatible endpoint, chosen by a model name such as `anthropic/claude-haiku-4-5`.
+- **Tools fitted to the model.** `system_tools()` gives each model family the toolset it was trained on: `apply_patch` for OpenAI models, `read`/`write`/`edit` for Claude, `read_file` for Gemini and Qwen, and `shell` and `imgread` for all of them.
+- **Sandboxed by default.** Tools run in the console, not on the host. You choose its image, mounts, network access, CPU, memory and GPU.
+- **Skills.** A folder with a `SKILL.md`, mounted in the console, which the agent reads when it needs it.
+- **Extensible.** Custom tools in Rust, Python or JavaScript, MCP servers (stdio and streamable HTTP), A2A agents, sub-agents, and a searchable memory store.
+
+## Examples
+
+Rust examples are in [`examples/`](./examples) and run with `cargo run --example <name>`.
+Most of them mount a `SKILL.md`, read-only inputs at `/context` and writable outputs at `/artifacts`.
+
+| Example | Description |
+| --- | --- |
+| [hello](./examples/hello) | One turn with no tools and no console |
+| [cad](./examples/cad) | Writes CadQuery, renders the model from four sides, looks at the renders and iterates |
+| [offshore_leaks](./examples/offshore_leaks) | Analyses the ICIJ Offshore Leaks database with SQL and Python that the agent writes itself |
+| [retail_bench](./examples/retail_bench) | Runs a supermarket simulator, one day per turn |
+| [sam3](./examples/sam3) | Segments images and videos with SAM3 on the guest GPU (ncnn + Vulkan) |
+| [tts](./examples/tts) | Speaks text in a voice described in words, using Qwen3-TTS |
+| [laya](./examples/laya) | Answers typed decision questions with a local model on the GPU |
+
+Python examples are in [`bindings/python/examples`](./bindings/python/examples), and Node examples are in [`bindings/node/examples`](./bindings/node/examples).
+
+> Local models no longer run inside the library. As the `sam3`, `tts` and `laya` examples show, they run in the console as skills, on the guest's Vulkan GPU.
+
+## Concepts
+
+### Models and providers
+
+The prefix of a model name selects its provider.
+The default providers are read from the environment the first time an agent is built:
+
+| Prefix | Environment variable | Example |
+| --- | --- | --- |
+| `openai/` | `OPENAI_API_KEY` | `openai/gpt-5.6-luna` |
+| `anthropic/` | `ANTHROPIC_API_KEY` | `anthropic/claude-haiku-4-5` |
+| `google/` | `GEMINI_API_KEY` | `google/gemini-3-pro` |
+| `x-ai/` | `XAI_API_KEY` | `x-ai/grok-4` |
+| `deepseek/` | `DEEPSEEK_API_KEY` | `deepseek/deepseek-chat` |
+| `moonshotai/` | `KIMI_API_KEY` | `moonshotai/kimi-k2` |
+| `openrouter/` | `OPENROUTER_API_KEY` | `openrouter/<vendor>/<model>` |
+| `bedrock/` | `AWS_BEARER_TOKEN_BEDROCK` (+ `AWS_REGION`) | `bedrock/global.openai.gpt-6-astra` |
+
+To use another endpoint, register it under a pattern of your own with one of the wire formats: OpenAI Responses, Chat Completions, Anthropic Messages, Gemini, or Bedrock Converse.
+In Rust this is done through `LangModelProvider`, and in Python and Node through `register_lang_model` / `registerLangModel`.
+
+### The console
+
+A console is a cortex VM.
+The guest is always Linux, and the host can be Linux, macOS on Apple silicon, or Windows 11.
+The console's image is built from a recipe (a base image plus setup steps), and host folders are mounted into it read-only or writable.
+The agent starts the VM for each batch of tool calls and stops it afterwards.
+
+```python
+ConsoleClient.builder()
+    .image(Recipe("python:3.12-slim-trixie").step("pip install duckdb"))
+    .mount_readonly("./context", "/context")
+    .mount("./artifacts", "/artifacts")
+    .network(NetworkAccess.public())
+    .gpu(True)           # Vulkan inside the guest
+    .vcpus(4).memory_mib(4096)
+    .build()
+```
+
+The console is shared with the agent rather than handed over to it, so your own code can keep calling `exec`, `read` and `write` on it between turns.
+Sub-agents share their parent's console.
+
+### Tools
+
+| Tool | What it does |
+| --- | --- |
+| `shell` | Runs a command in the console |
+| `read`, `read_file` | Read a file, in Claude style or Gemini style (line ranges) |
+| `write`, `edit`, `apply_patch` | Overwrite a file, replace an exact string, apply a Codex-style patch |
+| `imgread` | Shows an image (PNG/JPEG/GIF/WEBP) to the model |
+| `web_search` | Searches across Bing, Brave, DuckDuckGo, Google, Mojeek, Naver, Startpage, Yahoo and Yandex |
+| `web_fetch` | Fetches pages as Markdown, respecting robots.txt |
+
+`system_tools()` picks the file tools for the model.
+`shell_tool()`, `web_search_tool()` and `web_fetch_tool()` add tools one at a time.
+
+Custom tools can be added as well:
+
+```python
+def temperature(city: str) -> float:
+    return 21.5
+
+desc = ailoy.register_tool(
+    {
+        "name": "temperature",
+        "description": "The temperature in a city now, in Celsius.",
+        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+    },
+    temperature,
+)
+agent = await ailoy.AgentBuilder("anthropic/claude-haiku-4-5").tool(desc).build()
+```
+
+MCP servers are added with `register_mcp_stdio` / `register_mcp_streamable_http`, and A2A agents with `register_a2a`.
+Each of these returns the tool descriptions to pass to the builder.
+A tool that raises an error returns the error to the model instead of ending the turn.
+
+### Skills, sub-agents and memory
+
+- **Skills**: `.skill("/skills/cad")` points to a folder in the console that contains a `SKILL.md`. Its frontmatter is listed in the system message, and the agent reads the full file when it uses the skill.
+- **Sub-agents**: an `AgentSpec` with an `AgentCard` becomes a tool that the parent agent can call.
+- **Memory**: a `Memory` store gives the agent `mem_search` and `mem_insert` tools, backed by a single file in the console.
+- **Context management**: when the input grows past a token limit, the oldest turns are dropped, and the system message and the most recent turns are kept.
+
+## Building from source
+
+Ailoy links [cortex](https://github.com/brekkylab/cortex) from a checkout next to this repository:
+
+```
+workspace/
+├── ailoy/
+└── cortex/
+```
+
+On macOS, cortex's host mounts require FUSE-T: `brew install --cask fuse-t`.
+
+```sh
+cargo build                                   # Rust crate
+cargo run --example hello -- anthropic/claude-haiku-4-5
+
+cd bindings/python && uv sync && uv run maturin develop   # Python
+cd bindings/node && npm install && npm run build          # Node
+```
+
+For details, see [bindings/python/README.md](./bindings/python/README.md) and [bindings/node/README.md](./bindings/node/README.md).
+
+## Requirements
+
+| | |
+| --- | --- |
+| Rust | 1.95+ (edition 2024) |
+| Python | 3.10+ |
+| Node.js | 18+ |
+| Host OS | Linux, macOS (Apple silicon), Windows 11 |
+
+## License
+
+Apache-2.0. See [LICENSE.md](./LICENSE.md).

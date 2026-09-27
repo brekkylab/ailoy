@@ -4,7 +4,7 @@
 //! cargo run --example hello -- [model]
 //! ```
 //!
-//! `model` defaults to `openai/gpt-5.4-mini`; its provider's API key has to be set
+//! `model` defaults to `openai/gpt-5.6-luna`; its provider's API key has to be set
 //! (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...), in the environment or in `.env`.
 
 use std::io::Write as _;
@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
 
     let model = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "openai/gpt-5.4-mini".to_string());
+        .unwrap_or_else(|| "openai/gpt-5.6-luna".to_string());
     let mut agent = Agent::try_new(AgentSpec::new(&model)).await?;
     println!("model  {model}\n");
 
