@@ -36,6 +36,16 @@ Ailoy works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width=
 > [!WARNING]
 > Ailoy is under active development, and its API may change between versions.
 
+## Requirements
+
+Basically **none**.
+
+You don't need to run a heavy VM daemon such as Docker.
+
+The only exception is cortex's virtual filesystem feature, which relies on host mounts and therefore needs FUSE support:
+install [FUSE-T](https://www.fuse-t.org/) on macOS or [Dokany](https://github.com/dokan-dev/dokany) on Windows.
+See the [cortex README](https://github.com/brekkylab/cortex) for details.
+
 ## Quick start
 
 Set the API key for your model's provider, either in the environment or in a `.env` file:
