@@ -38,7 +38,8 @@ Ailoy works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width=
 
 ## Requirements
 
-Basically **none**.
+**Nothing to install on your machine**.
+All you need is an API key for the LLM provider you want to use.
 
 You don't need to install and run a VM daemon such as Docker.
 
