@@ -44,7 +44,7 @@ export ANTHROPIC_API_KEY=...
 export GEMINI_API_KEY=...
 ```
 
-<details open>
+<details>
 <summary><b>Python</b></summary>
 
 ```sh
