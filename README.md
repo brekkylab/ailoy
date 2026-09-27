@@ -63,9 +63,9 @@ from ailoy.cortex import ConsoleClient, NetworkAccess, Recipe
 async def main() -> None:
     console = await (
         ConsoleClient.builder()
-        .image(Recipe("alpine:latest"))
+        .image(Recipe("python:3.12-slim-trixie").step("pip install matplotlib"))
         .mount("./artifacts", "/artifacts")
-        .network(NetworkAccess.none())
+        .network(NetworkAccess.public())
         .build()
     )
 
@@ -78,7 +78,7 @@ async def main() -> None:
         .build()
     )
 
-    async for output in agent.run("What is the meaning of hello world?"):
+    async for output in agent.run("Create a bar chart comparing the populations of European countries and save it to /artifacts/population.png."):
         for part in output["message"]["contents"]:
             if part["type"] == "text":
                 print(part["text"])
@@ -96,9 +96,9 @@ npm install ailoy-node
 const { AgentBuilder, ConsoleClient, NetworkAccess, Recipe } = require('ailoy-node')
 
 const console_ = await ConsoleClient.builder()
-  .image(new Recipe('alpine:latest'))
+  .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))
   .mount('./artifacts', '/artifacts')
-  .network(NetworkAccess.none())
+  .network(NetworkAccess.public())
   .build()
 // For openai, use "openai/gpt-5.6-luna"
 const agent = await new AgentBuilder('anthropic/claude-haiku-4-5')
@@ -108,7 +108,7 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-4-5')
   .build()
 
 try {
-  for await (const { message } of agent.run('What is the meaning of hello world?')) {
+  for await (const { message } of agent.run('Create a bar chart comparing the populations of European countries and save it to /artifacts/population.png.')) {
     for (const part of message.contents) {
       if (part.type === 'text') console.log(part.text)
     }
@@ -140,9 +140,9 @@ use futures::StreamExt as _;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let console = ConsoleClient::builder()
-        .image(Recipe::new("alpine:latest"))
+        .image(Recipe::new("python:3.12-slim-trixie").step("pip install matplotlib"))
         .mount(PathBuf::from("./artifacts"), "/artifacts")
-        .network(NetworkAccess::none())
+        .network(NetworkAccess::public())
         .build()
         .await?;
 
@@ -154,7 +154,7 @@ async fn main() -> anyhow::Result<()> {
         .build()
         .await?;
 
-    let query = Message::new(Role::User).with_contents([Part::text("What is the meaning of hello world?")]);
+    let query = Message::new(Role::User).with_contents([Part::text("Create a bar chart comparing the populations of European countries and save it to /artifacts/population.png.")]);
     let mut stream = agent.run(query);
     while let Some(output) = stream.next().await {
         let message = output?.message;
