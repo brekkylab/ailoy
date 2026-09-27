@@ -21,17 +21,18 @@
 
 <br>
 
-Ailoy is a library for building modern AI agents, in your computer.
+Ailoy is a next-gen AI agent development library.
 
-Most AI agent libraries focus on connecting an LLM to tools (usually MCP tools).
-Ailoy supports that too.
+Most agent development frameworks provide a way to connect an LLM to tools (e.g. MCP).
+Ailoy can do that too, but it also offers a way to make agents far more powerful: give the agent a computer of its own.
 
-But our core idea is that you can hand an agent far more work by taking a different approach: giving it a virtual machine of its own.
+This lets you build agents that do more than call predefined tools: they can install and use software, create their own scripts, and operate in a general-purpose computing environment—without touching the host system beyond what you explicitly expose.
 
-This is done through the **console system**, a disposable VM from [cortex](https://github.com/brekkylab/cortex): the agent can install packages, run code, read and write files and use the GPU there, and none of it touches your machine except through the folders you mount.
+To make this possible, Ailoy gives each agent a virtual machine of its own.
+Inside this isolated Linux VM, the agent can freely install packages, run code, work with files, use the network, and even run ML models on the GPU, regardless of your host OS.
 
-This is the same approach the Claude and OpenAI apps take, and you can get it there too.
-But if you want to customize it yourself or deploy it on your own, give Ailoy a try.
+Modern coding and research agents increasingly work this way: instead of relying only on predefined tools, they operate inside general-purpose computing environments.
+Ailoy brings that architecture to your own applications.
 
 > [!WARNING]
 > Ailoy is under active development, and its API may change between versions.
