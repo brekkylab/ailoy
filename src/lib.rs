@@ -2,6 +2,7 @@
 extern crate self as ailoy;
 
 pub mod agent;
+pub mod automation;
 pub mod console;
 pub mod datatype;
 pub mod lang_model;
