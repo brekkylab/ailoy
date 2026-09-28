@@ -29,7 +29,7 @@ use _cortex::console::PyConsoleClient;
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     datatype::Value,
-    lang_model::ResponseFormat,
+    lang_model::{ReasoningEffort, ResponseFormat},
     memory::Memory,
     message::Message,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -195,6 +195,14 @@ impl PyAgentBuilder {
 
     fn top_k(slf: PyRef<'_, Self>, top_k: u64) -> PyResult<PyRef<'_, Self>> {
         Self::update(slf, |b| Ok(b.top_k(top_k)))
+    }
+
+    /// Turn on the model's thinking at `effort`: `"low"`, `"medium"` or `"high"`.
+    fn reasoning(slf: PyRef<'_, Self>, effort: String) -> PyResult<PyRef<'_, Self>> {
+        let effort: ReasoningEffort = effort
+            .parse()
+            .map_err(|e| PyValueError::new_err(format!("{e:#}")))?;
+        Self::update(slf, |b| Ok(b.reasoning(effort)))
     }
 
     /// Constrain replies to the JSON schema `schema`, which is checked here.

@@ -238,6 +238,13 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
                 .insert("top_p".into(), top_p.into());
         }
         // top_k is not part of the OpenAI Responses spec; intentionally ignored.
+        // Reasoning comes back only as a summary, and only when one is asked for.
+        if let Some(effort) = options.reasoning {
+            body.as_object_mut().unwrap().insert(
+                "reasoning".into(),
+                to_value!({"effort": effort.as_str(), "summary": "auto"}),
+            );
+        }
         if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
             let wire_schema = self.marshal_response_schema(schema);
             body.as_object_mut().unwrap().insert(
@@ -561,6 +568,37 @@ mod tests {
         message::{Delta, FinishReason, Message, MessageDeltaOutput, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    fn marshal_reasoning(model: &str, options: LangModelOptions) -> serde_json::Value {
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+        let provider = LangModelProvider::openai("k".into());
+        let req = LangModelRequest {
+            model,
+            messages: &messages,
+            tools: &[],
+            provider: &provider,
+            options: &options,
+            stream: false,
+        };
+        OpenAIMarshal.marshal(&req).into()
+    }
+
+    #[test]
+    fn reasoning_maps_to_effort_with_a_summary() {
+        let v = marshal_reasoning(
+            "gpt-5",
+            LangModelOptions {
+                reasoning: Some(crate::lang_model::ReasoningEffort::Low),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            v["body"]["reasoning"],
+            serde_json::json!({"effort": "low", "summary": "auto"})
+        );
+        let v = marshal_reasoning("gpt-5", LangModelOptions::default());
+        assert!(v["body"].get("reasoning").is_none());
+    }
 
     /// Feeds Responses SSE event payloads through `unmarshal_event`,
     /// accumulating to a final `MessageDeltaOutput`.

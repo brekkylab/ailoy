@@ -42,11 +42,69 @@ pub struct LangModelOptions {
     /// Constrains the model's output to a JSON schema validated at construction time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<ResponseFormat>,
+
+    /// Turns on the model's thinking (extended thinking / reasoning) at the
+    /// given effort, and asks the provider to return it, which lands in
+    /// [`Message::thinking`](crate::message::Message::thinking).  `None`
+    /// sends nothing and leaves the provider default in place: some models
+    /// think anyway, most do not.
+    ///
+    /// Each provider maps the effort to its own control: Anthropic's adaptive
+    /// thinking and `effort` (a thinking-token budget on models before
+    /// Claude 4.6), OpenAI's `reasoning.effort`, Gemini's `thinkingConfig`.
+    /// Anthropic does not take the sampling knobs while thinking, so
+    /// `temperature`, `top_p` and `top_k` are dropped for it.  A model that
+    /// cannot think answers the request with an API error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningEffort>,
 }
 
 impl LangModelOptions {
     pub fn new() -> Self {
         Self::default()
+    }
+}
+
+/// How much the model thinks before it answers.  See
+/// [`LangModelOptions::reasoning`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    Low,
+    Medium,
+    High,
+}
+
+impl ReasoningEffort {
+    /// The name every provider that takes an effort level uses for it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+
+    /// A thinking-token budget for providers that take one instead of a level.
+    pub(crate) fn budget_tokens(self) -> u64 {
+        match self {
+            Self::Low => 2048,
+            Self::Medium => 8192,
+            Self::High => 24576,
+        }
+    }
+}
+
+impl std::str::FromStr for ReasoningEffort {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> anyhow::Result<Self> {
+        match s {
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            other => anyhow::bail!("reasoning effort must be low, medium or high, not {other:?}"),
+        }
     }
 }
 

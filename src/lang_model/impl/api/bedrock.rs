@@ -4,7 +4,7 @@
 use anyhow::bail;
 use url::Url;
 
-use super::super::response_format::ResponseSchemaMarshal;
+use super::{super::response_format::ResponseSchemaMarshal, anthropic};
 use crate::{
     datatype::Value,
     lang_model::{
@@ -314,7 +314,13 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
 /// is recognized: `openai.…` or `<geo>.openai.…`. An application inference-profile ARN hides
 /// the model and goes through unchanged.
 fn takes_images_outside_tool_results(model: &str) -> bool {
-    model.split('.').take(2).any(|s| s == "openai")
+    names_vendor(model, "openai")
+}
+
+/// Whether the model id names `vendor`: `<vendor>.…` or `<geo>.<vendor>.…`. An application
+/// inference-profile ARN hides the model and names none.
+fn names_vendor(model: &str, vendor: &str) -> bool {
+    model.split('.').take(2).any(|s| s == vendor)
 }
 
 /// Moves the images out of each `user` turn's `toolResult` blocks to the end of that turn,
@@ -460,29 +466,58 @@ impl Marshal<LangModelRequest<'_>> for BedrockMarshal {
             );
         }
 
+        // Converse has no portable thinking control, so it goes in as the model's own
+        // fields: Claude's `thinking` and `output_config`, OpenAI's `reasoning_effort`.
+        let mut additional = Value::object_empty();
+        let add = additional.as_object_mut().unwrap();
+        let mut max_tokens = options.max_tokens;
+        let claude_thinking = options.reasoning.is_some() && names_vendor(req.model, "anthropic");
+        if let Some(effort) = options.reasoning {
+            if claude_thinking {
+                // Claude's thinking counts against maxTokens, and the Converse default is
+                // too small to hold it; the one set here fits every Claude that thinks.
+                let cfg = anthropic::thinking_config(req.model, effort, max_tokens);
+                max_tokens = Some(cfg.max_tokens);
+                add.insert("thinking".into(), cfg.thinking);
+                if let Some(effort) = cfg.effort {
+                    add.insert("output_config".into(), to_value!({"effort": effort}));
+                }
+            } else if names_vendor(req.model, "openai") {
+                add.insert("reasoning_effort".into(), effort.as_str().into());
+            } else {
+                log::warn!(
+                    "{}: no thinking control known on Bedrock; ignored",
+                    req.model
+                );
+            }
+        }
+
         // No default maxTokens: the ceiling differs per model family and an
         // over-limit value is a 400, so leave it to the model unless asked.
         let mut inference = Value::object_empty();
         let inf = inference.as_object_mut().unwrap();
-        if let Some(max_tokens) = options.max_tokens {
+        if let Some(max_tokens) = max_tokens {
             inf.insert("maxTokens".into(), (max_tokens as i64).into());
         }
-        if let Some(temperature) = options.temperature {
-            inf.insert("temperature".into(), temperature.into());
-        }
-        if let Some(top_p) = options.top_p {
-            inf.insert("topP".into(), top_p.into());
+        // Claude does not take the sampling knobs while thinking; drop them silently.
+        if !claude_thinking {
+            if let Some(temperature) = options.temperature {
+                inf.insert("temperature".into(), temperature.into());
+            }
+            if let Some(top_p) = options.top_p {
+                inf.insert("topP".into(), top_p.into());
+            }
+            // Converse has no portable top-k; `top_k` is the Anthropic/Cohere
+            // spelling and is passed through as a model-specific field.
+            if let Some(top_k) = options.top_k {
+                add.insert("top_k".into(), (top_k as i64).into());
+            }
         }
         if !inf.is_empty() {
             body_obj.insert("inferenceConfig".into(), inference);
         }
-        // Converse has no portable top-k; `top_k` is the Anthropic/Cohere
-        // spelling and is passed through as a model-specific field.
-        if let Some(top_k) = options.top_k {
-            body_obj.insert(
-                "additionalModelRequestFields".into(),
-                to_value!({"top_k": top_k as i64}),
-            );
+        if !add.is_empty() {
+            body_obj.insert("additionalModelRequestFields".into(), additional);
         }
         // Converse takes the schema as a JSON *string*, not an object.
         if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
@@ -801,6 +836,7 @@ mod tests {
             top_p: Some(0.9),
             top_k: Some(5),
             response_format: None,
+            reasoning: None,
         };
 
         let v = marshal(&request(&provider, &messages, &tools, &options, false));
@@ -822,6 +858,52 @@ mod tests {
             serde_json::json!({"maxTokens": 100, "temperature": 0.2, "topP": 0.9})
         );
         assert_eq!(v["body"]["additionalModelRequestFields"]["top_k"], 5);
+    }
+
+    #[test]
+    fn reasoning_goes_in_as_the_model_family_fields() {
+        let provider = LangModelProvider::bedrock("us-east-1".parse().unwrap(), "k".to_string());
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+        let options = LangModelOptions {
+            temperature: Some(0.2),
+            top_k: Some(5),
+            reasoning: Some(crate::lang_model::ReasoningEffort::Low),
+            ..Default::default()
+        };
+        let mut req = request(&provider, &messages, &[], &options, false);
+
+        let v = marshal(&req);
+        assert_eq!(
+            v["body"]["additionalModelRequestFields"],
+            serde_json::json!({
+                "thinking": {"type": "adaptive", "display": "summarized"},
+                "output_config": {"effort": "low"},
+            })
+        );
+        assert_eq!(
+            v["body"]["inferenceConfig"],
+            serde_json::json!({"maxTokens": 2048 + 8192}),
+            "room for the thinking, and no sampling knobs while thinking"
+        );
+
+        req.model = "anthropic.claude-haiku-4-5-20251001-v1:0";
+        let v = marshal(&req);
+        assert_eq!(
+            v["body"]["additionalModelRequestFields"],
+            serde_json::json!({"thinking": {"type": "enabled", "budget_tokens": 2048}})
+        );
+        assert_eq!(
+            v["body"]["inferenceConfig"],
+            serde_json::json!({"maxTokens": 2048 + 8192})
+        );
+
+        req.model = "openai.gpt-oss-120b-1:0";
+        let v = marshal(&req);
+        assert_eq!(
+            v["body"]["additionalModelRequestFields"],
+            serde_json::json!({"reasoning_effort": "low", "top_k": 5})
+        );
+        assert_eq!(v["body"]["inferenceConfig"]["temperature"], 0.2);
     }
 
     #[test]

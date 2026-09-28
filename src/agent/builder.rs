@@ -218,6 +218,12 @@ impl AgentBuilder {
         self
     }
 
+    /// Turn on the model's thinking at `effort`, forwarded to the language model on every call.
+    pub fn reasoning(mut self, effort: crate::lang_model::ReasoningEffort) -> Self {
+        self.spec = self.spec.reasoning(effort);
+        self
+    }
+
     /// Materialise the agent by dispatching to
     /// [`Agent::try_with_provider_name_and_state`] with a state assembled from
     /// the optional machine and history.

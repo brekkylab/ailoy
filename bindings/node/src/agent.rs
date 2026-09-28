@@ -35,7 +35,7 @@ use std::sync::Arc;
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     datatype::Value,
-    lang_model::ResponseFormat,
+    lang_model::{ReasoningEffort, ResponseFormat},
     memory::Memory,
     message::{Message, MessageDeltaOutput, MessageOutput},
     tool::{ToolDesc, WebSearchEngineKind},
@@ -268,6 +268,17 @@ impl JsAgentBuilder {
     pub fn top_k<'env>(&mut self, this: This<'env>, top_k: i64) -> Result<This<'env>> {
         let top_k = unsigned(Some(top_k), "topK")?.unwrap_or_default();
         self.update(this, |b| Ok(b.top_k(top_k)))
+    }
+
+    /// Turn on the model's thinking at `effort`.
+    #[napi]
+    pub fn reasoning<'env>(
+        &mut self,
+        this: This<'env>,
+        #[napi(ts_arg_type = "'low' | 'medium' | 'high'")] effort: String,
+    ) -> Result<This<'env>> {
+        let effort: ReasoningEffort = effort.parse().map_err(|e| invalid(format!("{e:#}")))?;
+        self.update(this, |b| Ok(b.reasoning(effort)))
     }
 
     /// Constrain replies to the JSON schema `schema`, which is checked here.

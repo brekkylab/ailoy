@@ -233,6 +233,13 @@ impl AgentSpec {
             .response_format = Some(fmt);
         self
     }
+
+    pub fn reasoning(mut self, effort: crate::lang_model::ReasoningEffort) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .reasoning = Some(effort);
+        self
+    }
 }
 
 #[cfg(test)]
