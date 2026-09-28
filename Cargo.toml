@@ -3,6 +3,7 @@ members = [
     "./",
     "bindings/node",
     "bindings/python",
+    "daemon",
 ]
 exclude = [
     ".worktrees",
@@ -40,6 +41,9 @@ categories = ["development-tools"]
 # `.DS_Store` too.
 include = [
     "/src/**/*.rs",
+    # `automation` carries its authoring guide in the crate and reads it with
+    # `include_str!`, so the package needs it too.
+    "/src/**/*.md",
     "/README.md",
     "/LICENSE.md",
 ]

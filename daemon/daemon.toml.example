@@ -1,0 +1,42 @@
+# Copy this into the daemon's root directory as `daemon.toml`.
+# Every field has a default, so an empty file (or no file) works too.
+#
+# Beside it goes `.env`, read into the daemon's own environment when it starts: the
+# API key a model is reached with, and the variables `console.json` names its secrets
+# by. A variable already in the environment wins.
+
+# TCP address carrying `POST /events/{type}` alone. Administration and queries go
+# over the socket instead, so this may face wherever event senders are.
+#
+# Whether it asks for a credential is not a setting here: put `AILOY_API_TOKEN` in the
+# environment (`.env` beside this file will do) and a sender must bear it. Without the
+# variable the address is open to whoever reaches it, which is why this is loopback.
+listen = "127.0.0.1:7878"
+
+# Socket file carrying every route, relative to this directory. Whoever may open it
+# may administer the daemon.
+socket = "daemon.sock"
+
+# Events older than this are pruned. Default is 7 days.
+# events_retention_secs = 604800
+
+[console]
+# The console server to start. Unset, virtx finds `virtx-uvm` for itself and fetches
+# it when it is missing, which is what you want unless you are working on a server.
+#
+# Absolute path: a relative one resolves against wherever `serve` was started, not
+# against this file. What a server you name here enforces of `console.json` is its
+# own business.
+# program = ["CHANGE-ME/virtx/target/debug/virtx-uvm"]
+
+# Guest image of the shared console the trigger scripts run in. Needs python3.
+# Pulled from a registry on first use and cached by digest.
+image = "python:3.12-slim"
+
+# Run status changes are POSTed here. Optional. Nothing authenticates the daemon to
+# the receiver, so put whatever the receiver needs in the URL or terminate it behind
+# something that does.
+# [[hooks]]
+# url = "https://example.com/ailoy"
+# statuses = ["done", "failed"]      # empty means all
+# triggers = []                      # empty means all

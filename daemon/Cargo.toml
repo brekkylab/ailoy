@@ -1,0 +1,43 @@
+[package]
+name = "ailoy-daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ailoy-daemon"
+path = "src/main.rs"
+
+[dependencies]
+ailoy = { path = ".." }
+virtx = { workspace = true }
+anyhow = "1"
+axum = "0.8"
+chrono = "0.4"
+clap = { version = "4", features = ["derive", "env"] }
+croner = "2"
+dotenvy = "0.15"
+hex = "0.4"
+# The client side of the administration socket: reqwest has no unix transport,
+# so those calls are one hyper connection over a `UnixStream`.
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+bytes = "1"
+notify = "8"
+reqwest = { version = "0.13", features = ["json"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+schemars = { version = "0.9", features = ["preserve_order"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+tar = "0.4"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "fs", "signal", "net"] }
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
