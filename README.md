@@ -42,7 +42,11 @@ All you need is an API key for the LLM provider you want to use.
 
 The only exception is cortex's virtual filesystem feature, which relies on host mounts and therefore needs FUSE support:
 install [FUSE-T](https://www.fuse-t.org/) on macOS or [Dokany](https://github.com/dokan-dev/dokany) on Windows.
+Without it everything else still works, and a mount fails with an error that says what to install.
 See the [cortex README](https://github.com/brekkylab/cortex) for details.
+
+On Windows, the Node and Python packages also need the [Microsoft Visual C++ Redistributable](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) (x64), which most machines already have.
+Without it they fail to load with `The specified module could not be found.`
 
 ## Quick start
 

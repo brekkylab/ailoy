@@ -1,15 +1,23 @@
-//! napi's link setup, and the `LC_RPATH` libfuse-t is found by on a macOS target.
+//! napi's link setup, `dokan2.dll` delay-loaded on a Windows MSVC target, and the `LC_RPATH`
+//! libfuse-t is found by on a macOS target.
 //!
-//! cortex's own `build.rs` emits the same rpath, but a `rustc-link-arg` applies only to the
-//! targets of the package that printed it — so a dependent that is itself linked, as this
-//! cdylib is, has to ask again. Without it `require` fails in `dlopen` with
-//! `Library not loaded: @rpath/libfuse-t.dylib`.
+//! cortex needs both from the binary that links it, and a `rustc-link-arg` applies only to the
+//! package that prints it, so this cdylib asks itself. With the delay-load `require` works on a
+//! host without Dokany and only a mount fails, saying what to install. Without the rpath
+//! `require` fails in `dlopen` with `Library not loaded: @rpath/libfuse-t.dylib`.
 //!
-//! `ailoy` depends on cortex with its default features, so libfuse-t is linked whether or not
-//! this crate's `mount` is on; the check is on the target alone.
+//! `ailoy` depends on cortex with its default features, so Dokany and libfuse-t are linked
+//! whether or not this crate's `mount` is on; the checks are on the target alone.
 
 fn main() {
     napi_build::setup();
+
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        println!("cargo::rustc-link-arg=/DELAYLOAD:dokan2.dll");
+        println!("cargo::rustc-link-lib=delayimp");
+    }
 
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return;
