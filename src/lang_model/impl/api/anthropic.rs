@@ -235,7 +235,6 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
         let options = req.options;
         let model = Value::from(req.model);
 
-        // Extract system message text if present
         let system = req
             .messages
             .iter()
@@ -301,8 +300,7 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
                 .unwrap()
                 .insert("tools".to_owned(), tools);
         }
-        // Thinking does not take the sampling knobs; drop them silently, as for OpenAI's
-        // reasoning models.
+        // Thinking does not take the sampling knobs; drop them silently.
         if thinking.is_none() {
             if let Some(temperature) = options.temperature {
                 body.as_object_mut()
@@ -420,7 +418,7 @@ impl AnthropicUnmarshal {
 
 /// Parses one Anthropic SSE stream event into an incremental delta.
 ///
-/// Each event type contributes a fragment that [`MessageDelta::accumulate`]
+/// Each event type contributes a fragment that [`Delta::accumulate`](crate::message::Delta::accumulate)
 /// stitches together:
 /// - `message_start`: role + initial usage (input / cache tokens)
 /// - `content_block_start`: begins a `tool_use` function call (id + name)
@@ -499,8 +497,8 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             }
             // Control events carry no delta.
             "ping" | "content_block_stop" | "message_stop" => return Ok(None),
-            // Mid-stream error (e.g. `overloaded_error`, rate limit). Surface the
-            // server's own type + message rather than a generic "unknown event".
+            // Mid-stream error (e.g. `overloaded_error`, rate limit): surface the
+            // server's own type + message.
             "error" => {
                 let err_type = val
                     .pointer("/error/type")
@@ -534,13 +532,11 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("Root should be an object"))?;
 
-        // Parse stop_reason -> finish_reason
         let finish_reason = root
             .get("stop_reason")
             .and_then(|v| v.as_str())
             .map(Self::parse_finish_reason);
 
-        // Parse role
         let role = root
             .get("role")
             .and_then(|v| v.as_str())
@@ -549,7 +545,6 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
 
         let mut delta = MessageDelta::new().with_role(role);
 
-        // Parse content array
         if let Some(contents) = root.get("content")
             && !contents.is_null()
         {
@@ -623,7 +618,6 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             }
         }
 
-        // Parse usage
         let usage = root.get("usage").and_then(Self::parse_usage);
 
         Ok(MessageDeltaOutput {
@@ -1248,7 +1242,7 @@ mod tests {
         let api_key =
             std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set in .env");
 
-        // Intentionally omit additionalProperties to verify normalize_schema adds it.
+        // No additionalProperties: the marshal must add it.
         let schema = to_value!({
             "type": "object",
             "properties": {
@@ -1328,7 +1322,6 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
 
-        // Fetch a real JPEG image to use as the tool result
         let img_bytes = reqwest::get(
             "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg",
         )

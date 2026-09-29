@@ -43,7 +43,7 @@ pub enum PartImage {
 /// an array of three `Part` elements.
 ///
 /// Note that a `Part` does **not** carry "intent", such as "reasoning" or "tool call".
-/// These higher-level semantics are determined by the context of a [`Message`].
+/// These higher-level semantics are determined by the context of a [`Message`](crate::message::Message).
 ///
 /// # Example
 ///

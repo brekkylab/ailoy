@@ -97,9 +97,8 @@ pub fn get_shell_tool_func() -> ToolFunc {
             "stderr": middle_truncate(stderr, MAX_OUTPUT_CHARS).as_str(),
             "exit_code": out.code as i64,
             "timed_out": false,
-            // The console cut the output because it would not fit one message. Said
-            // out loud, because a model reading a partial result it believes is whole
-            // draws a conclusion from it.
+            // The console cut output that would not fit one message. Said out loud,
+            // since a model that takes a partial result as whole draws conclusions from it.
             "truncated": out.truncated
         })
     })

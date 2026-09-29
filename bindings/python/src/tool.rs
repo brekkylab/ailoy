@@ -1,30 +1,26 @@
 //! A Python callable as a [`ToolFunc`].
 //!
-//! The model's arguments arrive as a dict and are passed as keyword arguments — the
-//! parameters schema a tool is described by names them, so they are the callable's
-//! parameters. Arguments that are not an object are passed as the one positional argument.
-//! What the callable returns becomes the tool's result value, so it has to be what a
-//! message can hold: `None`, a bool, a number, a string, or a list or dict of those.
+//! The model's arguments, a dict whose keys the tool's parameters schema names, are passed as
+//! keyword arguments; non-object arguments are passed as the one positional argument. The
+//! return value becomes the tool's result, so it must be what a message can hold: `None`, a
+//! bool, a number, a string, or a list or dict of those.
 //!
 //! # Sync and async
 //!
-//! Either is taken, and which is told by what calling it returns. A plain result is the
-//! answer. An awaitable is awaited on the event loop the turn is being iterated from — the
-//! one `pyo3-async-runtimes` puts in the task's locals for every future it runs, and so for
-//! the `__anext__` a tool call happens inside.
+//! A plain return value is the result. An awaitable is awaited on the event loop the turn is
+//! iterated from, which `pyo3-async-runtimes` puts in the task locals of the `__anext__` the
+//! call happens inside.
 //!
-//! The call itself is made on tokio's blocking pool, not on a worker: a synchronous tool may
-//! take as long as it likes, and a worker it held would be one the rest of the turn — and
-//! any other tool running beside it — could not use.
+//! The call runs on tokio's blocking pool, not a worker, so a slow synchronous tool does not
+//! starve the rest of the turn or tools running beside it.
 //!
 //! # Failure
 //!
-//! A tool that raises answers with the exception as its result, `"error: ValueError: ..."`,
-//! rather than ending the turn: the model asked for something that did not work, and it is
-//! the one that can try differently.
+//! A raise becomes the result `"error: ValueError: ..."` instead of ending the turn, so the
+//! model can try differently.
 //!
-//! A Python tool is pure — it is not handed the console. One that needs to run a command
-//! does it through a `ConsoleClient` it holds itself.
+//! A Python tool is not handed the console; one that runs commands holds its own
+//! `ConsoleClient`.
 
 use std::sync::Arc;
 
@@ -62,9 +58,8 @@ pub fn tool_func(func: Py<PyAny>) -> ToolFunc {
 }
 
 async fn call(func: Arc<Py<PyAny>>, args: Value) -> PyResult<Value> {
-    // Taken here, before the blocking pool: the locals are the task's, and a blocking thread
-    // is not in the task. A turn driven from outside an event loop has none, which only a
-    // tool that returns an awaitable finds out.
+    // Taken before the blocking pool, whose threads are outside the task. A turn driven from
+    // outside an event loop has none, which only matters for a tool returning an awaitable.
     let locals: Option<TaskLocals> = Python::attach(|py| get_current_locals(py).ok());
 
     let returned = tokio::task::spawn_blocking(move || {

@@ -33,8 +33,8 @@ impl<T: DeserializeOwned> FromNapiValue for Json<T> {
     }
 }
 
-/// `INVALID_ARG` naming what was expected, since an object that does not fit says only which
-/// field it tripped on.
+/// `INVALID_ARG` naming what was expected, since serde's error names only the field it
+/// tripped on.
 pub fn from_js<T: DeserializeOwned>(env: &Env, value: Unknown<'_>, what: &str) -> Result<T> {
     env.from_js_value(value)
         .map_err(|e| invalid(format!("not {what}: {}", e.reason)))

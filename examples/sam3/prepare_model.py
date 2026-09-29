@@ -778,7 +778,7 @@ def check(ncnn_dir: Path, specs: dict, ios: dict):
     Vulkan is taken down by hand here, and in `finally` blocks. ncnn's GPU instance is a
     global whose destructor runs at interpreter exit, by which time the `Net`s holding
     devices on it may or may not have been collected, and on Windows that order segfaults.
-    Measured on this machine, one piece loaded: leaving both to the interpreter crashes,
+    With one piece loaded: leaving both to the interpreter crashes,
     releasing the nets and leaving the instance crashes, and destroying the instance with a
     net still up crashes. Releasing the nets and then destroying the instance is the one
     order that exits cleanly, so it is the one spelled out.

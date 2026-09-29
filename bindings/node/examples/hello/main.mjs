@@ -17,11 +17,9 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 
 const { AgentBuilder } = createRequire(import.meta.url)('../../index.js')
 
-// The request the agent is given.
 const QUERY = 'What is the meaning of hello world?'
 
-// From the nearest `.env` up from this file, as the Rust and Python examples load it. What the
-// environment already has wins.
+// From the nearest `.env` up from this file. What the environment already has wins.
 function loadDotenv() {
   for (let dir = HERE; ; dir = dirname(dir)) {
     const path = join(dir, '.env')

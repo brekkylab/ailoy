@@ -6,7 +6,7 @@
   import type { Segments } from "@/lib/contexts.svelte";
   import type { Entry } from "@/lib/viewers/entry";
 
-  /** Where each context was left: the view unmounts with its tab, and coming back finds it as it was. */
+  /** Where each context was left, so it survives the view unmounting with its tab. */
   const kept = new Map<string, { cwd: Segments; viewing: Entry | null }>();
 </script>
 
@@ -81,8 +81,8 @@
     void load();
   });
 
-  // The helper beside this view may have changed the tree: show it as it now is. The view
-  // is keyed by context, so the count it starts from is read once.
+  // The helper may have changed the tree, so re-read it. The view is keyed by context, so
+  // the starting count is read once.
   let seen = untrack(() => helpers.context.revision[context.id] ?? 0);
   $effect(() => {
     const revision = helpers.context.revision[context.id] ?? 0;
@@ -91,7 +91,7 @@
     void load();
   });
 
-  /** Runs a change to the tree, then shows the tree as it now is — whether or not it worked. */
+  /** Runs a change to the tree, then re-reads it whether or not the change succeeded. */
   async function change(run: () => Promise<void>) {
     try {
       await run();

@@ -1,4 +1,4 @@
-// Small things said about a file wherever it is shown.
+// File display helpers.
 
 /** `1.2 MB`, `340 KB`, `12 B`; a dash when there is no size to give. */
 export function formatSize(bytes: number | null | undefined): string {

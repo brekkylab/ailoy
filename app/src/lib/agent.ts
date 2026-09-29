@@ -1,26 +1,26 @@
-// The editor's model for an agent, and a serializer into the two shapes that own it:
+// The editor's model for an agent, and its serialization into the two shapes that own it:
 //
 //   AgentSpec  src/agent/spec.rs              model, instruction, tools, subagents
 //   Recipe     cortex/src/rootfs/recipe.rs    base image and steps — the editor's "sandbox"
 //
-// They stay separate objects: ailoy keeps runtime — the sandbox, the MCP servers, the
-// context mounted — off the spec.
+// They stay separate because ailoy keeps runtime (sandbox, MCP servers, mounted context)
+// off the spec.
 
 // ── The sandbox ──────────────────────────────────────────────────
 
-/** cortex's four build instructions, and no others. */
+/** cortex's four build instructions. */
 export type StepKind = "run" | "copy" | "env" | "workdir";
 
 /**
  * A step as the editor holds it: flat, so switching a row's kind keeps what was typed in
- * the other field. `recipe()` turns it into cortex's shape.
+ * the other field. `recipe()` converts it to cortex's shape.
  */
 export interface StepRow {
   id: string;
   kind: StepKind;
   /** `run`'s command, `copy`'s src, `env`'s key, `workdir`'s directory. */
   first: string;
-  /** `copy`'s dst and `env`'s value. `run` and `workdir` do not use it. */
+  /** `copy`'s dst and `env`'s value; unused by `run` and `workdir`. */
   second: string;
 }
 
@@ -41,7 +41,7 @@ export const STEP_KINDS: { id: StepKind; label: string; first: string; second: s
   { id: "workdir", label: "WORKDIR", first: "Directory", second: null },
 ];
 
-/** One step as cortex's `Display` writes it, which is the line the build reports. */
+/** One step as cortex's `Display` writes it, i.e. the line the build reports. */
 export function stepLine(step: StepRow): string {
   switch (step.kind) {
     case "run":
@@ -58,14 +58,14 @@ export function stepLine(step: StepRow): string {
 // ── Tools ────────────────────────────────────────────────────────
 
 /**
- * The builtins ailoy ships (`src/tool/impl/builtins`), by the name it registers them under.
- * Every agent gets all of them, so they are written to the spec and not shown in the editor.
+ * The builtins ailoy ships (`src/tool/impl/builtins`), by registered name. Every agent
+ * gets all of them, so they are written to the spec and not shown in the editor.
  */
 export const BUILTIN_TOOLS = ["read", "write", "edit", "apply_patch", "shell", "web_search", "web_fetch"];
 
 /**
- * `WebSearchEngineKind::ALL`. An empty selection means all of them, which is what
- * `web_search_engines: None` says in the spec.
+ * `WebSearchEngineKind::ALL`. An empty selection means all, i.e. `web_search_engines: None`
+ * in the spec.
  */
 export const SEARCH_ENGINES = [
   "Bing",
@@ -91,9 +91,10 @@ export interface McpServer {
 // ── An agent ─────────────────────────────────────────────────────
 
 /**
- * Strings, not numbers: each is `Option<…>` in ailoy, and an empty field has to stay
- * empty rather than coerce to `0`.
- */
+ /**
+  * Strings, not numbers: each is `Option<…>` in ailoy, and an empty field must stay empty
+  * rather than coerce to `0`.
+  */
 export interface Options {
   temperature: string;
   topP: string;
@@ -116,7 +117,7 @@ export interface Agent {
   mcp: McpServer[];
   /** Ids of other agents, whose specs are inlined on serialize. */
   subagents: string[];
-  /** The id of the context mounted read-only into this agent's sandbox, if any. One at most, for now. */
+  /** The id of the context mounted read-only into this agent's sandbox, if any. At most one. */
   context: string | null;
   options: Options;
   /** Handed to the console as a cortex `Recipe`. */
@@ -124,12 +125,12 @@ export interface Agent {
 }
 
 /**
- * Distinct per page load, so an id minted now cannot collide with one written before a
- * reload — a counter alone restarts at zero.
+ * Distinct per page load, so ids minted now cannot collide with ones written before a
+ * reload (a counter alone restarts at zero).
  */
 const RUN = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 let counter = 0;
-/** An id of the characters the backend accepts in a directory name: letters, digits, `-`, `_`. */
+/** An id made only of characters the backend accepts in a directory name: letters, digits, `-`, `_`. */
 export function newId(prefix: string): string {
   counter += 1;
   return `${prefix}-${RUN}-${counter.toString(36)}`;
@@ -166,13 +167,12 @@ export function duplicateOf(agent: Agent, name: string): Agent {
 }
 
 /**
- * One stored document, as the editor's model. Every field is taken from a blank agent
- * first and then overwritten, so a document written by an older version — or edited by
- * hand, which is the point of files — opens instead of breaking the editor. The envelope
- * (`default`, `createdAt`, `updatedAt`) is the collection's and is dropped.
+ * One stored document as the editor's model. Fields are laid over a blank agent, so a
+ * document from an older version or edited by hand still opens. The collection's envelope
+ * (`default`, `createdAt`, `updatedAt`) is dropped.
  */
 export function fromStored(doc: Record<string, unknown>): Agent {
-  // `contexts` is the list an earlier build wrote; its first entry is the one kept.
+  // Legacy `contexts` list: its first entry becomes `context`.
   const { default: _d, createdAt: _c, updatedAt: _u, contexts, ...rest } = doc;
   const stored = rest as Partial<Agent> & { id: string };
   const blank = blankAgent(stored.name ?? "", "");
@@ -181,8 +181,8 @@ export function fromStored(doc: Record<string, unknown>): Agent {
     ...stored,
     id: stored.id,
     context: stored.context ?? (Array.isArray(contexts) ? ((contexts[0] as string | undefined) ?? null) : null),
-    // The two that are not plain values: a shallow spread would leave `sandbox.steps`
-    // missing on a document that has no sandbox, and a step with no `id` unkeyable.
+    // Nested fields merged explicitly: a shallow spread would leave `sandbox.steps` missing
+    // on a document without a sandbox, and a step without `id` unkeyable.
     options: { ...blank.options, ...(stored.options ?? {}) },
     sandbox: {
       base: stored.sandbox?.base ?? blank.sandbox.base,
@@ -207,9 +207,10 @@ function num(value: string): number | undefined {
 export const badNumber = (value: string) => value.trim() !== "" && num(value) === undefined;
 
 /**
- * The steps as cortex would store them. A row with an empty first field is still being
- * typed, so it is dropped rather than written.
- */
+ /**
+  * The steps as cortex would store them. Rows with an empty first field are still being
+  * typed and are dropped.
+  */
 export function recipe(agent: Agent): { v: number; base: string; steps: Step[] } {
   const steps: Step[] = [];
   for (const step of agent.sandbox.steps) {
@@ -225,10 +226,11 @@ export function recipe(agent: Agent): { v: number; base: string; steps: Step[] }
 }
 
 /**
- * One `AgentSpec`, with sub-agents inlined. Tools are bare names: the provider resolves a
- * name to the factory that owns its description and schema. `depth` stops a cycle, since
- * the editor allows two agents to name each other.
- */
+ /**
+  * One `AgentSpec`, with sub-agents inlined. Tools are bare names; the provider resolves
+  * each to the factory owning its description and schema. `depth` stops cycles, since two
+  * agents may name each other.
+  */
 export function spec(agent: Agent, all: Agent[], depth = 0): Record<string, unknown> {
   const out: Record<string, unknown> = { model: agent.model.trim() };
   if (agent.instruction.trim()) out.instruction = agent.instruction;
@@ -253,21 +255,21 @@ export function spec(agent: Agent, all: Agent[], depth = 0): Record<string, unkn
   set("top_k", agent.options.topK);
   if (Object.keys(options).length) out.model_options = options;
 
-  // A card is what a *calling* agent reads; it is written whenever there is something to
-  // say, because an agent picked as a sub-agent elsewhere needs one.
+  // The card is what a calling agent reads; written whenever there is something to say,
+  // since any agent may be picked as a sub-agent elsewhere.
   if (agent.name.trim() || agent.description.trim()) {
     out.card = { name: agent.name.trim(), description: agent.description.trim(), skills: [] };
   }
 
-  // A full selection is written as none: the two mean the same, and the shorter one does
-  // not go stale when ailoy adds an engine.
+  // A full selection is written as none: same meaning, and it does not go stale when ailoy
+  // adds an engine.
   if (agent.engines.length && agent.engines.length < SEARCH_ENGINES.length) {
     out.web_search_engines = [...agent.engines];
   }
   return out;
 }
 
-/** What one agent would be run from: the spec, and beside it its runtime. */
+/** What one agent runs from: the spec plus its runtime. */
 export function entry(agent: Agent, all: Agent[]): Record<string, unknown> {
   const out: Record<string, unknown> = { spec: spec(agent, all), sandbox: recipe(agent) };
   if (agent.context) out.context = agent.context;

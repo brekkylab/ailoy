@@ -149,10 +149,8 @@ impl PartDelta {
                 id,
                 function: PartDeltaFunction::WithStringArgs { name, arguments },
             } => {
-                // A no-arg tool call streams empty arguments (e.g. Anthropic
-                // sends a single `partial_json: ""`); treat blank as an empty
-                // object. Non-empty but malformed JSON stays `None` so callers
-                // can surface it as an error instead of guessing.
+                // Blank means a no-arg call (Anthropic sends `partial_json: ""`); malformed
+                // JSON yields `None` so callers can report it.
                 let arguments = if arguments.trim().is_empty() {
                     Value::Object(Default::default())
                 } else {
@@ -189,9 +187,8 @@ impl Default for PartDelta {
 }
 
 impl From<Part> for PartDelta {
-    /// Wraps a finalized [`Part`] as a complete delta (used when a tool result,
-    /// which is produced whole, is surfaced on the streaming path). A function's
-    /// already-parsed arguments map to [`PartDeltaFunction::WithParsedArgs`].
+    /// Wraps a finalized [`Part`] (e.g. a whole tool result on the streaming path) as a
+    /// complete delta; function arguments map to [`PartDeltaFunction::WithParsedArgs`].
     fn from(part: Part) -> Self {
         match part {
             Part::Text { text } => PartDelta::Text { text },
@@ -279,7 +276,7 @@ impl Delta for PartDelta {
                             arguments: a2,
                         },
                     ) => {
-                        // @jhlee: Rather than just replacing, merge logic could be helpful
+                        // Arguments are replaced, not merged.
                         n1.push_str(&n2);
                         PartDeltaFunction::WithParsedArgs {
                             name: n1,
@@ -313,10 +310,8 @@ impl Delta for PartDelta {
                 text: text.to_owned(),
             }),
             PartDelta::Function { .. } => {
-                // Malformed (non-empty, non-JSON) arguments — e.g. a tool call
-                // truncated mid-stream by a token limit — return an error rather
-                // than panic, so the caller can handle it (the agent loop rolls
-                // the turn back).
+                // Error rather than panic on malformed arguments (e.g. truncated by a
+                // token limit), so the agent loop can roll the turn back.
                 let Some((id, name, arguments)) = self.to_parsed_function() else {
                     bail!("tool-call arguments are not valid JSON");
                 };

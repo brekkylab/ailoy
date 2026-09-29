@@ -1,9 +1,9 @@
 <!--
-  One file, opened over the pane it was opened from: its name, where it is, and the way
-  out. Reading and rendering it is `FileContents`.
+  One file, opened over the pane it came from: its name, location, and a way to close it.
+  Reading and rendering is `FileContents`.
 
-  `position: absolute`, so it covers the Files view and not the window — the sidebar
-  stays reachable.
+  `position: absolute`, so it covers the Files view but not the window; the sidebar stays
+  reachable.
 -->
 <script lang="ts">
   import { File, X } from "@lucide/svelte";
@@ -21,11 +21,11 @@
   const viewer = $derived(viewerFor(entry));
   let panel = $state<HTMLElement | undefined>(undefined);
 
-  // Takes focus so a screen reader lands inside it and not on what is behind.
+  // Takes focus so a screen reader lands inside it, not behind it.
   $effect(() => panel?.focus());
 </script>
 
-<!-- On the window: a click into the document moves focus, and Escape should still close. -->
+<!-- On the window: clicking into the document moves focus, and Escape must still close. -->
 <svelte:window onkeydown={(e) => e.key === "Escape" && onClose()} />
 
 <div
@@ -53,7 +53,7 @@
         <X class="size-4" />
       </button>
     </header>
-    <!-- The viewers come from agent-s and speak its token names; `viewer-tokens` maps them. -->
+    <!-- The viewers use agent-s token names; `viewer-tokens` maps them. -->
     <div class="viewer-tokens min-h-0 flex-1 overflow-auto">
       <FileContents {entry} {source} />
     </div>

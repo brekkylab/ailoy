@@ -1,7 +1,7 @@
 <!--
   The Agent helper: a pane on the right of a tab, where an agent is asked to change what
-  the tab shows. Closed, it leaves a rail that opens it again — unmounted rather than hidden,
-  like the sidebar, so it takes no tab stops.
+  the tab shows. Closed, it leaves a rail that reopens it; unmounted rather than hidden, so
+  it takes no tab stops.
 -->
 <script lang="ts">
   import { ArrowUp, Eraser, PanelRightClose, PanelRightOpen, Square } from "@lucide/svelte";

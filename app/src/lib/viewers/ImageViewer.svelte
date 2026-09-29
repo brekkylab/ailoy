@@ -4,21 +4,19 @@
 
   let { entry, url }: UrlProps = $props();
 
-  /// `loading` until the browser has decoded the bytes. `failed` is the answer for a
-  /// file that is named `.png` and is not one — the panel says so rather than leaving
-  /// the broken-image glyph to explain itself.
+  /// `loading` until the browser has decoded the bytes. `failed` covers a file named `.png`
+  /// that is not one; the panel says so instead of showing a broken-image glyph.
   let status = $state<'loading' | 'ready' | 'failed'>('loading');
-  /// `fit` scales an oversized image down to the panel; `actual` is one image pixel per
-  /// CSS pixel, which is the view you need to read a screenshot.
+  /// `fit` scales an oversized image down to the panel; `actual` is one image pixel per CSS
+  /// pixel, needed to read a screenshot.
   let zoom = $state<'fit' | 'actual'>('fit');
   let natural = $state<{ w: number; h: number } | null>(null);
 
-  /// The panel's own size, to tell an image that is merely large from one that is
-  /// larger than the space it has — only the second has anything to zoom.
+  /// The panel's size, to tell whether the image exceeds it; only then is there anything to
+  /// zoom.
   let frame = $state({ w: 0, h: 0 });
 
-  // The viewer is reused when another file is opened, so the old image's state must not
-  // outlive it.
+  // The viewer is reused across files, so the old image's state must not outlive it.
   $effect(() => {
     void url;
     status = 'loading';
@@ -32,8 +30,8 @@
 
   function onLoad(event: Event) {
     const img = event.currentTarget as HTMLImageElement;
-    // An SVG without width/height has no intrinsic size; the browser reports its own
-    // fallback, which is not a fact about the file, so it is not shown.
+    // An SVG without width/height has no intrinsic size; the browser's fallback says nothing
+    // about the file, so it is not shown.
     natural = img.naturalWidth ? { w: img.naturalWidth, h: img.naturalHeight } : null;
     status = 'ready';
   }
@@ -49,10 +47,9 @@
     <p class="note">That image could not be decoded.</p>
   {:else}
     <!--
-      A plain <img>, including for SVG. An image context runs no script and loads no
-      external reference, so the one file type the server marks as active content is
-      rendered by the part of the browser that cannot execute it. See
-      `is_active_content` on the server.
+      A plain <img>, including for SVG: an image context runs no script and loads no external
+      references, so the one type the server marks as active content cannot execute here (see
+      `is_active_content` on the server).
     -->
     <img
       src={url}
@@ -89,11 +86,10 @@
   .stage {
     display: grid;
     place-items: center;
-    /* The footer's 30px. The panel behind this scrolls; the stage fills what is left. */
+    /* Leaves room for the 30px footer. The panel behind scrolls; the stage fills the rest. */
     height: calc(100% - 30px);
     padding: 16px;
-    /* The checkerboard is what makes a transparent PNG read as transparent rather than
-       as whatever the theme's background happens to be. */
+    /* The checkerboard makes transparency read as transparent, not as the theme background. */
     background-color: var(--bg-sunken);
     background-image:
       linear-gradient(45deg, var(--border) 25%, transparent 25%),
@@ -104,7 +100,7 @@
     background-position: 0 0, 0 8px, 8px -8px, -8px 0;
   }
   .stage.scroll {
-    /* At actual size the image decides the size of the box, and the box scrolls. */
+    /* At actual size the image sizes the box, and the box scrolls. */
     place-items: start;
     overflow: auto;
   }
@@ -113,7 +109,7 @@
     display: block;
     max-width: 100%;
     max-height: 100%;
-    /* A 16px icon stays 16px: `max-` only ever scales down, never up. */
+    /* `max-` only scales down, so a 16px icon stays 16px. */
     box-shadow: var(--shadow-md);
   }
   img.actual {

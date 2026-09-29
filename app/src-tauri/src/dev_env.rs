@@ -1,8 +1,7 @@
-//! Dev-only API keys from a `.env`, so a `tauri dev` session starts with its providers set.
+//! Dev-only API keys from a `.env`, so a `tauri dev` session starts with providers set.
 //!
-//! Debug builds only: a release build never reads a `.env` and the command answers empty.
-//! The variable names are the ones ailoy's own `LangModelProvider::default()` reads, so one
-//! `.env` serves both.
+//! Debug builds only: release builds never read a `.env` and the command returns empty.
+//! Variable names match those `LangModelProvider::default()` reads, so one `.env` serves both.
 
 use std::collections::BTreeMap;
 
@@ -22,8 +21,8 @@ pub struct DevEnvKeys {
     bedrock_region: Option<String>,
 }
 
-/// Loads the nearest `.env` above this crate — `app/.env` first, then the repo root's.
-/// Variables already set in the shell win over the file.
+/// Loads the nearest `.env` above this crate (`app/.env`, then the repo root's). Variables
+/// already set in the shell win.
 pub fn load() {
     if !cfg!(debug_assertions) {
         return;
@@ -54,7 +53,7 @@ pub fn dev_env_keys() -> DevEnvKeys {
             .iter()
             .filter_map(|(provider, name)| var(name).map(|v| (provider.to_string(), v)))
             .collect(),
-        // Same precedence as ailoy and the AWS SDKs.
+        // AWS SDK precedence.
         bedrock_region: var("AWS_REGION").or_else(|| var("AWS_DEFAULT_REGION")),
     }
 }

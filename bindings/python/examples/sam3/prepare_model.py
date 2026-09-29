@@ -75,8 +75,7 @@ FILES = [
     "LICENSE",
 ]
 
-# What a masked attention score becomes: past anything a softmax sees here, so the weight it
-# gives is 0 all the same, and inside bf16's range.
+# A masked attention score: low enough that softmax gives it weight 0, yet within bf16's range.
 MASKED = -1e4
 
 IMAGE = 1008
@@ -178,11 +177,9 @@ class Vision(nn.Module):
     def neck(self, layer, x):
         """`Sam3FPNLayer.forward`, less the `.to(self.proj1.weight.dtype)` it opens with.
 
-        The cast is a no-op in an fp32 trace and pnnx has no ncnn spelling for it, so it
-        survives into the graph as an `aten::to` with two `pnnx.Expression` constants feeding
-        it -- neither a layer ncnn has, and the net then refuses to build at all rather than
-        at the cast: `layer pnnx.Expression not exists or registered`, and no blob to extract.
-        Six FPN layers here, so six of them.
+        The cast is a no-op in an fp32 trace, but pnnx has no ncnn spelling for it: it survives
+        as an `aten::to` fed by two `pnnx.Expression` constants, and ncnn then refuses to build
+        the whole net (`layer pnnx.Expression not exists or registered`).
         """
         for scale in layer.scale_layers:
             x = scale(x)
@@ -596,32 +593,21 @@ def pieces(video) -> dict:
 def _patch_pnnx_on_windows() -> None:
     r"""Stop pnnx from importing the `*_pnnx.py` it generates.
 
-    `pnnx.export` writes what this script is after -- the ncnn param and bin -- and then, as
-    the last thing `convert()` does, imports the Python transcript of the graph it wrote
-    beside them, so as to hand the caller back a torch module. Nothing here wants that
-    module: the call below drops the return value and takes the files off disk.
+    `convert()` ends by importing the Python transcript of the graph to return a torch module;
+    nothing here uses it, since the ncnn param and bin are taken off disk.
 
-    That import is where a conversion stops on Windows. pnnx writes the paths it was handed
-    into the transcript as ordinary string literals, so `zipfile.ZipFile('C:\Users\...')`
-    reaches the parser as escapes and `\U` in `C:\Users` is a SyntaxError before a line of
-    the module runs. The paths that do parse are the worse half, since `\a`, `\b`, `\n` and
-    `\t` become control characters and the module then opens a file nobody wrote.
+    On Windows that import fails. pnnx writes paths as plain string literals, so `\U` in
+    `C:\Users` is a SyntaxError, and paths that do parse turn `\a`, `\b`, `\n`, `\t` into
+    control characters. The transcript is not always Python either: an op pnnx cannot spell in
+    Python is written verbatim, e.g. `v_1103 = aten::to(v_1100, v_1102, v_1101, v_1101)`. So
+    `importlib.util.spec_from_file_location`, which `convert()` imports it through, is wrapped
+    to give a `_pnnx.py` a loader that never reads the source and defines only the `Model`
+    name `convert()` touches. Every other module keeps its own loader.
 
-    Repairing the literals only moves the wall: the transcript is not always Python at all,
-    because an op pnnx has no Python spelling for is written out verbatim, and a line like
-    `v_1103 = aten::to(v_1100, v_1102, v_1101, v_1101)` parses nowhere. Neither is worth
-    fixing for a module that is thrown away, so the import is made to produce nothing
-    instead. `convert()` reaches it through `importlib.util.spec_from_file_location`, which
-    is wrapped here to hand a `_pnnx.py` back with a loader that never reads the source and
-    defines the one name `convert()` goes on to touch. Every other module keeps the loader it
-    would have had.
+    Gated to Windows so that hosts where the import works still get the real torch module.
 
-    Windows only, and gated rather than unconditional because a host where the import works
-    gets a real torch module out of it -- worth keeping for anything that comes to want one.
-
-    An op ncnn cannot run is a separate matter and is not hidden by this: it stays in the
-    `.param` as an unregistered layer, and the check against PyTorch at the end is what
-    catches it.
+    This does not hide an op ncnn cannot run: it stays in the `.param` as an unregistered
+    layer, which the final check against PyTorch catches.
     """
     if sys.platform != "win32":
         return
@@ -629,8 +615,7 @@ def _patch_pnnx_on_windows() -> None:
     import importlib.abc
     import importlib.util
 
-    # The wrapper goes on once, however often this is called: wrapping a wrapper would work,
-    # and would also leave a chain as long as the model has pieces.
+    # Called once per piece; wrap only once so the wrappers do not chain.
     if getattr(importlib.util.spec_from_file_location, "_pnnx_skips_transcript", False):
         return
 
@@ -641,8 +626,7 @@ def _patch_pnnx_on_windows() -> None:
             return None  # the default module object is enough
 
         def exec_module(self, module):
-            # `convert()` ends in `return foo.Model()`, which is the whole of what it asks
-            # the transcript for, and the caller here discards it.
+            # `convert()` only calls `Model()` on the transcript, and the result is discarded.
             module.Model = lambda *args, **kwargs: None
 
     spec_from_file_location = importlib.util.spec_from_file_location
@@ -710,8 +694,8 @@ def constants(video) -> dict:
     _, mem_pos = t.memory_encoder(torch.zeros(1, 256, GRID, GRID), torch.zeros(1, 1, 16 * GRID, 16 * GRID))
     a = lambda x: x.detach().float().numpy()
     return {
-        # The token table is what the text piece's lookup was; half precision, as the pieces'
-        # weights are.
+        # The text piece's token lookup, done by the caller; half precision like the pieces'
+        # weights.
         "text_tokens": a(text.token_embedding.weight).astype(np.float16),
         "text_positions": a(text.position_embedding.weight),
         "geometry_norm_weight": a(det.geometry_encoder.vision_layer_norm.weight),
@@ -775,17 +759,10 @@ def cos(a: np.ndarray, b: np.ndarray) -> float:
 def check(ncnn_dir: Path, specs: dict, ios: dict):
     """Each piece, on its example inputs, against the PyTorch module it was traced from.
 
-    Vulkan is taken down by hand here, and in `finally` blocks. ncnn's GPU instance is a
-    global whose destructor runs at interpreter exit, by which time the `Net`s holding
-    devices on it may or may not have been collected, and on Windows that order segfaults.
-    Measured on this machine, one piece loaded: leaving both to the interpreter crashes,
-    releasing the nets and leaving the instance crashes, and destroying the instance with a
-    net still up crashes. Releasing the nets and then destroying the instance is the one
-    order that exits cleanly, so it is the one spelled out.
-
-    It is worth the three blocks because the caller is a `cargo run` that reads the exit
-    code. A crash on the way out reports 139 whether the checks passed or a piece failed
-    one -- so the run that has something to say is the run that cannot say it.
+    Vulkan is torn down explicitly in `finally` blocks. ncnn's GPU instance is a global
+    destroyed at interpreter exit, and on Windows every order but releasing all `Net`s and then
+    destroying the instance segfaults. The caller is a `cargo run` that reads the exit code,
+    and a crash on exit reports 139 whether or not the checks passed.
     """
     import ncnn
 
@@ -823,7 +800,6 @@ def check(ncnn_dir: Path, specs: dict, ios: dict):
                 net.clear()
                 net = None
     finally:
-        # Only if there was one to destroy.
         if gpu:
             ncnn.destroy_gpu_instance()
 

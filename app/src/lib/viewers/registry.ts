@@ -1,8 +1,8 @@
 // Which viewer opens which file.
 //
-// One table, keyed by extension, so adding a type is adding a component and a line
-// here rather than a branch inside the Files view. A file whose extension is absent
-// has no viewer, and the shell says so instead of guessing at the bytes.
+// One table keyed by extension, so a new type is a component plus a line here, not a
+// branch in the Files view. An unlisted extension has no viewer, and the shell says so
+// instead of guessing at the bytes.
 
 import type { Component } from 'svelte';
 import type { Entry } from './entry';
@@ -21,25 +21,21 @@ import { extOf } from '../files';
 export interface TextProps {
   entry: Entry;
   text: string;
-  /// What a relative link inside the document resolves against, for the one viewer that
-  /// has to answer it: the file's own folder in its tree (see `source.ts`).
+  /// What relative links in the document resolve against: the file's own folder in its tree
+  /// (see `source.ts`).
   base: string;
-  /// What those characters were decoded from. A viewer with room for it says so: the
-  /// encoding of a file that did not announce one is something the app worked out, and
-  /// a reader looking at Korean text should be able to see which way it was read.
+  /// The encoding the text was decoded from. Viewers with room show it, since for a file
+  /// that did not announce one it was inferred, and a reader of Korean text should see how.
   encoding: Decoded['encoding'];
 }
 
-/// A viewer that is handed the file's address and lets the browser do the fetching —
-/// what a format wants when the renderer is the browser's own.
+/// A viewer handed the file's URL, for formats the browser renders itself.
 export interface UrlProps {
   entry: Entry;
   url: string;
 }
 
-/// A viewer that is handed the file's bytes, already fetched — what a format wants
-/// when it is a container the app has to open itself rather than a stream of
-/// characters or something the browser renders.
+/// A viewer handed the file's bytes, for container formats the app opens itself.
 export interface BytesProps {
   entry: Entry;
   bytes: ArrayBuffer;
@@ -50,9 +46,7 @@ interface TextViewer {
   /// What the header calls the format.
   label: string;
   component: Component<TextProps>;
-  /// Past this, the file is not opened inline. A viewer handed the text has to hold
-  /// the whole of it in the DOM, and a browser asked to lay out a 40 MB document has
-  /// stopped responding. `url` viewers stream and have no such limit.
+  /// Past this, the file is not opened inline.
   maxBytes: number;
 }
 
@@ -66,11 +60,13 @@ interface BytesViewer {
   source: 'bytes';
   label: string;
   component: Component<BytesProps>;
-  /// As with `text`: the whole file is held in memory and then turned into DOM, so
-  /// there is a size past which it is not opened inline.
+  /// Past this, the file is not opened inline.
   maxBytes: number;
 }
 
+/// `text` and `bytes` viewers hold the whole file in memory and turn it into DOM (a 40 MB
+/// document hangs the browser), so each caps inline size with `maxBytes`. `url` viewers
+/// let the browser fetch and stream, and have no cap.
 export type Viewer = TextViewer | UrlViewer | BytesViewer;
 
 const MARKDOWN: TextViewer = {
@@ -84,14 +80,12 @@ const TEXT: TextViewer = {
   source: 'text',
   label: 'Text',
   component: PlainTextViewer,
-  // Between the prose viewers and the CSV one: a log is bigger than a document and
-  // every line of it becomes a row, but the viewer pages through them, so what the cap
-  // is really holding down is the string and the array it is split into.
+  // Each line becomes a row; the viewer pages through them, so the cap bounds the string
+  // and the array it is split into.
   maxBytes: 2 * 1024 * 1024,
 };
 
-/// Same viewer, different name in the header. A `.log` is a text file that says what it
-/// is, and the header saying `Log` is the one place that is worth repeating.
+/// Plain text labeled `Log` in the header.
 const LOG: TextViewer = { ...TEXT, label: 'Log' };
 
 const HTML: TextViewer = {
@@ -105,27 +99,24 @@ const CSV: TextViewer = {
   source: 'text',
   label: 'CSV',
   component: CsvViewer,
-  // Lower than the prose viewers: a megabyte of CSV is tens of thousands of records,
-  // and each one becomes a table row. The viewer pages through them, but the parse
-  // itself still has to hold the whole sheet.
+  // A megabyte of CSV is tens of thousands of table rows; the viewer pages them, but the
+  // parse holds the whole sheet.
   maxBytes: 1024 * 1024,
 };
 
-/// Same viewer, different name in the header — and `CsvViewer` reads the extension
-/// itself rather than sniffing a delimiter it already knows.
+/// `CsvViewer` reads the extension itself rather than sniffing a delimiter it knows.
 const TSV: TextViewer = { ...CSV, label: 'TSV' };
 
-/// No `maxBytes`, like every `url` viewer: the bytes never pass through the app, and
-/// a browser decoding a large photograph is a browser doing what it is built for.
+/// No `maxBytes`: the bytes never pass through the app.
 const IMAGE: UrlViewer = {
   source: 'url',
   label: 'Image',
   component: ImageViewer,
 };
 
-/// The bytes and not the URL: pdf.js draws it (see `PdfViewer`), because the webview's
-/// own PDF viewer shows nothing inside a frame here. Pages are drawn as they scroll into
-/// view, so the cap is on the file held in memory, not on what gets laid out.
+/// Bytes, not URL: pdf.js draws it (see `PdfViewer`), because the webview's own PDF viewer
+/// shows nothing inside a frame here. Pages render as they scroll into view, so the cap is
+/// on the file held in memory, not on layout.
 const PDF: BytesViewer = {
   source: 'bytes',
   label: 'PDF',
@@ -137,9 +128,8 @@ const DOCX: BytesViewer = {
   source: 'bytes',
   label: 'Word',
   component: DocxViewer,
-  // A `.docx` is compressed, so the cap is on what arrives and not on what it becomes.
-  // 25 MB of it is a document with a lot of photographs in it, which is the case worth
-  // stopping: the pages it unpacks to are what the tab has to lay out.
+  // Compressed, so the cap is on the download, not the unpacked size. 25 MB is mostly
+  // photographs, and the unpacked pages are what the tab must lay out.
   maxBytes: 25 * 1024 * 1024,
 };
 
@@ -147,9 +137,7 @@ const XLSX: BytesViewer = {
   source: 'bytes',
   label: 'Spreadsheet',
   component: XlsxViewer,
-  // Lower than the Word cap. A `.docx` that size is mostly pictures, which cost what
-  // one image costs; an `.xlsx` that size is cells, and every one of them becomes a
-  // table cell in the DOM.
+  // An `.xlsx` this size is mostly cells, each of which becomes a DOM table cell.
   maxBytes: 12 * 1024 * 1024,
 };
 
@@ -173,8 +161,7 @@ const BY_EXT: Record<string, Viewer | undefined> = {
   avif: IMAGE,
   bmp: IMAGE,
   ico: IMAGE,
-  // Rendered in an <img>, which is the context that runs none of what makes the server
-  // treat an SVG as active content.
+  // Rendered in an <img>, which runs none of an SVG's active content.
   svg: IMAGE,
   pdf: PDF,
   docx: DOCX,

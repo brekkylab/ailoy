@@ -368,8 +368,7 @@ fn lift_tool_result_images(messages: &mut Value) {
 /// assistant alternation, and several tool results after one assistant turn
 /// would otherwise be several `user` messages in a row.
 ///
-/// Thinking is replayed only for assistant turns after the last user message,
-/// the same rule the Anthropic marshal applies.
+/// Thinking is replayed only for assistant turns after the last user message.
 fn marshal_messages(messages: &[Message]) -> Value {
     let last_user_index = messages
         .iter()
@@ -594,8 +593,8 @@ impl BedrockUnmarshal {
 }
 
 /// Events arrive as `{"<eventType>": body}` (see
-/// [`frame_to_event_data`](crate::lang_model::r#impl::framing::eventstream::frame_to_event_data));
-/// each maps onto the same delta fragments the Anthropic stream produces:
+/// [`frame_to_event_data`](super::super::framing::eventstream::frame_to_event_data));
+/// each maps onto a delta fragment:
 /// - `messageStart`: role
 /// - `contentBlockStart`: begins a `toolUse` call (id + name)
 /// - `contentBlockDelta`: text / reasoning / signature / tool-input fragment
@@ -997,7 +996,7 @@ mod tests {
         let v = marshal(&req);
         let turn = v["body"]["messages"][2]["content"].as_array().unwrap();
 
-        // The three results first, as before, then each image after its call's name.
+        // The three results first, in order, then each image after its call's name.
         let ids: Vec<_> = turn[..3]
             .iter()
             .map(|b| &b["toolResult"]["toolUseId"])

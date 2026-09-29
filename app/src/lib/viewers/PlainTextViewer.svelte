@@ -3,26 +3,21 @@
 
   let { text, encoding }: TextProps = $props();
 
-  /// How many lines are put in the DOM at a time. A nightly log runs to tens of
-  /// thousands of them, and a browser asked to lay all of that out at once is a tab
-  /// that stops answering — so the first page is on screen immediately and the rest
-  /// is a click away, as in the CSV viewer.
+  /// Lines per page in the DOM. Nightly logs run to tens of thousands of lines, and laying
+  /// them all out at once hangs the tab.
   const PAGE = 2000;
 
-  /// The file's lines, with the carriage returns of a CRLF file taken off. Left on,
-  /// each one is a character in the DOM that lands at the end of a line and takes the
-  /// cursor with it on copy. The footer says when they were there.
+  /// The file's lines with CRLF carriage returns stripped; left in, each lands at a line end
+  /// and gets dragged along on copy. The footer notes when they were present.
   let crlf = $derived(text.includes('\r\n'));
   let lines = $derived(split(text));
 
   let shown = $state(PAGE);
-  /// Off by default: what arrives as `.txt` here is a fixed-width report or a log,
-  /// and wrapping breaks the columns it was aligned into. Prose is the case the
-  /// toggle is for.
+  /// Off by default: `.txt` files here are mostly fixed-width reports or logs, whose columns
+  /// wrapping breaks. The toggle is for prose.
   let wrap = $state(false);
 
-  // Back to the first page when the viewer is pointed at another file, which reuses
-  // this component rather than building a new one.
+  // Back to the first page on another file: the component is reused, not rebuilt.
   $effect(() => {
     void text;
     shown = PAGE;
@@ -31,8 +26,8 @@
   let visible = $derived(lines.slice(0, shown));
   let remaining = $derived(lines.length - visible.length);
 
-  /// `text` as lines. A file that ends in a newline ends a line rather than starting
-  /// an empty one, which is what every editor shows and what the count should say.
+  /// `text` as lines. A trailing newline ends the last line rather than starting an empty
+  /// one, matching editors and the line count.
   function split(source: string): string[] {
     const body = source.endsWith('\n') ? source.slice(0, -1) : source;
     if (body === '') return [];
@@ -48,8 +43,7 @@
       <tbody>
         {#each visible as line, i}
           <tr>
-            <!-- The number is the line's own, so a reader can point at a line in the
-                 source — a log is quoted by line as often as it is read. -->
+            <!-- The file's own line number, so a reader can cite a line; logs are quoted by line. -->
             <th class="gutter" scope="row">{i + 1}</th>
             <td class="line">{line}</td>
           </tr>
@@ -83,13 +77,13 @@
 
 <style>
   .sheet {
-    /* The footer sits below; this is the part that scrolls sideways when a long line
-       needs it, while the panel behind it scrolls down. */
+    /* Scrolls sideways for long lines while the panel behind scrolls down; the footer sits
+       below. */
     min-height: calc(100% - 30px);
     overflow-x: auto;
   }
-  /* Wrapped, nothing overflows sideways, so the table fills the panel instead of
-     sizing itself to its widest line. */
+  /* When wrapped nothing overflows, so the table fills the panel rather than sizing to its
+     widest line. */
   .sheet.wrap { overflow-x: hidden; }
   .sheet.wrap table { width: 100%; }
   .sheet.wrap .line { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -105,12 +99,11 @@
   .line {
     padding: 0 14px 0 12px;
     color: var(--text);
-    /* The file's own spacing is the layout of a report or a log, so it is kept. */
+    /* Spacing is the layout of a report or log, so it is kept. */
     white-space: pre;
   }
 
-  /* The line-number gutter: fixed while the text scrolls sideways, so the number
-     stays with its line. */
+  /* Line-number gutter, fixed during sideways scroll so each number stays with its line. */
   .gutter {
     position: sticky;
     left: 0;

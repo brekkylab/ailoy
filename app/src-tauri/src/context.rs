@@ -1,12 +1,10 @@
-//! A context: a directory of files an agent reads and never writes — mounted read-only.
+//! A context: a directory of files mounted read-only for an agent.
 //!
-//! The tree is mounted as it stands, so what we know about it lives beside it rather than
-//! in it: `contexts/{id}/` is the tree, `contexts/{id}.json` its name.
+//! The tree is mounted as is, so its metadata lives beside it: `contexts/{id}/` is the
+//! tree, `contexts/{id}.json` its name.
 //!
-//! One context is always there: [`DEFAULT_ID`], made at every start it is missing from, so
-//! the default agent has somewhere to look before anyone has made a context of their own.
-//! It is not to be deleted — anything that deletes a context refuses it (see
-//! [`Context::is_default`]).
+//! [`DEFAULT_ID`] always exists: recreated at startup if missing, so the default agent has
+//! a context before the user makes one. Nothing may delete it (see [`Context::is_default`]).
 
 use std::{
     fs, io,
@@ -41,7 +39,7 @@ pub struct FileEntry {
     pub kind: FileKind,
     /// Bytes; 0 for a folder.
     pub size: u64,
-    /// Milliseconds since the epoch, when the platform says.
+    /// Milliseconds since the epoch, if the platform reports it.
     pub modified: Option<u64>,
 }
 
@@ -50,7 +48,7 @@ pub struct FileEntry {
 pub enum FileKind {
     Folder,
     File,
-    /// Shown as what it is, not followed: the tree is displayed as it stands.
+    /// Never followed.
     Link,
 }
 
@@ -61,8 +59,8 @@ struct Meta {
 }
 
 impl Context {
-    /// The context whose tree is `dir`, read from the `.json` beside it. `None` when either
-    /// half is missing; an error when the file is there but is not one.
+    /// The context whose tree is `dir`, named by the `.json` beside it. `None` if either is
+    /// missing; an error if the `.json` is malformed.
     pub fn load(dir: &Path) -> io::Result<Option<Self>> {
         let Some(id) = dir.file_name().and_then(|n| n.to_str()) else {
             return Ok(None);
@@ -89,20 +87,20 @@ impl Context {
         self.default
     }
 
-    /// A new, empty context named `name` under `contexts`. The tree is made first and the
-    /// name last, so one cut short is a bare directory that `load` passes over.
+    /// A new, empty context under `contexts`. The tree is made before the name, so an
+    /// interrupted create leaves a bare directory that `load` skips.
     pub fn create(contexts: &Path, name: &str) -> io::Result<Self> {
         Self::create_as(contexts, uuid::Uuid::new_v4().to_string(), name)
     }
 
-    /// The default context, made if it is not there — whether this is the first start or
-    /// its tree or name went missing since. What is there is left as it is.
+    /// The default context, recreating its tree or name if missing; existing content is
+    /// left as is.
     pub fn seed(contexts: &Path) -> io::Result<Self> {
         let dir = contexts.join(DEFAULT_ID);
         if let Some(context) = Self::load(&dir)? {
             return Ok(context);
         }
-        // A tree whose name went missing keeps its files: only the name is written again.
+        // A tree without its name keeps its files; only the name is rewritten.
         if !dir.is_dir() {
             return Self::create_as(contexts, DEFAULT_ID.to_owned(), DEFAULT_NAME);
         }
@@ -125,7 +123,7 @@ impl Context {
     /// Writes the `.json` beside the tree at `dir`.
     fn name(dir: &Path, name: &str) -> io::Result<()> {
         let meta = dir.with_extension("json");
-        // Beside the target and renamed over it, so a reader never sees half a file.
+        // Written beside and renamed over, so a reader never sees half a file.
         let tmp = dir.with_extension("json.tmp");
         fs::write(
             &tmp,
@@ -136,9 +134,8 @@ impl Context {
         fs::rename(&tmp, &meta)
     }
 
-    /// The path under the tree that `path` names, one segment at a time. A segment that is
-    /// empty, `.`, `..` or carries a separator could reach outside the tree, so it is
-    /// refused rather than resolved.
+    /// Joins `path` onto the tree. Segments that are empty, `.`, `..` or contain a separator
+    /// are refused, since they could escape the tree.
     fn resolve(&self, path: &[String]) -> io::Result<PathBuf> {
         let mut at = self.dir.clone();
         for segment in path {
@@ -162,7 +159,7 @@ impl Context {
         let mut entries = Vec::new();
         for item in fs::read_dir(self.resolve(path)?)? {
             let item = item?;
-            // Not `metadata`: a link is listed as a link, never as whatever it points at.
+            // `DirEntry::metadata` does not follow links, so a link is listed as a link.
             let meta = item.metadata()?;
             let kind = if meta.is_symlink() {
                 FileKind::Link
@@ -194,14 +191,12 @@ impl Context {
         Ok(entries)
     }
 
-    /// A new, empty folder at `path`.
     pub fn make_dir(&self, path: &[String]) -> io::Result<()> {
         fs::create_dir(self.resolve(path)?)
     }
 
-    /// Copies each of `sources` — files or whole folders, from anywhere on this machine —
-    /// into the directory at `path`, under its own name. Nothing is overwritten: a name
-    /// already taken stops the copy there.
+    /// Copies each of `sources` (files or folders, from anywhere on disk) into `path` under
+    /// its own name. Never overwrites: a name already taken stops the copy there.
     pub fn add(&self, path: &[String], sources: &[PathBuf]) -> io::Result<()> {
         let into = self.resolve(path)?;
         for source in sources {
@@ -216,8 +211,7 @@ impl Context {
         Ok(())
     }
 
-    /// The file or folder at `path`, and everything under it. A link goes, not what it
-    /// points at.
+    /// Removes the file or folder at `path` recursively. A link is removed, not its target.
     pub fn remove(&self, path: &[String]) -> io::Result<()> {
         if path.is_empty() {
             return Err(io::Error::new(
@@ -233,9 +227,9 @@ impl Context {
         }
     }
 
-    /// The tree written to `to` as a gzipped tar, under one folder named after the context.
-    /// Links are archived as links, never followed out of the tree. Written beside `to` and
-    /// renamed over it, so a failed export leaves no half an archive behind.
+    /// Writes the tree to `to` as a gzipped tar under one folder named after the context.
+    /// Links are archived, not followed. Written beside `to` and renamed over it, so a
+    /// failed export leaves no partial archive.
     pub fn export(&self, to: &Path) -> io::Result<()> {
         let root: String = self
             .name
@@ -280,8 +274,8 @@ impl Context {
     }
 }
 
-/// `from` copied to `to`, which must not exist yet. A folder is copied whole; a link
-/// inside one is left behind, since following it could copy half the disk or loop.
+/// Copies `from` to `to`, which must not exist. Links inside a folder are skipped, since
+/// following them could copy half the disk or loop.
 fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
     if to.symlink_metadata().is_ok() {
         return Err(io::Error::new(
@@ -321,7 +315,7 @@ pub fn create_context(cache: State<'_, Cache>, name: String) -> Result<Context, 
     cache.create_context(name).map_err(|err| err.to_string())
 }
 
-/// The context `id`, or the sentence the frontend shows when there is none.
+/// The context `id`, or the error message the frontend shows.
 fn find(cache: &Cache, id: &str) -> Result<Context, String> {
     cache.context(id).ok_or_else(|| format!("no context {id}"))
 }

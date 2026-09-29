@@ -24,8 +24,8 @@
 //! * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes.
 //!
 //! The image is Debian rather than Alpine because PyPI's ncnn wheels are manylinux (glibc)
-//! only. `mesa-vulkan-drivers` carries the venus ICD the guest needs — from trixie-backports,
-//! as the other ncnn examples have it — and `libvulkan1` the loader the wheel opens.
+//! only. `mesa-vulkan-drivers` carries the venus ICD the guest needs — from trixie-backports —
+//! and `libvulkan1` the loader the wheel opens.
 //!
 //! Qwen3-TTS and its weights are the Qwen team's, under Apache-2.0.
 //!
@@ -100,8 +100,7 @@ async fn main() -> anyhow::Result<()> {
         ConsoleClient::builder()
             .image(
                 Recipe::new("python:3.12-slim-trixie")
-                    // Mesa from backports, 26.0 against trixie's 25.0, as the other ncnn examples
-                    // have it.
+                    // Mesa from backports: 26.0 against trixie's 25.0.
                     .step(
                         "echo 'deb http://deb.debian.org/debian trixie-backports main' \
                         > /etc/apt/sources.list.d/backports.list \

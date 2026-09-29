@@ -1,8 +1,7 @@
-//! The directory the app owns: whatever it keeps between runs goes under here.
+//! The app's persistent directory: `AILOY_CACHE` if set, else `~/.cache/ailoy`.
 //!
-//! `AILOY_CACHE` wins when set; otherwise `~/.cache/ailoy`. Made and canonicalized once at
-//! startup, so every path handed out below is absolute — cortex refuses a mount point that
-//! is not.
+//! Canonicalized once at startup so every path handed out is absolute, which cortex
+//! requires of mount points.
 //!
 //! ```text
 //! contexts/{id}/             mounted as it stands, so nothing of ours goes inside
@@ -24,8 +23,7 @@ pub struct Cache {
 }
 
 impl Cache {
-    /// Resolves the cache directory and makes it, and its collections, if this is the
-    /// first run.
+    /// Resolves the cache directory, creating it and its collections if missing.
     pub fn open() -> io::Result<Self> {
         let root = match std::env::var_os("AILOY_CACHE").filter(|v| !v.is_empty()) {
             Some(dir) => PathBuf::from(dir),
@@ -46,13 +44,12 @@ impl Cache {
         &self.root
     }
 
-    /// Where the contexts live: each one's tree, and its `.json` beside it.
+    /// Each context's tree, with its `.json` beside it.
     pub fn contexts_dir(&self) -> PathBuf {
         self.root.join("contexts")
     }
 
-    /// Every context there is: the default first, then by name. One that cannot be read is
-    /// left out, not fatal.
+    /// Every context: the default first, then by name. Unreadable ones are skipped.
     pub fn contexts(&self) -> Vec<Context> {
         let entries = match fs::read_dir(self.contexts_dir()) {
             Ok(entries) => entries,
@@ -79,8 +76,8 @@ impl Cache {
         contexts
     }
 
-    /// The context `id`, if there is one. The id comes from the frontend, so one that
-    /// could step out of `contexts/` is no context — see [`plain_id`].
+    /// The context `id`, if any. An id that is not [`plain_id`] yields `None`, since it
+    /// comes from the frontend.
     pub fn context(&self, id: &str) -> Option<Context> {
         if !plain_id(id) {
             return None;
@@ -104,8 +101,8 @@ impl Cache {
     }
 }
 
-/// Whether `id`, which came from the frontend, is safe to name a directory with: letters,
-/// digits, `-` and `_`, so nothing that could step out of the collection it is under.
+/// Whether a frontend-supplied `id` is safe as a directory name: only ASCII letters,
+/// digits, `-` and `_`, so it cannot escape its collection.
 pub fn plain_id(id: &str) -> bool {
     !id.is_empty()
         && id

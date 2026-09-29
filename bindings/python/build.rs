@@ -1,5 +1,4 @@
-//! Gives the extension the `LC_RPATH` libfuse-t is found by, when the `mount` feature is on
-//! for a macOS target.
+//! Gives the extension the `LC_RPATH` libfuse-t is found by, on a macOS target.
 //!
 //! cortex's own `build.rs` emits the same rpath, but a `rustc-link-arg` applies only to the
 //! targets of the package that printed it — so a dependent that is itself linked, as this

@@ -1,8 +1,8 @@
 // Where a viewer's file comes from.
 //
-// The viewers ask a tree four things — a file's address, the folder it sits in, its bytes,
-// its characters — so a new tree is a new `Source` and not a second copy of the viewers.
-// Today there is one: a context's tree on disk, read through Tauri's asset protocol.
+// Viewers ask a tree four things (a file's URL, its folder, its bytes, its text), so a new
+// tree is a new `Source`, not a copy of the viewers. The one implementation is a context's
+// tree on disk, read through Tauri's asset protocol.
 
 import { convertFileSrc } from "@tauri-apps/api/core";
 
@@ -11,30 +11,29 @@ import type { Context } from "@/lib/contexts.svelte";
 import type { Entry } from "@/lib/viewers/entry";
 
 export interface Source {
-  /** The file's address: what a `url` viewer — one the browser renders — is handed. */
+  /** The file's URL, handed to `url` viewers. */
   url(entry: Entry): string;
   /**
-   * The folder that address sits in, trailing slash and all. A previewed document's
-   * relative links resolve against this, so it has to be the file's own folder.
+   * The folder URL, with trailing slash. A previewed document's relative links resolve
+   * against it, so it must be the file's own folder.
    */
   base(entry: Entry): string;
-  /** The file, unchanged — for a viewer that opens a container itself. */
+  /** The raw bytes, for viewers that open containers themselves. */
   bytes(entry: Entry): Promise<ArrayBuffer>;
-  /** The same read, decoded, with the encoding it was decoded from. */
+  /** The same bytes decoded, with the encoding used. */
   decoded(entry: Entry): Promise<Decoded>;
-  /** Where this file is, for the line under its name. */
+  /** Location shown under the file name. */
   where(entry: Entry): string;
 }
 
 /**
- * The asset-protocol URL of an absolute path, one encoded segment at a time. Not
- * `convertFileSrc(path)` itself: that encodes the slashes too, and a URL with no folders
- * in it gives a document's relative links nothing to resolve against.
+ * The asset-protocol URL of an absolute path, encoded per segment. Not
+ * `convertFileSrc(path)` alone: it encodes the slashes too, leaving a document's relative
+ * links nothing to resolve against.
  *
- * The root's own slash is the one that stays encoded. Tauri drops the URL path's first
- * character and decodes the rest, so `/%2FUsers/me/a.pdf` reads as `/Users/me/a.pdf`,
- * while `/Users/me/a.pdf` would read as the relative `Users/me/a.pdf` — outside every
- * scope, and refused.
+ * The root slash stays encoded. Tauri drops the path's first character and decodes the
+ * rest, so `/%2FUsers/me/a.pdf` reads as `/Users/me/a.pdf`, whereas `/Users/me/a.pdf`
+ * would read as relative `Users/me/a.pdf`, outside every scope and refused.
  */
 function assetUrl(parts: string[]): string {
   return convertFileSrc("") + "%2F" + parts.filter(Boolean).map(encodeURIComponent).join("/");

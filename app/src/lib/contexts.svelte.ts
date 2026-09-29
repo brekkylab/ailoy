@@ -1,5 +1,5 @@
 // The contexts the backend keeps under `~/.cache/ailoy/contexts` (see `src-tauri/src/context.rs`).
-// Outside Tauri — a plain `vite dev` in the browser — there is no backend, and the list stays empty.
+// Outside Tauri (plain `vite dev`) there is no backend and the list stays empty.
 
 import { invoke } from "@tauri-apps/api/core";
 
@@ -8,7 +8,7 @@ export interface Context {
   name: string;
   /** The tree on disk, absolute. */
   dir: string;
-  /** The context that is always there, made at startup, which nothing may delete. */
+  /** Always present, created at startup; nothing may delete it. */
   default: boolean;
 }
 
@@ -55,13 +55,13 @@ export type Segments = string[];
 
 export const listFiles = (id: string, path: Segments) => invoke<FileEntry[]>("list_context_files", { id, path });
 export const makeDir = (id: string, path: Segments) => invoke<void>("make_context_dir", { id, path });
-/** Copies files or folders from anywhere on this machine into `path`. */
+/** Copies files or folders from anywhere on disk into `path`. */
 export const addFiles = (id: string, path: Segments, sources: string[]) =>
   invoke<void>("add_context_files", { id, path, sources });
 /** Writes the whole tree to `to`, a `.tar.gz` outside the cache. */
 export const exportContext = (id: string, to: string) => invoke<void>("export_context", { id, to });
 export const removeFile = (id: string, path: Segments) => invoke<void>("remove_context_file", { id, path });
 
-/** What a web address points at, and the title it goes by. */
+/** Whether a URL is a YouTube video or a page, and its title. */
 export type UrlPeek = { kind: "page" | "youtube"; title: string | null; author: string | null };
 export const peekUrl = (url: string) => invoke<UrlPeek>("peek_url", { url });

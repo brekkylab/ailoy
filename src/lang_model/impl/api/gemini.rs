@@ -73,8 +73,7 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
                 let (mime_type, b64) = match image {
                     PartImage::Embedded { mime_type, data } => (mime_type.clone(), data.base64()),
                     PartImage::Url { url } => {
-                        // If url is a form of base64 data uri, use the data part as inline data.
-                        // Otherwise, Gemini does not support public url image inputs.
+                        // Only a base64 data URI works, as inline data; Gemini takes no image URLs.
                         let re = fancy_regex::Regex::new(
                             r"^data:([a-z]+/[a-z0-9-+.]+(;[a-z-]+=[a-z0-9-]+)?)?;base64,(.*)$",
                         )
@@ -105,10 +104,8 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             .split_once('/')
             .expect("Tool call id must be in \"{name}/call-{id}\" format");
 
-        // Split contents: images become sibling inline_data parts alongside functionResponse;
-        // non-image parts go into the functionResponse.response object.
-        // The Gemini REST API FunctionResponse proto has no "parts" field — multimodal data
-        // must live as separate parts in the outer parts array.
+        // Images become inline_data parts beside functionResponse, since the REST
+        // FunctionResponse has no `parts` field; other parts go into its `response`.
         let mut response_value: Option<Value> = None;
         let mut inline_data_parts: Vec<Value> = Vec::new();
         for part in msg.contents.iter() {
@@ -129,8 +126,7 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
         let response_body = if let Some(rv) = response_value {
             to_value!({"result": rv})
         } else if !inline_data_parts.is_empty() {
-            // Image-only result: provide a text description in response; actual bytes go
-            // as sibling inline_data parts in the outer parts array.
+            // Image-only result: `response` gets a placeholder; the bytes travel beside it.
             let mime = inline_data_parts
                 .iter()
                 .find_map(|p| p.pointer("/inline_data/mime_type").and_then(|v| v.as_str()))
@@ -147,7 +143,6 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             }
         });
 
-        // Combine functionResponse and any inline_data blobs as sibling parts
         let mut parts = vec![function_response_part];
         parts.extend(inline_data_parts);
 
@@ -157,7 +152,6 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
         });
     }
 
-    // Role
     let role: String = if msg.role == Role::Assistant {
         "model".into()
     } else if msg.role == Role::User {
@@ -166,7 +160,6 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
         panic!("Gemini accepts \"model\" and \"user\" role only.")
     };
 
-    // Collecting contents
     let mut parts = Vec::<Value>::new();
     if let Some(thinking) = &msg.thinking
         && !thinking.is_empty()
@@ -190,7 +183,6 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             .map(part_to_value),
     );
 
-    // Final message object with role and collected parts
     to_value!({"role": role, "parts": parts})
 }
 
@@ -233,7 +225,6 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
         let LangModelProviderElem::API { url, api_key, .. } = req.provider;
         let options = req.options;
 
-        // Extract system instruction from system message if present
         let system_instruction = req
             .messages
             .iter()
@@ -431,20 +422,17 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
 
         let delta = match (&finish_reason, candidate.pointer("/content")) {
             // A finish-only or refusal chunk may omit content. Still set the role
-            // (candidates are always model output) so a stream whose only/first
-            // chunk is finish-only doesn't accumulate to a role-less message that
-            // makes `finish()` bail.
+            // (candidates are always model output), or a stream starting with such
+            // a chunk accumulates to a role-less message `finish()` rejects.
             (Some(FinishReason::Refusal { .. }), _) | (_, None) => {
                 MessageDelta::new().with_role(Role::Assistant)
             }
             _ => parse_candidate_content(&candidate)?,
         };
 
-        // NOTE: Gemini reports "STOP" even for tool calls, and can split the
-        // functionCall part and the terminal STOP across separate SSE chunks
-        // (2.5 Pro / 3.x), so neither chunk alone carries both. The
-        // STOP→ToolCall promotion therefore can't be done per chunk — it lives
-        // in `MessageDeltaOutput::finish()`, on the fully accumulated message.
+        // Gemini reports "STOP" even for tool calls and may send the functionCall
+        // and STOP in separate chunks (2.5 Pro / 3.x), so STOP→ToolCall promotion
+        // happens on the accumulated message in `MessageDeltaOutput::finish()`.
         let usage = Self::parse_usage(&val);
 
         Ok(Some(MessageDeltaOutput {
@@ -482,7 +470,6 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
             finish_reason = Some(FinishReason::ToolCall {});
         }
 
-        // Parse usage (Gemini: usageMetadata.promptTokenCount / candidatesTokenCount)
         let usage = Self::parse_usage(&val);
 
         Ok(MessageDeltaOutput {
@@ -520,7 +507,6 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
         rv.role = Some(Role::Assistant);
     }
 
-    // Parse parts
     if let Some(parts) = content.pointer("/parts")
         && !parts.is_null()
     {
@@ -569,8 +555,7 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
                         rv.signature = Some(sig.to_owned());
                     }
                     rv.tool_calls.push(PartDelta::Function {
-                        // Generate tool call id with a form of "{tool_name}/{random_id}",
-                        // and use {tool_name} part only on Marshal.
+                        // Id is "{tool_name}/call-{random}"; marshal reads the name back from it.
                         id: Some(format!(
                             "{}/call-{}",
                             name,
@@ -1165,7 +1150,6 @@ mod tests {
             Err(_) => return,
         };
 
-        // Fetch a real JPEG image to use as the tool result
         let img_bytes = reqwest::get(
             "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg",
         )

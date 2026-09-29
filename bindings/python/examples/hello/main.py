@@ -27,7 +27,6 @@ if Path(sys.prefix).resolve() != HERE / ".venv" and "AILOY_EXAMPLE_REEXEC" not i
 import ailoy  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
-# The request the agent is given.
 QUERY = "What is the meaning of hello world?"
 
 
@@ -44,6 +43,6 @@ async def main(model: str) -> None:
 
 
 if __name__ == "__main__":
-    # From the nearest `.env` up from this file, as the Rust examples load it.
+    # From the nearest `.env` up from this file.
     load_dotenv()
     asyncio.run(main(sys.argv[1] if len(sys.argv) > 1 else "bedrock/global.openai.gpt-5.6-luna"))

@@ -42,9 +42,8 @@ pub(crate) async fn get_a2a_tool_desc(name: &str, url: &Url) -> anyhow::Result<T
 
     Ok(ToolDescBuilder::new(name)
         .description(description)
-        // An object with a single `task` string, matching the sub-agent tool:
-        // delegating a plain-text task is the same shape of call, and the model
-        // APIs reject a `parameters` schema that is not an object anyway.
+        // An object with a single `task` string: the model APIs reject a
+        // `parameters` schema that is not an object.
         .parameters(crate::to_value!({
             "type": "object",
             "properties": {
@@ -581,7 +580,7 @@ mod tests {
         provider.insert_a2a(desc.name.clone(), url);
         let funcs = provider.provide(&[desc])?;
 
-        // Pure, like an MCP tool: no console is borrowed to reach the network.
+        // Pure: no console is borrowed to reach the network.
         let out = funcs
             .get("remote")
             .expect("the agent was registered")

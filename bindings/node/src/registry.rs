@@ -11,8 +11,8 @@
 //! exist throws rather than making it: `add*Provider` makes one, so a misspelt name is an
 //! error and not a second, empty registry.
 //!
-//! The registering functions hand back the tool descriptions they registered, as the Rust
-//! ones do — pass them to `AgentBuilder.tool`/`tools` to put them in front of the model.
+//! The registering functions hand back the tool descriptions they registered — pass them to
+//! `AgentBuilder.tool`/`tools` to put them in front of the model.
 
 use ailoy::{
     agent::{AgentProvider, get_agent_providers_mut},

@@ -13,8 +13,7 @@
 //! `AgentBuilder.console` takes a cortex `ConsoleClient` and puts its slot in the agent's state —
 //! the slot itself, not what is in it. The `ConsoleClient` object stays usable: its calls and the
 //! agent's tools take turns on the one lock, and the agent starts and stops its backend
-//! around each batch of tool calls, as the Rust agent does. `ConsoleClient.close()` ends the session
-//! for both.
+//! around each batch of tool calls. `ConsoleClient.close()` ends the session for both.
 //!
 //! # How a turn is iterated
 //!
@@ -79,8 +78,8 @@ impl<T> Drop for OnRuntime<T> {
 
 /// An [`AgentBuilder`], filled in place and emptied by `build()`.
 ///
-/// In place rather than by value, as cortex's `ConsoleClientBuilder` is: the Rust builder is
-/// consumed by each call and is not `Clone`, so there is exactly one of it to hand along.
+/// In place rather than by value: the Rust builder is consumed by each call and is not
+/// `Clone`, so there is exactly one of it to hand along.
 /// Each method returns the same object so calls chain as they do in Rust.
 #[napi(js_name = "AgentBuilder")]
 pub struct JsAgentBuilder(Option<AgentBuilder>);

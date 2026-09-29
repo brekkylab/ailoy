@@ -174,6 +174,6 @@ async def main(prompt: str) -> None:
 
 
 if __name__ == "__main__":
-    # From the nearest `.env` up from this file, as the Rust examples load it.
+    # From the nearest `.env` up from this file.
     load_dotenv()
     asyncio.run(main(" ".join(sys.argv[1:])))

@@ -21,11 +21,9 @@ The two are rewritten on different clocks.
 `orders_in_transit.md` — and is small; `market/` is a function of the date alone,
 so it is written once a day.
 
-**What is where is not written into the tree.** It used to be, as a `README.md`
-generated beside the files, and the agent was told to read that first. It is in
-the system prompt now instead (`agent/system.md`): one description rather than
-two, and the agent is not spending its first tool call reading a map. The cost is
-that this file and that one can drift — if a path moves here, it moves there.
+**What is where is not written into the tree.** The system prompt
+(`agent/system.md`) describes it, so there is one description and the agent
+spends no tool call reading a map. A path moved here has to move there too.
 """
 
 from __future__ import annotations
@@ -40,12 +38,11 @@ from typing import Any, Iterable
 # under `store/` (or `news/`) and never rewritten: the tool, the directory, and
 # whether the day has to be split across categories to fit.
 #
-# It fits for five of the six. `exec_tools` truncates a `formatted` answer at
-# fifty thousand characters, and one day of the whole store runs to twenty-four
-# thousand at the widest (the news) — except the reviews, which reach sixty on
-# the busiest days the dataset seeded and would lose the overflow silently. Per
-# category they are three thousand, so the split is where the environment's own
-# limit puts it and nowhere else.
+# Only the reviews split. `exec_tools` truncates a `formatted` answer at fifty
+# thousand characters; one day of the whole store stays under twenty-four
+# thousand (the news is widest), but the reviews reach sixty thousand on the
+# busiest seeded days and would lose the overflow silently. Per category they
+# are about three thousand.
 RECORDS = (
     ("view_sku_sales_history", "store/sales", False),
     ("view_return_rates", "store/returns", False),
@@ -76,13 +73,9 @@ def parse_date(value: Any) -> date | None:
 def rows_upto(rows: Iterable[dict[str, Any]], end: date) -> list[dict[str, Any]]:
     """The rows dated on or before `end`, in the order they were given.
 
-    Only the future is cut. The dataset's own first row is where these files
-    start, because a day the data records is a day that happened, and there is
-    no reason for this tree to know it and not say so.
-
-    A row whose date cannot be read is dropped rather than kept: it cannot be
-    shown to be in the past, and the whole point of this file is that nothing in
-    the future is shown.
+    Only the future is cut: rows from the dataset's first day on are kept, since
+    those days happened. A row whose date cannot be read is dropped, since it
+    cannot be shown to be in the past.
     """
     kept = []
     for row in rows:
@@ -242,9 +235,8 @@ def as_row(entry: dict[str, Any]) -> dict[str, Any]:
     """One catalog entry, flat enough to be a row.
 
     `DELEVERY_TIME` is the only value in the item master that is not a scalar:
-    a `[min, max]` pair of days, always two and always in order. Split, it is
-    two columns named the way the supplier files already name their own pair,
-    and the catalog is a table like everything else under `market/`.
+    a `[min, max]` pair of days, always two and always in order. Split into two
+    columns, the catalog is a table like everything else under `market/`.
     """
     row = dict(entry)
     window = row.pop("DELEVERY_TIME", None)
@@ -308,7 +300,7 @@ def looked(env: Any, tool: str, **arguments: Any) -> str:
 
 
 def answered(env: Any, tool: str, **arguments: Any) -> tuple[str, bool]:
-    """[`looked`], with whether the tool found anything to say.
+    """What a `view_*` tool would have said, and whether it found anything to say.
 
     The text alone cannot be asked: a tool with nothing to report still returns
     a heading — `## News 1991-06-06 ~ 1991-06-06 (0 items)` — and that heading

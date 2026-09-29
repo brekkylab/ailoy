@@ -22,14 +22,11 @@ use crate::{
 /// An agent that drives a language model through multi-turn, tool-augmented conversations.
 ///
 /// `Agent` pairs an [`AgentSpec`] (model + instruction + tools + sub-agents) with an
-/// [`AgentProvider`] (credentials + tool sources) and an internal [`AgentState`]
-/// (message history + shared machine).  Call [`Agent::run`] to stream a single turn;
-/// tool calls are resolved automatically and the conversation is appended to history
-/// after each turn.
+/// [`AgentProvider`] (credentials + tool sources) and an [`AgentState`] (history +
+/// console). [`Agent::run`] streams one turn, resolving tool calls and appending to history.
 ///
-/// Sub-agents declared in [`AgentSpec::subagents`] are materialised at construction time
-/// and registered as callable tools, inheriting the parent's machine so they share
-/// filesystem state.
+/// Sub-agents in [`AgentSpec::subagents`] are registered as callable tools that share the
+/// parent's console.
 ///
 /// Constructors:
 /// * [`Agent::try_new`] — `"default"` provider + fresh [`AgentState`].
@@ -49,8 +46,7 @@ pub struct Agent {
 
     context_manager: Option<ContextManager>,
 
-    /// Card name lifted from the originating spec.  Used by
-    /// [`Self::stamp_source_agent`] to tag streamed events.
+    /// Spec's card name, used by [`Self::stamp_source_agent`] to tag streamed events.
     card_name: Option<String>,
 }
 
@@ -79,20 +75,15 @@ impl Agent {
     /// Create an agent using the [`AgentProvider`] registered under `provider`
     /// in [`get_agent_providers`] and an explicit [`AgentState`].
     ///
-    /// The canonical constructor.  `state.machine` is cloned into every
-    /// sub-agent declared in [`AgentSpec::subagents`], so the parent and its
-    /// sub-agents observe the same filesystem and process state.  Sub-agents
-    /// inherit the same `provider` name and re-resolve it from the registry
-    /// on every invocation — make sure the name stays registered for the
-    /// lifetime of the agent.
+    /// The canonical constructor. Sub-agents share `state.console` and re-resolve
+    /// `provider` from the registry on every invocation, so the name must stay
+    /// registered for the agent's lifetime.
     ///
-    /// Unless `state.history` already leads with a [`Role::System`] message, one
-    /// built from `spec.instruction` is inserted at the front; a history that leads
-    /// with one is taken as-is, so the caller's own system message wins.
+    /// Unless `state.history` already has a [`Role::System`] message, one built from
+    /// `spec.instruction` and [`AgentSpec::skills`] is inserted at the front.
     ///
-    /// Async for [`AgentSpec::skills`], which are read through the console to go into
-    /// that message. A console server boots its session when the console is built, so
-    /// this is a read and not a boot.
+    /// Async because skills are read through the console (a read, not a boot: the
+    /// session boots when the console is built).
     pub async fn try_with_provider_and_state(
         spec: AgentSpec,
         provider: impl AsRef<str>,
@@ -108,8 +99,7 @@ impl Agent {
             LangModel::try_from_provider(spec.model.clone(), &provider_value.lang_model_provider)?;
         let model_options = spec.model_options.clone().unwrap_or_default();
 
-        // Collect tools required by the spec; error if any tool is missing.
-        // When the spec requests specific web_search engines, override the default factory.
+        // Errors if any spec tool is missing.
         let mut tools = {
             let registry = get_tool_providers();
             let tp = registry.get(&provider_value.tool_provider).ok_or_else(|| {
@@ -128,11 +118,8 @@ impl Agent {
         };
         let mut tool_descs = spec.tools.clone();
 
-        // Sub-agents become regular tool entries: each is a one-shot ToolFunc
-        // that materialises a fresh Agent on call (re-resolving the provider
-        // name from the registry) and shares the parent's machine so
-        // filesystem state is shared.  Sub-specs are taken as-is — no path
-        // rewriting — so sub-agent skills are portable across parents.
+        // Sub-specs are taken as-is (no path rewriting) so sub-agent skills are portable
+        // across parents.
         for sub_spec in &spec.subagents {
             let card = sub_spec
                 .card
@@ -149,14 +136,8 @@ impl Agent {
             tools.insert(tool_name, func);
         }
 
-        // An agent given a memory gets the two tools for it, and one without a memory has
-        // no such tools to be told about. They are not resolved from the ToolProvider like
-        // the tools above, for the reason `tool::impl::memory` gives: which store is not a
-        // name in a registry but a `Memory` this one agent was handed, so the func has to
-        // be built here where that value is.
-        //
-        // Nothing is added to the instruction. What the model is told about remembering is
-        // the tool descriptions, until a prompt says more.
+        // Built here rather than resolved from the ToolProvider: the store is this agent's
+        // `Memory` value, not a registry name. The instruction is left untouched.
         if let Some(memory) = state.memory.clone() {
             for (desc, func) in [
                 (
@@ -170,9 +151,8 @@ impl Agent {
             }
         }
 
-        // Build the system message from the instruction.
-        // A system message is expected only at index 0; `any` covers a stray one too,
-        // since seeding a second would either shadow theirs or ship both.
+        // `any` rather than index 0: seeding a second system message would shadow or
+        // duplicate a stray one.
         if !state.history.iter().any(|m| m.role == Role::System) {
             let skills = if spec.skills.is_empty() {
                 None
@@ -184,8 +164,7 @@ impl Agent {
                 (instruction, skills) => skills.or(instruction.map(str::to_string)),
             };
             if let Some(text) = text {
-                // Front: that is where every schema expects a system message, whether
-                // it extracts the first one or sends them in place.
+                // Every provider schema expects the system message first.
                 state.history.insert(
                     0,
                     Message::new(Role::System).with_contents([Part::text(text)]),
@@ -206,23 +185,15 @@ impl Agent {
 
     /// Tell the model which directories it has been given.
     ///
-    /// **Asked of the console, not kept beside it.** Cortex already answers
-    /// [`mounts`](cortex::console::ConsoleClient::mounts), so a copy on this side would be a
-    /// second answer to a settled question. The only thing that ever made one tempting is
-    /// that [`try_with_provider_and_state`](Self::try_with_provider_and_state) is a `fn`
-    /// and the console sits behind a lock — so the question is asked here instead, at the
-    /// top of a turn, which is `async` and takes that lock to
-    /// [`start`](Self::start_console) anyway.
+    /// Runs at the top of each turn and reads
+    /// [`mounts`](cortex::console::ConsoleClient::mounts) from the console instead of
+    /// caching a copy.
     ///
-    /// Only paths are said. What each mount is *for* is the caller's own and nowhere in the
-    /// protocol, so an instruction that needs to say it does, and this supplies the one
-    /// thing no instruction can know ahead of time: where the mounts ended up.
-    ///
-    /// Appended to the system message rather than merged into
-    /// [`AgentSpec::instruction`], and appended even to a system message the caller wrote
-    /// themselves, for the same reason.
+    /// Only paths are listed; what a mount is for belongs in the instruction. The section
+    /// is appended to the system message, including a caller-written one, because mount
+    /// locations cannot be known ahead of time.
     async fn seed_console_mounts(&mut self) {
-        // Held only long enough to read the paths — nothing below it awaits.
+        // Lock held only while reading the paths.
         let mounts: Vec<std::path::PathBuf> = {
             let guard = self.state.console.lock().await;
             let Some(console) = guard.as_ref() else {
@@ -231,7 +202,6 @@ impl Agent {
             console.mounts().map(Path::to_path_buf).collect()
         };
 
-        // A console that mounted nothing says nothing about where the agent stands.
         if mounts.is_empty() {
             return;
         }
@@ -244,19 +214,15 @@ impl Agent {
             section.push_str(&format!("\n- `{}`", path.display()));
         }
 
-        // Into the *first* text part, not a part of its own. Three of the four provider
-        // schemas take `contents.first()` off the system message and drop whatever
-        // follows — see the `instructions`/`system`/`system_instruction` extraction in
-        // `openai`, `anthropic` and `gemini` — so a second part would reach
-        // chat-completions and nowhere else, and silently.
+        // Into the *first* text part: the openai, anthropic and gemini schemas keep only
+        // `contents.first()` of the system message, silently dropping any later part.
         let Some(at) = self
             .state
             .history
             .iter()
             .position(|m| m.role == Role::System)
         else {
-            // No instruction was given and the caller wrote no system message, but the
-            // mounts are still worth saying on their own.
+            // No system message at all: the mounts become one.
             self.state.history.insert(
                 0,
                 Message::new(Role::System).with_contents([Part::text(section.trim_start())]),
@@ -269,33 +235,28 @@ impl Agent {
             Part::Text { text } => Some(text),
             _ => None,
         }) {
-            // Every turn seeds, and a second `Agent` may be built over the history a
-            // first one produced. The text is built from the same paths each time, so
-            // what was already written is what would be written again — which makes the
-            // section its own marker, with nothing to keep in step with it.
+            // Seeding runs every turn and may run over a history another `Agent` seeded;
+            // the section is deterministic, so it serves as its own idempotence marker.
             Some(text) => {
                 if text.contains(section.as_str()) {
                     return;
                 }
                 text.push_str(&section);
             }
-            // A system message carrying no text at all: the mounts lead it.
+            // System message without text: the mounts lead it.
             None => system.contents.insert(0, Part::text(section.trim_start())),
         }
     }
 
-    /// Maximum number of characters kept in a single tool-result message before
-    /// middle-truncation is applied.  Mirrors the limit already enforced by the
-    /// built-in shell tool so that *all* tool results stay within a consistent bound.
+    /// Per-part character limit for tool results before middle-truncation, keeping all
+    /// tool results within the same bound as the built-in shell tool.
     const MAX_TOOL_RESULT_CHARS: usize = 30_000;
 
-    /// Clamp every [`Part`] in a [`Role::Tool`] message so that large payloads
-    /// (e.g. web-search results) do not accumulate unbounded in history and
-    /// trigger 429 rate-limit errors.
+    /// Clamp every [`Part`] of a [`Role::Tool`] message so large payloads (e.g. web-search
+    /// results) don't accumulate in history and trigger 429 rate-limit errors.
     ///
-    /// * `Part::Value` – serialised to JSON to measure size; if over the limit the
-    ///   truncated string is stored back as a `Part::Value` wrapping a JSON string.
-    /// * `Part::Text`  – measured directly; truncated in-place if needed.
+    /// An oversized `Part::Value` is measured as serialized JSON and replaced by a string
+    /// value holding the truncated JSON.
     fn cap_tool_result(mut msg: Message) -> Message {
         for part in &mut msg.contents {
             match part {
@@ -317,8 +278,7 @@ impl Agent {
         msg
     }
 
-    /// Truncate `s` to at most `max_chars` characters, keeping equal-sized head and
-    /// tail and inserting an omission notice in the middle.
+    /// Keep `max_chars` characters of `s` as head and tail around an omission notice.
     fn middle_truncate(s: String, max_chars: usize) -> String {
         let chars: Vec<char> = s.chars().collect();
         if chars.len() <= max_chars {
@@ -334,14 +294,9 @@ impl Agent {
 
     /// Boot the console's backend for a batch of tool calls.
     ///
-    /// Paid per batch rather than once per agent, because the other half of a turn is
-    /// spent waiting on the model and a booted console is a backend sitting idle —
-    /// on a micro-VM one, a whole VM. `start`/`stop` is the pair cortex offers for
-    /// exactly that: `stop` releases what booting took and leaves the session open,
-    /// so the next batch starts again on the same console.
-    ///
-    /// An agent with no console has no backend to boot, and says nothing about it —
-    /// its pure tools run either way, and a console tool reports the absence itself.
+    /// Per batch rather than per agent, so the backend (possibly a whole micro-VM) is not
+    /// idle while waiting on the model. `stop` keeps the session, so the next batch
+    /// resumes the same console. A no-op without a console.
     async fn start_console(&self) -> anyhow::Result<()> {
         if let Some(console) = self.state.console.lock().await.as_mut() {
             console.start().await?;
@@ -351,8 +306,7 @@ impl Agent {
 
     /// Release what [`start_console`](Self::start_console) booted.
     ///
-    /// Not the end of the session — another `start` is allowed and is what the next
-    /// batch of tool calls does.
+    /// Keeps the session open for the next batch's `start`.
     async fn stop_console(&self) -> anyhow::Result<()> {
         if let Some(console) = self.state.console.lock().await.as_mut() {
             console.stop().await?;
@@ -367,17 +321,11 @@ impl Agent {
     /// Execute tool calls concurrently within the current task and return a
     /// stream of all outputs.
     ///
-    /// Each tool's future independently borrows the shared machine via the
-    /// Mutex — pure tools skip the lock entirely. Driven by
-    /// [`FuturesUnordered`] so completions interleave naturally; sub-agent
-    /// invocations (pure ToolFunc) do their own machine locking inside their
-    /// nested `run()` without re-entering the parent's tool future.
+    /// Console tools lock the shared console; pure tools (including sub-agents, which
+    /// lock inside their nested `run()`) skip it. Panics are caught and turned into
+    /// error tool results so the LM gets exactly one result per call.
     ///
-    /// Panics inside a tool's stream are caught via `catch_unwind` and
-    /// converted to synthetic error tool results so the LM always receives
-    /// exactly one result per call.
-    ///
-    /// Returns `Err` immediately (before launching) if any tool name is not found.
+    /// Returns `Err` before launching anything if a tool name is unknown.
     fn execute_tool_calls(
         &self,
         tool_calls: Vec<Part>,
@@ -409,8 +357,7 @@ impl Agent {
             futs.push(Box::pin(async move {
                 let tx_inner = tx.clone();
                 let tool_name_inner = tool_name.clone();
-                // A second clone: the error path below reports the name after the
-                // inner block has moved its own.
+                // The inner block moves its clone; the error path below needs this one.
                 let tool_name_for_call = tool_name.clone();
                 let call_id_for_call = call_id.clone();
 
@@ -419,10 +366,8 @@ impl Agent {
                         if let Some(mut stream) =
                             tool.call_pure(call_args.clone(), call_id_for_call.clone())
                         {
-                            // Pure tool: the stream is `'static`, so it does not take
-                            // the console lock. Critically, this lets a sub-agent
-                            // ToolFunc drive its own nested `run()` without deadlocking
-                            // against the parent's tool batch.
+                            // No console lock, so a sub-agent's nested `run()` cannot
+                            // deadlock against the parent's tool batch.
                             let mut last: Option<MessageOutput> = None;
                             while let Some(item) = stream.next().await {
                                 if let Some(mut prev) = last.replace(item) {
@@ -442,10 +387,8 @@ impl Agent {
                                 None => anyhow::Ok(false),
                             }
                         } else {
-                            // Console tool: hold the lock for the whole stream, which
-                            // borrows the console exclusively. That serialises tool
-                            // calls against one console — which is the protocol, not a
-                            // choice: one outstanding request at a time.
+                            // Lock held for the whole stream: the console protocol
+                            // allows one outstanding request at a time.
                             let mut guard = console_slot.lock().await;
                             let console = guard.as_mut().ok_or_else(|| {
                                 anyhow::anyhow!(
@@ -506,11 +449,10 @@ impl Agent {
             }));
         }
 
-        // Drop the outer sender so the channel closes once all futures finish.
+        // So the channel closes once all futures finish.
         drop(tx);
 
         Ok(Box::pin(async_stream::stream! {
-            // Drive futures concurrently within the current task.
             let drive = async move {
                 while futs.next().await.is_some() {}
             };
@@ -537,11 +479,8 @@ impl Agent {
         }))
     }
 
-    /// Stamp a `source_agent` field with this agent's card name if not already
-    /// set. Takes the field directly so it works for both `MessageOutput` and
-    /// `MessageDeltaOutput`. Because it only writes when the field is `None`,
-    /// items already carrying a name from a deeper subagent are forwarded
-    /// unchanged — the innermost producer always wins in nested chains.
+    /// Set `source_agent` to this agent's card name if unset, so the innermost sub-agent
+    /// wins in nested chains. Takes the field to serve both output types.
     fn stamp_source_agent(&self, source_agent: &mut Option<String>) {
         if source_agent.is_none()
             && let Some(name) = self.card_name.as_ref()
@@ -567,9 +506,9 @@ impl Agent {
         Box::pin(async_stream::try_stream! {
 
             self.state.history.push(query);
-            // See run_stream: pop the dangling query if the turn fails before its
-            // assistant message commits, so the reused agent doesn't later push
-            // two consecutive User messages.
+            // Pop the query if the turn fails before its assistant message commits, so a
+            // reused agent doesn't push two consecutive User messages (most providers
+            // reject that).
             let mut committed = false;
 
             self.seed_console_mounts().await;
@@ -619,9 +558,8 @@ impl Agent {
 
                 self.start_console().await?;
 
-                // Drained to the end even on failure, so the console is released
-                // before the error leaves this scope — a `?` here would step over the
-                // `stop` and leave the backend booted with nobody driving it.
+                // Collect failure instead of `?` so `stop` always runs and the backend is
+                // not left booted.
                 let mut tool_stream = self.execute_tool_calls(tool_calls)?;
                 let mut failure = None;
                 while let Some(event) = tool_stream.next().await {
@@ -643,8 +581,7 @@ impl Agent {
                 drop(tool_stream);
 
                 let stopped = self.stop_console().await;
-                // The tools' failure first: it is what the caller asked about, and a
-                // console that would not stop is the less useful of the two.
+                // A tool failure takes precedence over a stop failure.
                 if let Some(e) = failure {
                     Err(e)?;
                 }
@@ -653,12 +590,9 @@ impl Agent {
         })
     }
 
-    /// Token-streaming counterpart to [`run`](Self::run). Drives the same
-    /// agentic loop but calls [`LangModel::run_stream`] per turn, yielding a
-    /// uniform stream of [`MessageDeltaOutput`]: the model's incremental deltas
-    /// for live rendering, then each tool result as a complete one-shot delta.
-    /// A `finish_reason` (or a role change) marks a message boundary; the
-    /// blocking [`run`](Self::run) is the accumulate-and-finish counterpart.
+    /// Token-streaming variant of [`run`](Self::run): yields the model's deltas, then each
+    /// tool result as one complete delta. A `finish_reason` or role change marks a message
+    /// boundary.
     pub fn run_stream(
         &mut self,
         query: Message,
@@ -666,9 +600,9 @@ impl Agent {
         Box::pin(async_stream::try_stream! {
 
             self.state.history.push(query);
-            // If a turn fails before its assistant message commits, pop the
-            // dangling user query so the reused agent's next run doesn't push a
-            // second consecutive User message (which most providers reject).
+            // Pop the query if the turn fails before its assistant message commits, so a
+            // reused agent doesn't push two consecutive User messages (most providers
+            // reject that).
             let mut committed = false;
 
             self.seed_console_mounts().await;
@@ -680,8 +614,7 @@ impl Agent {
                         cm.truncate_history(&mut self.state.history);
                     }
 
-                // Stream the model's deltas, forwarding each while accumulating
-                // the full turn for loop control (history / tool dispatch).
+                // Accumulated for history and tool dispatch while forwarding each delta.
                 let mut acc = MessageDeltaOutput::new();
                 {
                     let mut delta_stream = self.model.run_stream(
@@ -708,17 +641,14 @@ impl Agent {
                                 Err(e)?
                             }
                         };
-                        // Tag with the top-level metadata so accumulating these
-                        // deltas reconstructs the same MessageOutput `run` yields.
+                        // So accumulated deltas equal the MessageOutput `run` yields.
                         delta.depth = Some(0);
                         self.stamp_source_agent(&mut delta.source_agent);
                         yield delta;
                     }
                 }
-                // LangModel::run_stream closes the contract — every message ends
-                // with a finish_reason delta (a synthesized Stop if the provider
-                // sent none) — so acc always carries one here. finish() promotes
-                // Stop to ToolCall if tool calls were produced.
+                // `run_stream` always ends with a finish_reason (synthesized Stop if
+                // needed); finish() promotes Stop to ToolCall when tool calls exist.
                 let mut output = match acc.finish() {
                     Ok(o) => o,
                     Err(e) => {
@@ -738,8 +668,7 @@ impl Agent {
                 self.state.history.push(output.message.clone());
                 committed = true;
 
-                // The assistant turn was already streamed as deltas above; drive
-                // the loop off its finish_reason without re-emitting it.
+                // Already streamed above; not re-emitted.
                 let tool_calls = match &output.finish_reason {
                     FinishReason::ToolCall {} => {
                         output.message.tool_calls.clone().unwrap_or_default()
@@ -749,8 +678,7 @@ impl Agent {
 
                 self.start_console().await?;
 
-                // See `run`: drained to the end even on failure, so `stop` is not
-                // stepped over by an early `?`.
+                // Collect failure instead of `?` so `stop` always runs.
                 let mut tool_stream = self.execute_tool_calls(tool_calls)?;
                 let mut failure = None;
                 while let Some(event) = tool_stream.next().await {
@@ -760,8 +688,6 @@ impl Agent {
                             break;
                         }
                         Ok(mut output) => {
-                            // Tool results are complete MessageOutputs; commit to
-                            // history, stamp, then re-emit on the delta stream.
                             if output.message.role == Role::Tool && output.depth == Some(0) {
                                 output.message = Self::cap_tool_result(output.message);
                                 self.state.history.push(output.message.clone());
@@ -783,10 +709,6 @@ impl Agent {
     }
 }
 
-// The `DummyConsoleExt` stand-in that used to live here is gone: a pure tool is now
-// run through `ToolFunc::call_pure`, which asks for no console at all. There is no
-// fabricating a `cortex` one anyway — it is a live session with a server behind it.
-
 #[cfg(test)]
 mod tests {
     use futures::StreamExt as _;
@@ -805,19 +727,15 @@ mod tests {
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    /// Load `.env`, then re-register the `"default"` lang-model provider so
-    /// that any `*_API_KEY` introduced by `dotenv` is picked up — the
-    /// `LangModelProvider::default()` that backs the global LazyLock may have
-    /// been initialised before `dotenv` ran.
+    /// Load `.env` and re-register the `"default"` lang-model provider, whose LazyLock
+    /// may have initialised before `dotenv` set the `*_API_KEY`s.
     fn refresh_default_lang_models() {
         dotenvy::dotenv().ok();
         get_lm_providers_mut().insert("default".to_string(), LangModelProvider::default());
     }
 
-    /// Register an `AgentProvider` under `unique_name` whose `tool_provider`
-    /// points at a freshly-registered `ToolProvider` configured by `build`.
-    /// Reuses the `"default"` lang-model provider.  Returns the registry name
-    /// to pass into `Agent::try_with_provider*`.
+    /// Register an `AgentProvider` named `unique_name` over the `"default"` lang models and
+    /// a new `ToolProvider` configured by `build`; returns the name.
     fn provider_with_tools(unique_name: &str, build: impl FnOnce(&mut ToolProvider)) -> String {
         refresh_default_lang_models();
         let mut tp = ToolProvider::new();
@@ -837,8 +755,7 @@ mod tests {
         "default"
     }
 
-    /// A model nothing calls, and a provider with a made-up key behind it — for the
-    /// tests that only construct an agent and look at what it was built with.
+    /// Never called; for tests that only inspect a constructed agent.
     const DUMMY_MODEL: &str = "openai/gpt-4o-mini";
 
     fn dummy_provider(name: &'static str) -> &'static str {
@@ -894,8 +811,7 @@ mod tests {
             .join("\n\n")
     }
 
-    /// Seed a turn's worth without calling a model: `seed_console_mounts` is what the
-    /// top of `run` and `run_stream` both do before anything else.
+    /// Seed as the top of a turn does, without calling a model.
     async fn seeded(agent: &mut Agent) -> String {
         agent.seed_console_mounts().await;
         system_text(agent)
@@ -932,8 +848,7 @@ mod tests {
             .collect();
         assert!(at[0] < at[1], "listed in the order mounted: {text}");
 
-        // Exactly one system message: the mounts join the instruction's, they do not
-        // ship a second one for a provider to pick between.
+        // The mounts join the existing system message rather than adding one.
         assert_eq!(
             agent
                 .get_history()
@@ -946,10 +861,8 @@ mod tests {
 
     /// The mounts land in the *first* text part of the system message.
     ///
-    /// Not a detail of layout: `openai`, `anthropic` and `gemini` each extract
-    /// `contents.first()` and drop the rest, so a section written into a part of its own
-    /// would reach chat-completions and nothing else — and would do it without an error
-    /// anywhere.
+    /// `openai`, `anthropic` and `gemini` keep only `contents.first()`, so a separate part
+    /// would be silently dropped.
     #[tokio::test]
     async fn test_mounts_land_in_the_first_text_part() {
         let provider = default_test_provider();
@@ -991,8 +904,7 @@ mod tests {
         assert_eq!(seeded(&mut agent).await, "Be brief.");
     }
 
-    /// A console that mounted nothing is the same case: nothing to say about where it
-    /// stands, so nothing is said.
+    /// Nor does a console with no mounts.
     #[tokio::test]
     async fn test_console_without_mounts_leaves_the_system_message_alone() {
         let provider = default_test_provider();
@@ -1005,8 +917,7 @@ mod tests {
         assert_eq!(seeded(&mut agent).await, "Be brief.");
     }
 
-    /// The caller's own system message wins on instruction and still learns the paths:
-    /// where a mount ended up cannot be authored ahead of time.
+    /// A caller's system message replaces the instruction but still gets the mount paths.
     #[tokio::test]
     async fn test_mounts_are_appended_to_a_caller_supplied_system_message() {
         let provider = default_test_provider();
@@ -1027,8 +938,7 @@ mod tests {
         assert!(text.contains("# Mounts"), "and still learns the paths");
     }
 
-    /// Every turn seeds, so seeding twice must be seeding once — otherwise a
-    /// many-turn conversation stacks a copy of the section per turn.
+    /// Seeding is idempotent, so multi-turn conversations don't stack copies.
     #[tokio::test]
     async fn test_mounts_are_seeded_once_across_turns() {
         let provider = default_test_provider();
@@ -1049,8 +959,7 @@ mod tests {
             "one copy of the section: {text}"
         );
 
-        // And a second Agent built over the history the first produced does not add
-        // another either.
+        // Also across an Agent rebuilt over the same history.
         let rebuilt = AgentState::new().with_history(agent.get_history().to_vec());
         let mut rebuilt = Agent::try_with_provider_and_state(
             AgentSpec::new("openai/gpt-4o-mini").instruction("Be brief."),
@@ -1062,8 +971,7 @@ mod tests {
         assert_eq!(seeded(&mut rebuilt).await.matches("# Mounts").count(), 1);
     }
 
-    /// A sub-agent shares the parent's console slot, and so is told the same mounts
-    /// without anything having to be passed alongside it.
+    /// A sub-agent shares the parent's console slot and so sees the same mounts.
     #[tokio::test]
     async fn test_subagents_are_told_the_same_mounts() {
         let provider = default_test_provider();
@@ -1079,8 +987,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Materialised the way the sub-agent ToolFunc does it: the parent's slot, and
-        // nothing else.
+        // As the sub-agent ToolFunc builds it: the parent's slot only.
         let mut child = Agent::try_with_provider_and_state(
             sub,
             provider,
@@ -1135,9 +1042,6 @@ mod tests {
     async fn unreachable_agent() -> Agent {
         use crate::lang_model::{LangModelAPISchema, LangModelProvider, get_lm_providers_mut};
 
-        // Register a lang-model provider whose endpoint refuses connection, so
-        // the first model call fails deterministically; pair it with the
-        // auto-registered `"default"` tool provider.
         let mut lmp = LangModelProvider::new();
         lmp.insert_api(
             "test/*".into(),
@@ -1155,10 +1059,8 @@ mod tests {
             .unwrap()
     }
 
-    /// A first model call that fails must roll the just-pushed user query back
-    /// out of history. Otherwise the reused agent would start its next run with
-    /// the query still dangling at the tail and push a second consecutive User
-    /// message, which most providers reject.
+    /// A failed first model call rolls the user query back out of history, so a reused
+    /// agent doesn't push two consecutive User messages.
     #[tokio::test]
     async fn test_run_stream_rolls_back_query_on_failure() {
         let mut agent = unreachable_agent().await;
@@ -1181,7 +1083,7 @@ mod tests {
         );
     }
 
-    /// Same rollback guarantee for the non-streaming `run`.
+    /// Query rollback on failure for the non-streaming `run`.
     #[tokio::test]
     async fn test_run_rolls_back_query_on_failure() {
         let mut agent = unreachable_agent().await;
@@ -1257,7 +1159,6 @@ mod tests {
         );
     }
 
-    /// Verifies that the agent calls the temperature tool and returns a final answer.
     /// Verifies that the main agent actually delegates to the in-memory subagent.
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
@@ -1636,13 +1537,8 @@ mod tests {
         );
     }
 
-    /// The cycle `run` performs once per batch of tool calls: boot, run, release,
-    /// and boot again for the next batch.
-    ///
-    /// What makes it safe is that `stop` releases the backend without ending the
-    /// session — so what a tool wrote in one batch is still there in the next. The
-    /// whole start/stop-per-batch design rests on that, which is why it is pinned
-    /// here rather than assumed.
+    /// The per-batch start/stop cycle relies on `stop` keeping the session, so one
+    /// batch's writes are visible to the next.
     #[tokio::test]
     async fn a_console_survives_the_stop_start_cycle_between_tool_batches() {
         let dir = tempfile::tempdir().unwrap();
@@ -1663,8 +1559,7 @@ mod tests {
             console.stop().await.expect("release between batches");
         }
 
-        // Second batch, on the same console: `stop` released the backend but not the
-        // session, so this is a fresh boot rather than a new conversation.
+        // Second batch: a fresh boot of the same session.
         {
             let mut guard = agent_state.console.lock().await;
             let console = guard.as_mut().unwrap();
@@ -1682,8 +1577,7 @@ mod tests {
         }
     }
 
-    /// An agent with no console runs its pure tools and says so plainly when a
-    /// console tool is called — nothing builds one on its behalf.
+    /// A fresh state has no console, and nothing builds one implicitly.
     #[tokio::test]
     async fn an_agent_without_a_console_says_so_rather_than_building_one() {
         let state = AgentState::new();
@@ -1693,8 +1587,7 @@ mod tests {
         );
     }
 
-    /// A memory on the state is the two memory tools on the agent — no spec entry, and
-    /// nothing registered in the ToolProvider.
+    /// A memory on the state yields the two memory tools without spec or ToolProvider entries.
     #[tokio::test]
     async fn test_memory_brings_its_two_tools() {
         let provider = dummy_provider("agent_rt_memory_tests");
@@ -1710,8 +1603,7 @@ mod tests {
         assert!(agent.tools.contains_key("mem_insert"));
     }
 
-    /// And an agent with no memory is told of no such tools, rather than being given two
-    /// that would fail on a store it does not have.
+    /// No memory, no memory tools.
     #[tokio::test]
     async fn test_no_memory_means_no_memory_tools() {
         let provider = dummy_provider("agent_rt_memory_tests");

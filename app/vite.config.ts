@@ -5,9 +5,9 @@ import path from "node:path";
 import { defineConfig, type Plugin } from "vite";
 
 /**
- * pdf.js reads its CMaps (CJK text), standard fonts, ICC profiles and wasm decoders by URL
- * at run time, so they are served as they ship under `/pdfjs/` — by the dev server, and
- * copied into the build — rather than imported.
+ * pdf.js fetches its CMaps (CJK text), standard fonts, ICC profiles and wasm decoders by URL
+ * at run time, so they are served as shipped under `/pdfjs/` (dev server and build copy)
+ * rather than imported.
  */
 function pdfjsAssets(): Plugin {
   const root = path.resolve(import.meta.dirname, "node_modules/pdfjs-dist");

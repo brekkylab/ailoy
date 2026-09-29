@@ -351,7 +351,7 @@ async fn register_actions(
         };
         let mut description = spec["description"].as_str().unwrap_or_default().to_string();
         if name == "end_today" {
-            // True here and not in the runners upstream wrote the description for.
+            // Holds only in this harness, so the store's own description does not say it.
             description.push_str(
                 " This ends your turn: call it once, when you are done for the day, and expect \
                  no further instructions afterwards.",

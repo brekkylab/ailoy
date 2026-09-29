@@ -92,7 +92,7 @@ def record_orders_once() -> None:
     (`OrderManager.step`, given the record manager by the daily step). So every
     row doubles on the day its goods arrive, and a run's
     `order_records/records.db` reports more bought than was ever paid for —
-    $49,248 against $28,193, five days into the run this was found in.
+    $49,248 against $28,193 five days into a run.
 
     Nothing the store runs on reads that table: funds, net worth and the
     agent's own `store/orders_in_transit.md` all come from the order manager
@@ -168,15 +168,15 @@ def deliver_per_sku_once() -> None:
     leave is that, and nothing else: stock whose shelf-life clock has not
     started, marked above what was paid for it.
 
-    Fixed where the mistake is rather than where it shows: an order now
-    delivers the items that are due and keeps the rest, so `begin_time` is the
-    day a thing actually arrives and the ratio cannot exceed one. What is still
+    Fixed at the cause rather than the symptom: an order delivers the items
+    that are due and keeps the rest, so `begin_time` is the day a thing
+    actually arrives and the ratio cannot exceed one. What is still
     in transit keeps the cost of what is still in transit, and the order's date
     moves to the next line due, so `store/orders_in_transit.md` says a true
     thing on both counts.
 
-    This replaces `step` outright, so it also takes on what [`record_orders_once`]
-    was there for: no record manager is ever passed on, and a delivered order is
+    This replaces `step` outright, so it also does what [`record_orders_once`]
+    does: no record manager is ever passed on, and a delivered order is
     written to `supplier_orders` once, where it was placed.
     """
     from module.order_manager import OrderManager
@@ -205,8 +205,8 @@ def deliver_per_sku_once() -> None:
         return delivered
 
     step.delivers_per_sku = True
-    # What `record_orders_once` guards against, guarded by this being the whole
-    # of `step`: it can return early rather than wrap what it no longer needs to.
+    # This `step` never passes a record manager on, so `record_orders_once` can
+    # return early rather than wrap it.
     step.records_once = True
     OrderManager.step = step
 
@@ -427,7 +427,7 @@ class Session:
         )
 
     def worth_on_shelf(self) -> float:
-        """The other definition: funds plus what is actually on the shelf.
+        """Funds plus what is actually on the shelf, stock in transit left out.
 
         Reported beside the scored one because it is what a day's liquidity
         looks like — a store can be worth a great deal and still be unable to

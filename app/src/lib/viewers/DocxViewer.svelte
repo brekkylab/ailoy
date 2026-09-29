@@ -6,16 +6,13 @@
   let host = $state<HTMLDivElement | undefined>(undefined);
   let status = $state<'rendering' | 'ready' | 'failed'>('rendering');
 
-  // Rendering writes into the DOM rather than returning markup, so it is an effect over
-  // the element and not a `$derived` — and it renders into a detached element that is
-  // swapped in whole once it is finished. That is what keeps a half-built page off the
-  // screen, and what keeps a render that is still running when the viewer is pointed at
-  // another file from writing its pages into the one now on screen.
+  // The renderer writes into the DOM, so this is an effect, not a `$derived`. It renders
+  // into a detached element swapped in whole when done, which keeps half-built pages off
+  // screen and stops a stale render (after switching files) from writing into the current one.
   //
-  // The stylesheet goes into the same detached element. A style element applies to the
-  // whole document wherever it sits, so what makes this safe is that every rule it
-  // writes is under `.docx`; what the placement buys is that the sheet is discarded
-  // along with the element instead of accumulating, one per file opened.
+  // The stylesheet goes into the same detached element. Style elements apply document-wide
+  // wherever they sit, so safety comes from every rule being under `.docx`; the placement
+  // just discards the sheet with the element instead of accumulating one per file.
   $effect(() => {
     const target = host;
     const source = bytes;
@@ -33,10 +30,8 @@
         status = 'ready';
       })
       .catch((error: unknown) => {
-        // Logged whether or not this render is still the current one, because what
-        // goes on screen is deliberately not this: the text a failure carries is
-        // written for whoever is reading the console, and names parts of a file
-        // format that mean nothing to someone who opened a form.
+        // Logged even if this render is stale. The error text is for the console: it names
+        // file-format parts that mean nothing to someone who opened a form.
         console.warn(`${entry.name} could not be rendered`, error);
         if (!live) return;
         status = 'failed';
@@ -48,26 +43,25 @@
   });
 
   async function render(source: ArrayBuffer, into: HTMLElement): Promise<void> {
-    // Loaded when a document is opened rather than when the app starts. The renderer
-    // is far larger than the app around it, and most sessions never open a `.docx`.
+    // Loaded on first open: the renderer is far larger than the app, and most sessions never
+    // open a `.docx`.
     const { renderAsync } = await import('docx-preview');
     await renderAsync(source, into, into, {
-      // The document's page geometry is the point of a form: the margins and the
-      // column widths are what make a filled-in cell land where it does on paper.
+      // Page geometry is the point of a form: margins and column widths place each filled-in
+      // cell where it lands on paper.
       inWrapper: true,
       breakPages: true,
       ignoreWidth: false,
       ignoreHeight: false,
-      // The fonts a `.docx` embeds are not installed here, so the substitution is the
-      // browser's either way. Honouring the names asked for is what gets the CJK face
-      // these documents are written in.
+      // Embedded fonts are not installed, so the browser substitutes either way; honouring the
+      // requested names gets the CJK face these documents use.
       ignoreFonts: false,
       renderHeaders: true,
       renderFooters: true,
       renderFootnotes: true,
       renderEndnotes: true,
-      // Tracked changes as the author left them: a form that went round for approval
-      // reads wrong with the edits silently applied.
+      // Tracked changes shown as left: an approval-routed form reads wrong with edits silently
+      // applied.
       renderChanges: true,
       trimXmlDeclaration: true,
     });
@@ -80,24 +74,24 @@
   {:else if status === 'failed'}
     <div class="note stack">
       <p>This file could not be read as a Word document.</p>
-      <!-- The two ways a `.docx` that is not one gets here. Both are about the file
-           rather than the viewer, which is what makes them worth naming. -->
+      <!-- The two ways a non-`.docx` file with that extension arrives. Both are about the
+           file, not the viewer, so they are named. -->
       <p class="hint">
         A <code>.doc</code> saved under a <code>.docx</code> name, or a download that
         did not finish, both land here.
       </p>
     </div>
   {/if}
-  <!-- Present from the first paint, so the effect above has somewhere to put the pages
-       once they are built. Empty until then. -->
+  <!-- Present from first paint so the effect has a target for the built pages; empty until
+       then. -->
   <div class="page" bind:this={host}></div>
 </div>
 
 <style>
   .stage {
     min-height: 100%;
-    /* The letterboxing around a page, as in the PDF viewer: what is inside is the
-       document's own colouring, and it is not the panel's to restyle. */
+    /* Letterboxing around the page: inside is the document's own colouring, not the panel's
+       to restyle. */
     background: var(--bg-sunken);
   }
   .stage.busy { display: grid; place-items: center; }
@@ -125,17 +119,15 @@
     font-size: 0.9em;
   }
 
-  /* The rendered document is written into `.page` by the effect, so everything under
-     it is global. The sheet the renderer brings styles the document itself; these
-     rules only place the pages it produces. */
+  /* The effect writes the rendered document into `.page`, so these rules are global. The
+     renderer's own sheet styles the document; these only place its pages. */
   .page :global(.docx-wrapper) {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 20px;
-    /* As in the spreadsheet viewer: sized to its content rather than to the panel, so
-       that a page wider than the panel — a landscape document — keeps its padding and
-       scrolls instead of being centred half out of view. */
+    /* Sized to content, not the panel, so a page wider than the panel (landscape) keeps its
+       padding and scrolls instead of being centred half out of view. */
     box-sizing: border-box;
     width: max-content;
     min-width: 100%;
@@ -143,8 +135,7 @@
     background: transparent;
   }
   .page :global(.docx-wrapper > section.docx) {
-    /* A page narrower than the panel keeps its width; a wider one scrolls rather than
-       being squeezed, because a form's column widths are the layout. */
+    /* Wider pages scroll rather than squeeze, because a form's column widths are the layout. */
     box-shadow: var(--shadow-md);
     background: #ffffff;
   }

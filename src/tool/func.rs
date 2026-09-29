@@ -86,12 +86,8 @@ impl ToolFunc {
         }
     }
 
-    /// Invoke the tool. The `console` argument is always required for API
-    /// uniformity; pure variants simply ignore it.
-    ///
-    /// A caller with no console to lend wants [`call_pure`](Self::call_pure): there
-    /// is no stand-in [`ConsoleClient`] to pass here, because one is a live session with a
-    /// server on the other end.
+    /// Invoke the tool. `console` is always required; pure variants ignore it.
+    /// A caller with no console to lend uses [`call_pure`](Self::call_pure).
     pub fn call<'a>(
         &self,
         args: Value,
@@ -485,8 +481,8 @@ mod tests {
     async fn test_async_value_with_console() {
         let mut console = test_console().await;
         let f = tool_func!(async |_args: Value, console: &mut ConsoleClient| -> Value {
-            // cortex as it is: an argv in, bytes out. A tool that wants a shell asks
-            // for one, and converts what came back itself.
+            // `exec` takes an argv and returns raw bytes: a shell must be invoked
+            // explicitly and the output decoded by the caller.
             let r = console.exec(["sh", "-c", "echo hi"], None).await.unwrap();
             Value::string(String::from_utf8_lossy(&r.stdout).trim().to_string())
         });

@@ -1,5 +1,5 @@
-// The app's state, in memory. Stands in for what the backend will own later: sessions,
-// their messages, and the key/model settings.
+// In-memory app state standing in for what the backend will own: sessions, their
+// messages, and key/model settings.
 
 import { DEFAULT_BEDROCK_REGION, MODELS, seedMessages, seedSessions } from "@/lib/mock";
 import { S } from "@/strings";

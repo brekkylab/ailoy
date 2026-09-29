@@ -5,7 +5,7 @@
   let { message }: { message: ChatMessage } = $props();
 </script>
 
-<!-- Plain text for now; markdown rendering comes with real replies. -->
+<!-- Plain text only, for now; markdown is not rendered. -->
 <div class="group/msg max-w-[92%] space-y-1">
   <div class="leading-relaxed whitespace-pre-wrap">{message.text}</div>
   <MessageActions text={message.text} at={message.created_at} />

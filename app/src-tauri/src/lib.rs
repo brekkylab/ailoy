@@ -20,8 +20,8 @@ pub fn run() {
     }
     tauri::Builder::default()
         .manage(cache)
-        // The viewers read a context's files through the asset protocol. The scope is
-        // granted here rather than in `tauri.conf.json`, because `AILOY_CACHE` can move it.
+        // Viewers read context files via the asset protocol; scoped here, not in
+        // `tauri.conf.json`, because `AILOY_CACHE` can move the directory.
         .setup(move |app| {
             app.asset_protocol_scope()
                 .allow_directory(&contexts, true)?;

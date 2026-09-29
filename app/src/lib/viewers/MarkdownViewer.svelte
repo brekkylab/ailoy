@@ -4,8 +4,8 @@
 
   let { text }: TextProps = $props();
 
-  // `renderMarkdown` escapes its input before parsing, so the only markup here is the
-  // markup it wrote. See the note at the top of `markdown.ts`.
+  // `renderMarkdown` escapes its input before parsing, so the only markup here is its own
+  // (see the top of `markdown.ts`).
   let html = $derived(renderMarkdown(text));
 </script>
 
@@ -24,7 +24,7 @@
     overflow-wrap: anywhere;
   }
 
-  /* The document's own tags are written by the renderer, so they are global. */
+  /* The renderer writes the document's tags, so these rules are global. */
   .prose :global(h1),
   .prose :global(h2),
   .prose :global(h3),

@@ -31,7 +31,7 @@ impl Bing {
     }
 
     /// Bing sometimes wraps the real URL in a tracking redirect of the form
-    ///   https://www.bing.com/ck/a?...&u=a1<base64url-no-pad>&...
+    /// `https://www.bing.com/ck/a?...&u=a1<base64url-no-pad>&...`.
     /// Decode the `u` query parameter: strip the "a1" prefix, then
     /// base64url-decode to recover the original URL.
     fn decode_bing_redirect(href: &str) -> String {
@@ -82,11 +82,8 @@ impl SearchEngine for Bing {
         query: &str,
         max_results: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
-        // Use wreq with Firefox TLS fingerprint emulation.
-        // Bing/Cloudflare uses JA3 TLS fingerprinting to detect bots.
-        // Standard Rust TLS backends (native-tls / rustls) have fingerprints that
-        // are blocked, while Firefox's TLS ClientHello passes.
-        // wreq with Emulation::Firefox135 replicates the Firefox TLS handshake.
+        // Bing/Cloudflare JA3 fingerprinting blocks the native-tls/rustls
+        // ClientHello but passes Firefox's, which wreq emulates.
         let rq_client = wreq::Client::builder()
             .emulation(Emulation::Firefox135)
             .timeout(std::time::Duration::from_secs(15))
@@ -157,7 +154,6 @@ impl SearchEngine for Bing {
                 continue;
             }
 
-            // Decode Bing tracking redirects to recover the real destination URL.
             let url = Self::decode_bing_redirect(href);
 
             // Description: text from .b_caption p, skipping decorative icon spans

@@ -1,8 +1,8 @@
 """cortex, as built into ailoy: the console an agent's tools run in, and what it sees.
 
-The same classes as the ``cortex-py`` package, but not the same types. Each extension module
-links its own copy of cortex, so a ``ConsoleClient`` built by ``cortex-py`` cannot be handed to
-an ``AgentBuilder`` — build the console from here.
+Each extension module links its own copy of cortex, so these are distinct types from
+``cortex-py``'s: a ``ConsoleClient`` built by ``cortex-py`` cannot be handed to an
+``AgentBuilder``.
 """
 
 from enum import IntEnum

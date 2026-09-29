@@ -1,4 +1,4 @@
-<!-- Keys are held in memory only for now; the backend will own them. -->
+<!-- Keys are held in memory only, for now. -->
 <script lang="ts">
   import Section from "@/components/settings/Section.svelte";
   import { BEDROCK_REGIONS, MODELS, PROVIDERS } from "@/lib/mock";

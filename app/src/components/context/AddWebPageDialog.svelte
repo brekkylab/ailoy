@@ -11,7 +11,7 @@
   let dialog: HTMLDialogElement;
   let text = $state("");
 
-  /** What was typed as a web address, `https://` supplied when there is no scheme; `null` when it is not one. */
+  /** The typed address, with `https://` added if it has no scheme; `null` if not a URL. */
   const url = $derived.by(() => {
     const trimmed = text.trim();
     if (!trimmed) return null;
@@ -23,7 +23,7 @@
     }
   });
 
-  /** What the address was found to be; `"error"` when it could not be reached. Follows `url` after a pause in typing. */
+  /** What the address points at, or `"error"` if unreachable. Follows `url` after a typing pause. */
   let peek = $state<UrlPeek | "error" | null>(null);
   let peeking = $state(false);
   $effect(() => {

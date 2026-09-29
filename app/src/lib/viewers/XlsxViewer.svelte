@@ -23,9 +23,8 @@
         status = read.length === 0 ? 'failed' : 'ready';
       })
       .catch((error: unknown) => {
-        // What a reader says about a malformed file names parts of a file format,
-        // which is not what belongs on screen in front of a form. It goes to the
-        // console, and the panel says the one thing that is actionable.
+        // Reader errors name file-format parts, which do not belong in front of a form; they go
+        // to the console and the panel shows the actionable message.
         console.warn(`${entry.name} could not be read`, error);
         if (live) status = 'failed';
       });
@@ -36,13 +35,12 @@
   });
 
   async function read(source: ArrayBuffer): Promise<Sheet[]> {
-    // Loaded when a spreadsheet is opened rather than when the app starts. The reader
-    // is far larger than the app around it, and most sessions never open one.
+    // Loaded on first open: the reader is far larger than the app, and most sessions never
+    // open a spreadsheet.
     const { Workbook } = await import('exceljs');
     const workbook = new Workbook();
-    // Not `source` directly: a workbook the agent wrote wires its parts up in a way the
-    // reader does not resolve, and `repair` is what puts it in the shape it reads. A
-    // file that does not need it comes back as the same bytes.
+    // `repair` first: workbooks the agent writes wire their parts in a way the reader does
+    // not resolve. Files that need no repair come back as the same bytes.
     await workbook.xlsx.load(await repair(source));
     return workbook.worksheets.map(readSheet);
   }
@@ -55,8 +53,8 @@
 {:else if status === 'failed'}
   <div class="note stack">
     <p>This file could not be read as a spreadsheet.</p>
-    <!-- The two ways an `.xlsx` that is not one gets here. Both are about the file
-         rather than the viewer, which is what makes them worth naming. -->
+    <!-- The two ways a non-`.xlsx` file with that extension arrives. Both are about the
+         file, not the viewer, so they are named. -->
     <p class="hint">
       An <code>.xls</code> saved under an <code>.xlsx</code> name, or a download that
       did not finish, both land here.
@@ -100,8 +98,8 @@
 
   <footer>
     {#if sheets.length > 1}
-      <!-- The workbook's own tabs, in its own order. Hidden for the single-sheet case,
-           which is what a form is, because one tab is not a choice. -->
+      <!-- The workbook's tabs in its own order; hidden for a single sheet (a form), where one
+           tab is not a choice. -->
       <div class="tabs" role="tablist" aria-label="Sheets">
         {#each sheets as tab, i}
           <button
@@ -128,68 +126,60 @@
 <script lang="ts" module>
   import type { Border } from './sheet';
 
-  /// A side, as the CSS shorthand — or `null`, which leaves the neighbouring cell's
-  /// border to draw the line.
+  /// A side as the CSS shorthand, or `null` to let the neighbouring cell's border draw the
+  /// line.
   function border(side: Border | null): string | null {
     return side && `${side.width}px ${side.style} ${side.color}`;
   }
 
   // -- Making an openpyxl workbook readable by the reader -----------
   //
-  // An `.xlsx` is a zip of XML parts wired together by `.rels` files, and the wiring is
-  // the one place the two ends of this app disagree. Excel writes a relationship target
-  // relative to the part that holds it — a sheet points at its table as
-  // `../tables/table1.xml` — and `exceljs` takes that string at face value: it indexes
-  // the parts it unpacked under exactly that spelling and looks them up by it, with no
-  // path resolution in between. openpyxl, which is what the agent writes workbooks with,
-  // spells the same target absolutely: `/xl/tables/table1.xml`. Both are valid OPC, Excel
-  // opens either, and `exceljs` finds nothing under the second one — so the lookup
-  // returns `undefined` and the load throws on the next line. That is why a file the
-  // browser could not open downloads and opens fine in Excel.
+  // An `.xlsx` is a zip of XML parts wired by `.rels` files. Excel writes relationship
+  // targets relative to the holding part (`../tables/table1.xml`), and `exceljs` indexes
+  // and looks up parts by that exact string, with no path resolution. openpyxl (which the
+  // agent uses) writes the same target absolutely (`/xl/tables/table1.xml`). Both are valid
+  // OPC and Excel opens either, but `exceljs` finds nothing for the absolute form and the
+  // load throws, so such a file fails here yet opens fine in Excel.
   //
-  // So the bytes are rewritten before the reader sees them: absolute targets become the
-  // relative spelling `exceljs` indexes by, and cell comments are dropped. Comments go
-  // rather than get rewritten because openpyxl puts them at `xl/comments/comment1.xml`
-  // while `exceljs` only ever looks for `xl/comments1.xml` — there is no target spelling
-  // that would find them — and the viewer does not render notes anyway, so nothing that
-  // reaches the screen is lost.
+  // So the bytes are rewritten first: absolute targets become the relative spelling
+  // `exceljs` indexes by, and cell comments are dropped. openpyxl puts comments at
+  // `xl/comments/comment1.xml` while `exceljs` only looks for `xl/comments1.xml`, so no
+  // target spelling finds them, and the viewer does not render notes anyway.
   //
-  // A workbook that needs none of this is handed back untouched, bytes and all: Excel's
-  // own files take the reader's fast path and never get repacked.
+  // A workbook needing none of this is returned untouched, so Excel's own files skip
+  // repacking.
 
-  /// A relationship type whose part this viewer drops rather than rewires. Matched
-  /// against the tail of the `Type` URI.
+  /// Relationship types whose parts are dropped rather than rewired, matched against the
+  /// tail of the `Type` URI.
   const DROPPED = /\/(?:comments|vmlDrawing)$/;
 
-  /// Where those parts live in a workbook openpyxl wrote. Removed alongside the
-  /// relationships that point at them, so nothing is left addressing a part that is gone.
+  /// Where openpyxl puts those parts. Removed along with the relationships pointing at them,
+  /// so nothing addresses a missing part.
   const DROPPED_PARTS = /^xl\/comments\/|\.vml$/i;
 
-  /// One `<Relationship>` element, whole — self-closing, which is how both writers spell
-  /// it, or an open/close pair, which the schema also allows.
+  /// One whole `<Relationship>` element: self-closing (as both writers emit) or an
+  /// open/close pair (also schema-valid).
   const RELATIONSHIP = /<Relationship\b[^>]*?(?:\/>|>[\s\S]*?<\/Relationship>)/g;
 
   const ATTR = (name: string) => new RegExp(`\\b${name}="([^"]*)"`);
 
-  /// An absolute part name, as the relative path `exceljs` would have indexed it under.
+  /// An absolute part name as the relative path `exceljs` would index it under.
   ///
-  /// Not any relative path that resolves to the same part — the one it writes itself,
-  /// which is the shortest: the shared leading folders are dropped and one `../` is
-  /// spent for each folder left over on the way up. `xl/worksheets/` to
-  /// `xl/tables/table1.xml` is `../tables/table1.xml`, and never
-  /// `../../xl/tables/table1.xml`, which addresses the same file and would still not be
-  /// found.
+  /// Must be the shortest relative path, the one `exceljs` itself writes: shared leading
+  /// folders dropped, one `../` per remaining folder. From `xl/worksheets/`,
+  /// `xl/tables/table1.xml` is `../tables/table1.xml`, never `../../xl/tables/table1.xml`,
+  /// which names the same file but would not be found.
   function relativize(fromDir: string, absolute: string): string {
     const from = fromDir.split('/').filter(Boolean);
     const to = absolute.split('/').filter(Boolean);
     let shared = 0;
-    // `to.length - 1` keeps the filename out of it: a part is never its own folder.
+    // `to.length - 1` excludes the filename: a part is never its own folder.
     while (shared < from.length && shared < to.length - 1 && from[shared] === to[shared]) shared++;
     return '../'.repeat(from.length - shared) + to.slice(shared).join('/');
   }
 
-  /// One `.rels` part, rewritten — or null when it was already in the shape the reader
-  /// wants, which is what says a workbook needs no repacking at all.
+  /// One `.rels` part rewritten, or null if already in the reader's shape; all-null means
+  /// the workbook needs no repacking.
   function rewrite(xml: string, dir: string): string | null {
     let changed = false;
     const out = xml.replace(RELATIONSHIP, (element) => {
@@ -197,27 +187,25 @@
         changed = true;
         return '';
       }
-      // A target outside the package is a URL, not a part name, and is left as it stands.
+      // A target outside the package is a URL, not a part name; left as is.
       if (ATTR('TargetMode').exec(element)?.[1] === 'External') return element;
       const target = ATTR('Target').exec(element)?.[1];
       if (!target || !target.startsWith('/')) return element;
       changed = true;
-      // A function replacement, so a `$` in a part's name is a `$` and not a backreference.
+      // Function replacement, so a `$` in a part name is literal, not a backreference.
       return element.replace(ATTR('Target'), () => `Target="${relativize(dir, target.slice(1))}"`);
     });
     return changed ? out : null;
   }
 
-  /// `bytes` in a shape `exceljs` can load — the same bytes when they already were.
+  /// `bytes` in a shape `exceljs` can load; the same bytes if already so.
   ///
-  /// Never throws on a file it cannot make sense of: something that is not a zip, or is
-  /// a zip of something else, is handed back unchanged so that the error the viewer
-  /// reports is the reader's own rather than this pass failing first.
+  /// Never throws: a non-zip or unrelated zip is returned unchanged, so the viewer reports
+  /// the reader's own error rather than this pass's.
   async function repair(bytes: ArrayBuffer): Promise<ArrayBuffer> {
     try {
-      // Alongside the reader itself: both are loaded when a spreadsheet is opened and
-      // not before. `exceljs` unpacks zips with this same library, so it costs nothing
-      // that was not already being paid.
+      // Loaded with the reader, on first spreadsheet open. `exceljs` unpacks zips with this
+      // same library, so it adds no cost.
       const JSZip = (await import('jszip')).default;
       const zip = await JSZip.loadAsync(bytes);
 
@@ -235,8 +223,7 @@
       for (const path of Object.keys(zip.files)) {
         if (DROPPED_PARTS.test(path)) zip.remove(path);
       }
-      // Stored rather than deflated: this archive is read once, in memory, by the line
-      // that asked for it, and compressing it would be work done to be undone.
+      // Stored, not deflated: read once in memory right away, so compressing is wasted work.
       return await zip.generateAsync({ type: 'arraybuffer' });
     } catch {
       return bytes;
@@ -246,11 +233,10 @@
 
 <style>
   .stage {
-    /* The letterboxing around the sheet, as in the PDF and Word viewers: what is
-       inside is the document's own colouring and not the panel's to restyle.
-       `max-content` rather than a plain block, because a sheet wider than the panel
-       scrolls: a block is only as wide as the container, so its right-hand padding
-       lands under the sheet and the last column ends up flush against the edge. */
+    /* Letterboxing around the sheet: inside is the document's own colouring, not the panel's
+       to restyle. `max-content`, not a plain block, because a wider-than-panel sheet
+       scrolls: a block is only as wide as its container, so its right padding would land
+       under the sheet and the last column would sit flush against the edge. */
     box-sizing: border-box;
     width: max-content;
     min-width: 100%;
@@ -268,9 +254,8 @@
 
   table {
     border-collapse: collapse;
-    /* Fixed, so the file's column widths are the layout rather than a starting point
-       the browser rebalances against the content — which in a form is what puts a
-       value under the wrong heading. */
+    /* Fixed, so the file's column widths are the layout rather than a starting point the
+       browser rebalances (which in a form puts values under the wrong heading). */
     table-layout: fixed;
     color: #1a1917;
     font-size: var(--fs-md);
@@ -279,8 +264,7 @@
   td {
     padding: 2px 5px;
     overflow: hidden;
-    /* A spreadsheet does not wrap unless the cell says to, and a form's column widths
-       are set on the assumption that it does not. */
+    /* Cells do not wrap unless the cell says so; form column widths assume that. */
     white-space: pre;
     text-overflow: ellipsis;
     vertical-align: bottom;

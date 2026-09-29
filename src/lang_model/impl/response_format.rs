@@ -7,13 +7,13 @@ use crate::datatype::Value;
 /// The default implementation adds `"additionalProperties": false` to every
 /// object sub-schema, satisfying Anthropic and OpenAI strict mode.  Marshal
 /// types that require different transformations (e.g. stripping unsupported
-/// keywords) override [`marshal_response_schema`].
+/// keywords) override [`marshal_response_schema`](Self::marshal_response_schema).
 pub trait ResponseSchemaMarshal {
     /// Recursively add `"additionalProperties": false` to object sub-schemas that
-    /// omit it.  Returns a new owned Value; the input is never mutated.
+    /// omit it, keeping any explicit value.
     ///
-    /// Traversal covers: `properties` values, `items`, `prefixItems` entries,
-    /// `anyOf`/`oneOf`/`allOf` entries, and `$defs`/`definitions` values.
+    /// Traversal covers: `properties` values, `items`, `not`, `prefixItems`
+    /// entries, `anyOf`/`oneOf`/`allOf` entries, and `$defs`/`definitions` values.
     fn marshal_response_schema(&self, schema: &Value) -> Value {
         let Value::Object(obj) = schema else {
             return schema.clone();

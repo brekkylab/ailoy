@@ -46,7 +46,7 @@ pub enum LangModelProviderElem {
 /// `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `XAI_API_KEY` / `DEEPSEEK_API_KEY` /
 /// `KIMI_API_KEY` / `OPENROUTER_API_KEY` that is set, plus `bedrock/*` (Converse) for `AWS_BEARER_TOKEN_BEDROCK`
 /// (region from `AWS_REGION`, then `AWS_DEFAULT_REGION`, defaulting to
-/// `us-east-1`).  The default is what the global [`lang_model_providers`]
+/// `us-east-1`).  The default is what the global [`get_lm_providers`]
 /// registry stores under the `"default"` key.  Use [`new`](Self::new) for an
 /// empty registry.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -204,12 +204,9 @@ pub fn model_family(model: &str) -> (&str, &str) {
     id.split_once('/').unwrap_or(("", id))
 }
 
-/// Process-wide named registry of [`LangModelProvider`] instances.
-///
-/// Populated at first access with a single `"default"` entry built from
-/// [`LangModelProvider::default`] (i.e. the env-variable seeded provider).
-/// Additional named providers can be registered via [`lang_model_providers_mut`],
-/// and looked up via [`lang_model_providers`].
+/// Process-wide named registry of [`LangModelProvider`]s, seeded at first
+/// access with a `"default"` entry from [`LangModelProvider::default`].
+/// Accessed via [`get_lm_providers`] and [`get_lm_providers_mut`].
 static LANG_MODEL_PROVIDERS: LazyLock<RwLock<HashMap<String, LangModelProvider>>> =
     LazyLock::new(|| {
         let mut map = HashMap::new();
@@ -245,7 +242,7 @@ fn glob_match_chars(p: &[char], t: &[char]) -> bool {
         (None, None) => true,
         (None, Some(_)) => false,
         (Some((&'*', rest_p)), _) => {
-            // * matches zero characters here, or consume one character from text
+            // `*` matches empty here, or consumes one text char and retries.
             glob_match_chars(rest_p, t)
                 || t.split_first()
                     .is_some_and(|(_, rest_t)| glob_match_chars(p, rest_t))
@@ -273,10 +270,9 @@ mod tests {
         let mut p = LangModelProvider::new();
         p.insert("openai/*".into(), dummy());
         p.insert("openai/gpt-4o".into(), dummy());
-        // both match; exact wins (verified indirectly: removing exact still leaves a hit).
         assert!(p.get("openai/gpt-4o").is_some());
         p.remove("openai/gpt-4o");
-        assert!(p.get("openai/gpt-4o").is_some()); // still resolves via glob
+        assert!(p.get("openai/gpt-4o").is_some());
     }
 
     #[test]
@@ -285,7 +281,6 @@ mod tests {
         p.insert("*".into(), dummy());
         p.insert("openai/*".into(), dummy());
         p.insert("anthropic/*".into(), dummy());
-        // longest literal run is "openai/" — ensures it would be picked over "*".
         assert!(p.get("openai/gpt-4o").is_some());
         assert!(p.get("anthropic/claude-x").is_some());
         assert!(p.get("anything-else").is_some());

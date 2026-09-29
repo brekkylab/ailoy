@@ -5,20 +5,18 @@
 
   let { entry, text, encoding }: TextProps = $props();
 
-  /// How many records are put in the DOM at a time. A spreadsheet export runs to tens
-  /// of thousands of rows, and a table that large lays out slowly enough to lock the
-  /// tab — so the first page is on screen immediately and the rest is a click away.
+  /// Records per page in the DOM. Exports run to tens of thousands of rows, and laying out
+  /// a table that large locks the tab.
   const PAGE = 500;
 
-  // A `.tsv` has already said what its delimiter is; anything else is sniffed.
+  // A `.tsv` declares its delimiter; anything else is sniffed.
   let table = $derived(parseCsv(text, extOf(entry.name) === 'tsv' ? '\t' : undefined));
   let numeric = $derived(
     Array.from({ length: table.columns }, (_, i) => isNumericColumn(table.rows, i)),
   );
 
   let shown = $state(PAGE);
-  // Back to the first page when the viewer is pointed at another file, which reuses
-  // this component rather than building a new one.
+  // Back to the first page on another file: the component is reused, not rebuilt.
   $effect(() => {
     void text;
     shown = PAGE;
@@ -42,8 +40,8 @@
     <table>
       <thead>
         <tr>
-          <!-- The row numbers are the file's, not the table's, so a reader can point
-               at a row in the source. The header record is row 1. -->
+          <!-- File row numbers, not table ones, so a reader can point at a source row. The header
+               record is row 1. -->
           <th class="gutter" scope="col"><span class="sr-only">Row</span></th>
           {#each table.header as cell, i}
             <th scope="col" class:num={numeric[i]}>{cell}</th>
@@ -86,8 +84,8 @@
 
 <style>
   .sheet {
-    /* The footer sits below; this is the part that scrolls sideways when a wide sheet
-       needs it, while the panel behind it scrolls down. */
+    /* Scrolls sideways for wide sheets while the panel behind scrolls down; the footer sits
+       below. */
     min-height: calc(100% - 30px);
     overflow-x: auto;
   }
@@ -122,8 +120,7 @@
     color: var(--text);
   }
 
-  /* The row-number gutter: fixed while the sheet scrolls sideways, so the number
-     stays with its row. */
+  /* Row-number gutter, fixed during sideways scroll so each number stays with its row. */
   .gutter {
     position: sticky;
     left: 0;
@@ -143,8 +140,8 @@
 
   tbody tr:hover td,
   tbody tr:hover .gutter {
-    /* `background-color`, not the shorthand: the shorthand would clear the blank-cell
-       marker below, which is a background-image. */
+    /* `background-color`, not the shorthand, which would clear the blank-cell marker (a
+       background-image) below. */
     background-color: var(--bg-hover);
   }
 
@@ -153,7 +150,7 @@
     text-align: right;
   }
   .blank {
-    /* An empty cell reads as an empty cell rather than as a rendering slip. */
+    /* So an empty cell reads as empty rather than as a rendering slip. */
     background-image: linear-gradient(
       to top right,
       transparent calc(50% - 0.5px),

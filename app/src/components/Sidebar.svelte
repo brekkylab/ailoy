@@ -50,7 +50,7 @@
     onSelect: (id: string | null) => void;
     /** Opens an unsaved chat. Nothing is stored until the user sends into it. */
     onNewChat: () => void;
-    /** Whether the thread on screen is that unsaved chat, which is New chat's row to mark. */
+    /** Whether the thread on screen is that unsaved chat, so the New chat row is marked. */
     drafting: boolean;
     view: MainView;
     onSelectView: (view: MainView) => void;
@@ -98,7 +98,7 @@
     return a ? a.name || S.untitled : S.agent;
   }
 
-  /** A new agent inherits the open one's model, which is likelier than the first in the list. */
+  /** A new agent inherits the open one's model, a likelier pick than the list's first. */
   function createAgent() {
     const model = agents.list.find((a) => a.id === agent)?.model ?? store.defaultModel;
     onSelectAgent(agents.create(S.newAgentName, model).id);
@@ -189,7 +189,7 @@
         <p class="p-3 text-xs text-muted-foreground">{agents.loaded ? S.empty : S.loadingAgents}</p>
       {/each}
     </div>
-    <!-- The pages of the open agent, pinned to the bottom like a context's commands. -->
+    <!-- The pages of the open agent, pinned to the bottom. -->
     {@const current = agents.list.find((a) => a.id === agent)}
     {#if current}
       <nav class="space-y-0.5 border-t px-2 pt-2 pb-3">

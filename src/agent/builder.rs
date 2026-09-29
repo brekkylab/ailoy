@@ -12,13 +12,8 @@ use crate::{
 
 /// Fluent builder over [`AgentSpec`] for [`Agent`].
 ///
-/// This is a convenience wrapper around the spec/provider construction path — useful
-/// when you want to assemble an agent inline rather than constructing an [`AgentSpec`]
-/// up front.
-///
-/// When you already hold a fully-formed [`AgentSpec`], call
-/// [`Agent::try_with_provider_name`] / [`Agent::try_new`] / [`Agent::try_with_provider`]
-/// directly instead.
+/// For assembling an agent inline; with a fully-formed [`AgentSpec`], call
+/// [`Agent::try_new`] / [`Agent::try_with_provider`] directly.
 ///
 /// # Examples
 ///
@@ -30,11 +25,9 @@ use crate::{
 /// # };
 /// # #[tokio::main]
 /// # async fn main() -> anyhow::Result<()> {
-/// // Use the global `"default"` agent-provider bundle (env-driven lang-model
-/// // registry + built-in tools).  Register additional named providers via
-/// // `get_lm_providers_mut()` / `get_tool_providers_mut()` /
-/// // `get_agent_providers_mut()` and reference them by name with
-/// // [`AgentBuilder::agent_provider`].
+/// // Uses the `"default"` agent-provider bundle (env-driven lang models + built-in
+/// // tools). Register others via `get_lm_providers_mut()` / `get_tool_providers_mut()` /
+/// // `get_agent_providers_mut()` and select them with [`AgentBuilder::agent_provider`].
 /// let agent = AgentBuilder::new("openai/gpt-4o")
 ///     .tool(ToolDescBuilder::new("web_search")
 ///         .description("Search the web.")
@@ -49,8 +42,8 @@ use crate::{
 pub struct AgentBuilder {
     spec: AgentSpec,
 
-    /// Name of the [`AgentProvider`](crate::agent::AgentProvider) bundle to
-    /// resolve at [`build`](Self::build) time.  Defaults to `"default"`.
+    /// [`AgentProvider`](crate::agent::AgentProvider) bundle resolved at
+    /// [`build`](Self::build) time. Defaults to `"default"`.
     agent_provider: String,
 
     history: Vec<Message>,
@@ -63,9 +56,8 @@ pub struct AgentBuilder {
 }
 
 impl AgentBuilder {
-    /// Create a builder for the given model identifier (e.g. `"openai/gpt-4o"`).
-    /// The model must be resolvable by the [`AgentProvider`](crate::agent::AgentProvider)
-    /// bundle selected at [`build`](Self::build) time.
+    /// Create a builder for `model` (e.g. `"openai/gpt-4o"`), which the selected
+    /// [`AgentProvider`](crate::agent::AgentProvider) must resolve at [`build`](Self::build) time.
     pub fn new(model: impl Into<String>) -> Self {
         let spec = AgentSpec::new(model);
         Self {
@@ -78,11 +70,9 @@ impl AgentBuilder {
         }
     }
 
-    /// Select the [`AgentProvider`](crate::agent::AgentProvider) bundle to
-    /// resolve against at [`build`](Self::build) time.  `name` must exist in
-    /// the global registry exposed by
-    /// [`get_agent_providers`](crate::agent::get_agent_providers); defaults
-    /// to `"default"` if this method is never called.
+    /// Select the [`AgentProvider`](crate::agent::AgentProvider) bundle (default
+    /// `"default"`). `name` must be registered in
+    /// [`get_agent_providers`](crate::agent::get_agent_providers) by [`build`](Self::build) time.
     pub fn agent_provider(mut self, name: impl Into<String>) -> Self {
         self.agent_provider = name.into();
         self
@@ -127,9 +117,9 @@ impl AgentBuilder {
         self
     }
 
-    /// Append a sub-agent spec.  At [`build`](Self::build) time the sub-agent is
-    /// materialised and registered as a callable tool, sharing the parent's machine.
-    /// The sub-spec must carry an [`AgentCard`](crate::agent::AgentCard).
+    /// Append a sub-agent spec, registered as a callable tool at [`build`](Self::build)
+    /// time and sharing the parent's console. It must carry an
+    /// [`AgentCard`](crate::agent::AgentCard).
     pub fn subagent(mut self, spec: AgentSpec) -> Self {
         self.spec.subagents.push(spec);
         self
@@ -145,10 +135,8 @@ impl AgentBuilder {
 
     /// Run this agent's console tools in `console`, which must already be started.
     ///
-    /// Required for an agent whose tools need one — nothing builds a console on its
-    /// own, because building one means choosing a console server to start, and that
-    /// is the caller's decision. Without it, pure tools still run and a console tool
-    /// fails saying so.
+    /// Nothing builds a console implicitly, since that means choosing a console server.
+    /// Without one, pure tools still run and console tools fail with an error.
     pub fn console(mut self, console: ConsoleClient) -> Self {
         self.console = Some(Arc::new(Mutex::new(Some(console))));
         self
@@ -162,18 +150,12 @@ impl AgentBuilder {
 
     /// Let this agent remember into `memory`.
     ///
-    /// Which brings the `mem_search` and `mem_insert` tools with it: an agent that was
-    /// given a memory can recall from it and write to it, and one that was not has
-    /// neither tool. Nothing else has to be listed — these two are not spec tools,
-    /// because which store is a value this one agent holds rather than a name in the
-    /// [`ToolProvider`](crate::tool::ToolProvider).
+    /// Adds the `mem_search` and `mem_insert` tools; they are not spec tools because the
+    /// store is a per-agent value, not a name in the [`ToolProvider`](crate::tool::ToolProvider).
     ///
-    /// The store is expected to exist: `mem init` makes one. A file that is not there is
-    /// reported by the first memory tool call rather than by [`build`](Self::build),
-    /// since finding out means running a command on the console.
-    ///
-    /// Runs on the same console as every other tool, so an agent with a memory wants a
-    /// [`console`](Self::console) too — a memory tool without one fails saying so.
+    /// The store must already exist (`mem init`); a missing file is reported by the first
+    /// memory tool call, not by [`build`](Self::build). Memory tools run on the
+    /// [`console`](Self::console), so one is required too.
     pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
         self.memory = Some(memory.into());
         self
@@ -224,11 +206,8 @@ impl AgentBuilder {
         self
     }
 
-    /// Materialise the agent by dispatching to
-    /// [`Agent::try_with_provider_name_and_state`] with a state assembled from
-    /// the optional machine and history.
-    ///
-    /// Async as [`Agent::try_with_provider_and_state`] is, which reads the skills.
+    /// Materialise the agent via [`Agent::try_with_provider_and_state`], which is async
+    /// because it reads the skills through the console.
     pub async fn build(self) -> anyhow::Result<Agent> {
         let Self {
             spec,
@@ -271,8 +250,7 @@ mod tests {
     const TEST_MODEL: &str = "openai/gpt-4o-mini";
     const TEST_PROVIDER_NAME: &str = "agent_builder_tests";
 
-    /// Register a dummy lang-model provider scoped to this test module and an
-    /// `AgentProvider` bundle that points at it.  Each call is idempotent.
+    /// Register a dummy lang-model provider and an `AgentProvider` pointing at it. Idempotent.
     fn ensure_dummy_provider() {
         let mut lmps = get_lm_providers_mut();
         if !lmps.contains_key(TEST_PROVIDER_NAME) {
@@ -324,8 +302,7 @@ mod tests {
         assert!(agent.get_history().is_empty());
     }
 
-    /// `console()` carries the supplied console through to `state.console`, already
-    /// filled in — where an agent left to itself would build one on first run.
+    /// `console()` puts the supplied console into `state.console`.
     #[tokio::test]
     async fn test_builder_console_is_applied() {
         ensure_dummy_provider();
@@ -424,8 +401,7 @@ mod tests {
         assert_eq!(system_text(&agent).as_deref(), Some("stored instruction"));
     }
 
-    /// `memory()` lands on the state, which is what the agent's constructor reads to
-    /// decide whether it hands out the memory tools.
+    /// `memory()` lands on the state, which decides whether the agent gets memory tools.
     #[tokio::test]
     async fn test_builder_memory_is_applied() {
         use crate::memory::Memory;
@@ -445,7 +421,7 @@ mod tests {
         );
     }
 
-    /// A path names a store, so it can be handed in as one and lands as the same value.
+    /// A path converts into the equivalent `Memory`.
     #[tokio::test]
     async fn test_builder_memory_takes_a_path() {
         use crate::memory::Memory;

@@ -173,8 +173,7 @@ mod tests {
             results.iter().map(|r| &r.url).collect::<Vec<_>>()
         );
 
-        // 4. Results that appeared in more than one engine should be ranked first.
-        // (Relevance is monotonically non-increasing after sort in MetaSearcher.)
+        // 4. Results are sorted by descending relevance.
         for window in results.windows(2) {
             assert!(
                 window[0].relevance >= window[1].relevance,

@@ -168,7 +168,6 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
         let LangModelProviderElem::API { url, api_key, .. } = req.provider;
         let options = req.options;
 
-        // Extract system instruction from system message if present
         let instructions = req
             .messages
             .iter()
@@ -319,10 +318,9 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
                         text: text.to_owned(),
                     }]);
             }
-            // Incremental reasoning summary -> thinking. Set the role too (like
-            // output_text.delta): a reasoning model truncated mid-reasoning emits
-            // only reasoning before the terminal event, and without a role the
-            // accumulated message makes finish() bail with "Role not specified".
+            // Incremental reasoning summary -> thinking. Also sets the role: a
+            // reasoning model truncated mid-reasoning emits only reasoning before
+            // the terminal event, and a role-less message fails finish().
             "response.reasoning_summary_text.delta" => {
                 let Some(text) = val.pointer("/delta").and_then(|v| v.as_str()) else {
                     return Ok(None);
@@ -405,7 +403,6 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("Root should be an object"))?;
 
-        // Parse finish reason from status
         let status = root
             .get("status")
             .and_then(|v| v.as_str())
@@ -432,7 +429,6 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             _ => None,
         };
 
-        // Parse output items
         let mut delta = MessageDelta::default();
 
         if let Some(output) = root.get("output")
@@ -445,7 +441,6 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
                 let ty = item_obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
                 match ty {
                     "message" => {
-                        // Parse role
                         if delta.role.is_none() {
                             let role = item_obj
                                 .get("role")
@@ -458,7 +453,6 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
                                 .unwrap_or(Role::Assistant);
                             delta.role = Some(role);
                         }
-                        // Parse content parts
                         if let Some(content) = item_obj.get("content")
                             && let Some(parts) = content.as_array()
                         {
@@ -500,7 +494,6 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
                         });
                     }
                     "reasoning" => {
-                        // Parse summary text as thinking
                         if let Some(summary) = item_obj.get("summary")
                             && let Some(parts) = summary.as_array()
                         {
@@ -517,7 +510,7 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             }
         }
 
-        // Adjust finish reason for tool calls
+        // Tool-call responses also report `completed`.
         if !delta.tool_calls.is_empty()
             && finish_reason
                 .clone()
@@ -526,7 +519,6 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             finish_reason = Some(FinishReason::ToolCall {});
         }
 
-        // Parse usage (OpenAI Responses API: usage.input_tokens / output_tokens)
         let usage = val
             .as_object()
             .and_then(|r| r.get("usage"))
@@ -1053,7 +1045,6 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").unwrap();
 
-        // Fetch a real JPEG image to use as the tool result
         let img_bytes = reqwest::get(
             "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg",
         )

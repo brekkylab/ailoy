@@ -12,7 +12,7 @@
 //!
 //! cortex comes along whole. Its classes are linked into this addon from `cortex-node` rather
 //! than loaded from cortex's own, because an agent has to take a `ConsoleClient` apart to share its
-//! session, and two addons cannot see into each other's — see [`agent`] for the sharing.
+//! session, and two addons cannot see into each other's — see the `agent` module for the sharing.
 
 mod agent;
 mod convert;

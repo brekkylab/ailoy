@@ -166,7 +166,7 @@ impl ToolDescBuilder {
     }
 }
 
-/// Longest tool name the stricter of the two model APIs (OpenAI) accepts.
+/// Longest tool name accepted by OpenAI, the strictest model API on this limit.
 pub const MAX_TOOL_NAME_LEN: usize = 64;
 
 /// Map anything a model API would refuse in a tool name onto `_`.

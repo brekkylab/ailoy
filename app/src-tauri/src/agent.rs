@@ -1,17 +1,14 @@
 //! An agent: one JSON document at `agents/{id}/agent.json`.
 //!
-//! The collection is what this module has opinions about — the id names the directory,
-//! `createdAt` orders the list, and at most one agent is the default. Everything else the
-//! editor writes — the model, the prompt, the tools, the sandbox — rides through `rest`
-//! untouched: it is the app's shape and not ours, so a field added there needs no change
-//! here and cannot be dropped on a round trip by a struct that has not heard of it yet.
+//! This module owns only the collection: the id names the directory, `createdAt` orders
+//! the list, and at most one agent is the default. Every other field (model, prompt, tools,
+//! sandbox) passes through `rest` untouched, so a field the app adds needs no change here
+//! and survives a round trip.
 //!
-//! A few agents live beside the collection rather than in it: the [`HELPERS`], one behind
-//! the helper pane of each tab that has one — `context` changes a context's files,
-//! `agentmaker` builds agents. They are the same kind of document in the same directory,
-//! but [`list`] leaves them out and [`save`] and [`remove`] refuse them, so the Agent tab
-//! never shows them and nothing there can pick one as a sub-agent or a default. Their
-//! settings are edited in their files.
+//! The [`HELPERS`] (`context` edits a context's files, `agentmaker` builds agents) back the
+//! helper pane of their tabs. They share the directory, but [`list`] omits them and
+//! [`save`] and [`remove`] refuse them, so the Agent tab never shows them and none can be
+//! a sub-agent or the default. Their settings are edited in their files.
 
 use std::{
     fs, io,
@@ -35,8 +32,7 @@ pub struct Agent {
     /// The agent a chat starts with when none is named. The collection keeps it to one.
     #[serde(default, rename = "default")]
     pub is_default: bool,
-    /// Milliseconds since the epoch. Set once, and kept across every later write; 0 on
-    /// the way in means the sender does not know it.
+    /// Milliseconds since the epoch; kept across writes. 0 on input means unknown.
     #[serde(default)]
     pub created_at: u64,
     #[serde(default)]
@@ -46,8 +42,8 @@ pub struct Agent {
     pub rest: Map<String, Value>,
 }
 
-/// What the collection starts with, so a chat has something to answer with before anyone
-/// has opened the Agent tab. It reads the default context (`context::DEFAULT_ID`).
+/// Seeded into an empty collection so chat works before the Agent tab is opened. Reads the
+/// default context (`context::DEFAULT_ID`).
 const SEED: &str = r#"{
   "id": "default",
   "name": "Default",
@@ -58,8 +54,8 @@ const SEED: &str = r#"{
   "instruction": "Answer concisely, in the language the question was asked in.\n\nBefore you touch the files in a context, read `README.md` at its root if there is one: it says how the context is laid out and how its files are to be read."
 }"#;
 
-/// The helpers, by id — also the name of each one's directory — with what each starts with.
-/// None names a `context`: each works on whatever its tab has open.
+/// Helper ids (also their directory names) with their seeds. None names a `context`: each
+/// works on whatever its tab has open.
 pub const HELPERS: &[(&str, &str)] = &[
     (
         "context",
@@ -102,7 +98,7 @@ fn load(path: &Path) -> io::Result<Option<Agent>> {
     }
 }
 
-/// Beside the target and renamed over it, so a reader never sees half a file.
+/// Writes beside the target and renames over it, so a reader never sees half a file.
 fn write(dir: &Path, agent: &Agent) -> io::Result<()> {
     let path = file(dir, &agent.id);
     fs::create_dir_all(path.parent().expect("a file under a directory"))?;
@@ -125,8 +121,7 @@ fn refuse_helper(id: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Every agent under `dir` but the helpers, oldest first. One that cannot be read is
-/// left out, not fatal.
+/// Every agent under `dir` but the helpers, oldest first. Unreadable ones are skipped.
 pub fn list(dir: &Path) -> Vec<Agent> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -156,9 +151,7 @@ pub fn list(dir: &Path) -> Vec<Agent> {
     agents
 }
 
-/// Writes `agent` under its id, creating it if there is none yet. Made the default, it
-/// takes the flag off whoever had it rather than being refused: that is the only thing
-/// sending it could mean.
+/// Creates or overwrites `agent`. If it is the default, the previous default loses the flag.
 pub fn save(dir: &Path, mut agent: Agent) -> io::Result<Agent> {
     if !plain_id(&agent.id) {
         return Err(io::Error::new(
@@ -188,7 +181,7 @@ pub fn save(dir: &Path, mut agent: Agent) -> io::Result<Agent> {
     Ok(agent)
 }
 
-/// The agent `id` and its directory. One that is not there is already what was asked.
+/// Removes the agent `id` and its directory; a missing one is not an error.
 pub fn remove(dir: &Path, id: &str) -> io::Result<()> {
     if !plain_id(id) {
         return Err(io::Error::new(
@@ -203,8 +196,8 @@ pub fn remove(dir: &Path, id: &str) -> io::Result<()> {
     }
 }
 
-/// Writes the seed agent when the collection is empty, and each helper whose file is
-/// missing — only then, so a start never overwrites what was edited.
+/// Writes the seed agent into an empty collection and each missing helper; never
+/// overwrites an existing file.
 pub fn seed(dir: &Path) -> io::Result<()> {
     for &(id, _) in HELPERS {
         helper(dir, id)?;
@@ -254,8 +247,8 @@ pub fn remove_agent(cache: State<'_, Cache>, id: String) -> Result<(), String> {
     remove(&cache.agents(), &id).map_err(|err| err.to_string())
 }
 
-/// `agent` — the document as the editor has it, which may be ahead of the file — written
-/// to `to`, outside the collection.
+/// Writes `agent` to `to`, outside the collection. Takes the editor's copy, which may be
+/// ahead of the file.
 #[tauri::command]
 pub fn export_agent(agent: Value, to: PathBuf) -> Result<(), String> {
     serde_json::to_vec_pretty(&agent)

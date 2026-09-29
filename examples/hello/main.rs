@@ -15,7 +15,6 @@ use ailoy::{
 };
 use futures::StreamExt as _;
 
-/// The request the agent is given.
 const QUERY: &str = "What is the meaning of hello world?";
 
 #[tokio::main]

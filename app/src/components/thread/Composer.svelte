@@ -15,8 +15,8 @@
 
   let text = $state("");
   let box = $state<HTMLTextAreaElement>();
-  // A draft has no session to hold its agent yet, so it keeps one here until the first send.
-  // `null` is the default agent, whichever that is by then.
+  // A draft has no session to hold its agent, so it is kept here until the first send.
+  // `null` means whichever agent is the default by then.
   let draftAgent = $state<string | null>(null);
 
   const session = $derived(sessionId ? store.sessions.find((s) => s.id === sessionId) : undefined);
@@ -24,7 +24,7 @@
   const running = $derived(sessionId ? !!store.running[sessionId] : false);
   const canSend = $derived(text.trim().length > 0 && !running);
 
-  // Back into the box whenever the thread or the draft token changes.
+  // Refocus whenever the thread or the draft token changes.
   $effect(() => {
     void sessionId;
     void draft;

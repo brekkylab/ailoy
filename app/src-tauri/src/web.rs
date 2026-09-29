@@ -1,12 +1,11 @@
-//! What a web address points at, looked up before it is added: a YouTube video or an
-//! ordinary page, and the title it goes by.
+//! Looks up a URL before it is added: whether it is a YouTube video or a page, and its title.
 
 use std::time::Duration;
 
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 
-/// How much of a page is read looking for its title; `<head>` comes well before this.
+/// Bytes read looking for the title; `<head>` ends well before this.
 const HEAD_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -19,13 +18,13 @@ pub enum Kind {
 #[derive(Debug, Serialize)]
 pub struct Peek {
     pub kind: Kind,
-    /// The page's `<title>` or the video's; `None` when it could not be had.
+    /// The page's or video's title; `None` if unavailable.
     pub title: Option<String>,
     /// The channel, for a video.
     pub author: Option<String>,
 }
 
-/// Whether `url` is on YouTube, judged by its host alone.
+/// Judged by host alone.
 fn is_youtube(url: &Url) -> bool {
     let host = url.host_str().unwrap_or_default();
     let host = host.strip_prefix("www.").unwrap_or(host);
@@ -43,7 +42,7 @@ fn client() -> reqwest::Result<Client> {
         .build()
 }
 
-/// A video's title and channel through YouTube's oEmbed, which needs no key.
+/// Title and channel via YouTube's oEmbed, which needs no API key.
 async fn youtube(client: &Client, url: &Url) -> reqwest::Result<Peek> {
     #[derive(Deserialize)]
     struct OEmbed {
@@ -125,7 +124,7 @@ fn meta_content<'a>(html: &'a str, lower: &str, property: &str) -> Option<&'a st
     None
 }
 
-/// The handful of entities titles actually carry, and numeric ones.
+/// Decodes the few named entities titles carry, plus numeric ones.
 fn decode_entities(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;

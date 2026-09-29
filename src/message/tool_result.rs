@@ -4,8 +4,7 @@ use crate::{datatype::Value, message::Part};
 
 /// An intermediate progress update yielded by a streaming tool during execution.
 ///
-/// Items are **independent snapshots** — they are NOT accumulated into the final
-/// [`TurnEvent::ToolResult`][crate::agent::TurnEvent::ToolResult]. Callers should
+/// Items are **independent snapshots**, not accumulated into the final tool result;
 /// use them for UI progress display only.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolResultDelta {
@@ -19,8 +18,8 @@ pub struct ToolResultDelta {
 
 /// Output yielded by a streaming tool function.
 ///
-/// A streaming tool yields zero or more [`Delta`] items (intermediate progress,
-/// for UI display only), followed by exactly one [`Result`] item (the definitive
+/// A streaming tool yields zero or more [`Delta`](Self::Delta) items (intermediate progress,
+/// for UI display only), followed by exactly one [`Result`](Self::Result) item (the definitive
 /// tool output that will be added to the agent's history and returned to the LLM).
 #[derive(Clone, Debug)]
 pub enum StreamingToolOutput {

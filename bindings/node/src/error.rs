@@ -1,6 +1,6 @@
 //! How ailoy's failures arrive in JavaScript.
 //!
-//! As an `Error` whose `code` says what kind, as cortex's binding does. `AILOY_ERROR` for
+//! As an `Error` whose `code` says what kind. `AILOY_ERROR` for
 //! everything ailoy itself reports — a model that no provider serves, a tool that is not
 //! registered, an API that answered with an error. What a console reports keeps cortex's own
 //! codes: a refusal inside an agent's turn is the same `TIMED_OUT`, say, as one from

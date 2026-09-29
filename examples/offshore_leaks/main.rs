@@ -49,10 +49,9 @@ use ailoy::{
 };
 use anyhow::Context as _;
 use cortex::{fs::Directory, image::Recipe, protocol::NetworkAccess};
-// One host binding per platform, each mounting on `try_new` and unmounting on `Drop`, so
-// the tree below is written once. Three arms and not `not(windows)` because the guards are
-// three distinct types: cortex's default `mount` feature compiles the one binding its target
-// has — Dokany on Windows, `fuser` on Linux, FUSE-T on macOS — and names the guard after it.
+// One host binding per platform (mounts on `try_new`, unmounts on `Drop`), so the tree
+// below is written once. Three arms, not `not(windows)`: cortex's default `mount` feature
+// compiles only its target's binding, each a distinct guard type.
 #[cfg(windows)]
 use cortex::fs::DokanMount as HostMount;
 #[cfg(target_os = "linux")]
@@ -105,8 +104,7 @@ async fn main() -> anyhow::Result<()> {
     .console(
         ConsoleClient::builder()
             .image(Recipe::new("python:3.12-slim-trixie").step(
-                // The DuckDB `prepare_data.py` wrote the file with, in pyproject.toml: an
-                // older one may not read it.
+                // The DuckDB version that wrote the file; an older one may not read it.
                 "pip install --no-cache-dir duckdb==1.5.5 pandas matplotlib networkx",
             ))
             .mount_readonly(

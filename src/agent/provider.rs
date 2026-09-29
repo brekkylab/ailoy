@@ -3,40 +3,28 @@ use std::{
     sync::{LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
-/// Named bundle that ties an agent to a [`LangModelProvider`] and a
-/// [`ToolProvider`] by **name** rather than by value.
+/// Named bundle that ties an agent to a [`LangModelProvider`](crate::lang_model::LangModelProvider) and a
+/// [`ToolProvider`](crate::tool::ToolProvider) by **name** rather than by value.
 ///
-/// `AgentProvider` itself does not hold model or tool definitions — those live
-/// in their own process-wide registries
-/// ([`lang_model_providers`](crate::lang_model::lang_model_providers),
-/// [`tool_providers`](crate::tool::tool_providers)).  This struct only stores
-/// the *keys* into those registries, so a single update to e.g.
-/// [`lang_model_providers_mut`](crate::lang_model::lang_model_providers_mut)
-/// is immediately visible to every `AgentProvider` that references that name.
+/// It stores only keys into the process-wide registries
+/// ([`get_lm_providers`](crate::lang_model::get_lm_providers),
+/// [`get_tool_providers`](crate::tool::get_tool_providers)), so a registry update is immediately
+/// visible to every `AgentProvider` naming that entry. The names are resolved at agent
+/// construction time (e.g. [`AgentBuilder::build`](crate::agent::AgentBuilder::build)).
 ///
-/// Mirror registries:
-/// * [`get_agent_providers`] / [`get_agent_providers_mut`] — the global map of
-///   `AgentProvider`s, pre-populated with a single `"default"` entry that
-///   points at the `"default"` lang-model and tool providers.
-///
-/// At agent construction time
-/// (e.g. [`AgentBuilder::build`](crate::agent::AgentBuilder::build)) the
-/// builder looks up the chosen [`AgentProvider`] by name, then resolves the
-/// nested `lang_model_provider` / `tool_provider` names against their
-/// respective registries.
+/// Bundles themselves are registered in [`get_agent_providers`] / [`get_agent_providers_mut`].
 #[derive(Clone, Debug)]
 pub struct AgentProvider {
-    /// Key into [`lang_model_providers`](crate::lang_model::lang_model_providers).
+    /// Key into [`get_lm_providers`](crate::lang_model::get_lm_providers).
     pub lang_model_provider: String,
 
-    /// Key into [`tool_providers`](crate::tool::tool_providers).
+    /// Key into [`get_tool_providers`](crate::tool::get_tool_providers).
     pub tool_provider: String,
 }
 
 impl AgentProvider {
-    /// Bundle the two given provider names.  Both names must exist in their
-    /// respective registries at agent-construction time; this constructor does
-    /// not validate them.
+    /// Bundle two provider names, unvalidated; both must be registered by
+    /// agent-construction time.
     pub fn new(lang_model_provider: impl Into<String>, tool_provider: impl Into<String>) -> Self {
         Self {
             lang_model_provider: lang_model_provider.into(),
@@ -46,9 +34,7 @@ impl AgentProvider {
 }
 
 impl Default for AgentProvider {
-    /// Returns the canonical bundle `{ "default", "default" }`, matching the
-    /// `"default"` entries auto-registered in the lang-model and tool
-    /// provider registries.
+    /// `{ "default", "default" }`, the entries auto-registered in both registries.
     fn default() -> Self {
         Self::new("default", "default")
     }
@@ -56,9 +42,7 @@ impl Default for AgentProvider {
 
 /// Process-wide named registry of [`AgentProvider`] bundles.
 ///
-/// Pre-populated with a single `"default"` entry equal to
-/// [`AgentProvider::default`].  Look up additional named bundles via
-/// [`get_agent_providers`]; register new ones via [`get_agent_providers_mut`].
+/// Pre-populated with `"default"` = [`AgentProvider::default`].
 static AGENT_PROVIDERS: LazyLock<RwLock<HashMap<String, AgentProvider>>> = LazyLock::new(|| {
     let mut map = HashMap::new();
     map.insert("default".to_string(), AgentProvider::default());

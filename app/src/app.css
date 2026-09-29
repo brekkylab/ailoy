@@ -1,9 +1,8 @@
 @import "tailwindcss";
 /*
  * brekkylab's shared tokens and palette. Tokens and theme only, not `index.css`: that also
- * pulls in `base.css`, a second reset on top of Tailwind's preflight whose unlayered
- * `button` rules would outrank every utility class. So the `color-scheme` rules it would
- * have supplied live below instead.
+ * pulls in `base.css`, a second reset over Tailwind's preflight whose unlayered `button`
+ * rules would outrank every utility class. Its `color-scheme` rules are defined below.
  */
 @import "@brekkylab/ui/tokens.css";
 @import "@brekkylab/ui/theme/brekkylab.css";
@@ -16,9 +15,8 @@
 :root[data-theme="dark"] { color-scheme: dark; }
 
 /*
- * shadcn-style token names, pointed at the shared palette, so the utilities read the same
- * as in feat/desktop. `--accent` is the hover/selected surface, not the brand colour —
- * that is `--primary` — and `--input` is a border, not a fill.
+ * shadcn-style token names mapped onto the shared palette. `--accent` is the hover/selected
+ * surface, not the brand colour (that is `--primary`), and `--input` is a border, not a fill.
  */
 :root {
   --background: var(--bl-color-bg);
@@ -95,9 +93,9 @@ html, body, #app { height: 100%; margin: 0; }
 }
 
 /*
- * The file viewers (`src/lib/viewers`) come from agent-s and are written against its token
- * names. Those are brekkylab's tokens under shorter names, so this maps them one to one,
- * scoped to the viewer so they never meet the shadcn names above.
+ * The file viewers (`src/lib/viewers`) use agent-s token names, which are brekkylab's tokens
+ * under shorter names. Mapped one to one here, scoped to the viewer so they never meet the
+ * shadcn names above.
  */
 .viewer-tokens {
   --bg: var(--bl-color-bg);

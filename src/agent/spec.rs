@@ -96,13 +96,12 @@ impl AgentSpec {
 
     /// Give this agent the skill in `dir`, a directory in the console holding a `SKILL.md`.
     ///
-    /// When the agent is made, the `name` and `description` in the file's frontmatter are
-    /// read through the console and listed in the system message, with where the skill
-    /// is. The rest of the file is left for the agent to read when it uses the skill, so
-    /// an agent with skills needs a console and a tool that reads files.
+    /// At construction the frontmatter `name` and `description` are read through the
+    /// console and listed in the system message with the skill's location; the agent reads
+    /// the rest itself, so it needs a console and a file-reading tool.
     ///
-    /// Only alongside the instruction: a history that already leads with a system message
-    /// keeps its own, and the skills are not added to it.
+    /// Skills are added only to the instruction-built system message, never to one already
+    /// in the history.
     pub fn skill(mut self, dir: impl Into<String>) -> Self {
         self.skills.push(dir.into());
         self
@@ -127,9 +126,8 @@ impl AgentSpec {
         if family == "openai" {
             self.tools.push(get_apply_patch_tool_desc());
         } else {
-            // DeepSeek, Kimi and GLM are served behind Anthropic-compatible APIs
-            // for Claude Code, so they likely follow the Claude style.
-            // Qwen Code is a fork of Gemini CLI.
+            // DeepSeek, Kimi and GLM serve Anthropic-compatible APIs for Claude Code, so
+            // likely follow the Claude style; Qwen Code is a fork of Gemini CLI.
             self.tools.push(match family {
                 "anthropic" | "deepseek" | "moonshotai" | "z-ai" => get_read_tool_desc(),
                 "google" | "qwen" => get_read_file_tool_desc(),
@@ -163,8 +161,7 @@ impl AgentSpec {
 
     /// Add the `web_search` tool to the spec.
     ///
-    /// Pass a non-empty `engines` vec to restrict which engines are used;
-    /// an empty vec (or `vec![]`) uses all available engines.
+    /// A non-empty `engines` restricts the engines used; empty uses all available.
     pub fn web_search_tool(mut self, engines: Vec<WebSearchEngineKind>) -> Self {
         self.tools.push(get_web_search_tool_desc());
         if !engines.is_empty() {
@@ -175,10 +172,9 @@ impl AgentSpec {
 
     /// Add the `web_fetch` tool to the spec.
     ///
-    /// Like `web_search_tool`, this is opt-in and is not included in
-    /// `system_tools()`. The tool accepts either a single `url` or a `urls`
-    /// array (up to five) for parallel fetches, honors robots.txt, and
-    /// rate-limits one request per second per host.
+    /// Not part of `system_tools()`. The tool accepts a `url` or a `urls` array (up to
+    /// five, fetched in parallel), honors robots.txt, and allows one request per second
+    /// per host.
     pub fn web_fetch_tool(mut self) -> Self {
         self.tools.push(get_web_fetch_tool_desc());
         self

@@ -2,9 +2,8 @@
 #
 # Read by `sim` for both halves of what it sets up — the code under `upstream/`
 # and the dataset under `.cache/data` — because the two have to come from the
-# same commit. The simulator reads its data by file name and by shape, so a
-# store built from one commit's code and another commit's data is a result that
-# cannot be compared with anything, including itself.
+# same commit. The simulator reads its data by file name and by shape, so code
+# and data from different commits give a result comparable with nothing.
 #
 # To move to another commit: edit COMMIT here, then
 #

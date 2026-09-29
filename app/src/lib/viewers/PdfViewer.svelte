@@ -6,13 +6,12 @@
 
   let { entry, bytes }: BytesProps = $props();
 
-  // Rendered by pdf.js into canvases, not handed to the browser's own viewer in an
-  // iframe: WKWebView draws nothing for a PDF in a subframe served over a custom scheme,
-  // which is where a context's files come from. The legacy build, so an older macOS's
-  // WebKit can run it.
+  // Drawn by pdf.js into canvases, not the browser's viewer in an iframe: WKWebView draws
+  // nothing for a PDF in a subframe served over a custom scheme, which is how context files
+  // are served. The legacy build runs on older macOS WebKit.
 
-  /// What pdf.js asks for by URL while it works (see `pdfjsAssets` in `vite.config.ts`).
-  /// Absolute, because the worker resolves them and it has no page to be relative to.
+  /// What pdf.js fetches by URL (see `pdfjsAssets` in `vite.config.ts`). Absolute, because
+  /// the worker resolves them with no page to be relative to.
   const assets = (dir: string) => new URL(`/pdfjs/${dir}/`, location.href).href;
 
   type Pdfjs = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -44,8 +43,8 @@
         doc = await task.promise;
         if (cancelled) return;
 
-        // Every page's box first, at the width the panel has, so the scrollbar is the
-        // document's length before a single page is drawn.
+        // Size every page box first, at the panel's width, so the scrollbar reflects the full
+        // document before any page is drawn.
         const fit = Math.max(200, host.clientWidth - 48);
         const sizes = [];
         for (let n = 1; n <= doc.numPages; n++) {
@@ -57,7 +56,7 @@
         if (cancelled) return;
         pages = sizes;
 
-        // Then each page as it comes near the viewport, once.
+        // Then draw each page once, as it nears the viewport.
         const drawn = new Set<number>();
         observer = new IntersectionObserver(
           (seen) => {
@@ -81,19 +80,19 @@
     return () => {
       cancelled = true;
       observer?.disconnect();
-      // The task, not the document: it takes the document and its worker down with it.
+      // Destroy the task, not the document: it takes the document and its worker with it.
       void task?.destroy();
     };
   });
 
-  /// Page `n` into its box: the picture on the canvas, and the text laid over it where
-  /// each glyph sits, transparent, so it can be selected and copied.
+  /// Draws page `n` into its box: the canvas image, plus a transparent text layer over each
+  /// glyph so text can be selected and copied.
   async function draw(pdfjs: Pdfjs, doc: PDFDocumentProxy, n: number, box: HTMLElement) {
     const page = await doc.getPage(n);
     const { scale } = pages[n - 1];
     const viewport = page.getViewport({ scale });
 
-    // Sharp on a Retina screen: the backing store is the device's pixels, the box is CSS's.
+    // Backing store in device pixels, box in CSS pixels, so it is sharp on Retina.
     const ratio = window.devicePixelRatio || 1;
     const canvas = box.querySelector('canvas')!;
     canvas.width = Math.floor(viewport.width * ratio);
@@ -138,7 +137,7 @@
     height: 100%;
     padding: 24px;
     overflow: auto;
-    /* The letterboxing around a page, rather than the panel's own background. */
+    /* Letterboxing around the page, distinct from the panel background. */
     background: var(--bg-sunken);
     box-sizing: border-box;
   }

@@ -16,7 +16,7 @@ pub struct AggregatedResult {
     pub description: String,
     /// Names of engines that returned this URL.
     pub sources: Vec<&'static str>,
-    /// Number of engines that returned this URL (used for ranking).
+    /// Reciprocal-rank-fusion score summed over engines; higher ranks first.
     pub relevance: f32,
 }
 
@@ -28,26 +28,22 @@ pub struct AggregatedResult {
 pub fn normalize_url(url: &str) -> String {
     let url = url.trim();
 
-    // Remove fragment
     let url = url.split('#').next().unwrap_or(url);
 
-    // Split at query string
     let (base, query) = match url.split_once('?') {
         Some((b, q)) => (b, Some(q)),
         None => (url, None),
     };
 
-    // Normalize the base: only lowercase scheme+host, preserve path case (RFC 3986)
     let base = base.trim_end_matches('/');
 
-    // Split into scheme+host and path
     let base = if let Some(authority_start) = base.find("://") {
         let (scheme, after_scheme) = base.split_at(authority_start + 3);
         let (host_part, path_part) = after_scheme
             .split_once('/')
             .map(|(h, p)| (h, format!("/{}", p)))
             .unwrap_or((after_scheme, String::new()));
-        // Only lowercase scheme and host; path is case-sensitive
+        // Path is case-sensitive (RFC 3986); only scheme and host are lowercased.
         format!(
             "{}{}{}",
             scheme.to_lowercase(),
@@ -58,7 +54,6 @@ pub fn normalize_url(url: &str) -> String {
         base.to_lowercase()
     };
 
-    // Remove www. from host (after scheme://)
     let base = if let Some(after_scheme) = base.strip_prefix("https://www.") {
         format!("https://{}", after_scheme)
     } else if let Some(after_scheme) = base.strip_prefix("http://www.") {
@@ -67,7 +62,6 @@ pub fn normalize_url(url: &str) -> String {
         base
     };
 
-    // Keep only non-tracking query params
     let tracking_params = [
         "utm_source",
         "utm_medium",
@@ -124,7 +118,6 @@ impl MetaSearcher {
     }
 
     pub async fn search(&self, query: &str, max_results: usize) -> Vec<AggregatedResult> {
-        // Fan-out: search all engines concurrently
         let futures: Vec<_> = self
             .engines
             .iter()
@@ -163,7 +156,7 @@ impl MetaSearcher {
                         }
                     }
                 }
-                Err(SearchError::NoResults) => {} // silent
+                Err(SearchError::NoResults) => {}
                 Err(e) => log::warn!("Search engine '{}' failed: {}", self.engines[i].name(), e),
             }
         }

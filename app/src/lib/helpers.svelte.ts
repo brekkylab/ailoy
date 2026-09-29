@@ -1,13 +1,13 @@
-// The helper pane's agents: one per tab that has the pane, each asked to change what that
-// tab shows — `context` a context's files, `agentmaker` the agents.
+// The helper pane's agents: one per tab with the pane, each changing what that tab shows
+// (`context` a context's files, `agentmaker` the agents).
 //
-// Each is `agents/{id}/agent.json` in the cache (see `HELPERS` in `src-tauri/src/agent.rs`):
-// kept beside the Agent tab's collection and out of it, and edited in its file. Outside
-// Tauri there is no file, and a blank agent on the first model stands in.
+// Each is `agents/{id}/agent.json` in the cache (see `HELPERS` in `src-tauri/src/agent.rs`),
+// kept out of the Agent tab's collection and edited in its file. Outside Tauri a blank agent
+// on the first model stands in.
 //
-// A helper keeps one thread per thing it works on — a context, an agent — in memory, like
-// `store`: the reply is a placeholder until ailoy is wired in. When it is, a turn that
-// changed what is on screen bumps `revision[key]`, and the tab re-reads on it.
+// A helper keeps one in-memory thread per subject (a context, an agent). Replies are
+// placeholders until ailoy is wired in; then a turn that changed what is on screen bumps
+// `revision[key]`, and the tab re-reads on it.
 
 import { invoke } from "@tauri-apps/api/core";
 
@@ -28,7 +28,7 @@ class Helper {
   /** Goes up whenever the helper may have changed what the thread is about. */
   revision = $state<Record<string, number>>({});
   agent = $state<Agent | null>(null);
-  /** The agent's model unless one was picked in the pane, which lasts until the app quits. */
+  /** The agent's model unless one was picked in the pane; the pick lasts until the app quits. */
   picked = $state<string | null>(null);
   model = $derived(this.picked ?? (this.agent?.model || MODELS[0].id));
 

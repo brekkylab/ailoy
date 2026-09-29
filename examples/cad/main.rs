@@ -42,10 +42,9 @@ use ailoy::{
 };
 use anyhow::Context as _;
 use cortex::{fs::Directory, image::Recipe};
-// One host binding per platform, each mounting on `try_new` and unmounting on `Drop`, so
-// the tree below is written once. Three arms and not `not(windows)` because the guards are
-// three distinct types: cortex's default `mount` feature compiles the one binding its target
-// has — Dokany on Windows, `fuser` on Linux, FUSE-T on macOS — and names the guard after it.
+// One host binding per platform (mounts on `try_new`, unmounts on `Drop`), so the tree
+// below is written once. Three arms, not `not(windows)`: cortex's default `mount` feature
+// compiles only its target's binding, each a distinct guard type.
 #[cfg(windows)]
 use cortex::fs::DokanMount as HostMount;
 #[cfg(target_os = "linux")]
@@ -141,7 +140,7 @@ async fn main() -> anyhow::Result<()> {
     let mut stream = agent.run(query);
     while let Some(output) = stream.next().await {
         let output = output?;
-        // The run ends on any other reason as well, and without this it ends in silence.
+        // A token-limit cutoff also ends the run; without this it ends silently.
         if matches!(output.finish_reason, FinishReason::Length {}) {
             eprintln!("(the reply was cut off at the token limit)");
         }

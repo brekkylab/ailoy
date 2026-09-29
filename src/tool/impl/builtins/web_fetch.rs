@@ -81,7 +81,7 @@ async fn rate_limit_for(state: &WebFetchState, host: &str) {
             .unwrap_or(Duration::ZERO);
         m.insert(host.to_string(), now + wait);
         // Self-trim: only keep hosts hit within the rate-limit window.
-        // Future timestamps (the entry we just inserted with non-zero wait)
+        // Future timestamps (the just-inserted entry, when wait > 0)
         // survive because `duration_since` saturates to zero for them.
         m.retain(|_, when| now.duration_since(*when) < PER_HOST_MIN_INTERVAL);
         wait
@@ -154,9 +154,8 @@ impl BodyFormat {
     }
 }
 
-// Output of the HTML→{text,markdown} conversion path. We return both the
-// readable body and the document title because `html_to_markdown_rs` already
-// extracts both in one pass — no point parsing twice.
+// Output of the HTML→{text,markdown} conversion: body and title together,
+// since `html_to_markdown_rs` extracts both in one pass.
 struct Converted {
     body: String,
     title: String,
@@ -392,7 +391,7 @@ async fn fetch_one(
 }
 
 /// Factory closes over a process-wide [`WebFetchState`] so the rate limiter
-/// is shared across calls, matching `web_search`.
+/// is shared across calls.
 pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
     let state = WebFetchState::new();
     move |_| {
@@ -452,8 +451,8 @@ mod net_guard {
     ///
     /// A concrete type rather than a string because a refusal raised inside the
     /// resolver has to be recognized again after the connector has wrapped it,
-    /// which [`blocked_reason`] does by downcast. Matching on the message text
-    /// would work today and break the moment someone rewords it.
+    /// which [`blocked_reason`] does by downcast; matching message text would
+    /// break on any rewording.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct Blocked(String);
 
@@ -468,13 +467,10 @@ mod net_guard {
     /// Find a [`Blocked`] in an error's source chain.
     ///
     /// `Display` on a client error stops one level in, while a refusal from
-    /// [`PublicOnlyResolver`] sits three deep — under the connect error and the
-    /// DNS error the connector wraps it in. Formatting the outer error therefore
-    /// reports a plain connection failure, which reads as a target that happens to
-    /// be down rather than one that will never be reachable. A model told the first
-    /// retries; told the second it stops. Walking the chain is what keeps a name
-    /// refused by the resolver reporting the same way as an IP literal refused
-    /// before the connection.
+    /// [`PublicOnlyResolver`] sits three deep, under the connector's connect and
+    /// DNS errors. Formatted as-is it reads as a target that is merely down, which
+    /// a model retries; walking the chain makes a name refused by the resolver
+    /// report the same as an IP literal refused before connecting.
     pub fn blocked_reason(err: &(dyn std::error::Error + 'static)) -> Option<String> {
         let mut source = Some(err);
         while let Some(e) = source {
@@ -934,7 +930,7 @@ mod tests {
 
     /// `last_hit` self-trim invariants. The retain expression is replicated
     /// here exactly as `rate_limit_for` uses it; if either drifts, this test
-    /// catches it before the table starts growing unbounded again.
+    /// catches it before the table grows unbounded.
     #[test]
     fn last_hit_retain_keeps_fresh_and_future_drops_stale() {
         let now = Instant::now();
@@ -1071,12 +1067,10 @@ mod tests {
         );
     }
 
-    /// The same refusal reached by name instead of by literal. It travels a
-    /// different path — the resolver rather than the up-front check — and the
-    /// connector wraps it in an error whose `Display` drops it, so without the
-    /// recovery in `download` this reports a bare connect failure. The two must
-    /// read alike: a model retries a connection that failed and gives up on one
-    /// that policy refused, and this refusal will never succeed.
+    /// A loopback target reached by name is refused by the resolver rather than
+    /// the up-front literal check, inside an error whose `Display` drops it; the
+    /// recovery in `download` must still report it as a policy refusal, not a bare
+    /// connect failure a model would retry.
     #[tokio::test]
     async fn fetch_one_refuses_a_name_resolving_inward_with_the_same_error() {
         use std::sync::{Arc, Mutex};
@@ -1240,7 +1234,7 @@ mod tests {
         assert!(retrieved_at.ends_with('Z'), "retrieved_at: {retrieved_at}");
     }
 
-    /// `format="html"` against the same endpoint should return raw markup —
+    /// `format="html"` against a stable public endpoint should return raw markup —
     /// `<html`, `<title>`, etc. — not the converted text form.
     #[tokio::test]
     #[ignore = "requires network"]

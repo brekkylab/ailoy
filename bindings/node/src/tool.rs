@@ -1,28 +1,24 @@
 //! A JavaScript function as a [`ToolFunc`].
 //!
-//! The model's arguments arrive as the one argument the function is called with — an object,
-//! as the parameters schema a tool is described by names its fields. What the function returns
-//! becomes the tool's result value, so it has to be what a message can hold: `null`, a
-//! boolean, a number, a string, or an array or object of those.
+//! The function is called with the model's arguments as one object, whose fields the tool's
+//! parameters schema names. Its return value becomes the tool's result, so it must be what a
+//! message can hold: `null`, a boolean, a number, a string, or an array or object of those.
 //!
 //! # Sync and async
 //!
-//! Either is taken, and which is told by what calling it returns. A plain result is the
-//! answer; a promise is awaited. The call itself is made on the JavaScript thread, through a
-//! threadsafe function, since that is the only thread a function can be called on — which a
-//! turn leaves free, because it is iterated by promises.
+//! A plain return value is the result; a returned promise is awaited. The call goes through a
+//! threadsafe function because a JavaScript function can only be called on the JavaScript
+//! thread, which a turn leaves free since it is iterated by promises.
 //!
-//! The threadsafe function is weak: a registered tool does not keep the process alive by
-//! itself, as a function held in a registry should not.
+//! The threadsafe function is weak, so a registered tool does not keep the process alive.
 //!
 //! # Failure
 //!
-//! A tool that throws, or whose promise rejects, answers with the error as its result,
-//! `"error: ..."`, rather than ending the turn: the model asked for something that did not
-//! work, and it is the one that can try differently.
+//! A throw or rejection becomes the result `"error: ..."` instead of ending the turn, so the
+//! model can try differently.
 //!
-//! A JavaScript tool is pure — it is not handed the console. One that needs to run a command
-//! does it through a `ConsoleClient` it holds itself.
+//! A JavaScript tool is not handed the console; one that runs commands holds its own
+//! `ConsoleClient`.
 
 use std::sync::Arc;
 
@@ -41,8 +37,7 @@ use napi::{
 
 use crate::convert::Json;
 
-/// What a tool's function is taken as: called with the arguments, not an error first, and
-/// weak.
+/// Called with the arguments (not error-first), and weak.
 pub type Callback = ThreadsafeFunction<Json<Value>, Returned, Json<Value>, Status, false, true>;
 
 /// What calling a tool's function returned: the result, or a promise of it.

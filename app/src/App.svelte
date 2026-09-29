@@ -42,12 +42,12 @@
   let selected = $state<string | null>(read(KEY));
   // Not persisted: a relaunch should land on the conversation.
   let view = $state<MainView>("session");
-  // A new chat not sent into yet. A counter rather than a flag, so a second click on
-  // New chat still changes it and the composer can take focus again.
+  // An unsent new chat. A counter, not a flag, so each New chat click changes it and the
+  // composer can refocus.
   let draft = $state<number | null>(null);
   let context = $state<string | null>(null);
   let command = $state<ContextCommand>("files");
-  // Falls back to the default context, as the agent does to the default agent.
+  // Falls back to the default context.
   const currentContext = $derived(
     contexts.list.find((c) => c.id === context) ?? contexts.list.find((c) => c.default) ?? null,
   );

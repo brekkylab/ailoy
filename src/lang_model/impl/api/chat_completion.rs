@@ -114,8 +114,7 @@ impl Marshal<Message> for ChatCompletionMarshal {
             let contents: Vec<Value> = item
                 .contents
                 .iter()
-                // Some ChatCompletion-compatible backends (e.g. Kimi)
-                // reject content arrays containing an empty-text part
+                // Some backends (e.g. Kimi) reject content arrays with an empty-text part.
                 .filter(|p| !matches!(p, Part::Text { text } if text.is_empty()))
                 .map(|p| {
                     // ChatCompletion backends don't reliably accept images in tool results;
@@ -406,11 +405,9 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
 
         let mut delta = MessageDelta::new();
 
-        // role: usually present only on the first chunk. Default to Assistant
-        // when a chunk omits it (some OpenAI-compatible backends do), mirroring
-        // the non-streaming `unmarshal` default — otherwise a role-less stream
-        // accumulates to a message with no role and `finish()` bails with
-        // "Role not specified".
+        // role: usually only on the first chunk, and some OpenAI-compatible
+        // backends omit it entirely. Default to Assistant, or a role-less stream
+        // accumulates to a message `finish()` rejects with "Role not specified".
         let role = choice
             .pointer("/delta/role")
             .and_then(|v| v.as_str())
@@ -484,12 +481,10 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             .pointer("/choices/0")
             .ok_or_else(|| anyhow::anyhow!("Missing 'choices[0]' in response"))?;
 
-        // Parse finish_reason
         let finish_reason = choice
             .pointer("/finish_reason")
             .map(Self::parse_finish_reason);
 
-        // Check for refusal
         let message = choice
             .pointer("/message")
             .ok_or_else(|| anyhow::anyhow!("Missing 'message' in choice"))?;
@@ -507,7 +502,6 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             });
         }
 
-        // Parse role
         let role: Role = message
             .pointer("/role")
             .and_then(|v| v.as_str())
@@ -515,23 +509,20 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             .parse()
             .unwrap_or(Role::Assistant);
 
-        // Parse content
         let contents = message
             .pointer("/content")
             .filter(|v| !v.is_null())
             .map(Self::parse_content)
             .unwrap_or_default();
 
-        // Parse tool_calls
         let tool_calls = message
             .pointer("/tool_calls")
             .filter(|v| !v.is_null())
             .map(Self::parse_tool_calls)
             .unwrap_or_default();
 
-        // DeepSeek thinking-mode responses include `reasoning_content` as a
-        // sibling of `content`. Map it onto ailoy's canonical `thinking` field
-        // so the same value gets replayed on follow-up turns.
+        // DeepSeek thinking-mode `reasoning_content` maps onto `thinking` so it
+        // is replayed on follow-up turns.
         let thinking = message
             .pointer("/reasoning_content")
             .and_then(|v| v.as_str())
@@ -549,7 +540,6 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             delta.thinking = Some(t);
         }
 
-        // Parse usage (Chat Completion: usage.prompt_tokens / completion_tokens)
         let usage = Self::parse_usage(&val);
 
         Ok(MessageDeltaOutput {

@@ -64,9 +64,8 @@
 //! is argv-in, bytes-out — one shot, with no handle to a process left running —
 //! so there is nowhere inside the sandbox to keep a server that has to hold its
 //! stdin and stdout open for the length of a session. An MCP server therefore
-//! has whatever access this process has. That is the one asymmetry between MCP
-//! tools and every other tool here, and the reason to register only servers the
-//! caller trusts.
+//! has whatever access this process has, so register only servers the caller
+//! trusts.
 
 use std::sync::Arc;
 
@@ -397,8 +396,8 @@ fn content_block_to_part(block: ContentBlock) -> Part {
                 "[binary resource omitted: {uri}{}]",
                 mime_type.map(|m| format!(", {m}")).unwrap_or_default()
             )),
-            // `#[non_exhaustive]`, like `ContentBlock` below: a newer protocol
-            // can carry a resource shape this build has no arm for.
+            // `#[non_exhaustive]`: a newer protocol can carry a resource shape
+            // this build has no arm for.
             other => Part::text(format!("[unsupported MCP resource: {other:?}]")),
         },
 

@@ -3,17 +3,15 @@
 
   let { entry, text, base }: TextProps = $props();
 
-  /// The file's own directory, so a relative `<img>` or stylesheet in the document
-  /// resolves against the tree it was read from. A `srcdoc` frame otherwise resolves
-  /// relative URLs against the app's own address, where none of them exist.
+  /// The file's own directory, so relative `<img>`s and stylesheets resolve against its tree;
+  /// a `srcdoc` frame would otherwise resolve them against the app's address.
   let href = $derived(base);
   let doc = $derived(withHead(text, href));
 
-  /// What is put at the top of the document's head.
+  /// Prepended to the document's head.
   ///
-  /// The sandbox below is what actually stops scripts; this is the second lock. A
-  /// document that reaches the DOM through two independent "no scripts" is a document
-  /// that still runs none of them when one of them is got wrong.
+  /// A second lock behind the sandbox, which is what actually stops scripts: if either is
+  /// got wrong, the other still blocks them.
   function headOf(href: string): string {
     return (
       `<base href="${href}">` +
@@ -22,8 +20,8 @@
     );
   }
 
-  /// `html` with that head inserted — after `<head>` when the document has one, and at
-  /// the front when it does not, which is where a browser will read it either way.
+  /// `html` with that head inserted after `<head>`, or at the front if there is none (where
+  /// a browser reads it either way).
   function withHead(html: string, href: string): string {
     const head = headOf(href);
     const open = html.match(/<head[^>]*>/i) ?? html.match(/<html[^>]*>/i);
@@ -35,10 +33,9 @@
 
 <div class="frame">
   <!--
-    `sandbox` with no tokens is the whole point of this viewer: no scripts, no forms,
-    no navigation of the tab it sits in, and an opaque origin, so the document cannot
-    reach the app it is being previewed inside. `srcdoc` rather than `src` because the
-    server sends these files as attachments — see `is_active_content` on the server.
+    `sandbox` with no tokens is the point of this viewer: no scripts, forms, or navigation
+    of its tab, and an opaque origin, so the document cannot reach the app. `srcdoc`, not
+    `src`, because the server sends these files as attachments (see `is_active_content`).
   -->
   <iframe
     title={entry.name}

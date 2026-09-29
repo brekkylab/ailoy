@@ -43,9 +43,6 @@ impl DuckDuckGo {
 
         let parser = SearchResultParser::new(
             ".no-results",
-            // Select only web-result blocks inside the #links container.
-            // Ads appear outside #links (or carry "result--ad") so this selector
-            // naturally excludes them.
             "#links .web-result",
             // Placeholder – title extraction is done via title_url_selector below.
             "h2.result__title",

@@ -8,18 +8,15 @@
   import type { Source } from './source';
   import { viewerFor } from './registry';
 
-  // One file, read and rendered — and nothing around it.
+  // Reads and renders one file, without chrome (the caller's job): picks the viewer by
+  // name, reads through the file's tree, and hands the viewer what its kind takes.
   //
-  // This is the half of opening a file that is the same wherever it is opened: work out
-  // which viewer the name calls for, read the file through whatever tree it is in, and
-  // hand the viewer what its kind takes. The chrome around it is the caller's.
-  //
-  // `unsupported` and `too-big` are answers about the file and not failures to read it:
-  // the file is fine, and each says why it is not on screen.
+  // `unsupported` and `too-big` are not read failures: the file is fine, and each says why
+  // it is not on screen.
 
   interface Props {
     entry: Entry;
-    /// Which tree this file is in. See `source.ts`.
+    /// The tree this file is in (see `source.ts`).
     source: Source;
   }
 
@@ -28,14 +25,14 @@
   let viewer = $derived(viewerFor(entry));
   let status = $state<'loading' | 'ready' | 'failed' | 'too-big' | 'unsupported'>('loading');
   let text = $state('');
-  /// What `text` was decoded from — handed on to the viewer, which is where there is
-  /// room to say so. UTF-8 until a read says otherwise.
+  /// The encoding `text` was decoded from, passed on for the viewer to show. UTF-8 until a
+  /// read says otherwise.
   let encoding = $state<Decoded['encoding']>('UTF-8');
   let bytes = $state<ArrayBuffer | null>(null);
 
   $effect(() => {
-    // Re-reads when pointed at another file, and when the same one comes back with a
-    // new size or date — a file the agent rewrote mid-conversation is a new read.
+    // Re-reads on another file, or the same one with a new size or date (e.g. the agent
+    // rewrote it mid-conversation).
     void [entry.name, entry.segments.join('/'), entry.size, entry.modified];
     load();
   });
@@ -49,7 +46,7 @@
       return;
     }
     if (viewer.source === 'url') {
-      // Nothing to fetch: the viewer is handed the address and the browser reads it.
+      // Nothing to fetch: the viewer gets the URL and the browser reads it.
       status = 'ready';
       return;
     }
@@ -61,8 +58,7 @@
     try {
       if (viewer.source === 'bytes') {
         const body = await source.bytes(target);
-        // The file may have been closed, or another one opened, while this was in
-        // flight.
+        // The file may have been closed, or another opened, while this was in flight.
         if (target !== entry) return;
         bytes = body;
       } else {
@@ -84,13 +80,12 @@
 {:else if status === 'ready' && viewer}
   {#if viewer.source === 'text'}
     {@const TextViewer = viewer.component}
-    <!-- The base a relative link resolves against is this file's own folder in its own
-         tree — see `source.ts`. -->
+    <!-- Relative links resolve against this file's own folder in its tree (see `source.ts`). -->
     <TextViewer {entry} {text} {encoding} base={source.base(entry)} />
   {:else if viewer.source === 'bytes'}
     {@const BytesViewer = viewer.component}
-    <!-- Keyed on the file, so opening another builds a fresh viewer rather than handing
-         new bytes to one that has already rendered. -->
+    <!-- Keyed on the file, so another file builds a fresh viewer rather than feeding new bytes
+         to one that has already rendered. -->
     {#key entry}
       {#if bytes}<BytesViewer {entry} {bytes} />{/if}
     {/key}
