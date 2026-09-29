@@ -417,10 +417,22 @@ fn said(call: &Call) -> String {
     text
 }
 
+/// Windows can't execute `sim`'s shebang, so there it runs under `uv`'s Python.
+fn sim_command(sim: &Path) -> tokio::process::Command {
+    if cfg!(windows) {
+        let uv = std::env::var("UV").unwrap_or_else(|_| "uv".to_string());
+        let mut command = tokio::process::Command::new(uv);
+        command.args(["run", "--no-project", "python"]).arg(sim);
+        command
+    } else {
+        tokio::process::Command::new(sim)
+    }
+}
+
 /// Set the store up if it is not: the upstream code, an interpreter for it, and the dataset.
 async fn prepare(sim: &Path, smoke: bool) -> anyhow::Result<()> {
     let ready = !smoke
-        && tokio::process::Command::new(sim)
+        && sim_command(sim)
             .arg("status")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -430,15 +442,21 @@ async fn prepare(sim: &Path, smoke: bool) -> anyhow::Result<()> {
     if ready {
         return Ok(());
     }
-    let mut command = tokio::process::Command::new(sim);
+    let mut command = sim_command(sim);
     command.args(["setup", "--no-serve"]);
     if smoke {
         command.args(["--skus", "8"]);
     }
-    let status = command
-        .status()
-        .await
-        .with_context(|| format!("running {}. It needs `python3` on PATH.", sim.display()))?;
+    let status = command.status().await.with_context(|| {
+        if cfg!(windows) {
+            format!(
+                "running {} through `uv`. It needs `uv` on PATH, or `UV` naming it.",
+                sim.display()
+            )
+        } else {
+            format!("running {}. It needs `python3` on PATH.", sim.display())
+        }
+    })?;
     anyhow::ensure!(status.success(), "setting the store up: {status}");
     Ok(())
 }
@@ -468,7 +486,7 @@ impl Store {
         config: &str,
         days: u32,
     ) -> anyhow::Result<Self> {
-        let status = tokio::process::Command::new(sim)
+        let status = sim_command(sim)
             .arg("serve")
             .arg("--run")
             .arg(run)

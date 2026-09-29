@@ -499,6 +499,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
 
 def venv_python() -> Path:
+    # Windows venvs keep the interpreter in Scripts/, with its .exe.
+    if os.name == "nt":
+        return VENV / "Scripts" / "python.exe"
     return VENV / "bin" / "python"
 
 
@@ -509,13 +512,14 @@ def cmd_python(args: argparse.Namespace) -> int:
     if args.force and VENV.exists():
         shutil.rmtree(VENV)
 
-    base = args.python or "python3"
+    # Not `python3`: on Windows that may be the Store's alias.
+    base = args.python or sys.executable
     say(f"interpreter — {VENV}")
     say(f"  base     {base}")
     subprocess.run([base, "-m", "venv", str(VENV)], check=True)
     install = subprocess.run(
         [
-            str(VENV / "bin" / "pip"),
+            str(venv_python()), "-m", "pip",
             "install",
             "-q",
             "--disable-pip-version-check",
