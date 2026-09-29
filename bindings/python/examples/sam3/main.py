@@ -50,7 +50,6 @@ from ailoy.cortex import (  # noqa: E402
     ConsoleClient,
     Directory,
     HostMount,
-    NetworkAccess,
     Recipe,
 )
 from dotenv import load_dotenv  # noqa: E402
@@ -129,8 +128,8 @@ async def main(prompt: str) -> None:
         )
         .mount_readonly(HERE / "context", "/context")
         .mount(HERE / "artifacts", "/artifacts")
-        # The build's `apt-get` and `pip` run with the session's reach.
-        .network(NetworkAccess.public())
+        # The build's `apt-get` and `pip` need the session to reach the network.
+        .network(True)
         .gpu(True)
         .vcpus(2)
         .memory_mib(4096)

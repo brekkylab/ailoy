@@ -45,7 +45,7 @@ use ailoy::{
     message::{Message, Part, Role},
 };
 use anyhow::Context as _;
-use cortex::{fs::Directory, image::Recipe, protocol::NetworkAccess};
+use cortex::{fs::Directory, image::Recipe};
 // One host binding per platform, each mounting on `try_new` and unmounting on `Drop`, so
 // the tree below is written once. Three arms and not `not(windows)` because the guards are
 // three distinct types: cortex's default `mount` feature compiles the one binding its target
@@ -125,8 +125,8 @@ async fn main() -> anyhow::Result<()> {
             )
             .mount_readonly(context, "/context")
             .mount(project_path.join("artifacts"), "/artifacts")
-            // The build's `apt-get` and `pip` run with the session's reach.
-            .network(NetworkAccess::public())
+            // The build's `apt-get` and `pip` need the session to reach the network.
+            .network(true)
             .gpu(true)
             .vcpus(2)
             // The talker is 2.8 GB on the device in fp16, and its cache and the codec's buffers
