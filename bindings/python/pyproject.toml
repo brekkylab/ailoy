@@ -6,7 +6,6 @@ build-backend = "maturin"
 name = "ailoy-py"
 dynamic = ["version"]
 description = "Agents that drive a language model through tool-augmented turns, in a cortex console."
-readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 # `NotRequired`, for `ailoy.types`, is in `typing` from 3.11.
