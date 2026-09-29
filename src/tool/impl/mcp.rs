@@ -59,8 +59,8 @@
 //!
 //! ## Where a stdio server runs
 //!
-//! On the **host**, not inside the [`Console`](crate::console::Console) sandbox
-//! that the built-in tools run in. [`Console::exec`](cortex::console::Console::exec)
+//! On the **host**, not inside the [`ConsoleClient`](crate::console::ConsoleClient) sandbox
+//! that the built-in tools run in. [`ConsoleClient::exec`](cortex::console::ConsoleClient::exec)
 //! is argv-in, bytes-out — one shot, with no handle to a process left running —
 //! so there is nowhere inside the sandbox to keep a server that has to hold its
 //! stdin and stdout open for the length of a session. An MCP server therefore

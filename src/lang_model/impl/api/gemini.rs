@@ -320,6 +320,20 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
                 .unwrap()
                 .insert("topK".into(), (top_k as i64).into());
         }
+        // Gemini 2.x takes a thinking budget, Gemini 3 onwards a level. Thoughts come back
+        // only when asked for.
+        if let Some(effort) = options.reasoning {
+            let thinking_config = if req.model.starts_with("gemini-2") {
+                let budget = effort.budget_tokens() as i64;
+                to_value!({"thinkingBudget": budget, "includeThoughts": true})
+            } else {
+                to_value!({"thinkingLevel": effort.as_str(), "includeThoughts": true})
+            };
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("thinkingConfig".into(), thinking_config);
+        }
         if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
             generation_config
                 .as_object_mut()
@@ -590,6 +604,38 @@ mod tests {
         message::{Delta, FinishReason, Message, MessageDeltaOutput, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    fn marshal_reasoning(model: &str, options: LangModelOptions) -> serde_json::Value {
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+        let provider = LangModelProvider::gemini("k".into());
+        let req = LangModelRequest {
+            model,
+            messages: &messages,
+            tools: &[],
+            provider: &provider,
+            options: &options,
+            stream: false,
+        };
+        GeminiMarshal.marshal(&req).into()
+    }
+
+    #[test]
+    fn reasoning_is_a_budget_on_gemini_2_and_a_level_after() {
+        let options = LangModelOptions {
+            reasoning: Some(crate::lang_model::ReasoningEffort::Medium),
+            ..Default::default()
+        };
+        let v = marshal_reasoning("gemini-2.5-flash", options.clone());
+        assert_eq!(
+            v["body"]["generationConfig"]["thinkingConfig"],
+            serde_json::json!({"thinkingBudget": 8192, "includeThoughts": true})
+        );
+        let v = marshal_reasoning("gemini-3-pro-preview", options);
+        assert_eq!(
+            v["body"]["generationConfig"]["thinkingConfig"],
+            serde_json::json!({"thinkingLevel": "medium", "includeThoughts": true})
+        );
+    }
 
     /// Feeds Gemini SSE chunk payloads through `unmarshal_event`, accumulating
     /// to a final `MessageDeltaOutput`.

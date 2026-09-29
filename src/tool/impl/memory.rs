@@ -60,7 +60,7 @@ pub fn get_mem_search_tool_desc() -> ToolDesc {
 /// One store per tool, captured here — see the module docs for why the model is not asked
 /// for a path.
 pub fn get_mem_search_tool_func(memory: Memory) -> ToolFunc {
-    crate::tool_func!(async |args: Value, console: &mut Console| -> Value
+    crate::tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value
         with [memory = memory.clone()]
     {
         let Some(query) = args.pointer("/query").and_then(|v| v.as_str()) else {
@@ -124,7 +124,7 @@ pub fn get_mem_insert_tool_desc() -> ToolDesc {
 
 /// The `mem_insert` tool for `memory`.
 pub fn get_mem_insert_tool_func(memory: Memory) -> ToolFunc {
-    crate::tool_func!(async |args: Value, console: &mut Console| -> Value
+    crate::tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value
         with [memory = memory.clone()]
     {
         // An array, and only an array. A bare string would be one memory and is tempting
@@ -171,10 +171,12 @@ mod tests {
     use futures::StreamExt as _;
 
     use super::*;
-    use crate::{console::Console, datatype::Value, message::Message, test_console, to_value};
+    use crate::{
+        console::ConsoleClient, datatype::Value, message::Message, test_console, to_value,
+    };
 
     /// A store with memories in it, made and filled by `mem` itself.
-    async fn filled(console: &mut Console, memories: &[&str]) -> Memory {
+    async fn filled(console: &mut ConsoleClient, memories: &[&str]) -> Memory {
         let dir = tempfile::tempdir().unwrap();
         let path = dir
             .keep()
@@ -201,7 +203,7 @@ mod tests {
     }
 
     /// One call of a tool, as the agent makes it.
-    async fn call(func: &ToolFunc, args: Value, console: &mut Console) -> Message {
+    async fn call(func: &ToolFunc, args: Value, console: &mut ConsoleClient) -> Message {
         func.call(args, "1", console).next().await.unwrap().message
     }
 

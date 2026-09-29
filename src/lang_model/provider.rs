@@ -42,9 +42,9 @@ pub enum LangModelProviderElem {
 ///
 /// [`Default::default`] returns a registry pre-populated from the environment:
 /// registers `openai/*`, `anthropic/*`, `google/*`, `x-ai/*`, `deepseek/*`,
-/// and/or `moonshotai/kimi-*` for every `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
-/// / `GEMINI_API_KEY` / `XAI_API_KEY` / `DEEPSEEK_API_KEY` / `KIMI_API_KEY`
-/// that is set, plus `bedrock/*` (Converse) for `AWS_BEARER_TOKEN_BEDROCK`
+/// `moonshotai/kimi-*` and/or `openrouter/*` for every `OPENAI_API_KEY` /
+/// `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `XAI_API_KEY` / `DEEPSEEK_API_KEY` /
+/// `KIMI_API_KEY` / `OPENROUTER_API_KEY` that is set, plus `bedrock/*` (Converse) for `AWS_BEARER_TOKEN_BEDROCK`
 /// (region from `AWS_REGION`, then `AWS_DEFAULT_REGION`, defaulting to
 /// `us-east-1`).  The default is what the global [`lang_model_providers`]
 /// registry stores under the `"default"` key.  Use [`new`](Self::new) for an
@@ -85,6 +85,9 @@ impl Default for LangModelProvider {
         }
         if let Some(key) = env_key("KIMI_API_KEY") {
             p.insert("moonshotai/*".into(), Self::kimi(key));
+        }
+        if let Some(key) = env_key("OPENROUTER_API_KEY") {
+            p.insert("openrouter/*".into(), Self::openrouter(key));
         }
         if let Some(key) = env_key("AWS_BEARER_TOKEN_BEDROCK") {
             // Same precedence the AWS SDKs use, so a shell already configured
@@ -167,6 +170,38 @@ impl LangModelProvider {
             .unwrap_or_else(|| spec_model.to_string());
         Ok(model_id)
     }
+}
+
+/// The model's family (its vendor) and its name within that family, whichever
+/// provider routes to it: `openai/gpt-5` and `openrouter/openai/gpt-5` are both
+/// `("openai", "gpt-5")`, and the Bedrock id
+/// `bedrock/global.anthropic.claude-sonnet-5` is `("anthropic", "claude-sonnet-5")`.
+/// For code that picks behaviour by model family. A model with no family in its
+/// name has `""`.
+pub fn model_family(model: &str) -> (&str, &str) {
+    if let Some(id) = model.strip_prefix("bedrock/") {
+        // `[<geo>.]<vendor>.<model>`: an inference-profile id leads with where it
+        // routes, a foundation-model id does not.
+        let id = match id.split_once('.') {
+            Some((geo, rest))
+                if matches!(
+                    geo,
+                    "global" | "us" | "us-gov" | "eu" | "apac" | "jp" | "au" | "ca"
+                ) =>
+            {
+                rest
+            }
+            _ => id,
+        };
+        return match id.split_once('.') {
+            // Bedrock's vendor names, where they differ from the ones used elsewhere.
+            Some(("moonshot", name)) => ("moonshotai", name),
+            Some((vendor, name)) => (vendor, name),
+            None => ("", id),
+        };
+    }
+    let id = model.strip_prefix("openrouter/").unwrap_or(model);
+    id.split_once('/').unwrap_or(("", id))
 }
 
 /// Process-wide named registry of [`LangModelProvider`] instances.
@@ -268,5 +303,42 @@ mod tests {
         let mut p = LangModelProvider::new();
         p.insert("openai/*".into(), dummy());
         assert_eq!(p.resolve_model_id("openai/gpt-4o").unwrap(), "gpt-4o");
+    }
+
+    #[test]
+    fn resolve_model_id_keeps_openrouter_vendor() {
+        let mut p = LangModelProvider::new();
+        p.insert("openrouter/*".into(), dummy());
+        assert_eq!(
+            p.resolve_model_id("openrouter/openai/gpt-5").unwrap(),
+            "openai/gpt-5"
+        );
+    }
+
+    #[test]
+    fn model_family_strips_openrouter() {
+        assert_eq!(model_family("openrouter/openai/gpt-5"), ("openai", "gpt-5"));
+        assert_eq!(model_family("openai/gpt-5"), ("openai", "gpt-5"));
+        assert_eq!(model_family("gpt-5"), ("", "gpt-5"));
+    }
+
+    #[test]
+    fn model_family_maps_bedrock_ids() {
+        assert_eq!(
+            model_family("bedrock/global.anthropic.claude-sonnet-5"),
+            ("anthropic", "claude-sonnet-5")
+        );
+        assert_eq!(
+            model_family("bedrock/anthropic.claude-haiku-4-5-20251001-v1:0"),
+            ("anthropic", "claude-haiku-4-5-20251001-v1:0")
+        );
+        assert_eq!(
+            model_family("bedrock/us.openai.gpt-oss-120b-1:0"),
+            ("openai", "gpt-oss-120b-1:0")
+        );
+        assert_eq!(
+            model_family("bedrock/moonshot.kimi-k2-thinking"),
+            ("moonshotai", "kimi-k2-thinking")
+        );
     }
 }

@@ -3,12 +3,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     agent::AgentCard,
-    lang_model::LangModelOptions,
+    lang_model::{LangModelOptions, model_family},
     tool::{
         ToolDesc, WebSearchEngineKind,
         r#impl::{
-            get_apply_patch_tool_desc, get_docread_tool_desc, get_edit_tool_desc,
-            get_glob_tool_desc, get_grep_tool_desc, get_read_tool_desc, get_shell_tool_desc,
+            get_apply_patch_tool_desc, get_edit_tool_desc, get_imgread_tool_desc,
+            get_read_file_tool_desc, get_read_tool_desc, get_shell_tool_desc,
             get_web_fetch_tool_desc, get_web_search_tool_desc, get_write_tool_desc,
         },
     },
@@ -22,7 +22,7 @@ use crate::{
 /// changes the fundamental nature of the agent.
 ///
 /// Runtime concerns — credentials, tool sources, and the
-/// [`Console`](crate::console::Console) — live on
+/// [`ConsoleClient`](crate::console::ConsoleClient) — live on
 /// [`AgentProvider`](crate::agent::AgentProvider) and the constructors in
 /// [`Agent`](crate::agent::Agent), not here.
 ///
@@ -68,6 +68,11 @@ pub struct AgentSpec {
     /// all available engines. Only meaningful when `web_search` is listed in `tools`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_search_engines: Option<Vec<WebSearchEngineKind>>,
+
+    /// Skill directories in the console, each holding a `SKILL.md`. See
+    /// [`skill`](Self::skill).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
 }
 
 impl AgentSpec {
@@ -80,11 +85,26 @@ impl AgentSpec {
             card: None,
             model_options: None,
             web_search_engines: None,
+            skills: Vec::new(),
         }
     }
 
     pub fn instruction(mut self, inst: impl Into<String>) -> Self {
         self.instruction = Some(inst.into());
+        self
+    }
+
+    /// Give this agent the skill in `dir`, a directory in the console holding a `SKILL.md`.
+    ///
+    /// When the agent is made, the `name` and `description` in the file's frontmatter are
+    /// read through the console and listed in the system message, with where the skill
+    /// is. The rest of the file is left for the agent to read when it uses the skill, so
+    /// an agent with skills needs a console and a tool that reads files.
+    ///
+    /// Only alongside the instruction: a history that already leads with a system message
+    /// keeps its own, and the skills are not added to it.
+    pub fn skill(mut self, dir: impl Into<String>) -> Self {
+        self.skills.push(dir.into());
         self
     }
 
@@ -99,34 +119,39 @@ impl AgentSpec {
     }
 
     /// Append the canonical local-execution toolset for the spec's model family.
-    ///
-    /// * `openai/*`: `shell`, `read`, `docread`, `apply_patch`. Shell-first — `shell` is
-    ///   preferred over dedicated `glob`/`grep`, and `apply_patch` is preferred over
-    ///   `write`+`edit`.
-    /// * others: `shell`, `read`, `docread`, `write`, `edit`, `glob`, `grep`.
-    ///
-    /// Both families get `docread` alongside `read`: `read` returns a file as it is
-    /// written, which for a PDF or a `.docx` is a binary it refuses, and `docread` is
-    /// the only way to reach the text inside one.
     pub fn system_tools(mut self) -> Self {
-        self.tools.extend(if self.model.starts_with("openai/") {
-            vec![
-                get_shell_tool_desc(),
-                get_read_tool_desc(),
-                get_docread_tool_desc(),
-                get_apply_patch_tool_desc(),
-            ]
+        self.tools.push(get_shell_tool_desc());
+
+        let (family, name) = model_family(&self.model);
+        // OpenAI models read files through `shell`, as in Codex.
+        if family == "openai" {
+            self.tools.push(get_apply_patch_tool_desc());
         } else {
-            vec![
-                get_shell_tool_desc(),
-                get_read_tool_desc(),
-                get_docread_tool_desc(),
-                get_write_tool_desc(),
-                get_edit_tool_desc(),
-                get_glob_tool_desc(),
-                get_grep_tool_desc(),
-            ]
-        });
+            // DeepSeek, Kimi and GLM are served behind Anthropic-compatible APIs
+            // for Claude Code, so they likely follow the Claude style.
+            // Qwen Code is a fork of Gemini CLI.
+            self.tools.push(match family {
+                "anthropic" | "deepseek" | "moonshotai" | "z-ai" => get_read_tool_desc(),
+                "google" | "qwen" => get_read_file_tool_desc(),
+                _ => get_read_tool_desc(),
+            });
+            self.tools.push(get_write_tool_desc());
+            self.tools.push(get_edit_tool_desc());
+        }
+
+        // Text-only models (no image input) get no `imgread`.
+        let text_only = match family {
+            "deepseek" => true,
+            "moonshotai" => {
+                name.starts_with("kimi-k2-")
+                    || (name.starts_with("moonshot-v1-") && !name.contains("vision"))
+            }
+            _ => false,
+        };
+        if !text_only {
+            self.tools.push(get_imgread_tool_desc());
+        }
+
         self
     }
 
@@ -206,6 +231,13 @@ impl AgentSpec {
         self.model_options
             .get_or_insert_with(LangModelOptions::new)
             .response_format = Some(fmt);
+        self
+    }
+
+    pub fn reasoning(mut self, effort: crate::lang_model::ReasoningEffort) -> Self {
+        self.model_options
+            .get_or_insert_with(LangModelOptions::new)
+            .reasoning = Some(effort);
         self
     }
 }

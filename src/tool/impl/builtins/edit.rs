@@ -40,7 +40,7 @@ pub fn get_edit_tool_desc() -> ToolDesc {
 }
 
 pub fn get_edit_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &mut Console| -> Value {
+    tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value {
         let Some(path) = args.pointer("/path").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: path",

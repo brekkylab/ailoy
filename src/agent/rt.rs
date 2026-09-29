@@ -5,6 +5,7 @@ use futures::{FutureExt as _, Stream, StreamExt as _, stream::FuturesUnordered};
 use crate::{
     agent::{
         AgentProvider, AgentSpec, AgentState, ContextManager, get_agent_providers,
+        skill::render_skills,
         subagent::{get_subagent_tool_desc, get_subagent_tool_func},
     },
     lang_model::{LangModel, LangModelOptions},
@@ -56,20 +57,23 @@ pub struct Agent {
 impl Agent {
     /// Create an agent using the `"default"` entry of the process-wide
     /// [`get_agent_providers`] registry and a fresh [`AgentState`].
-    pub fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_state(spec, "default", AgentState::new())
+    pub async fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
+        Self::try_with_provider_and_state(spec, "default", AgentState::new()).await
     }
 
     /// Create an agent using the [`AgentProvider`] registered under `provider`
     /// in [`get_agent_providers`] and a fresh [`AgentState`].
-    pub fn try_with_provider(spec: AgentSpec, provider: impl AsRef<str>) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_state(spec, provider, AgentState::new())
+    pub async fn try_with_provider(
+        spec: AgentSpec,
+        provider: impl AsRef<str>,
+    ) -> anyhow::Result<Self> {
+        Self::try_with_provider_and_state(spec, provider, AgentState::new()).await
     }
 
     /// Create an agent using the `"default"` entry of the process-wide
     /// [`get_agent_providers`] registry and an explicit [`AgentState`].
-    pub fn try_with_state(spec: AgentSpec, state: AgentState) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_state(spec, "default", state)
+    pub async fn try_with_state(spec: AgentSpec, state: AgentState) -> anyhow::Result<Self> {
+        Self::try_with_provider_and_state(spec, "default", state).await
     }
 
     /// Create an agent using the [`AgentProvider`] registered under `provider`
@@ -85,7 +89,11 @@ impl Agent {
     /// Unless `state.history` already leads with a [`Role::System`] message, one
     /// built from `spec.instruction` is inserted at the front; a history that leads
     /// with one is taken as-is, so the caller's own system message wins.
-    pub fn try_with_provider_and_state(
+    ///
+    /// Async for [`AgentSpec::skills`], which are read through the console to go into
+    /// that message. A console server boots its session when the console is built, so
+    /// this is a read and not a boot.
+    pub async fn try_with_provider_and_state(
         spec: AgentSpec,
         provider: impl AsRef<str>,
         mut state: AgentState,
@@ -166,7 +174,16 @@ impl Agent {
         // A system message is expected only at index 0; `any` covers a stray one too,
         // since seeding a second would either shadow theirs or ship both.
         if !state.history.iter().any(|m| m.role == Role::System) {
-            if let Some(text) = spec.instruction.as_deref() {
+            let skills = if spec.skills.is_empty() {
+                None
+            } else {
+                Some(render_skills(&spec.skills, &state.console, &spec.model).await?)
+            };
+            let text = match (spec.instruction.as_deref(), skills) {
+                (Some(instruction), Some(skills)) => Some(format!("{instruction}\n\n{skills}")),
+                (instruction, skills) => skills.or(instruction.map(str::to_string)),
+            };
+            if let Some(text) = text {
                 // Front: that is where every schema expects a system message, whether
                 // it extracts the first one or sends them in place.
                 state.history.insert(
@@ -187,113 +204,44 @@ impl Agent {
         })
     }
 
-    /// Tell the model which directories it has and what each one is for.
+    /// Tell the model which directories it has been given.
     ///
     /// **Asked of the console, not kept beside it.** Cortex already answers
-    /// [`context_path`](cortex::console::Console::context_path) and its two siblings, so a copy on this
-    /// side would be a second answer to a settled question. The only thing that ever
-    /// made one tempting is that [`try_with_provider_and_state`](Self::try_with_provider_and_state)
-    /// is a `fn` and the console sits behind a lock — so the question is asked here
-    /// instead, at the top of a turn, which is `async` and takes that lock to
+    /// [`mounts`](cortex::console::ConsoleClient::mounts), so a copy on this side would be a
+    /// second answer to a settled question. The only thing that ever made one tempting is
+    /// that [`try_with_provider_and_state`](Self::try_with_provider_and_state) is a `fn`
+    /// and the console sits behind a lock — so the question is asked here instead, at the
+    /// top of a turn, which is `async` and takes that lock to
     /// [`start`](Self::start_console) anyway.
     ///
-    /// Only the trees the caller actually mounted are described, each under the path
-    /// the server answered — a section about a directory that is not there would be a
-    /// place for the model to try to write and fail. For the same reason each section's
-    /// advice to put something *elsewhere* is written only when that elsewhere exists:
-    /// told to move its drafts to a scratch directory it has not got, a model has
-    /// nowhere to put them.
+    /// Only paths are said. What each mount is *for* is the caller's own and nowhere in the
+    /// protocol, so an instruction that needs to say it does, and this supplies the one
+    /// thing no instruction can know ahead of time: where the mounts ended up.
     ///
     /// Appended to the system message rather than merged into
-    /// [`AgentSpec::instruction`], and appended even to a system message the caller
-    /// wrote themselves: these paths are not advice anyone can author ahead of time,
-    /// and an instruction that says "leave the result in the artifacts directory" still
-    /// needs something to say which directory that is.
-    async fn seed_console_trees(&mut self) {
-        // Held only long enough to read three paths — nothing below it awaits.
-        let (context, artifacts, scratch) = {
+    /// [`AgentSpec::instruction`], and appended even to a system message the caller wrote
+    /// themselves, for the same reason.
+    async fn seed_console_mounts(&mut self) {
+        // Held only long enough to read the paths — nothing below it awaits.
+        let mounts: Vec<std::path::PathBuf> = {
             let guard = self.state.console.lock().await;
             let Some(console) = guard.as_ref() else {
                 return;
             };
-            (
-                console.context_path().map(Path::to_path_buf),
-                console.artifacts_path().map(Path::to_path_buf),
-                console.scratch_path().map(Path::to_path_buf),
-            )
+            console.mounts().map(Path::to_path_buf).collect()
         };
 
-        // Every continuation fragment carries its own *leading* space. A `\` line
-        // continuation would read as well, but it eats the leading whitespace of the
-        // next line, so the space that keeps two words apart has to sit at the end of
-        // the line before — where a trailing-whitespace trimmer silently removes it and
-        // joins the words. This way the spacing is visible and nothing can take it.
-        let mut sections = String::new();
-
-        if let Some(path) = &context {
-            sections.push_str(&format!(
-                concat!(
-                    "\n\n# Context\n\n",
-                    "Path: `{}`\n\n",
-                    "What you were given to work from: the user's own information, the",
-                    " documents and data this task is about. Read what is here before",
-                    " assuming anything it would have told you, and prefer it over a",
-                    " guess or a search when both could answer.",
-                ),
-                path.display()
-            ));
-            if scratch.is_some() {
-                sections.push_str(concat!(
-                    " A file you need to change is copied into the scratch directory",
-                    " and changed there.",
-                ));
-            }
-        }
-
-        if let Some(path) = &artifacts {
-            sections.push_str(&format!(
-                concat!(
-                    "\n\n# Artifacts\n\n",
-                    "Path: `{}`\n\n",
-                    "Where what the user asked for goes. Every result — the report, the",
-                    " figure, the file they came for — is written here, because the",
-                    " whole contents of this directory are what gets collected and",
-                    " handed back; a result left anywhere else is not delivered.",
-                ),
-                path.display()
-            ));
-            if scratch.is_some() {
-                sections.push_str(concat!(
-                    "\n\nSo put finished work here and only finished work. Intermediate",
-                    " files, working copies and anything you write in order to read it",
-                    " back belong in the scratch directory.",
-                ));
-            }
-        }
-
-        if let Some(path) = &scratch {
-            sections.push_str(&format!(
-                concat!(
-                    "\n\n# Scratch\n\n",
-                    "Path: `{}`\n\n",
-                    "Where you work, and where you start: a relative path lands here",
-                    " unless you move. Downloads, unpacked archives, drafts,",
-                    " intermediate output, anything you write in order to read it back",
-                    " — all of it goes here, and you do not have to keep it tidy.\n\n",
-                    "Nothing here is delivered: it is thrown away when the session ends",
-                ),
-                path.display()
-            ));
-            sections.push_str(if artifacts.is_some() {
-                ", so copy what is meant to be seen into the artifacts directory."
-            } else {
-                "."
-            });
-        }
-
         // A console that mounted nothing says nothing about where the agent stands.
-        if sections.is_empty() {
+        if mounts.is_empty() {
             return;
+        }
+
+        let mut section = String::from(concat!(
+            "\n\n# Mounts\n\n",
+            "The directories you have been given, in the order they were mounted:\n",
+        ));
+        for path in &mounts {
+            section.push_str(&format!("\n- `{}`", path.display()));
         }
 
         // Into the *first* text part, not a part of its own. Three of the four provider
@@ -308,10 +256,10 @@ impl Agent {
             .position(|m| m.role == Role::System)
         else {
             // No instruction was given and the caller wrote no system message, but the
-            // trees are still worth saying on their own.
+            // mounts are still worth saying on their own.
             self.state.history.insert(
                 0,
-                Message::new(Role::System).with_contents([Part::text(sections.trim_start())]),
+                Message::new(Role::System).with_contents([Part::text(section.trim_start())]),
             );
             return;
         };
@@ -322,17 +270,17 @@ impl Agent {
             _ => None,
         }) {
             // Every turn seeds, and a second `Agent` may be built over the history a
-            // first one produced. The text is built from the same three paths each
-            // time, so what was already written is what would be written again — which
-            // makes the section its own marker, with nothing to keep in step with it.
+            // first one produced. The text is built from the same paths each time, so
+            // what was already written is what would be written again — which makes the
+            // section its own marker, with nothing to keep in step with it.
             Some(text) => {
-                if text.contains(sections.as_str()) {
+                if text.contains(section.as_str()) {
                     return;
                 }
-                text.push_str(&sections);
+                text.push_str(&section);
             }
-            // A system message carrying no text at all: the trees lead it.
-            None => system.contents.insert(0, Part::text(sections.trim_start())),
+            // A system message carrying no text at all: the mounts lead it.
+            None => system.contents.insert(0, Part::text(section.trim_start())),
         }
     }
 
@@ -354,23 +302,34 @@ impl Agent {
                 Part::Value { value } => {
                     let serialised = serde_json::to_string(value).unwrap_or_default();
                     if serialised.len() > Self::MAX_TOOL_RESULT_CHARS {
-                        let truncated = crate::util::truncate::middle_truncate(
-                            serialised,
-                            Self::MAX_TOOL_RESULT_CHARS,
-                        );
+                        let truncated =
+                            Self::middle_truncate(serialised, Self::MAX_TOOL_RESULT_CHARS);
                         *value = crate::datatype::Value::string(truncated);
                     }
                 }
                 Part::Text { text } if text.len() > Self::MAX_TOOL_RESULT_CHARS => {
-                    *text = crate::util::truncate::middle_truncate(
-                        std::mem::take(text),
-                        Self::MAX_TOOL_RESULT_CHARS,
-                    );
+                    *text =
+                        Self::middle_truncate(std::mem::take(text), Self::MAX_TOOL_RESULT_CHARS);
                 }
                 _ => {}
             }
         }
         msg
+    }
+
+    /// Truncate `s` to at most `max_chars` characters, keeping equal-sized head and
+    /// tail and inserting an omission notice in the middle.
+    fn middle_truncate(s: String, max_chars: usize) -> String {
+        let chars: Vec<char> = s.chars().collect();
+        if chars.len() <= max_chars {
+            return s;
+        }
+        let head = max_chars / 2;
+        let tail = max_chars - head;
+        let omitted = chars.len() - head - tail;
+        let head_str: String = chars[..head].iter().collect();
+        let tail_str: String = chars[chars.len() - tail..].iter().collect();
+        format!("{head_str}\n\n... [{omitted} characters omitted] ...\n\n{tail_str}")
     }
 
     /// Boot the console's backend for a batch of tool calls.
@@ -613,7 +572,7 @@ impl Agent {
             // two consecutive User messages.
             let mut committed = false;
 
-            self.seed_console_trees().await;
+            self.seed_console_mounts().await;
 
             loop {
                 // Truncation check based on previous call's token usage.
@@ -712,7 +671,7 @@ impl Agent {
             // second consecutive User message (which most providers reject).
             let mut committed = false;
 
-            self.seed_console_trees().await;
+            self.seed_console_mounts().await;
 
             loop {
                 // Truncation check based on previous call's token usage.
@@ -830,7 +789,6 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
-    use cortex::console::TreeRole;
     use futures::StreamExt as _;
 
     use super::*;
@@ -902,33 +860,24 @@ mod tests {
 
     // ── tests ─────────────────────────────────────────────────────────────────
 
-    /// A console whose trees are the directories named, each an empty temp dir.
-    ///
-    /// `None` for a role leaves that tree unmounted, which is how the sections are
-    /// checked against a session that has only some of them.
-    async fn console_with_trees(
+    /// A console with one writable mount per name, each an empty temp dir under `root`
+    /// and mounted at itself.
+    async fn console_with_mounts(
         root: &std::path::Path,
-        roles: &[TreeRole],
-    ) -> cortex::console::Console {
+        names: &[&str],
+    ) -> cortex::console::ConsoleClient {
         dotenvy::dotenv().ok();
-        let program = std::env::var("AILOY_CORTEX_CONSOLE")
-            .unwrap_or_else(|_| "cortex-local-console".to_string());
-
-        let mut builder = cortex::console::Console::builder().stdio_client(&[&program]);
-        for role in roles {
-            let dir = root.join(role.as_str());
+        let mut builder = cortex::console::ConsoleClient::builder();
+        for name in names {
+            let dir = root.join(name);
             std::fs::create_dir_all(&dir).unwrap();
-            builder = match role {
-                TreeRole::Context => builder.context(dir),
-                TreeRole::Artifacts => builder.artifacts(dir),
-                TreeRole::Scratch => builder.scratch(dir),
-            };
+            builder = builder.mount(dir.clone(), dir);
         }
 
         let mut console = builder
             .build()
             .await
-            .unwrap_or_else(|e| panic!("starting `{program}`: {e:#}"));
+            .unwrap_or_else(|e| panic!("starting the console server: {e:#}"));
         console.start().await.expect("starting a test console");
         console
     }
@@ -945,39 +894,45 @@ mod tests {
             .join("\n\n")
     }
 
-    /// Seed a turn's worth without calling a model: `seed_console_trees` is what the
+    /// Seed a turn's worth without calling a model: `seed_console_mounts` is what the
     /// top of `run` and `run_stream` both do before anything else.
     async fn seeded(agent: &mut Agent) -> String {
-        agent.seed_console_trees().await;
+        agent.seed_console_mounts().await;
         system_text(agent)
     }
 
-    /// A console that lent trees gets each one described, under the path the server
+    /// A console with mounts gets each one listed, under the path the server
     /// answered, alongside the instruction rather than in place of it.
     #[tokio::test]
-    async fn test_console_trees_are_described_in_the_system_message() {
+    async fn test_console_mounts_are_listed_in_the_system_message() {
         let provider = default_test_provider();
         let dir = tempfile::tempdir().unwrap();
-        let console = console_with_trees(
-            dir.path(),
-            &[TreeRole::Context, TreeRole::Artifacts, TreeRole::Scratch],
-        )
-        .await;
+        let console = console_with_mounts(dir.path(), &["first", "second"]).await;
+        let paths: Vec<String> = console.mounts().map(|p| p.display().to_string()).collect();
+        assert_eq!(paths.len(), 2);
 
         let spec = AgentSpec::new("openai/gpt-4o-mini").instruction("Be brief.");
         let state = AgentState::new().with_console(console);
-        let mut agent = Agent::try_with_provider_and_state(spec, provider, state).unwrap();
+        let mut agent = Agent::try_with_provider_and_state(spec, provider, state)
+            .await
+            .unwrap();
 
         let text = seeded(&mut agent).await;
-        assert!(text.contains("Be brief."), "the instruction survives");
-        assert!(text.contains("# Context"), "{text}");
-        assert!(text.contains("# Artifacts"), "{text}");
-        assert!(text.contains("# Scratch"), "{text}");
-        for role in ["context", "artifacts", "scratch"] {
-            assert!(text.contains(role), "{role} is named by path: {text}");
-        }
+        assert!(
+            text.starts_with("Be brief."),
+            "the instruction survives and leads"
+        );
+        assert!(text.contains("# Mounts"), "{text}");
+        let at: Vec<usize> = paths
+            .iter()
+            .map(|p| {
+                text.find(&format!("`{p}`"))
+                    .unwrap_or_else(|| panic!("{p} in {text}"))
+            })
+            .collect();
+        assert!(at[0] < at[1], "listed in the order mounted: {text}");
 
-        // Exactly one system message: the trees join the instruction's, they do not
+        // Exactly one system message: the mounts join the instruction's, they do not
         // ship a second one for a provider to pick between.
         assert_eq!(
             agent
@@ -989,22 +944,24 @@ mod tests {
         );
     }
 
-    /// The trees land in the *first* text part of the system message.
+    /// The mounts land in the *first* text part of the system message.
     ///
     /// Not a detail of layout: `openai`, `anthropic` and `gemini` each extract
-    /// `contents.first()` and drop the rest, so a tree section written into a part of
-    /// its own would reach chat-completions and nothing else — and would do it without
-    /// an error anywhere.
+    /// `contents.first()` and drop the rest, so a section written into a part of its own
+    /// would reach chat-completions and nothing else — and would do it without an error
+    /// anywhere.
     #[tokio::test]
-    async fn test_trees_land_in_the_first_text_part() {
+    async fn test_mounts_land_in_the_first_text_part() {
         let provider = default_test_provider();
         let dir = tempfile::tempdir().unwrap();
-        let console = console_with_trees(dir.path(), &[TreeRole::Artifacts]).await;
+        let console = console_with_mounts(dir.path(), &["work"]).await;
 
         let spec = AgentSpec::new("openai/gpt-4o-mini").instruction("Be brief.");
         let state = AgentState::new().with_console(console);
-        let mut agent = Agent::try_with_provider_and_state(spec, provider, state).unwrap();
-        agent.seed_console_trees().await;
+        let mut agent = Agent::try_with_provider_and_state(spec, provider, state)
+            .await
+            .unwrap();
+        agent.seed_console_mounts().await;
 
         let system = agent
             .get_history()
@@ -1019,62 +976,8 @@ mod tests {
             "the instruction still leads"
         );
         assert!(
-            first.contains("# Artifacts"),
-            "and the trees are in the same part: {first:?}"
-        );
-    }
-
-    /// The section is prose, not source: no line carries the indentation the literals
-    /// are written at, and no two words have been run together by a lost space.
-    #[tokio::test]
-    async fn test_tree_sections_carry_no_source_indentation() {
-        let provider = default_test_provider();
-        let dir = tempfile::tempdir().unwrap();
-        let console = console_with_trees(
-            dir.path(),
-            &[TreeRole::Context, TreeRole::Artifacts, TreeRole::Scratch],
-        )
-        .await;
-
-        let spec = AgentSpec::new("openai/gpt-4o-mini").instruction("Be brief.");
-        let state = AgentState::new().with_console(console);
-        let mut agent = Agent::try_with_provider_and_state(spec, provider, state).unwrap();
-
-        let text = seeded(&mut agent).await;
-        for line in text.lines() {
-            assert!(
-                !line.starts_with(' '),
-                "line is indented like the literal it came from: {line:?}"
-            );
-            assert!(!line.contains("  "), "doubled space: {line:?}");
-        }
-        // The joins the fragments make, spelled out: a lost leading space shows up here
-        // and nowhere else, since the result is still a perfectly plausible sentence.
-        assert!(text.contains("information, the documents and data"));
-        assert!(text.contains("the report, the figure, the file"));
-        assert!(text.contains("lands here unless you move"));
-    }
-
-    /// A tree the caller never mounted is not described, and nothing sends the model
-    /// to one: advice to move drafts into a scratch directory it has not got leaves it
-    /// nowhere to put them.
-    #[tokio::test]
-    async fn test_unmounted_trees_are_not_described() {
-        let provider = default_test_provider();
-        let dir = tempfile::tempdir().unwrap();
-        let console = console_with_trees(dir.path(), &[TreeRole::Artifacts]).await;
-
-        let spec = AgentSpec::new("openai/gpt-4o-mini").instruction("Be brief.");
-        let state = AgentState::new().with_console(console);
-        let mut agent = Agent::try_with_provider_and_state(spec, provider, state).unwrap();
-
-        let text = seeded(&mut agent).await;
-        assert!(text.contains("# Artifacts"));
-        assert!(!text.contains("# Context"));
-        assert!(!text.contains("# Scratch"));
-        assert!(
-            !text.contains("scratch directory"),
-            "no advice pointing at an unmounted tree: {text}"
+            first.contains("# Mounts"),
+            "and the mounts are in the same part: {first:?}"
         );
     }
 
@@ -1083,7 +986,7 @@ mod tests {
     async fn test_no_console_leaves_the_system_message_alone() {
         let provider = default_test_provider();
         let spec = AgentSpec::new("openai/gpt-4o-mini").instruction("Be brief.");
-        let mut agent = Agent::try_with_provider(spec, provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, provider).await.unwrap();
 
         assert_eq!(seeded(&mut agent).await, "Be brief.");
     }
@@ -1091,51 +994,57 @@ mod tests {
     /// A console that mounted nothing is the same case: nothing to say about where it
     /// stands, so nothing is said.
     #[tokio::test]
-    async fn test_console_without_trees_leaves_the_system_message_alone() {
+    async fn test_console_without_mounts_leaves_the_system_message_alone() {
         let provider = default_test_provider();
         let spec = AgentSpec::new("openai/gpt-4o-mini").instruction("Be brief.");
         let state = AgentState::new().with_console(crate::test_console().await);
-        let mut agent = Agent::try_with_provider_and_state(spec, provider, state).unwrap();
+        let mut agent = Agent::try_with_provider_and_state(spec, provider, state)
+            .await
+            .unwrap();
 
         assert_eq!(seeded(&mut agent).await, "Be brief.");
     }
 
     /// The caller's own system message wins on instruction and still learns the paths:
-    /// which directory "the artifacts directory" is cannot be authored ahead of time.
+    /// where a mount ended up cannot be authored ahead of time.
     #[tokio::test]
-    async fn test_trees_are_appended_to_a_caller_supplied_system_message() {
+    async fn test_mounts_are_appended_to_a_caller_supplied_system_message() {
         let provider = default_test_provider();
         let dir = tempfile::tempdir().unwrap();
-        let console = console_with_trees(dir.path(), &[TreeRole::Artifacts]).await;
+        let console = console_with_mounts(dir.path(), &["work"]).await;
 
         let spec = AgentSpec::new("openai/gpt-4o-mini").instruction("ignored");
         let state = AgentState::new()
             .with_history([Message::new(Role::System).with_contents([Part::text("Mine.")])])
             .with_console(console);
-        let mut agent = Agent::try_with_provider_and_state(spec, provider, state).unwrap();
+        let mut agent = Agent::try_with_provider_and_state(spec, provider, state)
+            .await
+            .unwrap();
 
         let text = seeded(&mut agent).await;
         assert!(text.contains("Mine."));
         assert!(!text.contains("ignored"), "the caller's message wins");
-        assert!(text.contains("# Artifacts"), "and still learns the paths");
+        assert!(text.contains("# Mounts"), "and still learns the paths");
     }
 
     /// Every turn seeds, so seeding twice must be seeding once — otherwise a
     /// many-turn conversation stacks a copy of the section per turn.
     #[tokio::test]
-    async fn test_trees_are_seeded_once_across_turns() {
+    async fn test_mounts_are_seeded_once_across_turns() {
         let provider = default_test_provider();
         let dir = tempfile::tempdir().unwrap();
-        let console = console_with_trees(dir.path(), &[TreeRole::Artifacts]).await;
+        let console = console_with_mounts(dir.path(), &["work"]).await;
 
         let spec = AgentSpec::new("openai/gpt-4o-mini").instruction("Be brief.");
         let state = AgentState::new().with_console(console);
-        let mut agent = Agent::try_with_provider_and_state(spec, provider, state).unwrap();
+        let mut agent = Agent::try_with_provider_and_state(spec, provider, state)
+            .await
+            .unwrap();
 
-        agent.seed_console_trees().await;
+        agent.seed_console_mounts().await;
         let text = seeded(&mut agent).await;
         assert_eq!(
-            text.matches("# Artifacts").count(),
+            text.matches("# Mounts").count(),
             1,
             "one copy of the section: {text}"
         );
@@ -1148,17 +1057,18 @@ mod tests {
             provider,
             rebuilt.with_console_slot(agent.state.console.clone()),
         )
+        .await
         .unwrap();
-        assert_eq!(seeded(&mut rebuilt).await.matches("# Artifacts").count(), 1);
+        assert_eq!(seeded(&mut rebuilt).await.matches("# Mounts").count(), 1);
     }
 
-    /// A sub-agent shares the parent's console slot, and so is told the same trees
+    /// A sub-agent shares the parent's console slot, and so is told the same mounts
     /// without anything having to be passed alongside it.
     #[tokio::test]
-    async fn test_subagents_are_told_the_same_trees() {
+    async fn test_subagents_are_told_the_same_mounts() {
         let provider = default_test_provider();
         let dir = tempfile::tempdir().unwrap();
-        let console = console_with_trees(dir.path(), &[TreeRole::Artifacts]).await;
+        let console = console_with_mounts(dir.path(), &["work"]).await;
 
         let sub = AgentSpec::new("openai/gpt-4o-mini").instruction("Sub.");
         let parent = Agent::try_with_provider_and_state(
@@ -1166,6 +1076,7 @@ mod tests {
             provider,
             AgentState::new().with_console(console),
         )
+        .await
         .unwrap();
 
         // Materialised the way the sub-agent ToolFunc does it: the parent's slot, and
@@ -1175,9 +1086,10 @@ mod tests {
             provider,
             AgentState::new().with_console_slot(parent.state.console.clone()),
         )
+        .await
         .unwrap();
 
-        assert!(seeded(&mut child).await.contains("# Artifacts"));
+        assert!(seeded(&mut child).await.contains("# Mounts"));
     }
 
     /// Verifies `run_stream` emits multiple incremental `Delta` events whose
@@ -1187,7 +1099,7 @@ mod tests {
     async fn test_run_stream_emits_text_deltas() {
         let provider = default_test_provider();
         let spec = AgentSpec::new("openai/gpt-4o-mini");
-        let mut agent = Agent::try_with_provider(spec, provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, provider).await.unwrap();
 
         let query =
             Message::new(Role::User).with_contents([Part::text("Reply with a short greeting.")]);
@@ -1220,7 +1132,7 @@ mod tests {
 
     /// A model whose endpoint refuses connection, so the first model call fails
     /// deterministically and offline (no API key needed).
-    fn unreachable_agent() -> Agent {
+    async fn unreachable_agent() -> Agent {
         use crate::lang_model::{LangModelAPISchema, LangModelProvider, get_lm_providers_mut};
 
         // Register a lang-model provider whose endpoint refuses connection, so
@@ -1238,7 +1150,9 @@ mod tests {
             "unreachable_agent".into(),
             AgentProvider::new("unreachable_lm", "default"),
         );
-        Agent::try_with_provider(AgentSpec::new("test/model"), "unreachable_agent").unwrap()
+        Agent::try_with_provider(AgentSpec::new("test/model"), "unreachable_agent")
+            .await
+            .unwrap()
     }
 
     /// A first model call that fails must roll the just-pushed user query back
@@ -1247,7 +1161,7 @@ mod tests {
     /// message, which most providers reject.
     #[tokio::test]
     async fn test_run_stream_rolls_back_query_on_failure() {
-        let mut agent = unreachable_agent();
+        let mut agent = unreachable_agent().await;
         let query = Message::new(Role::User).with_contents([Part::text("hi")]);
         let mut errored = false;
         {
@@ -1270,7 +1184,7 @@ mod tests {
     /// Same rollback guarantee for the non-streaming `run`.
     #[tokio::test]
     async fn test_run_rolls_back_query_on_failure() {
-        let mut agent = unreachable_agent();
+        let mut agent = unreachable_agent().await;
         let query = Message::new(Role::User).with_contents([Part::text("hi")]);
         let mut errored = false;
         {
@@ -1313,7 +1227,7 @@ mod tests {
         });
 
         let spec = AgentSpec::new("openai/gpt-4o-mini").tool(temperature_desc);
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let query = Message::new(Role::User)
             .with_contents([Part::text("What is the temperature in Seoul?")]);
@@ -1371,7 +1285,7 @@ mod tests {
             )
             .subagent(sub_spec);
 
-        let mut main_agent = Agent::try_with_provider(main_spec, provider).unwrap();
+        let mut main_agent = Agent::try_with_provider(main_spec, provider).await.unwrap();
 
         let query =
             Message::new(Role::User).with_contents([Part::text("What is 123 multiplied by 7?")]);
@@ -1421,7 +1335,7 @@ mod tests {
 
         let main_spec = AgentSpec::new("openai/gpt-4o-mini").subagent(sub_spec);
 
-        let mut main_agent = Agent::try_with_provider(main_spec, provider).unwrap();
+        let mut main_agent = Agent::try_with_provider(main_spec, provider).await.unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text("What is 99 plus 1?")]);
 
@@ -1502,7 +1416,7 @@ mod tests {
                     .to_string(),
             );
 
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let query = Message::new(Role::User).with_contents([Part::text(
             "Tell me about Seoul. Use get_weather for weather and get_traffic for traffic.",
@@ -1583,7 +1497,7 @@ mod tests {
             .instruction("Reply with exactly 'OK'. Do not call any tools.")
             .tool(dummy_desc);
 
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let old_id = "call_old";
         let recent_id = "call_recent";
@@ -1668,7 +1582,7 @@ mod tests {
             .instruction("Reply with exactly 'OK'. Do not call any tools.")
             .tool(dummy_desc);
 
-        let mut agent = Agent::try_with_provider(spec, &provider).unwrap();
+        let mut agent = Agent::try_with_provider(spec, &provider).await.unwrap();
 
         let old_id = "call_old_b";
         let recent_id = "call_recent_b";
@@ -1787,6 +1701,7 @@ mod tests {
         let state = AgentState::new().with_memory(Memory::new("/work/notes.sqlite"));
         let agent =
             Agent::try_with_provider_and_state(AgentSpec::new(DUMMY_MODEL), provider, state)
+                .await
                 .unwrap();
 
         let names: Vec<&str> = agent.tool_descs.iter().map(|d| d.name.as_str()).collect();
@@ -1805,6 +1720,7 @@ mod tests {
             provider,
             AgentState::new(),
         )
+        .await
         .unwrap();
 
         assert!(agent.tool_descs.is_empty(), "{:?}", agent.tool_descs);

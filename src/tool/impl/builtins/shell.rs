@@ -1,12 +1,26 @@
-use cortex::console::Error;
+use cortex::protocol::Error;
 
 use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
-    util::truncate::middle_truncate,
 };
 
 const MAX_OUTPUT_CHARS: usize = 30_000; // same as Claude Code
+
+/// Truncate `s` to at most `max_chars` characters, keeping equal-sized head and
+/// tail and inserting an omission notice in the middle.
+fn middle_truncate(s: String, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars {
+        return s;
+    }
+    let head = max_chars / 2;
+    let tail = max_chars - head;
+    let omitted = chars.len() - head - tail;
+    let head_str: String = chars[..head].iter().collect();
+    let tail_str: String = chars[chars.len() - tail..].iter().collect();
+    format!("{head_str}\n\n... [{omitted} characters omitted] ...\n\n{tail_str}")
+}
 
 pub fn get_shell_tool_desc() -> ToolDesc {
     ToolDescBuilder::new("shell")
@@ -31,7 +45,7 @@ pub fn get_shell_tool_desc() -> ToolDesc {
 }
 
 pub fn get_shell_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &mut Console| -> Value {
+    tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value {
         let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
@@ -44,9 +58,17 @@ pub fn get_shell_tool_func() -> ToolFunc {
             }
         };
 
+        // Seconds, whole or not, as the model gives them; 0 or none is no bound of the call's
+        // own, which leaves it to whatever the console was built with.
+        let timeout_ms = args
+            .pointer("/timeout_secs")
+            .and_then(|v| v.as_float().or_else(|| v.as_unsigned().map(|u| u as f64)))
+            .filter(|secs| *secs > 0.0)
+            .map(|secs| (secs * 1000.0).ceil() as u64);
+
         // cortex consults no shell, so asking for shell semantics means asking for a
-        // shell. `None` leaves the bound to whatever the console was built with.
-        let out = match console.exec(["sh", "-c", cmd.as_str()], None).await {
+        // shell.
+        let out = match console.exec(["sh", "-c", cmd.as_str()], timeout_ms).await {
             Ok(out) => out,
             // A killed command has no result — no exit code, and whatever it wrote is
             // gone with it — so cortex refuses the execution instead of inventing one.
@@ -136,6 +158,31 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap();
         assert!(stdout.contains("ailoy"), "stdout: {stdout:?}");
+    }
+
+    #[tokio::test]
+    async fn test_timeout_secs_bounds_the_command() {
+        let provider = provider().await;
+        let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
+        let f = funcs.get("shell").unwrap();
+        let mut console = test_console().await;
+        let msg = f
+            .call(
+                to_value!({ "cmd": "sleep 30", "timeout_secs": 1 }),
+                "",
+                &mut console,
+            )
+            .next()
+            .await
+            .unwrap()
+            .message;
+        let timed_out = msg.contents[0]
+            .as_value()
+            .unwrap()
+            .pointer("/timed_out")
+            .and_then(|v| v.as_bool())
+            .unwrap();
+        assert!(timed_out);
     }
 
     #[tokio::test]

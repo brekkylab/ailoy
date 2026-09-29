@@ -1,0 +1,9 @@
+# What the vendored simulator imports. Not pinned tighter than this on purpose:
+# the environment's own randomness is seeded (`global_random_seed`), and these
+# are used for arithmetic and for plots that never run here.
+#
+# matplotlib is on the list because `upstream/module/sku.py` imports pyplot at
+# import time, not because anything draws: MPLBACKEND=Agg is set before it.
+numpy>=1.26
+pandas>=2.0
+matplotlib>=3.8

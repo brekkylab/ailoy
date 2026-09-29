@@ -1,0 +1,25 @@
+[project]
+name = "ailoy-example-sam3"
+version = "0.1.0"
+description = "SAM3 on ncnn as an agent's skill, on ailoy's Python bindings, and the script that downloads and converts its checkpoint."
+requires-python = ">=3.10"
+dependencies = [
+    "ailoy-py",
+    "huggingface_hub",
+    "ncnn",
+    "numpy",
+    "pillow",
+    "pnnx",
+    "python-dotenv>=1",
+    "torch",
+    "torchvision",
+    "transformers",
+]
+
+[tool.uv]
+# Scripts, not a package: `uv run` only needs the environment.
+package = false
+
+[tool.uv.sources]
+# The bindings in this checkout, built by maturin on the first `uv run`.
+ailoy-py = { path = "../..", editable = true }

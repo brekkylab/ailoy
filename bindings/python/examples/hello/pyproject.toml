@@ -1,0 +1,14 @@
+[project]
+name = "ailoy-example-hello"
+version = "0.1.0"
+description = "One agent turn with a fixed question, on ailoy's Python bindings."
+requires-python = ">=3.10"
+dependencies = ["ailoy-py", "python-dotenv>=1"]
+
+[tool.uv]
+# Scripts, not a package: `uv run` only needs the environment.
+package = false
+
+[tool.uv.sources]
+# The bindings in this checkout, built by maturin on the first `uv run`.
+ailoy-py = { path = "../..", editable = true }

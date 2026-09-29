@@ -40,6 +40,15 @@ impl LangModelProvider {
         }
     }
 
+    /// Its model ids are `<vendor>/<model>` (`openai/gpt-5`), so they are registered as `openrouter/<vendor>/<model>`.
+    pub fn openrouter(api_key: String) -> LangModelProviderElem {
+        LangModelProviderElem::API {
+            schema: LangModelAPISchema::ChatCompletion,
+            url: Url::parse("https://openrouter.ai/api/v1/chat/completions").unwrap(),
+            api_key: Some(api_key),
+        }
+    }
+
     pub fn chat_completion(
         url: &str,
         api_key: Option<String>,
@@ -235,6 +244,11 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
                 .insert("top_p".to_owned(), top_p.into());
         }
         // top_k is not part of the OpenAI ChatCompletion spec; intentionally ignored.
+        if let Some(effort) = options.reasoning {
+            body.as_object_mut()
+                .unwrap()
+                .insert("reasoning_effort".to_owned(), effort.as_str().into());
+        }
         if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
             let wire_schema = self.marshal_response_schema(schema);
             body.as_object_mut().unwrap().insert(
@@ -561,6 +575,34 @@ mod tests {
         message::{Delta, FinishReason, Message, MessageDeltaOutput, Part, Role},
         tool::ToolDesc,
     };
+
+    fn marshal_reasoning(model: &str, options: LangModelOptions) -> serde_json::Value {
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+        let provider = LangModelProvider::deepseek("k".into());
+        let req = LangModelRequest {
+            model,
+            messages: &messages,
+            tools: &[],
+            provider: &provider,
+            options: &options,
+            stream: false,
+        };
+        ChatCompletionMarshal.marshal(&req).into()
+    }
+
+    #[test]
+    fn reasoning_maps_to_reasoning_effort() {
+        let v = marshal_reasoning(
+            "grok-4",
+            LangModelOptions {
+                reasoning: Some(crate::lang_model::ReasoningEffort::High),
+                ..Default::default()
+            },
+        );
+        assert_eq!(v["body"]["reasoning_effort"], "high");
+        let v = marshal_reasoning("grok-4", LangModelOptions::default());
+        assert!(v["body"].get("reasoning_effort").is_none());
+    }
 
     #[test]
     fn test_marshal_stream_options() {

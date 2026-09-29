@@ -4,7 +4,7 @@
 use anyhow::bail;
 use url::Url;
 
-use super::super::response_format::ResponseSchemaMarshal;
+use super::{super::response_format::ResponseSchemaMarshal, anthropic};
 use crate::{
     datatype::Value,
     lang_model::{
@@ -202,8 +202,8 @@ pub(in crate::lang_model) fn validate_request(req: &LangModelRequest<'_>) -> any
     Ok(())
 }
 
-/// Converse request marshal. Model-agnostic, so nothing here depends on the
-/// model family behind the id.
+/// Converse request marshal. Model-agnostic but for one thing, where the
+/// images of tool results go: see [`takes_images_outside_tool_results`].
 #[derive(Clone, Debug, Default)]
 pub struct BedrockMarshal;
 
@@ -307,6 +307,62 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
     to_value!({"role": item.role.to_string(), "content": contents})
 }
 
+/// Whether the model takes an image only as a block of the user message, and not inside a
+/// `toolResult`. Bedrock's OpenAI models answer an image in a tool result with a 400 ("This
+/// model doesn't support the image field for user messages") and take the same image beside
+/// it, so for them [`lift_tool_result_images`] moves it there. Only a model named in the id
+/// is recognized: `openai.…` or `<geo>.openai.…`. An application inference-profile ARN hides
+/// the model and goes through unchanged.
+fn takes_images_outside_tool_results(model: &str) -> bool {
+    names_vendor(model, "openai")
+}
+
+/// Whether the model id names `vendor`: `<vendor>.…` or `<geo>.<vendor>.…`. An application
+/// inference-profile ARN hides the model and names none.
+fn names_vendor(model: &str, vendor: &str) -> bool {
+    model.split('.').take(2).any(|s| s == vendor)
+}
+
+/// Moves the images out of each `user` turn's `toolResult` blocks to the end of that turn,
+/// each after a text block naming the tool call it came from, and leaves a note in the
+/// result in its place. The tool results stay first in the turn, as they were.
+fn lift_tool_result_images(messages: &mut Value) {
+    for msg in messages.as_array_mut().into_iter().flatten() {
+        if msg.pointer("/role").and_then(Value::as_str) != Some("user") {
+            continue;
+        }
+        let Some(blocks) = msg.pointer_mut("/content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        let mut lifted = Vec::new();
+        for block in blocks.iter_mut() {
+            let Some(result) = block.pointer_mut("/toolResult") else {
+                continue;
+            };
+            let id = result
+                .pointer("/toolUseId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let Some(content) = result.pointer_mut("/content").and_then(Value::as_array_mut) else {
+                continue;
+            };
+            let (images, mut rest): (Vec<Value>, Vec<Value>) = std::mem::take(content)
+                .into_iter()
+                .partition(|c| c.pointer("/image").is_some());
+            if images.is_empty() {
+                *content = rest;
+                continue;
+            }
+            rest.push(to_value!({"text": "(the image is attached after the tool results)"}));
+            *content = rest;
+            lifted.push(to_value!({"text": format!("Image from tool call {id}:")}));
+            lifted.extend(images);
+        }
+        blocks.append(&mut lifted);
+    }
+}
+
 /// Marshals the conversation, folding tool results into `user` turns and
 /// merging consecutive same-role turns: Converse requires strict user /
 /// assistant alternation, and several tool results after one assistant turn
@@ -380,7 +436,11 @@ impl Marshal<LangModelRequest<'_>> for BedrockMarshal {
         let url = model_url(url, req.model, action);
         let header = headers(api_key.as_deref(), req.stream);
 
-        let mut body = to_value!({"messages": marshal_messages(req.messages)});
+        let mut messages = marshal_messages(req.messages);
+        if takes_images_outside_tool_results(req.model) {
+            lift_tool_result_images(&mut messages);
+        }
+        let mut body = to_value!({"messages": messages});
         let body_obj = body.as_object_mut().unwrap();
 
         let system: Vec<Value> = req
@@ -406,29 +466,58 @@ impl Marshal<LangModelRequest<'_>> for BedrockMarshal {
             );
         }
 
+        // Converse has no portable thinking control, so it goes in as the model's own
+        // fields: Claude's `thinking` and `output_config`, OpenAI's `reasoning_effort`.
+        let mut additional = Value::object_empty();
+        let add = additional.as_object_mut().unwrap();
+        let mut max_tokens = options.max_tokens;
+        let claude_thinking = options.reasoning.is_some() && names_vendor(req.model, "anthropic");
+        if let Some(effort) = options.reasoning {
+            if claude_thinking {
+                // Claude's thinking counts against maxTokens, and the Converse default is
+                // too small to hold it; the one set here fits every Claude that thinks.
+                let cfg = anthropic::thinking_config(req.model, effort, max_tokens);
+                max_tokens = Some(cfg.max_tokens);
+                add.insert("thinking".into(), cfg.thinking);
+                if let Some(effort) = cfg.effort {
+                    add.insert("output_config".into(), to_value!({"effort": effort}));
+                }
+            } else if names_vendor(req.model, "openai") {
+                add.insert("reasoning_effort".into(), effort.as_str().into());
+            } else {
+                log::warn!(
+                    "{}: no thinking control known on Bedrock; ignored",
+                    req.model
+                );
+            }
+        }
+
         // No default maxTokens: the ceiling differs per model family and an
         // over-limit value is a 400, so leave it to the model unless asked.
         let mut inference = Value::object_empty();
         let inf = inference.as_object_mut().unwrap();
-        if let Some(max_tokens) = options.max_tokens {
+        if let Some(max_tokens) = max_tokens {
             inf.insert("maxTokens".into(), (max_tokens as i64).into());
         }
-        if let Some(temperature) = options.temperature {
-            inf.insert("temperature".into(), temperature.into());
-        }
-        if let Some(top_p) = options.top_p {
-            inf.insert("topP".into(), top_p.into());
+        // Claude does not take the sampling knobs while thinking; drop them silently.
+        if !claude_thinking {
+            if let Some(temperature) = options.temperature {
+                inf.insert("temperature".into(), temperature.into());
+            }
+            if let Some(top_p) = options.top_p {
+                inf.insert("topP".into(), top_p.into());
+            }
+            // Converse has no portable top-k; `top_k` is the Anthropic/Cohere
+            // spelling and is passed through as a model-specific field.
+            if let Some(top_k) = options.top_k {
+                add.insert("top_k".into(), (top_k as i64).into());
+            }
         }
         if !inf.is_empty() {
             body_obj.insert("inferenceConfig".into(), inference);
         }
-        // Converse has no portable top-k; `top_k` is the Anthropic/Cohere
-        // spelling and is passed through as a model-specific field.
-        if let Some(top_k) = options.top_k {
-            body_obj.insert(
-                "additionalModelRequestFields".into(),
-                to_value!({"top_k": top_k as i64}),
-            );
+        if !add.is_empty() {
+            body_obj.insert("additionalModelRequestFields".into(), additional);
         }
         // Converse takes the schema as a JSON *string*, not an object.
         if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
@@ -747,6 +836,7 @@ mod tests {
             top_p: Some(0.9),
             top_k: Some(5),
             response_format: None,
+            reasoning: None,
         };
 
         let v = marshal(&request(&provider, &messages, &tools, &options, false));
@@ -768,6 +858,52 @@ mod tests {
             serde_json::json!({"maxTokens": 100, "temperature": 0.2, "topP": 0.9})
         );
         assert_eq!(v["body"]["additionalModelRequestFields"]["top_k"], 5);
+    }
+
+    #[test]
+    fn reasoning_goes_in_as_the_model_family_fields() {
+        let provider = LangModelProvider::bedrock("us-east-1".parse().unwrap(), "k".to_string());
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+        let options = LangModelOptions {
+            temperature: Some(0.2),
+            top_k: Some(5),
+            reasoning: Some(crate::lang_model::ReasoningEffort::Low),
+            ..Default::default()
+        };
+        let mut req = request(&provider, &messages, &[], &options, false);
+
+        let v = marshal(&req);
+        assert_eq!(
+            v["body"]["additionalModelRequestFields"],
+            serde_json::json!({
+                "thinking": {"type": "adaptive", "display": "summarized"},
+                "output_config": {"effort": "low"},
+            })
+        );
+        assert_eq!(
+            v["body"]["inferenceConfig"],
+            serde_json::json!({"maxTokens": 2048 + 8192}),
+            "room for the thinking, and no sampling knobs while thinking"
+        );
+
+        req.model = "anthropic.claude-haiku-4-5-20251001-v1:0";
+        let v = marshal(&req);
+        assert_eq!(
+            v["body"]["additionalModelRequestFields"],
+            serde_json::json!({"thinking": {"type": "enabled", "budget_tokens": 2048}})
+        );
+        assert_eq!(
+            v["body"]["inferenceConfig"],
+            serde_json::json!({"maxTokens": 2048 + 8192})
+        );
+
+        req.model = "openai.gpt-oss-120b-1:0";
+        let v = marshal(&req);
+        assert_eq!(
+            v["body"]["additionalModelRequestFields"],
+            serde_json::json!({"reasoning_effort": "low", "top_k": 5})
+        );
+        assert_eq!(v["body"]["inferenceConfig"]["temperature"], 0.2);
     }
 
     #[test]
@@ -819,6 +955,82 @@ mod tests {
         assert_eq!(content.len(), 1, "empty text is dropped");
         assert_eq!(content[0]["image"]["format"], "jpeg");
         assert_eq!(content[0]["image"]["source"]["bytes"], "AQID");
+    }
+
+    fn tool_image_turns() -> Vec<Message> {
+        let image = || Part::image_embedded("image/png", Bytes::from(vec![1, 2, 3])).unwrap();
+        vec![
+            Message::new(Role::User).with_contents([Part::text("look")]),
+            Message::new(Role::Assistant).with_tool_calls([
+                Part::function("t1", "imgread", to_value!({"path": "/a.png"})),
+                Part::function("t2", "read", to_value!({"path": "/b.txt"})),
+                Part::function("t3", "imgread", to_value!({"path": "/c.png"})),
+            ]),
+            Message::new(Role::Tool)
+                .with_id("t1")
+                .with_contents([image()]),
+            Message::new(Role::Tool)
+                .with_id("t2")
+                .with_contents([Part::text("text")]),
+            Message::new(Role::Tool)
+                .with_id("t3")
+                .with_contents([image()]),
+        ]
+    }
+
+    #[test]
+    fn openai_models_take_tool_images_beside_the_results() {
+        assert!(takes_images_outside_tool_results(
+            "global.openai.gpt-6-astra"
+        ));
+        assert!(takes_images_outside_tool_results("openai.gpt-oss-120b-1:0"));
+        assert!(!takes_images_outside_tool_results(
+            "global.anthropic.claude-sonnet-5"
+        ));
+
+        let provider =
+            LangModelProvider::bedrock("ap-northeast-2".parse().unwrap(), "KEY".to_string());
+        let messages = tool_image_turns();
+        let options = LangModelOptions::default();
+        let mut req = request(&provider, &messages, &[], &options, false);
+        req.model = "global.openai.gpt-6-astra";
+        let v = marshal(&req);
+        let turn = v["body"]["messages"][2]["content"].as_array().unwrap();
+
+        // The three results first, as before, then each image after its call's name.
+        let ids: Vec<_> = turn[..3]
+            .iter()
+            .map(|b| &b["toolResult"]["toolUseId"])
+            .collect();
+        assert_eq!(ids, ["t1", "t2", "t3"]);
+        assert_eq!(
+            turn[0]["toolResult"]["content"],
+            serde_json::json!([{"text": "(the image is attached after the tool results)"}])
+        );
+        assert_eq!(
+            turn[1]["toolResult"]["content"],
+            serde_json::json!([{"text": "text"}])
+        );
+        assert_eq!(turn[3]["text"], "Image from tool call t1:");
+        assert_eq!(turn[4]["image"]["format"], "png");
+        assert_eq!(turn[5]["text"], "Image from tool call t3:");
+        assert_eq!(turn[6]["image"]["source"]["bytes"], "AQID");
+        assert_eq!(turn.len(), 7);
+    }
+
+    #[test]
+    fn other_models_keep_tool_images_in_the_results() {
+        let provider =
+            LangModelProvider::bedrock("ap-northeast-2".parse().unwrap(), "KEY".to_string());
+        let messages = tool_image_turns();
+        let options = LangModelOptions::default();
+        let v = marshal(&request(&provider, &messages, &[], &options, false));
+        let turn = v["body"]["messages"][2]["content"].as_array().unwrap();
+        assert_eq!(turn.len(), 3);
+        assert_eq!(
+            turn[0]["toolResult"]["content"][0]["image"]["format"],
+            "png"
+        );
     }
 
     #[test]

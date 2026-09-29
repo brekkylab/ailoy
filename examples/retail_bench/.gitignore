@@ -1,0 +1,5 @@
+# Fetched, built or written by a run — see main.rs.
+.cache
+runs
+simulator/upstream
+__pycache__

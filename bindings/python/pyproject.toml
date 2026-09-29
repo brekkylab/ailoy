@@ -1,0 +1,29 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ailoy-py"
+dynamic = ["version"]
+description = "Agents that drive a language model through tool-augmented turns, in a cortex console."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+# `NotRequired`, for `ailoy.types`, is in `typing` from 3.11.
+dependencies = ["typing_extensions>=4; python_version < '3.11'"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[dependency-groups]
+dev = ["maturin>=1.9,<2", "pytest>=8", "pytest-asyncio>=1"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "ailoy._ailoy"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

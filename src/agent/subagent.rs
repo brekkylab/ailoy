@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use cortex::console::Console;
+use cortex::console::ConsoleClient;
 use futures::StreamExt as _;
 use tokio::sync::Mutex;
 
@@ -69,7 +69,7 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
 pub fn get_subagent_tool_func(
     spec: AgentSpec,
     provider: String,
-    console: Arc<Mutex<Option<Console>>>,
+    console: Arc<Mutex<Option<ConsoleClient>>>,
 ) -> ToolFunc {
     // Capture the card name once; it's needed on every synthesised MessageOutput.
     let card_name = spec.card.as_ref().map(|c| c.name.clone());
@@ -104,7 +104,7 @@ pub fn get_subagent_tool_func(
             // Build a fresh Agent for this invocation, sharing the parent's console
             // slot so filesystem state stays consistent across the call.
             let state = AgentState::new().with_console_slot(console);
-            let mut agent = match Agent::try_with_provider_and_state(spec, &provider, state) {
+            let mut agent = match Agent::try_with_provider_and_state(spec, &provider, state).await {
                 Ok(a) => a,
                 Err(e) => {
                     yield MessageOutput {

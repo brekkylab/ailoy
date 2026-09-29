@@ -6,7 +6,7 @@ use crate::{
     datatype::Value,
     lang_model::{
         LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest,
-        ResponseFormat,
+        ReasoningEffort, ResponseFormat,
     },
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
@@ -22,6 +22,71 @@ impl LangModelProvider {
             schema: LangModelAPISchema::Anthropic,
             url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
             api_key: Some(api_key),
+        }
+    }
+}
+
+/// Anthropic requires an explicit max_tokens value; this is the one sent when none is asked.
+const DEFAULT_MAX_TOKENS: u64 = 8192;
+
+/// Whether a Claude model predates adaptive thinking (Claude 4.6) and thinks only on a
+/// `budget_tokens` budget. Reads the version out of the id, so it takes the Anthropic id
+/// (`claude-haiku-4-5`), a dated one (`claude-sonnet-4-20250514`, `claude-3-7-sonnet-…`) and
+/// the Bedrock one (`anthropic.claude-haiku-4-5-20251001-v1:0`). An id it cannot read is
+/// taken for a newer model.
+fn takes_thinking_budget(model: &str) -> bool {
+    let Some((_, rest)) = model.split_once("claude-") else {
+        return false;
+    };
+    let is_num = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let mut tokens = rest.split('-').skip_while(|t| !is_num(t));
+    let Some(major) = tokens.next().and_then(|t| t.parse::<u32>().ok()) else {
+        return false;
+    };
+    // A date (`20250514`) after the major version is no minor version.
+    let minor = tokens
+        .next()
+        .filter(|t| is_num(t) && t.len() <= 2)
+        .and_then(|t| t.parse::<u32>().ok())
+        .unwrap_or(0);
+    (major, minor) < (4, 6)
+}
+
+/// How a Claude model is asked to think at `effort`: the `thinking` field, the
+/// `output_config.effort` to go with it, and the `max_tokens` to send.
+pub(super) struct ThinkingConfig {
+    pub thinking: Value,
+    pub effort: Option<&'static str>,
+    /// The caller's `max_tokens`, or one that leaves room past the thinking, which
+    /// counts against it.
+    pub max_tokens: u64,
+}
+
+/// Adaptive thinking with a summarized display and `effort`, or, on a model before
+/// Claude 4.6, a thinking budget sized by `effort` and kept below `max_tokens`.
+pub(super) fn thinking_config(
+    model: &str,
+    effort: ReasoningEffort,
+    max_tokens: Option<u64>,
+) -> ThinkingConfig {
+    let max_tokens = max_tokens.unwrap_or(effort.budget_tokens() + DEFAULT_MAX_TOKENS);
+    if takes_thinking_budget(model) {
+        // The budget must be at least 1024 and below max_tokens.
+        let budget = effort
+            .budget_tokens()
+            .min(max_tokens.saturating_sub(1))
+            .max(1024) as i64;
+        ThinkingConfig {
+            thinking: to_value!({"type": "enabled", "budget_tokens": budget}),
+            effort: None,
+            max_tokens,
+        }
+    } else {
+        // Newer models omit the thinking text unless a summary is asked for.
+        ThinkingConfig {
+            thinking: to_value!({"type": "adaptive", "display": "summarized"}),
+            effort: Some(effort.as_str()),
+            max_tokens,
         }
     }
 }
@@ -211,8 +276,13 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
             "true".into(),
         );
 
-        // Anthropic requires an explicit max_tokens value, so we set it as 8192
-        let max_tokens = options.max_tokens.unwrap_or(8192) as i64;
+        let thinking = options
+            .reasoning
+            .map(|effort| thinking_config(req.model, effort, options.max_tokens));
+        let max_tokens = match &thinking {
+            Some(cfg) => cfg.max_tokens,
+            None => options.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+        } as i64;
         let mut body = to_value!({
             "model": model,
             "max_tokens": max_tokens,
@@ -231,27 +301,48 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
                 .unwrap()
                 .insert("tools".to_owned(), tools);
         }
-        if let Some(temperature) = options.temperature {
-            body.as_object_mut()
-                .unwrap()
-                .insert("temperature".to_owned(), temperature.into());
+        // Thinking does not take the sampling knobs; drop them silently, as for OpenAI's
+        // reasoning models.
+        if thinking.is_none() {
+            if let Some(temperature) = options.temperature {
+                body.as_object_mut()
+                    .unwrap()
+                    .insert("temperature".to_owned(), temperature.into());
+            }
+            if let Some(top_p) = options.top_p {
+                body.as_object_mut()
+                    .unwrap()
+                    .insert("top_p".to_owned(), top_p.into());
+            }
+            if let Some(top_k) = options.top_k {
+                body.as_object_mut()
+                    .unwrap()
+                    .insert("top_k".to_owned(), (top_k as i64).into());
+            }
         }
-        if let Some(top_p) = options.top_p {
-            body.as_object_mut()
-                .unwrap()
-                .insert("top_p".to_owned(), top_p.into());
-        }
-        if let Some(top_k) = options.top_k {
-            body.as_object_mut()
-                .unwrap()
-                .insert("top_k".to_owned(), (top_k as i64).into());
-        }
+        let mut output_config = Value::object_empty();
         if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
             let wire_schema = self.marshal_response_schema(schema);
-            body.as_object_mut().unwrap().insert(
-                "output_config".into(),
-                to_value!({"format": {"type": "json_schema", "schema": wire_schema}}),
+            output_config.as_object_mut().unwrap().insert(
+                "format".into(),
+                to_value!({"type": "json_schema", "schema": wire_schema}),
             );
+        }
+        if let Some(cfg) = thinking {
+            body.as_object_mut()
+                .unwrap()
+                .insert("thinking".into(), cfg.thinking);
+            if let Some(effort) = cfg.effort {
+                output_config
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("effort".into(), effort.into());
+            }
+        }
+        if !output_config.as_object().unwrap().is_empty() {
+            body.as_object_mut()
+                .unwrap()
+                .insert("output_config".into(), output_config);
         }
 
         if req.stream {
@@ -559,6 +650,115 @@ mod tests {
         message::{Delta, FinishReason, Message, MessageDeltaOutput, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    fn marshal_reasoning(model: &str, options: LangModelOptions) -> serde_json::Value {
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+        let provider = LangModelProvider::anthropic("k".into());
+        let req = LangModelRequest {
+            model,
+            messages: &messages,
+            tools: &[],
+            provider: &provider,
+            options: &options,
+            stream: false,
+        };
+        AnthropicMarshal.marshal(&req).into()
+    }
+
+    #[test]
+    fn thinking_budget_models_are_those_before_4_6() {
+        for model in [
+            "claude-haiku-4-5",
+            "claude-sonnet-4-5-20250929",
+            "claude-sonnet-4-20250514",
+            "claude-opus-4-1",
+            "claude-3-7-sonnet-20250219",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+        ] {
+            assert!(takes_thinking_budget(model), "{model}");
+        }
+        for model in [
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-opus-4-8",
+            "claude-sonnet-5",
+            "claude-opus-5-5",
+            "claude-fable-5-1",
+            "global.anthropic.claude-sonnet-5",
+            "some-proxy-alias",
+        ] {
+            assert!(!takes_thinking_budget(model), "{model}");
+        }
+    }
+
+    #[test]
+    fn reasoning_turns_on_adaptive_thinking_and_drops_sampling() {
+        let options = LangModelOptions {
+            temperature: Some(0.3),
+            top_p: Some(0.9),
+            top_k: Some(5),
+            response_format: Some(
+                crate::lang_model::ResponseFormat::json_schema(to_value!({"type": "object"}))
+                    .unwrap(),
+            ),
+            reasoning: Some(ReasoningEffort::High),
+            ..Default::default()
+        };
+        let v = marshal_reasoning("claude-sonnet-5", options);
+        let body = &v["body"];
+        assert_eq!(
+            body["thinking"],
+            serde_json::json!({"type": "adaptive", "display": "summarized"})
+        );
+        assert_eq!(body["output_config"]["effort"], "high");
+        assert_eq!(body["output_config"]["format"]["type"], "json_schema");
+        assert_eq!(body["max_tokens"], 24576 + 8192);
+        for knob in ["temperature", "top_p", "top_k"] {
+            assert!(body.get(knob).is_none(), "{knob} sent while thinking");
+        }
+    }
+
+    #[test]
+    fn reasoning_on_older_models_takes_a_budget_below_max_tokens() {
+        let v = marshal_reasoning(
+            "claude-haiku-4-5",
+            LangModelOptions {
+                reasoning: Some(ReasoningEffort::Medium),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            v["body"]["thinking"],
+            serde_json::json!({"type": "enabled", "budget_tokens": 8192})
+        );
+        assert_eq!(v["body"]["max_tokens"], 8192 + 8192);
+        assert!(v["body"].get("output_config").is_none());
+
+        let v = marshal_reasoning(
+            "claude-haiku-4-5",
+            LangModelOptions {
+                max_tokens: Some(4096),
+                reasoning: Some(ReasoningEffort::Medium),
+                ..Default::default()
+            },
+        );
+        assert_eq!(v["body"]["thinking"]["budget_tokens"], 4095);
+        assert_eq!(v["body"]["max_tokens"], 4096);
+    }
+
+    #[test]
+    fn no_reasoning_sends_no_thinking() {
+        let v = marshal_reasoning(
+            "claude-sonnet-5",
+            LangModelOptions {
+                temperature: Some(0.3),
+                ..Default::default()
+            },
+        );
+        assert!(v["body"].get("thinking").is_none());
+        assert!(v["body"].get("output_config").is_none());
+        assert_eq!(v["body"]["temperature"], 0.3);
+    }
 
     /// Register a one-off [`LangModelProvider`] under `provider_name` in the
     /// global registry and build the [`LangModel`] via
