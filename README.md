@@ -65,7 +65,7 @@ pip install ailoy-py
 import asyncio
 
 from ailoy import AgentBuilder
-from ailoy.cortex import ConsoleClient, NetworkAccess, Recipe
+from ailoy.cortex import ConsoleClient, Recipe
 
 
 async def main() -> None:
@@ -73,7 +73,7 @@ async def main() -> None:
         ConsoleClient.builder()
         .image(Recipe("python:3.12-slim-trixie").step("pip install matplotlib"))
         .mount("./artifacts", "/artifacts")
-        .network(NetworkAccess.public())
+        .network(True)
         .build()
     )
 
@@ -104,12 +104,12 @@ npm install ailoy-node
 ```
 
 ```js
-const { AgentBuilder, ConsoleClient, NetworkAccess, Recipe } = require('ailoy-node')
+const { AgentBuilder, ConsoleClient, Recipe } = require('ailoy-node')
 
 const console_ = await ConsoleClient.builder()
   .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))
   .mount('./artifacts', '/artifacts')
-  .network(NetworkAccess.public())
+  .network(true)
   .build()
 // For openai, use "openai/gpt-5.6-luna"
 const agent = await new AgentBuilder('anthropic/claude-haiku-4-5')
@@ -146,7 +146,7 @@ use ailoy::{
     console::ConsoleClient,
     message::{Message, Part, Role},
 };
-use cortex::{image::Recipe, protocol::NetworkAccess};
+use cortex::image::Recipe;
 use futures::StreamExt as _;
 
 #[tokio::main]
@@ -154,7 +154,7 @@ async fn main() -> anyhow::Result<()> {
     let console = ConsoleClient::builder()
         .image(Recipe::new("python:3.12-slim-trixie").step("pip install matplotlib"))
         .mount(std::path::absolute("./artifacts")?, "/artifacts")
-        .network(NetworkAccess::public())
+        .network(true)
         .build()
         .await?;
 

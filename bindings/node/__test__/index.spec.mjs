@@ -178,7 +178,7 @@ test('breaking out of a turn ends it where it stands', async (t) => {
 test('an agent shares its console, and closing the agent leaves it open', async () => {
   const console_ = await ConsoleClient.builder()
     .image(new Recipe('python:3.12-slim-trixie'))
-    .network(ailoy.NetworkAccess.none())
+    .network(false)
     .build()
   try {
     // Never asked anything, so the model only has to be registered.

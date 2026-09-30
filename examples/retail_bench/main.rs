@@ -76,7 +76,7 @@ use ailoy::{
     tool_func,
 };
 use anyhow::{Context as _, bail};
-use cortex::{image::Recipe, protocol::NetworkAccess};
+use cortex::image::Recipe;
 use futures::StreamExt as _;
 use serde_json::{Value as Json, json};
 
@@ -173,7 +173,7 @@ async fn main() -> anyhow::Result<()> {
                 .image(Recipe::new("python:3.12-slim-trixie"))
                 .mount_readonly(context.clone(), "/context")
                 .mount(artifacts.clone(), "/artifacts")
-                .network(NetworkAccess::none())
+                .network(false)
                 .vcpus(2)
                 .memory_mib(2048)
                 .build()
