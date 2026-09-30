@@ -1,23 +1,9 @@
 //! A Python callable as a [`ToolFunc`].
 //!
 //! The model's arguments, a dict whose keys the tool's parameters schema names, are passed as
-//! keyword arguments; non-object arguments are passed as the one positional argument. The
-//! return value becomes the tool's result, so it must be what a message can hold: `None`, a
+//! keyword arguments; non-object arguments as the one positional argument. The callable returns
+//! the result or an awaitable of it, and the result must be what a message can hold: `None`, a
 //! bool, a number, a string, or a list or dict of those.
-//!
-//! # Sync and async
-//!
-//! A plain return value is the result. An awaitable is awaited on the event loop the turn is
-//! iterated from, which `pyo3-async-runtimes` puts in the task locals of the `__anext__` the
-//! call happens inside.
-//!
-//! The call runs on tokio's blocking pool, not a worker, so a slow synchronous tool does not
-//! starve the rest of the turn or tools running beside it.
-//!
-//! # Failure
-//!
-//! A raise becomes the result `"error: ValueError: ..."` instead of ending the turn, so the
-//! model can try differently.
 //!
 //! A Python tool is not handed the console; one that runs commands holds its own
 //! `ConsoleClient`.
@@ -35,6 +21,8 @@ use pyo3_async_runtimes::{TaskLocals, into_future_with_locals, tokio::get_curren
 
 use crate::convert::{from_py, to_py};
 
+/// A raise becomes the result `"error: ValueError: ..."` instead of ending the turn, so the
+/// model can try differently.
 pub fn tool_func(func: Py<PyAny>) -> ToolFunc {
     let func = Arc::new(func);
     ToolFunc::new(move |args, id| {
@@ -58,10 +46,13 @@ pub fn tool_func(func: Py<PyAny>) -> ToolFunc {
 }
 
 async fn call(func: Arc<Py<PyAny>>, args: Value) -> PyResult<Value> {
-    // Taken before the blocking pool, whose threads are outside the task. A turn driven from
-    // outside an event loop has none, which only matters for a tool returning an awaitable.
+    // The event loop an awaitable is awaited on: the turn's, which `pyo3-async-runtimes` puts in
+    // the task locals of the enclosing `__anext__`. Taken before the blocking pool, whose
+    // threads are outside the task. A turn driven from outside an event loop has none, which
+    // only matters for a tool returning an awaitable.
     let locals: Option<TaskLocals> = Python::attach(|py| get_current_locals(py).ok());
 
+    // The blocking pool, so a slow synchronous tool does not starve the turn or tools beside it.
     let returned = tokio::task::spawn_blocking(move || {
         Python::attach(|py| -> PyResult<Py<PyAny>> {
             let args = to_py(py, &args)?;

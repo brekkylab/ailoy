@@ -1,18 +1,16 @@
 //! The process-wide registries an agent resolves its model and tools from.
 //!
-//! ailoy keeps three, each keyed by name and each with a `'default'` entry from the start:
-//! language-model providers (seeded from `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, … on first
-//! use), tool providers (every built-in tool), and agent providers, which pair one of each
-//! by name. An agent names the agent provider it is built against — `'default'` unless
-//! [`AgentBuilder.agentProvider`](crate::agent) says otherwise.
+//! ailoy keeps three, keyed by name, each with a `'default'` entry: language-model providers
+//! (seeded from `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, … on first use), tool providers (every
+//! built-in tool), and agent providers, which pair one of each by name and are what an agent is
+//! built against ([`AgentBuilder.agentProvider`](crate::agent), `'default'` if unset).
 //!
-//! Every function here takes the registry entry it works on as `{ provider }` in its last
-//! argument, defaulting to `'default'`, and one that registers into an entry that does not
-//! exist throws rather than making it: `add*Provider` makes one, so a misspelt name is an
-//! error and not a second, empty registry.
+//! Every function takes the entry it works on as `{ provider }` in its last argument, defaulting
+//! to `'default'`. Registering into a missing entry throws rather than creating it, so a
+//! misspelt name is an error; `add*Provider` creates one.
 //!
-//! The registering functions hand back the tool descriptions they registered — pass them to
-//! `AgentBuilder.tool`/`tools` to put them in front of the model.
+//! The registering functions return the tool descriptions they registered, to pass to
+//! `AgentBuilder.tool`/`tools`.
 
 use ailoy::{
     agent::{AgentProvider, get_agent_providers_mut},

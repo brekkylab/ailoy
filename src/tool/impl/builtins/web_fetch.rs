@@ -429,19 +429,13 @@ pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
 }
 
 mod net_guard {
-    //! Egress guard for host-side tools.
+    //! Egress guard for host-side tools: decides whether a destination is on the
+    //! public internet.
     //!
-    //! Tools registered as *pure* run in the ailoy host process rather than inside
-    //! the sandbox VM, so the guest network policy never sees their requests. A
-    //! model — or a prompt-injected page a model reads — can otherwise aim such a
-    //! tool at loopback, the LAN, or the cloud-metadata address and read the answer
-    //! back into the conversation. This module decides whether a destination is on
-    //! the public internet.
-    //!
-    //! There are two entry points because a URL names its destination in two ways:
-    //! [`check_host`] for a host written as an IP literal, where the address is
-    //! known before connecting, and [`PublicOnlyResolver`] for a host written as a
-    //! name, where the addresses are known only once DNS answers.
+    //! Pure tools run in the host process, outside the sandbox's network policy, so
+    //! without this a model (or a page injected into it) could reach loopback, the
+    //! LAN, or cloud metadata. IP literals are checked by [`check_host`]; names by
+    //! [`PublicOnlyResolver`] once DNS answers.
 
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 

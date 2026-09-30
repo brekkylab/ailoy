@@ -1,26 +1,14 @@
 //! `AgentBuilder`, `Agent`, and the turn an `Agent` runs.
 //!
-//! # Where the agent lives
+//! A Python future must be `'static`, but [`Agent::run`] borrows the agent for as long as the
+//! turn's stream lives. So the agent sits behind an `Arc<Mutex<..>>` and a turn holds the
+//! lock's owned guard in its stream, which also makes a second `run` wait for the first to
+//! finish, as `&mut self` would in Rust.
 //!
-//! A Python future has to be `'static`, so it cannot borrow the object it was started from —
-//! and [`Agent::run`] borrows the agent for as long as the turn's stream lives. The agent is
-//! therefore behind an `Arc<Mutex<..>>`, and a turn holds the lock's *owned* guard inside its
-//! stream. Which also makes turns take turns, as `&mut self` does in Rust: a second `run`
-//! started while one is being iterated waits for it to finish before it begins.
-//!
-//! # Where the console lives
-//!
-//! `AgentBuilder.console` takes a cortex `ConsoleClient` and puts its slot in the agent's state —
-//! the slot itself, not what is in it. The `ConsoleClient` object stays usable: its calls and the
-//! agent's tools take turns on the one lock, and the agent starts and stops its backend
-//! around each batch of tool calls. `ConsoleClient.close()` ends the session for both.
-//!
-//! # How it ends
-//!
-//! Dropping an agent may drop the last hold on its console, and a console says `quit` only
-//! when it is dropped on a runtime — which a Python finalizer is not on. So [`OnRuntime`]
-//! enters the binding's runtime before letting go, for the agent and for a turn's stream
-//! alike.
+//! `AgentBuilder.console` puts a cortex `ConsoleClient`'s slot (the slot, not its contents) in
+//! the agent's state. The `ConsoleClient` stays usable: its calls and the agent's tools take
+//! turns on the one lock, the agent starts and stops its backend around each batch of tool
+//! calls, and `ConsoleClient.close()` ends the session for both.
 
 use std::sync::Arc;
 
@@ -46,7 +34,9 @@ use crate::{
     error::{self, AiloyError},
 };
 
-/// A value let go of on the binding's runtime — see the module docs.
+/// A value let go of on the binding's runtime. Dropping an agent or a turn's stream may drop
+/// the last hold on its console, which says `quit` only when dropped on a runtime, and a
+/// Python finalizer is not on one.
 struct OnRuntime<T>(Option<T>);
 
 impl<T> Drop for OnRuntime<T> {

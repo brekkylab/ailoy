@@ -1,8 +1,7 @@
 //! Crossing as objects: ailoy's types to JavaScript through their serde form, and back.
 //!
-//! A [`Message`] goes out as `{ role: 'assistant', contents: [{ type: 'text', ... }] }`,
-//! exactly the JSON ailoy writes, and comes back from the same shape. Bytes — an embedded
-//! image — are a `Buffer` on the JavaScript side rather than the base64 JSON would need.
+//! A [`Message`] crosses both ways as the JSON ailoy writes, `{ role: 'assistant', ... }`,
+//! except that bytes (an embedded image) are a `Buffer` rather than base64.
 
 use ailoy::message::{Message, Part, Role};
 use napi::{

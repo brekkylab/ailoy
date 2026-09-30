@@ -2,9 +2,6 @@
 //!
 //! The tree is mounted as is, so its metadata lives beside it: `contexts/{id}/` is the
 //! tree, `contexts/{id}.json` its name.
-//!
-//! [`DEFAULT_ID`] always exists: recreated at startup if missing, so the default agent has
-//! a context before the user makes one. Nothing may delete it (see [`Context::is_default`]).
 
 use std::{
     fs, io,
@@ -18,7 +15,8 @@ use tauri::State;
 
 use crate::cache::Cache;
 
-/// The id of the context that is always there.
+/// The id of the context that is always there, recreated at startup if missing so the
+/// default agent has one before the user makes any.
 pub const DEFAULT_ID: &str = "default";
 const DEFAULT_NAME: &str = "Default";
 

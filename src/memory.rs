@@ -1,13 +1,8 @@
 //! Memories, as `mem` keeps them.
 //!
 //! A store is one file made by `mem init`; every read or write is a `mem` command run on a
-//! [`ConsoleClient`]. Nothing here opens the database or knows its schema.
-//!
-//! So `mem` must be on the console side's `PATH`, and the memory file is a path the console
-//! side opens, not one this process resolves.
-//!
-//! Stores are never created here: keeping `mem init` separate stops a mistyped name from
-//! silently becoming an empty store.
+//! [`ConsoleClient`], so `mem` must be on the console side's `PATH` and the memory file is a
+//! path the console side opens. Nothing here opens the database or knows its schema.
 
 use std::path::{Path, PathBuf};
 
@@ -34,7 +29,8 @@ pub struct Memory {
 }
 
 impl Memory {
-    /// The store at `memfile`, expected to exist already (`mem init`).
+    /// The store at `memfile`, expected to exist already (`mem init`); never created here, so a
+    /// mistyped name cannot silently become an empty store.
     ///
     /// Unchecked, since checking needs a console; a missing store surfaces on the first
     /// [`search`](Self::search) or [`insert`](Self::insert).

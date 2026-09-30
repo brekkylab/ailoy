@@ -7,34 +7,22 @@
 //! cargo run --release --example retail_bench             # the benchmark: 96 SKUs, 180 days
 //! ```
 //!
-//! The store is RetailBench's own simulator, run as a local REST server by
-//! `simulator/sim` — see `simulator/README.md`. Its code is restored from the upstream
-//! repository at a pinned commit and its data fetched from the same one, both on the first
-//! run (once; eight SKUs for `--smoke`).
+//! The store is RetailBench's own simulator, run as a local REST server by `simulator/sim`
+//! (see `simulator/README.md`). Its code and data are fetched from the upstream repository at
+//! a pinned commit on the first run (`--smoke` fetches only its eight SKUs' data).
 //!
 //! # A day is a turn
 //!
 //! Every morning the store writes what the agent may read into `runs/<slug>/context/`,
 //! mounted read-only at `/context`. The agent reads it with its file tools and its shell,
-//! calls an action when it wants to change something, and closes the day with `end_today`.
-//! Then the store writes tomorrow's tree and the agent is asked again, **with an empty
-//! history**.
+//! calls an action to change something, and closes the day with `end_today`. Then the store
+//! writes tomorrow's tree and the agent is asked again, **with an empty history**.
 //!
 //! Fifteen of RetailBench's nineteen tools only look, and here looking is reading a file.
-//! Three stayed tools because they can be *refused*, and a file cannot say no:
-//!
-//! * `place_order` — buy from one named supplier; refused for a supplier not quoting that
-//!   SKU today, or for more than the till holds.
-//! * `modify_sku_price` — set a shelf price.
-//! * `end_today` — settle the day and move the clock.
-//!
-//! Their schemas are the environment's own, read from the store at startup rather than
-//! written here. Upstream's `add_note` is a directory instead: the agent writes one file a
-//! day into `/artifacts/notes/` and reads the earlier ones back, and that is the whole of
-//! what survives the night.
-//!
-//! What the agent is told is in `system.md`, `user.md` (every morning) and `nudge.md` (when
-//! a turn ends without closing the day).
+//! Three stay tools because the store can *refuse* them, and a file cannot say no:
+//! `place_order`, `modify_sku_price` and `end_today`, which settles the day and moves the
+//! clock. Upstream's `add_note` is a directory instead: the agent writes one file a day into
+//! `/artifacts/notes/` and reads the earlier ones back, and that is all that survives the night.
 //!
 //! # What a run leaves behind
 //!
@@ -48,15 +36,13 @@
 //!   artifacts/        what the agent wrote, notes/<date>.md among it
 //! ```
 //!
-//! The store outlives nothing by default; `--keep-store` leaves it up to be asked
+//! The store stops with the run; `--keep-store` leaves it up to be asked
 //! (`simulator/sim view view_inventory --run runs/<slug>`).
 //!
-//! Environment:
+//! Environment, also read from `.env`:
 //!
 //! * `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its provider's API
 //!   key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …).
-//!
-//! Read from `.env` as well.
 
 use std::{
     io::Write as _,
@@ -81,7 +67,9 @@ use futures::StreamExt as _;
 use serde_json::{Value as Json, json};
 
 const SYSTEM: &str = include_str!("system.md");
+/// Sent every morning.
 const USER: &str = include_str!("user.md");
+/// Sent when a turn ends without closing the day.
 const NUDGE: &str = include_str!("nudge.md");
 
 /// The tools the agent may call, `end_today` last because that is where it belongs in a day.
@@ -326,7 +314,8 @@ async fn run_day(
         .or_else(|| metrics["terminated"].as_str().map(str::to_string)))
 }
 
-/// Register the three actions under [`PROVIDER`] and return their descriptions.
+/// Register the three actions under [`PROVIDER`] and return their descriptions, whose
+/// schemas are the store's own rather than written here.
 ///
 /// A `ToolDesc` in a spec is resolved by name against a tool provider, so the default one is
 /// cloned, keeping the built-in tools, and the three are inserted into the copy.

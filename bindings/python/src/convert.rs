@@ -1,8 +1,7 @@
 //! Crossing as dicts: ailoy's types to Python through their serde form, and back.
 //!
-//! A [`Message`] goes out as `{"role": "assistant", "contents": [{"type": "text", ...}]}`,
-//! exactly the JSON ailoy writes, and comes back from the same shape. Bytes — an embedded
-//! image — are `bytes` on the Python side rather than the base64 JSON would need.
+//! A [`Message`] crosses both ways as the JSON ailoy writes, `{"role": "assistant", ...}`,
+//! except that bytes (an embedded image) are `bytes` rather than base64.
 
 use ailoy::message::{Message, Part, Role};
 use pyo3::{exceptions::PyValueError, prelude::*};

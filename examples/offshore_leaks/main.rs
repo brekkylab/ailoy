@@ -10,35 +10,32 @@
 //! The [Offshore Leaks database](https://offshoreleaks.icij.org) is the graph ICIJ published
 //! from the Offshore Leaks, the Panama, Paradise and Pandora Papers and the Bahamas Leaks:
 //! about 2 million offshore companies, people, intermediaries and addresses, and the 3.3
-//! million relationships between them. `prepare_data.py` downloads ICIJ's CSVs and loads them
-//! into one DuckDB file, which the agent queries in place.
+//! million relationships between them. `prepare_data.py` loads ICIJ's CSVs into one DuckDB
+//! file, which the agent queries in place.
 //!
-//! The skill is `SKILL.md` and `oldb.py`, mounted at `/skills/offshore-leaks` from memory. It
+//! The skill (`SKILL.md`, `oldb.py`) is mounted from memory at `/skills/offshore-leaks`. It
 //! is what the agent knows of the data before it looks: the tables, which way a relationship
-//! points, and what a match on a name does not show. For more than a query, the agent writes
-//! Python of its own and runs it with its `shell` tool.
+//! points, and what a match on a name does not show. Beyond a query, the agent writes and runs
+//! Python of its own.
 //!
 //! * `context/` at `/context`, read-only — `offshore_leaks.duckdb`, and whatever else the
 //!   request is about, such as a list of names to look for.
 //! * `artifacts/` at `/artifacts`, writable — where the reports, tables and charts go.
 //!
-//! What the agent runs is its own code over 2 million records, and the console is where that
-//! is safe to do: it sees the two directories and nothing else of the host, and the database
-//! is read-only to it.
+//! The agent runs its own code, so it runs in the console: it sees the two directories and
+//! nothing else of the host, and the database is read-only to it.
 //!
 //! The data is ICIJ's, under the Open Database License, and its contents under CC BY-SA.
 //! Being in it is not evidence of wrongdoing, as ICIJ says and the skill tells the agent.
 //!
-//! Environment:
+//! Environment, also read from `.env`:
 //!
-//! * `OFFSHORE_LEAKS_URL` — the archive `prepare_data.py` downloads, ICIJ's latest by default.
-//! * `UV` — the `uv` binary `prepare_data.py` runs with, `uv` on `PATH` by default.
+//! * `OFFSHORE_LEAKS_URL` — the archive `prepare_data.py` downloads; ICIJ's latest by default.
+//! * `UV` — the `uv` binary `prepare_data.py` runs with; `uv` on `PATH` by default.
 //! * `AILOY_MODEL` — the agent's model, `bedrock/global.openai.gpt-6-astra` by default; its
 //!   provider's credentials have to be set — for Bedrock `AWS_BEARER_TOKEN_BEDROCK`, with the
 //!   region from `AWS_REGION` / `AWS_DEFAULT_REGION` (`us-east-1` by default), and for a direct
 //!   provider its API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …).
-//!
-//! Read from `.env` as well.
 
 use std::{io::Write as _, path::Path};
 

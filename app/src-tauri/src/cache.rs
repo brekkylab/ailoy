@@ -1,8 +1,5 @@
 //! The app's persistent directory: `AILOY_CACHE` if set, else `~/.cache/ailoy`.
 //!
-//! Canonicalized once at startup so every path handed out is absolute, which cortex
-//! requires of mount points.
-//!
 //! ```text
 //! contexts/{id}/             mounted as it stands, so nothing of ours goes inside
 //! contexts/{id}.json         its name, beside it
@@ -24,6 +21,7 @@ pub struct Cache {
 
 impl Cache {
     /// Resolves the cache directory, creating it and its collections if missing.
+    /// Canonicalized so every path handed out is absolute, as cortex requires of mount points.
     pub fn open() -> io::Result<Self> {
         let root = match std::env::var_os("AILOY_CACHE").filter(|v| !v.is_empty()) {
             Some(dir) => PathBuf::from(dir),

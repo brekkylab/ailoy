@@ -1,18 +1,10 @@
 //! `mem_search` and `mem_insert` — an agent's own memory, as two tools.
 //!
-//! # Why these are not built-ins
-//!
-//! Every tool in [`builtins`](super::builtins) is registered by name in a
-//! [`ToolProvider`](crate::tool::ToolProvider) and resolved from an
-//! [`AgentSpec`](crate::agent::AgentSpec), which works because the spec carries
-//! everything the tool needs. These two need one thing more: *which* store, and that is
-//! not a name in a registry — it is a [`Memory`] a caller handed to one agent.
-//!
-//! So the store is captured in the closure rather than asked for in the arguments. The
-//! model never names a memory file, cannot name a different one, and does not have to be
-//! told in the prompt which one is its own. An agent that was given a memory gets these
-//! two tools for it; one that was not, does not — see
-//! [`Agent::try_with_provider_and_state`](crate::agent::Agent::try_with_provider_and_state).
+//! Not built-ins: a registry entry resolves from the [`AgentSpec`](crate::agent::AgentSpec)
+//! alone, but these also need *which* store, a [`Memory`] a caller handed to one agent. So
+//! the store is captured in the closure rather than taken as an argument: the model never
+//! names a memory file and cannot name another. Only an agent given a memory gets these
+//! tools — see [`Agent::try_with_provider_and_state`](crate::agent::Agent::try_with_provider_and_state).
 
 use crate::{
     memory::Memory,

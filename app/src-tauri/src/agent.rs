@@ -1,14 +1,11 @@
 //! An agent: one JSON document at `agents/{id}/agent.json`.
 //!
-//! This module owns only the collection: the id names the directory, `createdAt` orders
-//! the list, and at most one agent is the default. Every other field (model, prompt, tools,
-//! sandbox) passes through `rest` untouched, so a field the app adds needs no change here
-//! and survives a round trip.
+//! This module owns only the collection (id, order, default); every other field passes
+//! through `rest` untouched, so a field the app adds needs no change here.
 //!
-//! The [`HELPERS`] (`context` edits a context's files, `agentmaker` builds agents) back the
-//! helper pane of their tabs. They share the directory, but [`list`] omits them and
-//! [`save`] and [`remove`] refuse them, so the Agent tab never shows them and none can be
-//! a sub-agent or the default. Their settings are edited in their files.
+//! The [`HELPERS`] share the directory, but [`list`] omits them and [`save`] and [`remove`]
+//! refuse them, so the Agent tab never shows them and none can be a sub-agent or the
+//! default. Their settings are edited in their files.
 
 use std::{
     fs, io,
@@ -54,8 +51,9 @@ const SEED: &str = r#"{
   "instruction": "Answer concisely, in the language the question was asked in.\n\nBefore you touch the files in a context, read `README.md` at its root if there is one: it says how the context is laid out and how its files are to be read."
 }"#;
 
-/// Helper ids (also their directory names) with their seeds. None names a `context`: each
-/// works on whatever its tab has open.
+/// Helper ids (also their directory names) with their seeds, each backing its tab's helper
+/// pane: `context` edits a context's files, `agentmaker` builds agents. None names a
+/// `context`: each works on whatever its tab has open.
 pub const HELPERS: &[(&str, &str)] = &[
     (
         "context",

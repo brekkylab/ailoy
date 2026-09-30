@@ -1,13 +1,12 @@
 //! Dev-only API keys from a `.env`, so a `tauri dev` session starts with providers set.
-//!
-//! Debug builds only: release builds never read a `.env` and the command returns empty.
-//! Variable names match those `LangModelProvider::default()` reads, so one `.env` serves both.
+//! Release builds never read a `.env` and the command returns empty.
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
 
 /// Provider key (as the frontend names it) → the environment variable holding its key.
+/// The names `LangModelProvider::default()` reads, so one `.env` serves both.
 const KEYS: &[(&str, &str)] = &[
     ("anthropic", "ANTHROPIC_API_KEY"),
     ("openai", "OPENAI_API_KEY"),

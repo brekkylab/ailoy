@@ -5,7 +5,7 @@
 //! ```
 //!
 //! `model` defaults to `openai/gpt-5.6-luna`; its provider's API key has to be set
-//! (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...), in the environment or in `.env`.
+//! (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …), in the environment or in `.env`.
 
 use std::io::Write as _;
 

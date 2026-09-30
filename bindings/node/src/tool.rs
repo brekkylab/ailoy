@@ -1,21 +1,8 @@
 //! A JavaScript function as a [`ToolFunc`].
 //!
 //! The function is called with the model's arguments as one object, whose fields the tool's
-//! parameters schema names. Its return value becomes the tool's result, so it must be what a
-//! message can hold: `null`, a boolean, a number, a string, or an array or object of those.
-//!
-//! # Sync and async
-//!
-//! A plain return value is the result; a returned promise is awaited. The call goes through a
-//! threadsafe function because a JavaScript function can only be called on the JavaScript
-//! thread, which a turn leaves free since it is iterated by promises.
-//!
-//! The threadsafe function is weak, so a registered tool does not keep the process alive.
-//!
-//! # Failure
-//!
-//! A throw or rejection becomes the result `"error: ..."` instead of ending the turn, so the
-//! model can try differently.
+//! parameters schema names, and returns the result or a promise of it. The result must be what
+//! a message can hold: `null`, a boolean, a number, a string, or an array or object of those.
 //!
 //! A JavaScript tool is not handed the console; one that runs commands holds its own
 //! `ConsoleClient`.
@@ -37,7 +24,9 @@ use napi::{
 
 use crate::convert::Json;
 
-/// Called with the arguments (not error-first), and weak.
+/// Called with the arguments (not error-first). Threadsafe because a JavaScript function runs
+/// only on the JavaScript thread, which a turn leaves free as promises iterate it; weak so a
+/// registered tool does not keep the process alive.
 pub type Callback = ThreadsafeFunction<Json<Value>, Returned, Json<Value>, Status, false, true>;
 
 /// What calling a tool's function returned: the result, or a promise of it.
@@ -58,6 +47,8 @@ impl FromNapiValue for Returned {
     }
 }
 
+/// A throw or rejection becomes the result `"error: ..."` instead of ending the turn, so the
+/// model can try differently.
 pub fn tool_func(func: Callback) -> ToolFunc {
     let func = Arc::new(func);
     ToolFunc::new(move |args, id| {

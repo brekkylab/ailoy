@@ -9,29 +9,23 @@
 //!
 //! [CadQuery](https://cadquery.readthedocs.io) is a Python library for parametric CAD on the
 //! OpenCascade kernel: a model is a script, and what it builds is exact solids, not meshes. The
-//! agent writes that script, and the skill's `render.py` runs it, checks each part — valid,
-//! one solid, closed, not overlapping another — and draws it from four sides. The agent reads
-//! the pictures with its `imgread` tool, so it sees the hole it put on the wrong face, and goes
-//! round again until the model is what was asked for.
+//! agent writes that script; the skill's `render.py` runs it, checks each part — valid, one
+//! solid, closed, not overlapping another — and draws it from four sides. The agent reads the
+//! pictures with its `imgread` tool and goes round again until the model is what was asked for.
+//! `render.py` rasterizes on the CPU, so there is no model to download and no GPU needed.
 //!
-//! The skill is `SKILL.md` and `render.py`, mounted at `/skills/cad` from memory.
+//! The skill (`SKILL.md`, `render.py`) is mounted from memory at `/skills/cad`.
 //!
 //! * `context/` at `/context`, read-only — what the request is about, when it is not in the
 //!   prompt: a sketch, a photo of the thing it has to fit, the STEP of a part to mate with.
-//! * `artifacts/` at `/artifacts`, writable — the script, the STEP and STL files, a GLB for a
-//!   viewer, and the pictures: four views, exploded, cut and turning.
+//! * `artifacts/` at `/artifacts`, writable — the script, the STEP, STL and GLB files, and the
+//!   pictures.
 //!
-//! There is no model to download: `render.py` draws with a small rasterizer of its own, on the
-//! CPU, so the console needs no GPU. OpenCascade's wheel still links libGL and libX11, which
-//! the slim image leaves out.
+//! Environment, also read from `.env`:
 //!
-//! Environment:
-//!
-//! * `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its provider's
-//!   API key has to be set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …). It has to take images,
-//!   or it cannot see what it built.
-//!
-//! Read from `.env` as well.
+//! * `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its provider's API
+//!   key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …). It has to take images, or
+//!   it cannot see what it built.
 
 use std::{io::Write as _, path::Path};
 
@@ -102,6 +96,7 @@ async fn main() -> anyhow::Result<()> {
         ConsoleClient::builder()
             .image(
                 Recipe::new("python:3.12-slim-trixie")
+                    // OpenCascade's wheel links libGL and libX11, which the slim image leaves out.
                     .step(
                         "apt-get update && apt-get install -y --no-install-recommends \
                         libgl1 libx11-6 && rm -rf /var/lib/apt/lists/*",

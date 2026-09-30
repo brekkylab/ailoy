@@ -1,12 +1,10 @@
 //! MCP (Model Context Protocol) client support.
 //!
-//! An MCP server is not one tool but a bag of them, and the list is knowable
-//! only by asking: the client connects, initialises, and calls `tools/list`.
-//! That is a round trip — over a socket, or to a child process — and
-//! [`ToolProvider::provide`](crate::tool::ToolProvider::provide) is a `fn` with
-//! no `.await` to spend on it. So discovery happens once, at **registration**
-//! time, and what lands in the registry is one already-resolved entry per remote
-//! tool, each sharing the live connection behind an `Arc`:
+//! A server's tool list is knowable only by a `tools/list` round trip, and
+//! [`ToolProvider::provide`](crate::tool::ToolProvider::provide) has no `.await`
+//! to spend on it. So discovery happens once, at registration, and the registry
+//! gets one resolved entry per remote tool, all sharing the live connection
+//! behind an `Arc`:
 //!
 //! ```text
 //! MCPConnection::connect(&transport)   ← async: initialize + tools/list
@@ -16,11 +14,6 @@
 //! "github__create_issue" → ToolProviderElem::MCP(MCPToolEntry)
 //! "github__list_issues"  → ToolProviderElem::MCP(MCPToolEntry)
 //! ```
-//!
-//! Registration also hands back the [`ToolDesc`]s it just inserted, which is
-//! what an [`AgentSpec`](crate::agent::AgentSpec) wants in its `tools` field —
-//! so the spec stays a plain list of descriptions and nothing downstream of
-//! registration needs to know an MCP server was involved.
 //!
 //! ```no_run
 //! # use ailoy::{agent::AgentSpec, tool::{register_mcp_stdio, unregister_mcp}};
@@ -44,28 +37,6 @@
 //! # Ok(())
 //! # }
 //! ```
-//!
-//! ## Names
-//!
-//! The name a model sees is `{prefix}__{remote name}`, because two servers may
-//! both call a tool `search` and the registry is one flat name-keyed map. The
-//! separator is `__` rather than `/` or `.`: model-facing tool names are limited
-//! to `[A-Za-z0-9_-]` by the OpenAI and Anthropic schemas, so a `/` would make
-//! the request itself invalid. Doubling the underscore keeps the boundary
-//! legible when a prefix or a remote name contains one of its own.
-//!
-//! The remote name is kept beside the entry and used verbatim on the wire — the
-//! prefix is this crate's business, not the server's.
-//!
-//! ## Where a stdio server runs
-//!
-//! On the **host**, not inside the [`ConsoleClient`](crate::console::ConsoleClient) sandbox
-//! that the built-in tools run in. [`ConsoleClient::exec`](cortex::console::ConsoleClient::exec)
-//! is argv-in, bytes-out — one shot, with no handle to a process left running —
-//! so there is nowhere inside the sandbox to keep a server that has to hold its
-//! stdin and stdout open for the length of a session. An MCP server therefore
-//! has whatever access this process has, so register only servers the caller
-//! trusts.
 
 use std::sync::Arc;
 
@@ -89,7 +60,9 @@ use crate::{
 
 /// Separator between the registry prefix and the server's own tool name.
 ///
-/// See the module docs on names for why it is not `/`.
+/// Not `/` or `.`: the OpenAI and Anthropic schemas limit tool names to
+/// `[A-Za-z0-9_-]`. Doubled so the boundary stays legible when a prefix or
+/// remote name contains `_` itself.
 pub const MCP_NAME_SEPARATOR: &str = "__";
 
 // ── Connection ────────────────────────────────────────────────────────────────

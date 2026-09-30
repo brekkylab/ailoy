@@ -1,15 +1,13 @@
 //! napi's link setup, plus the `LC_RPATH` that finds libfuse-t on a macOS target.
 //!
-//! A `rustc-link-arg` applies only to the targets of the package that printed it, so this
-//! cdylib must emit the rpath itself; without it `require` fails in `dlopen` with
-//! `Library not loaded: @rpath/libfuse-t.dylib`.
-//!
-//! `ailoy` links libfuse-t through cortex's default features regardless of this crate's
-//! `mount`, so only the target OS is checked.
+//! A `rustc-link-arg` applies only to the package that printed it, so this cdylib emits the
+//! rpath itself; without it `require` fails with `Library not loaded: @rpath/libfuse-t.dylib`.
 
 fn main() {
     napi_build::setup();
 
+    // `ailoy` links libfuse-t through cortex's default features whatever this crate's `mount`
+    // is, so only the target OS decides.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return;
     }

@@ -10,24 +10,16 @@
 //! (a text, an email, a ticket) and typed questions — a choice, a score, a yes/no — it answers
 //! each with calibrated probabilities in one forward pass, and generates no text.
 //!
-//! The skill is `SKILL.md` and `run_laya.py`, mounted at `/skills/laya` from memory, which the
-//! agent runs with its `shell` tool.
+//! The skill (`SKILL.md`, `run_laya.py`) is mounted from memory at `/skills/laya`.
 //!
 //! * `context/` at `/context`, read-only — what to decide on, when it is not in the prompt.
 //! * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes.
 //!
-//! The image is Debian rather than Alpine. PyPI's ncnn has a musllinux wheel, but it crashes
-//! freeing the first `Mat` it allocates, where the manylinux (glibc) one runs laya.
-//! `mesa-vulkan-drivers` carries the venus ICD the guest needs — from trixie-backports, for
-//! bf16 — and `libvulkan1` the loader the wheel opens.
+//! Environment, also read from `.env`:
 //!
-//! Environment:
-//!
-//! * `UV` — the `uv` binary `prepare_model.py` runs with, `uv` on `PATH` by default.
+//! * `UV` — the `uv` binary `prepare_model.py` runs with; `uv` on `PATH` by default.
 //! * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its provider's
-//!   API key has to be set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …).
-//!
-//! Read from `.env` as well.
+//!   API key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …).
 
 use std::{io::Write as _, path::Path};
 
@@ -82,10 +74,13 @@ async fn main() -> anyhow::Result<()> {
     .web_search_tool(vec![])
     .console(
         ConsoleClient::builder()
+            // Debian, not Alpine: PyPI's musllinux ncnn wheel crashes freeing its first `Mat`,
+            // where the manylinux (glibc) one runs laya.
             .image(
                 Recipe::new("python:3.12-slim-trixie")
-                    // Mesa from backports: venus passes VK_KHR_shader_bfloat16 through from 26.0
-                    // on, and trixie itself has 25.0.
+                    // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader
+                    // the wheel opens. Mesa from backports: venus passes VK_KHR_shader_bfloat16
+                    // through from 26.0 on, and trixie itself has 25.0.
                     .step(
                         "echo 'deb http://deb.debian.org/debian trixie-backports main' \
                         > /etc/apt/sources.list.d/backports.list \
