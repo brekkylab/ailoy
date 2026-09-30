@@ -58,8 +58,7 @@ pub fn get_shell_tool_func() -> ToolFunc {
             }
         };
 
-        // Seconds, whole or not, as the model gives them; 0 or none is no bound of the call's
-        // own, which leaves it to whatever the console was built with.
+        // Fractional seconds allowed; 0 or absent defers to the console's own timeout.
         let timeout_ms = args
             .pointer("/timeout_secs")
             .and_then(|v| v.as_float().or_else(|| v.as_unsigned().map(|u| u as f64)))

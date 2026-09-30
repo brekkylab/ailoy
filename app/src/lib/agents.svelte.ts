@@ -1,7 +1,6 @@
 // The agents the backend keeps under `~/.cache/ailoy/agents` (see `src-tauri/src/agent.rs`).
 //
-// Edits autosave instead of waiting for a Save button, so leaving the tab never loses work;
-// `SAVE_DELAY` debounces keystrokes.
+// Edits autosave instead of waiting for a Save button, so leaving the tab never loses work.
 //
 // Outside Tauri (plain `vite dev`) there is no backend: the tab opens one blank in-memory
 // agent and nothing is written.
@@ -13,6 +12,7 @@ import { confirm } from "@/lib/confirm";
 import { MODELS } from "@/lib/mock";
 import { S } from "@/strings";
 
+// Debounces keystrokes.
 const SAVE_DELAY = 600;
 
 const inTauri = () => "__TAURI_INTERNALS__" in window;

@@ -290,11 +290,7 @@ impl super::QuotaClassifier for OpenAIUnmarshal {
     }
 }
 
-/// Parses one Responses API SSE event (`response.*`) into a delta: the role
-/// (`output_item.added`), incremental text (`output_text.delta`), reasoning
-/// (`reasoning_summary_text.delta`), and whole function calls (`output_item.done`);
-/// `response.completed` / `response.incomplete` reuse the full-response `Unmarshal`
-/// for finish_reason + usage, and `response.failed` fails. Other events: no delta.
+/// Parses one Responses API `response.*` SSE event into a delta; lifecycle events yield none.
 impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;
@@ -708,9 +704,7 @@ mod tests {
         );
     }
 
-    /// Register a one-off [`LangModelProvider`] under `provider_name` in the
-    /// global registry and build the [`LangModel`] via
-    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    /// Registers a one-off provider under `provider_name` and builds the model from it.
     fn build_openai_model(provider_name: &str, model: &str, api_key: String) -> LangModel {
         let elem = LangModelProviderElem::API {
             schema: LangModelAPISchema::OpenAI,

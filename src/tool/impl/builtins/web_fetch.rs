@@ -100,10 +100,8 @@ async fn download(
         .get(url)
         .send()
         .await
-        // A refusal from the resolver arrives wrapped in a connect error whose
-        // `Display` drops it, so it has to be recovered rather than formatted.
-        // Without this a blocked name reports a plain connection failure and is
-        // indistinguishable from a target that is merely down.
+        // Recover a resolver refusal hidden in the connect error, so it isn't
+        // reported as the target being down.
         .map_err(|e| {
             net_guard::blocked_reason(&e).unwrap_or_else(|| format!("request failed: {e}"))
         })?;
@@ -196,12 +194,7 @@ fn convert_with_crate(html: &str, output_format: OutputFormat) -> Converted {
     }
 }
 
-// Pick the conversion path for the requested format and content-type.
-//
-// - `format=html`: raw passthrough, regardless of content type.
-// - `format={text,markdown}`: route HTML through `html_to_markdown_rs`;
-//   non-HTML content (JSON, plain text, etc.) passes through verbatim so a
-//   caller asking for a JSON body gets a JSON body, not an empty conversion.
+// Only HTML is converted; other content passes through, so a JSON body stays JSON.
 fn convert(body: &str, content_type: &str, format: BodyFormat) -> Converted {
     if matches!(format, BodyFormat::Html) {
         return Converted {
@@ -226,11 +219,6 @@ fn convert(body: &str, content_type: &str, format: BodyFormat) -> Converted {
 
 // Returns `(slice, total_chars, next_offset)`. `next_offset = None` means the
 // slice reaches the end of `text` (caller treats this as `complete`).
-//
-// Single `char_indices()` pass: locates the start/end byte boundaries for the
-// requested char window, counts total chars, and computes `next_offset` without
-// re-iterating the slice or copying into a `Vec<char>`. Byte-indexing into
-// `text` is safe because `char_indices()` yields char-boundary offsets.
 fn slice_body(text: &str, offset: usize, len: usize) -> (String, usize, Option<usize>) {
     let end_char = offset.saturating_add(len);
     let mut start_byte: Option<usize> = None;
@@ -481,9 +469,8 @@ mod net_guard {
     /// gated later by [`PublicOnlyResolver`], which is the only place its actual
     /// addresses are known.
     ///
-    /// Strips the brackets an IPv6 literal is written with. Both callers hand them
-    /// over — `url::Url::host_str` and `http::Uri::host` each return `[::1]` rather
-    /// than `::1` — and `IpAddr` parses neither spelling with them attached.
+    /// Strips IPv6 brackets, which `Url::host_str` and `Uri::host` both keep and
+    /// `IpAddr` won't parse.
     pub fn check_host(host: &str) -> Result<(), Blocked> {
         let bare = host
             .strip_prefix('[')
@@ -510,10 +497,7 @@ mod net_guard {
         }
     }
 
-    /// Keep only the globally routable addresses in `addrs`. Returns `Err` when
-    /// nothing survives, which the connector buries under two layers of its own
-    /// error; [`blocked_reason`] is what digs it back out so the caller reports a
-    /// blocked host rather than an opaque connection failure.
+    /// Keep only the globally routable addresses in `addrs`; `Err` when none survive.
     fn filter_public(
         host: &str,
         addrs: impl Iterator<Item = SocketAddr>,
@@ -631,14 +615,8 @@ mod net_guard {
         // sit at a fixed offset the way it does under the well-known prefix, and
         // there is no address in the range worth reaching anyway.
         //
-        // Then three ranges that carry no embedded address and reach no service:
-        // 100::/64 discards whatever is sent to it, and 3fff::/20 and 5f00::/16 are
-        // reserved for documentation and for SRv6 segment identifiers. None is
-        // routable, so none belongs on the allowed side of a predicate that answers
-        // "is this on the public internet".
-        //
-        // 2001:20::/28 (ORCHIDv2) and 2001:30::/28 (DRIP) need no entry of their
-        // own — both sit inside 2001::/23 above.
+        // Then three non-routable ranges with no embedded address: 100::/64
+        // discard-only, 3fff::/20 documentation, and 5f00::/16 SRv6 segment ids.
         let s = ip.segments();
         !((s[0] == 0 && s[1] == 0 && s[2] == 0 && s[3] == 0)
             || (s[0] & 0xfe00) == 0xfc00
@@ -922,9 +900,7 @@ mod tests {
         assert_eq!(BodyFormat::parse("xml"), None);
     }
 
-    /// `last_hit` self-trim invariants. The retain expression is replicated
-    /// here exactly as `rate_limit_for` uses it; if either drifts, this test
-    /// catches it before the table grows unbounded.
+    /// Retain rule for `last_hit`: fresh and future entries stay, stale ones go.
     #[test]
     fn last_hit_retain_keeps_fresh_and_future_drops_stale() {
         let now = Instant::now();
@@ -1061,10 +1037,8 @@ mod tests {
         );
     }
 
-    /// A loopback target reached by name is refused by the resolver rather than
-    /// the up-front literal check, inside an error whose `Display` drops it; the
-    /// recovery in `download` must still report it as a policy refusal, not a bare
-    /// connect failure a model would retry.
+    /// A name resolving inward must report as a policy refusal, not a retryable
+    /// connect failure.
     #[tokio::test]
     async fn fetch_one_refuses_a_name_resolving_inward_with_the_same_error() {
         use std::sync::{Arc, Mutex};
@@ -1170,8 +1144,7 @@ mod tests {
         )
         .await;
 
-        // Without this the test could pass for the wrong reason: a failure to
-        // reach the first hop at all looks identical to a refused second hop.
+        // A failure to reach the first hop looks identical to a refused second hop.
         assert_eq!(
             *go_hits.lock().unwrap(),
             1,

@@ -1,13 +1,10 @@
-// Decodes file bytes to text.
-//
-// `res.text()` decodes only UTF-8, but workspace files such as `erp/` (a Korean ERP's
-// nightly output) are CP949, which reads as silent mojibake. So the app decodes itself.
+// `res.text()` decodes only UTF-8, and CP949 workspace files would read as silent mojibake,
+// so the app decodes itself.
 
 /// A decoded file, and what it turned out to be written in.
 export interface Decoded {
   text: string;
-  /// The encoding's display name. The app shows which one it settled on, since an inferred
-  /// decoding should be disclosed to the reader.
+  /// The encoding's display name, shown to the reader.
   encoding: 'UTF-8' | 'UTF-16' | 'CP949';
 }
 

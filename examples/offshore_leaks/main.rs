@@ -15,15 +15,14 @@
 //!
 //! The skill (`SKILL.md`, `oldb.py`) is mounted from memory at `/skills/offshore-leaks`. It
 //! is what the agent knows of the data before it looks: the tables, which way a relationship
-//! points, and what a match on a name does not show. Beyond a query, the agent writes and runs
-//! Python of its own.
+//! points, and what a match on a name does not show.
 //!
 //! * `context/` at `/context`, read-only — `offshore_leaks.duckdb`, and whatever else the
 //!   request is about, such as a list of names to look for.
 //! * `artifacts/` at `/artifacts`, writable — where the reports, tables and charts go.
 //!
-//! The agent runs its own code, so it runs in the console: it sees the two directories and
-//! nothing else of the host, and the database is read-only to it.
+//! The agent's code runs in the console, which sees nothing of the host but these two
+//! directories.
 //!
 //! The data is ICIJ's, under the Open Database License, and its contents under CC BY-SA.
 //! Being in it is not evidence of wrongdoing, as ICIJ says and the skill tells the agent.

@@ -64,8 +64,8 @@
   // Open unless it was closed. One setting for every tab that has the helper.
   let helperOpen = $state(read(HELPER_KEY) !== "0");
 
-  // `selected` is the user's choice; `effective` is what the window shows. It falls back to
-  // the most recent session while the choice is unknown or gone.
+  // `stored` is the user's choice (`selected`), or the most recent session while it is unknown
+  // or gone; `effective` is what the window shows, null while drafting.
   const stored = $derived(
     selected && store.sessions.some((s) => s.id === selected) ? selected : (store.sessions[0]?.id ?? null),
   );

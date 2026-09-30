@@ -1,10 +1,9 @@
 // A Markdown renderer for the file viewer.
 //
 // CommonMark core plus GFM tables. Deliberately omitted: setext headings (`---` is
-// ambiguous with a rule), reference links, and raw HTML.
-//
-// Raw HTML is refused: workspace files may be written by anyone, so every character is
-// escaped *before* parsing and only tags this module writes can reach the DOM.
+// ambiguous with a rule), reference links, and raw HTML: workspace files may be written by
+// anyone, so every character is escaped *before* parsing and only tags this module writes
+// can reach the DOM.
 
 /// The characters that change meaning in HTML text and in an attribute value.
 const ESCAPES: Record<string, string> = {

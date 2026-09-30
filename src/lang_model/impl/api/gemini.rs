@@ -402,12 +402,8 @@ impl GeminiUnmarshal {
     }
 }
 
-/// Parses one Gemini SSE chunk (`?alt=sse`) into a delta. Each chunk is a
-/// partial `GenerateContentResponse` of the same shape as the final response
-/// and carries incremental text, so it reuses `parse_candidate_content` and
-/// accumulates. A chunk without a candidate yields no delta; `finishReason` and
-/// `usageMetadata` arrive on the final chunk (alongside the function call, if
-/// any — Gemini sends `STOP` even for tool calls, adjusted to `ToolCall`).
+/// Parses one `?alt=sse` chunk, a partial `GenerateContentResponse`, into a delta; a
+/// chunk without a candidate yields none.
 impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;
@@ -689,11 +685,8 @@ mod tests {
 
     #[test]
     fn test_unmarshal_event_tool_call_split_stream() {
-        // Gemini 2.5 Pro / 3.x can deliver the functionCall part and the
-        // terminal `finishReason: STOP` in *separate* SSE chunks. Neither chunk
-        // alone carries both, so the STOP→ToolCall promotion must happen on the
-        // accumulated message (in finish()), not per chunk — otherwise the turn
-        // looks like a plain Stop and the tool call is silently dropped.
+        // functionCall and STOP in separate chunks: the promotion must happen on the
+        // accumulated message, or the tool call is dropped.
         let inputs = [
             r#"{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"location":"Paris"}}}]}}]}"#,
             r#"{"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":6}}"#,
@@ -751,9 +744,7 @@ mod tests {
         );
     }
 
-    /// Register a one-off [`LangModelProvider`] under `provider_name` in the
-    /// global registry and build the [`LangModel`] via
-    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    /// Registers a one-off provider under `provider_name` and builds the model from it.
     fn build_gemini_model(provider_name: &str, model: &str, api_key: String) -> LangModel {
         let elem = LangModelProviderElem::API {
             schema: LangModelAPISchema::Gemini,
@@ -857,15 +848,7 @@ mod tests {
         );
     }
 
-    /// Verifies functionResponse.response.result marshaling for all Part variants.
-    ///
-    /// Gemini accepts arbitrary values in `result`, so:
-    /// - Part::Text  → {"text": "..."} object (no double-encoding issue; object is valid)
-    /// - Part::Value(String) → plain string "..." (no double-encoding via value.to_owned())
-    /// - Part::Value(Object) → the object itself passed through
-    /// - Part::Image (embedded) → image-only: functionResponse gets a {mimeType, type:"image"}
-    ///   placeholder and the actual bytes appear as a sibling inline_data part; mixed with text:
-    ///   text goes into functionResponse.response.result and image becomes a sibling inline_data part
+    /// Checks how each Part variant marshals into `functionResponse.response.result`.
     #[test]
     fn test_function_response_result_marshaling() {
         let get_result = |msg: &Message| -> Value {
@@ -1137,11 +1120,9 @@ mod tests {
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 
-    /// Verifies that an image embedded in a Role::Tool message is accepted by the Gemini API
-    /// via functionResponse.parts[].inlineData and that the model can respond after seeing it.
-    ///
-    /// Uses a 2-turn interaction so the model's own functionCall (with thoughtSignature) is used
-    /// in the conversation history — required by Gemini 3 thinking models.
+    /// Live: an image in a Tool message (sent as a sibling inline_data part) is accepted and
+    /// described. Two turns, so history carries the model's own functionCall with its
+    /// thoughtSignature, which Gemini 3 requires.
     #[tokio::test]
     async fn test_tool_result_with_image() {
         dotenvy::dotenv().ok();

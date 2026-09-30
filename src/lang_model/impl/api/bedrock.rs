@@ -307,12 +307,9 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
     to_value!({"role": item.role.to_string(), "content": contents})
 }
 
-/// Whether the model takes an image only as a block of the user message, and not inside a
-/// `toolResult`. Bedrock's OpenAI models answer an image in a tool result with a 400 ("This
-/// model doesn't support the image field for user messages") and take the same image beside
-/// it, so for them [`lift_tool_result_images`] moves it there. Only a model named in the id
-/// is recognized: `openai.…` or `<geo>.openai.…`. An application inference-profile ARN hides
-/// the model and goes through unchanged.
+/// Whether the model takes an image only beside a tool result, not inside `toolResult`:
+/// Bedrock's OpenAI models answer the latter with a 400, so [`lift_tool_result_images`]
+/// moves the images for them.
 fn takes_images_outside_tool_results(model: &str) -> bool {
     names_vendor(model, "openai")
 }
@@ -592,15 +589,8 @@ impl BedrockUnmarshal {
     }
 }
 
-/// Events arrive as `{"<eventType>": body}` (see
-/// [`frame_to_event_data`](super::super::framing::eventstream::frame_to_event_data));
-/// each maps onto a delta fragment:
-/// - `messageStart`: role
-/// - `contentBlockStart`: begins a `toolUse` call (id + name)
-/// - `contentBlockDelta`: text / reasoning / signature / tool-input fragment
-/// - `messageStop`: `stopReason`
-/// - `metadata`: usage
-/// - `contentBlockStop` and unknown events: no delta
+/// Each event is a single-key `{"<eventType>": body}` object; `contentBlockStop` and
+/// unknown events yield no delta.
 impl Unmarshal<MessageDeltaOutput> for BedrockUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;

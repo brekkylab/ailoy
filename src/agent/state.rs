@@ -21,7 +21,6 @@ pub struct AgentState {
     pub console: Arc<Mutex<Option<ConsoleClient>>>,
 
     /// The memory store this agent remembers into; `None` means no memory tools.
-    /// Only the caller sets it.
     ///
     /// A [`Memory`] is a path, not a handle, so it is cheap to clone into the memory tools
     /// and safe to share with a sub-agent.

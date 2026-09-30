@@ -372,11 +372,8 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<It
 
 #[napi]
 impl JsAgent {
-    /// An agent from a spec — the object an `AgentSpec` serializes to — for a caller who holds
-    /// one rather than building it up.
-    ///
-    /// `options` may name the `agentProvider` (`'default'` unless it does), the `history` to
-    /// start from, the `console` to share and the `memory` file to remember into.
+    /// An agent from a spec (the object an `AgentSpec` serializes to). `options.agentProvider`
+    /// defaults to `'default'`; `memory` is the file to remember into.
     #[napi(
         ts_args_type = "spec: AgentSpec, options?: { agentProvider?: string; history?: Array<Message>; console?: ConsoleClient; memory?: string }",
         ts_return_type = "Promise<Agent>"

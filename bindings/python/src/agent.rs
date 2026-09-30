@@ -46,11 +46,8 @@ impl<T> Drop for OnRuntime<T> {
     }
 }
 
-/// An [`AgentBuilder`], filled in place and emptied by `build()`.
-///
-/// In place rather than by value: the Rust builder is consumed by each call and is not
-/// `Clone`, so there is exactly one of it to hand along.
-/// Each method returns the same object so calls chain as they do in Rust.
+/// An [`AgentBuilder`], filled in place since the Rust one is consumed per call and not
+/// `Clone`, and emptied by `build()`. Methods return `self` to chain.
 #[pyclass(name = "AgentBuilder", module = "ailoy")]
 pub struct PyAgentBuilder(std::sync::Mutex<Option<AgentBuilder>>);
 

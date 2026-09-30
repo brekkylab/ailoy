@@ -8,11 +8,8 @@
   import type { Source } from './source';
   import { viewerFor } from './registry';
 
-  // Reads and renders one file, without chrome (the caller's job): picks the viewer by
-  // name, reads through the file's tree, and hands the viewer what its kind takes.
-  //
-  // `unsupported` and `too-big` are not read failures: the file is fine, and each says why
-  // it is not on screen.
+  // Reads and renders one file, without chrome. `unsupported` and `too-big` are not read
+  // failures: the file is fine, and each says why it is not on screen.
 
   interface Props {
     entry: Entry;

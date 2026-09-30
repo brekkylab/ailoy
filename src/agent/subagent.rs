@@ -49,15 +49,12 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
         .build()
 }
 
-/// Build a [`ToolFunc`] that materialises a fresh sub-agent from `spec` on every call,
-/// runs it for one turn, then drops it.
+/// A [`ToolFunc`] that builds a fresh sub-agent from `spec` per call and runs it for one turn,
+/// streaming every [`MessageOutput`], then a `Role::Tool` message with its last answer, all
+/// tagged with [`AgentCard::name`] as `source_agent`.
 ///
 /// `provider` is re-resolved from [`get_agent_providers`](crate::agent::get_agent_providers)
-/// on every call, so it must stay registered for the parent agent's lifetime.
-///
-/// Streams every [`MessageOutput`] of the sub-agent's
-/// turn, then a final `Role::Tool` message holding its last assistant answer; all are
-/// tagged with the sub-agent's [`AgentCard::name`] as `source_agent`.
+/// per call, so it must stay registered for the parent agent's lifetime.
 pub fn get_subagent_tool_func(
     spec: AgentSpec,
     provider: String,

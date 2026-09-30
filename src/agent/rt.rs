@@ -27,12 +27,6 @@ use crate::{
 ///
 /// Sub-agents in [`AgentSpec::subagents`] are registered as callable tools that share the
 /// parent's console.
-///
-/// Constructors:
-/// * [`Agent::try_new`] — `"default"` provider + fresh [`AgentState`].
-/// * [`Agent::try_with_provider`] — named provider + fresh state.
-/// * [`Agent::try_with_state`] — `"default"` provider + explicit state.
-/// * [`Agent::try_with_provider_and_state`] — named provider + explicit state.
 pub struct Agent {
     model: LangModel,
 
@@ -303,9 +297,7 @@ impl Agent {
         Ok(())
     }
 
-    /// Release what [`start_console`](Self::start_console) booted.
-    ///
-    /// Keeps the session open for the next batch's `start`.
+    /// Release what [`start_console`](Self::start_console) booted; the session stays open.
     async fn stop_console(&self) -> anyhow::Result<()> {
         if let Some(console) = self.state.console.lock().await.as_mut() {
             console.stop().await?;
@@ -859,9 +851,6 @@ mod tests {
     }
 
     /// The mounts land in the *first* text part of the system message.
-    ///
-    /// `openai`, `anthropic` and `gemini` keep only `contents.first()`, so a separate part
-    /// would be silently dropped.
     #[tokio::test]
     async fn test_mounts_land_in_the_first_text_part() {
         let provider = default_test_provider();
@@ -1214,9 +1203,7 @@ mod tests {
         );
     }
 
-    /// Verifies that run() emits intermediate sub-agent outputs (depth > 0)
-    /// followed by a final Role::Tool result (depth == 0) when using a streaming
-    /// subagent tool.
+    /// Sub-agent outputs stream at depth > 0, then one `Role::Tool` result at depth 0.
     #[test_with::env(OPENAI_API_KEY)]
     #[tokio::test]
     async fn test_streaming_subagent_emits_tool_deltas() {

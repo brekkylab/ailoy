@@ -372,10 +372,7 @@ impl ChatCompletionUnmarshal {
     }
 }
 
-/// Parses one ChatCompletion SSE chunk (`chat.completion.chunk`) into a delta:
-/// the incremental `choices[0].delta` (role / content / reasoning_content /
-/// tool_call fragments), `finish_reason`, and usage from the final chunk.
-/// `[DONE]` carries no delta.
+/// Parses one `chat.completion.chunk` SSE event into a delta.
 impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         // OpenAI-compatible streams end with a `[DONE]` sentinel (not JSON).
@@ -737,9 +734,7 @@ mod tests {
         assert!(usage.output_tokens > 0, "output_tokens should be > 0");
     }
 
-    /// Register a one-off [`LangModelProvider`] under `provider_name` in the
-    /// global registry and build the [`LangModel`] via
-    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    /// Registers a one-off provider under `provider_name` and builds the model from it.
     fn build_chat_completion_model(provider_name: &str, model: &str, api_key: String) -> LangModel {
         let elem = LangModelProviderElem::API {
             schema: LangModelAPISchema::ChatCompletion,

@@ -14,27 +14,15 @@ use crate::{
     },
 };
 
-/// Defines the logical identity of an agent as configured by the user.
+/// What makes an agent distinct: its model, instruction, tools and sub-agents.
 ///
-/// `AgentSpec` captures what makes an agent distinct — the language model it uses,
-/// the system instruction that shapes its behaviour, the set of tools it has access
-/// to, and the sub-agents it can delegate work to.  Changing any of these fields
-/// changes the fundamental nature of the agent.
+/// Credentials and tool sources live on [`AgentProvider`](crate::agent::AgentProvider), the
+/// [`ConsoleClient`](crate::console::ConsoleClient) on [`AgentState`](crate::agent::AgentState).
 ///
-/// Runtime concerns — credentials, tool sources, and the
-/// [`ConsoleClient`](crate::console::ConsoleClient) — live on
-/// [`AgentProvider`](crate::agent::AgentProvider) and the constructors in
-/// [`Agent`](crate::agent::Agent), not here.
-///
-/// # `instruction` vs `card`
-///
-/// [`instruction`](AgentSpec::instruction) is *internal*: private guidance fed to the
-/// model that callers never see.  It controls how this agent thinks and behaves.
-///
-/// [`card`](AgentSpec::card) is *external*: a public self-introduction that a calling
-/// agent or orchestrator reads to decide whether to delegate work here.  Sub-agents
-/// must have a card — it supplies the name and description of the tool the parent
-/// will call.  Top-level agents typically don't need one.
+/// [`instruction`](AgentSpec::instruction) is private guidance to the model, never seen by
+/// callers; [`card`](AgentSpec::card) is what a calling agent reads to decide whether to
+/// delegate here. A sub-agent must have a card, since it names and describes the parent's
+/// tool for it.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSpec {
     /// Identifier of the language model (e.g. `"anthropic/claude-sonnet-4-6"`)
@@ -57,10 +45,7 @@ pub struct AgentSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_options: Option<LangModelOptions>,
 
-    /// Public self-introduction exposed to a calling agent or orchestrator.
-    ///
-    /// Only relevant when this agent acts as a sub-agent.
-    /// `None` for top-level agents.
+    /// Public self-introduction to a calling agent; required when this spec is a sub-agent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub card: Option<AgentCard>,
 
@@ -159,9 +144,7 @@ impl AgentSpec {
         self
     }
 
-    /// Add the `web_search` tool to the spec.
-    ///
-    /// A non-empty `engines` restricts the engines used; empty uses all available.
+    /// Add `web_search`; a non-empty `engines` restricts it to those, empty uses all.
     pub fn web_search_tool(mut self, engines: Vec<WebSearchEngineKind>) -> Self {
         self.tools.push(get_web_search_tool_desc());
         if !engines.is_empty() {

@@ -42,8 +42,7 @@ use crate::{
 pub struct AgentBuilder {
     spec: AgentSpec,
 
-    /// [`AgentProvider`](crate::agent::AgentProvider) bundle resolved at
-    /// [`build`](Self::build) time. Defaults to `"default"`.
+    /// [`AgentProvider`](crate::agent::AgentProvider) name resolved at [`build`](Self::build).
     agent_provider: String,
 
     history: Vec<Message>,

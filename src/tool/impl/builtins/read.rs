@@ -27,9 +27,8 @@ pub(super) async fn load_text(
     console: &mut ConsoleClient,
     path: &str,
 ) -> Result<String, (String, &'static str)> {
-    // One `read`. `size` is the whole file's, so a short answer means the
-    // file is bigger than one message — reported rather than returned as if
-    // it were the file.
+    // `size` is the whole file's, so a short answer means the file is bigger
+    // than one message — reported rather than returned as if it were the file.
     let bytes = match console.read(path, None, None).await {
         Ok(r) if (r.data.len() as u64) < r.size => {
             return Err((

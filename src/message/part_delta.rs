@@ -8,18 +8,8 @@ use crate::{
     message::{Delta, Part, PartFunction, PartImage},
 };
 
-/// Represents an incremental update (delta) of a function part.
-///
-/// This type is used during streaming or partial message generation, when function calls are being streamed as text chunks or partial JSON fragments.
-///
-/// # Variants
-/// * `Verbatim(String)` — Raw text content, typically a partial JSON fragment.
-/// * `WithStringArgs { name, arguments }` — Function name and its serialized arguments as strings.
-/// * `WithParsedArgs { name, arguments }` — Function name and parsed arguments as a `Value`.
-///
-/// # Use Case
-/// When the model streams out a function call response (e.g., `"function_call":{"name":...}`),
-/// the incremental deltas can be accumulated until the full function payload is formed.
+/// A streamed function-call fragment: raw text (typically partial JSON), or a
+/// name with arguments as a string or a parsed value.
 ///
 /// # Example
 /// ```rust

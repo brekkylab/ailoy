@@ -2,12 +2,8 @@ use indexmap::IndexMap;
 
 use crate::datatype::Value;
 
-/// Adapts a JSON schema for a specific provider's wire format requirements.
-///
-/// The default implementation adds `"additionalProperties": false` to every
-/// object sub-schema, satisfying Anthropic and OpenAI strict mode.  Marshal
-/// types that require different transformations (e.g. stripping unsupported
-/// keywords) override [`marshal_response_schema`](Self::marshal_response_schema).
+/// Adapts a JSON schema to a provider's wire format. The default closes every object
+/// sub-schema (`"additionalProperties": false`), as Anthropic and OpenAI strict mode require.
 pub trait ResponseSchemaMarshal {
     /// Recursively add `"additionalProperties": false` to object sub-schemas that
     /// omit it, keeping any explicit value.

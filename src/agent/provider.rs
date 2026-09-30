@@ -3,16 +3,11 @@ use std::{
     sync::{LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
-/// Named bundle that ties an agent to a [`LangModelProvider`](crate::lang_model::LangModelProvider) and a
-/// [`ToolProvider`](crate::tool::ToolProvider) by **name** rather than by value.
+/// Names a [`LangModelProvider`](crate::lang_model::LangModelProvider) and a
+/// [`ToolProvider`](crate::tool::ToolProvider) in the process-wide registries rather than
+/// holding them, so a registry update reaches every bundle naming that entry.
 ///
-/// It stores only keys into the process-wide registries
-/// ([`get_lm_providers`](crate::lang_model::get_lm_providers),
-/// [`get_tool_providers`](crate::tool::get_tool_providers)), so a registry update is immediately
-/// visible to every `AgentProvider` naming that entry. The names are resolved at agent
-/// construction time (e.g. [`AgentBuilder::build`](crate::agent::AgentBuilder::build)).
-///
-/// Bundles themselves are registered in [`get_agent_providers`] / [`get_agent_providers_mut`].
+/// Registered in [`get_agent_providers`] / [`get_agent_providers_mut`].
 #[derive(Clone, Debug)]
 pub struct AgentProvider {
     /// Key into [`get_lm_providers`](crate::lang_model::get_lm_providers).
@@ -40,9 +35,7 @@ impl Default for AgentProvider {
     }
 }
 
-/// Process-wide named registry of [`AgentProvider`] bundles.
-///
-/// Pre-populated with `"default"` = [`AgentProvider::default`].
+/// Process-wide registry of [`AgentProvider`] bundles, seeded with [`AgentProvider::default`].
 static AGENT_PROVIDERS: LazyLock<RwLock<HashMap<String, AgentProvider>>> = LazyLock::new(|| {
     let mut map = HashMap::new();
     map.insert("default".to_string(), AgentProvider::default());

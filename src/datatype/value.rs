@@ -218,14 +218,7 @@ impl Value {
         }
     }
 
-    /// Get a value by JSON Pointer (immutable).
-    ///
-    /// Rules:
-    /// - `""` (empty string): returns `Some(self)`
-    /// - Must start with `/`; otherwise returns `None`
-    /// - Objects are accessed by key; arrays are accessed by decimal index
-    /// - Unescape tokens: `~1` → `/`, `~0` → `~`
-    /// - The JSON Patch `-` token is not supported
+    /// Get a value by RFC 6901 JSON Pointer; the JSON Patch `-` token is not supported.
     pub fn pointer(&self, pointer: &str) -> Option<&Value> {
         if pointer.is_empty() {
             return Some(self);

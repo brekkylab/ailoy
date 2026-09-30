@@ -39,8 +39,8 @@
     // open a spreadsheet.
     const { Workbook } = await import('exceljs');
     const workbook = new Workbook();
-    // `repair` first: workbooks the agent writes wire their parts in a way the reader does
-    // not resolve. Files that need no repair come back as the same bytes.
+    // `repair` first: workbooks the agent writes wire their parts in a way `exceljs` does not
+    // resolve.
     await workbook.xlsx.load(await repair(source));
     return workbook.worksheets.map(readSheet);
   }
@@ -138,16 +138,12 @@
   // targets relative to the holding part (`../tables/table1.xml`), and `exceljs` indexes
   // and looks up parts by that exact string, with no path resolution. openpyxl (which the
   // agent uses) writes the same target absolutely (`/xl/tables/table1.xml`). Both are valid
-  // OPC and Excel opens either, but `exceljs` finds nothing for the absolute form and the
-  // load throws, so such a file fails here yet opens fine in Excel.
+  // OPC, but `exceljs` finds nothing for the absolute form and the load throws.
   //
   // So the bytes are rewritten first: absolute targets become the relative spelling
   // `exceljs` indexes by, and cell comments are dropped. openpyxl puts comments at
   // `xl/comments/comment1.xml` while `exceljs` only looks for `xl/comments1.xml`, so no
   // target spelling finds them, and the viewer does not render notes anyway.
-  //
-  // A workbook needing none of this is returned untouched, so Excel's own files skip
-  // repacking.
 
   /// Relationship types whose parts are dropped rather than rewired, matched against the
   /// tail of the `Type` URI.

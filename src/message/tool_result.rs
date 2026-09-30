@@ -16,11 +16,7 @@ pub struct ToolResultDelta {
     pub content: Part,
 }
 
-/// Output yielded by a streaming tool function.
-///
-/// A streaming tool yields zero or more [`Delta`](Self::Delta) items (intermediate progress,
-/// for UI display only), followed by exactly one [`Result`](Self::Result) item (the definitive
-/// tool output that will be added to the agent's history and returned to the LLM).
+/// Output of a streaming tool: zero or more [`Delta`](Self::Delta)s, then exactly one [`Result`](Self::Result).
 #[derive(Clone, Debug)]
 pub enum StreamingToolOutput {
     /// Intermediate progress snapshot. Not added to history.

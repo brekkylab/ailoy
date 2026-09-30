@@ -30,10 +30,9 @@ impl LangModelProvider {
 const DEFAULT_MAX_TOKENS: u64 = 8192;
 
 /// Whether a Claude model predates adaptive thinking (Claude 4.6) and thinks only on a
-/// `budget_tokens` budget. Reads the version out of the id, so it takes the Anthropic id
-/// (`claude-haiku-4-5`), a dated one (`claude-sonnet-4-20250514`, `claude-3-7-sonnet-…`) and
-/// the Bedrock one (`anthropic.claude-haiku-4-5-20251001-v1:0`). An id it cannot read is
-/// taken for a newer model.
+/// `budget_tokens` budget. Reads the version from Anthropic (`claude-opus-5-5`), dated
+/// (`claude-haiku-4-5-20251001`, legacy `claude-3-7-sonnet-…`) and Bedrock
+/// (`anthropic.claude-haiku-4-5-20251001-v1:0`) ids; an unreadable id counts as newer.
 fn takes_thinking_budget(model: &str) -> bool {
     let Some((_, rest)) = model.split_once("claude-") else {
         return false;
@@ -186,11 +185,8 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
     to_value!({"role": item.role.to_string(), "content": contents})
 }
 
-/// Marshal a message slice with position-aware thinking inclusion.
-///
-/// Thinking blocks are only included for assistant messages that appear after
-/// the last user message, matching Anthropic's extended-thinking requirements.
-/// System messages are extracted separately and excluded from the array.
+/// Thinking is replayed only for assistant turns after the last user message, as
+/// extended thinking requires. System messages are left out; they go in the top-level `system`.
 fn marshal_messages(messages: &[Message]) -> Value {
     let last_user_index = messages
         .iter()
@@ -416,17 +412,7 @@ impl AnthropicUnmarshal {
     }
 }
 
-/// Parses one Anthropic SSE stream event into an incremental delta.
-///
-/// Each event type contributes a fragment that [`Delta::accumulate`](crate::message::Delta::accumulate)
-/// stitches together:
-/// - `message_start`: role + initial usage (input / cache tokens)
-/// - `content_block_start`: begins a `tool_use` function call (id + name)
-/// - `content_block_delta`: a text / thinking / signature / tool-args fragment
-/// - `message_delta`: `stop_reason` + final usage (output tokens)
-/// - `ping` / `content_block_stop` / `message_stop`: no delta → `Ok(None)`
-/// - `error`: fails with the server-reported error type + message
-/// - any other (future) type: ignored → `Ok(None)`
+/// Parses one Anthropic SSE event into a delta; control and unknown events yield `Ok(None)`.
 impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;
@@ -754,9 +740,7 @@ mod tests {
         assert_eq!(v["body"]["temperature"], 0.3);
     }
 
-    /// Register a one-off [`LangModelProvider`] under `provider_name` in the
-    /// global registry and build the [`LangModel`] via
-    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    /// Registers a one-off provider under `provider_name` and builds the model from it.
     fn build_anthropic_model(provider_name: &str, model: &str, api_key: String) -> LangModel {
         let elem = LangModelProviderElem::API {
             schema: LangModelAPISchema::Anthropic,

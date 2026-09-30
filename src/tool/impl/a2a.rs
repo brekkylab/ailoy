@@ -9,22 +9,16 @@ use crate::{
 
 // ── Tool constructor ──────────────────────────────────────────────────────────
 
-/// Discover the remote A2A agent at `url` and build the [`ToolDesc`] a spec
-/// carries for it, under `name`.
+/// Fetch the agent card at `url` and build the A2A agent's [`ToolDesc`] under `name`;
+/// the network fetch is why the agent is contacted at registration, not at resolution.
 ///
-/// Performs a network fetch of the agent card — which is why this is `async`,
-/// and why an A2A agent is contacted when it is *registered* rather than when
-/// [`ToolProvider::provide`](crate::tool::ToolProvider::provide) resolves it.
-///
-/// The name is the caller's, not the card's: it has to match the key the entry
-/// was registered under for `provide` to find it, and a remote card is free to
-/// call itself something no model API would accept as a function name.
+/// `name` is the caller's registration key, not the card's name, which may not be
+/// a valid function name.
 pub(crate) async fn get_a2a_tool_desc(name: &str, url: &Url) -> anyhow::Result<ToolDesc> {
     let base_url = url.to_string();
     let card = discover(&base_url).await?;
 
-    // The card's own name is worth showing even though it is not the tool name,
-    // since it is how the remote agent introduces itself.
+    // Description plus a skills list, so the model knows what the remote agent does.
     let description = if card.skills.is_empty() {
         card.description.clone()
     } else {

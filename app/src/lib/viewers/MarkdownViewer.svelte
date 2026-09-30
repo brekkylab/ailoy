@@ -4,8 +4,7 @@
 
   let { text }: TextProps = $props();
 
-  // `renderMarkdown` escapes its input before parsing, so the only markup here is its own
-  // (see the top of `markdown.ts`).
+  // `renderMarkdown` escapes its input before parsing, so the only markup is its own.
   let html = $derived(renderMarkdown(text));
 </script>
 

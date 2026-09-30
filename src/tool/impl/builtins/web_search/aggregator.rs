@@ -20,11 +20,8 @@ pub struct AggregatedResult {
     pub relevance: f32,
 }
 
-/// Normalizes a URL for deduplication:
-/// - lowercases scheme and host
-/// - removes "www." prefix
-/// - strips trailing slash
-/// - removes common tracking query params (utm_*, ref, etc.)
+/// Normalizes a URL for dedup: drops the fragment, trailing slash, `www.` and
+/// tracking params (utm_*, ref, etc.); lowercases scheme and host.
 pub fn normalize_url(url: &str) -> String {
     let url = url.trim();
 
@@ -96,9 +93,7 @@ pub struct MetaSearcher {
 }
 
 impl MetaSearcher {
-    /// Constructs a `MetaSearcher` using the given engine selection.
-    ///
-    /// An empty `engines` slice uses all available engines (default meta-search behaviour).
+    /// An empty `engines` uses every engine.
     pub fn new(engines: Vec<WebSearchEngineKind>) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(10))

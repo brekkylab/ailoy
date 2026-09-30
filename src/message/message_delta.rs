@@ -258,22 +258,8 @@ impl fmt::Display for MessageDelta {
     }
 }
 
-/// A container for a streamed message delta and its termination signal.
-///
-/// During streaming, `delta` carries the incremental payload; once a terminal
-/// condition is reached, `finish_reason` may be populated to explain why.
-///
-/// # Examples
-/// ```rust
-/// # use ailoy::message::{MessageDeltaOutput, MessageDelta, PartDelta, Role};
-/// let mut out = MessageDeltaOutput::new();
-/// out.delta = MessageDelta::new().with_role(Role::Assistant).with_contents([PartDelta::Text { text: "Hi".into() }]);
-/// assert!(out.finish_reason.is_none());
-/// ```
-///
-/// # Lifecycle
-/// - While streaming: `finish_reason` is typically `None`.
-/// - On completion: `finish_reason` is set; callers can then `finish()` the delta to obtain a concrete [`Message`].
+/// A streamed [`MessageDelta`] plus its termination signal; `finish_reason` is
+/// set on the delta that ends a message.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct MessageDeltaOutput {
     pub delta: MessageDelta,

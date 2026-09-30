@@ -40,8 +40,6 @@ pub fn get_web_search_tool_desc() -> ToolDesc {
 }
 
 /// Returns a factory for the `web_search` tool that fans out to the given engines.
-///
-/// An empty `engines` vec falls back to all available engines.
 pub fn get_web_search_tool_factory(
     engines: Vec<WebSearchEngineKind>,
 ) -> impl Fn(&ToolDesc) -> ToolFunc {

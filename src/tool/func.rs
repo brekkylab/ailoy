@@ -73,8 +73,7 @@ impl ToolFunc {
     /// which locks the same console — without deadlocking against the batch it is
     /// part of.
     ///
-    /// A console tool cannot simply be handed a stand-in: a [`ConsoleClient`] is a live
-    /// session with a server process behind it, so there is no fabricating one.
+    /// `None` for a console tool, since a live [`ConsoleClient`] can't be fabricated.
     pub fn call_pure(
         &self,
         args: Value,
@@ -104,8 +103,6 @@ impl ToolFunc {
 /// Wrapping helpers used by the [`crate::tool_func!`] macro to turn user output
 /// (a [`Value`]/[`Message`], an async future of one, or a stream of them) into
 /// the canonical `BoxStream<_, MessageOutput>` shape.
-///
-/// Not part of the public API.
 #[doc(hidden)]
 pub mod __private {
     use super::*;

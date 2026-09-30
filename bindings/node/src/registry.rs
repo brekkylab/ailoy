@@ -80,8 +80,7 @@ pub struct RegisterLangModelOptions {
 }
 
 /// Serve the models `pattern` matches — an exact name, or a glob with `*` and `?` — from the
-/// API at `url`, spoken in `schema`: `'chat_completion'`, `'openai'`, `'anthropic'`,
-/// `'gemini'` or `'bedrock'`.
+/// API at `url`, spoken in `schema`.
 #[napi]
 pub fn register_lang_model(
     env: &Env,
@@ -133,8 +132,8 @@ pub fn add_tool_provider(name: String, options: Option<ToolProviderOptions>) {
 
 /// Register `func` as the tool `desc` describes, and hand `desc` back.
 ///
-/// `desc` is `{ name, description, parameters: <JSON schema> }`; the name is what the model
-/// calls and what the entry is keyed by. See [`crate::tool`] for how `func` is called.
+/// `desc.name` is what the model calls and what the entry is keyed by. See [`crate::tool`] for
+/// how `func` is called.
 #[napi(ts_return_type = "ToolDesc")]
 pub fn register_tool(
     env: &Env,

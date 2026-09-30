@@ -4,20 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::datatype::Value;
 
-/// Describes a **tool** (or function) that a language model can invoke.
-///
-/// `ToolDesc` defines the schema, behavior, and input/output specification of a callable
-/// external function, allowing an LLM to understand how to use it.
-///
-/// The primary role of this struct is to describe to the LLM what a *tool* does,
-/// how it can be invoked, and what input (`parameters`) and output (`returns`) schemas it expects.
-///
-/// The format follows the same **schema conventions** used by Hugging Face’s
-/// `transformers` library, as well as APIs such as *OpenAI* and *Anthropic*.
-/// The `parameters` and `returns` fields are typically defined using **JSON Schema**.
-///
-/// We provide a builder [`ToolDescBuilder`] helper for convenient and fluent construction.
-/// Please refer to [`ToolDescBuilder`].
+/// A tool as described to a language model: name, description, and JSON Schema
+/// for its parameters and (optional) return value, in the convention OpenAI,
+/// Anthropic and Hugging Face `transformers` share. Build with [`ToolDescBuilder`].
 ///
 /// # Example
 /// ```rust
@@ -169,17 +158,11 @@ impl ToolDescBuilder {
 /// Longest tool name accepted by OpenAI, the strictest model API on this limit.
 pub const MAX_TOOL_NAME_LEN: usize = 64;
 
-/// Map anything a model API would refuse in a tool name onto `_`.
+/// Replace every char outside `[A-Za-z0-9_-]` (the function-name set OpenAI,
+/// Anthropic and Gemini accept) with `_`, so a name from an MCP server, an A2A
+/// card, or a caller's label can't get the request rejected.
 ///
-/// OpenAI, Anthropic and Gemini all constrain a function name to
-/// `[A-Za-z0-9_-]`, and [`ToolDesc::name`] is handed to them verbatim — so a
-/// name that came from somewhere else (an MCP server's tool list, an A2A agent
-/// card, a caller's label) has to be brought into that set before a model ever
-/// sees it, or the request itself is rejected.
-///
-/// Sanitising rather than refusing: whatever the name is on the wire is kept
-/// separately by the caller that needs it, and one stray character should not
-/// cost the caller the whole tool.
+/// Sanitizes rather than refuses: callers keep the wire name separately.
 pub fn sanitize_tool_name(name: &str) -> String {
     name.chars()
         .map(|c| {
@@ -194,9 +177,7 @@ pub fn sanitize_tool_name(name: &str) -> String {
 
 /// Warn when `name` is longer than every model API will accept.
 ///
-/// A warning and not an error: which provider this tool will be sent to is not
-/// known here, and only the strictest of them draws the line at
-/// [`MAX_TOOL_NAME_LEN`].
+/// A warning, not an error: the target provider is unknown here.
 pub(crate) fn warn_if_tool_name_too_long(name: &str) {
     if name.len() > MAX_TOOL_NAME_LEN {
         log::warn!(

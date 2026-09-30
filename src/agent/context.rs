@@ -231,13 +231,9 @@ mod tests {
 
     #[test]
     fn test_preserve_counts_user_messages_not_assistant() {
-        // A single user turn may produce multiple assistant messages in tool-use:
-        //   u2 → asst(tool_call) → tool → asst("a2")
-        // preserve_recent_turns = 2 must preserve both u1 and u2's full interactions,
-        // not just u2's (which would happen if assistant messages were counted).
-        //
+        // u2's turn spans asst(tool_call) → tool → asst("a2"); counting assistants would put
+        // the boundary inside it.
         // history: sys(0), u1(1), asst("a1")(2), u2(3), asst(tool_call)(4), tool(5), asst("a2")(6)
-        // Expected boundary: u1 at index 1  (2 user turns preserved)
         let history = vec![
             sys(),
             user("u1"),
@@ -256,8 +252,6 @@ mod tests {
 
     #[test]
     fn test_preserved_messages_untouched() {
-        // Only messages outside the preserve window should be replaced.
-        // The tool result inside the preserve window must keep its original content.
         let mut history = vec![
             sys(),
             user("u1"),

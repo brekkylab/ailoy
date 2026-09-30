@@ -114,9 +114,8 @@ const IMAGE: UrlViewer = {
   component: ImageViewer,
 };
 
-/// Bytes, not URL: pdf.js draws it (see `PdfViewer`), because the webview's own PDF viewer
-/// shows nothing inside a frame here. Pages render as they scroll into view, so the cap is
-/// on the file held in memory, not on layout.
+/// Bytes, not URL: pdf.js draws it. Pages render as they scroll into view, so the cap is on
+/// the file held in memory, not on layout.
 const PDF: BytesViewer = {
   source: 'bytes',
   label: 'PDF',

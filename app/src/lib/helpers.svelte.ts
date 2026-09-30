@@ -1,13 +1,12 @@
-// The helper pane's agents: one per tab with the pane, each changing what that tab shows
-// (`context` a context's files, `agentmaker` the agents).
+// The helper pane's agents: one per tab with the pane, each changing what that tab shows.
 //
 // Each is `agents/{id}/agent.json` in the cache (see `HELPERS` in `src-tauri/src/agent.rs`),
 // kept out of the Agent tab's collection and edited in its file. Outside Tauri a blank agent
 // on the first model stands in.
 //
 // A helper keeps one in-memory thread per subject (a context, an agent). Replies are
-// placeholders until ailoy is wired in; then a turn that changed what is on screen bumps
-// `revision[key]`, and the tab re-reads on it.
+// placeholders until ailoy is wired in. Each reply bumps `revision[key]`, and the tab
+// re-reads on it.
 
 import { invoke } from "@tauri-apps/api/core";
 

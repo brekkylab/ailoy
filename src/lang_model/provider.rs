@@ -23,31 +23,16 @@ pub enum LangModelProviderElem {
     },
 }
 
-/// Registry of language model endpoints, keyed by model-name patterns.
+/// Registry of language model endpoints keyed by exact model name or glob (`*`, `?`),
+/// e.g. `"openai/*"`; [`get`](Self::get) prefers an exact key, then the glob with the most
+/// literal characters.
 ///
-/// Keys may be exact model names (e.g. `"openai/gpt-4o"`) or globs supporting
-/// `*` (any sequence) and `?` (any single character) — e.g. `"openai/*"`,
-/// `"anthropic/claude-*"`. [`get`](Self::get) prefers an exact hit, then falls
-/// back to the most specific glob match (longest run of literal characters).
-///
-/// Populate via the convenience constructors ([`openai`](Self::openai),
-/// [`anthropic`](Self::anthropic), [`gemini`](Self::gemini),
-/// [`bedrock`](Self::bedrock), [`chat_completion`](Self::chat_completion), …)
-/// which return
-/// [`LangModelProviderElem`] values, then [`insert`](Self::insert) them under
-/// the chosen pattern.  At agent construction time
+/// Build entries with the provider constructors ([`openai`](Self::openai), …) and
+/// [`insert`](Self::insert) them;
 /// [`LangModel::try_from_provider`](crate::lang_model::LangModel::try_from_provider)
-/// resolves the spec's `model` against these entries via [`get`](Self::get).
-///
-/// [`Default::default`] returns a registry pre-populated from the environment:
-/// registers `openai/*`, `anthropic/*`, `google/*`, `x-ai/*`, `deepseek/*`,
-/// `moonshotai/*` and/or `openrouter/*` for every `OPENAI_API_KEY` /
-/// `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `XAI_API_KEY` / `DEEPSEEK_API_KEY` /
-/// `KIMI_API_KEY` / `OPENROUTER_API_KEY` that is set, plus `bedrock/*` (Converse) for `AWS_BEARER_TOKEN_BEDROCK`
-/// (region from `AWS_REGION`, then `AWS_DEFAULT_REGION`, defaulting to
-/// `us-east-1`).  The default is what the global [`get_lm_providers`]
-/// registry stores under the `"default"` key.  Use [`new`](Self::new) for an
-/// empty registry.
+/// resolves a spec's `model` through [`get`](Self::get). [`Default`] registers a
+/// `<vendor>/*` entry for each provider key set in the environment; [`new`](Self::new)
+/// is empty.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 #[schemars(transparent)]
@@ -55,11 +40,8 @@ pub struct LangModelProvider {
     inner: BTreeMap<String, LangModelProviderElem>,
 }
 
-/// Reads an API key from the environment, treating blank as absent.
-///
-/// A `.env` copied from `.env.example` leaves keys set-but-empty; registering
-/// those would produce a provider that resolves fine and then fails with 401 at
-/// call time, which is a much worse error to debug than "no provider found".
+/// Reads an env var, treating blank as unset: a `.env` copied from `.env.example` has
+/// empty keys, which would register a provider that resolves but fails later with a 401.
 fn env_key(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
@@ -175,8 +157,7 @@ impl LangModelProvider {
 /// provider routes to it: `openai/gpt-5` and `openrouter/openai/gpt-5` are both
 /// `("openai", "gpt-5")`, and the Bedrock id
 /// `bedrock/global.anthropic.claude-sonnet-5` is `("anthropic", "claude-sonnet-5")`.
-/// For code that picks behaviour by model family. A model with no family in its
-/// name has `""`.
+/// A model with no family in its name has `""`.
 pub fn model_family(model: &str) -> (&str, &str) {
     if let Some(id) = model.strip_prefix("bedrock/") {
         // `[<geo>.]<vendor>.<model>`: an inference-profile id leads with where it

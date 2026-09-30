@@ -31,27 +31,16 @@ pub(super) struct LangModelRequest<'a> {
 }
 
 impl LangModel {
-    /// Resolve `model` against the `"default"` entry of
-    /// [`get_lm_providers`].  Convenience
-    /// over [`try_from_provider`](Self::try_from_provider).
-    ///
-    /// Returns an error if the `"default"` provider is missing or has no
-    /// entry matching `model`.
+    /// [`try_from_provider`](Self::try_from_provider) on the `"default"` provider.
     pub fn try_new(model: String) -> anyhow::Result<Self> {
         Self::try_from_provider(model, "default")
     }
 
     /// Resolve `model` against the [`LangModelProvider`](super::LangModelProvider)
-    /// registered under `provider` in
-    /// [`get_lm_providers`].
+    /// registered under `provider` in [`get_lm_providers`] (exact, then glob).
     ///
-    /// `model` is the spec-side name (e.g. `"openai/gpt-4o"`) used to look up
-    /// the registered pattern; the stored API-side id has any `provider/`
-    /// prefix stripped (e.g. `"gpt-4o"`) so it matches what the upstream
-    /// endpoint expects.
-    ///
-    /// Returns an error if `provider` is not registered, or if no entry
-    /// inside it matches `model` (with the usual exact-then-glob lookup).
+    /// The API-side id drops the `provider/` prefix (`"openai/gpt-6-astra"` →
+    /// `"gpt-6-astra"`). Errors if `provider` is not registered or no entry matches.
     pub fn try_from_provider(model: String, provider: impl AsRef<str>) -> anyhow::Result<Self> {
         let provider_name = provider.as_ref();
         let registry = get_lm_providers();
@@ -158,10 +147,7 @@ impl LangModel {
                 send_with_retry(&client, &url, header_map, &body, provider.as_ref()).await?;
 
             // Network chunks don't align with event boundaries, so events are
-            // framed out of a buffer. Reading runs to EOF, which the server sends
-            // right after the terminal event, since usage may follow the
-            // finish_reason (ChatCompletion with `stream_options.include_usage`).
-            // Role and finish tracking close the contract at EOF.
+            // framed out of a buffer; role/finish tracking closes the contract at EOF.
             let mut seen_role: Option<Role> = None;
             let mut saw_finish = false;
 
@@ -370,7 +356,7 @@ mod tests {
 
     /// Register a one-off [`LangModelProvider`] under a unique key in the
     /// global registry and build a [`LangModel`] from it via
-    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    /// [`LangModel::try_from_provider`].
     fn build_test_model(
         provider_name: &str,
         model: &str,
@@ -675,8 +661,6 @@ mod tests {
             .map(|d| d.unwrap())
             .collect();
 
-        // The provider never sent a finish_reason; the last delta is the
-        // synthesized terminal closer: role set, Stop, no content.
         let last = deltas.last().expect("at least one delta");
         assert_eq!(last.finish_reason, Some(FinishReason::Stop {}));
         assert_eq!(last.delta.role, Some(Role::Assistant));
@@ -706,8 +690,6 @@ mod tests {
 
         let app = Router::new().route(
             "/",
-            // Two framed events, then a final finish event closed by EOF (no
-            // trailing blank line) so it surfaces via the EOF-flush path.
             post(|| async {
                 let sse = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"}}]}\n\n\
                            data: {\"choices\":[{\"delta\":{\"content\":\"!\"}}]}\n\n\

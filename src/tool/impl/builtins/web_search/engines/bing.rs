@@ -30,10 +30,8 @@ impl Bing {
         })
     }
 
-    /// Bing sometimes wraps the real URL in a tracking redirect of the form
-    /// `https://www.bing.com/ck/a?...&u=a1<base64url-no-pad>&...`.
-    /// Decode the `u` query parameter: strip the "a1" prefix, then
-    /// base64url-decode to recover the original URL.
+    /// Unwraps Bing's `https://www.bing.com/ck/a?...&u=a1<base64url-no-pad>`
+    /// tracking redirect; other hrefs pass through.
     fn decode_bing_redirect(href: &str) -> String {
         if !href.starts_with("https://www.bing.com/ck/a?") {
             return href.to_string();
@@ -90,14 +88,11 @@ impl SearchEngine for Bing {
             .build()
             .map_err(|e| SearchError::Parse(e.to_string()))?;
 
-        // A homepage pre-fetch seeds cookies (e.g. _EDGE_S=F=1&SID=...) that
-        // cause Bing to switch to JS-rendered results with no SSR b_algo nodes.
-        // Without prior cookies, Bing serves server-side-rendered results directly.
-        //
-        // nfpr=1 disables Bing's automatic query reformulation (spell correction),
-        // which would otherwise silently rewrite short/uncommon terms like "ailoy"
-        // into a different word and return completely irrelevant results.
-        // Locale is left to Bing's geolocation so results match the user's region.
+        // No homepage pre-fetch: its cookies (e.g. _EDGE_S) switch Bing to
+        // JS-rendered results with no SSR b_algo nodes.
+        // nfpr=1 stops spell correction from rewriting rare terms (e.g. "ailoy")
+        // into unrelated queries. Locale is left to geolocation so results match
+        // the user's region.
         let url = format!(
             "https://www.bing.com/search?q={}&adlt=off&nfpr=1",
             urlencoding::encode(query)
@@ -156,8 +151,7 @@ impl SearchEngine for Bing {
 
             let url = Self::decode_bing_redirect(href);
 
-            // Description: text from .b_caption p, skipping decorative icon spans
-            // (<span class="algoSlug_icon">) that Bing injects into snippet text.
+            // Skip the decorative <span class="algoSlug_icon"> Bing injects into snippets.
             let description = item
                 .select(&self.sel_caption)
                 .flat_map(|p| {

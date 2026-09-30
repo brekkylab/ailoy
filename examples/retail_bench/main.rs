@@ -78,10 +78,8 @@ const ACTIONS: [&str; 3] = ["place_order", "modify_sku_price", "end_today"];
 /// The name the tool and agent providers carrying the three actions are registered under.
 const PROVIDER: &str = "retail_bench";
 
-/// How many times a day is asked before the harness closes it itself.
-///
-/// Upstream forces the day shut after twenty steps of its own loop; this is the same idea a
-/// level up. A day left open would stop the clock, and the run would never end.
+/// How many times a day is asked before the harness closes it itself: a day left open would
+/// stop the clock, and the run would never end.
 const NUDGES: usize = 3;
 
 const HELP: &str = "\

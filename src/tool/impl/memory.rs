@@ -11,8 +11,6 @@ use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
 };
 
-/// How many memories a search answers with when the caller does not say.
-///
 /// Matches `mem`'s own default; spelled here because it goes in the model-facing
 /// description, which must agree with the command.
 const DEFAULT_LIMIT: i64 = 10;
@@ -46,10 +44,7 @@ pub fn get_mem_search_tool_desc() -> ToolDesc {
         .build()
 }
 
-/// The `mem_search` tool for `memory`.
-///
-/// One store per tool, captured here — see the module docs for why the model is not asked
-/// for a path.
+/// The `mem_search` tool bound to `memory`.
 pub fn get_mem_search_tool_func(memory: Memory) -> ToolFunc {
     crate::tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value
         with [memory = memory.clone()]
