@@ -125,7 +125,6 @@ async fn main() -> anyhow::Result<()> {
             )
             .mount_readonly(context, "/context")
             .mount(project_path.join("artifacts"), "/artifacts")
-            // The build's `apt-get` and `pip` need the session to reach the network.
             .network(true)
             .gpu(true)
             .vcpus(2)

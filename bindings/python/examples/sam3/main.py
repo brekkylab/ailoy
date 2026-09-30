@@ -128,7 +128,6 @@ async def main(prompt: str) -> None:
         )
         .mount_readonly(HERE / "context", "/context")
         .mount(HERE / "artifacts", "/artifacts")
-        # The build's `apt-get` and `pip` need the session to reach the network.
         .network(True)
         .gpu(True)
         .vcpus(2)
