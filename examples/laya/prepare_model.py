@@ -4,7 +4,7 @@
 
 DATA_DIR is `data/` beside this file by default. The checkpoint goes into `DATA_DIR/checkpoint`,
 from `convaiinnovations/laya` on the Hugging Face Hub at a pinned revision (the English one at
-the repo root: ModernBERT-large and Laya's decision head, ~840 MB in fp16), and this writes into
+the repo root: ModernBERT-large and Laya's decision head), and this writes into
 `DATA_DIR/ncnn`
 
 * `laya.ncnn.param`, `laya.ncnn.bin` -- the model, weights in fp16;

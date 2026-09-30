@@ -89,7 +89,7 @@ class Model:
         self.codec_embed = consts["codec_embed"]
         self.predictor_embed = consts["predictor_embed"]
         self.rvq = consts["rvq"]
-        # 600 MB, of which a prompt reads a few rows.
+        # Large, and a prompt reads only a few rows of it.
         self.text = np.load(f"{MODELS}/text.npy", mmap_mode="r")
         self.tokenizer = Tokenizer.from_file(f"{MODELS}/tokenizer.json")
         fp16 = MODES[mode]

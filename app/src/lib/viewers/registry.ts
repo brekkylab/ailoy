@@ -64,7 +64,7 @@ interface BytesViewer {
   maxBytes: number;
 }
 
-/// `text` and `bytes` viewers hold the whole file in memory and turn it into DOM (a 40 MB
+/// `text` and `bytes` viewers hold the whole file in memory and turn it into DOM (a large
 /// document hangs the browser), so each caps inline size with `maxBytes`. `url` viewers
 /// let the browser fetch and stream, and have no cap.
 export type Viewer = TextViewer | UrlViewer | BytesViewer;
@@ -128,7 +128,7 @@ const DOCX: BytesViewer = {
   source: 'bytes',
   label: 'Word',
   component: DocxViewer,
-  // Compressed, so the cap is on the download, not the unpacked size. 25 MB is mostly
+  // Compressed, so the cap is on the download, not the unpacked size. A large one is mostly
   // photographs, and the unpacked pages are what the tab must lay out.
   maxBytes: 25 * 1024 * 1024,
 };

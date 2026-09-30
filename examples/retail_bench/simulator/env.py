@@ -91,8 +91,7 @@ def record_orders_once() -> None:
     placed (`RetailEnvironment.place_order`) and once more where it lands
     (`OrderManager.step`, given the record manager by the daily step). So every
     row doubles on the day its goods arrive, and a run's
-    `order_records/records.db` reports more bought than was ever paid for —
-    $49,248 against $28,193 five days into a run.
+    `order_records/records.db` reports more bought than was ever paid for.
 
     Nothing the store runs on reads that table: funds, net worth and the
     agent's own `store/orders_in_transit.md` all come from the order manager
@@ -124,12 +123,12 @@ def record_orders_once() -> None:
 # Section 3.1: "an initial budget of 30,000, a daily rent of 600, an inventory
 # capacity of 15,000 units, and a shelf capacity of 40 products". The repo ships
 # 50,000, 1,000 and 40,000 instead, and a run against those is not the run the
-# paper's table reports: at a rent of 1,000 the best assortment this demand
-# model allows needs a 37% margin to break even, against 22% at 600, so the sign
-# of the result turns on the number rather than on the agent.
+# paper's table reports: the higher rent raises the margin the best assortment
+# needs to break even so far that the sign of the result turns on the number
+# rather than on the agent.
 #
 # The fourth, the shelf, is not here. Nothing upstream implements it, and
-# holding the shelf to forty products is worth about a tenth of the volume —
+# holding the shelf to forty products costs little volume —
 # because demand is a category sum, dropping a SKU takes its own contribution
 # out along with the crowding it caused. An agent free to carry forty can reach
 # the same place by carrying forty; the cap only forecloses carrying all
@@ -142,9 +141,8 @@ PAPER = {
 
 # A.3 again: "Category Effects: All categories have a uniform effect of -0.1".
 # The repo ships -0.2 for all twenty, which is the difference between a demand
-# model that reproduces this store's own recorded past and one that does not —
-# at -0.1 it predicts 0.54 of the 5,309 units a day the seeded history holds,
-# at -0.2 only 0.33. The coefficient subtracts a share of every same-category
+# model that comes near this store's own recorded daily volume and one that
+# falls far short of it. The coefficient subtracts a share of every same-category
 # neighbour's pull from a product's own, so doubling it does not halve demand,
 # it clamps the weaker half of the shelf to nothing.
 CATEGORY_EFFECT = -0.1
@@ -163,9 +161,9 @@ def deliver_per_sku_once() -> None:
     nine lands with one quoted four. The second case is the one that shows:
     goods arrive before their own `begin_time`, and `compute_net_worth` values
     stock at `buy_price * remaining / total_span` — with `current_date` before
-    `begin_time`, `remaining` exceeds `total_span` and the ratio passes one. A
-    day-two net worth of 29,006.15 against the 28,800 that two nights of rent
-    leave is that, and nothing else: stock whose shelf-life clock has not
+    `begin_time`, `remaining` exceeds `total_span` and the ratio passes one. An
+    early net worth above what the rent paid so far leaves is that, and
+    nothing else: stock whose shelf-life clock has not
     started, marked above what was paid for it.
 
     Fixed at the cause rather than the symptom: an order delivers the items

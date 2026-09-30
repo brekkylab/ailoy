@@ -14,7 +14,7 @@ intermediaries, addresses and others) and one of the relationships between them.
 takes three fixes of what DuckDB would guess:
 
 * **Quotes.** DuckDB's sniffer finds no quoting in `relationships.csv`, whose first quoted
-  field is 345,000 lines in, and splits `"owner, director and shareholder of"` at its comma.
+  field is far past what it samples, and splits `"owner, director and shareholder of"` at its comma.
   The quote and escape are named instead.
 * **Dates.** They are text in three formats -- `08-MAR-2004` in most leaks, `2000-07-24` in
   the 2013 Offshore Leaks, and a few `Sep 25, 2012` -- and become DATEs. What is in none of

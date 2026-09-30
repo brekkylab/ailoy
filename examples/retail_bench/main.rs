@@ -10,7 +10,7 @@
 //! The store is RetailBench's own simulator, run as a local REST server by
 //! `simulator/sim` — see `simulator/README.md`. Its code is restored from the upstream
 //! repository at a pinned commit and its data fetched from the same one, both on the first
-//! run (about 700 MB, once; eight SKUs for `--smoke`).
+//! run (once; eight SKUs for `--smoke`).
 //!
 //! # A day is a turn
 //!
@@ -197,7 +197,7 @@ async fn main() -> anyhow::Result<()> {
                 break;
             }
             // A failed day ends the run and not the process: the days before it are a
-            // result, and on day 150 that is hours of work.
+            // result, and late in a run that is hours of work.
             Err(e) => {
                 println!("\nday {day} failed: {e:#}");
                 failure = Some(format!("day {day}: {e:#}"));
@@ -460,7 +460,7 @@ struct Call {
 }
 
 impl Store {
-    /// Start this run's server — booting reads about 600 MB, and `sim serve` waits for it.
+    /// Start this run's server — booting loads the store's data, and `sim serve` waits for it.
     async fn start(
         sim: &Path,
         run: &Path,
