@@ -3,7 +3,7 @@
     python3 shot.py PORT
 
 The agent plays from a console of its own, which has no display to take a picture of. So
-it connects here, through the tunnel, and sends a name; this takes the screenshot into
+it connects here, at the port this console published, and sends a name; this takes the screenshot into
 `/artifacts/shots/NAME.png`, which both consoles see, and answers with its path.
 """
 

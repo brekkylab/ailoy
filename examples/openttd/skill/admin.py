@@ -31,10 +31,11 @@ SERVER_CONSOLE = 121
 SERVER_GAMESCRIPT = 124
 SERVER_RCON_END = 125
 
-# Where the game is: in this console, when this runs in the game's own, and otherwise through
-# the host, which joins the agent's console to the game's.
-ADMIN_ADDRESSES = [("127.0.0.1", 3977), ("10.0.2.1", 5511)]
-SHOT_ADDRESSES = [("127.0.0.1", 5902), ("10.0.2.1", 5512)]
+# Where the game is: the same address from either console. In the game's own it is the
+# server itself, and from the agent's it is the port the game's console published, which
+# every console on the host reaches at 127.0.0.1.
+ADMIN_ADDRESSES = [("127.0.0.1", 3977)]
+SHOT_ADDRESSES = [("127.0.0.1", 5902)]
 
 UPDATE_DATE = 0
 UPDATE_GAMESCRIPT = 9

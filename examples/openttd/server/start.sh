@@ -2,19 +2,15 @@
 # Start OpenTTD as a dedicated server run by the bridge, a client watching it on a virtual
 # display, and a VNC server showing that display.
 #
-#     sh start.sh WIDTHxHEIGHT PASSWORD VNC_TUNNEL ADMIN_TUNNEL SHOT_TUNNEL [SAVEGAME]
+#     sh start.sh WIDTHxHEIGHT PASSWORD [SAVEGAME]
 #
-# Each tunnel is a HOST:PORT on the host that `tunnel.py` connects out to, one for each
-# port here the host reaches in to: the VNC server, the game's admin port, and `shot.py`.
-# A new game unless SAVEGAME, a file in the saves folder, is given. Everything is left
+# The host publishes the VNC server (5900), the game's admin port (3977) and `shot.py` (5902),
+# at the same ports on its loopback but the viewer's. A new game unless SAVEGAME, a file in the saves folder, is given. Everything is left
 # running when this returns; the server's process id is in /tmp/openttd.pid.
 set -eu
 SIZE=$1
 PASSWORD=$2
-VNC_TUNNEL=$3
-ADMIN_TUNNEL=$4
-SHOT_TUNNEL=$5
-SAVE=${6:-}
+SAVE=${3:-}
 HERE=$(dirname "$0")
 LOGS=/artifacts/logs
 
@@ -101,7 +97,3 @@ nohup /usr/games/openttd -c "$VIEWER/openttd.cfg" -x -r "$SIZE" -s null -m null 
 nohup x11vnc -display :99 -localhost -rfbport 5900 -forever -shared -passwd "$PASSWORD" \
     -threads -quiet >"$LOGS/x11vnc.log" 2>&1 &
 nohup python3 "$HERE/shot.py" 5902 >"$LOGS/shot.log" 2>&1 &
-
-nohup python3 "$HERE/tunnel.py" "$VNC_TUNNEL" 5900 >"$LOGS/tunnel-vnc.log" 2>&1 &
-nohup python3 "$HERE/tunnel.py" "$ADMIN_TUNNEL" 3977 >"$LOGS/tunnel-admin.log" 2>&1 &
-nohup python3 "$HERE/tunnel.py" "$SHOT_TUNNEL" 5902 >"$LOGS/tunnel-shot.log" 2>&1 &

@@ -28,10 +28,10 @@
 //! the date, until the game has run for `OPENTTD_YEARS` years. Older command output drops out
 //! of its context as it goes, and its notes in `artifacts/notes.md` carry what it knows.
 //!
-//! **Tunnels**: nothing can connect into a console, so the game's `tunnel.py` connects out to
-//! this program, once for each port in there something here reaches in to, and this joins
-//! each to a port here: the VNC server to `localhost:5901`, and the admin port and
-//! `shot.py`, which takes screenshots, to two ports the agent's console is granted.
+//! **Ports**: the game's console publishes its admin port and `shot.py`, which takes
+//! screenshots, at the same ports on this machine's loopback, and every console reaches a
+//! published port at `127.0.0.1` as a program here does -- so `ttd.py` finds the game at the
+//! same address from either console. The VNC server is published at `localhost:5901`.
 //!
 //! **Watching**: open `vnc://localhost:5901`
 //! (Screen Sharing on macOS, or any VNC viewer) with the password `openttd`: a client of the
@@ -39,7 +39,7 @@
 //! of your own from its menu and play against the agent.
 //!
 //! * `server/` at `/example` in the game's console, read-only — `start.sh`, the Game Script,
-//!   the AI, `shot.py` and `tunnel.py`.
+//!   the AI and `shot.py`.
 //! * `skill/` at `/skills/openttd` in both, read-only — `SKILL.md`, `ttd.py` and the admin
 //!   port.
 //! * `artifacts/` at `/artifacts` in both, writable — the agent's notes, the screenshots it
@@ -62,7 +62,7 @@
 //!
 //! Read from `.env` as well.
 
-use std::{collections::VecDeque, io::Write as _, path::Path, sync::Arc};
+use std::{io::Write as _, path::Path};
 
 use ailoy::{
     agent::{Agent, AgentBuilder, ContextManager},
@@ -70,31 +70,17 @@ use ailoy::{
     message::{FinishReason, Message, Part, Role},
 };
 use anyhow::{Context as _, bail};
-use cortex::{image::Recipe, protocol::NetworkAccess};
+use cortex::{image::Recipe, protocol::Port};
 use futures::StreamExt as _;
-use tokio::{
-    io::{AsyncReadExt as _, AsyncWriteExt as _},
-    net::{TcpListener, TcpStream},
-    sync::Mutex,
-};
 
-/// The ports on this machine the game console's tunnels connect to, the ones it is granted:
-/// for its VNC server, its admin port and its screenshots.
-const VNC_TUNNEL: u16 = 5500;
-const ADMIN_TUNNEL: u16 = 5501;
-const SHOT_TUNNEL: u16 = 5502;
-
-/// The port a VNC viewer connects to here.
+/// The port a VNC viewer connects to here, and the VNC server's in the game's console.
 const VIEWER_PORT: u16 = 5901;
+const VNC_PORT: u16 = 5900;
 
-/// The ports the agent's console is granted, joined to the game's admin port and to its
-/// screenshots. `admin.py` names the same.
-const ADMIN_PORT: u16 = 5511;
-const SHOT_PORT: u16 = 5512;
-
-/// What the console sees this machine as: its gateway, which opens a granted port on
-/// loopback here.
-const HOST_FROM_CONSOLE: &str = "10.0.2.1";
+/// The game's admin port and `shot.py`'s, published at the same numbers here so that
+/// `admin.py` names one address for both consoles.
+const ADMIN_PORT: u16 = 3977;
+const SHOT_PORT: u16 = 5902;
 
 /// The goal when none is given.
 const GOAL: &str = "Make Ailoy Transport as valuable as you can: build routes that earn, \
@@ -138,21 +124,6 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&artifacts)
         .with_context(|| format!("creating {}", artifacts.display()))?;
 
-    // Bound before the consoles start, so the tunnels have somewhere to connect to at once.
-    for (from_game, to) in [
-        (VNC_TUNNEL, VIEWER_PORT),
-        (ADMIN_TUNNEL, ADMIN_PORT),
-        (SHOT_TUNNEL, SHOT_PORT),
-    ] {
-        let from_console = TcpListener::bind(("127.0.0.1", from_game))
-            .await
-            .with_context(|| format!("listening on {from_game} for the game's console"))?;
-        let clients = TcpListener::bind(("127.0.0.1", to))
-            .await
-            .with_context(|| format!("listening on {to}"))?;
-        tokio::spawn(tunnel(from_console, clients));
-    }
-
     let mut game = ConsoleClient::builder()
         .image(
             // All of it in `main`: the game, and the free graphics, sounds and music it needs,
@@ -168,8 +139,14 @@ async fn main() -> anyhow::Result<()> {
         .mount_readonly(project_path.join("server"), "/example")
         .mount_readonly(project_path.join("skill"), "/skills/openttd")
         .mount(artifacts.clone(), "/artifacts")
-        // Nothing outside, and of this machine only the tunnels' ports.
-        .network(NetworkAccess::host().with_host_ports([VNC_TUNNEL, ADMIN_TUNNEL, SHOT_TUNNEL]))
+        // The build's `apt-get` runs with the session's network. What comes in is the viewer,
+        // and the agent's console at the admin port and `shot.py`.
+        .network(true)
+        .ports([
+            Port::new(VIEWER_PORT, VNC_PORT)?,
+            Port::new(ADMIN_PORT, ADMIN_PORT)?,
+            Port::new(SHOT_PORT, SHOT_PORT)?,
+        ])
         .vcpus(2)
         .memory_mib(2048)
         .build()
@@ -188,9 +165,6 @@ async fn main() -> anyhow::Result<()> {
         "/example/start.sh".to_string(),
         size,
         password.clone(),
-        format!("{HOST_FROM_CONSOLE}:{VNC_TUNNEL}"),
-        format!("{HOST_FROM_CONSOLE}:{ADMIN_TUNNEL}"),
-        format!("{HOST_FROM_CONSOLE}:{SHOT_TUNNEL}"),
         save,
     ]);
     let out = game.exec(&start, Some(180_000)).await?;
@@ -224,13 +198,13 @@ async fn main() -> anyhow::Result<()> {
     ))
     .max_tokens(32000)
     .system_tools()
-    // Python for `ttd.py`, and of this machine only the ports joined to the game.
+    // Python for `ttd.py`, and a network to reach the ports the game's console published.
     .console(
         ConsoleClient::builder()
             .image(Recipe::new("python:3.12-slim-trixie"))
             .mount_readonly(project_path.join("skill"), "/skills/openttd")
             .mount(artifacts, "/artifacts")
-            .network(NetworkAccess::host().with_host_ports([ADMIN_PORT, SHOT_PORT]))
+            .network(true)
             .build()
             .await
             .with_context(|| "starting the agent's console")?,
@@ -348,60 +322,4 @@ fn year_of(date: &str) -> anyhow::Result<i32> {
         .next()
         .and_then(|y| y.parse().ok())
         .with_context(|| format!("{date} is not a date"))
-}
-
-/// Join viewers here to the VNC server in the console, which no one here can connect to.
-///
-/// The console's `tunnel.py` keeps one connection open to `from_console`, saying `CTRL`. For
-/// each viewer that connects to `viewers`, this writes `OPEN` on that connection, the tunnel
-/// connects again saying `DATA` with the server on its other end, and the two are joined.
-async fn tunnel(from_console: TcpListener, viewers: TcpListener) {
-    #[derive(Default)]
-    struct Tunnel {
-        ctrl: Option<TcpStream>,
-        waiting: VecDeque<TcpStream>,
-    }
-    let tunnel = Arc::new(Mutex::new(Tunnel::default()));
-
-    let shared = tunnel.clone();
-    tokio::spawn(async move {
-        while let Ok((viewer, _)) = viewers.accept().await {
-            let mut t = shared.lock().await;
-            t.waiting.push_back(viewer);
-            // With no control connection yet, the viewer waits for one: it asks for them all.
-            if let Some(ctrl) = t.ctrl.as_mut()
-                && ctrl.write_all(b"OPEN\n").await.is_err()
-            {
-                t.ctrl = None;
-            }
-        }
-    });
-
-    while let Ok((mut conn, _)) = from_console.accept().await {
-        let tunnel = tunnel.clone();
-        tokio::spawn(async move {
-            let mut hello = [0u8; 5];
-            if conn.read_exact(&mut hello).await.is_err() {
-                return;
-            }
-            let mut t = tunnel.lock().await;
-            match &hello {
-                b"CTRL\n" => {
-                    for _ in 0..t.waiting.len() {
-                        if conn.write_all(b"OPEN\n").await.is_err() {
-                            return;
-                        }
-                    }
-                    t.ctrl = Some(conn);
-                }
-                b"DATA\n" => {
-                    if let Some(mut viewer) = t.waiting.pop_front() {
-                        drop(t);
-                        let _ = tokio::io::copy_bidirectional(&mut viewer, &mut conn).await;
-                    }
-                }
-                _ => {}
-            }
-        });
-    }
 }

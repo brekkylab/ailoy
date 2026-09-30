@@ -5,8 +5,7 @@ description: Run a transport company in a live game of OpenTTD — find towns an
 
 # OpenTTD
 
-A game of [OpenTTD](https://www.openttd.org) is running in this console, and one company in
-it is yours: **Ailoy Transport**. You play it with `ttd.py`, from this directory:
+A game of [OpenTTD](https://www.openttd.org) is running, and one company in it is yours: **Ailoy Transport**. You play it with `ttd.py`, from this directory:
 
 ```sh
 python3 ttd.py status
