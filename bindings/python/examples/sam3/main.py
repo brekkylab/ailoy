@@ -15,8 +15,8 @@ the agent runs with its `shell` tool. `prepare_model.py` downloads and converts 
 
 Environment:
 
-* `AILOY_MODEL` — the agent's model, `bedrock/global.openai.gpt-6-astra` by default; its
-  provider's API key has to be set (`AWS_BEARER_TOKEN_BEDROCK`, `ANTHROPIC_API_KEY`, ...).
+* `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its
+  provider's API key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...).
 
 Read from `.env` as well.
 """
@@ -139,7 +139,7 @@ async def main(prompt: str) -> None:
 
     agent = await (
         ailoy.AgentBuilder(
-            os.environ.get("AILOY_MODEL", "bedrock/global.openai.gpt-6-astra")
+            os.environ.get("AILOY_MODEL", "openai/gpt-6-astra")
         )
         .instruction(INSTRUCTION)
         .system_tools()

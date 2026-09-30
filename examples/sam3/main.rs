@@ -65,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
     println!("building the image ...");
     let mut agent = AgentBuilder::new(
         std::env::var("AILOY_MODEL")
-            .unwrap_or_else(|_| "bedrock/global.openai.gpt-6-astra".to_string()),
+            .unwrap_or_else(|_| "openai/gpt-6-astra".to_string()),
     )
     .instruction(concat!(
         "# Context\n\n",
