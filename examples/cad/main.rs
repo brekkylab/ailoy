@@ -11,7 +11,7 @@
 //! OpenCascade kernel: a model is a script, and what it builds is exact solids, not meshes. The
 //! agent writes that script, and the skill's `render.py` runs it, checks each part — valid,
 //! one solid, closed, not overlapping another — and draws it from four sides. The agent reads
-//! the pictures with its `read` tool, so it sees the hole it put on the wrong face, and goes
+//! the pictures with its `imgread` tool, so it sees the hole it put on the wrong face, and goes
 //! round again until the model is what was asked for.
 //!
 //! The skill is `SKILL.md` and `render.py`, mounted at `/skills/cad` from memory.

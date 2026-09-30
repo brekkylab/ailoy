@@ -210,8 +210,7 @@ def _patch_pnnx_on_windows() -> None:
             return None  # the default module object is enough
 
         def exec_module(self, module):
-            # `convert()` ends in `return foo.Model()`, which is the whole of what it asks
-            # the transcript for, and the caller here discards it.
+            # `convert()` only calls `Model()` on the transcript, and the result is discarded.
             module.Model = lambda *args, **kwargs: None
 
     spec_from_file_location = importlib.util.spec_from_file_location

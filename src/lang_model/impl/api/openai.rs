@@ -290,10 +290,11 @@ impl super::QuotaClassifier for OpenAIUnmarshal {
     }
 }
 
-/// Parses one Responses API SSE event (`response.*`) into a delta: incremental
-/// text (`output_text.delta`), reasoning (`reasoning_summary_text.delta`), and
-/// whole function calls (`output_item.done`); `response.completed` reuses the
-/// full-response `Unmarshal` for finish_reason + usage. Other events: no delta.
+/// Parses one Responses API SSE event (`response.*`) into a delta: the role
+/// (`output_item.added`), incremental text (`output_text.delta`), reasoning
+/// (`reasoning_summary_text.delta`), and whole function calls (`output_item.done`);
+/// `response.completed` / `response.incomplete` reuse the full-response `Unmarshal`
+/// for finish_reason + usage, and `response.failed` fails. Other events: no delta.
 impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;

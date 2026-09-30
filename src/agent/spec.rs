@@ -172,9 +172,8 @@ impl AgentSpec {
 
     /// Add the `web_fetch` tool to the spec.
     ///
-    /// Not part of `system_tools()`. The tool accepts a `url` or a `urls` array (up to
-    /// five, fetched in parallel), honors robots.txt, and allows one request per second
-    /// per host.
+    /// Not part of `system_tools()`. The tool fetches one `url` per call, pages long bodies
+    /// through `offset`, and allows one request per second per host.
     pub fn web_fetch_tool(mut self) -> Self {
         self.tools.push(get_web_fetch_tool_desc());
         self

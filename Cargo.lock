@@ -667,12 +667,15 @@ dependencies = [
  "cc",
  "dokan",
  "dokan-sys",
+ "flate2",
  "fuser",
  "futures-core",
  "libc",
  "pkg-config",
+ "reqwest",
  "serde",
  "sha2",
+ "tar",
  "tokio",
  "widestring",
  "winapi",
@@ -687,7 +690,6 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
- "pkg-config",
  "tokio",
 ]
 
@@ -697,7 +699,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cortex",
- "pkg-config",
  "pyo3",
  "pyo3-async-runtimes",
  "tokio",

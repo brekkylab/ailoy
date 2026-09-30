@@ -69,7 +69,8 @@ impl ToolProviderElem {
 
 /// Registry of tool sources that an agent can draw from at startup.
 ///
-/// `ToolProvider` is the `tools` field of [`AgentProvider`](crate::agent::AgentProvider).
+/// Instances live in the [`get_tool_providers`] registry, where an
+/// [`AgentProvider`](crate::agent::AgentProvider) names one by its `tool_provider` key.
 /// Each entry is keyed by tool name and contributes a [`ToolFunc`] when an
 /// agent's [`AgentSpec`](crate::agent::AgentSpec) requests it (see [`ToolProvider::provide`]).
 ///
@@ -219,9 +220,8 @@ impl ToolProvider {
     }
 
     /// Resolve every [`ToolDesc`] listed in `spec.tools` to a [`ToolFunc`]
-    /// by looking up the matching entry in this provider. The returned vector
-    /// matches `spec.tools` element-for-element. Returns an error if any
-    /// requested tool name is not registered.
+    /// by looking up the matching entry in this provider, keyed by tool name.
+    /// Returns an error if any requested tool name is not registered.
     ///
     /// Called by [`Agent::try_with_provider_and_state`](crate::agent::Agent::try_with_provider_and_state)
     /// during agent construction.
@@ -263,7 +263,7 @@ pub fn get_tool_providers_mut() -> RwLockWriteGuard<'static, HashMap<String, Too
 
 /// Connect to a stdio MCP server and register its tools under `prefix` in the
 /// named provider, returning the [`ToolDesc`]s to put in an
-/// [`AgentSpec`](crate::agent::AgentSpec)(crate::agent::AgentSpec).
+/// [`AgentSpec`](crate::agent::AgentSpec).
 ///
 /// The two halves in the order that keeps the future `Send`: the connection is
 /// opened first, and the registry lock is taken only afterwards, for the
@@ -330,7 +330,7 @@ pub fn unregister_mcp(provider: impl AsRef<str>, prefix: impl AsRef<str>) -> any
 
 /// Fetch a remote A2A agent's card, register it under `name` in the named
 /// provider, and return the [`ToolDesc`] to put in an
-/// [`AgentSpec`](crate::agent::AgentSpec)(crate::agent::AgentSpec).
+/// [`AgentSpec`](crate::agent::AgentSpec).
 ///
 /// The card is fetched before the registry lock is taken, so no guard is held
 /// across an `.await`.

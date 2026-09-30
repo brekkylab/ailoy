@@ -67,8 +67,7 @@ from torch import nn
 REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
 REVISION = "5ecdb67327fd37bb2e042aab12ff7391903235d3"
 
-# What a masked attention score becomes: past anything a softmax sees here, so the weight it
-# gives is 0 all the same, and inside fp16's range.
+# A masked attention score: low enough that softmax gives it weight 0, yet within fp16's range.
 MASKED = -1e4
 
 # The codec decodes this many frames at a time, with this many before them as context, as
@@ -375,8 +374,7 @@ def _patch_pnnx_on_windows() -> None:
     import importlib.abc
     import importlib.util
 
-    # The wrapper goes on once, however often this is called: wrapping a wrapper would work,
-    # and would also leave a chain as long as the model has pieces.
+    # Called once per piece; wrap only once so the wrappers do not chain.
     if getattr(importlib.util.spec_from_file_location, "_pnnx_skips_transcript", False):
         return
 
@@ -387,8 +385,7 @@ def _patch_pnnx_on_windows() -> None:
             return None  # the default module object is enough
 
         def exec_module(self, module):
-            # `convert()` ends in `return foo.Model()`, which is the whole of what it asks
-            # the transcript for, and the caller here discards it.
+            # `convert()` only calls `Model()` on the transcript, and the result is discarded.
             module.Model = lambda *args, **kwargs: None
 
     spec_from_file_location = importlib.util.spec_from_file_location

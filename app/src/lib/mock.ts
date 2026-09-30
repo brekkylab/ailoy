@@ -31,7 +31,7 @@ export const MODELS: Model[] = [
   { id: "bedrock/amazon.nova-pro-v1:0", name: "Nova Pro", provider: "bedrock" },
 ];
 
-/** The regions ailoy's `BedrockRegion` accepts; `us-east-1` is its default. */
+/** The regions ailoy's `BedrockRegion` accepts; ailoy falls back to `us-east-1` if unset. */
 export const BEDROCK_REGIONS = [
   "us-east-1", "us-east-2", "us-west-1", "us-west-2", "us-gov-east-1", "us-gov-west-1",
   "ca-central-1", "ca-west-1", "sa-east-1", "mx-central-1",

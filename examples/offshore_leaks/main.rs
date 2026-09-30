@@ -104,7 +104,8 @@ async fn main() -> anyhow::Result<()> {
     .console(
         ConsoleClient::builder()
             .image(Recipe::new("python:3.12-slim-trixie").step(
-                // The DuckDB version that wrote the file; an older one may not read it.
+                // The DuckDB `prepare_data.py` writes the file with (pinned in pyproject.toml); an
+                // older one may not read it.
                 "pip install --no-cache-dir duckdb==1.5.5 pandas matplotlib networkx",
             ))
             .mount_readonly(

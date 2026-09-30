@@ -9,7 +9,7 @@ use crate::datatype::Value;
 pub struct LangModelOptions {
     /// Maximum number of tokens the model may generate in a single response.
     /// When `None`, provider-specific defaults apply (e.g. Anthropic defaults
-    /// to 8192). Set explicitly to cap output length per call.
+    /// to 8192, plus the thinking budget when reasoning). Set explicitly to cap output length per call.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u64>,
 
@@ -28,7 +28,7 @@ pub struct LangModelOptions {
 
     /// Nucleus (top-p) sampling parameter passed to the language model on every
     /// call. Rarely needed in practice — see [`temperature`](Self::temperature).
-    /// Honoured by all supported providers (Anthropic, Gemini, OpenAI).
+    /// Dropped for OpenAI reasoning models and for Anthropic/Bedrock while thinking.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f64>,
 

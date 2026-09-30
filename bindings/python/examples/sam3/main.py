@@ -1,7 +1,6 @@
 """Segment images and videos with SAM3 through ncnn on the guest's Vulkan device, as an
 agent's skill.
 
-    uv run main.py
     uv run main.py "Find every cat in the photos in context and mask them"
 
 The Python side of the Rust `sam3` example in `examples/sam3`, whose `main.rs` has the long

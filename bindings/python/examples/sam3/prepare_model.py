@@ -761,8 +761,8 @@ def check(ncnn_dir: Path, specs: dict, ios: dict):
 
     Vulkan is torn down explicitly in `finally` blocks. ncnn's GPU instance is a global
     destroyed at interpreter exit, and on Windows every order but releasing all `Net`s and then
-    destroying the instance segfaults. The caller is a `cargo run` that reads the exit code,
-    and a crash on exit reports 139 whether or not the checks passed.
+    destroying the instance segfaults. The caller, `main.py`, reads the exit code, and a crash
+    on exit reports 139 whether or not the checks passed.
     """
     import ncnn
 

@@ -1,7 +1,7 @@
 // The editor's model for an agent, and its serialization into the two shapes that own it:
 //
 //   AgentSpec  src/agent/spec.rs              model, instruction, tools, subagents
-//   Recipe     cortex/src/rootfs/recipe.rs    base image and steps — the editor's "sandbox"
+//   Recipe     cortex/src/image.rs            base image and steps — the editor's "sandbox"
 //
 // They stay separate because ailoy keeps runtime (sandbox, MCP servers, mounted context)
 // off the spec.
@@ -79,7 +79,7 @@ export const SEARCH_ENGINES = [
   "Yandex",
 ];
 
-/** `MCPToolProviderElem`. ailoy registers the stdio variant but does not implement it. */
+/** `MCPToolProviderElem`: `http` is its `StreamableHTTP`, `stdio` its `Stdio`. */
 export interface McpServer {
   id: string;
   name: string;
@@ -91,10 +91,9 @@ export interface McpServer {
 // ── An agent ─────────────────────────────────────────────────────
 
 /**
- /**
-  * Strings, not numbers: each is `Option<…>` in ailoy, and an empty field must stay empty
-  * rather than coerce to `0`.
-  */
+ * Strings, not numbers: each is `Option<…>` in ailoy, and an empty field must stay empty
+ * rather than coerce to `0`.
+ */
 export interface Options {
   temperature: string;
   topP: string;
@@ -207,10 +206,9 @@ function num(value: string): number | undefined {
 export const badNumber = (value: string) => value.trim() !== "" && num(value) === undefined;
 
 /**
- /**
-  * The steps as cortex would store them. Rows with an empty first field are still being
-  * typed and are dropped.
-  */
+ * The steps as cortex would store them. Rows with an empty first field are still being
+ * typed and are dropped.
+ */
 export function recipe(agent: Agent): { v: number; base: string; steps: Step[] } {
   const steps: Step[] = [];
   for (const step of agent.sandbox.steps) {
@@ -226,11 +224,9 @@ export function recipe(agent: Agent): { v: number; base: string; steps: Step[] }
 }
 
 /**
- /**
-  * One `AgentSpec`, with sub-agents inlined. Tools are bare names; the provider resolves
-  * each to the factory owning its description and schema. `depth` stops cycles, since two
-  * agents may name each other.
-  */
+ * One `AgentSpec`, with sub-agents inlined. Tools are bare names, each of which must be
+ * registered in the tool provider. `depth` stops cycles, since two agents may name each other.
+ */
 export function spec(agent: Agent, all: Agent[], depth = 0): Record<string, unknown> {
   const out: Record<string, unknown> = { model: agent.model.trim() };
   if (agent.instruction.trim()) out.instruction = agent.instruction;

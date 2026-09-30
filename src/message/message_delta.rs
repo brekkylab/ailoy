@@ -153,7 +153,8 @@ impl Delta for MessageDelta {
 
         // Assumes calls stream *sequentially*, with the `id` on each call's first
         // fragment and `id = None` continuations merging into the last call. True for
-        // OpenAI, Anthropic and the OpenAI-compatible backends (DeepSeek / Kimi / Grok).
+        // OpenAI, Anthropic, Gemini, Bedrock and the OpenAI-compatible backends
+        // (DeepSeek / Kimi / Grok).
         //
         // KNOWN LIMITATION: `tool_calls[].index`, the documented OpenAI-compatible merge
         // key, is ignored. A backend interleaving parallel calls by `index` (or omitting

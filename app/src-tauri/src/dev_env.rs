@@ -21,8 +21,8 @@ pub struct DevEnvKeys {
     bedrock_region: Option<String>,
 }
 
-/// Loads the nearest `.env` above this crate (`app/.env`, then the repo root's). Variables
-/// already set in the shell win.
+/// Loads the nearest `.env` from this crate up (`src-tauri/`, `app/`, then the repo root).
+/// Variables already set in the shell win.
 pub fn load() {
     if !cfg!(debug_assertions) {
         return;

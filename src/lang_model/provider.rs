@@ -35,14 +35,13 @@ pub enum LangModelProviderElem {
 /// [`bedrock`](Self::bedrock), [`chat_completion`](Self::chat_completion), …)
 /// which return
 /// [`LangModelProviderElem`] values, then [`insert`](Self::insert) them under
-/// the chosen pattern.  At agent construction time the runtime calls
-/// [`get`](Self::get) to verify that the spec's `model` matches an entry, then
-/// hands the resolved provider-name and model id to
-/// [`LangModel::try_from_provider`](crate::lang_model::LangModel::try_from_provider).
+/// the chosen pattern.  At agent construction time
+/// [`LangModel::try_from_provider`](crate::lang_model::LangModel::try_from_provider)
+/// resolves the spec's `model` against these entries via [`get`](Self::get).
 ///
 /// [`Default::default`] returns a registry pre-populated from the environment:
 /// registers `openai/*`, `anthropic/*`, `google/*`, `x-ai/*`, `deepseek/*`,
-/// `moonshotai/kimi-*` and/or `openrouter/*` for every `OPENAI_API_KEY` /
+/// `moonshotai/*` and/or `openrouter/*` for every `OPENAI_API_KEY` /
 /// `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `XAI_API_KEY` / `DEEPSEEK_API_KEY` /
 /// `KIMI_API_KEY` / `OPENROUTER_API_KEY` that is set, plus `bedrock/*` (Converse) for `AWS_BEARER_TOKEN_BEDROCK`
 /// (region from `AWS_REGION`, then `AWS_DEFAULT_REGION`, defaulting to

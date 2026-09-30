@@ -82,8 +82,8 @@ impl Agent {
     /// Unless `state.history` already has a [`Role::System`] message, one built from
     /// `spec.instruction` and [`AgentSpec::skills`] is inserted at the front.
     ///
-    /// Async because skills are read through the console (a read, not a boot: the
-    /// session boots when the console is built).
+    /// Async because skills are read through the console, which boots its backend on
+    /// that first read if nothing has yet.
     pub async fn try_with_provider_and_state(
         spec: AgentSpec,
         provider: impl AsRef<str>,
@@ -248,8 +248,7 @@ impl Agent {
         }
     }
 
-    /// Per-part character limit for tool results before middle-truncation, keeping all
-    /// tool results within the same bound as the built-in shell tool.
+    /// Per-part size limit for tool results, past which the middle is truncated.
     const MAX_TOOL_RESULT_CHARS: usize = 30_000;
 
     /// Clamp every [`Part`] of a [`Role::Tool`] message so large payloads (e.g. web-search

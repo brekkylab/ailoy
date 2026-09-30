@@ -294,10 +294,6 @@ pub struct ChatCompletionUnmarshal;
 // quota signal can be assumed; treat 429 as transient and retry.
 impl super::QuotaClassifier for ChatCompletionUnmarshal {}
 
-/// Parses one ChatCompletion SSE chunk (`chat.completion.chunk`) into a delta:
-/// the incremental `choices[0].delta` (role / content / reasoning_content /
-/// tool_call fragments), `finish_reason`, and usage from the final chunk.
-/// `[DONE]` carries no delta.
 impl ChatCompletionUnmarshal {
     fn parse_finish_reason(val: &Value) -> FinishReason {
         match val.as_str() {
@@ -376,6 +372,10 @@ impl ChatCompletionUnmarshal {
     }
 }
 
+/// Parses one ChatCompletion SSE chunk (`chat.completion.chunk`) into a delta:
+/// the incremental `choices[0].delta` (role / content / reasoning_content /
+/// tool_call fragments), `finish_reason`, and usage from the final chunk.
+/// `[DONE]` carries no delta.
 impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         // OpenAI-compatible streams end with a `[DONE]` sentinel (not JSON).

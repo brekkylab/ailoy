@@ -390,8 +390,8 @@ async fn fetch_one(
     })
 }
 
-/// Factory closes over a process-wide [`WebFetchState`] so the rate limiter
-/// is shared across calls.
+/// Factory closes over one [`WebFetchState`] so the rate limiter is shared by
+/// every tool it builds.
 pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
     let state = WebFetchState::new();
     move |_| {

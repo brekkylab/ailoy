@@ -13,8 +13,7 @@ pub struct AgentState {
     /// With `None`, pure tools still run and console tools fail with an error; nothing
     /// fills this in, since building a console means choosing a console server.
     ///
-    /// Supplied already started: the server re-boots on a second `start`, so only the
-    /// console's builder calls it.
+    /// Need not be started: the first command that needs a booted session boots it.
     ///
     /// `Arc` because tool execution hands out `'static` streams that each carry a handle;
     /// `Mutex` because the protocol allows one outstanding request at a time (every
@@ -53,7 +52,7 @@ impl AgentState {
         self
     }
 
-    /// Run console tools in `console`, which must already be started.
+    /// Run console tools in `console`; it need not be started.
     pub fn with_console(mut self, console: ConsoleClient) -> Self {
         self.console = Arc::new(Mutex::new(Some(console)));
         self

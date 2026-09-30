@@ -133,7 +133,8 @@ impl AgentBuilder {
         self
     }
 
-    /// Run this agent's console tools in `console`, which must already be started.
+    /// Run this agent's console tools in `console`. It need not be started: the first
+    /// command that needs a booted session boots it.
     ///
     /// Nothing builds a console implicitly, since that means choosing a console server.
     /// Without one, pure tools still run and console tools fail with an error.
