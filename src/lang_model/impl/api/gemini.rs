@@ -1233,152 +1233,156 @@ mod tests {
     }
 }
 
-// #[cfg(test)]
-// mod dialect_tests {
-//     use super::*;
-//     use crate::{
-//         datatype::Bytes,
-//         message::{Marshaled, Message, Role},
-//     };
+#[cfg(test)]
+mod dialect_tests {
+    use super::*;
+    use crate::{
+        datatype::Bytes,
+        message::{Marshaled, Message, Role},
+    };
 
-//     #[test]
-//     pub fn serialize_text() {
-//         let msg = Message::new(Role::User).with_contents([
-//             Part::text("Explain me about Riemann hypothesis."),
-//             Part::text("How cold brew is different from the normal coffee?"),
-//         ]);
-//         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"{"role":"user","parts":[{"text":"Explain me about Riemann hypothesis."},{"text":"How cold brew is different from the normal coffee?"}]}"#
-//         );
-//     }
+    #[test]
+    pub fn serialize_text() {
+        let msg = Message::new(Role::User).with_contents([
+            Part::text("Explain me about Riemann hypothesis."),
+            Part::text("How cold brew is different from the normal coffee?"),
+        ]);
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"role":"user","parts":[{"text":"Explain me about Riemann hypothesis."},{"text":"How cold brew is different from the normal coffee?"}]}"#
+        );
+    }
 
-//     #[test]
-//     pub fn serialize_messages_with_thinkings() {
-//         let msgs = vec![
-//             Message::new(Role::User)
-//                 .with_contents([Part::text("Hello there."), Part::text("How are you?")]),
-//             Message::new(Role::Assistant)
-//                 .with_thinking_signature("This is thinking text would be vanished.", "")
-//                 .with_contents([Part::text("I'm fine, thank you. And you?")]),
-//             Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
-//             Message::new(Role::Assistant)
-//                 .with_thinking_signature(
-//                     "This is thinking text would be remaining.",
-//                     "Ev4MCkYIBxgCKkDl5A",
-//                 )
-//                 .with_contents([Part::text("Is there anything I can help with?")]),
-//         ];
-//         // Use marshal_messages directly to test position-aware thinking inclusion.
-//         let marshaled = marshal_messages(&msgs);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"[{"role":"user","parts":[{"text":"Hello there."},{"text":"How are you?"}]},{"role":"model","parts":[{"text":"I'm fine, thank you. And you?"}]},{"role":"user","parts":[{"text":"I'm okay."}]},{"role":"model","parts":[{"text":"This is thinking text would be remaining.","thought":true},{"text":"Is there anything I can help with?"}]}]"#
-//         );
-//     }
+    #[test]
+    pub fn serialize_messages_with_thinkings() {
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("Hello there."), Part::text("How are you?")]),
+            Message::new(Role::Assistant)
+                .with_signatured_thinking("Earlier thinking text.", "")
+                .with_contents([Part::text("I'm fine, thank you. And you?")]),
+            Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
+            Message::new(Role::Assistant)
+                .with_signatured_thinking("Later thinking text.", "Ev4MCkYIBxgCKkDl5A")
+                .with_contents([Part::text("Is there anything I can help with?")]),
+        ];
+        // Thinking and its signature are replayed on every model turn.
+        let marshaled = marshal_messages(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","parts":[{"text":"Hello there."},{"text":"How are you?"}]},{"role":"model","parts":[{"text":"Earlier thinking text.","thought":true,"thoughtSignature":""},{"text":"I'm fine, thank you. And you?"}]},{"role":"user","parts":[{"text":"I'm okay."}]},{"role":"model","parts":[{"text":"Later thinking text.","thought":true,"thoughtSignature":"Ev4MCkYIBxgCKkDl5A"},{"text":"Is there anything I can help with?"}]}]"#
+        );
+    }
 
-//     #[test]
-//     pub fn serialize_function() {
-//         let msg = Message::new(Role::Assistant).with_tool_calls([
-//             Part::function("temperature", Value::object([("unit", "celsius")])),
-//             Part::function("temperature", Value::object([("unit", "fahrenheit")])),
-//         ]);
-//         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"{"role":"model","parts":[{"functionCall":{"name":"temperature","args":{"unit":"celsius"}}},{"functionCall":{"name":"temperature","args":{"unit":"fahrenheit"}}}]}"#
-//         );
-//     }
+    #[test]
+    pub fn serialize_function() {
+        let msg = Message::new(Role::Assistant).with_tool_calls([
+            Part::function(
+                "temperature/call-1",
+                "temperature",
+                Value::object([("unit", "celsius")]),
+            ),
+            Part::function(
+                "temperature/call-2",
+                "temperature",
+                Value::object([("unit", "fahrenheit")]),
+            ),
+        ]);
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"role":"model","parts":[{"functionCall":{"name":"temperature","args":{"unit":"celsius"}}},{"functionCall":{"name":"temperature","args":{"unit":"fahrenheit"}}}]}"#
+        );
+    }
 
-//     #[test]
-//     pub fn serialize_tool_response() {
-//         let msgs = vec![
-//             Message::new(Role::Tool)
-//                 .with_id("temperature/call-1")
-//                 .with_contents(vec![Part::Value {
-//                     value: to_value!({"temperature": 30, "unit": "celsius"}),
-//                 }]),
-//             Message::new(Role::Tool)
-//                 .with_id("temperature/call-2")
-//                 .with_contents(vec![Part::Value {
-//                     value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
-//                 }]),
-//         ];
-//         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msgs);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"[{"role":"user","parts":[{"functionResponse":{"name":"temperature","response":{"result":{"temperature":30,"unit":"celsius"}}}}]},{"role":"user","parts":[{"functionResponse":{"name":"temperature","response":{"result":{"temperature":86,"unit":"fahrenheit"}}}}]}]"#
-//         );
-//     }
+    #[test]
+    pub fn serialize_tool_response() {
+        let msgs = vec![
+            Message::new(Role::Tool)
+                .with_id("temperature/call-1")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("temperature/call-2")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+        ];
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","parts":[{"functionResponse":{"name":"temperature","response":{"result":{"temperature":30,"unit":"celsius"}}}}]},{"role":"user","parts":[{"functionResponse":{"name":"temperature","response":{"result":{"temperature":86,"unit":"fahrenheit"}}}}]}]"#
+        );
+    }
 
-//     #[test]
-//     pub fn serialize_image() {
-//         use base64::prelude::*;
+    #[test]
+    pub fn serialize_image() {
+        use base64::prelude::*;
 
-//         let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAD0lEQVR4nGPh4uJikYNgAANQAI8386KKAAAAAElFTkSuQmCC";
-//         let png_bytes = BASE64_STANDARD.decode(png_base64).unwrap();
-//         let msg = Message::new(Role::User).with_contents([
-//             Part::text("What you can see in this image?"),
-//             Part::image_embedded("image/png".to_owned(), Bytes::from(png_bytes)).unwrap(),
-//         ]);
-//         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"{"role":"user","parts":[{"text":"What you can see in this image?"},{"inline_data":{"mime_type":"image/png","data":""#.to_owned()
-//                 + png_base64
-//                 + r#""}}]}"#,
-//         );
-//     }
+        let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAD0lEQVR4nGPh4uJikYNgAANQAI8386KKAAAAAElFTkSuQmCC";
+        let png_bytes = BASE64_STANDARD.decode(png_base64).unwrap();
+        let msg = Message::new(Role::User).with_contents([
+            Part::text("What you can see in this image?"),
+            Part::image_embedded("image/png".to_owned(), Bytes::from(png_bytes)).unwrap(),
+        ]);
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"role":"user","parts":[{"text":"What you can see in this image?"},{"inline_data":{"mime_type":"image/png","data":""#.to_owned()
+                + png_base64
+                + r#""}}]}"#,
+        );
+    }
 
-//     #[test]
-//     pub fn deserialize_text() {
-//         let input =
-//             r#"{"candidates":[{"content":{"parts":[{"text":"Hello world!"}],"role":"model"},"finishReason":"STOP"}]}"#;
-//         let mut u = GeminiUnmarshal;
-//         let val = serde_json::from_str::<Value>(input).unwrap();
-//         let output = u.unmarshal(val).unwrap();
-//         assert_eq!(output.finish_reason, Some(FinishReason::Stop {}));
-//         let mut delta = output.delta;
-//         assert_eq!(delta.role, Some(Role::Assistant));
-//         assert_eq!(delta.contents.len(), 1);
-//         let content = delta.contents.pop().unwrap();
-//         assert_eq!(content.to_text().unwrap(), "Hello world!");
-//     }
+    #[test]
+    pub fn deserialize_text() {
+        let input = r#"{"candidates":[{"content":{"parts":[{"text":"Hello world!"}],"role":"model"},"finishReason":"STOP"}]}"#;
+        let mut u = GeminiUnmarshal;
+        let val = serde_json::from_str::<Value>(input).unwrap();
+        let output = u.unmarshal(val).unwrap();
+        assert_eq!(output.finish_reason, Some(FinishReason::Stop {}));
+        let mut delta = output.delta;
+        assert_eq!(delta.role, Some(Role::Assistant));
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
+    }
 
-//     #[test]
-//     pub fn deserialize_text_with_thinking() {
-//         let input = r#"{"candidates":[{"content":{"parts":[{"text":"**Answering a simple question**\n\nUser is saying hello.","thought":true},{"text":"Hello world!"}],"role":"model"},"finishReason":"STOP"}]}"#;
-//         let mut u = GeminiUnmarshal;
-//         let val = serde_json::from_str::<Value>(input).unwrap();
-//         let output = u.unmarshal(val).unwrap();
-//         assert_eq!(output.finish_reason, Some(FinishReason::Stop {}));
-//         let mut delta = output.delta;
-//         assert_eq!(delta.role, Some(Role::Assistant));
-//         assert_eq!(
-//             delta.thinking,
-//             Some("**Answering a simple question**\n\nUser is saying hello.".into())
-//         );
-//         assert_eq!(delta.contents.len(), 1);
-//         let content = delta.contents.pop().unwrap();
-//         assert_eq!(content.to_text().unwrap(), "Hello world!");
-//     }
+    #[test]
+    pub fn deserialize_text_with_thinking() {
+        let input = r#"{"candidates":[{"content":{"parts":[{"text":"**Answering a simple question**\n\nUser is saying hello.","thought":true},{"text":"Hello world!"}],"role":"model"},"finishReason":"STOP"}]}"#;
+        let mut u = GeminiUnmarshal;
+        let val = serde_json::from_str::<Value>(input).unwrap();
+        let output = u.unmarshal(val).unwrap();
+        assert_eq!(output.finish_reason, Some(FinishReason::Stop {}));
+        let mut delta = output.delta;
+        assert_eq!(delta.role, Some(Role::Assistant));
+        assert_eq!(
+            delta.thinking,
+            Some("**Answering a simple question**\n\nUser is saying hello.".into())
+        );
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
+    }
 
-//     #[test]
-//     pub fn deserialize_tool_call() {
-//         let input = r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"location":"Paris, France"}}}],"role":"model"},"finishReason":"STOP"}]}"#;
-//         let mut u = GeminiUnmarshal;
-//         let val = serde_json::from_str::<Value>(input).unwrap();
-//         let output = u.unmarshal(val).unwrap();
-//         assert_eq!(output.finish_reason, Some(FinishReason::ToolCall {}));
-//         let mut delta = output.delta;
-//         assert_eq!(delta.tool_calls.len(), 1);
-//         let tool_call = delta.tool_calls.pop().unwrap();
-//         let (_, name, args) = tool_call.to_parsed_function().unwrap();
-//         assert_eq!(name, "get_weather");
-//         assert_eq!(
-//             serde_json::to_string(&args).unwrap(),
-//             "{\"location\":\"Paris, France\"}"
-//         );
-//     }
-// }
+    #[test]
+    pub fn deserialize_tool_call() {
+        let input = r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"location":"Paris, France"}}}],"role":"model"},"finishReason":"STOP"}]}"#;
+        let mut u = GeminiUnmarshal;
+        let val = serde_json::from_str::<Value>(input).unwrap();
+        let output = u.unmarshal(val).unwrap();
+        assert_eq!(output.finish_reason, Some(FinishReason::ToolCall {}));
+        let mut delta = output.delta;
+        assert_eq!(delta.tool_calls.len(), 1);
+        let tool_call = delta.tool_calls.pop().unwrap();
+        let (_, name, args) = tool_call.to_parsed_function().unwrap();
+        assert_eq!(name, "get_weather");
+        assert_eq!(
+            serde_json::to_string(&args).unwrap(),
+            "{\"location\":\"Paris, France\"}"
+        );
+    }
+}
