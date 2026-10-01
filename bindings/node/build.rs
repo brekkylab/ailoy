@@ -1,13 +1,13 @@
-//! napi's link setup, plus delay-loading `dokan2.dll` on a Windows MSVC target.
+//! napi's link setup, plus `dokan2.dll` delay-loaded on a Windows MSVC target.
 //!
-//! A `rustc-link-arg` applies only to the package that printed it, so this cdylib asks for the
-//! delay-load itself; without it `require` fails on a host without Dokany, even for callers
-//! that never mount. macOS needs nothing: cortex opens libfuse-t itself, at run time.
+//! A `rustc-link-arg` applies only to the package that printed it, so this cdylib emits it
+//! itself. With the delay-load `require` works on a host without Dokany and only a mount fails,
+//! saying what to install. macOS needs nothing: virtx opens libfuse-t itself, at run time.
 
 fn main() {
     napi_build::setup();
 
-    // `ailoy` links Dokany through cortex's default features whatever this crate's `mount` is,
+    // `ailoy` links Dokany through virtx's default features whatever this crate's `mount` is,
     // so only the target decides.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use cortex::console::ConsoleClient;
 use tokio::sync::Mutex;
+use virtx::console::ConsoleClient;
 
 use crate::{memory::Memory, message::Message};
 

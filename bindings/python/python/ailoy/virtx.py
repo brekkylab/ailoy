@@ -1,7 +1,7 @@
-"""cortex, as built into ailoy: the console an agent's tools run in, and what it sees.
+"""virtx, as built into ailoy: the console an agent's tools run in, and what it sees.
 
-Each extension module links its own copy of cortex, so these are distinct types from
-``cortex-py``'s: a ``ConsoleClient`` built by ``cortex-py`` cannot be handed to an
+Each extension module links its own copy of virtx, so these are distinct types from
+``virtx``'s: a ``ConsoleClient`` built by ``virtx`` cannot be handed to an
 ``AgentBuilder``.
 """
 
@@ -14,19 +14,18 @@ from ._ailoy import (
     ConsoleClient,
     ConsoleClientBuilder,
     ConsoleRefused,
-    CortexError,
+    VirtxError,
     Directory,
     ExecResult,
     ImageClient,
     ImageEntry,
     ImageSource,
-    NetworkAccess,
     ReadResult,
     Recipe,
     Step,
 )
 
-# The numbers a `ConsoleRefused.code` may hold, named as cortex names them.
+# The numbers a `ConsoleRefused.code` may hold, named as virtx names them.
 ErrorCode = IntEnum("ErrorCode", _ailoy.ERROR_CODES)
 
 __all__ = [
@@ -35,14 +34,13 @@ __all__ = [
     "ConsoleClient",
     "ConsoleClientBuilder",
     "ConsoleRefused",
-    "CortexError",
+    "VirtxError",
     "Directory",
     "ErrorCode",
     "ExecResult",
     "ImageClient",
     "ImageEntry",
     "ImageSource",
-    "NetworkAccess",
     "ReadResult",
     "Recipe",
     "Step",

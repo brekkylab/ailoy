@@ -35,7 +35,7 @@ anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"
 base64 = "0.23"
-cortex = { path = "../cortex" }
+virtx = { path = "../virtx" }
 dedent = "0.1.1"
 derive_builder = "0.20.2"
 fancy-regex = "0.18"

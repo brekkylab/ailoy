@@ -180,7 +180,7 @@ impl Agent {
     /// Tell the model which directories it has been given.
     ///
     /// Runs at the top of each turn and reads
-    /// [`mounts`](cortex::console::ConsoleClient::mounts) from the console instead of
+    /// [`mounts`](virtx::console::ConsoleClient::mounts) from the console instead of
     /// caching a copy.
     ///
     /// Only paths are listed; what a mount is for belongs in the instruction. The section
@@ -773,9 +773,9 @@ mod tests {
     async fn console_with_mounts(
         root: &std::path::Path,
         names: &[&str],
-    ) -> cortex::console::ConsoleClient {
+    ) -> virtx::console::ConsoleClient {
         dotenvy::dotenv().ok();
-        let mut builder = cortex::console::ConsoleClient::builder();
+        let mut builder = virtx::console::ConsoleClient::builder();
         for name in names {
             let dir = root.join(name);
             std::fs::create_dir_all(&dir).unwrap();
