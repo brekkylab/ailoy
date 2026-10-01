@@ -9,22 +9,16 @@ use crate::{
 
 // ── Tool constructor ──────────────────────────────────────────────────────────
 
-/// Discover the remote A2A agent at `url` and build the [`ToolDesc`] a spec
-/// carries for it, under `name`.
+/// Fetch the agent card at `url` and build the A2A agent's [`ToolDesc`] under `name`;
+/// the network fetch is why the agent is contacted at registration, not at resolution.
 ///
-/// Performs a network fetch of the agent card — which is why this is `async`,
-/// and why an A2A agent is contacted when it is *registered* rather than when
-/// [`ToolProvider::provide`](crate::tool::ToolProvider::provide) resolves it.
-///
-/// The name is the caller's, not the card's: it has to match the key the entry
-/// was registered under for `provide` to find it, and a remote card is free to
-/// call itself something no model API would accept as a function name.
+/// `name` is the caller's registration key, not the card's name, which may not be
+/// a valid function name.
 pub(crate) async fn get_a2a_tool_desc(name: &str, url: &Url) -> anyhow::Result<ToolDesc> {
     let base_url = url.to_string();
     let card = discover(&base_url).await?;
 
-    // The card's own name is worth showing even though it is not the tool name,
-    // since it is how the remote agent introduces itself.
+    // Description plus a skills list, so the model knows what the remote agent does.
     let description = if card.skills.is_empty() {
         card.description.clone()
     } else {
@@ -42,9 +36,8 @@ pub(crate) async fn get_a2a_tool_desc(name: &str, url: &Url) -> anyhow::Result<T
 
     Ok(ToolDescBuilder::new(name)
         .description(description)
-        // An object with a single `task` string, matching the sub-agent tool:
-        // delegating a plain-text task is the same shape of call, and the model
-        // APIs reject a `parameters` schema that is not an object anyway.
+        // An object with a single `task` string: the model APIs reject a
+        // `parameters` schema that is not an object.
         .parameters(crate::to_value!({
             "type": "object",
             "properties": {
@@ -581,7 +574,7 @@ mod tests {
         provider.insert_a2a(desc.name.clone(), url);
         let funcs = provider.provide(&[desc])?;
 
-        // Pure, like an MCP tool: no console is borrowed to reach the network.
+        // Pure: no console is borrowed to reach the network.
         let out = funcs
             .get("remote")
             .expect("the agent was registered")

@@ -5,7 +5,7 @@
 //! ```
 //!
 //! `model` defaults to `openai/gpt-5.6-luna`; its provider's API key has to be set
-//! (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...), in the environment or in `.env`.
+//! (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …), in the environment or in `.env`.
 
 use std::io::Write as _;
 
@@ -15,7 +15,6 @@ use ailoy::{
 };
 use futures::StreamExt as _;
 
-/// The request the agent is given.
 const QUERY: &str = "What is the meaning of hello world?";
 
 #[tokio::main]

@@ -6,14 +6,14 @@ import { test } from 'node:test'
 const ailoy = createRequire(import.meta.url)('../index.js')
 const { Agent, AgentBuilder, ConsoleClient, Recipe, registerLangModel, registerTool } = ailoy
 
-// ---- cortex, built in ----------------------------------------------------------------------
+// ---- virtx, built in ----------------------------------------------------------------------
 
-test('cortex comes along', () => {
+test('virtx comes along', () => {
   assert.match(new Recipe('python:3.12-slim').step('pip install duckdb').toString(), /duckdb/)
 })
 
-test('a console without a server fails with cortex’s code', async () => {
-  await assert.rejects(ConsoleClient.builder().build(), { code: 'CORTEX_ERROR' })
+test('a console without a server fails with virtx’s code', async () => {
+  await assert.rejects(ConsoleClient.builder().build(), { code: 'VIRTX_ERROR' })
 })
 
 // ---- the builder and the registries --------------------------------------------------------
@@ -173,12 +173,12 @@ test('breaking out of a turn ends it where it stands', async (t) => {
   assert.ok(Array.isArray(agent.history))
 })
 
-// ---- a shared console, against the console server cortex starts by default ---------------
+// ---- a shared console, against the console server virtx starts by default ---------------
 
 test('an agent shares its console, and closing the agent leaves it open', async () => {
   const console_ = await ConsoleClient.builder()
     .image(new Recipe('python:3.12-slim-trixie'))
-    .network(ailoy.NetworkAccess.none())
+    .network(false)
     .build()
   try {
     // Never asked anything, so the model only has to be registered.

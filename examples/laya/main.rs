@@ -10,24 +10,16 @@
 //! (a text, an email, a ticket) and typed questions — a choice, a score, a yes/no — it answers
 //! each with calibrated probabilities in one forward pass, and generates no text.
 //!
-//! The skill is `SKILL.md` and `run_laya.py`, mounted at `/skills/laya` from memory, which the
-//! agent runs with its `shell` tool.
+//! The skill (`SKILL.md`, `run_laya.py`) is mounted from memory at `/skills/laya`.
 //!
 //! * `context/` at `/context`, read-only — what to decide on, when it is not in the prompt.
 //! * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes.
 //!
-//! The image is Debian rather than Alpine. PyPI's ncnn has a musllinux wheel, but it crashes
-//! freeing the first `Mat` it allocates, where the manylinux (glibc) one runs laya.
-//! `mesa-vulkan-drivers` carries the venus ICD the guest needs — from trixie-backports, for
-//! bf16 — and `libvulkan1` the loader the wheel opens.
+//! Environment, also read from `.env`:
 //!
-//! Environment:
-//!
-//! * `UV` — the `uv` binary `prepare_model.py` runs with, `uv` on `PATH` by default.
+//! * `UV` — the `uv` binary `prepare_model.py` runs with; `uv` on `PATH` by default.
 //! * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its provider's
-//!   API key has to be set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …).
-//!
-//! Read from `.env` as well.
+//!   API key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …).
 
 use std::{io::Write as _, path::Path};
 
@@ -37,18 +29,17 @@ use ailoy::{
     message::{Message, Part, Role},
 };
 use anyhow::Context as _;
-use cortex::{fs::Directory, image::Recipe, protocol::NetworkAccess};
-// One host binding per platform, each mounting on `try_new` and unmounting on `Drop`, so
-// the tree below is written once. Three arms and not `not(windows)` because the guards are
-// three distinct types: cortex's default `mount` feature compiles the one binding its target
-// has — Dokany on Windows, `fuser` on Linux, FUSE-T on macOS — and names the guard after it.
-#[cfg(windows)]
-use cortex::fs::DokanMount as HostMount;
-#[cfg(target_os = "linux")]
-use cortex::fs::FuseMount as HostMount;
-#[cfg(target_os = "macos")]
-use cortex::fs::FuseTMount as HostMount;
+// One host binding per platform (mounts on `try_new`, unmounts on `Drop`), so the tree
+// below is written once. Three arms, not `not(windows)`: virtx's default `mount` feature
+// compiles only its target's binding, each a distinct guard type.
 use futures::StreamExt as _;
+#[cfg(windows)]
+use virtx::fs::DokanMount as HostMount;
+#[cfg(target_os = "linux")]
+use virtx::fs::FuseMount as HostMount;
+#[cfg(target_os = "macos")]
+use virtx::fs::FuseTMount as HostMount;
+use virtx::{fs::Directory, image::Recipe};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -83,10 +74,13 @@ async fn main() -> anyhow::Result<()> {
     .web_search_tool(vec![])
     .console(
         ConsoleClient::builder()
+            // Debian, not Alpine: PyPI's musllinux ncnn wheel crashes freeing its first `Mat`,
+            // where the manylinux (glibc) one runs laya.
             .image(
                 Recipe::new("python:3.12-slim-trixie")
-                    // Mesa from backports: venus passes VK_KHR_shader_bfloat16 through from 26.0
-                    // on, and trixie itself has 25.0.
+                    // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader
+                    // the wheel opens. Mesa from backports: venus passes VK_KHR_shader_bfloat16
+                    // through from 26.0 on, and trixie itself has 25.0.
                     .step(
                         "echo 'deb http://deb.debian.org/debian trixie-backports main' \
                         > /etc/apt/sources.list.d/backports.list \
@@ -110,8 +104,6 @@ async fn main() -> anyhow::Result<()> {
             )
             .mount_readonly(project_path.join("context"), "/context")
             .mount(project_path.join("artifacts"), "/artifacts")
-            // The build's `apt-get` and `pip` run with the session's reach.
-            .network(NetworkAccess::public())
             .gpu(true)
             .vcpus(2)
             .memory_mib(4096)

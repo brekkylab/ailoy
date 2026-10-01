@@ -1,4 +1,4 @@
-// Allow proc-macros to use `ailoy::` prefix when invoked from within this crate.
+// Lets proc-macro expansions use the `ailoy::` prefix inside this crate.
 extern crate self as ailoy;
 
 pub mod agent;
@@ -10,17 +10,14 @@ pub mod memory;
 pub mod message;
 pub mod tool;
 
-/// A started console, for the tests across this crate that need one.
+/// A started console on virtx's default server, for tests.
 ///
-/// Test scaffolding, on the console server cortex starts by default.
-///
-/// Panics rather than returning an error: a test with no console is meaningless, so
-/// a missing server binary should stop the run and say so.
+/// Panics on failure: a missing server binary should stop the test run loudly.
 #[cfg(test)]
-pub(crate) async fn test_console() -> cortex::console::ConsoleClient {
+pub(crate) async fn test_console() -> virtx::console::ConsoleClient {
     dotenvy::dotenv().ok();
 
-    let mut console = cortex::console::ConsoleClient::builder()
+    let mut console = virtx::console::ConsoleClient::builder()
         .build()
         .await
         .unwrap_or_else(|e| panic!("starting the console server: {e:#}"));

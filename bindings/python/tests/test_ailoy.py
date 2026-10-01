@@ -7,7 +7,7 @@ import pytest
 
 import ailoy
 from ailoy import AgentBuilder, AiloyError
-from ailoy.cortex import ConsoleClient, CortexError, ErrorCode, NetworkAccess, Recipe
+from ailoy.virtx import ConsoleClient, VirtxError, ErrorCode, Recipe
 
 
 def content_text(content):
@@ -127,7 +127,7 @@ async def run(agent, query):
 # ---- offline --------------------------------------------------------------------------
 
 
-def test_cortex_is_built_in():
+def test_virtx_is_built_in():
     assert ErrorCode.TIMED_OUT == -32000
     assert "python:3.12-slim" in repr(Recipe("python:3.12-slim"))
 
@@ -271,7 +271,7 @@ async def test_from_spec_and_closing():
         await run(agent, "hi")
 
 
-# ---- against the console server cortex starts by default ----------------------------
+# ---- against the console server virtx starts by default ----------------------------
 
 
 async def test_the_agent_shares_the_console(tmp_path):
@@ -279,7 +279,7 @@ async def test_the_agent_shares_the_console(tmp_path):
         ConsoleClient.builder()
         .image(Recipe("python:3.12-slim-trixie"))
         .mount(tmp_path, "/work")
-        .network(NetworkAccess.none())
+        .network(False)
         .build()
     )
     agent = await (
@@ -299,5 +299,5 @@ async def test_the_agent_shares_the_console(tmp_path):
     assert result.stdout == b"shared\n"
     await console.stop()
     await console.close()
-    with pytest.raises(CortexError):
+    with pytest.raises(VirtxError):
         await console.exec(["true"])

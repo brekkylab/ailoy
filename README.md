@@ -40,10 +40,10 @@ You don't need to install and run a VM daemon such as Docker.
 
 All you need is an API key for the LLM provider you want to use.
 
-The only exception is cortex's virtual filesystem feature, which relies on host mounts and therefore needs FUSE support:
+The only exception is virtx's virtual filesystem feature, which relies on host mounts and therefore needs FUSE support:
 install [FUSE-T](https://www.fuse-t.org/) on macOS or [Dokany](https://github.com/dokan-dev/dokany) on Windows.
 Without it everything else still works, and a mount fails with an error that says what to install.
-See the [cortex README](https://github.com/brekkylab/cortex) for details.
+See the [virtx README](https://github.com/brekkylab/virtx) for details.
 
 On Windows, the console's micro-VM runs on the *Windows Hypervisor Platform*, which is off by default.
 Turn the optional feature on from an administrator PowerShell and restart, with virtualization enabled in the firmware:
@@ -73,7 +73,7 @@ pip install ailoy-py
 import asyncio
 
 from ailoy import AgentBuilder
-from ailoy.cortex import ConsoleClient, NetworkAccess, Recipe
+from ailoy.virtx import ConsoleClient, Recipe
 
 
 async def main() -> None:
@@ -81,7 +81,7 @@ async def main() -> None:
         ConsoleClient.builder()
         .image(Recipe("python:3.12-slim-trixie").step("pip install matplotlib"))
         .mount("./artifacts", "/artifacts")
-        .network(NetworkAccess.public())
+        .network(True)
         .build()
     )
 
@@ -112,12 +112,12 @@ npm install ailoy-node
 ```
 
 ```js
-const { AgentBuilder, ConsoleClient, NetworkAccess, Recipe } = require('ailoy-node')
+const { AgentBuilder, ConsoleClient, Recipe } = require('ailoy-node')
 
 const console_ = await ConsoleClient.builder()
   .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))
   .mount('./artifacts', '/artifacts')
-  .network(NetworkAccess.public())
+  .network(true)
   .build()
 // For openai, use "openai/gpt-5.6-luna"
 const agent = await new AgentBuilder('anthropic/claude-haiku-4-5')
@@ -145,7 +145,7 @@ try {
 ```toml
 [dependencies]
 ailoy = "0.3"
-cortex = { git = "https://github.com/brekkylab/cortex" }
+virtx = { git = "https://github.com/brekkylab/virtx" }
 ```
 
 ```rust
@@ -154,7 +154,7 @@ use ailoy::{
     console::ConsoleClient,
     message::{Message, Part, Role},
 };
-use cortex::{image::Recipe, protocol::NetworkAccess};
+use virtx::image::Recipe;
 use futures::StreamExt as _;
 
 #[tokio::main]
@@ -162,7 +162,7 @@ async fn main() -> anyhow::Result<()> {
     let console = ConsoleClient::builder()
         .image(Recipe::new("python:3.12-slim-trixie").step("pip install matplotlib"))
         .mount(std::path::absolute("./artifacts")?, "/artifacts")
-        .network(NetworkAccess::public())
+        .network(true)
         .build()
         .await?;
 

@@ -22,26 +22,12 @@ impl Default for ContextManager {
 impl ContextManager {
     /// Truncate the conversation history to reduce context size.
     ///
-    /// ## Algorithm
+    /// A leading system message is always kept, as is everything from the
+    /// [preserve boundary](find_preserve_boundary) on. Each earlier `Role::Tool` message
+    /// has its contents replaced by `"[context truncated]"` but keeps its `id`: Anthropic
+    /// returns HTTP 400 for a tool-use id with no matching tool result.
     ///
-    /// 1. If `history[0]` is `Role::System`, always preserve it (never dropped).
-    /// 2. Walk backwards from the end of history, skipping `System` messages, and
-    ///    count `User` messages.  Once `preserve_recent_turns` `User` messages have
-    ///    been counted, the oldest of them becomes the **preserve boundary** —
-    ///    everything at or after that index is left untouched.  Counting `User`
-    ///    messages (not `Assistant` messages) correctly handles tool-use sessions
-    ///    where a single user input may expand into multiple assistant messages.
-    /// 3. For each `Role::Tool` message *before* the preserve boundary, replace its
-    ///    contents with a `"[context truncated]"` placeholder **while keeping the
-    ///    message's `id` intact**.  Anthropic's API returns HTTP 400 if a tool-use
-    ///    `id` that appears in an assistant message has no matching tool-result, so
-    ///    the id must never be discarded.
-    ///
-    /// Note: Full group-level dropping (removing the oldest user + assistant + tool
-    /// triplet entirely) is left for a future iteration; it requires a reliable
-    /// post-truncation token estimate that is not yet available here.  For now,
-    /// placeholder replacement alone is sufficient to keep the context window
-    /// manageable for most workloads.
+    /// Whole turns are never dropped; that would need a post-truncation token estimate.
     pub(crate) fn truncate_history(&self, history: &mut [Message]) {
         if history.is_empty() {
             return;
@@ -56,10 +42,8 @@ impl ContextManager {
             0
         };
 
-        // `preserve_from = 0` means "fewer turns than requested — preserve everything":
-        // `.take(0).skip(start_idx)` is always empty, so nothing is truncated.
-        // When `preserve_from > 0` the System message always lands at index 0 and
-        // the oldest preserved User turn is at index >= 1, so start_idx <= preserve_from.
+        // `preserve_from == 0` truncates nothing; otherwise the oldest preserved User turn
+        // is at index >= 1, so start_idx <= preserve_from.
         debug_assert!(
             preserve_from == 0 || start_idx <= preserve_from,
             "start_idx ({start_idx}) > preserve_from ({preserve_from}): \
@@ -84,14 +68,11 @@ impl ContextManager {
 
 /// Find the index from which messages should be preserved.
 ///
-/// Scans backwards through `history`, skipping `System` messages, and counts
-/// `User` messages.  Returns the index of the `User` message that is the
-/// `preserve_recent_turns`-th from the end, or `0` when there are fewer turns
-/// than requested (meaning: preserve everything).
+/// Returns the index of the `preserve_recent_turns`-th `User` message from the end, or
+/// `0` (preserve everything) when there are fewer turns.
 ///
-/// Counting `User` messages (rather than `Assistant` messages) correctly handles
-/// tool-use sessions where one user input may produce multiple assistant messages
-/// (`asst(tool_call) → tool → asst(text)`).
+/// Counts `User` rather than `Assistant` messages because one user input may produce
+/// several assistant messages (`asst(tool_call) → tool → asst(text)`).
 fn find_preserve_boundary(history: &[Message], preserve_recent_turns: usize) -> usize {
     if preserve_recent_turns == 0 {
         return history.len();
@@ -250,13 +231,9 @@ mod tests {
 
     #[test]
     fn test_preserve_counts_user_messages_not_assistant() {
-        // A single user turn may produce multiple assistant messages in tool-use:
-        //   u2 → asst(tool_call) → tool → asst("a2")
-        // preserve_recent_turns = 2 must preserve both u1 and u2's full interactions,
-        // not just u2's (which would happen if assistant messages were counted).
-        //
+        // u2's turn spans asst(tool_call) → tool → asst("a2"); counting assistants would put
+        // the boundary inside it.
         // history: sys(0), u1(1), asst("a1")(2), u2(3), asst(tool_call)(4), tool(5), asst("a2")(6)
-        // Expected boundary: u1 at index 1  (2 user turns preserved)
         let history = vec![
             sys(),
             user("u1"),
@@ -275,8 +252,6 @@ mod tests {
 
     #[test]
     fn test_preserved_messages_untouched() {
-        // Only messages outside the preserve window should be replaced.
-        // The tool result inside the preserve window must keep its original content.
         let mut history = vec![
             sys(),
             user("u1"),

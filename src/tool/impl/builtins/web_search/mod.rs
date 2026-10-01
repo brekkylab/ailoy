@@ -40,8 +40,6 @@ pub fn get_web_search_tool_desc() -> ToolDesc {
 }
 
 /// Returns a factory for the `web_search` tool that fans out to the given engines.
-///
-/// An empty `engines` vec falls back to all available engines.
 pub fn get_web_search_tool_factory(
     engines: Vec<WebSearchEngineKind>,
 ) -> impl Fn(&ToolDesc) -> ToolFunc {
@@ -173,8 +171,7 @@ mod tests {
             results.iter().map(|r| &r.url).collect::<Vec<_>>()
         );
 
-        // 4. Results that appeared in more than one engine should be ranked first.
-        // (Relevance is monotonically non-increasing after sort in MetaSearcher.)
+        // 4. Results are sorted by descending relevance.
         for window in results.windows(2) {
             assert!(
                 window[0].relevance >= window[1].relevance,

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use cortex::console::ConsoleClient;
 use futures::{
     StreamExt,
     future::BoxFuture,
     stream::{self, BoxStream},
 };
+use virtx::console::ConsoleClient;
 
 use crate::{
     datatype::Value,
@@ -73,8 +73,7 @@ impl ToolFunc {
     /// which locks the same console — without deadlocking against the batch it is
     /// part of.
     ///
-    /// A console tool cannot simply be handed a stand-in: a [`ConsoleClient`] is a live
-    /// session with a server process behind it, so there is no fabricating one.
+    /// `None` for a console tool, since a live [`ConsoleClient`] can't be fabricated.
     pub fn call_pure(
         &self,
         args: Value,
@@ -86,12 +85,8 @@ impl ToolFunc {
         }
     }
 
-    /// Invoke the tool. The `console` argument is always required for API
-    /// uniformity; pure variants simply ignore it.
-    ///
-    /// A caller with no console to lend wants [`call_pure`](Self::call_pure): there
-    /// is no stand-in [`ConsoleClient`] to pass here, because one is a live session with a
-    /// server on the other end.
+    /// Invoke the tool. `console` is always required; pure variants ignore it.
+    /// A caller with no console to lend uses [`call_pure`](Self::call_pure).
     pub fn call<'a>(
         &self,
         args: Value,
@@ -108,8 +103,6 @@ impl ToolFunc {
 /// Wrapping helpers used by the [`crate::tool_func!`] macro to turn user output
 /// (a [`Value`]/[`Message`], an async future of one, or a stream of them) into
 /// the canonical `BoxStream<_, MessageOutput>` shape.
-///
-/// Not part of the public API.
 #[doc(hidden)]
 pub mod __private {
     use super::*;
@@ -485,8 +478,8 @@ mod tests {
     async fn test_async_value_with_console() {
         let mut console = test_console().await;
         let f = tool_func!(async |_args: Value, console: &mut ConsoleClient| -> Value {
-            // cortex as it is: an argv in, bytes out. A tool that wants a shell asks
-            // for one, and converts what came back itself.
+            // `exec` takes an argv and returns raw bytes: a shell must be invoked
+            // explicitly and the output decoded by the caller.
             let r = console.exec(["sh", "-c", "echo hi"], None).await.unwrap();
             Value::string(String::from_utf8_lossy(&r.stdout).trim().to_string())
         });

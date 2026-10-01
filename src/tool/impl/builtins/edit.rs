@@ -70,9 +70,8 @@ pub fn get_edit_tool_func() -> ToolFunc {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        // One `read`, and it has to have reached the end: `size` is the file's, not
-        // the answer's, so a short answer means the file does not fit in one message.
-        // Editing the front of a file and writing it back would drop the rest.
+        // `size` is the whole file's, so a short read means the file exceeds one
+        // message; editing only the front and writing it back would drop the rest.
         let bytes = match console.read(path, None, None).await {
             Ok(r) if (r.data.len() as u64) < r.size => {
                 return crate::to_value!({
@@ -126,8 +125,7 @@ pub fn get_edit_tool_func() -> ToolFunc {
         let replacements = if replace_all { count } else { 1 };
 
         // `None` offset: the file *becomes* these bytes, so a shorter replacement
-        // leaves no tail of the old one behind. No `mkdir` — `edit` just read this
-        // file, so everything above it is already there.
+        // leaves no stale tail. No `mkdir`: the file was just read, so its parent exists.
         match console.write(path, updated.into_bytes(), None).await {
             Ok(_) => crate::to_value!({
                 "ok": true,

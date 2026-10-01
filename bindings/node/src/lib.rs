@@ -2,17 +2,15 @@
 //!
 //! The shape is ailoy's own, spelled in JavaScript: an [`Agent`](ailoy::agent::Agent) is built
 //! by an [`AgentBuilder`](ailoy::agent::AgentBuilder) and awaited, a turn is iterated with
-//! `for await`, and the registries an agent resolves its model and tools from are the
-//! process-wide ones the crate keeps. Names are camelCased and nothing else changes — a caller
-//! reading ailoy's Rust documentation should find the same names doing the same things.
+//! `for await`, and the registries are the process-wide ones the crate keeps. Names are
+//! camelCased and nothing else changes, so ailoy's Rust documentation applies as is.
 //!
-//! What crosses the boundary as data — messages, specs, tool descriptions, a turn's outputs —
-//! crosses as the objects its serde form already is, rather than as a class per type: that
-//! form is what ailoy stores and sends, so it is the one a caller already has.
+//! Data (messages, specs, tool descriptions, a turn's outputs) crosses as plain objects in its
+//! serde form rather than a class per type, since that form is what ailoy stores and sends.
 //!
-//! cortex comes along whole. Its classes are linked into this addon from `cortex-node` rather
-//! than loaded from cortex's own, because an agent has to take a `ConsoleClient` apart to share its
-//! session, and two addons cannot see into each other's — see [`agent`] for the sharing.
+//! virtx's classes are linked in from `virtx-node` rather than loaded from virtx's own addon,
+//! because an agent takes a `ConsoleClient` apart to share its session and two addons cannot
+//! see into each other's.
 
 mod agent;
 mod convert;

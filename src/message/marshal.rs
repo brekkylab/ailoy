@@ -12,13 +12,11 @@ pub trait Unmarshal<T: Delta>: Default {
     /// Parse a whole (non-streaming) response into `T`.
     fn unmarshal(&mut self, val: Value) -> anyhow::Result<T>;
 
-    /// Parse one streaming (SSE) event's `data:` payload into an incremental
-    /// delta. Stream events differ in shape from the whole response, so this is
-    /// a separate parser; control events with no delta (OpenAI `[DONE]`,
-    /// Anthropic `ping`) return `Ok(None)`. Defaults to unsupported; override to
-    /// opt into streaming. `&mut self` matches [`unmarshal`](Self::unmarshal) and
-    /// leaves room to carry aggregation state across a stream without `Arc`/
-    /// `Mutex`; current impls are stateless, so it's unused but kept for that.
+    /// Parse one streaming (SSE) event's `data:` payload into a delta; events are shaped
+    /// differently from the whole response. Control events (OpenAI `[DONE]`, Anthropic
+    /// `ping`) return `Ok(None)`. Unsupported unless overridden.
+    ///
+    /// `&mut self` allows carrying state across a stream without `Arc`/`Mutex`.
     fn unmarshal_event(&mut self, _data: &str) -> anyhow::Result<Option<T>> {
         Err(anyhow::anyhow!(
             "streaming (SSE) is not supported for this provider"

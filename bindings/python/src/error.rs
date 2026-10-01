@@ -1,19 +1,17 @@
 //! How ailoy's failures arrive in Python.
 //!
-//! One exception, `AiloyError`, for everything ailoy itself reports — a model that no
-//! provider serves, a tool that is not registered, an API that answered with an error. What
-//! a console reports keeps cortex's own classes: a refusal inside an agent's turn is the
-//! same `ConsoleRefused`, with the same `code`, as one from `ConsoleClient.exec`, so a caller
-//! handles it once.
+//! `AiloyError` for everything ailoy itself reports (an unserved model, an unregistered tool,
+//! an API error). Console failures keep virtx's classes, so a refusal inside a turn is the
+//! same `ConsoleRefused`, with the same `code`, as one from `ConsoleClient.exec`.
 
-use cortex::protocol::Failure;
 use pyo3::{create_exception, exceptions::PyException, prelude::*};
+use virtx::protocol::Failure;
 
 create_exception!(ailoy, AiloyError, PyException);
 
 pub fn anyhow(error: anyhow::Error) -> PyErr {
     match error.downcast::<Failure>() {
-        Ok(failure) => _cortex::error::failure(failure),
+        Ok(failure) => _virtx::error::failure(failure),
         Err(error) => AiloyError::new_err(format!("{error:#}")),
     }
 }
