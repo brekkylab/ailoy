@@ -1,0 +1,29 @@
+{
+  "name": "@brekkylab/ailoy-win32-x64-msvc",
+  "version": "0.3.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "ailoy.win32-x64-msvc.node",
+  "files": [
+    "ailoy.win32-x64-msvc.node"
+  ],
+  "description": "Agents that drive a language model through tool-augmented turns, in a virtx console.",
+  "homepage": "https://github.com/brekkylab/ailoy#readme",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">= 18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brekkylab/ailoy.git",
+    "directory": "bindings/node"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "os": [
+    "win32"
+  ]
+}
