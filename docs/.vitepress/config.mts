@@ -13,10 +13,7 @@ export default defineConfig({
     logo: '/img/ailoy-logo-letter.png',
     siteTitle: false,
 
-    nav: [
-      { text: 'Quick start', link: '/guide/quick-start' },
-      { text: 'Examples', link: '/guide/examples' },
-    ],
+    nav: [{ text: 'Guide', link: '/guide/quick-start', activeMatch: '/guide/' }],
 
     sidebar: {
       '/guide/': [
@@ -24,6 +21,8 @@ export default defineConfig({
           text: 'Guide',
           items: [
             { text: 'Quick start', link: '/guide/quick-start' },
+            { text: 'Message format', link: '/guide/message-format' },
+            { text: 'Model providers', link: '/guide/model-providers' },
             { text: 'Examples', link: '/guide/examples' },
           ],
         },
