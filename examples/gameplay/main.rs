@@ -1,8 +1,8 @@
 //! An agent that plays OpenTTD, running in a console, while you watch it over VNC.
 //!
 //! ```sh
-//! cargo run --example openttd
-//! cargo run --example openttd -- "Connect every town over 1000 people by air"
+//! cargo run --example gameplay
+//! cargo run --example gameplay -- "Connect every town over 1000 people by air"
 //! ```
 //!
 //! [OpenTTD](https://www.openttd.org) is the open-source game after Transport Tycoon Deluxe,
@@ -119,7 +119,7 @@ async fn main() -> anyhow::Result<()> {
     let save = std::env::var("OPENTTD_SAVE").unwrap_or_default();
 
     // Absolute, because a mount is named to the server as a `file://` URL.
-    let project_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/openttd");
+    let project_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/gameplay");
     let artifacts = project_path.join("artifacts");
     std::fs::create_dir_all(&artifacts)
         .with_context(|| format!("creating {}", artifacts.display()))?;
@@ -205,6 +205,7 @@ async fn main() -> anyhow::Result<()> {
             .image(Recipe::new("python:3.12-slim-trixie"))
             .mount_readonly(project_path.join("skill"), "/skills/openttd")
             .mount(artifacts, "/artifacts")
+            .network(true)
             .build()
             .await
             .with_context(|| "starting the agent's console")?,
