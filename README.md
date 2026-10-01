@@ -209,7 +209,7 @@ async fn main() -> anyhow::Result<()> {
 
 ...Or skip the reading: point your coding agent (Claude Code, Codex, Cursor, ...) at this README and tell it what agent you want to build.
 
-## What can a agent do?
+## What can an agent do?
 
 Rust examples are in [`examples/`](./examples) and run with `cargo run --example <name>`.
 
