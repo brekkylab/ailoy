@@ -307,12 +307,9 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
     to_value!({"role": item.role.to_string(), "content": contents})
 }
 
-/// Whether the model takes an image only as a block of the user message, and not inside a
-/// `toolResult`. Bedrock's OpenAI models answer an image in a tool result with a 400 ("This
-/// model doesn't support the image field for user messages") and take the same image beside
-/// it, so for them [`lift_tool_result_images`] moves it there. Only a model named in the id
-/// is recognized: `openai.…` or `<geo>.openai.…`. An application inference-profile ARN hides
-/// the model and goes through unchanged.
+/// Whether the model takes an image only beside a tool result, not inside `toolResult`:
+/// Bedrock's OpenAI models answer the latter with a 400, so [`lift_tool_result_images`]
+/// moves the images for them.
 fn takes_images_outside_tool_results(model: &str) -> bool {
     names_vendor(model, "openai")
 }
@@ -368,8 +365,7 @@ fn lift_tool_result_images(messages: &mut Value) {
 /// assistant alternation, and several tool results after one assistant turn
 /// would otherwise be several `user` messages in a row.
 ///
-/// Thinking is replayed only for assistant turns after the last user message,
-/// the same rule the Anthropic marshal applies.
+/// Thinking is replayed only for assistant turns after the last user message.
 fn marshal_messages(messages: &[Message]) -> Value {
     let last_user_index = messages
         .iter()
@@ -593,15 +589,8 @@ impl BedrockUnmarshal {
     }
 }
 
-/// Events arrive as `{"<eventType>": body}` (see
-/// [`frame_to_event_data`](crate::lang_model::r#impl::framing::eventstream::frame_to_event_data));
-/// each maps onto the same delta fragments the Anthropic stream produces:
-/// - `messageStart`: role
-/// - `contentBlockStart`: begins a `toolUse` call (id + name)
-/// - `contentBlockDelta`: text / reasoning / signature / tool-input fragment
-/// - `messageStop`: `stopReason`
-/// - `metadata`: usage
-/// - `contentBlockStop` and unknown events: no delta
+/// Each event is a single-key `{"<eventType>": body}` object; `contentBlockStop` and
+/// unknown events yield no delta.
 impl Unmarshal<MessageDeltaOutput> for BedrockUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;
@@ -997,7 +986,7 @@ mod tests {
         let v = marshal(&req);
         let turn = v["body"]["messages"][2]["content"].as_array().unwrap();
 
-        // The three results first, as before, then each image after its call's name.
+        // The three results first, in order, then each image after its call's name.
         let ids: Vec<_> = turn[..3]
             .iter()
             .map(|b| &b["toolResult"]["toolUseId"])

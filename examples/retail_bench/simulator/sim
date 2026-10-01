@@ -100,8 +100,8 @@ SKIPPED = {
 
 # ── what the data half is ─────────────────────────────────────────
 
-# Store-level files, relative to the dataset root. `{set}` is `dynamic` or
-# `still`; the config names these paths and `serve.py` only prefixes them.
+# Store-level files, relative to the dataset root, as the config names them.
+# `{set}` is `dynamic` or `still`.
 STORE_FILES = [
     "data/{set}/simulate_data/{store}/sku_model_parameter.json",
     "data/{set}/simulate_data/{store}/upc.json",
@@ -370,8 +370,8 @@ def config_for(which: str) -> dict[str, Any]:
 def roster(which: str, limit: int) -> list[tuple[str, str]]:
     """The SKUs the store trades, as `(sku_id, category_directory)`.
 
-    The same intersection the simulator takes: a SKU needs demand parameters
-    *and* a category the config selected. Both files have to be fetched first,
+    A SKU is traded when it has demand parameters *and* a category the config
+    selected. Both files have to be fetched first,
     which is why the store files come before this in every command below.
     """
     base = DATA / f"data/{which}/simulate_data/{STORE}"
@@ -404,7 +404,7 @@ def roster(which: str, limit: int) -> list[tuple[str, str]]:
 
 
 def manifest_data(which: str, skus: list[str], full: bool, without: list[str] | None = None) -> None:
-    """What was fetched, beside the data, for `serve.py` to hold the run to.
+    """What was fetched, written beside the data so the run is held to it.
 
     A partial fetch has to become a partial store: without this the environment
     builds every SKU the parameter file names, and the ones whose supplier file

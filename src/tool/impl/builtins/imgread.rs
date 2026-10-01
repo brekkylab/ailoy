@@ -54,8 +54,8 @@ pub fn get_imgread_tool_func() -> ToolFunc {
                 return error_message(id, "missing required parameter: path", "validation");
             };
 
-            // Same single-`read` contract as the `read` tool: a short answer means
-            // the file is bigger than one message carries.
+            // One `read` must reach the end: a short answer means the file is
+            // bigger than one message carries.
             let bytes = match console.read(path_str, None, None).await {
                 Ok(r) if (r.data.len() as u64) < r.size => {
                     return error_message(
@@ -133,7 +133,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_imgread_returns_image_part() {
-        // Minimal 1x1 red PNG (valid PNG bytes)
+        // Minimal 1x1 red PNG
         let png: &[u8] = &[
             0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
             0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,

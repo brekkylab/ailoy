@@ -58,8 +58,7 @@ pub fn get_shell_tool_func() -> ToolFunc {
             }
         };
 
-        // Seconds, whole or not, as the model gives them; 0 or none is no bound of the call's
-        // own, which leaves it to whatever the console was built with.
+        // Fractional seconds allowed; 0 or absent defers to the console's own timeout.
         let timeout_ms = args
             .pointer("/timeout_secs")
             .and_then(|v| v.as_float().or_else(|| v.as_unsigned().map(|u| u as f64)))
@@ -97,9 +96,8 @@ pub fn get_shell_tool_func() -> ToolFunc {
             "stderr": middle_truncate(stderr, MAX_OUTPUT_CHARS).as_str(),
             "exit_code": out.code as i64,
             "timed_out": false,
-            // The console cut the output because it would not fit one message. Said
-            // out loud, because a model reading a partial result it believes is whole
-            // draws a conclusion from it.
+            // The console cut output that would not fit one message. Said out loud,
+            // since a model that takes a partial result as whole draws conclusions from it.
             "truncated": out.truncated
         })
     })

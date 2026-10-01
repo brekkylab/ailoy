@@ -1,9 +1,8 @@
 /// Suppress panic hook output for the duration of the enclosing scope.
 ///
-/// Rust's panic hook fires before `catch_unwind` catches a panic, so
-/// intentional panics in tests produce spurious "panicked at ..." lines.
-/// This macro replaces the hook with a no-op and restores the original
-/// hook when the binding is dropped (including on assertion failure).
+/// The panic hook fires before `catch_unwind`, so intentional test panics print spurious
+/// "panicked at ..." lines. The original hook is restored on drop, including on
+/// assertion failure.
 #[macro_export]
 macro_rules! suppress_panics {
     () => {

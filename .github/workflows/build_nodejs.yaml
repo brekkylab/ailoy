@@ -42,7 +42,6 @@ jobs:
       publish: ${{ inputs.publish }}
     secrets: inherit
 
-  # Build main package
   build-main:
     needs: [build-linux, build-macos, build-windows]
     uses: ./.github/workflows/build_nodejs_main.yaml

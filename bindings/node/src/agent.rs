@@ -1,34 +1,19 @@
 //! `AgentBuilder`, `Agent`, and the turn an `Agent` runs.
 //!
-//! # Where the agent lives
+//! A promise's future must be `'static`, but [`Agent::run`] borrows the agent for as long as
+//! the turn's stream lives. So the agent sits behind an `Arc<Mutex<..>>` and a turn holds the
+//! lock's owned guard in its stream, which also makes a second `run` wait for the first to
+//! finish, as `&mut self` would in Rust.
 //!
-//! A promise's future has to be `'static`, so it cannot borrow the object it was started
-//! from — and [`Agent::run`] borrows the agent for as long as the turn's stream lives. The
-//! agent is therefore behind an `Arc<Mutex<..>>`, and a turn holds the lock's *owned* guard
-//! inside its stream. Which also makes turns take turns, as `&mut self` does in Rust: a second
-//! `run` started while one is being iterated waits for it to finish before it begins.
+//! `AgentBuilder.console` puts a cortex `ConsoleClient`'s slot (the slot, not its contents) in
+//! the agent's state. The `ConsoleClient` stays usable: its calls and the agent's tools take
+//! turns on the one lock, the agent starts and stops its backend around each batch of tool
+//! calls, and `ConsoleClient.close()` ends the session for both.
 //!
-//! # Where the console lives
-//!
-//! `AgentBuilder.console` takes a cortex `ConsoleClient` and puts its slot in the agent's state —
-//! the slot itself, not what is in it. The `ConsoleClient` object stays usable: its calls and the
-//! agent's tools take turns on the one lock, and the agent starts and stops its backend
-//! around each batch of tool calls, as the Rust agent does. `ConsoleClient.close()` ends the session
-//! for both.
-//!
-//! # How a turn is iterated
-//!
-//! `run` hands back an `AgentRun`, whose `next()` and `return()` are an async iterator's; the
-//! package's `index.js` gives the class its `Symbol.asyncIterator`, so `for await` takes it.
-//! Not napi's own async-iterator support, because that rejects with napi's status as the
-//! error's `code`, and the codes a caller acts on are ailoy's and cortex's.
-//!
-//! # How it ends
-//!
-//! Dropping an agent may drop the last hold on its console, and a console says `quit` only
-//! when it is dropped on a runtime — which a garbage-collection finalizer is not on. So
-//! [`OnRuntime`] keeps the handle of the runtime the agent was built on and enters it before
-//! letting go, for the agent and for a turn's stream alike.
+//! `AgentRun`'s `next()` and `return()` are an async iterator's, and the package's `index.js`
+//! gives the class `Symbol.asyncIterator` so `for await` takes it. napi's own async-iterator
+//! support is not used because it rejects with napi's status as the `code`, and the codes a
+//! caller acts on are ailoy's and cortex's.
 
 use std::sync::Arc;
 
@@ -55,7 +40,9 @@ use crate::{
     error::{self, Result, invalid, unsigned},
 };
 
-/// A value let go of on the runtime it was made on — see the module docs.
+/// A value let go of on the runtime it was made on. Dropping an agent or a turn's stream may
+/// drop the last hold on its console, which says `quit` only when dropped on a runtime, and a
+/// garbage-collection finalizer is not on one.
 struct OnRuntime<T> {
     value: Option<T>,
     runtime: Handle,
@@ -79,8 +66,8 @@ impl<T> Drop for OnRuntime<T> {
 
 /// An [`AgentBuilder`], filled in place and emptied by `build()`.
 ///
-/// In place rather than by value, as cortex's `ConsoleClientBuilder` is: the Rust builder is
-/// consumed by each call and is not `Clone`, so there is exactly one of it to hand along.
+/// In place rather than by value: the Rust builder is consumed by each call and is not
+/// `Clone`, so there is exactly one of it to hand along.
 /// Each method returns the same object so calls chain as they do in Rust.
 #[napi(js_name = "AgentBuilder")]
 pub struct JsAgentBuilder(Option<AgentBuilder>);
@@ -385,11 +372,8 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<It
 
 #[napi]
 impl JsAgent {
-    /// An agent from a spec — the object an `AgentSpec` serializes to — for a caller who holds
-    /// one rather than building it up.
-    ///
-    /// `options` may name the `agentProvider` (`'default'` unless it does), the `history` to
-    /// start from, the `console` to share and the `memory` file to remember into.
+    /// An agent from a spec (the object an `AgentSpec` serializes to). `options.agentProvider`
+    /// defaults to `'default'`; `memory` is the file to remember into.
     #[napi(
         ts_args_type = "spec: AgentSpec, options?: { agentProvider?: string; history?: Array<Message>; console?: ConsoleClient; memory?: string }",
         ts_return_type = "Promise<Agent>"

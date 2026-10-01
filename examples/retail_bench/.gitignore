@@ -1,4 +1,4 @@
-# Fetched, built or written by a run — see main.rs.
+# Fetched, built or written by a run.
 .cache
 runs
 simulator/upstream

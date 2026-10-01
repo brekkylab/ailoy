@@ -11,12 +11,11 @@ use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
 };
 
-/// Prefix applied to every subagent tool's descriptor name so callers can
-/// identify subagent tool calls without additional metadata.
-/// The card name (and therefore `source_agent`) is left unchanged.
+/// Prefix on every subagent tool name, so subagent calls are identifiable without extra
+/// metadata. The card name (and so `source_agent`) is unprefixed.
 pub const SUBAGENT_TOOL_PREFIX: &str = "subagent_";
 
-/// Returns the tool-descriptor name for a subagent card (prefixed form).
+/// The prefixed tool name for a subagent card.
 pub fn subagent_tool_name(card: &AgentCard) -> String {
     format!("{}{}", SUBAGENT_TOOL_PREFIX, card.name)
 }
@@ -50,28 +49,17 @@ pub fn get_subagent_tool_desc(card: &AgentCard) -> ToolDesc {
         .build()
 }
 
-/// Build a one-shot [`ToolFunc`] that materialises a fresh sub-agent from the
-/// supplied [`AgentSpec`] every time the tool is invoked, runs it for one turn,
-/// then drops it.
+/// A [`ToolFunc`] that builds a fresh sub-agent from `spec` per call and runs it for one turn,
+/// streaming every [`MessageOutput`], then a `Role::Tool` message with its last answer, all
+/// tagged with [`AgentCard::name`] as `source_agent`.
 ///
-/// The closure captures only owned, cheaply-cloneable values: the spec, the
-/// agent-provider name (a [`String`]), the shared machine, and the card name.
-/// The provider name is re-resolved against [`get_agent_providers`] on every
-/// invocation via [`Agent::try_with_provider_and_state`], so the registry
-/// entry must stay live for the parent agent's lifetime.
-///
-/// The returned function:
-/// 1. Streams every [`MessageOutput`](crate::message::MessageOutput) produced by
-///    the sub-agent during its turn, with `source_agent` already set to the
-///    sub-agent's [`AgentCard::name`].
-/// 2. Emits a final `Role::Tool` message whose value content is the sub-agent's
-///    last assistant answer, also tagged with `source_agent`.
+/// `provider` is re-resolved from [`get_agent_providers`](crate::agent::get_agent_providers)
+/// per call, so it must stay registered for the parent agent's lifetime.
 pub fn get_subagent_tool_func(
     spec: AgentSpec,
     provider: String,
     console: Arc<Mutex<Option<ConsoleClient>>>,
 ) -> ToolFunc {
-    // Capture the card name once; it's needed on every synthesised MessageOutput.
     let card_name = spec.card.as_ref().map(|c| c.name.clone());
 
     ToolFunc::new(move |args: Value, id: String| {
@@ -101,8 +89,7 @@ pub fn get_subagent_tool_func(
                 }
             };
 
-            // Build a fresh Agent for this invocation, sharing the parent's console
-            // slot so filesystem state stays consistent across the call.
+            // Shares the parent's console slot so both see the same filesystem.
             let state = AgentState::new().with_console_slot(console);
             let mut agent = match Agent::try_with_provider_and_state(spec, &provider, state).await {
                 Ok(a) => a,
@@ -139,8 +126,7 @@ pub fn get_subagent_tool_func(
                                     .collect::<Vec<_>>()
                                     .join("");
                             }
-                            // Yield the full MessageOutput so source_agent (stamped by the
-                            // sub-agent's own Agent::run) is preserved through to the parent.
+                            // Forwarded whole to keep the source_agent the sub-agent stamped.
                             yield output;
                         }
                         Err(e) => {

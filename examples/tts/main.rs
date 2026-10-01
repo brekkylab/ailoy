@@ -7,35 +7,26 @@
 //!
 //! [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) 1.7B VoiceDesign speaks ten languages,
 //! Korean among them, in a voice an instruction describes, such as "a calm woman in her thirties,
-//! speaking slowly". It is three models, all of them here, converted from the checkpoint by
-//! `prepare_model.py`: the talker, a Qwen3 LM that reads the instruction and the text and makes
-//! each frame's first code; the code predictor, which makes the frame's other 15; and the codec's
-//! decoder, which turns the frames into a 24 kHz waveform.
+//! speaking slowly". It is three models, all converted from the checkpoint by `prepare_model.py`:
+//! the talker, a Qwen3 LM that reads the instruction and the text and makes each frame's first
+//! code; the code predictor, which makes the frame's other 15; and the codec's decoder, which
+//! turns the frames into a 24 kHz waveform.
 //!
-//! There is no prompt. What to say and how are two files in the context folder, `text.txt` and
-//! `instruct.txt`, and the agent reads them, speaks the text in that voice and hands back the
-//! WAV.
+//! There is no prompt: the agent reads `text.txt` and `instruct.txt` from the context folder,
+//! speaks the text in that voice and hands back the WAV.
 //!
-//! The skill is `SKILL.md` and `run_tts.py`, mounted at `/skills/tts` from memory, which the
-//! agent runs with its `shell` tool.
+//! The skill (`SKILL.md`, `run_tts.py`) is mounted from memory at `/skills/tts`.
 //!
-//! * `context/` at `/context`, read-only — the text and the instruction. When it is empty or
-//!   missing, `context_example/` is copied into it first.
+//! * `context/` at `/context`, read-only — the text and the instruction.
 //! * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes.
-//!
-//! The image is Debian rather than Alpine because PyPI's ncnn wheels are manylinux (glibc)
-//! only. `mesa-vulkan-drivers` carries the venus ICD the guest needs — from trixie-backports,
-//! as the other ncnn examples have it — and `libvulkan1` the loader the wheel opens.
 //!
 //! Qwen3-TTS and its weights are the Qwen team's, under Apache-2.0.
 //!
-//! Environment:
+//! Environment, also read from `.env`:
 //!
-//! * `UV` — the `uv` binary `prepare_model.py` runs with, `uv` on `PATH` by default.
+//! * `UV` — the `uv` binary `prepare_model.py` runs with; `uv` on `PATH` by default.
 //! * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its provider's
-//!   API key has to be set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …).
-//!
-//! Read from `.env` as well.
+//!   API key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …).
 
 use std::{io::Write as _, path::Path};
 
@@ -46,10 +37,9 @@ use ailoy::{
 };
 use anyhow::Context as _;
 use cortex::{fs::Directory, image::Recipe};
-// One host binding per platform, each mounting on `try_new` and unmounting on `Drop`, so
-// the tree below is written once. Three arms and not `not(windows)` because the guards are
-// three distinct types: cortex's default `mount` feature compiles the one binding its target
-// has — Dokany on Windows, `fuser` on Linux, FUSE-T on macOS — and names the guard after it.
+// One host binding per platform (mounts on `try_new`, unmounts on `Drop`), so the tree
+// below is written once. Three arms, not `not(windows)`: cortex's default `mount` feature
+// compiles only its target's binding, each a distinct guard type.
 #[cfg(windows)]
 use cortex::fs::DokanMount as HostMount;
 #[cfg(target_os = "linux")]
@@ -98,10 +88,11 @@ async fn main() -> anyhow::Result<()> {
     .system_tools()
     .console(
         ConsoleClient::builder()
+            // Debian, not Alpine: PyPI's ncnn wheels are manylinux (glibc) only.
             .image(
                 Recipe::new("python:3.12-slim-trixie")
-                    // Mesa from backports, 26.0 against trixie's 25.0, as the other ncnn examples
-                    // have it.
+                    // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader
+                    // the wheel opens. Mesa from backports: 26.0 against trixie's 25.0.
                     .step(
                         "echo 'deb http://deb.debian.org/debian trixie-backports main' \
                         > /etc/apt/sources.list.d/backports.list \

@@ -43,9 +43,6 @@ impl DuckDuckGo {
 
         let parser = SearchResultParser::new(
             ".no-results",
-            // Select only web-result blocks inside the #links container.
-            // Ads appear outside #links (or carry "result--ad") so this selector
-            // naturally excludes them.
             "#links .web-result",
             // Placeholder – title extraction is done via title_url_selector below.
             "h2.result__title",
@@ -138,14 +135,9 @@ impl SearchEngine for DuckDuckGo {
         query: &str,
         max_results: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
-        // POST to html.duckduckgo.com/html/ – the no-JS endpoint.
-        //
-        // Key headers required to avoid bot-detection (202 CAPTCHA challenge):
-        //   • Sec-Fetch-{Dest,Mode,Site,User} – mimic a real browser form submit
-        //   • Referer set to the DDG HTML page (Referrer-Policy: origin)
-        //
-        // Sending `kl=wt-wt` (all regions) gives broader results than an empty
-        // string.  `b=""` is the first-page marker; omit `df` for no date filter.
+        // No-JS endpoint. Sec-Fetch-* and Referer mimic a browser form submit to
+        // avoid the 202 bot challenge. `kl=wt-wt` (all regions) broadens results,
+        // `b=""` marks page one, and no `df` means no date filter.
         let response = client
             .post("https://html.duckduckgo.com/html/")
             .form(&[("q", query), ("b", ""), ("kl", "wt-wt")])
@@ -228,8 +220,6 @@ mod tests {
 
     #[test]
     fn test_parser_excludes_ads() {
-        // Ads appear OUTSIDE #links (or with result--ad class) so the
-        // `#links .web-result` selector naturally skips them.
         let engine = DuckDuckGo::new().expect("Failed to create DuckDuckGo engine");
         // Ad lives outside #links
         let html = r#"<html><body>
