@@ -42,6 +42,7 @@ All you need is an API key for the LLM provider you want to use.
 
 The only exception is cortex's virtual filesystem feature, which relies on host mounts and therefore needs FUSE support:
 install [FUSE-T](https://www.fuse-t.org/) on macOS or [Dokany](https://github.com/dokan-dev/dokany) on Windows.
+Neither is needed to build or load ailoy: without one, everything else still works, and a mount fails with an error that says what to install.
 See the [cortex README](https://github.com/brekkylab/cortex) for details.
 
 ## Quick start

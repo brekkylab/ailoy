@@ -11,8 +11,6 @@ crate-type = ["cdylib"]
 
 [build-dependencies]
 napi-build = "2"
-# The rpath libfuse-t needs on macOS — see `build.rs`.
-pkg-config = "0.3"
 
 [dependencies]
 ailoy = { path = "../.." }
