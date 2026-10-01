@@ -30,10 +30,8 @@ impl Bing {
         })
     }
 
-    /// Bing sometimes wraps the real URL in a tracking redirect of the form
-    ///   https://www.bing.com/ck/a?...&u=a1<base64url-no-pad>&...
-    /// Decode the `u` query parameter: strip the "a1" prefix, then
-    /// base64url-decode to recover the original URL.
+    /// Unwraps Bing's `https://www.bing.com/ck/a?...&u=a1<base64url-no-pad>`
+    /// tracking redirect; other hrefs pass through.
     fn decode_bing_redirect(href: &str) -> String {
         if !href.starts_with("https://www.bing.com/ck/a?") {
             return href.to_string();
@@ -82,25 +80,19 @@ impl SearchEngine for Bing {
         query: &str,
         max_results: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
-        // Use wreq with Firefox TLS fingerprint emulation.
-        // Bing/Cloudflare uses JA3 TLS fingerprinting to detect bots.
-        // Standard Rust TLS backends (native-tls / rustls) have fingerprints that
-        // are blocked, while Firefox's TLS ClientHello passes.
-        // wreq with Emulation::Firefox135 replicates the Firefox TLS handshake.
+        // Bing/Cloudflare JA3 fingerprinting blocks the native-tls/rustls
+        // ClientHello but passes Firefox's, which wreq emulates.
         let rq_client = wreq::Client::builder()
             .emulation(Emulation::Firefox135)
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .map_err(|e| SearchError::Parse(e.to_string()))?;
 
-        // A homepage pre-fetch seeds cookies (e.g. _EDGE_S=F=1&SID=...) that
-        // cause Bing to switch to JS-rendered results with no SSR b_algo nodes.
-        // Without prior cookies, Bing serves server-side-rendered results directly.
-        //
-        // nfpr=1 disables Bing's automatic query reformulation (spell correction),
-        // which would otherwise silently rewrite short/uncommon terms like "ailoy"
-        // into a different word and return completely irrelevant results.
-        // Locale is left to Bing's geolocation so results match the user's region.
+        // No homepage pre-fetch: its cookies (e.g. _EDGE_S) switch Bing to
+        // JS-rendered results with no SSR b_algo nodes.
+        // nfpr=1 stops spell correction from rewriting rare terms (e.g. "ailoy")
+        // into unrelated queries. Locale is left to geolocation so results match
+        // the user's region.
         let url = format!(
             "https://www.bing.com/search?q={}&adlt=off&nfpr=1",
             urlencoding::encode(query)
@@ -157,11 +149,9 @@ impl SearchEngine for Bing {
                 continue;
             }
 
-            // Decode Bing tracking redirects to recover the real destination URL.
             let url = Self::decode_bing_redirect(href);
 
-            // Description: text from .b_caption p, skipping decorative icon spans
-            // (<span class="algoSlug_icon">) that Bing injects into snippet text.
+            // Skip the decorative <span class="algoSlug_icon"> Bing injects into snippets.
             let description = item
                 .select(&self.sel_caption)
                 .flat_map(|p| {

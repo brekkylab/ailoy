@@ -14,17 +14,16 @@ napi-build = "2"
 
 [dependencies]
 ailoy = { path = "../.." }
-# For `Failure`, which is how a console's refusal arrives inside an agent's error. The same
-# crate as `ailoy`'s own dependency on it, so the type is the one ailoy's errors carry.
+# For `Failure`, a console's refusal inside an agent's error. Must be the same crate `ailoy`
+# depends on, so the type matches the one ailoy's errors carry.
 cortex = { path = "../../../cortex", default-features = false }
-# cortex's JavaScript classes, linked into this addon rather than loaded from cortex's own. A
-# `ConsoleClient` has to be one this addon can take apart to hand to an agent, and a `ConsoleClient` built
-# by another addon is a copy of cortex this one cannot see into — see the `rlib` in that
-# crate's manifest. napi registers its classes here just by its being linked.
+# cortex's JavaScript classes, linked into this addon (napi registers them on link) rather than
+# loaded from cortex's own: a `ConsoleClient` built by another addon is an opaque copy of cortex
+# this addon cannot unwrap to hand to an agent. cortex-node builds an `rlib` for this.
 cortex-node = { path = "../../../cortex/bindings/node", default-features = false }
 # `serde-json` for `Env::to_js_value`/`from_js_value`: messages, specs and tool arguments cross
-# as the objects their serde form already is, rather than as a mirror of each type — ailoy's
-# JSON shape *is* its interface. The rest is what cortex's binding asks for, so the two agree.
+# as their serde objects, not per-type mirrors — ailoy's JSON shape *is* its interface. The
+# other features match cortex-node's so the two agree.
 napi = { version = "3", default-features = false, features = ["napi8", "async", "tokio_rt", "serde-json"] }
 napi-derive = "3"
 anyhow = "1"
@@ -35,7 +34,7 @@ tokio = { version = "1", features = ["sync", "rt"] }
 url = "2.5"
 
 [features]
-# `mount` by default, as cortex's own binding has it: `HostMount` is what gives an agent a
-# directory held in memory, and it needs the host's FUSE provider — see cortex's README.
+# `mount` on by default: `HostMount` gives an agent a directory held in memory, and needs the
+# host's FUSE provider (setup in cortex's README).
 default = ["mount"]
 mount = ["cortex-node/mount"]

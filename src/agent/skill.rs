@@ -8,13 +8,12 @@ use crate::lang_model::model_family;
 
 /// The skills in `dirs`, as the section of the system message that lists them.
 ///
-/// The catalog the Agent Skills integration guide describes: each skill's `name`,
-/// `description` and `location` (its `SKILL.md`), after a few lines on how to load one.
-/// Only the frontmatter goes in; the body is the agent's to read when a task calls for
-/// the skill.
+/// Per the Agent Skills integration guide: a short preamble, then each skill's `name`,
+/// `description` and `location` (its `SKILL.md`). Only frontmatter is included; the agent
+/// reads the body when it uses the skill.
 ///
-/// In the shape `model` reads best: an `<available_skills>` block for Claude, which is
-/// trained on XML-tagged prompts, and a Markdown list for every other model.
+/// An `<available_skills>` XML block for Claude (trained on XML-tagged prompts), a
+/// Markdown list otherwise.
 pub(super) async fn render_skills(
     dirs: &[String],
     console: &Mutex<Option<ConsoleClient>>,
@@ -94,8 +93,7 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// The whole of the file at `path` in the console, asked for again from where the last
-/// piece ended for as long as the file is longer than what has arrived.
+/// Read the whole file at `path`, re-requesting from the current offset until `size` is reached.
 async fn read_to_string(console: &mut ConsoleClient, path: &str) -> anyhow::Result<String> {
     let mut data = Vec::new();
     loop {
@@ -111,8 +109,8 @@ async fn read_to_string(console: &mut ConsoleClient, path: &str) -> anyhow::Resu
 
 /// The `name` and `description` in the YAML frontmatter that opens a `SKILL.md`.
 ///
-/// Only one line per field, which is all a skill's frontmatter holds, so no YAML parser:
-/// a value is taken as it stands, with quotes around it dropped.
+/// No YAML parser: skill frontmatter fields are single-line, so a value is taken verbatim
+/// minus surrounding quotes.
 fn frontmatter(text: &str) -> anyhow::Result<(String, String)> {
     let mut lines = text.lines();
     anyhow::ensure!(

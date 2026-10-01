@@ -1,29 +1,18 @@
 //! `mem_search` and `mem_insert` — an agent's own memory, as two tools.
 //!
-//! # Why these are not built-ins
-//!
-//! Every tool in [`builtins`](super::builtins) is registered by name in a
-//! [`ToolProvider`](crate::tool::ToolProvider) and resolved from an
-//! [`AgentSpec`](crate::agent::AgentSpec), which works because the spec carries
-//! everything the tool needs. These two need one thing more: *which* store, and that is
-//! not a name in a registry — it is a [`Memory`] a caller handed to one agent.
-//!
-//! So the store is captured in the closure rather than asked for in the arguments. The
-//! model never names a memory file, cannot name a different one, and does not have to be
-//! told in the prompt which one is its own. An agent that was given a memory gets these
-//! two tools for it; one that was not, does not — see
-//! [`Agent::try_with_provider_and_state`](crate::agent::Agent::try_with_provider_and_state).
+//! Not built-ins: a registry entry resolves from the [`AgentSpec`](crate::agent::AgentSpec)
+//! alone, but these also need *which* store, a [`Memory`] a caller handed to one agent. So
+//! the store is captured in the closure rather than taken as an argument: the model never
+//! names a memory file and cannot name another. Only an agent given a memory gets these
+//! tools — see [`Agent::try_with_provider_and_state`](crate::agent::Agent::try_with_provider_and_state).
 
 use crate::{
     memory::Memory,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
 };
 
-/// How many memories a search answers with when the caller does not say.
-///
-/// `mem`'s own default is the same number. Spelled here because it goes in the
-/// description the model reads, and a description that disagreed with the command would
-/// be worse than none.
+/// Matches `mem`'s own default; spelled here because it goes in the model-facing
+/// description, which must agree with the command.
 const DEFAULT_LIMIT: i64 = 10;
 
 pub fn get_mem_search_tool_desc() -> ToolDesc {
@@ -55,10 +44,7 @@ pub fn get_mem_search_tool_desc() -> ToolDesc {
         .build()
 }
 
-/// The `mem_search` tool for `memory`.
-///
-/// One store per tool, captured here — see the module docs for why the model is not asked
-/// for a path.
+/// The `mem_search` tool bound to `memory`.
 pub fn get_mem_search_tool_func(memory: Memory) -> ToolFunc {
     crate::tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value
         with [memory = memory.clone()]
@@ -85,9 +71,8 @@ pub fn get_mem_search_tool_func(memory: Memory) -> ToolFunc {
             }
         };
 
-        // Bounded here rather than by `mem -n`: the limit is the model's to raise and the
-        // store answers in nearest-first order either way, so taking the front of the
-        // answer is the same list a smaller `-n` would have returned.
+        // Truncated here rather than via `mem -n`: results are nearest-first, so the
+        // front of the answer is what a smaller `-n` would have returned.
         let count = found.len().min(limit);
         crate::to_value!({
             "memories": crate::datatype::Value::array(found.into_iter().take(limit)),
@@ -127,10 +112,8 @@ pub fn get_mem_insert_tool_func(memory: Memory) -> ToolFunc {
     crate::tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value
         with [memory = memory.clone()]
     {
-        // An array, and only an array. A bare string would be one memory and is tempting
-        // to accept, but a model that meant two and wrote them into one string would have
-        // that stored as a single memory, word for word — which is exactly what this tool
-        // promises and exactly the wrong result. The refusal names the shape instead.
+        // Arrays only: a model that packed two memories into one string would have them
+        // stored verbatim as one. The refusal names the expected shape instead.
         let Some(memories) = args.pointer("/memories").and_then(|v| v.as_array()) else {
             return crate::to_value!({
                 "error": "missing required parameter: memories (an array of strings)",

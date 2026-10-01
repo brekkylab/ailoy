@@ -15,10 +15,7 @@ pub struct PartFunction {
     pub arguments: Value,
 }
 
-/// Represents the image data contained in a [`Part`].
-///
-/// `PartImage` provides structured access to image data.
-/// Currently, it only implments "binary" types.
+/// Image data in a [`Part`]: embedded bytes or a URL.
 ///
 /// # Example
 /// ```rust
@@ -33,17 +30,10 @@ pub enum PartImage {
     Url { url: String },
 }
 
-/// Represents a semantically meaningful content unit exchanged between the model and the user.
-///
-/// Conceptually, each `Part` encapsulates a piece of **data** that contributes
-/// to a chat message — such as text, a function invocation, or an image.  
-///
-/// For example, a single message consisting of a sequence like  
-/// `(text..., image, text...)` is represented as a `Message` containing
-/// an array of three `Part` elements.
-///
-/// Note that a `Part` does **not** carry "intent", such as "reasoning" or "tool call".
-/// These higher-level semantics are determined by the context of a [`Message`].
+/// One content unit of a message (text, function call, value, image); a
+/// `(text, image, text)` message is three parts. A part carries no intent such
+/// as reasoning or tool call; that comes from its place in the
+/// [`Message`](crate::message::Message).
 ///
 /// # Example
 ///
@@ -60,33 +50,13 @@ pub enum Part {
     /// Plain utf-8 encoded text.
     Text { text: String },
 
-    /// Represents a structured function call to an external tool.
-    ///
-    /// Many language models (LLMs) use a **function calling** mechanism to extend their capabilities.
-    /// When an LLM decides to use external *tools*, it produces a structured output called a `function`.
-    /// A function conventionally consists of two fields: a `name`, and an `arguments` field formatted as JSON.
-    /// This is conceptually similar to making an HTTP POST request, where the request body carries a single JSON object.
-    ///
-    /// This struct models that convention, representing a function invocation request
-    /// from an LLM to an external tool or API.
-    ///
-    /// # Examples
-    /// ```rust
-    /// # use ailoy::message::PartFunction;
-    /// # use ailoy::to_value;
-    /// let f = PartFunction {
-    ///     name: "translate".to_string(),
-    ///     arguments: to_value!({"source": "hello", "lang": "cn"}),
-    /// };
-    /// ```
+    /// A tool call requested by the model; `id` pairs it with its result.
     Function { id: String, function: PartFunction },
 
     /// Holds a structured data value, typically considered as a JSON structure.
     Value { value: Value },
 
-    /// Contains an image payload or reference used within a message part.
-    /// The image may be provided as raw binary data or an encoded format (e.g., PNG, JPEG),
-    /// or as a reference via a URL. Optional metadata can be included alongside the image.
+    /// An image, embedded or by URL.
     Image { image: PartImage },
 }
 

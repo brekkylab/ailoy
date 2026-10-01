@@ -168,7 +168,6 @@ impl Marshal<LangModelRequest<'_>> for OpenAIMarshal {
         let LangModelProviderElem::API { url, api_key, .. } = req.provider;
         let options = req.options;
 
-        // Extract system instruction from system message if present
         let instructions = req
             .messages
             .iter()
@@ -291,10 +290,7 @@ impl super::QuotaClassifier for OpenAIUnmarshal {
     }
 }
 
-/// Parses one Responses API SSE event (`response.*`) into a delta: incremental
-/// text (`output_text.delta`), reasoning (`reasoning_summary_text.delta`), and
-/// whole function calls (`output_item.done`); `response.completed` reuses the
-/// full-response `Unmarshal` for finish_reason + usage. Other events: no delta.
+/// Parses one Responses API `response.*` SSE event into a delta; lifecycle events yield none.
 impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;
@@ -319,10 +315,9 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
                         text: text.to_owned(),
                     }]);
             }
-            // Incremental reasoning summary -> thinking. Set the role too (like
-            // output_text.delta): a reasoning model truncated mid-reasoning emits
-            // only reasoning before the terminal event, and without a role the
-            // accumulated message makes finish() bail with "Role not specified".
+            // Incremental reasoning summary -> thinking. Also sets the role: a
+            // reasoning model truncated mid-reasoning emits only reasoning before
+            // the terminal event, and a role-less message fails finish().
             "response.reasoning_summary_text.delta" => {
                 let Some(text) = val.pointer("/delta").and_then(|v| v.as_str()) else {
                     return Ok(None);
@@ -405,7 +400,6 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("Root should be an object"))?;
 
-        // Parse finish reason from status
         let status = root
             .get("status")
             .and_then(|v| v.as_str())
@@ -432,7 +426,6 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             _ => None,
         };
 
-        // Parse output items
         let mut delta = MessageDelta::default();
 
         if let Some(output) = root.get("output")
@@ -445,7 +438,6 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
                 let ty = item_obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
                 match ty {
                     "message" => {
-                        // Parse role
                         if delta.role.is_none() {
                             let role = item_obj
                                 .get("role")
@@ -458,7 +450,6 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
                                 .unwrap_or(Role::Assistant);
                             delta.role = Some(role);
                         }
-                        // Parse content parts
                         if let Some(content) = item_obj.get("content")
                             && let Some(parts) = content.as_array()
                         {
@@ -500,7 +491,6 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
                         });
                     }
                     "reasoning" => {
-                        // Parse summary text as thinking
                         if let Some(summary) = item_obj.get("summary")
                             && let Some(parts) = summary.as_array()
                         {
@@ -517,7 +507,7 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             }
         }
 
-        // Adjust finish reason for tool calls
+        // Tool-call responses also report `completed`.
         if !delta.tool_calls.is_empty()
             && finish_reason
                 .clone()
@@ -526,7 +516,6 @@ impl Unmarshal<MessageDeltaOutput> for OpenAIUnmarshal {
             finish_reason = Some(FinishReason::ToolCall {});
         }
 
-        // Parse usage (OpenAI Responses API: usage.input_tokens / output_tokens)
         let usage = val
             .as_object()
             .and_then(|r| r.get("usage"))
@@ -715,9 +704,7 @@ mod tests {
         );
     }
 
-    /// Register a one-off [`LangModelProvider`] under `provider_name` in the
-    /// global registry and build the [`LangModel`] via
-    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    /// Registers a one-off provider under `provider_name` and builds the model from it.
     fn build_openai_model(provider_name: &str, model: &str, api_key: String) -> LangModel {
         let elem = LangModelProviderElem::API {
             schema: LangModelAPISchema::OpenAI,
@@ -1053,7 +1040,6 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").unwrap();
 
-        // Fetch a real JPEG image to use as the tool result
         let img_bytes = reqwest::get(
             "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg",
         )
@@ -1107,164 +1093,163 @@ mod tests {
     }
 }
 
-// #[cfg(test)]
-// mod dialect_tests {
-//     use super::*;
-//     use crate::{
-//         datatype::Bytes,
-//         message::{Marshaled, Message, Role},
-//     };
+#[cfg(test)]
+mod dialect_tests {
+    use super::*;
+    use crate::{
+        datatype::Bytes,
+        message::{Marshaled, Message, Role},
+    };
 
-//     #[test]
-//     pub fn serialize_text() {
-//         let msg = Message::new(Role::User)
-//             .with_contents([Part::text("Explain me about Riemann hypothesis.")]);
-//         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"[{"role":"user","content":[{"type":"input_text","text":"Explain me about Riemann hypothesis."}]}]"#
-//         );
-//     }
+    #[test]
+    pub fn serialize_text() {
+        let msg = Message::new(Role::User)
+            .with_contents([Part::text("Explain me about Riemann hypothesis.")]);
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","content":[{"type":"input_text","text":"Explain me about Riemann hypothesis."}]}]"#
+        );
+    }
 
-//     #[test]
-//     pub fn serialize_messages_with_thinkings() {
-//         let msgs = vec![
-//             Message::new(Role::User).with_contents([Part::text("Hello there.")]),
-//             Message::new(Role::Assistant)
-//                 .with_thinking_signature("This is thinking text would be vanished.", "")
-//                 .with_contents([Part::text("I'm fine, thank you. And you?")]),
-//             Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
-//             Message::new(Role::Assistant)
-//                 .with_thinking_signature(
-//                     "This is thinking text would be remaining.",
-//                     "Ev4MCkYIBxgCKkDl5A",
-//                 )
-//                 .with_contents([Part::text("Is there anything I can help with?")]),
-//         ];
-//         // Use marshal_messages directly to test position-aware thinking inclusion.
-//         let marshaled = marshal_messages(&msgs);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"[{"role":"user","content":[{"type":"input_text","text":"Hello there."}]},{"role":"assistant","content":[{"type":"output_text","text":"I'm fine, thank you. And you?"}]},{"role":"user","content":[{"type":"input_text","text":"I'm okay."}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"This is thinking text would be remaining."}]},{"role":"assistant","content":[{"type":"output_text","text":"Is there anything I can help with?"}]}]"#
-//         );
-//     }
+    #[test]
+    pub fn serialize_messages_with_thinkings() {
+        let msgs = vec![
+            Message::new(Role::User).with_contents([Part::text("Hello there.")]),
+            Message::new(Role::Assistant)
+                .with_signatured_thinking("This is thinking text would be vanished.", "")
+                .with_contents([Part::text("I'm fine, thank you. And you?")]),
+            Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
+            Message::new(Role::Assistant)
+                .with_signatured_thinking(
+                    "This is thinking text would be remaining.",
+                    "Ev4MCkYIBxgCKkDl5A",
+                )
+                .with_contents([Part::text("Is there anything I can help with?")]),
+        ];
+        // Use marshal_messages directly to test position-aware thinking inclusion.
+        let marshaled = marshal_messages(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","content":[{"type":"input_text","text":"Hello there."}]},{"role":"assistant","content":[{"type":"output_text","text":"I'm fine, thank you. And you?"}]},{"role":"user","content":[{"type":"input_text","text":"I'm okay."}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"This is thinking text would be remaining."}]},{"role":"assistant","content":[{"type":"output_text","text":"Is there anything I can help with?"}]}]"#
+        );
+    }
 
-//     #[test]
-//     pub fn serialize_function() {
-//         let msg = Message::new(Role::Assistant).with_tool_calls([
-//             Part::function_with_id(
-//                 "funcid_123456",
-//                 "temperature",
-//                 Value::object([("unit", "celsius")]),
-//             ),
-//             Part::function_with_id(
-//                 "funcid_7890ab",
-//                 "temperature",
-//                 Value::object([("unit", "fahrenheit")]),
-//             ),
-//         ]);
-//         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"[{"type":"function_call","call_id":"funcid_123456","name":"temperature","arguments":"{\"unit\":\"celsius\"}"},{"type":"function_call","call_id":"funcid_7890ab","name":"temperature","arguments":"{\"unit\":\"fahrenheit\"}"}]"#
-//         );
-//     }
+    #[test]
+    pub fn serialize_function() {
+        let msg = Message::new(Role::Assistant).with_tool_calls([
+            Part::function(
+                "funcid_123456",
+                "temperature",
+                Value::object([("unit", "celsius")]),
+            ),
+            Part::function(
+                "funcid_7890ab",
+                "temperature",
+                Value::object([("unit", "fahrenheit")]),
+            ),
+        ]);
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"type":"function_call","call_id":"funcid_123456","name":"temperature","arguments":"{\"unit\":\"celsius\"}"},{"type":"function_call","call_id":"funcid_7890ab","name":"temperature","arguments":"{\"unit\":\"fahrenheit\"}"}]"#
+        );
+    }
 
-//     #[test]
-//     pub fn serialize_tool_response() {
-//         let msgs = vec![
-//             Message::new(Role::Tool)
-//                 .with_id("funcid_123456")
-//                 .with_contents(vec![Part::Value {
-//                     value: to_value!({"temperature": 30, "unit": "celsius"}),
-//                 }]),
-//             Message::new(Role::Tool)
-//                 .with_id("funcid_7890ab")
-//                 .with_contents(vec![Part::Value {
-//                     value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
-//                 }]),
-//         ];
-//         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msgs);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"[{"type":"function_call_output","call_id":"funcid_123456","output":"{\"temperature\":30,\"unit\":\"celsius\"}"},{"type":"function_call_output","call_id":"funcid_7890ab","output":"{\"temperature\":86,\"unit\":\"fahrenheit\"}"}]"#
-//         );
-//     }
+    #[test]
+    pub fn serialize_tool_response() {
+        let msgs = vec![
+            Message::new(Role::Tool)
+                .with_id("funcid_123456")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("funcid_7890ab")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+        ];
+        let marshaled = marshal_messages(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"type":"function_call_output","call_id":"funcid_123456","output":[{"type":"input_text","text":"{\"temperature\":30,\"unit\":\"celsius\"}"}]},{"type":"function_call_output","call_id":"funcid_7890ab","output":[{"type":"input_text","text":"{\"temperature\":86,\"unit\":\"fahrenheit\"}"}]}]"#
+        );
+    }
 
-//     #[test]
-//     pub fn serialize_image() {
-//         use base64::prelude::*;
+    #[test]
+    pub fn serialize_image() {
+        use base64::prelude::*;
 
-//         let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII=";
-//         let png_bytes = BASE64_STANDARD.decode(png_base64).unwrap();
-//         let msg = Message::new(Role::User).with_contents([
-//             Part::text("What you can see in this image?"),
-//             Part::image_embedded("image/png".to_owned(), Bytes::from(png_bytes)).unwrap(),
-//         ]);
-//         let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"[{"role":"user","content":[{"type":"input_text","text":"What you can see in this image?"},{"type":"input_image","image_url":{"url":"data:image/png;base64,"#.to_owned()
-//                 + png_base64
-//                 + r#""}}]}]"#,
-//         );
-//     }
+        let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAF0lEQVR4AQEMAPP/AAoUHgAoMjwARlBaB4wBw+VFyrAAAAAASUVORK5CYII=";
+        let png_bytes = BASE64_STANDARD.decode(png_base64).unwrap();
+        let msg = Message::new(Role::User).with_contents([
+            Part::text("What you can see in this image?"),
+            Part::image_embedded("image/png".to_owned(), Bytes::from(png_bytes)).unwrap(),
+        ]);
+        let marshaled = Marshaled::<_, OpenAIMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","content":[{"type":"input_text","text":"What you can see in this image?"},{"type":"input_image","image_url":"data:image/png;base64,"#.to_owned()
+                + png_base64
+                + r#""}]}]"#,
+        );
+    }
 
-//     #[test]
-//     pub fn deserialize_text() {
-//         let input = r#"{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello world!"}]}]}"#;
-//         let mut u = OpenAIUnmarshal;
-//         let val = serde_json::from_str::<Value>(input).unwrap();
-//         let output = u.unmarshal(val).unwrap();
-//         assert_eq!(output.finish_reason, Some(FinishReason::Stop {}));
-//         let mut delta = output.delta;
-//         assert_eq!(delta.role, Some(Role::Assistant));
-//         assert_eq!(delta.contents.len(), 1);
-//         let content = delta.contents.pop().unwrap();
-//         assert_eq!(content.to_text().unwrap(), "Hello world!");
-//     }
+    #[test]
+    pub fn deserialize_text() {
+        let input = r#"{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello world!"}]}]}"#;
+        let mut u = OpenAIUnmarshal;
+        let val = serde_json::from_str::<Value>(input).unwrap();
+        let output = u.unmarshal(val).unwrap();
+        assert_eq!(output.finish_reason, Some(FinishReason::Stop {}));
+        let mut delta = output.delta;
+        assert_eq!(delta.role, Some(Role::Assistant));
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
+    }
 
-//     #[test]
-//     pub fn deserialize_text_with_reasoning() {
-//         let input = r#"{"status":"completed","output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"**Answering a simple question**\n\nUser is saying hello."}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello world!"}]}]}"#;
-//         let mut u = OpenAIUnmarshal;
-//         let val = serde_json::from_str::<Value>(input).unwrap();
-//         let output = u.unmarshal(val).unwrap();
-//         assert_eq!(output.finish_reason, Some(FinishReason::Stop {}));
-//         let mut delta = output.delta;
-//         assert_eq!(delta.role, Some(Role::Assistant));
-//         assert_eq!(
-//             delta.thinking,
-//             Some("**Answering a simple question**\n\nUser is saying hello.".into())
-//         );
-//         assert_eq!(delta.contents.len(), 1);
-//         let content = delta.contents.pop().unwrap();
-//         assert_eq!(content.to_text().unwrap(), "Hello world!");
-//     }
+    #[test]
+    pub fn deserialize_text_with_reasoning() {
+        let input = r#"{"status":"completed","output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"**Answering a simple question**\n\nUser is saying hello."}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello world!"}]}]}"#;
+        let mut u = OpenAIUnmarshal;
+        let val = serde_json::from_str::<Value>(input).unwrap();
+        let output = u.unmarshal(val).unwrap();
+        assert_eq!(output.finish_reason, Some(FinishReason::Stop {}));
+        let mut delta = output.delta;
+        assert_eq!(delta.role, Some(Role::Assistant));
+        assert_eq!(
+            delta.thinking,
+            Some("**Answering a simple question**\n\nUser is saying hello.".into())
+        );
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
+    }
 
-//     #[test]
-//     pub fn deserialize_tool_call() {
-//         let input = r#"{"status":"completed","output":[{"type":"function_call","call_id":"call_DF3wZtLHv5eBNfURjvI8MULJ","name":"get_weather","arguments":"{\"location\":\"Paris, France\"}"}]}"#;
-//         let mut u = OpenAIUnmarshal;
-//         let val = serde_json::from_str::<Value>(input).unwrap();
-//         let output = u.unmarshal(val).unwrap();
-//         assert_eq!(output.finish_reason, Some(FinishReason::ToolCall {}));
-//         let mut delta = output.delta;
-//         assert_eq!(delta.tool_calls.len(), 1);
-//         let tool_call = delta.tool_calls.pop().unwrap();
-//         let (id, name, args) = tool_call.to_function().unwrap();
-//         assert_eq!(id.unwrap(), "call_DF3wZtLHv5eBNfURjvI8MULJ");
-//         assert_eq!(name, "get_weather");
-//         assert_eq!(args, "{\"location\":\"Paris, France\"}");
-//     }
+    #[test]
+    pub fn deserialize_tool_call() {
+        let input = r#"{"status":"completed","output":[{"type":"function_call","call_id":"call_DF3wZtLHv5eBNfURjvI8MULJ","name":"get_weather","arguments":"{\"location\":\"Paris, France\"}"}]}"#;
+        let mut u = OpenAIUnmarshal;
+        let val = serde_json::from_str::<Value>(input).unwrap();
+        let output = u.unmarshal(val).unwrap();
+        assert_eq!(output.finish_reason, Some(FinishReason::ToolCall {}));
+        let mut delta = output.delta;
+        assert_eq!(delta.tool_calls.len(), 1);
+        let tool_call = delta.tool_calls.pop().unwrap();
+        let (id, name, args) = tool_call.to_function().unwrap();
+        assert_eq!(id.unwrap(), "call_DF3wZtLHv5eBNfURjvI8MULJ");
+        assert_eq!(name, "get_weather");
+        assert_eq!(args, "{\"location\":\"Paris, France\"}");
+    }
 
-//     #[test]
-//     pub fn deserialize_incomplete() {
-//         let input =
-//             r#"{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}"#;
-//         let mut u = OpenAIUnmarshal;
-//         let val = serde_json::from_str::<Value>(input).unwrap();
-//         let output = u.unmarshal(val).unwrap();
-//         assert_eq!(output.finish_reason, Some(FinishReason::Length {}));
-//     }
-// }
+    #[test]
+    pub fn deserialize_incomplete() {
+        let input = r#"{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}"#;
+        let mut u = OpenAIUnmarshal;
+        let val = serde_json::from_str::<Value>(input).unwrap();
+        let output = u.unmarshal(val).unwrap();
+        assert_eq!(output.finish_reason, Some(FinishReason::Length {}));
+    }
+}
