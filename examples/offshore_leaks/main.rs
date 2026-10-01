@@ -10,35 +10,29 @@
 //! The [Offshore Leaks database](https://offshoreleaks.icij.org) is the graph ICIJ published
 //! from the Offshore Leaks, the Panama, Paradise and Pandora Papers and the Bahamas Leaks:
 //! about 2 million offshore companies, people, intermediaries and addresses, and the 3.3
-//! million relationships between them. `prepare_data.py` downloads ICIJ's CSVs and loads them
-//! into one DuckDB file, which the agent queries in place.
+//! million relationships between them. `prepare_data.py` loads ICIJ's CSVs into one DuckDB
+//! file, which the agent queries in place.
 //!
-//! The skill is `SKILL.md` and `oldb.py`, mounted at `/skills/offshore-leaks` from memory. It
+//! The skill (`SKILL.md`, `oldb.py`) is mounted from memory at `/skills/offshore-leaks`. It
 //! is what the agent knows of the data before it looks: the tables, which way a relationship
-//! points, and what a match on a name does not show. For more than a query, the agent writes
-//! Python of its own and runs it with its `shell` tool.
+//! points, and what a match on a name does not show.
 //!
 //! * `context/` at `/context`, read-only — `offshore_leaks.duckdb`, and whatever else the
 //!   request is about, such as a list of names to look for.
 //! * `artifacts/` at `/artifacts`, writable — where the reports, tables and charts go.
 //!
-//! What the agent runs is its own code over 2 million records, and the console is where that
-//! is safe to do: it sees the two directories and nothing else of the host, and the database
-//! is read-only to it.
+//! The agent's code runs in the console, which sees nothing of the host but these two
+//! directories.
 //!
 //! The data is ICIJ's, under the Open Database License, and its contents under CC BY-SA.
 //! Being in it is not evidence of wrongdoing, as ICIJ says and the skill tells the agent.
 //!
-//! Environment:
+//! Environment, also read from `.env`:
 //!
-//! * `OFFSHORE_LEAKS_URL` — the archive `prepare_data.py` downloads, ICIJ's latest by default.
-//! * `UV` — the `uv` binary `prepare_data.py` runs with, `uv` on `PATH` by default.
-//! * `AILOY_MODEL` — the agent's model, `bedrock/global.openai.gpt-6-astra` by default; its
-//!   provider's credentials have to be set — for Bedrock `AWS_BEARER_TOKEN_BEDROCK`, with the
-//!   region from `AWS_REGION` / `AWS_DEFAULT_REGION` (`us-east-1` by default), and for a direct
-//!   provider its API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …).
-//!
-//! Read from `.env` as well.
+//! * `OFFSHORE_LEAKS_URL` — the archive `prepare_data.py` downloads; ICIJ's latest by default.
+//! * `UV` — the `uv` binary `prepare_data.py` runs with; `uv` on `PATH` by default.
+//! * `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its provider's API
+//!   key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …).
 
 use std::{io::Write as _, path::Path};
 
@@ -49,10 +43,9 @@ use ailoy::{
 };
 use anyhow::Context as _;
 use cortex::{fs::Directory, image::Recipe, protocol::NetworkAccess};
-// One host binding per platform, each mounting on `try_new` and unmounting on `Drop`, so
-// the tree below is written once. Three arms and not `not(windows)` because the guards are
-// three distinct types: cortex's default `mount` feature compiles the one binding its target
-// has — Dokany on Windows, `fuser` on Linux, FUSE-T on macOS — and names the guard after it.
+// One host binding per platform (mounts on `try_new`, unmounts on `Drop`), so the tree
+// below is written once. Three arms, not `not(windows)`: cortex's default `mount` feature
+// compiles only its target's binding, each a distinct guard type.
 #[cfg(windows)]
 use cortex::fs::DokanMount as HostMount;
 #[cfg(target_os = "linux")]
@@ -87,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut agent = AgentBuilder::new(
         std::env::var("AILOY_MODEL")
-            .unwrap_or_else(|_| "bedrock/global.openai.gpt-6-astra".to_string()),
+            .unwrap_or_else(|_| "openai/gpt-6-astra".to_string()),
     )
     .instruction(concat!(
         "# Context\n\n",
@@ -105,7 +98,7 @@ async fn main() -> anyhow::Result<()> {
     .console(
         ConsoleClient::builder()
             .image(Recipe::new("python:3.12-slim-trixie").step(
-                // The DuckDB `prepare_data.py` wrote the file with, in pyproject.toml: an
+                // The DuckDB `prepare_data.py` writes the file with (pinned in pyproject.toml); an
                 // older one may not read it.
                 "pip install --no-cache-dir duckdb==1.5.5 pandas matplotlib networkx",
             ))

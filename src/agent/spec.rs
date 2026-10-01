@@ -14,27 +14,15 @@ use crate::{
     },
 };
 
-/// Defines the logical identity of an agent as configured by the user.
+/// What makes an agent distinct: its model, instruction, tools and sub-agents.
 ///
-/// `AgentSpec` captures what makes an agent distinct — the language model it uses,
-/// the system instruction that shapes its behaviour, the set of tools it has access
-/// to, and the sub-agents it can delegate work to.  Changing any of these fields
-/// changes the fundamental nature of the agent.
+/// Credentials and tool sources live on [`AgentProvider`](crate::agent::AgentProvider), the
+/// [`ConsoleClient`](crate::console::ConsoleClient) on [`AgentState`](crate::agent::AgentState).
 ///
-/// Runtime concerns — credentials, tool sources, and the
-/// [`ConsoleClient`](crate::console::ConsoleClient) — live on
-/// [`AgentProvider`](crate::agent::AgentProvider) and the constructors in
-/// [`Agent`](crate::agent::Agent), not here.
-///
-/// # `instruction` vs `card`
-///
-/// [`instruction`](AgentSpec::instruction) is *internal*: private guidance fed to the
-/// model that callers never see.  It controls how this agent thinks and behaves.
-///
-/// [`card`](AgentSpec::card) is *external*: a public self-introduction that a calling
-/// agent or orchestrator reads to decide whether to delegate work here.  Sub-agents
-/// must have a card — it supplies the name and description of the tool the parent
-/// will call.  Top-level agents typically don't need one.
+/// [`instruction`](AgentSpec::instruction) is private guidance to the model, never seen by
+/// callers; [`card`](AgentSpec::card) is what a calling agent reads to decide whether to
+/// delegate here. A sub-agent must have a card, since it names and describes the parent's
+/// tool for it.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSpec {
     /// Identifier of the language model (e.g. `"anthropic/claude-sonnet-4-6"`)
@@ -57,10 +45,7 @@ pub struct AgentSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_options: Option<LangModelOptions>,
 
-    /// Public self-introduction exposed to a calling agent or orchestrator.
-    ///
-    /// Only relevant when this agent acts as a sub-agent.
-    /// `None` for top-level agents.
+    /// Public self-introduction to a calling agent; required when this spec is a sub-agent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub card: Option<AgentCard>,
 
@@ -96,13 +81,12 @@ impl AgentSpec {
 
     /// Give this agent the skill in `dir`, a directory in the console holding a `SKILL.md`.
     ///
-    /// When the agent is made, the `name` and `description` in the file's frontmatter are
-    /// read through the console and listed in the system message, with where the skill
-    /// is. The rest of the file is left for the agent to read when it uses the skill, so
-    /// an agent with skills needs a console and a tool that reads files.
+    /// At construction the frontmatter `name` and `description` are read through the
+    /// console and listed in the system message with the skill's location; the agent reads
+    /// the rest itself, so it needs a console and a file-reading tool.
     ///
-    /// Only alongside the instruction: a history that already leads with a system message
-    /// keeps its own, and the skills are not added to it.
+    /// Skills are added only to the instruction-built system message, never to one already
+    /// in the history.
     pub fn skill(mut self, dir: impl Into<String>) -> Self {
         self.skills.push(dir.into());
         self
@@ -127,9 +111,8 @@ impl AgentSpec {
         if family == "openai" {
             self.tools.push(get_apply_patch_tool_desc());
         } else {
-            // DeepSeek, Kimi and GLM are served behind Anthropic-compatible APIs
-            // for Claude Code, so they likely follow the Claude style.
-            // Qwen Code is a fork of Gemini CLI.
+            // DeepSeek, Kimi and GLM serve Anthropic-compatible APIs for Claude Code, so
+            // likely follow the Claude style; Qwen Code is a fork of Gemini CLI.
             self.tools.push(match family {
                 "anthropic" | "deepseek" | "moonshotai" | "z-ai" => get_read_tool_desc(),
                 "google" | "qwen" => get_read_file_tool_desc(),
@@ -161,10 +144,7 @@ impl AgentSpec {
         self
     }
 
-    /// Add the `web_search` tool to the spec.
-    ///
-    /// Pass a non-empty `engines` vec to restrict which engines are used;
-    /// an empty vec (or `vec![]`) uses all available engines.
+    /// Add `web_search`; a non-empty `engines` restricts it to those, empty uses all.
     pub fn web_search_tool(mut self, engines: Vec<WebSearchEngineKind>) -> Self {
         self.tools.push(get_web_search_tool_desc());
         if !engines.is_empty() {
@@ -175,10 +155,8 @@ impl AgentSpec {
 
     /// Add the `web_fetch` tool to the spec.
     ///
-    /// Like `web_search_tool`, this is opt-in and is not included in
-    /// `system_tools()`. The tool accepts either a single `url` or a `urls`
-    /// array (up to five) for parallel fetches, honors robots.txt, and
-    /// rate-limits one request per second per host.
+    /// Not part of `system_tools()`. The tool fetches one `url` per call, pages long bodies
+    /// through `offset`, and allows one request per second per host.
     pub fn web_fetch_tool(mut self) -> Self {
         self.tools.push(get_web_fetch_tool_desc());
         self

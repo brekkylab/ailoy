@@ -1,8 +1,7 @@
 //! Crossing as dicts: ailoy's types to Python through their serde form, and back.
 //!
-//! A [`Message`] goes out as `{"role": "assistant", "contents": [{"type": "text", ...}]}`,
-//! exactly the JSON ailoy writes, and comes back from the same shape. Bytes — an embedded
-//! image — are `bytes` on the Python side rather than the base64 JSON would need.
+//! A [`Message`] crosses both ways as the JSON ailoy writes, `{"role": "assistant", ...}`,
+//! except that bytes (an embedded image) are `bytes` rather than base64.
 
 use ailoy::message::{Message, Part, Role};
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -12,8 +11,8 @@ pub fn to_py<'py>(py: Python<'py>, value: &impl Serialize) -> PyResult<Bound<'py
     Ok(pythonize::pythonize(py, value)?)
 }
 
-/// `ValueError` naming what was expected, since a dict that does not fit says only which
-/// field it tripped on.
+/// `ValueError` naming what was expected, since serde's error names only the field it
+/// tripped on.
 pub fn from_py<T: DeserializeOwned>(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<T> {
     pythonize::depythonize(obj).map_err(|e| PyValueError::new_err(format!("not {what}: {e}")))
 }

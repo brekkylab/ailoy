@@ -16,7 +16,6 @@ permissions:
   packages: read
 
 jobs:
-  # Python builds
   build-python:
     name: Build Python Packages
     uses: ./.github/workflows/build_python.yaml
@@ -24,7 +23,6 @@ jobs:
       publish: ${{ github.event_name == 'release' || inputs.publish }}
     secrets: inherit
 
-  # Node.js builds
   build-node:
     name: Build Node.js Packages
     uses: ./.github/workflows/build_nodejs.yaml
@@ -32,7 +30,6 @@ jobs:
       publish: ${{ github.event_name == 'release' || inputs.publish }}
     secrets: inherit
 
-  # Web build
   build-web:
     name: Build Web Package
     uses: ./.github/workflows/build_js_web.yaml

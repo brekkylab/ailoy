@@ -4,7 +4,7 @@
 
 DATA_DIR is `data/` beside this file by default. The checkpoint goes into `DATA_DIR/checkpoint`,
 from `convaiinnovations/laya` on the Hugging Face Hub at a pinned revision (the English one at
-the repo root: ModernBERT-large and Laya's decision head, ~840 MB in fp16), and this writes into
+the repo root: ModernBERT-large and Laya's decision head), and this writes into
 `DATA_DIR/ncnn`
 
 * `laya.ncnn.param`, `laya.ncnn.bin` -- the model, weights in fp16;
@@ -33,8 +33,8 @@ caller's instead: the lookups, the masks, which `transformers` would build from 
 and the gather at the markers and what follows it. The check after the conversion is against
 laya's own runtime.
 
-What it took to get it through pnnx and onto the GPU is in the comments below it: the norms
-without a bias, the RoPE pnnx fuses and the masks ncnn's Vulkan SDPA does not broadcast.
+The comments in `Exported` and `convert` cover what pnnx and the GPU need: the norms without a
+bias, the RoPE pnnx fuses and the masks ncnn's Vulkan SDPA does not broadcast.
 """
 
 import json
@@ -175,34 +175,23 @@ def check(ncnn_dir: Path, io: dict, model, tok, items: list[dict], window: int):
 
 
 def _patch_pnnx_on_windows() -> None:
-    r"""Stop pnnx from importing the `*_pnnx.py` it generates.
+    r"""Stop pnnx from importing the `*_pnnx.py` it generates, on Windows only.
 
-    `pnnx.export` writes what this script is after -- the ncnn param and bin -- and then, as
-    the last thing `convert()` does, imports the Python transcript of the graph it wrote
-    beside them, so as to hand the caller back a torch module. Nothing here wants that
-    module: the call below drops the return value and takes the files off disk.
+    `pnnx.export` writes the ncnn param and bin, then `convert()` imports the Python
+    transcript of the graph beside them to return a torch module, which the call below
+    discards.
 
-    That import is where a conversion stops on Windows. pnnx writes the paths it was handed
-    into the transcript as ordinary string literals, so `zipfile.ZipFile('C:\Users\...')`
-    reaches the parser as escapes and `\U` in `C:\Users` is a SyntaxError before a line of
-    the module runs. The paths that do parse are the worse half, since `\a`, `\b`, `\n` and
-    `\t` become control characters and the module then opens a file nobody wrote.
+    On Windows that import fails: pnnx writes paths into the transcript as plain string
+    literals, so `\U` in `C:\Users` is a SyntaxError, and paths that do parse turn `\a`, `\b`,
+    `\n` and `\t` into control characters and open a file nobody wrote. Repairing the
+    literals is not enough, since an op with no Python spelling is written verbatim, e.g.
+    `v_1103 = aten::to(v_1100, v_1102, v_1101, v_1101)`. So
+    `importlib.util.spec_from_file_location` is wrapped to give a `_pnnx.py` a loader that
+    never reads the source and defines only `Model`, the one name `convert()` touches; every
+    other module keeps its loader. Elsewhere the import works and yields a real torch module.
 
-    Repairing the literals only moves the wall: the transcript is not always Python at all,
-    because an op pnnx has no Python spelling for is written out verbatim, and a line like
-    `v_1103 = aten::to(v_1100, v_1102, v_1101, v_1101)` parses nowhere. Neither is worth
-    fixing for a module that is thrown away, so the import is made to produce nothing
-    instead. `convert()` reaches it through `importlib.util.spec_from_file_location`, which
-    is wrapped here to hand a `_pnnx.py` back with a loader that never reads the source and
-    defines the one name `convert()` goes on to touch. Every other module keeps the loader it
-    would have had.
-
-    Windows only, and gated rather than unconditional because a host where the import works
-    gets a real torch module out of it -- worth keeping for anything that comes to want one.
-
-    An op ncnn cannot run is a separate matter and is not hidden by this: it stays in the
-    `.param` as an unregistered layer, and the check against PyTorch at the end is what
-    catches it.
+    An op ncnn cannot run is not hidden by this: it stays in the `.param` as an unregistered
+    layer, and the final check against PyTorch catches it.
     """
     if sys.platform != "win32":
         return
@@ -210,8 +199,7 @@ def _patch_pnnx_on_windows() -> None:
     import importlib.abc
     import importlib.util
 
-    # The wrapper goes on once, however often this is called: wrapping a wrapper would work,
-    # and would also leave a chain as long as the model has pieces.
+    # Wrap once, however often this is called, so no chain of wrappers builds up.
     if getattr(importlib.util.spec_from_file_location, "_pnnx_skips_transcript", False):
         return
 
@@ -222,8 +210,7 @@ def _patch_pnnx_on_windows() -> None:
             return None  # the default module object is enough
 
         def exec_module(self, module):
-            # `convert()` ends in `return foo.Model()`, which is the whole of what it asks
-            # the transcript for, and the caller here discards it.
+            # `convert()` only calls `Model()` on the transcript, and the result is discarded.
             module.Model = lambda *args, **kwargs: None
 
     spec_from_file_location = importlib.util.spec_from_file_location

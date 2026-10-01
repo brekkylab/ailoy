@@ -45,10 +45,8 @@ pub fn get_write_tool_func() -> ToolFunc {
             });
         };
 
-        // cortex writes the file, not the path: a directory above it that is not
-        // there is a `NOT_FOUND`, not something `write` creates. Creating one *is*
-        // this tool's job, though — it exists to put a file where there was none — so
-        // the miss is paid for here, once, and only when it actually happens.
+        // cortex `write` does not create missing parent directories (`NOT_FOUND`).
+        // This tool does, only when that miss actually happens.
         let mut wrote = console.write(path, content.as_bytes().to_vec(), None).await;
 
         if wrote.as_ref().err().and_then(|e| e.code()) == Some(Error::NOT_FOUND)

@@ -1,7 +1,6 @@
 """Segment images and videos with SAM3 through ncnn on the guest's Vulkan device, as an
 agent's skill.
 
-    uv run main.py
     uv run main.py "Find every cat in the photos in context and mask them"
 
 The Python side of the Rust `sam3` example in `examples/sam3`, whose `main.rs` has the long
@@ -16,8 +15,8 @@ the agent runs with its `shell` tool. `prepare_model.py` downloads and converts 
 
 Environment:
 
-* `AILOY_MODEL` — the agent's model, `bedrock/global.openai.gpt-6-astra` by default; its
-  provider's API key has to be set (`AWS_BEARER_TOKEN_BEDROCK`, `ANTHROPIC_API_KEY`, ...).
+* `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its
+  provider's API key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...).
 
 Read from `.env` as well.
 """
@@ -140,7 +139,7 @@ async def main(prompt: str) -> None:
 
     agent = await (
         ailoy.AgentBuilder(
-            os.environ.get("AILOY_MODEL", "bedrock/global.openai.gpt-6-astra")
+            os.environ.get("AILOY_MODEL", "openai/gpt-6-astra")
         )
         .instruction(INSTRUCTION)
         .system_tools()
@@ -174,6 +173,6 @@ async def main(prompt: str) -> None:
 
 
 if __name__ == "__main__":
-    # From the nearest `.env` up from this file, as the Rust examples load it.
+    # From the nearest `.env` up from this file.
     load_dotenv()
     asyncio.run(main(" ".join(sys.argv[1:])))

@@ -75,8 +75,7 @@ FILES = [
     "LICENSE",
 ]
 
-# What a masked attention score becomes: past anything a softmax sees here, so the weight it
-# gives is 0 all the same, and inside bf16's range.
+# A masked attention score: low enough that softmax gives it weight 0, yet within bf16's range.
 MASKED = -1e4
 
 IMAGE = 1008
@@ -629,8 +628,7 @@ def _patch_pnnx_on_windows() -> None:
     import importlib.abc
     import importlib.util
 
-    # The wrapper goes on once, however often this is called: wrapping a wrapper would work,
-    # and would also leave a chain as long as the model has pieces.
+    # Called once per piece; wrap only once so the wrappers do not chain.
     if getattr(importlib.util.spec_from_file_location, "_pnnx_skips_transcript", False):
         return
 
@@ -641,8 +639,7 @@ def _patch_pnnx_on_windows() -> None:
             return None  # the default module object is enough
 
         def exec_module(self, module):
-            # `convert()` ends in `return foo.Model()`, which is the whole of what it asks
-            # the transcript for, and the caller here discards it.
+            # `convert()` only calls `Model()` on the transcript, and the result is discarded.
             module.Model = lambda *args, **kwargs: None
 
     spec_from_file_location = importlib.util.spec_from_file_location
@@ -710,8 +707,8 @@ def constants(video) -> dict:
     _, mem_pos = t.memory_encoder(torch.zeros(1, 256, GRID, GRID), torch.zeros(1, 1, 16 * GRID, 16 * GRID))
     a = lambda x: x.detach().float().numpy()
     return {
-        # The token table is what the text piece's lookup was; half precision, as the pieces'
-        # weights are.
+        # The text piece's token lookup, done by the caller; half precision like the pieces'
+        # weights.
         "text_tokens": a(text.token_embedding.weight).astype(np.float16),
         "text_positions": a(text.position_embedding.weight),
         "geometry_norm_weight": a(det.geometry_encoder.vision_layer_norm.weight),
@@ -778,7 +775,7 @@ def check(ncnn_dir: Path, specs: dict, ios: dict):
     Vulkan is taken down by hand here, and in `finally` blocks. ncnn's GPU instance is a
     global whose destructor runs at interpreter exit, by which time the `Net`s holding
     devices on it may or may not have been collected, and on Windows that order segfaults.
-    Measured on this machine, one piece loaded: leaving both to the interpreter crashes,
+    With one piece loaded: leaving both to the interpreter crashes,
     releasing the nets and leaving the instance crashes, and destroying the instance with a
     net still up crashes. Releasing the nets and then destroying the instance is the one
     order that exits cleanly, so it is the one spelled out.
