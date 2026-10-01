@@ -116,7 +116,6 @@ async fn main() -> anyhow::Result<()> {
             )
             .mount_readonly(context, "/context")
             .mount(project_path.join("artifacts"), "/artifacts")
-            .network(true)
             .gpu(true)
             .vcpus(2)
             // The talker is 2.8 GB on the device in fp16, and its cache and the codec's buffers

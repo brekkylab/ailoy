@@ -104,7 +104,6 @@ async fn main() -> anyhow::Result<()> {
             )
             .mount_readonly(project_path.join("context"), "/context")
             .mount(project_path.join("artifacts"), "/artifacts")
-            .network(true)
             .gpu(true)
             .vcpus(2)
             .memory_mib(4096)
