@@ -2,8 +2,8 @@
 //
 //     node examples/hello/main.mjs [model]
 //
-// `model` defaults to `bedrock/global.openai.gpt-5.6-luna`; its provider's API key has to be
-// set (`AWS_BEARER_TOKEN_BEDROCK`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...), in the
+// `model` defaults to `openai/gpt-5.6-luna`; its provider's API key has to be
+// set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...), in the
 // environment or in `.env`.
 //
 // The addon has to be built first (`npm run build` in `bindings/node`).
@@ -17,11 +17,9 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 
 const { AgentBuilder } = createRequire(import.meta.url)('../../index.js')
 
-// The request the agent is given.
 const QUERY = 'What is the meaning of hello world?'
 
-// From the nearest `.env` up from this file, as the Rust and Python examples load it. What the
-// environment already has wins.
+// From the nearest `.env` up from this file. What the environment already has wins.
 function loadDotenv() {
   for (let dir = HERE; ; dir = dirname(dir)) {
     const path = join(dir, '.env')
@@ -48,4 +46,4 @@ async function main(model) {
 }
 
 loadDotenv()
-await main(process.argv[2] ?? 'bedrock/global.openai.gpt-5.6-luna')
+await main(process.argv[2] ?? 'openai/gpt-5.6-luna')

@@ -16,29 +16,18 @@
 //!
 //! ## Lifecycle
 //!
-//! 1. **`ToolProvider` is created** — [`ToolProvider::new`] starts pre-loaded
-//!    with every built-in tool ([`ToolProvider::empty`] opts out); additional
-//!    entries are added via [`ToolProvider::insert_func`],
-//!    [`ToolProvider::insert_func_factory`], [`ToolProvider::insert_a2a`], or
-//!    [`ToolProvider::insert_mcp`].
-//! 2. **`Agent` is instantiated from an `AgentSpec`** — [`ToolProvider::provide`]
-//!    walks `spec.tools`, looks up each [`ToolDesc`] by name, and builds the
-//!    matching [`ToolFunc`] (a fresh one per call for factory-style entries).
+//! 1. **Registration** — entries are inserted into a [`ToolProvider`], which
+//!    starts with every built-in tool.
+//! 2. **Resolution** — [`ToolProvider::provide`] builds a [`ToolFunc`] for each
+//!    [`ToolDesc`] in `spec.tools` when an `Agent` is instantiated.
+//! 3. **Execution** — the agent invokes the resolved [`ToolFunc`] for each tool
+//!    call the model issues.
 //!
-//! The two remote sources do not fit that order, because what they contribute
-//! to step 1 is only knowable by asking them and step 2 is a `fn` with nothing
-//! to await on. So both are contacted during step 1 instead, and the registering
-//! call hands back the [`ToolDesc`]s to put in the spec — by step 2 they are
-//! ordinary name-keyed entries like any other:
-//!
-//! * **MCP** — [`register_mcp_stdio`] / [`register_mcp_streamable_http`] run
-//!   `initialize` and `tools/list`, and fan one server out into one entry per
-//!   tool, named `{prefix}__{remote name}`.
-//! * **A2A** — [`register_a2a`] fetches the agent card for its description. One
-//!   agent is one tool; calling it needs only the URL, so
-//!   [`ToolProvider::insert_a2a`] alone is enough when the desc is already known.
-//! 3. **`ToolFunc` drives execution** — when the model issues a tool call, the
-//!    agent invokes the resolved [`ToolFunc`] to produce the result stream.
+//! Remote sources (MCP, A2A) are contacted during step 1, since what they offer
+//! is knowable only by asking and step 2 has nothing to await on. Their
+//! registering calls ([`register_mcp_stdio`], [`register_mcp_streamable_http`],
+//! [`register_a2a`]) hand back the [`ToolDesc`]s to put in the spec, so by
+//! step 2 they are ordinary name-keyed entries.
 
 mod desc;
 mod func;

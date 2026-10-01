@@ -81,7 +81,7 @@ async fn rate_limit_for(state: &WebFetchState, host: &str) {
             .unwrap_or(Duration::ZERO);
         m.insert(host.to_string(), now + wait);
         // Self-trim: only keep hosts hit within the rate-limit window.
-        // Future timestamps (the entry we just inserted with non-zero wait)
+        // Future timestamps (the just-inserted entry, when wait > 0)
         // survive because `duration_since` saturates to zero for them.
         m.retain(|_, when| now.duration_since(*when) < PER_HOST_MIN_INTERVAL);
         wait
@@ -100,10 +100,8 @@ async fn download(
         .get(url)
         .send()
         .await
-        // A refusal from the resolver arrives wrapped in a connect error whose
-        // `Display` drops it, so it has to be recovered rather than formatted.
-        // Without this a blocked name reports a plain connection failure and is
-        // indistinguishable from a target that is merely down.
+        // Recover a resolver refusal hidden in the connect error, so it isn't
+        // reported as the target being down.
         .map_err(|e| {
             net_guard::blocked_reason(&e).unwrap_or_else(|| format!("request failed: {e}"))
         })?;
@@ -154,9 +152,8 @@ impl BodyFormat {
     }
 }
 
-// Output of the HTML→{text,markdown} conversion path. We return both the
-// readable body and the document title because `html_to_markdown_rs` already
-// extracts both in one pass — no point parsing twice.
+// Output of the HTML→{text,markdown} conversion: body and title together,
+// since `html_to_markdown_rs` extracts both in one pass.
 struct Converted {
     body: String,
     title: String,
@@ -197,12 +194,7 @@ fn convert_with_crate(html: &str, output_format: OutputFormat) -> Converted {
     }
 }
 
-// Pick the conversion path for the requested format and content-type.
-//
-// - `format=html`: raw passthrough, regardless of content type.
-// - `format={text,markdown}`: route HTML through `html_to_markdown_rs`;
-//   non-HTML content (JSON, plain text, etc.) passes through verbatim so a
-//   caller asking for a JSON body gets a JSON body, not an empty conversion.
+// Only HTML is converted; other content passes through, so a JSON body stays JSON.
 fn convert(body: &str, content_type: &str, format: BodyFormat) -> Converted {
     if matches!(format, BodyFormat::Html) {
         return Converted {
@@ -227,11 +219,6 @@ fn convert(body: &str, content_type: &str, format: BodyFormat) -> Converted {
 
 // Returns `(slice, total_chars, next_offset)`. `next_offset = None` means the
 // slice reaches the end of `text` (caller treats this as `complete`).
-//
-// Single `char_indices()` pass: locates the start/end byte boundaries for the
-// requested char window, counts total chars, and computes `next_offset` without
-// re-iterating the slice or copying into a `Vec<char>`. Byte-indexing into
-// `text` is safe because `char_indices()` yields char-boundary offsets.
 fn slice_body(text: &str, offset: usize, len: usize) -> (String, usize, Option<usize>) {
     let end_char = offset.saturating_add(len);
     let mut start_byte: Option<usize> = None;
@@ -391,8 +378,8 @@ async fn fetch_one(
     })
 }
 
-/// Factory closes over a process-wide [`WebFetchState`] so the rate limiter
-/// is shared across calls, matching `web_search`.
+/// Factory closes over one [`WebFetchState`] so the rate limiter is shared by
+/// every tool it builds.
 pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
     let state = WebFetchState::new();
     move |_| {
@@ -430,19 +417,13 @@ pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
 }
 
 mod net_guard {
-    //! Egress guard for host-side tools.
+    //! Egress guard for host-side tools: decides whether a destination is on the
+    //! public internet.
     //!
-    //! Tools registered as *pure* run in the ailoy host process rather than inside
-    //! the sandbox VM, so the guest network policy never sees their requests. A
-    //! model — or a prompt-injected page a model reads — can otherwise aim such a
-    //! tool at loopback, the LAN, or the cloud-metadata address and read the answer
-    //! back into the conversation. This module decides whether a destination is on
-    //! the public internet.
-    //!
-    //! There are two entry points because a URL names its destination in two ways:
-    //! [`check_host`] for a host written as an IP literal, where the address is
-    //! known before connecting, and [`PublicOnlyResolver`] for a host written as a
-    //! name, where the addresses are known only once DNS answers.
+    //! Pure tools run in the host process, outside the sandbox's network policy, so
+    //! without this a model (or a page injected into it) could reach loopback, the
+    //! LAN, or cloud metadata. IP literals are checked by [`check_host`]; names by
+    //! [`PublicOnlyResolver`] once DNS answers.
 
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
@@ -452,8 +433,8 @@ mod net_guard {
     ///
     /// A concrete type rather than a string because a refusal raised inside the
     /// resolver has to be recognized again after the connector has wrapped it,
-    /// which [`blocked_reason`] does by downcast. Matching on the message text
-    /// would work today and break the moment someone rewords it.
+    /// which [`blocked_reason`] does by downcast; matching message text would
+    /// break on any rewording.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct Blocked(String);
 
@@ -468,13 +449,10 @@ mod net_guard {
     /// Find a [`Blocked`] in an error's source chain.
     ///
     /// `Display` on a client error stops one level in, while a refusal from
-    /// [`PublicOnlyResolver`] sits three deep — under the connect error and the
-    /// DNS error the connector wraps it in. Formatting the outer error therefore
-    /// reports a plain connection failure, which reads as a target that happens to
-    /// be down rather than one that will never be reachable. A model told the first
-    /// retries; told the second it stops. Walking the chain is what keeps a name
-    /// refused by the resolver reporting the same way as an IP literal refused
-    /// before the connection.
+    /// [`PublicOnlyResolver`] sits three deep, under the connector's connect and
+    /// DNS errors. Formatted as-is it reads as a target that is merely down, which
+    /// a model retries; walking the chain makes a name refused by the resolver
+    /// report the same as an IP literal refused before connecting.
     pub fn blocked_reason(err: &(dyn std::error::Error + 'static)) -> Option<String> {
         let mut source = Some(err);
         while let Some(e) = source {
@@ -491,9 +469,8 @@ mod net_guard {
     /// gated later by [`PublicOnlyResolver`], which is the only place its actual
     /// addresses are known.
     ///
-    /// Strips the brackets an IPv6 literal is written with. Both callers hand them
-    /// over — `url::Url::host_str` and `http::Uri::host` each return `[::1]` rather
-    /// than `::1` — and `IpAddr` parses neither spelling with them attached.
+    /// Strips IPv6 brackets, which `Url::host_str` and `Uri::host` both keep and
+    /// `IpAddr` won't parse.
     pub fn check_host(host: &str) -> Result<(), Blocked> {
         let bare = host
             .strip_prefix('[')
@@ -520,10 +497,7 @@ mod net_guard {
         }
     }
 
-    /// Keep only the globally routable addresses in `addrs`. Returns `Err` when
-    /// nothing survives, which the connector buries under two layers of its own
-    /// error; [`blocked_reason`] is what digs it back out so the caller reports a
-    /// blocked host rather than an opaque connection failure.
+    /// Keep only the globally routable addresses in `addrs`; `Err` when none survive.
     fn filter_public(
         host: &str,
         addrs: impl Iterator<Item = SocketAddr>,
@@ -641,14 +615,8 @@ mod net_guard {
         // sit at a fixed offset the way it does under the well-known prefix, and
         // there is no address in the range worth reaching anyway.
         //
-        // Then three ranges that carry no embedded address and reach no service:
-        // 100::/64 discards whatever is sent to it, and 3fff::/20 and 5f00::/16 are
-        // reserved for documentation and for SRv6 segment identifiers. None is
-        // routable, so none belongs on the allowed side of a predicate that answers
-        // "is this on the public internet".
-        //
-        // 2001:20::/28 (ORCHIDv2) and 2001:30::/28 (DRIP) need no entry of their
-        // own — both sit inside 2001::/23 above.
+        // Then three non-routable ranges with no embedded address: 100::/64
+        // discard-only, 3fff::/20 documentation, and 5f00::/16 SRv6 segment ids.
         let s = ip.segments();
         !((s[0] == 0 && s[1] == 0 && s[2] == 0 && s[3] == 0)
             || (s[0] & 0xfe00) == 0xfc00
@@ -932,9 +900,7 @@ mod tests {
         assert_eq!(BodyFormat::parse("xml"), None);
     }
 
-    /// `last_hit` self-trim invariants. The retain expression is replicated
-    /// here exactly as `rate_limit_for` uses it; if either drifts, this test
-    /// catches it before the table starts growing unbounded again.
+    /// Retain rule for `last_hit`: fresh and future entries stay, stale ones go.
     #[test]
     fn last_hit_retain_keeps_fresh_and_future_drops_stale() {
         let now = Instant::now();
@@ -1071,12 +1037,8 @@ mod tests {
         );
     }
 
-    /// The same refusal reached by name instead of by literal. It travels a
-    /// different path — the resolver rather than the up-front check — and the
-    /// connector wraps it in an error whose `Display` drops it, so without the
-    /// recovery in `download` this reports a bare connect failure. The two must
-    /// read alike: a model retries a connection that failed and gives up on one
-    /// that policy refused, and this refusal will never succeed.
+    /// A name resolving inward must report as a policy refusal, not a retryable
+    /// connect failure.
     #[tokio::test]
     async fn fetch_one_refuses_a_name_resolving_inward_with_the_same_error() {
         use std::sync::{Arc, Mutex};
@@ -1182,8 +1144,7 @@ mod tests {
         )
         .await;
 
-        // Without this the test could pass for the wrong reason: a failure to
-        // reach the first hop at all looks identical to a refused second hop.
+        // A failure to reach the first hop looks identical to a refused second hop.
         assert_eq!(
             *go_hits.lock().unwrap(),
             1,
@@ -1240,7 +1201,7 @@ mod tests {
         assert!(retrieved_at.ends_with('Z'), "retrieved_at: {retrieved_at}");
     }
 
-    /// `format="html"` against the same endpoint should return raw markup —
+    /// `format="html"` against a stable public endpoint should return raw markup —
     /// `<html`, `<title>`, etc. — not the converted text form.
     #[tokio::test]
     #[ignore = "requires network"]

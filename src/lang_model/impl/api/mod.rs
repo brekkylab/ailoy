@@ -52,14 +52,8 @@ pub trait QuotaClassifier {
     }
 }
 
-/// Provider-specific response handling, dispatched dynamically so callers map a
-/// [`LangModelAPISchema`] to its implementation once and reuse it for whole-
-/// response unmarshaling, per-event (SSE) unmarshaling, and 429 classification.
-///
-/// Both parsers live on the provider's [`Unmarshal<MessageDeltaOutput>`] impl
-/// (`unmarshal` for a whole response, `unmarshal_event` for one SSE event); this
-/// trait just re-exposes them for dynamic dispatch, since `Unmarshal: Default`
-/// isn't object-safe and so can't be a supertrait of a `dyn` type.
+/// Object-safe view of a provider's [`Unmarshal<MessageDeltaOutput>`] and [`QuotaClassifier`],
+/// so a [`LangModelAPISchema`] maps to one `dyn` impl; `Unmarshal: Default` can't be a `dyn` supertrait.
 pub trait ProviderApi: QuotaClassifier {
     fn unmarshal_response(&self, val: Value) -> anyhow::Result<MessageDeltaOutput>;
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>>;

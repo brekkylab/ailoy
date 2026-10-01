@@ -27,11 +27,8 @@ use crate::tool::r#impl::builtins::web_search::engine::{
 ///     </li>
 ///   </ul>
 pub struct Yandex {
-    /// Selector for individual search result items.
     results: Selector,
-    /// Selector for the title anchor inside a result item.
     result_link: Selector,
-    /// Selector for the description text inside a result item.
     result_desc: Selector,
 }
 

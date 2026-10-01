@@ -18,7 +18,6 @@ env:
   NODE_VERSION: "20.19.4"
 
 jobs:
-  # Build main package
   build:
     runs-on: ubuntu-latest
     outputs:

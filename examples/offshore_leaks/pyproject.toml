@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Downloads ICIJ's Offshore Leaks database and loads it into DuckDB for examples/offshore_leaks, on the host."
 requires-python = ">=3.10"
 dependencies = [
-    # The guest opens the file this writes, so it installs the same version: see main.rs.
+    # Pinned: the guest opens the file this writes and must install the same version.
     "duckdb==1.5.5",
 ]
 

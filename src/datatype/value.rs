@@ -14,12 +14,12 @@ fn decode_json_pointer_token(token: &str) -> String {
                 Some('0') => out.push('~'),
                 Some('1') => out.push('/'),
                 Some(other) => {
-                    // For malformed sequences, conservatively preserve the original ("~" + other)
+                    // Malformed escape: keep it verbatim.
                     out.push('~');
                     out.push(other);
                 }
                 None => {
-                    // If the string ends with a lone '~', preserve it as-is
+                    // Trailing lone '~': keep it.
                     out.push('~');
                 }
             }
@@ -49,9 +49,7 @@ impl schemars::JsonSchema for Value {
     }
 
     fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        // An empty schema (`{}`) accepts any value.
-        // This is intentional: `Value` is a free-form type that can hold any JSON-
-        // compatible value (null, bool, number, string, array, or object).
+        // `{}` accepts anything: `Value` holds any JSON-compatible value.
         schemars::json_schema!({})
     }
 }
@@ -220,14 +218,7 @@ impl Value {
         }
     }
 
-    /// Get a value by JSON Pointer (immutable).
-    ///
-    /// Rules:
-    /// - `""` (empty string): returns `Some(self)`
-    /// - Must start with `/`; otherwise returns `None`
-    /// - Objects are accessed by key; arrays are accessed by decimal index
-    /// - Unescape tokens: `~1` → `/`, `~0` → `~`
-    /// - The JSON Patch `-` token is not supported
+    /// Get a value by RFC 6901 JSON Pointer; the JSON Patch `-` token is not supported.
     pub fn pointer(&self, pointer: &str) -> Option<&Value> {
         if pointer.is_empty() {
             return Some(self);
@@ -244,7 +235,7 @@ impl Value {
                     cur = map.get(&token)?;
                 }
                 Value::Array(vec) => {
-                    // JSON Pointer encodes indices as strings; negative or non-integer -> None
+                    // Negative or non-integer indices -> None.
                     if token == "-" {
                         return None; // JSON Patch only
                     }

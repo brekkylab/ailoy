@@ -30,10 +30,9 @@ impl LangModelProvider {
 const DEFAULT_MAX_TOKENS: u64 = 8192;
 
 /// Whether a Claude model predates adaptive thinking (Claude 4.6) and thinks only on a
-/// `budget_tokens` budget. Reads the version out of the id, so it takes the Anthropic id
-/// (`claude-haiku-4-5`), a dated one (`claude-sonnet-4-20250514`, `claude-3-7-sonnet-…`) and
-/// the Bedrock one (`anthropic.claude-haiku-4-5-20251001-v1:0`). An id it cannot read is
-/// taken for a newer model.
+/// `budget_tokens` budget. Reads the version from Anthropic (`claude-opus-5-5`), dated
+/// (`claude-haiku-4-5-20251001`, legacy `claude-3-7-sonnet-…`) and Bedrock
+/// (`anthropic.claude-haiku-4-5-20251001-v1:0`) ids; an unreadable id counts as newer.
 fn takes_thinking_budget(model: &str) -> bool {
     let Some((_, rest)) = model.split_once("claude-") else {
         return false;
@@ -186,11 +185,8 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
     to_value!({"role": item.role.to_string(), "content": contents})
 }
 
-/// Marshal a message slice with position-aware thinking inclusion.
-///
-/// Thinking blocks are only included for assistant messages that appear after
-/// the last user message, matching Anthropic's extended-thinking requirements.
-/// System messages are extracted separately and excluded from the array.
+/// Thinking is replayed only for assistant turns after the last user message, as
+/// extended thinking requires. System messages are left out; they go in the top-level `system`.
 fn marshal_messages(messages: &[Message]) -> Value {
     let last_user_index = messages
         .iter()
@@ -235,7 +231,6 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
         let options = req.options;
         let model = Value::from(req.model);
 
-        // Extract system message text if present
         let system = req
             .messages
             .iter()
@@ -301,8 +296,7 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
                 .unwrap()
                 .insert("tools".to_owned(), tools);
         }
-        // Thinking does not take the sampling knobs; drop them silently, as for OpenAI's
-        // reasoning models.
+        // Thinking does not take the sampling knobs; drop them silently.
         if thinking.is_none() {
             if let Some(temperature) = options.temperature {
                 body.as_object_mut()
@@ -418,17 +412,7 @@ impl AnthropicUnmarshal {
     }
 }
 
-/// Parses one Anthropic SSE stream event into an incremental delta.
-///
-/// Each event type contributes a fragment that [`MessageDelta::accumulate`]
-/// stitches together:
-/// - `message_start`: role + initial usage (input / cache tokens)
-/// - `content_block_start`: begins a `tool_use` function call (id + name)
-/// - `content_block_delta`: a text / thinking / signature / tool-args fragment
-/// - `message_delta`: `stop_reason` + final usage (output tokens)
-/// - `ping` / `content_block_stop` / `message_stop`: no delta → `Ok(None)`
-/// - `error`: fails with the server-reported error type + message
-/// - any other (future) type: ignored → `Ok(None)`
+/// Parses one Anthropic SSE event into a delta; control and unknown events yield `Ok(None)`.
 impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;
@@ -499,8 +483,8 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             }
             // Control events carry no delta.
             "ping" | "content_block_stop" | "message_stop" => return Ok(None),
-            // Mid-stream error (e.g. `overloaded_error`, rate limit). Surface the
-            // server's own type + message rather than a generic "unknown event".
+            // Mid-stream error (e.g. `overloaded_error`, rate limit): surface the
+            // server's own type + message.
             "error" => {
                 let err_type = val
                     .pointer("/error/type")
@@ -534,13 +518,11 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("Root should be an object"))?;
 
-        // Parse stop_reason -> finish_reason
         let finish_reason = root
             .get("stop_reason")
             .and_then(|v| v.as_str())
             .map(Self::parse_finish_reason);
 
-        // Parse role
         let role = root
             .get("role")
             .and_then(|v| v.as_str())
@@ -549,7 +531,6 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
 
         let mut delta = MessageDelta::new().with_role(role);
 
-        // Parse content array
         if let Some(contents) = root.get("content")
             && !contents.is_null()
         {
@@ -623,7 +604,6 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             }
         }
 
-        // Parse usage
         let usage = root.get("usage").and_then(Self::parse_usage);
 
         Ok(MessageDeltaOutput {
@@ -760,9 +740,7 @@ mod tests {
         assert_eq!(v["body"]["temperature"], 0.3);
     }
 
-    /// Register a one-off [`LangModelProvider`] under `provider_name` in the
-    /// global registry and build the [`LangModel`] via
-    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    /// Registers a one-off provider under `provider_name` and builds the model from it.
     fn build_anthropic_model(provider_name: &str, model: &str, api_key: String) -> LangModel {
         let elem = LangModelProviderElem::API {
             schema: LangModelAPISchema::Anthropic,
@@ -1248,7 +1226,7 @@ mod tests {
         let api_key =
             std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set in .env");
 
-        // Intentionally omit additionalProperties to verify normalize_schema adds it.
+        // No additionalProperties: the marshal must add it.
         let schema = to_value!({
             "type": "object",
             "properties": {
@@ -1328,7 +1306,6 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
 
-        // Fetch a real JPEG image to use as the tool result
         let img_bytes = reqwest::get(
             "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg",
         )

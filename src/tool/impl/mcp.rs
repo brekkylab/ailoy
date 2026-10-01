@@ -1,26 +1,16 @@
 //! MCP (Model Context Protocol) client support.
 //!
-//! An MCP server is not one tool but a bag of them, and the list is knowable
-//! only by asking: the client connects, initialises, and calls `tools/list`.
-//! That is a round trip — over a socket, or to a child process — and
-//! [`ToolProvider::provide`](crate::tool::ToolProvider::provide) is a `fn` with
-//! no `.await` to spend on it. So discovery happens once, at **registration**
-//! time, and what lands in the registry is one already-resolved entry per remote
-//! tool, each sharing the live connection behind an `Arc`:
+//! Discovery (`tools/list`) happens once, at registration; each remote tool
+//! becomes its own registry entry, sharing the live connection behind an `Arc`:
 //!
 //! ```text
-//! MCPConnection::connect(&transport)   ← async: initialize + tools/list
+//! MCPToolProviderElem::connect()       ← async: initialize + tools/list
 //!         │
 //!         │  ToolProvider::insert_mcp("github", conn)   ← sync: N entries
 //!         ▼
 //! "github__create_issue" → ToolProviderElem::MCP(MCPToolEntry)
 //! "github__list_issues"  → ToolProviderElem::MCP(MCPToolEntry)
 //! ```
-//!
-//! Registration also hands back the [`ToolDesc`]s it just inserted, which is
-//! what an [`AgentSpec`](crate::agent::AgentSpec) wants in its `tools` field —
-//! so the spec stays a plain list of descriptions and nothing downstream of
-//! registration needs to know an MCP server was involved.
 //!
 //! ```no_run
 //! # use ailoy::{agent::AgentSpec, tool::{register_mcp_stdio, unregister_mcp}};
@@ -44,29 +34,6 @@
 //! # Ok(())
 //! # }
 //! ```
-//!
-//! ## Names
-//!
-//! The name a model sees is `{prefix}__{remote name}`, because two servers may
-//! both call a tool `search` and the registry is one flat name-keyed map. The
-//! separator is `__` rather than `/` or `.`: model-facing tool names are limited
-//! to `[A-Za-z0-9_-]` by the OpenAI and Anthropic schemas, so a `/` would make
-//! the request itself invalid. Doubling the underscore keeps the boundary
-//! legible when a prefix or a remote name contains one of its own.
-//!
-//! The remote name is kept beside the entry and used verbatim on the wire — the
-//! prefix is this crate's business, not the server's.
-//!
-//! ## Where a stdio server runs
-//!
-//! On the **host**, not inside the [`ConsoleClient`](crate::console::ConsoleClient) sandbox
-//! that the built-in tools run in. [`ConsoleClient::exec`](cortex::console::ConsoleClient::exec)
-//! is argv-in, bytes-out — one shot, with no handle to a process left running —
-//! so there is nowhere inside the sandbox to keep a server that has to hold its
-//! stdin and stdout open for the length of a session. An MCP server therefore
-//! has whatever access this process has. That is the one asymmetry between MCP
-//! tools and every other tool here, and the reason to register only servers the
-//! caller trusts.
 
 use std::sync::Arc;
 
@@ -90,16 +57,14 @@ use crate::{
 
 /// Separator between the registry prefix and the server's own tool name.
 ///
-/// See the module docs on names for why it is not `/`.
+/// Not `/` or `.`: the OpenAI and Anthropic schemas limit tool names to
+/// `[A-Za-z0-9_-]`. Doubled so the boundary stays legible when a prefix or
+/// remote name contains `_` itself.
 pub const MCP_NAME_SEPARATOR: &str = "__";
 
 // ── Connection ────────────────────────────────────────────────────────────────
 
 /// A live MCP session plus the tool list it reported at startup.
-///
-/// Created by [`MCPToolProviderElem::connect`] and handed to
-/// [`ToolProvider::insert_mcp`](crate::tool::ToolProvider::insert_mcp), which
-/// wraps it in an `Arc` and fans it out into one registry entry per tool.
 pub struct MCPConnection {
     service: RunningService<RoleClient, ()>,
     tools: Vec<rmcp::model::Tool>,
@@ -123,9 +88,8 @@ impl std::fmt::Debug for MCPConnection {
 impl MCPConnection {
     /// Spawn `command` and speak MCP over its stdio.
     ///
-    /// The child's stderr goes to `/dev/null`: servers routinely log there, and
-    /// inheriting it would interleave that with whatever the host process is
-    /// drawing on its own terminal.
+    /// Stderr goes to `/dev/null` so server logs don't interleave with the host's
+    /// terminal output.
     pub async fn stdio(
         command: impl AsRef<str>,
         args: impl IntoIterator<Item = impl AsRef<str>>,
@@ -200,8 +164,7 @@ impl MCPToolProviderElem {
 #[derive(Clone)]
 pub struct MCPToolEntry {
     conn: Arc<MCPConnection>,
-    /// The name the server knows this tool by — what goes on the wire, before
-    /// the registry prefix was put in front of it.
+    /// Unprefixed name the server knows; sent on the wire.
     remote_name: String,
 }
 
@@ -239,9 +202,8 @@ impl MCPToolEntry {
         tool_func!(async |args: Value, id: String| -> Message
             with [conn = conn.clone(), remote_name = remote_name.clone()]
             {
-            // MCP takes an arguments *object*; anything else is a tool being
-            // called with something its schema never described, and saying so
-            // is more use to the model than an empty call the server rejects.
+            // Non-object args mismatch the schema; reporting that helps the model
+            // more than an empty call the server rejects.
             let arguments = match serde_json::Value::from(args) {
                 serde_json::Value::Object(map) => Some(map),
                 serde_json::Value::Null => None,
@@ -295,9 +257,8 @@ pub(crate) fn mcp_tool_desc(prefix: &str, tool: &rmcp::model::Tool) -> ToolDesc 
     let name = prefixed_tool_name(prefix, &tool.name);
     warn_if_tool_name_too_long(&name);
 
-    // The schema is passed through as the server wrote it. It is already JSON
-    // Schema, which is what `ToolDesc::parameters` holds, and rewriting it here
-    // would only risk disagreeing with the server about what it accepts.
+    // Passed through verbatim: already JSON Schema, and rewriting risks
+    // disagreeing with the server about what it accepts.
     let parameters = Value::from(serde_json::Value::Object((*tool.input_schema).clone()));
 
     let mut builder = ToolDescBuilder::new(name).parameters(parameters);
@@ -314,9 +275,8 @@ pub(crate) fn mcp_tool_desc(prefix: &str, tool: &rmcp::model::Tool) -> ToolDesc 
 
 /// `{prefix}__{name}`, with anything a model API would refuse mapped to `_`.
 ///
-/// Sanitising rather than refusing: the remote name is kept verbatim on the
-/// entry and used on the wire, so a renamed tool still calls the right thing,
-/// and one oddly-named tool out of forty should not cost the caller the server.
+/// Sanitises rather than refusing: the wire uses the verbatim remote name, and
+/// one oddly-named tool should not cost the caller the whole server.
 pub(crate) fn prefixed_tool_name(prefix: &str, remote_name: &str) -> String {
     let mut out =
         String::with_capacity(prefix.len() + MCP_NAME_SEPARATOR.len() + remote_name.len());
@@ -370,6 +330,8 @@ pub(crate) fn call_tool_result_to_parts(result: CallToolResult) -> Vec<Part> {
     parts
 }
 
+/// Unknown `#[non_exhaustive]` variants from a newer protocol become placeholder
+/// text rather than being dropped, which would look like an empty result.
 fn content_block_to_part(block: ContentBlock) -> Part {
     match block {
         ContentBlock::Text(text) => Part::text(text.text),
@@ -397,8 +359,6 @@ fn content_block_to_part(block: ContentBlock) -> Part {
                 "[binary resource omitted: {uri}{}]",
                 mime_type.map(|m| format!(", {m}")).unwrap_or_default()
             )),
-            // `#[non_exhaustive]`, like `ContentBlock` below: a newer protocol
-            // can carry a resource shape this build has no arm for.
             other => Part::text(format!("[unsupported MCP resource: {other:?}]")),
         },
 
@@ -406,9 +366,6 @@ fn content_block_to_part(block: ContentBlock) -> Part {
             Part::text(format!("[resource link: {} ({})]", link.name, link.uri))
         }
 
-        // `ContentBlock` is `#[non_exhaustive]`: a server speaking a newer
-        // protocol than this build can send a kind that did not exist when it
-        // was compiled, and dropping it silently would look like an empty result.
         other => Part::text(format!("[unsupported MCP content block: {other:?}]")),
     }
 }
@@ -432,9 +389,8 @@ mod tests {
 
     // ── A server to talk to ───────────────────────────────────────────────────
 
-    /// Two tools, enough to cover the shapes the mapping has to distinguish:
-    /// `echo` answers with plain content, `structured` with `structuredContent`,
-    /// and either reports an error when asked to.
+    /// `echo` returns plain content (an error for "boom"); `odd.name/tool` returns
+    /// `structuredContent` under a name the model APIs refuse.
     #[derive(Clone)]
     struct TestServer;
 

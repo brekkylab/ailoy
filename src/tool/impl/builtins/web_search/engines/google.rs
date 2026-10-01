@@ -42,7 +42,7 @@ fn random_ua() -> String {
 }
 
 pub struct Google {
-    /// `a[data-ved]` — further filtered in code to skip anchors that have a class attribute.
+    /// `a[data-ved]`; anchors with a class attribute are skipped in code.
     sel_results: Selector,
     /// Title text lives in the first `div` with a `style` attribute inside the anchor.
     sel_title: Selector,
@@ -68,7 +68,6 @@ impl Google {
     /// paths, fragment-only anchors, etc.) returns `None` and will be skipped.
     fn clean_url(href: &str) -> Option<String> {
         if let Some(rest) = href.strip_prefix("/url?q=") {
-            // Take the part after `/url?q=` and before the first `&sa=U` token.
             let encoded = rest.split("&sa=U").next().unwrap_or("");
             let decoded = urlencoding::decode(encoded).ok()?.into_owned();
             if decoded.starts_with("http") {
@@ -96,9 +95,8 @@ impl SearchEngine for Google {
         query: &str,
         max_results: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
-        // Google does not use TLS fingerprinting for bot detection; plain reqwest works.
-        // The mobile Android Chrome UA is what triggers Google's SSR code path —
-        // desktop or unknown UAs receive a JavaScript-only shell that cannot be parsed.
+        // The mobile Android Chrome UA triggers Google's SSR path; other UAs get an
+        // unparseable JS-only shell. No TLS fingerprinting, so plain reqwest works.
 
         // hl=en-US   : interface language
         // lr=lang_en : restrict results to English documents
@@ -120,7 +118,6 @@ impl SearchEngine for Google {
             .send()
             .await?;
 
-        // Explicit rate-limit signal.
         if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
             log::warn!("Google blocked: HTTP 429");
             return Err(SearchError::Blocked);
@@ -132,8 +129,8 @@ impl SearchEngine for Google {
             return Err(SearchError::Blocked);
         }
 
-        // Other non-success statuses are not necessarily a block (transient 5xx, etc.).
-        // Surface them as SearchError::Http so callers can distinguish from Blocked.
+        // Other failures (transient 5xx, etc.) are not necessarily a block, so they
+        // surface as SearchError::Http rather than Blocked.
         let response = response.error_for_status()?;
 
         let html_text = response.text().await?;
@@ -179,7 +176,6 @@ impl SearchEngine for Google {
                 continue;
             }
 
-            // Description sits two DOM levels above the anchor.
             let description = a_el
                 .parent()
                 .and_then(|p| p.parent())
