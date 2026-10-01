@@ -141,7 +141,6 @@ async fn main() -> anyhow::Result<()> {
         .mount(artifacts.clone(), "/artifacts")
         // The build's `apt-get` runs with the session's network. What comes in is the viewer,
         // and the agent's console at the admin port and `shot.py`.
-        .network(true)
         .ports([
             Port::new(VIEWER_PORT, VNC_PORT)?,
             Port::new(ADMIN_PORT, ADMIN_PORT)?,
@@ -175,7 +174,9 @@ async fn main() -> anyhow::Result<()> {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    println!("OpenTTD is running. Watch it at vnc://localhost:{VIEWER_PORT} (password: {password}).");
+    println!(
+        "OpenTTD is running. Watch it at vnc://localhost:{VIEWER_PORT} (password: {password})."
+    );
 
     let mut date = game_date(&mut game).await?;
     let until = year_of(&date)? + years;
@@ -309,8 +310,8 @@ async fn game_date(console: &mut ConsoleClient) -> anyhow::Result<String> {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    let status: serde_json::Value = serde_json::from_slice(&out.stdout)
-        .with_context(|| "reading the game's status")?;
+    let status: serde_json::Value =
+        serde_json::from_slice(&out.stdout).with_context(|| "reading the game's status")?;
     status["date"]
         .as_str()
         .map(str::to_string)
