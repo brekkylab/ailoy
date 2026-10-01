@@ -1,6 +1,6 @@
 // Agents that drive a language model through tool-augmented turns.
 //
-// An `Agent` is built with an awaited `AgentBuilder`; a turn is `agent.run(query)`, iterated
+// An `Agent` is built with an `AgentBuilder` and awaited; a turn is `agent.run(query)`, iterated
 // with `for await`. Models and tools resolve by name from process-wide registries
 // (`registerLangModel`, `registerTool`, `registerMcpStdio`, ...), each starting with a
 // `'default'` entry: the models whose API keys are in the environment, and every built-in tool.
