@@ -49,8 +49,8 @@
 # # When it runs, and the virtx it is built with
 #
 # For a release: when one is published, or when dispatched with the tag to release. The ref
-# has to be a version tag, `vX.Y.Z`, and every manifest here -- the workspace, npm's
-# packages -- has to say that version (the wheel takes the workspace's).
+# has to be a version tag, `vX.Y.Z`, and every manifest `.bumpversion.toml` names -- the
+# workspace, npm's packages -- has to say that version (the wheel takes the workspace's).
 #
 # virtx is one release (`[workspace.dependencies]` in Cargo.toml): the crate from
 # crates.io, and its bindings' crates -- which crates.io does not have -- from git at the
@@ -106,28 +106,24 @@ jobs:
         with:
           ref: ${{ env.REF }}
 
+      # The version is `.bumpversion.toml`'s, and every manifest it names has to hold it: a
+      # dry-run replace fails, naming the file, where one does not. So the list of manifests
+      # is kept in one place, the one that bumps them.
       - id: version
         name: Every manifest is the tag's version
         run: |
           fail() { echo "::error::$*"; exit 1; }
-          toml() { sed -n 's/^version = "\(.*\)"$/\1/p' "$1" | head -1; }
-          # A build of a ref that is not a version tag is of whatever version its manifests say.
-          if ! [[ "$REF" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?)$ ]]; then
+          bump() { pipx run --spec 'bump-my-version>=1.5,<2' bump-my-version "$@"; }
+          version=$(bump show current_version)
+          bump replace --dry-run --allow-dirty --new-version "$version" > /dev/null \
+            || fail "not every manifest .bumpversion.toml names is at $version: bump them together, with bump-my-version"
+          if [[ "$REF" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?)$ ]]; then
+            [ "${BASH_REMATCH[1]}" = "$version" ] || fail "$REF is not the manifests' version, $version"
+          else
+            # A build of a ref that is not a version tag is of whatever version its manifests say.
             [ "$BUILD_ONLY" = true ] || fail "$REF is not a version tag: a release is tagged vX.Y.Z"
-            version=$(toml Cargo.toml)
-            echo "build-only: $REF is not a version tag; building version $version, as Cargo.toml says"
-            echo "version=$version" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "build-only: $REF is not a version tag; building version $version"
           fi
-          version=${BASH_REMATCH[1]}
-          json() { node -p "require('./$1').version"; }
-          wrong=""
-          # The workspace's, which the crate, both bindings' crates and the wheel inherit.
-          [ "$(toml Cargo.toml)" = "$version" ] || wrong="$wrong Cargo.toml=$(toml Cargo.toml)"
-          for f in bindings/node/package.json bindings/node/npm/*/package.json; do
-            [ "$(json "$f")" = "$version" ] || wrong="$wrong $f=$(json "$f")"
-          done
-          [ -z "$wrong" ] || fail "$REF is version $version, but these manifests say otherwise:$wrong"
           echo "ailoy $version ($REF)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
