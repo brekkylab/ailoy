@@ -18,15 +18,15 @@ _Path = str | PathLike[str]
 _Content = bytes | str
 _T = TypeVar("_T")
 
-# ---- cortex, built in: see `ailoy.cortex` -------------------------------------------------
+# ---- virtx, built in: see `ailoy.virtx` -------------------------------------------------
 ERROR_CODES: dict[str, int]
 
-class CortexError(Exception): ...
+class VirtxError(Exception): ...
 
-class ConsoleRefused(CortexError):
+class ConsoleRefused(VirtxError):
     code: int
 
-class ConsoleBroken(CortexError): ...
+class ConsoleBroken(VirtxError): ...
 
 class Step:
     @staticmethod

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use cortex::console::ConsoleClient;
 use futures::{
     StreamExt,
     future::BoxFuture,
     stream::{self, BoxStream},
 };
+use virtx::console::ConsoleClient;
 
 use crate::{
     datatype::Value,

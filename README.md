@@ -40,9 +40,9 @@ You don't need to install and run a VM daemon such as Docker.
 
 All you need is an API key for the LLM provider you want to use.
 
-The only exception is cortex's virtual filesystem feature, which relies on host mounts and therefore needs FUSE support:
+The only exception is virtx's virtual filesystem feature, which relies on host mounts and therefore needs FUSE support:
 install [FUSE-T](https://www.fuse-t.org/) on macOS or [Dokany](https://github.com/dokan-dev/dokany) on Windows.
-See the [cortex README](https://github.com/brekkylab/cortex) for details.
+See the [virtx README](https://github.com/brekkylab/virtx) for details.
 
 ## Quick start
 
@@ -65,7 +65,7 @@ pip install ailoy-py
 import asyncio
 
 from ailoy import AgentBuilder
-from ailoy.cortex import ConsoleClient, Recipe
+from ailoy.virtx import ConsoleClient, Recipe
 
 
 async def main() -> None:
@@ -137,7 +137,7 @@ try {
 ```toml
 [dependencies]
 ailoy = "0.3"
-cortex = { git = "https://github.com/brekkylab/cortex" }
+virtx = { git = "https://github.com/brekkylab/virtx" }
 ```
 
 ```rust
@@ -146,7 +146,7 @@ use ailoy::{
     console::ConsoleClient,
     message::{Message, Part, Role},
 };
-use cortex::image::Recipe;
+use virtx::image::Recipe;
 use futures::StreamExt as _;
 
 #[tokio::main]

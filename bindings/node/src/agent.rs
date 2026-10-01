@@ -5,7 +5,7 @@
 //! lock's owned guard in its stream, which also makes a second `run` wait for the first to
 //! finish, as `&mut self` would in Rust.
 //!
-//! `AgentBuilder.console` puts a cortex `ConsoleClient`'s slot (the slot, not its contents) in
+//! `AgentBuilder.console` puts a virtx `ConsoleClient`'s slot (the slot, not its contents) in
 //! the agent's state. The `ConsoleClient` stays usable: its calls and the agent's tools take
 //! turns on the one lock, the agent starts and stops its backend around each batch of tool
 //! calls, and `ConsoleClient.close()` ends the session for both.
@@ -13,7 +13,7 @@
 //! `AgentRun`'s `next()` and `return()` are an async iterator's, and the package's `index.js`
 //! gives the class `Symbol.asyncIterator` so `for await` takes it. napi's own async-iterator
 //! support is not used because it rejects with napi's status as the `code`, and the codes a
-//! caller acts on are ailoy's and cortex's.
+//! caller acts on are ailoy's and virtx's.
 
 use std::sync::Arc;
 
@@ -25,7 +25,6 @@ use ailoy::{
     message::{Message, MessageDeltaOutput, MessageOutput},
     tool::{ToolDesc, WebSearchEngineKind},
 };
-use cortex_node::console::{JsConsoleClient, promise, thrown};
 use futures::{StreamExt as _, stream::BoxStream};
 use napi::{
     Env,
@@ -34,6 +33,7 @@ use napi::{
 use napi_derive::napi;
 use serde::Serialize;
 use tokio::{runtime::Handle, sync::Mutex};
+use virtx_node::console::{JsConsoleClient, promise, thrown};
 
 use crate::{
     convert::{Json, from_js, query},

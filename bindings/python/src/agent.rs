@@ -5,14 +5,14 @@
 //! lock's owned guard in its stream, which also makes a second `run` wait for the first to
 //! finish, as `&mut self` would in Rust.
 //!
-//! `AgentBuilder.console` puts a cortex `ConsoleClient`'s slot (the slot, not its contents) in
+//! `AgentBuilder.console` puts a virtx `ConsoleClient`'s slot (the slot, not its contents) in
 //! the agent's state. The `ConsoleClient` stays usable: its calls and the agent's tools take
 //! turns on the one lock, the agent starts and stops its backend around each batch of tool
 //! calls, and `ConsoleClient.close()` ends the session for both.
 
 use std::sync::Arc;
 
-use _cortex::console::PyConsoleClient;
+use _virtx::console::PyConsoleClient;
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     datatype::Value,

@@ -62,9 +62,9 @@ use ailoy::{
     tool_func,
 };
 use anyhow::{Context as _, bail};
-use cortex::image::Recipe;
 use futures::StreamExt as _;
 use serde_json::{Value as Json, json};
+use virtx::image::Recipe;
 
 const SYSTEM: &str = include_str!("system.md");
 /// Sent every morning.
