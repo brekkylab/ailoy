@@ -1,4 +1,4 @@
-use cortex::protocol::Error;
+use virtx::protocol::Error;
 
 use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
@@ -65,12 +65,12 @@ pub fn get_shell_tool_func() -> ToolFunc {
             .filter(|secs| *secs > 0.0)
             .map(|secs| (secs * 1000.0).ceil() as u64);
 
-        // cortex consults no shell, so asking for shell semantics means asking for a
+        // virtx consults no shell, so asking for shell semantics means asking for a
         // shell.
         let out = match console.exec(["sh", "-c", cmd.as_str()], timeout_ms).await {
             Ok(out) => out,
             // A killed command has no result — no exit code, and whatever it wrote is
-            // gone with it — so cortex refuses the execution instead of inventing one.
+            // gone with it — so virtx refuses the execution instead of inventing one.
             Err(e) if e.code() == Some(Error::TIMED_OUT) => {
                 return crate::to_value!({
                     "stdout": "",

@@ -41,7 +41,6 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.23.1",
- "cortex",
  "dedent",
  "derive_builder",
  "dirs",
@@ -79,6 +78,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "virtx",
  "wreq",
  "wreq-util",
 ]
@@ -90,16 +90,15 @@ dependencies = [
  "ailoy",
  "anyhow",
  "async-stream",
- "cortex",
- "cortex-node",
  "futures",
  "napi",
  "napi-build",
  "napi-derive",
- "pkg-config",
  "serde",
  "tokio",
  "url",
+ "virtx",
+ "virtx-node",
 ]
 
 [[package]]
@@ -109,16 +108,15 @@ dependencies = [
  "ailoy",
  "anyhow",
  "async-stream",
- "cortex",
- "cortex-python",
  "futures",
- "pkg-config",
  "pyo3",
  "pyo3-async-runtimes",
  "pythonize",
  "serde",
  "tokio",
  "url",
+ "virtx",
+ "virtx-python",
 ]
 
 [[package]]
@@ -657,52 +655,6 @@ name = "core_detect"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
-
-[[package]]
-name = "cortex"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bson",
- "cc",
- "dokan",
- "dokan-sys",
- "flate2",
- "fuser",
- "futures-core",
- "libc",
- "pkg-config",
- "reqwest",
- "serde",
- "sha2",
- "tar",
- "tokio",
- "widestring",
- "winapi",
-]
-
-[[package]]
-name = "cortex-node"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cortex",
- "napi",
- "napi-build",
- "napi-derive",
- "tokio",
-]
-
-[[package]]
-name = "cortex-python"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cortex",
- "pyo3",
- "pyo3-async-runtimes",
- "tokio",
-]
 
 [[package]]
 name = "cpufeatures"
@@ -4113,6 +4065,52 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "virtx"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bson",
+ "cc",
+ "dokan",
+ "dokan-sys",
+ "flate2",
+ "fuser",
+ "futures-core",
+ "libc",
+ "pkg-config",
+ "reqwest",
+ "serde",
+ "sha2",
+ "tar",
+ "tokio",
+ "widestring",
+ "winapi",
+]
+
+[[package]]
+name = "virtx-node"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "tokio",
+ "virtx",
+]
+
+[[package]]
+name = "virtx-python"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pyo3",
+ "pyo3-async-runtimes",
+ "tokio",
+ "virtx",
+]
 
 [[package]]
 name = "vsimd"

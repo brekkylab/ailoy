@@ -24,12 +24,12 @@ use ailoy::{
         unregister_mcp as unregister_mcp_rs,
     },
 };
-use cortex_node::console::{promise, thrown};
 use napi::{
     Env,
     bindgen_prelude::{PromiseRaw, Unknown, within_runtime_if_available},
 };
 use napi_derive::napi;
+use virtx_node::console::{promise, thrown};
 
 use crate::{
     convert::{Json, from_js},

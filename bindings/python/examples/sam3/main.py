@@ -45,7 +45,7 @@ if (
     )
 
 import ailoy
-from ailoy.cortex import (  # noqa: E402
+from ailoy.virtx import (  # noqa: E402
     ConsoleClient,
     Directory,
     HostMount,

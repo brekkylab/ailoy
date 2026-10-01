@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use cortex::protocol::Error;
+use virtx::protocol::Error;
 
 use crate::{
     console::ConsoleClient,
@@ -199,7 +199,7 @@ fn apply_hunks(path: &str, mut content: String, hunks: &[Hunk]) -> anyhow::Resul
 }
 
 /// Write `bytes` to `path`, making its directories if they are not there yet —
-/// only after cortex says the write missed, since `write` creates the file but
+/// only after virtx says the write missed, since `write` creates the file but
 /// nothing above it.
 async fn write_creating_dirs(
     console: &mut ConsoleClient,
