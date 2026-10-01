@@ -227,8 +227,6 @@ See [virtx](https://github.com/brekkylab/virtx) for more details.
 
 ## Building from source
 
-Ailoy builds on [virtx](https://github.com/brekkylab/virtx); see its README for what it needs on your host.
-
 ```sh
 git clone https://github.com/brekkylab/ailoy
 cd ailoy
