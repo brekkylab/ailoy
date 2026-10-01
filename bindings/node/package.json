@@ -1,7 +1,7 @@
 {
   "name": "ailoy-node",
   "version": "0.3.0",
-  "description": "Agents that drive a language model through tool-augmented turns, in a cortex console.",
+  "description": "Agents that drive a language model through tool-augmented turns, in a virtx console.",
   "license": "Apache-2.0",
   "main": "index.js",
   "types": "index.d.ts",

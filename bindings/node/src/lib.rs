@@ -8,7 +8,7 @@
 //! Data (messages, specs, tool descriptions, a turn's outputs) crosses as plain objects in its
 //! serde form rather than a class per type, since that form is what ailoy stores and sends.
 //!
-//! cortex's classes are linked in from `cortex-node` rather than loaded from cortex's own addon,
+//! virtx's classes are linked in from `virtx-node` rather than loaded from virtx's own addon,
 //! because an agent takes a `ConsoleClient` apart to share its session and two addons cannot
 //! see into each other's.
 

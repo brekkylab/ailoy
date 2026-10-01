@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use cortex::protocol::Error;
+use virtx::protocol::Error;
 
 use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
@@ -45,7 +45,7 @@ pub fn get_write_tool_func() -> ToolFunc {
             });
         };
 
-        // cortex `write` does not create missing parent directories (`NOT_FOUND`).
+        // virtx `write` does not create missing parent directories (`NOT_FOUND`).
         // This tool does, only when that miss actually happens.
         let mut wrote = console.write(path, content.as_bytes().to_vec(), None).await;
 

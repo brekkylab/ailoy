@@ -35,16 +35,16 @@ use ailoy::{
 };
 use anyhow::Context as _;
 // One host binding per platform (mounts on `try_new`, unmounts on `Drop`), so the tree
-// below is written once. Three arms, not `not(windows)`: cortex's default `mount` feature
+// below is written once. Three arms, not `not(windows)`: virtx's default `mount` feature
 // compiles only its target's binding, each a distinct guard type.
-#[cfg(windows)]
-use cortex::fs::DokanMount as HostMount;
-#[cfg(target_os = "linux")]
-use cortex::fs::FuseMount as HostMount;
-#[cfg(target_os = "macos")]
-use cortex::fs::FuseTMount as HostMount;
-use cortex::{fs::Directory, image::Recipe};
 use futures::StreamExt as _;
+#[cfg(windows)]
+use virtx::fs::DokanMount as HostMount;
+#[cfg(target_os = "linux")]
+use virtx::fs::FuseMount as HostMount;
+#[cfg(target_os = "macos")]
+use virtx::fs::FuseTMount as HostMount;
+use virtx::{fs::Directory, image::Recipe};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

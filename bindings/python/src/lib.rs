@@ -8,7 +8,7 @@
 //! Data (messages, specs, tool descriptions, a turn's outputs) crosses as dicts in its serde
 //! form rather than a class per type, since that form is what ailoy stores and sends.
 //!
-//! cortex's classes are registered in from `cortex-python` rather than imported from cortex's
+//! virtx's classes are registered in from `virtx-python` rather than imported from virtx's
 //! own extension, because an agent takes a `ConsoleClient` apart to share its session and two
 //! extension modules cannot see into each other's.
 
@@ -22,7 +22,7 @@ mod tool;
 
 #[pymodule]
 fn _ailoy(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    _cortex::register(m)?;
+    _virtx::register(m)?;
     error::register(m)?;
     registry::register(m)?;
     agent::register(m)?;

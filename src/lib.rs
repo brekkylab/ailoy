@@ -10,14 +10,14 @@ pub mod memory;
 pub mod message;
 pub mod tool;
 
-/// A started console on cortex's default server, for tests.
+/// A started console on virtx's default server, for tests.
 ///
 /// Panics on failure: a missing server binary should stop the test run loudly.
 #[cfg(test)]
-pub(crate) async fn test_console() -> cortex::console::ConsoleClient {
+pub(crate) async fn test_console() -> virtx::console::ConsoleClient {
     dotenvy::dotenv().ok();
 
-    let mut console = cortex::console::ConsoleClient::builder()
+    let mut console = virtx::console::ConsoleClient::builder()
         .build()
         .await
         .unwrap_or_else(|e| panic!("starting the console server: {e:#}"));

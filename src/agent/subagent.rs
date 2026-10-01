@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use cortex::console::ConsoleClient;
 use futures::StreamExt as _;
 use tokio::sync::Mutex;
+use virtx::console::ConsoleClient;
 
 use crate::{
     agent::{Agent, AgentCard, AgentSpec, AgentState},

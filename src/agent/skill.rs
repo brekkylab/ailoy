@@ -1,8 +1,8 @@
 //! Skills: directories in the console, each with a `SKILL.md` saying how to use it.
 
 use anyhow::Context as _;
-use cortex::console::ConsoleClient;
 use tokio::sync::Mutex;
+use virtx::console::ConsoleClient;
 
 use crate::lang_model::model_family;
 
