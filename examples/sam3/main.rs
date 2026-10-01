@@ -43,7 +43,7 @@ use cortex::fs::DokanMount as HostMount;
 use cortex::fs::FuseMount as HostMount;
 #[cfg(target_os = "macos")]
 use cortex::fs::FuseTMount as HostMount;
-use cortex::{fs::Directory, image::Recipe, protocol::NetworkAccess};
+use cortex::{fs::Directory, image::Recipe};
 use futures::StreamExt as _;
 
 #[tokio::main]
@@ -123,8 +123,6 @@ async fn main() -> anyhow::Result<()> {
             )
             .mount_readonly(project_path.join("context"), "/context")
             .mount(project_path.join("artifacts"), "/artifacts")
-            // The build's `apt-get` and `pip` run with the session's reach.
-            .network(NetworkAccess::public())
             .gpu(true)
             .vcpus(2)
             .memory_mib(4096)

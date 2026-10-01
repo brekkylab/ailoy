@@ -7,7 +7,7 @@ import pytest
 
 import ailoy
 from ailoy import AgentBuilder, AiloyError
-from ailoy.cortex import ConsoleClient, CortexError, ErrorCode, NetworkAccess, Recipe
+from ailoy.cortex import ConsoleClient, CortexError, ErrorCode, Recipe
 
 
 def content_text(content):
@@ -279,7 +279,7 @@ async def test_the_agent_shares_the_console(tmp_path):
         ConsoleClient.builder()
         .image(Recipe("python:3.12-slim-trixie"))
         .mount(tmp_path, "/work")
-        .network(NetworkAccess.none())
+        .network(False)
         .build()
     )
     agent = await (

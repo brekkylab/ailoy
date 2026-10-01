@@ -42,7 +42,7 @@ use ailoy::{
     message::{Message, Part, Role},
 };
 use anyhow::Context as _;
-use cortex::{fs::Directory, image::Recipe, protocol::NetworkAccess};
+use cortex::{fs::Directory, image::Recipe};
 // One host binding per platform (mounts on `try_new`, unmounts on `Drop`), so the tree
 // below is written once. Three arms, not `not(windows)`: cortex's default `mount` feature
 // compiles only its target's binding, each a distinct guard type.
@@ -114,7 +114,7 @@ async fn main() -> anyhow::Result<()> {
             )
             .mount_readonly(project_path.join("context"), "/context")
             .mount(project_path.join("artifacts"), "/artifacts")
-            .network(NetworkAccess::none())
+            .network(false)
             .vcpus(2)
             .memory_mib(2048)
             .build()
