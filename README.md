@@ -4,16 +4,20 @@
   </picture>
 </p>
 
+<h3 align="center">AI agent builder with a VM at its heart.</h3>
+
 <p align="center">
+  <img src="https://cdn.simpleicons.org/rust/000000/ffffff" width="16"/> <a href="https://crates.io/crates/ailoy"><img src="https://img.shields.io/crates/v/ailoy?label=ailoy&color=dea584" alt="crates.io"></a>
   <img src="https://cdn.simpleicons.org/python" width="16"/> <a href="https://pypi.org/project/ailoy-py/"><img src="https://img.shields.io/pypi/v/ailoy-py?color=blue&label=ailoy-py" alt="PyPI"></a>
   <img src="https://cdn.simpleicons.org/nodedotjs" width="16"/> <a href="https://www.npmjs.com/package/ailoy-node"><img src="https://img.shields.io/npm/v/ailoy-node?label=ailoy-node&color=339933" alt="npm node"></a>
-  <img src="https://cdn.simpleicons.org/webassembly" width="16"/> <a href="https://www.npmjs.com/package/ailoy-web"><img src="https://img.shields.io/npm/v/ailoy-web?label=ailoy-web&color=654ff0" alt="npm web"></a>
 </p>
 
 </p>
 <p align="center">
-  <a href="https://brekkylab.github.io/ailoy/"><img src="https://img.shields.io/badge/docs-eng-5a9cae" alt="Documentation"></a>
-  <a href="https://brekkylab.github.io/ailoy/ko/"><img src="https://img.shields.io/badge/docs-kor-5a9cae" alt="Documentation"></a>
+  <img src="https://img.shields.io/badge/docs-coming%20soon-lightgrey" alt="Documentation coming soon">
+  <!-- <a href="https://brekkylab.github.io/ailoy/"><img src="https://img.shields.io/badge/docs-eng-5a9cae" alt="Documentation"></a> -->
+  <!-- <a href="https://brekkylab.github.io/ailoy/ko/"><img src="https://img.shields.io/badge/docs-kor-5a9cae" alt="Documentation"></a> -->
+  <!-- <a href="https://docs.rs/ailoy"><img src="https://img.shields.io/docsrs/ailoy?label=docs.rs" alt="docs.rs"></a> -->
   <a href="https://discord.gg/27rx3EJy3P"><img src="https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://x.com/ailoy_co"><img src="https://img.shields.io/badge/X-000000?logo=x&logoColor=white" alt="X"></a>
 </p>
@@ -25,8 +29,14 @@ Ailoy can do that too, but it also offers a way to make agents far more powerful
 
 This lets you build agents that do more than call predefined tools: they can install and use software, create their own scripts, and operate in a general-purpose computing environment—without touching the host system beyond what you explicitly expose.
 
-To make this possible, Ailoy **gives each agent a virtual machine of its own**.
-Inside this isolated Linux VM, the agent can freely install packages, run code, work with files, use the network, and even run ML models on the GPU, regardless of your host OS.
+To make this possible, Ailoy **gives each agent a virtual machine of its own** without a separate VM daemon to install.  
+Inside this isolated Linux VM, regardless of your host OS, the agent can freely:
+
+- install packages
+- run code
+- work with files
+- use the network
+- **even run ML models on the GPU**
 
 Ailoy works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width="16"/> Linux, <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/windows11/windows11-original.svg" width="16"/> Windows, and <img src="https://cdn.simpleicons.org/apple/000000/ffffff" width="16"/> macOS.
 
@@ -34,15 +44,13 @@ Ailoy works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width=
 > Ailoy is under active development, and its API may change between versions.
 
 ## Requirements
+**All you need is an API key** for the LLM provider you want to use for the agent.
 
-Nothing to install on your machine.
-You don't need to install and run a VM daemon such as Docker.
+**Nothing to install on your machine.** You don't need to install and run a VM daemon such as Docker or Kubernetes.  
 
-All you need is an API key for the LLM provider you want to use.
-
-The only exception is virtx's virtual filesystem feature, which relies on host mounts and therefore needs FUSE support:
-install [FUSE-T](https://www.fuse-t.org/) on macOS or [Dokany](https://github.com/dokan-dev/dokany) on Windows.
-Without it everything else still works, and a mount fails with an error that says what to install.
+The only exception is [virtx](https://github.com/brekkylab/virtx)'s virtual filesystem feature, which relies on host mounts and therefore needs FUSE support:
+install [FUSE-T](https://www.fuse-t.org/) on macOS, [Dokany](https://github.com/dokan-dev/dokany) on Windows, or `fuse3` on Linux (only for non-root users; usually preinstalled).  
+Without it everything else still works, and a mount fails with an error that says what to install.  
 See the [virtx README](https://github.com/brekkylab/virtx) for details.
 
 On Windows, the console's micro-VM runs on the *Windows Hypervisor Platform*, which is off by default.
@@ -61,6 +69,8 @@ export OPENAI_API_KEY=...
 export ANTHROPIC_API_KEY=...
 export GEMINI_API_KEY=...
 ```
+
+Then build your agent with this simple API in your preferred language:
 
 <details>
 <summary><b>Python</b></summary>
@@ -102,6 +112,8 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+`agent.run` yields one complete message for each step of the tool loop, and `agent.run_stream` streams each message token by token as the model writes it.
+
 </details>
 
 <details>
@@ -137,6 +149,8 @@ try {
 }
 ```
 
+`agent.run` yields one complete message for each step of the tool loop, and `agent.runStream` streams each message token by token as the model writes it.
+
 </details>
 
 <details>
@@ -145,7 +159,7 @@ try {
 ```toml
 [dependencies]
 ailoy = "0.3"
-virtx = { git = "https://github.com/brekkylab/virtx" }
+virtx = "0.1"
 ```
 
 ```rust
@@ -188,11 +202,14 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
+`agent.run` yields one complete message for each step of the tool loop, and `agent.run_stream` streams each message token by token as the model writes it.
+
 </details>
 
-`agent.run` yields one complete message for each step of the tool loop, and `run_stream` yields token deltas as the model writes them.
 
-## What can a agent do?
+...Or skip the reading: point your coding agent (Claude Code, Codex, Cursor, ...) at this README and tell it what agent you want to build.
+
+## What can an agent do?
 
 Rust examples are in [`examples/`](./examples) and run with `cargo run --example <name>`.
 
@@ -212,7 +229,20 @@ Python examples are in [`bindings/python/examples`](./bindings/python/examples),
 
 ## Building from source
 
-TODO
+Ailoy builds on [virtx](https://github.com/brekkylab/virtx); see its README for what it needs on your host.
+
+```sh
+git clone https://github.com/brekkylab/ailoy
+cd ailoy
+cargo build
+```
+
+For the bindings:
+
+```sh
+cd bindings/python && uv run maturin develop  # Python
+cd bindings/node && npm install && npm run build  # Node.js
+```
 
 ## License
 
