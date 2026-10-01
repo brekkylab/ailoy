@@ -42,7 +42,15 @@ All you need is an API key for the LLM provider you want to use.
 
 The only exception is virtx's virtual filesystem feature, which relies on host mounts and therefore needs FUSE support:
 install [FUSE-T](https://www.fuse-t.org/) on macOS or [Dokany](https://github.com/dokan-dev/dokany) on Windows.
+Without it everything else still works, and a mount fails with an error that says what to install.
 See the [virtx README](https://github.com/brekkylab/virtx) for details.
+
+On Windows, the console's micro-VM runs on the *Windows Hypervisor Platform*, which is off by default.
+Turn the optional feature on from an administrator PowerShell and restart, with virtualization enabled in the firmware:
+
+```powershell
+Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform
+```
 
 ## Quick start
 
