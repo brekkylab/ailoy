@@ -1,2 +1,11 @@
 [target.wasm32-unknown-unknown]
 rustflags = ['--cfg', 'getrandom_backend="wasm_js"', '--cfg', 'web_sys_unstable_apis']
+
+# The C and C++ runtimes linked in, so nothing built here needs the Visual C++ Redistributable,
+# and dokan2.dll delay-loaded, so an executable that mounts starts on a host without Dokany.
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+    "-C", "link-arg=/DELAYLOAD:dokan2.dll",
+    "-C", "link-arg=delayimp.lib",
+]
