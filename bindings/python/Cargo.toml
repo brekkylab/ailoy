@@ -16,11 +16,11 @@ crate-type = ["cdylib"]
 ailoy = { path = "../.." }
 # For `Failure`, a console's refusal inside an agent's error. Must be the same crate `ailoy`
 # depends on, so the type matches the one ailoy's errors carry.
-virtx = { path = "../../../virtx", default-features = false }
+virtx = { workspace = true }
 # virtx's Python classes, linked into this extension rather than imported from virtx's own:
 # a `ConsoleClient` built by another extension module is an opaque copy of virtx this module
 # cannot unwrap to hand to an agent. virtx-python builds an `rlib` for this.
-virtx-python = { path = "../../../virtx/bindings/python", default-features = false }
+virtx-python = { workspace = true }
 # `abi3-py310`: one wheel per platform, not per interpreter. `extension-module` is set in
 # `pyproject.toml` instead: it leaves libpython unlinked, which suits the interpreter-loaded
 # module but breaks `cargo test`.
