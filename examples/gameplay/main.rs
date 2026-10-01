@@ -70,8 +70,8 @@ use ailoy::{
     message::{FinishReason, Message, Part, Role},
 };
 use anyhow::{Context as _, bail};
-use cortex::{image::Recipe, protocol::Port};
 use futures::StreamExt as _;
+use virtx::{image::Recipe, protocol::Port};
 
 /// The port a VNC viewer connects to here, and the VNC server's in the game's console.
 const VIEWER_PORT: u16 = 5901;
