@@ -45,6 +45,13 @@ install [FUSE-T](https://www.fuse-t.org/) on macOS or [Dokany](https://github.co
 Without it everything else still works, and a mount fails with an error that says what to install.
 See the [cortex README](https://github.com/brekkylab/cortex) for details.
 
+On Windows, the console's micro-VM runs on the *Windows Hypervisor Platform*, which is off by default.
+Turn the optional feature on from an administrator PowerShell and restart, with virtualization enabled in the firmware:
+
+```powershell
+Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform
+```
+
 ## Quick start
 
 Set the API key for your model's provider, either in the environment or in a `.env` file:
