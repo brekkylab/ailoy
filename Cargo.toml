@@ -16,9 +16,9 @@ license = "Apache-2.0"
 repository = "https://github.com/brekkylab/ailoy"
 
 [workspace.dependencies]
-virtx = { git = "https://github.com/brekkylab/virtx", rev = "ae4132db52c29108e35247df4d3916e2d862824b", default-features = false }
-virtx-node = { git = "https://github.com/brekkylab/virtx", rev = "ae4132db52c29108e35247df4d3916e2d862824b", default-features = false }
-virtx-python = { git = "https://github.com/brekkylab/virtx", rev = "ae4132db52c29108e35247df4d3916e2d862824b", default-features = false }
+virtx = { git = "https://github.com/brekkylab/virtx", tag = "v0.1.0", default-features = false }
+virtx-node = { git = "https://github.com/brekkylab/virtx", tag = "v0.1.0", default-features = false }
+virtx-python = { git = "https://github.com/brekkylab/virtx", tag = "v0.1.0", default-features = false }
 
 [package]
 name = "ailoy"
