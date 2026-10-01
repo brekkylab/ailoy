@@ -24,9 +24,7 @@
 
 <br>
 
-Recent AI models seem capable of practically anything.
-They play games autonomously, draw up architectural plans, and solve scientific problems.
-Ailoy is a library that lets you do all of this yourself, in your own code.
+Ailoy is a library for building any kind of AI agents right in your own code.
 
 It works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width="16"/> Linux, <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/windows11/windows11-original.svg" width="16"/> Windows, and <img src="https://cdn.simpleicons.org/apple/000000/ffffff" width="16"/> macOS.
 
