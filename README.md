@@ -39,6 +39,8 @@ It works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width="16
 
 No system dependencies are required, but you need an API key for the LLM provider your agent will use.
 
+Mounting host folders into the console (`virtx`'s virtual filesystem) needs FUSE: install FUSE-T on macOS or Dokany on Windows. See the [`virtx` documentation](https://github.com/brekkylab/virtx) for details.
+
 On Windows, the console's micro-VM runs on the *Windows Hypervisor Platform*, which is off by default.
 Turn the optional feature on from an administrator PowerShell and restart, with virtualization enabled in the firmware:
 
