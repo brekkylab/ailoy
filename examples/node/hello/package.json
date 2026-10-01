@@ -1,0 +1,16 @@
+{
+  "name": "ailoy-example-hello",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One agent turn with a fixed question, on ailoy's Node bindings.",
+  "type": "module",
+  "scripts": {
+    "start": "node main.mjs"
+  },
+  "dependencies": {
+    "ailoy-node": "file:../../../bindings/node"
+  },
+  "engines": {
+    "node": ">= 20.12"
+  }
+}

@@ -98,3 +98,31 @@ dotenvy = "0.15"
 rmcp = { version = "3", default-features = false, features = ["server"] }
 test-with = { version = "0.17", default-features = false, features = ["executable"] }
 tokio = { version = "1.0", features = ["net"] }
+
+[[example]]
+name = "hello"
+path = "examples/rust/hello/main.rs"
+
+[[example]]
+name = "cad"
+path = "examples/rust/cad/main.rs"
+
+[[example]]
+name = "laya"
+path = "examples/rust/laya/main.rs"
+
+[[example]]
+name = "offshore_leaks"
+path = "examples/rust/offshore_leaks/main.rs"
+
+[[example]]
+name = "retail_bench"
+path = "examples/rust/retail_bench/main.rs"
+
+[[example]]
+name = "sam3"
+path = "examples/rust/sam3/main.rs"
+
+[[example]]
+name = "tts"
+path = "examples/rust/tts/main.rs"
