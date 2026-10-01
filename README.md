@@ -226,10 +226,9 @@ cd examples/python/<name>
 uv run main.py
 ```
 
-Node examples are in [`examples/node`](./examples/node), each an npm package of its own that depends on `ailoy-node` from this checkout (build the addon first).
+Node examples are in [`examples/node`](./examples/node).
 
 ```sh
-(cd bindings/node && npm install && npm run build)
 cd examples/node/<name>
 npm install
 npm start
