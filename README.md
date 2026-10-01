@@ -24,34 +24,18 @@
 
 <br>
 
-Most agent development frameworks focuses on how to connect an LLM to tools (e.g. MCP).
-Ailoy can do that too, but it also offers a way to make agents far more powerful: **give the agent a computer of its own**.
+Recent AI models seem capable of practically anything.
+They play games autonomously, draw up architectural plans, and solve scientific problems.
+Ailoy is a library that lets you do all of this yourself, in your own code.
 
-This lets you build agents that do more than call predefined tools: they can install and use software, create their own scripts, and operate in a general-purpose computing environment—without touching the host system beyond what you explicitly expose.
-
-To make this possible, Ailoy **gives each agent a virtual machine of its own** without a separate VM daemon to install.  
-Inside this isolated Linux VM, regardless of your host OS, the agent can freely:
-
-- install packages
-- run code
-- work with files
-- use the network
-- **even run ML models on the GPU**
-
-Ailoy works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width="16"/> Linux, <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/windows11/windows11-original.svg" width="16"/> Windows, and <img src="https://cdn.simpleicons.org/apple/000000/ffffff" width="16"/> macOS.
+It works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width="16"/> Linux, <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/windows11/windows11-original.svg" width="16"/> Windows, and <img src="https://cdn.simpleicons.org/apple/000000/ffffff" width="16"/> macOS.
 
 > [!WARNING]
 > Ailoy is under active development, and its API may change between versions.
 
 ## Requirements
-**All you need is an API key** for the LLM provider you want to use for the agent.
 
-**Nothing to install on your machine.** You don't need to install and run a VM daemon such as Docker or Kubernetes.  
-
-The only exception is [virtx](https://github.com/brekkylab/virtx)'s virtual filesystem feature, which relies on host mounts and therefore needs FUSE support:
-install [FUSE-T](https://www.fuse-t.org/) on macOS, [Dokany](https://github.com/dokan-dev/dokany) on Windows, or `fuse3` on Linux (only for non-root users; usually preinstalled).  
-Without it everything else still works, and a mount fails with an error that says what to install.  
-See the [virtx README](https://github.com/brekkylab/virtx) for details.
+No system dependencies are required, but you need an API key for the LLM provider your agent will use.
 
 On Windows, the console's micro-VM runs on the *Windows Hypervisor Platform*, which is off by default.
 Turn the optional feature on from an administrator PowerShell and restart, with virtualization enabled in the firmware:
@@ -226,6 +210,18 @@ Rust examples are in [`examples/`](./examples) and run with `cargo run --example
 | [laya](./examples/laya) | Answers typed decision questions with a local model on the GPU | GPU |
 
 Python examples are in [`bindings/python/examples`](./bindings/python/examples), and Node examples are in [`bindings/node/examples`](./bindings/node/examples).
+
+## How It Works
+
+Ailoy give the agent **a computer of its own**.
+
+This lets you build agents that do more than call predefined tools: they can install and use software, create their own scripts, and operate in a general-purpose computing environment—without touching the host system beyond what you explicitly expose.
+
+To make this possible, Ailoy uses krun-based virtualization to **give each agent a virtual machine of its own**, with no separate VM daemon to install.
+
+The virtualization used in Ailoy also **supports the GPU**, so an agent can run ML models, or even games, inside its VM.
+
+See [virtx](https://github.com/brekkylab/virtx) for more details.
 
 ## Building from source
 
