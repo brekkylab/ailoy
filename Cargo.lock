@@ -4071,6 +4071,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "virtx"
 version = "0.1.0"
+source = "git+https://github.com/brekkylab/virtx?rev=ae4132db52c29108e35247df4d3916e2d862824b#ae4132db52c29108e35247df4d3916e2d862824b"
 dependencies = [
  "anyhow",
  "bson",
@@ -4094,6 +4095,7 @@ dependencies = [
 [[package]]
 name = "virtx-node"
 version = "0.1.0"
+source = "git+https://github.com/brekkylab/virtx?rev=ae4132db52c29108e35247df4d3916e2d862824b#ae4132db52c29108e35247df4d3916e2d862824b"
 dependencies = [
  "anyhow",
  "napi",
@@ -4106,6 +4108,7 @@ dependencies = [
 [[package]]
 name = "virtx-python"
 version = "0.1.0"
+source = "git+https://github.com/brekkylab/virtx?rev=ae4132db52c29108e35247df4d3916e2d862824b#ae4132db52c29108e35247df4d3916e2d862824b"
 dependencies = [
  "anyhow",
  "pyo3",
