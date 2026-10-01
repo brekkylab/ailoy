@@ -42,7 +42,7 @@ if Path(sys.prefix).resolve() != HERE / ".venv" and "AILOY_EXAMPLE_REEXEC" not i
     os.execvpe("uv", ["uv", "run", "--directory", str(HERE), "main.py", *sys.argv[1:]], env)
 
 import ailoy  # noqa: E402
-from ailoy.virtx import ConsoleClient, Directory, HostMount, Recipe  # noqa: E402
+from ailoy.virtx import ConsoleClient, Directory, HostMount, Recipe, ensure_virtx  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
 INSTRUCTION = (
@@ -87,6 +87,9 @@ async def main(prompt: str) -> None:
     for name in ["context", "artifacts", "skill"]:
         (PROJECT / name).mkdir(parents=True, exist_ok=True)
 
+    # The console server, fetched into virtx's cache the first time: a host that installed only
+    # ailoy has none.
+    await ensure_virtx()
     console = await (
         ConsoleClient.builder()
         # Debian, not Alpine: PyPI's musllinux ncnn wheel crashes freeing its first `Mat`,

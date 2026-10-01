@@ -41,7 +41,7 @@ const SHARED = resolve(HERE, '../../shared/tts')
 // What a run reads and writes, beside this file.
 const PROJECT = HERE
 
-const { AgentBuilder, ConsoleClient, Directory, HostMount, Recipe } = ailoy
+const { AgentBuilder, ConsoleClient, Directory, HostMount, Recipe, ensureVirtx } = ailoy
 
 const INSTRUCTION =
   '# Context\n\n' +
@@ -116,6 +116,10 @@ async function main() {
       .withFile('run_tts.py', readFileSync(join(SHARED, 'run_tts.py'))),
     join(PROJECT, 'skill'),
   )
+
+  // The console server, fetched into virtx's cache the first time: a host that installed only
+  // ailoy has none.
+  await ensureVirtx()
 
   let consoleClient, agent
   try {

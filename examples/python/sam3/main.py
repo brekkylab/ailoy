@@ -55,6 +55,7 @@ from ailoy.virtx import (  # noqa: E402
     Directory,
     HostMount,
     Recipe,
+    ensure_virtx,
 )
 from dotenv import load_dotenv  # noqa: E402
 
@@ -97,8 +98,11 @@ async def main(prompt: str) -> None:
     # `skill` too, which is empty on the host: it is where the skill is mounted from memory.
     for name in ["context", "artifacts", "skill"]:
         (PROJECT / name).mkdir(parents=True, exist_ok=True)
-    # `build()` builds the image before it starts the console, which takes a while.
+    # The console server, fetched into virtx's cache the first time: a host that installed only
+    # ailoy has none.
+    await ensure_virtx()
 
+    # `build()` builds the image before it starts the console, which takes a while.
     print("building the image ...", flush=True)
     console = await (
         ConsoleClient.builder()

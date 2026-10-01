@@ -51,3 +51,9 @@ if hasattr(_ailoy, "HostMount"):
     from ._ailoy import HostMount
 
     __all__.append("HostMount")
+
+# Present only when the extension was built with the `ensure` feature, which is the default.
+if hasattr(_ailoy, "ensure_virtx"):
+    from ._ailoy import ensure_virtx
+
+    __all__.append("ensure_virtx")

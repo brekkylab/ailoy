@@ -45,7 +45,7 @@ const SHARED = resolve(HERE, '../../shared/offshore_leaks')
 // What a run reads and writes, beside this file.
 const PROJECT = HERE
 
-const { AgentBuilder, ConsoleClient, Directory, HostMount, Recipe } = ailoy
+const { AgentBuilder, ConsoleClient, Directory, HostMount, Recipe, ensureVirtx } = ailoy
 
 const INSTRUCTION =
   '# Context\n\n' +
@@ -118,6 +118,10 @@ async function main(prompt) {
       .withFile('oldb.py', readFileSync(join(SHARED, 'oldb.py'))),
     join(PROJECT, 'skill'),
   )
+
+  // The console server, fetched into virtx's cache the first time: a host that installed only
+  // ailoy has none.
+  await ensureVirtx()
 
   let consoleClient, agent
   try {

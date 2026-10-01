@@ -154,6 +154,9 @@ async fn main() -> anyhow::Result<()> {
     // ── the agent
     let day_over = Arc::new(AtomicBool::new(false));
     let tools = register_actions(&store, &record, &day_over).await?;
+    // The console server, fetched into virtx's cache the first time: a host that installed only
+    // ailoy has none.
+    virtx::ensure_virtx().await?;
     let mut agent = AgentBuilder::new(&model)
         .agent_provider(PROVIDER)
         .instruction(SYSTEM)

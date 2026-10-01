@@ -82,6 +82,9 @@ async fn main() -> anyhow::Result<()> {
     }
     prepare(&shared_path, &project_path).await?;
 
+    // The console server, fetched into virtx's cache the first time: a host that installed only
+    // ailoy has none.
+    virtx::ensure_virtx().await?;
     let mut agent = AgentBuilder::new(
         std::env::var("AILOY_MODEL")
             .unwrap_or_else(|_| "openai/gpt-6-astra".to_string()),

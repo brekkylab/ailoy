@@ -47,8 +47,15 @@ const SHARED = resolve(HERE, '../../shared/retail_bench')
 const PROJECT = HERE
 const SIM = join(SHARED, 'simulator', 'sim')
 
-const { AgentBuilder, ConsoleClient, Recipe, addAgentProvider, addToolProvider, registerTool } =
-  ailoy
+const {
+  AgentBuilder,
+  ConsoleClient,
+  Recipe,
+  addAgentProvider,
+  addToolProvider,
+  registerTool,
+  ensureVirtx,
+} = ailoy
 
 const SYSTEM = readFileSync(join(SHARED, 'system.md'), 'utf8')
 // Sent every morning.
@@ -129,6 +136,9 @@ async function main() {
   // ── the agent
   const day = { over: false }
   const tools = await registerActions(store, record, day)
+  // The console server, fetched into virtx's cache the first time: a host that installed only
+  // ailoy has none.
+  await ensureVirtx()
   const consoleClient = await ConsoleClient.builder()
     .image(new Recipe('python:3.12-slim-trixie'))
     .mountReadonly(context, '/context')

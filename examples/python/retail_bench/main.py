@@ -66,7 +66,7 @@ if Path(sys.prefix).resolve() != HERE / ".venv" and "AILOY_EXAMPLE_REEXEC" not i
     os.execvpe("uv", ["uv", "run", "--directory", str(HERE), "main.py", *sys.argv[1:]], env)
 
 import ailoy  # noqa: E402
-from ailoy.virtx import ConsoleClient, Recipe  # noqa: E402
+from ailoy.virtx import ConsoleClient, Recipe, ensure_virtx  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
 # The store's simulator, which keeps the upstream code and the dataset it fetched beside itself.
@@ -128,6 +128,9 @@ async def main(args: argparse.Namespace) -> None:
     # ── the agent
     day_over = threading.Event()
     tools = register_actions(store, record, day_over)
+    # The console server, fetched into virtx's cache the first time: a host that installed only
+    # ailoy has none.
+    await ensure_virtx()
     console = await (
         ConsoleClient.builder()
         .image(Recipe("python:3.12-slim-trixie"))

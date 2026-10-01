@@ -65,6 +65,10 @@ async fn main() -> anyhow::Result<()> {
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     }
 
+    // The console server, fetched into virtx's cache the first time: a host that installed only
+    // ailoy has none.
+    virtx::ensure_virtx().await?;
+
     // `build()` below builds the image before it starts the console, which takes a while.
     println!("building the image ...");
     let mut agent = AgentBuilder::new(
