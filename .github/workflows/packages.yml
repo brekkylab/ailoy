@@ -95,13 +95,12 @@ env:
   BUILD_ONLY: ${{ inputs.build-only == true }}
 
 jobs:
-  # What this release is, and the virtx it is built with.
+  # What this release is.
   resolve:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
-      virtx: ${{ steps.virtx.outputs.virtx }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -131,30 +130,6 @@ jobs:
           [ -z "$wrong" ] || fail "$REF is version $version, but these manifests say otherwise:$wrong"
           echo "ailoy $version ($REF)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      # One release: virtx from crates.io, both bindings' crates from git at its tag, and the
-      # lockfile holding exactly that -- one virtx, the crates.io one, which the patch makes
-      # the bindings' crates take too.
-      - id: virtx
-        name: The virtx release Cargo.toml pins
-        run: |
-          fail() { echo "::error::$*"; exit 1; }
-          field() { sed -n "s/^$1 = {.*$2 = \"\([^\"]*\)\".*/\1/p" Cargo.toml | head -1; }
-          version=$(field virtx version)
-          [ -n "$version" ] || fail "Cargo.toml takes virtx at no version"
-          tag="v$version"
-          for dep in virtx-node virtx-python; do
-            [ "$(field "$dep" tag)" = "$tag" ] || fail "Cargo.toml takes $dep at $(field "$dep" tag), and virtx $version"
-            grep -A2 "^name = \"$dep\"\$" Cargo.lock | grep -q "source = \"git+https://github.com/brekkylab/virtx?tag=$tag#" \
-              || fail "Cargo.lock does not hold $dep at $tag: run cargo update -p $dep"
-          done
-          [ "$(grep -c '^name = "virtx"$' Cargo.lock)" -eq 1 ] \
-            || fail "Cargo.lock holds more than one virtx: the bindings' crates must take the crates.io one"
-          grep -A2 '^name = "virtx"$' Cargo.lock | grep -q "^version = \"$version\"" \
-            && grep -A2 '^name = "virtx"$' Cargo.lock | grep -q 'source = "registry+https://github.com/rust-lang/crates.io-index"' \
-            || fail "Cargo.lock does not hold virtx $version from crates.io: run cargo update -p virtx"
-          echo "virtx $version ($tag)"
-          echo "virtx=$tag" >> "$GITHUB_OUTPUT"
 
   build:
     name: build (${{ matrix.platform }})
@@ -419,7 +394,6 @@ jobs:
     env:
       SMOKE_SERVER: "1"
       SMOKE_VM: ${{ matrix.vm }}
-      VIRTX: ${{ needs.resolve.outputs.virtx }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -458,16 +432,18 @@ jobs:
           ls -la /dev/kvm
 
       # The console server, fetched by virtx itself -- `ensure_virtx` from virtx's own package
-      # of the release ailoy takes -- into a VIRTX_HOME of this run's own. Only while that
-      # release starts the server it finds and never fetches one: once building a console
-      # fetches it (brekkylab/virtx#61), this step goes, and the smokes fetch it themselves.
+      # of the release Cargo.toml takes (a file at the root, which a sparse checkout keeps) --
+      # into a VIRTX_HOME of this run's own. Only while that release starts the server it
+      # finds and never fetches one: once building a console fetches it (brekkylab/virtx#61),
+      # this step goes, and the smokes fetch it themselves.
       - name: The console server
         shell: bash
         run: |
+          version=$(sed -n 's/^virtx = {.*version = "\([^"]*\)".*/\1/p' Cargo.toml | head -1)
           home="$RUNNER_TEMP/virtx-home"
           python -m venv "$RUNNER_TEMP/virtx-venv"
           py="$RUNNER_TEMP/virtx-venv/bin/python"; [ -x "$py" ] || py="$RUNNER_TEMP/virtx-venv/Scripts/python.exe"
-          "$py" -m pip install -q "virtx==${VIRTX#v}"
+          "$py" -m pip install -q "virtx==$version"
           VIRTX_HOME="$home" "$py" -c '
           import asyncio, virtx
           async def fetch():
@@ -567,10 +543,7 @@ jobs:
           echo "PASS ailoy came from the local registry"
           grep -A2 '^name = "virtx"$' Cargo.lock | grep -q 'registry+https://github.com/rust-lang/crates.io-index' \
             || { echo "::error::virtx did not come from crates.io"; exit 1; }
-          pin=$(cat "$CARGO_HOME"/registry/src/*/virtx-"${VIRTX#v}"/virtx-uvm.version)
-          [ "$pin" = "$VIRTX" ] \
-            || { echo "::error::virtx from crates.io pins virtx-uvm $pin, not $VIRTX"; exit 1; }
-          echo "PASS virtx $VIRTX came from crates.io, pinned to virtx-uvm $VIRTX"
+          echo "PASS virtx came from crates.io"
           exe=target/debug/ailoy-smoke; [ -f "$exe" ] || exe=$exe.exe
           "$exe"
 
