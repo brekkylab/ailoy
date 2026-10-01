@@ -9,8 +9,8 @@
 // spells out their shapes.
 //
 // Tools run commands in a virtx console (`ConsoleClient`, `Directory`, `Recipe`, ...), exported
-// here too. These classes are built into this addon and are distinct types from `virtx-node`'s:
-// a `ConsoleClient` built by `virtx-node` cannot be handed to an `AgentBuilder`.
+// here too. These classes are built into this addon and are distinct types from `virtx`'s:
+// a `ConsoleClient` built by `virtx` cannot be handed to an `AgentBuilder`.
 //
 // `binding.js` is the loader `napi build` generates; this file adds what napi cannot declare
 // from Rust: a turn is an async iterable.
