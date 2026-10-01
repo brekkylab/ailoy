@@ -2,8 +2,8 @@
 
     uv run main.py [model]
 
-`model` defaults to `bedrock/global.openai.gpt-5.6-luna`; its provider's API key has to be
-set (`AWS_BEARER_TOKEN_BEDROCK`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...), in the
+`model` defaults to `openai/gpt-5.6-luna`; its provider's API key has to be
+set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...), in the
 environment or in `.env`.
 
 This folder is a uv project of its own (`pyproject.toml`), which `uv run` sets up with
@@ -45,4 +45,4 @@ async def main(model: str) -> None:
 if __name__ == "__main__":
     # From the nearest `.env` up from this file.
     load_dotenv()
-    asyncio.run(main(sys.argv[1] if len(sys.argv) > 1 else "bedrock/global.openai.gpt-5.6-luna"))
+    asyncio.run(main(sys.argv[1] if len(sys.argv) > 1 else "openai/gpt-5.6-luna"))
