@@ -1,0 +1,5 @@
+From: Owen Price <owen@stillwater.example>
+Subject: Co-hosting a webinar
+
+A lot of our customers ask how we connect your API to our platform. Would you be up for
+co-hosting a webinar on it with us next quarter?

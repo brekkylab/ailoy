@@ -3,17 +3,22 @@
 //!
 //! ```sh
 //! cargo run --example laya
-//! cargo run --example laya -- "Triage this ticket: we were billed twice for March …"
+//! cargo run --example laya -- "Route the tickets in /context/inbox, but send anything about contracts to legal"
 //! ```
 //!
 //! [Laya](https://huggingface.co/convaiinnovations/laya) is a decision model: given a state
 //! (a text, an email, a ticket) and typed questions — a choice, a score, a yes/no — it answers
 //! each with calibrated probabilities in one forward pass, and generates no text.
 //!
+//! Without a prompt the agent routes a support inbox: it asks Laya which department each ticket in
+//! `shared/tickets/` belongs to and files a copy in that department's folder.
+//!
 //! The skill (`SKILL.md`, `run_laya.py`) is mounted from memory at `/skills/laya`.
 //!
 //! * `context/` at `/context`, read-only — what to decide on, when it is not in the prompt.
-//! * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes.
+//!   `context/inbox/` is a fresh copy of `shared/tickets/` on every run.
+//! * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes: the tickets
+//!   filed under `artifacts/routes/<department>/`, emptied at the start of every run.
 //!
 //! Environment, also read from `.env`:
 //!
@@ -41,6 +46,12 @@ use virtx::fs::FuseMount as HostMount;
 use virtx::fs::FuseTMount as HostMount;
 use virtx::{fs::Directory, image::Recipe};
 
+/// The request when none is given.
+const QUERY: &str = "Route every ticket in /context/inbox to the department that should handle it, \
+    by what the customer needs rather than the words they use: engineering, finance, sales, legal \
+    or marketing. Decide each one with Laya, copy the ticket into /artifacts/routes/<department>/, \
+    and write what went where to /artifacts/routing.md.";
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -50,6 +61,11 @@ async fn main() -> anyhow::Result<()> {
     // What a run reads and writes, beside this file.
     let project_path = examples.join("laya/rust");
     let prompt = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
+    let prompt = if prompt.is_empty() {
+        QUERY.to_string()
+    } else {
+        prompt
+    };
 
     prepare(&shared_path, &project_path).await?;
 
@@ -57,6 +73,8 @@ async fn main() -> anyhow::Result<()> {
         let dir = project_path.join(dir);
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     }
+    fill_inbox(&shared_path, &project_path)?;
+    clear_routes(&project_path)?;
 
     // The console server, fetched into virtx's cache the first time: a host that installed only
     // ailoy has none.
@@ -150,6 +168,36 @@ async fn main() -> anyhow::Result<()> {
         std::io::stdout().flush()?;
     }
 
+    Ok(())
+}
+
+/// Reset `project/context/inbox` to a copy of `shared/tickets`, so every run routes the same inbox.
+fn fill_inbox(shared: &Path, project: &Path) -> anyhow::Result<()> {
+    let inbox = project.join("context/inbox");
+    if inbox.exists() {
+        std::fs::remove_dir_all(&inbox).with_context(|| format!("clearing {}", inbox.display()))?;
+    }
+    std::fs::create_dir_all(&inbox).with_context(|| format!("creating {}", inbox.display()))?;
+    let tickets = shared.join("tickets");
+    for entry in
+        std::fs::read_dir(&tickets).with_context(|| format!("reading {}", tickets.display()))?
+    {
+        let path = entry?.path();
+        if path.is_file() {
+            std::fs::copy(&path, inbox.join(path.file_name().unwrap()))
+                .with_context(|| format!("copying {}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Empty `project/artifacts/routes`, so what is filed there is only this run's.
+fn clear_routes(project: &Path) -> anyhow::Result<()> {
+    let routes = project.join("artifacts/routes");
+    if routes.exists() {
+        std::fs::remove_dir_all(&routes)
+            .with_context(|| format!("clearing {}", routes.display()))?;
+    }
     Ok(())
 }
 
