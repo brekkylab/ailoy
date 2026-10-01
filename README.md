@@ -45,9 +45,6 @@ install [FUSE-T](https://www.fuse-t.org/) on macOS or [Dokany](https://github.co
 Without it everything else still works, and a mount fails with an error that says what to install.
 See the [cortex README](https://github.com/brekkylab/cortex) for details.
 
-On Windows, the Node and Python packages also need the [Microsoft Visual C++ Redistributable](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) (x64), which most machines already have.
-Without it they fail to load with `The specified module could not be found.`
-
 ## Quick start
 
 Set the API key for your model's provider, either in the environment or in a `.env` file:
