@@ -16,9 +16,9 @@ hero:
       text: View on GitHub
       link: https://github.com/brekkylab/ailoy
 
-features:
-  - details: IMAGE 1
 ---
+
+![Ailoy demo](./images/ailoy-sam3.gif)
 
 ## Install
 
