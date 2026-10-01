@@ -12,10 +12,6 @@ publish = false
 name = "_ailoy"
 crate-type = ["cdylib"]
 
-[build-dependencies]
-# Locates libfuse-t on macOS so its rpath can be set.
-pkg-config = "0.3"
-
 [dependencies]
 ailoy = { path = "../.." }
 # For `Failure`, a console's refusal inside an agent's error. Must be the same crate `ailoy`
