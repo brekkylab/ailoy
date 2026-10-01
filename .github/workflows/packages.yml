@@ -54,11 +54,10 @@
 #
 # virtx is one release (`[workspace.dependencies]` in Cargo.toml): the crate from
 # crates.io, and its bindings' crates -- which crates.io does not have -- from git at the
-# release's tag, patched onto that same crate. virtx and virtx-uvm release under one tag, so
-# that tag is also the console server every test here fetches, and `resolve` refuses a
-# release whose virtx tag virtx-uvm has not released whole. The crate from crates.io carries
-# that pin itself (`virtx-uvm.version`, see virtx's `build.rs`); the bindings are built with
-# it named as well (`VIRTX_UVM_PINNED_VERSION`), as virtx's own packages are.
+# release's tag, patched onto that same crate. Which console server that release fetches is
+# virtx's business: its crate on crates.io carries the virtx-uvm release it was tested with
+# (`virtx-uvm.version`, see virtx's `build.rs`), and virtx publishes only once that release
+# is out, so the bindings built here and a user's build of the crate fetch the same one.
 name: packages
 
 on:
@@ -88,8 +87,6 @@ permissions:
   contents: read
 
 env:
-  # Where virtx-uvm's releases are, as virtx's `ensure_virtx` fetches them.
-  DIST_URL: https://virtx-dist.s3.us-east-1.amazonaws.com
   CARGO_TERM_COLOR: always
   # The tag this run releases: the release's own, or the one it was dispatched with.
   REF: ${{ github.event.release.tag_name || inputs.ref }}
@@ -98,7 +95,7 @@ env:
   BUILD_ONLY: ${{ inputs.build-only == true }}
 
 jobs:
-  # What this release is, and the virtx -- and so the virtx-uvm -- it is built with.
+  # What this release is, and the virtx it is built with.
   resolve:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -159,26 +156,6 @@ jobs:
           echo "virtx $version ($tag)"
           echo "virtx=$tag" >> "$GITHUB_OUTPUT"
 
-      # virtx-uvm's dist names a release for its tag only once all four platforms' archives
-      # are up, and all four at once; each carries the sha it was built from.
-      - name: virtx-uvm has released that tag, on every platform
-        if: env.BUILD_ONLY != 'true'
-        env:
-          TAG: ${{ steps.virtx.outputs.virtx }}
-        run: |
-          fail() { echo "::error::$*"; exit 1; }
-          shas=""
-          for p in macos-aarch64 linux-x86_64 linux-aarch64 windows-x86_64; do
-            head=$(curl -fsSI "$DIST_URL/virtx-uvm/$TAG/virtx-uvm-$p.tar.gz") \
-              || fail "virtx-uvm has not released $TAG for $p"
-            sha=$(printf '%s' "$head" | awk 'tolower($1)=="x-amz-meta-sha:"{print $2}' | tr -d '\r')
-            echo "virtx-uvm/$TAG/virtx-uvm-$p.tar.gz: ${sha:-no sha}"
-            [ -n "$sha" ] || fail "virtx-uvm/$TAG/virtx-uvm-$p.tar.gz says no sha: it was not named by virtx-uvm's dist"
-            shas="$shas $sha"
-          done
-          [ "$(printf '%s\n' $shas | sort -u | wc -l)" -eq 1 ] \
-            || fail "virtx-uvm/$TAG holds archives of different builds:$shas"
-
   build:
     name: build (${{ matrix.platform }})
     needs: resolve
@@ -206,8 +183,6 @@ jobs:
             manylinux: "off"
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
-    env:
-      VIRTX_UVM_PINNED_VERSION: ${{ needs.resolve.outputs.virtx }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -253,7 +228,6 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           args: --release --out ${{ github.workspace }}/dist/wheels
-          docker-options: -e VIRTX_UVM_PINNED_VERSION
           before-script-linux: |
             py=/opt/python/cp312-cp312/bin/python
             "$py" -m pip install -q libclang
@@ -426,22 +400,18 @@ jobs:
         include:
           - platform: darwin-arm64
             runner: macos-15
-            uvm: macos-aarch64
             mount: "1"
             vm: "0"
           - platform: linux-x64-gnu
             runner: ubuntu-24.04
-            uvm: linux-x86_64
             mount: "1"
             vm: "1"
           - platform: linux-arm64-gnu
             runner: ubuntu-24.04-arm
-            uvm: linux-aarch64
             mount: "1"
             vm: "0"
           - platform: win32-x64-msvc
             runner: windows-2025
-            uvm: windows-x86_64
             mount: "0"
             vm: "0"
     runs-on: ${{ matrix.runner }}
@@ -487,17 +457,22 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           ls -la /dev/kvm
 
-      # The virtx-uvm release of ailoy's virtx tag, into a VIRTX_HOME of this run's own, laid
-      # out as virtx's `ensure_virtx` lays it out. Fetched here because virtx v0.1.0 starts
-      # the server it finds and never fetches one; once building a console ensures it, this
-      # step goes, and an empty VIRTX_HOME tests that fetch instead.
+      # The console server, fetched by virtx itself -- `ensure_virtx` from virtx's own package
+      # of the release ailoy takes -- into a VIRTX_HOME of this run's own. Only while that
+      # release starts the server it finds and never fetches one: once building a console
+      # fetches it (brekkylab/virtx#61), this step goes, and the smokes fetch it themselves.
       - name: The console server
         shell: bash
         run: |
           home="$RUNNER_TEMP/virtx-home"
-          mkdir -p "$home/bin"
-          # From stdin: GNU tar takes the `D:` of a Windows path for a remote host.
-          curl -fsSL "$DIST_URL/virtx-uvm/$VIRTX/virtx-uvm-${{ matrix.uvm }}.tar.gz" | (cd "$home/bin" && tar -xzf -)
+          python -m venv "$RUNNER_TEMP/virtx-venv"
+          py="$RUNNER_TEMP/virtx-venv/bin/python"; [ -x "$py" ] || py="$RUNNER_TEMP/virtx-venv/Scripts/python.exe"
+          "$py" -m pip install -q "virtx==${VIRTX#v}"
+          VIRTX_HOME="$home" "$py" -c '
+          import asyncio, virtx
+          async def fetch():
+              return await virtx.ensure_virtx()
+          print(asyncio.run(fetch()))'
           ls -la "$home/bin"
           echo "VIRTX_HOME=$home" >> "$GITHUB_ENV"
 
@@ -594,8 +569,8 @@ jobs:
             || { echo "::error::virtx did not come from crates.io"; exit 1; }
           pin=$(cat "$CARGO_HOME"/registry/src/*/virtx-"${VIRTX#v}"/virtx-uvm.version)
           [ "$pin" = "$VIRTX" ] \
-            || { echo "::error::virtx from crates.io pins virtx-uvm $pin, and the bindings $VIRTX"; exit 1; }
-          echo "PASS virtx $VIRTX came from crates.io, pinned to the same virtx-uvm as the bindings"
+            || { echo "::error::virtx from crates.io pins virtx-uvm $pin, not $VIRTX"; exit 1; }
+          echo "PASS virtx $VIRTX came from crates.io, pinned to virtx-uvm $VIRTX"
           exe=target/debug/ailoy-smoke; [ -f "$exe" ] || exe=$exe.exe
           "$exe"
 
