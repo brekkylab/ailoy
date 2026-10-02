@@ -24,6 +24,7 @@ export default defineConfig({
             { text: 'Message format', link: '/guide/message-format' },
             { text: 'Model providers', link: '/guide/model-providers' },
             { text: 'Building VM', link: '/guide/building-vm' },
+            { text: 'Using MCP', link: '/guide/using-mcp' },
           ],
         },
       ],
