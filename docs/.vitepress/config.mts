@@ -23,6 +23,7 @@ export default defineConfig({
             { text: 'Quick start', link: '/guide/quick-start' },
             { text: 'Message format', link: '/guide/message-format' },
             { text: 'Model providers', link: '/guide/model-providers' },
+            { text: 'Building VM', link: '/guide/building-vm' },
           ],
         },
       ],
