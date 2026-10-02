@@ -1,0 +1,319 @@
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::{LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard},
+};
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use url::Url;
+
+use crate::lang_model::{BedrockRegion, LangModelAPISchema};
+
+/// Describes the runtime endpoint used to invoke a language model.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum LangModelProviderElem {
+    /// Calls a remote HTTP API. Requires the wire `schema`, the `url` of the endpoint, and an optional `api_key` for authentication.
+    API {
+        schema: LangModelAPISchema,
+
+        url: Url,
+
+        api_key: Option<String>,
+    },
+}
+
+/// Registry of language model endpoints keyed by exact model name or glob (`*`, `?`),
+/// e.g. `"openai/*"`; [`get`](Self::get) prefers an exact key, then the glob with the most
+/// literal characters.
+///
+/// Build entries with the provider constructors ([`openai`](Self::openai), …) and
+/// [`insert`](Self::insert) them;
+/// [`LangModel::try_from_provider`](crate::lang_model::LangModel::try_from_provider)
+/// resolves a spec's `model` through [`get`](Self::get). [`Default`] registers a
+/// `<vendor>/*` entry for each provider key set in the environment; [`new`](Self::new)
+/// is empty.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+#[schemars(transparent)]
+pub struct LangModelProvider {
+    inner: BTreeMap<String, LangModelProviderElem>,
+}
+
+/// Reads an env var, treating blank as unset: a `.env` copied from `.env.example` has
+/// empty keys, which would register a provider that resolves but fails later with a 401.
+fn env_key(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.trim().is_empty())
+}
+
+impl Default for LangModelProvider {
+    fn default() -> Self {
+        let mut p = Self::new();
+        if let Some(key) = env_key("OPENAI_API_KEY") {
+            p.insert("openai/*".into(), Self::openai(key));
+        }
+        if let Some(key) = env_key("ANTHROPIC_API_KEY") {
+            p.insert("anthropic/*".into(), Self::anthropic(key));
+        }
+        if let Some(key) = env_key("GEMINI_API_KEY") {
+            p.insert("google/*".into(), Self::gemini(key));
+        }
+        if let Some(key) = env_key("XAI_API_KEY") {
+            p.insert("x-ai/*".into(), Self::grok(key));
+        }
+        if let Some(key) = env_key("DEEPSEEK_API_KEY") {
+            p.insert("deepseek/*".into(), Self::deepseek(key));
+        }
+        if let Some(key) = env_key("KIMI_API_KEY") {
+            p.insert("moonshotai/*".into(), Self::kimi(key));
+        }
+        if let Some(key) = env_key("OPENROUTER_API_KEY") {
+            p.insert("openrouter/*".into(), Self::openrouter(key));
+        }
+        if let Some(key) = env_key("AWS_BEARER_TOKEN_BEDROCK") {
+            // Same precedence the AWS SDKs use, so a shell already configured
+            // for AWS needs no extra variable.
+            let region = env_key("AWS_REGION")
+                .or_else(|| env_key("AWS_DEFAULT_REGION"))
+                .unwrap_or_else(|| "us-east-1".to_string());
+            match region.parse::<BedrockRegion>() {
+                Ok(region) => p.insert("bedrock/*".into(), Self::bedrock(region, key)),
+                Err(_) => log::warn!("skipping bedrock/*: unsupported AWS region {region:?}"),
+            }
+        }
+        p
+    }
+}
+
+impl LangModelProvider {
+    /// Construct an empty registry.
+    pub fn new() -> Self {
+        Self {
+            inner: BTreeMap::new(),
+        }
+    }
+
+    /// Register an endpoint under a name or glob pattern (`*`, `?`).
+    /// Overwrites any existing entry with the same key.
+    pub fn insert(&mut self, pattern: String, elem: LangModelProviderElem) {
+        self.inner.insert(pattern, elem);
+    }
+
+    /// Convenience over [`insert`](Self::insert) that constructs an
+    /// [`LangModelProviderElem::API`] inline.
+    pub fn insert_api(
+        &mut self,
+        pattern: String,
+        schema: LangModelAPISchema,
+        url: Url,
+        api_key: Option<String>,
+    ) {
+        self.inner.insert(
+            pattern,
+            LangModelProviderElem::API {
+                schema,
+                url,
+                api_key,
+            },
+        );
+    }
+
+    pub fn remove(&mut self, pattern: &str) {
+        self.inner.remove(pattern);
+    }
+
+    /// Resolve a model name. Exact match wins; otherwise the registered glob
+    /// pattern with the longest literal run is selected.
+    pub fn get(&self, name: impl AsRef<str>) -> Option<&LangModelProviderElem> {
+        let name = name.as_ref();
+        if let Some(elem) = self.inner.get(name) {
+            return Some(elem);
+        }
+        self.inner
+            .iter()
+            .filter(|(pattern, _)| glob_match(pattern, name))
+            .max_by_key(|(pattern, _)| pattern.chars().filter(|&c| c != '*' && c != '?').count())
+            .map(|(_, elem)| elem)
+    }
+
+    /// Verify that `spec_model` matches a registered pattern and return the
+    /// API-side model id with any `provider/` prefix stripped (e.g.
+    /// `"openai/gpt-4o"` → `"gpt-4o"`).  Returns an error if no pattern
+    /// matches.
+    pub fn resolve_model_id(&self, spec_model: impl AsRef<str>) -> anyhow::Result<String> {
+        let spec_model = spec_model.as_ref();
+        let _ = self
+            .get(spec_model)
+            .ok_or_else(|| anyhow::anyhow!("No provider found for model '{}'", spec_model))?;
+        let model_id = spec_model
+            .split_once('/')
+            .map(|(_, id)| id.to_string())
+            .unwrap_or_else(|| spec_model.to_string());
+        Ok(model_id)
+    }
+}
+
+/// The model's family (its vendor) and its name within that family, whichever
+/// provider routes to it: `openai/gpt-5` and `openrouter/openai/gpt-5` are both
+/// `("openai", "gpt-5")`, and the Bedrock id
+/// `bedrock/global.anthropic.claude-sonnet-5` is `("anthropic", "claude-sonnet-5")`.
+/// A model with no family in its name has `""`.
+pub fn model_family(model: &str) -> (&str, &str) {
+    if let Some(id) = model.strip_prefix("bedrock/") {
+        // `[<geo>.]<vendor>.<model>`: an inference-profile id leads with where it
+        // routes, a foundation-model id does not.
+        let id = match id.split_once('.') {
+            Some((geo, rest))
+                if matches!(
+                    geo,
+                    "global" | "us" | "us-gov" | "eu" | "apac" | "jp" | "au" | "ca"
+                ) =>
+            {
+                rest
+            }
+            _ => id,
+        };
+        return match id.split_once('.') {
+            // Bedrock's vendor names, where they differ from the ones used elsewhere.
+            Some(("moonshot", name)) => ("moonshotai", name),
+            Some((vendor, name)) => (vendor, name),
+            None => ("", id),
+        };
+    }
+    let id = model.strip_prefix("openrouter/").unwrap_or(model);
+    id.split_once('/').unwrap_or(("", id))
+}
+
+/// Process-wide named registry of [`LangModelProvider`]s, seeded at first
+/// access with a `"default"` entry from [`LangModelProvider::default`].
+/// Accessed via [`get_lm_providers`] and [`get_lm_providers_mut`].
+static LANG_MODEL_PROVIDERS: LazyLock<RwLock<HashMap<String, LangModelProvider>>> =
+    LazyLock::new(|| {
+        let mut map = HashMap::new();
+        map.insert("default".to_string(), LangModelProvider::default());
+        RwLock::new(map)
+    });
+
+/// Borrow the process-wide [`LangModelProvider`] registry for reading.
+///
+/// Holds a [`std::sync::RwLockReadGuard`]; drop it before performing long
+/// operations to avoid blocking writers.
+pub fn get_lm_providers() -> RwLockReadGuard<'static, HashMap<String, LangModelProvider>> {
+    LANG_MODEL_PROVIDERS
+        .read()
+        .expect("lang_model_providers lock poisoned")
+}
+
+/// Borrow the process-wide [`LangModelProvider`] registry for writing.
+pub fn get_lm_providers_mut() -> RwLockWriteGuard<'static, HashMap<String, LangModelProvider>> {
+    LANG_MODEL_PROVIDERS
+        .write()
+        .expect("lang_model_providers lock poisoned")
+}
+
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    glob_match_chars(&p, &t)
+}
+
+fn glob_match_chars(p: &[char], t: &[char]) -> bool {
+    match (p.split_first(), t.split_first()) {
+        (None, None) => true,
+        (None, Some(_)) => false,
+        (Some((&'*', rest_p)), _) => {
+            // `*` matches empty here, or consumes one text char and retries.
+            glob_match_chars(rest_p, t)
+                || t.split_first()
+                    .is_some_and(|(_, rest_t)| glob_match_chars(p, rest_t))
+        }
+        (Some((&'?', rest_p)), Some((_, rest_t))) => glob_match_chars(rest_p, rest_t),
+        (Some((pc, rest_p)), Some((tc, rest_t))) if pc == tc => glob_match_chars(rest_p, rest_t),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy() -> LangModelProviderElem {
+        LangModelProviderElem::API {
+            schema: LangModelAPISchema::OpenAI,
+            url: Url::parse("https://example.com").unwrap(),
+            api_key: None,
+        }
+    }
+
+    #[test]
+    fn exact_match_takes_precedence() {
+        let mut p = LangModelProvider::new();
+        p.insert("openai/*".into(), dummy());
+        p.insert("openai/gpt-4o".into(), dummy());
+        assert!(p.get("openai/gpt-4o").is_some());
+        p.remove("openai/gpt-4o");
+        assert!(p.get("openai/gpt-4o").is_some());
+    }
+
+    #[test]
+    fn glob_picks_most_specific() {
+        let mut p = LangModelProvider::new();
+        p.insert("*".into(), dummy());
+        p.insert("openai/*".into(), dummy());
+        p.insert("anthropic/*".into(), dummy());
+        assert!(p.get("openai/gpt-4o").is_some());
+        assert!(p.get("anthropic/claude-x").is_some());
+        assert!(p.get("anything-else").is_some());
+    }
+
+    #[test]
+    fn no_match_returns_none() {
+        let mut p = LangModelProvider::new();
+        p.insert("openai/*".into(), dummy());
+        assert!(p.get("anthropic/claude").is_none());
+    }
+
+    #[test]
+    fn resolve_model_id_strips_prefix() {
+        let mut p = LangModelProvider::new();
+        p.insert("openai/*".into(), dummy());
+        assert_eq!(p.resolve_model_id("openai/gpt-4o").unwrap(), "gpt-4o");
+    }
+
+    #[test]
+    fn resolve_model_id_keeps_openrouter_vendor() {
+        let mut p = LangModelProvider::new();
+        p.insert("openrouter/*".into(), dummy());
+        assert_eq!(
+            p.resolve_model_id("openrouter/openai/gpt-5").unwrap(),
+            "openai/gpt-5"
+        );
+    }
+
+    #[test]
+    fn model_family_strips_openrouter() {
+        assert_eq!(model_family("openrouter/openai/gpt-5"), ("openai", "gpt-5"));
+        assert_eq!(model_family("openai/gpt-5"), ("openai", "gpt-5"));
+        assert_eq!(model_family("gpt-5"), ("", "gpt-5"));
+    }
+
+    #[test]
+    fn model_family_maps_bedrock_ids() {
+        assert_eq!(
+            model_family("bedrock/global.anthropic.claude-sonnet-5"),
+            ("anthropic", "claude-sonnet-5")
+        );
+        assert_eq!(
+            model_family("bedrock/anthropic.claude-haiku-4-5-20251001-v1:0"),
+            ("anthropic", "claude-haiku-4-5-20251001-v1:0")
+        );
+        assert_eq!(
+            model_family("bedrock/us.openai.gpt-oss-120b-1:0"),
+            ("openai", "gpt-oss-120b-1:0")
+        );
+        assert_eq!(
+            model_family("bedrock/moonshot.kimi-k2-thinking"),
+            ("moonshotai", "kimi-k2-thinking")
+        );
+    }
+}

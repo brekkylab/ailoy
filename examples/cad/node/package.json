@@ -1,0 +1,16 @@
+{
+  "name": "ailoy-example-cad",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Parts designed in CadQuery by an agent that looks at what it built, on ailoy's Node bindings.",
+  "type": "module",
+  "scripts": {
+    "start": "node main.mjs"
+  },
+  "dependencies": {
+    "ailoy-node": "file:../../../bindings/node"
+  },
+  "engines": {
+    "node": ">= 20.12"
+  }
+}

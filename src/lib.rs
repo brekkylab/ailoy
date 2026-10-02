@@ -1,24 +1,26 @@
-extern crate alloc;
+// Lets proc-macro expansions use the `ailoy::` prefix inside this crate.
+extern crate self as ailoy;
 
-pub(crate) mod agent;
-pub(crate) mod cache;
-pub(crate) mod cli;
-pub(crate) mod constants;
-pub(crate) mod ffi;
-pub(crate) mod knowledge;
-pub(crate) mod model;
-pub(crate) mod tool;
-pub(crate) mod utils;
-pub(crate) mod value;
-pub(crate) mod vector_store;
+pub mod agent;
+pub mod console;
+pub mod datatype;
+pub mod lang_model;
+mod macros;
+pub mod memory;
+pub mod message;
+pub mod tool;
 
-pub use agent::*;
-#[cfg(feature = "ailoy-model-cli")]
-pub use cli::ailoy_model_cli;
-#[cfg(feature = "python")]
-pub use ffi::py_stub_info;
-pub use knowledge::*;
-pub use model::*;
-pub use tool::*;
-pub use value::*;
-pub use vector_store::*;
+/// A started console on virtx's default server, for tests.
+///
+/// Panics on failure: a missing server binary should stop the test run loudly.
+#[cfg(test)]
+pub(crate) async fn test_console() -> virtx::console::ConsoleClient {
+    dotenvy::dotenv().ok();
+
+    let mut console = virtx::console::ConsoleClient::builder()
+        .build()
+        .await
+        .unwrap_or_else(|e| panic!("starting the console server: {e:#}"));
+    console.start().await.expect("starting a test console");
+    console
+}

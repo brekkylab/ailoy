@@ -1,3 +1,5 @@
-site/
+.venv/
+__pycache__/
+*.so
 *.pyd
-*.dll
+/dist
