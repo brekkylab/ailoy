@@ -131,6 +131,7 @@ async def main(prompt: str) -> None:
     agent = await (
         ailoy.AgentBuilder(os.environ.get("AILOY_MODEL", "anthropic/claude-sonnet-5"))
         .instruction(INSTRUCTION)
+        .max_tokens(64000)
         .system_tools()
         .web_fetch_tool()
         .web_search_tool([])

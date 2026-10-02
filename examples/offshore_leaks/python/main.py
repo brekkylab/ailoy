@@ -132,6 +132,7 @@ async def main(prompt: str) -> None:
     agent = await (
         ailoy.AgentBuilder(os.environ.get("AILOY_MODEL", "openai/gpt-6-astra"))
         .instruction(INSTRUCTION)
+        .max_tokens(64000)
         .system_tools()
         .console(console)
         .skill("/skills/offshore-leaks")

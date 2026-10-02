@@ -152,6 +152,7 @@ async function main() {
     new AgentBuilder(model)
       .agentProvider(PROVIDER)
       .instruction(SYSTEM)
+      .maxTokens(64000)
       .systemTools()
       .tools(tools)
       .console(consoleClient)

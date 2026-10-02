@@ -222,6 +222,7 @@ async def run_day(
         ailoy.AgentBuilder(model)
         .agent_provider(PROVIDER)
         .instruction(SYSTEM)
+        .max_tokens(64000)
         .system_tools()
         .tools(tools)
         .console(console)

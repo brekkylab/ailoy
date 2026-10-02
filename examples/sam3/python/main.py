@@ -152,6 +152,7 @@ async def main(prompt: str) -> None:
             os.environ.get("AILOY_MODEL", "openai/gpt-6-astra")
         )
         .instruction(INSTRUCTION)
+        .max_tokens(64000)
         .system_tools()
         .web_fetch_tool()
         .web_search_tool([])

@@ -153,6 +153,7 @@ async function main() {
 
     agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'anthropic/claude-sonnet-5')
       .instruction(INSTRUCTION)
+      .maxTokens(64000)
       .systemTools()
       .console(consoleClient)
       .skill('/skills/tts')

@@ -145,6 +145,7 @@ async def main() -> None:
     agent = await (
         ailoy.AgentBuilder(os.environ.get("AILOY_MODEL", "anthropic/claude-sonnet-5"))
         .instruction(INSTRUCTION)
+        .max_tokens(64000)
         .system_tools()
         .console(console)
         .skill("/skills/tts")
