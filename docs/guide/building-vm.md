@@ -163,8 +163,10 @@ async fn main() -> anyhow::Result<()> {
 
 :::
 
+::: tip
+An image built from a `Recipe` passed straight to `.image(...)` is removed when the console closes.
+:::
+
 Besides `exec`, a console can `read` and `write` files in the VM.
 
-To give the VM to an agent, pass the console to `AgentBuilder.console(...)` instead of using it yourself, as in the [quick start](./quick-start#run-an-agent). The agent's tools then run their commands in it.
-
-For GPUs, in-memory directories, S3 mounts and more, see the [virtx README](https://github.com/brekkylab/virtx).
+For more information, see the [virtx README](https://github.com/brekkylab/virtx).
