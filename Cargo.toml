@@ -29,6 +29,20 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Agents that drive a language model through tool-augmented turns, in a virtx console."
+readme = "README.md"
+keywords = ["agent", "llm", "ai", "tool-use", "sandbox"]
+categories = ["development-tools"]
+# What a dependent builds: the library. The bindings are packages of their own, and the
+# examples need files and keys beside them that a dependent has no use for. Only `.rs`
+# under `src/`: `include` overrides `.gitignore`, so `/src/**` would pack a stray
+# `.DS_Store` too.
+include = [
+    "/src/**/*.rs",
+    "/README.md",
+    "/LICENSE.md",
+]
 
 [lib]
 crate-type = ["rlib"]

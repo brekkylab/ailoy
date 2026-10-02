@@ -1,0 +1,669 @@
+# Build every package ailoy is published as -- the Node and Python bindings for every
+# platform, and the Rust crate -- pack them as they would be published, install and run
+# them the way a user would, and then, if asked, publish them.
+#
+# The test publishes nothing. The npm packages go to a registry on the test runner's own
+# localhost, so `npm install @brekkylab/ailoy` resolves its optional platform packages by
+# os/cpu/libc exactly as it would from npmjs; the wheels are installed with pip choosing one
+# from a directory, as it would choose from PyPI; and the crate is published to
+# cargo-http-registry on localhost, for a project of its own to take `ailoy` from -- and
+# virtx from crates.io, as the published crate names it -- and build on each platform.
+#
+# Every smoke drives a whole agent turn against a model served from the test itself, so no
+# API key is needed: see `scripts/packages/smoke/`.
+#
+# # Publishing
+#
+# Only once every platform's test has passed, and only what those tests installed: the
+# `publish-*` jobs take the very archives `assemble` and `crate` uploaded, and build nothing.
+# One job per registry, so one that fails leaves the others published and is re-run alone.
+# Each skips what its registry already holds at this version, which is what makes a re-run
+# safe -- a registry refuses a version twice, and none of them takes one back.
+#
+# - npm: every platform package first, then `@brekkylab/ailoy`, whose optional dependencies name them.
+# - PyPI: every wheel of `ailoy-py`.
+# - crates.io: the packed `ailoy` crate.
+#
+# A release always publishes. A dispatch publishes only when asked to (`publish`), so a
+# release can be tried here end to end first.
+#
+# It needs three secrets, the organization's: `NPM_TOKEN` (an npm automation or granular
+# token that may publish `@brekkylab/ailoy` and `@brekkylab/ailoy-*`), `PYPI_TOKEN` (an API
+# token for `ailoy-py`) and `CARGO_REGISTRY_TOKEN` (a crates.io token with publish-new and
+# publish-update).
+#
+# # Platforms
+#
+# | package suffix  | built on                            | tested on        | the test can                  |
+# |-----------------|-------------------------------------|------------------|-------------------------------|
+# | darwin-arm64    | macos-15                            | macos-15         | mount (FUSE-T), serve         |
+# | linux-x64-gnu   | ubuntu-24.04, in manylinux_2_28     | ubuntu-22.04     | mount, serve, boot            |
+# | linux-arm64-gnu | ubuntu-24.04-arm, in manylinux_2_28 | ubuntu-22.04-arm | mount, serve                  |
+# | win32-x64-msvc  | windows-2025                        | windows-2025     | load without Dokany, serve    |
+#
+# "serve" is the console server answering -- everything short of a VM. macOS runners are
+# virtual M1s without nested virtualization, the arm64 Linux runners have no /dev/kvm, and
+# the Windows ones have no Hypervisor Platform, so only linux-x64 boots a session, and runs
+# an agent's shell tool in it.
+#
+# # The glibc floor
+#
+# The Linux packages run on glibc 2.28 and later, as virtx's do and as the virtx-uvm server
+# they fetch does: the addon and the wheel are built in a manylinux_2_28 container
+# (AlmaLinux 8), against its glibc's headers, and `The glibc each Linux artifact needs` fails
+# a build that needs more. Built on the runner itself they would need its glibc: the C in
+# aws-lc and BoringSSL, compiled against the runner's 2.39 headers, takes 2.38's
+# `__isoc23_*`. The Linux tests run on ubuntu-22.04, below the runner's glibc, where an
+# artifact needing more fails.
+#
+# # When it runs, and the virtx it is built with
+#
+# For a release: when one is published, or when dispatched with the tag to release. The ref
+# has to be a version tag, `vX.Y.Z`, and every manifest `.bumpversion.toml` names -- the
+# workspace, npm's packages -- has to say that version (the wheel takes the workspace's).
+#
+# virtx is one release (`[workspace.dependencies]` in Cargo.toml): the crate from
+# crates.io, and its bindings' crates -- which crates.io does not have -- from git at the
+# release's tag, patched onto that same crate. Which console server that release fetches is
+# virtx's business: its crate on crates.io carries the virtx-uvm release it was tested with
+# (`virtx-uvm.version`, see virtx's `build.rs`), and virtx publishes only once that release
+# is out, so the bindings built here and a user's build of the crate fetch the same one.
+name: packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: The version tag to release (vX.Y.Z); with build-only, any ref
+        required: true
+      build-only:
+        description: Build and pack every package, and stop -- no test, and no publish
+        type: boolean
+        default: false
+      publish:
+        description: Publish to npm, PyPI and crates.io once every test passes
+        type: boolean
+        default: false
+
+# One run per tag, and never one cut short: a release that stopped halfway is one nobody can
+# tell from a finished one without looking.
+concurrency:
+  group: packages-${{ github.event.release.tag_name || inputs.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # The tag this run releases: the release's own, or the one it was dispatched with.
+  REF: ${{ github.event.release.tag_name || inputs.ref }}
+  # A dispatch that only builds: whether every package still builds and packs, from any ref,
+  # untested.
+  BUILD_ONLY: ${{ inputs.build-only == true }}
+
+jobs:
+  # What this release is.
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      # The version is `.bumpversion.toml`'s, and every manifest it names has to hold it: a
+      # dry-run replace fails, naming the file, where one does not. So the list of manifests
+      # is kept in one place, the one that bumps them.
+      - id: version
+        name: Every manifest is the tag's version
+        run: |
+          fail() { echo "::error::$*"; exit 1; }
+          bump() { pipx run --spec 'bump-my-version>=1.5,<2' bump-my-version "$@"; }
+          version=$(bump show current_version)
+          bump replace --dry-run --allow-dirty --new-version "$version" > /dev/null \
+            || fail "not every manifest .bumpversion.toml names is at $version: bump them together, with bump-my-version"
+          if [[ "$REF" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?)$ ]]; then
+            [ "${BASH_REMATCH[1]}" = "$version" ] || fail "$REF is not the manifests' version, $version"
+          else
+            # A build of a ref that is not a version tag is of whatever version its manifests say.
+            [ "$BUILD_ONLY" = true ] || fail "$REF is not a version tag: a release is tagged vX.Y.Z"
+            echo "build-only: $REF is not a version tag; building version $version"
+          fi
+          echo "ailoy $version ($REF)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.platform }})
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+            manylinux: "off"
+          - platform: linux-x64-gnu
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            container: quay.io/pypa/manylinux_2_28_x86_64
+            manylinux: "2_28"
+          - platform: linux-arm64-gnu
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            container: quay.io/pypa/manylinux_2_28_aarch64
+            manylinux: "2_28"
+          - platform: win32-x64-msvc
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            manylinux: "off"
+    runs-on: ${{ matrix.runner }}
+    # The Linux packages' glibc floor -- see above. None for macOS and Windows.
+    container: ${{ matrix.container }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Apart from anything built on the runner itself: C compiled against its newer
+          # glibc's headers, restored here, would put that glibc back into the package.
+          key: ${{ matrix.target }}${{ matrix.container && '-manylinux_2_28' || '' }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bindings/node/package-lock.json
+
+      # wreq's BoringSSL (`btls-sys`) generates its bindings with bindgen, which needs libclang:
+      # AlmaLinux's, in the container, as root.
+      - name: libclang
+        if: matrix.container
+        run: dnf install -yq clang-devel
+
+      # `binding.js` (the loader) and `binding.d.ts` are generated beside the addon, and the
+      # root package takes them from one platform's build -- see `assemble`.
+      - name: Node addon
+        working-directory: bindings/node
+        shell: bash
+        run: |
+          npm ci
+          npx napi build --platform --release --target ${{ matrix.target }} \
+            --js binding.js --dts binding.d.ts --output-dir "$GITHUB_WORKSPACE/dist/node"
+          ls -la "$GITHUB_WORKSPACE/dist/node"
+
+      # maturin-action, building in the container itself, installs what it needs with
+      # `python3 -m pip`: the image's own Python, since AlmaLinux's has no pip.
+      - name: Python (Linux)
+        if: matrix.container
+        run: echo /opt/python/cp312-cp312/bin >> "$GITHUB_PATH"
+
+      - name: Python wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: bindings/python
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          # Already in the manylinux container on Linux: maturin builds where it is, rather
+          # than in a container of its own.
+          container: ${{ matrix.container && 'off' || '' }}
+          # Relative: in a container job `github.workspace` is the runner's path, not the
+          # container's, and a wheel written there is gone with the container.
+          args: --release --out ../../dist/wheels
+
+      # What the addon and the extension need from the loader to be loaded at all. Neither
+      # may need a DLL Windows does not ship: the C runtime is linked in (`.cargo/config.toml`)
+      # and Dokany is delay-loaded, so a host without either still loads the package, and only
+      # a mount says what to install.
+      - name: The DLLs each Windows artifact loads
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          readobj="/c/Program Files/LLVM/bin/llvm-readobj.exe"
+          cd dist
+          unzip -oq wheels/*.whl -d wheel
+          for f in node/*.node wheel/ailoy/*.pyd; do
+            echo "== $f"
+            "$readobj" --coff-imports "$f" | awk '/^Import \{/{k="load"} /^DelayImport \{/{k="delay"} /Name: .*\.dll/{print "  " k ": " $2}' | sort -u | tee imports.txt
+            if grep -iE "load: (vcruntime|msvcp|dokan)" imports.txt; then
+              echo "::error::$f needs the DLLs above to load"; fail=1
+            fi
+          done
+          exit ${fail:-0}
+
+      # Above 2.28, or glibc 2.38's `__isoc23_*` -- which comes in unversioned, so the version
+      # alone would not show it -- and the build stops here rather than on a user's machine.
+      - name: The glibc each Linux artifact needs
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cd dist
+          python3 -m zipfile -e wheels/*.whl wheel
+          for f in node/*.node wheel/ailoy/*.so; do
+            need=$(objdump -T "$f" | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1)
+            echo "$f needs $need"
+            if [ "$(printf '%s\n' "$need" GLIBC_2.28 | sort -V | tail -1)" != GLIBC_2.28 ]; then
+              echo "::error::$f needs $need, above glibc 2.28"; fail=1
+            fi
+            if objdump -T "$f" | grep -q __isoc23_; then
+              echo "::error::$f references __isoc23_*, glibc 2.38's"; fail=1
+            fi
+          done
+          exit ${fail:-0}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ matrix.platform }}
+          path: |
+            dist/node/*.node
+            dist/node/binding.js
+            dist/node/binding.d.ts
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.platform }}
+          path: dist/wheels/*.whl
+          if-no-files-found: error
+
+  assemble:
+    needs: [resolve, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bindings/node/package-lock.json
+
+      # Each platform's build in a directory of its own: they all carry a `binding.js`.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: node-*
+          path: dist/node
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist/wheels
+          merge-multiple: true
+
+      # The loader and the types every build generated should be one file; linux-x64-gnu's
+      # goes into the root package either way, and a platform whose differ says so.
+      #
+      # `napi artifacts` refuses to run unless every configured target has its binary,
+      # which is the gate a release wants: no root package names a platform with nothing
+      # behind it.
+      - name: npm packages
+        working-directory: bindings/node
+        run: |
+          mkdir -p artifacts
+          cp "$GITHUB_WORKSPACE"/dist/node/node-*/*.node artifacts/
+          for f in binding.js binding.d.ts; do
+            cp "$GITHUB_WORKSPACE/dist/node/node-linux-x64-gnu/$f" "$f"
+            for other in "$GITHUB_WORKSPACE"/dist/node/node-*/"$f"; do
+              diff -q --strip-trailing-cr "$f" "$other" >/dev/null \
+                || echo "::warning::$other differs from linux-x64-gnu's: $(diff --strip-trailing-cr "$f" "$other" | head -20)"
+            done
+          done
+          npm ci
+          npx napi artifacts --output-dir artifacts
+          node ../../scripts/packages/pack-npm.mjs "$GITHUB_WORKSPACE/dist/npm"
+          ls -la "$GITHUB_WORKSPACE/dist/npm"
+          tar -xzOf "$GITHUB_WORKSPACE/dist/npm/brekkylab-ailoy-$VERSION.tgz" package/package.json
+
+      - name: wheels
+        run: |
+          ls -la dist/wheels
+          for whl in dist/wheels/*.whl; do
+            case "$(basename "$whl")" in
+              "ailoy_py-$VERSION-"*) ;;
+              *) echo "::error::$whl is not a wheel of ailoy-py $VERSION"; exit 1 ;;
+            esac
+          done
+          [ "$(ls dist/wheels/*.whl | wc -l)" -eq 4 ] || { echo "::error::not one wheel per platform"; exit 1; }
+          pipx run twine check --strict dist/wheels/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages
+          path: dist/npm/*.tgz
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels
+          path: dist/wheels/*.whl
+          if-no-files-found: error
+
+  # The crate, packed once: it is source, and each platform's test builds it for itself.
+  # Verified as cargo verifies it -- the packed source, alone, built -- which takes virtx from
+  # crates.io, as a user's build will.
+  crate:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: crate
+
+      - name: libclang
+        run: sudo apt-get update -q && sudo apt-get install -yq libclang-dev
+
+      - name: Pack
+        run: |
+          cargo package -p ailoy
+          cargo package -p ailoy --list
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crate
+          path: target/package/ailoy-*.crate
+          if-no-files-found: error
+
+  test:
+    name: test (${{ matrix.platform }})
+    needs: [resolve, assemble, crate]
+    # Not on a build-only dispatch. A release has no inputs, and always tests.
+    if: ${{ !inputs.build-only }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-15
+            mount: "1"
+            vm: "0"
+          - platform: linux-x64-gnu
+            runner: ubuntu-22.04
+            mount: "1"
+            vm: "1"
+          - platform: linux-arm64-gnu
+            runner: ubuntu-22.04-arm
+            mount: "1"
+            vm: "0"
+          - platform: win32-x64-msvc
+            runner: windows-2025
+            mount: "0"
+            vm: "0"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      SMOKE_SERVER: "1"
+      SMOKE_VM: ${{ matrix.vm }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+          sparse-checkout: scripts/packages
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-packages
+          path: dist/npm
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels
+          path: dist/wheels
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: crate
+          path: dist/crate
+
+      - name: Let this user open /dev/kvm
+        if: matrix.vm == '1'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+
+      # Each smoke with a VIRTX_HOME of its own, empty, so that each fetches the console server
+      # itself with `ensure_virtx`, as the guides have a user do, rather than finding one
+      # another smoke left.
+      - name: A VIRTX_HOME for each smoke
+        shell: bash
+        run: |
+          for smoke in node python rust; do
+            echo "VIRTX_HOME_$(echo "$smoke" | tr a-z A-Z)=$RUNNER_TEMP/virtx-home-$smoke" >> "$GITHUB_ENV"
+          done
+
+      # A registry on localhost holding only what `assemble` packed. Published with an
+      # explicit --registry and a config of its own: the packages' publishConfig names
+      # npmjs, and nothing here may reach it.
+      - name: Install from a local registry
+        shell: bash
+        run: |
+          cd scripts/packages
+          npx -y verdaccio@6 --config ./verdaccio.yaml --listen 4873 > "$RUNNER_TEMP/verdaccio.log" 2>&1 &
+          for _ in $(seq 60); do curl -sf http://localhost:4873/-/ping >/dev/null && break; sleep 1; done
+          token=$(curl -sf -X PUT -H 'content-type: application/json' \
+            -d '{"name":"ci","password":"ci-local-only"}' \
+            http://localhost:4873/-/user/org.couchdb.user:ci | node -pe 'JSON.parse(require("fs").readFileSync(0)).token')
+          npmrc="$RUNNER_TEMP/npmrc"
+          printf 'registry=http://localhost:4873/\n//localhost:4873/:_authToken=%s\n' "$token" > "$npmrc"
+          for tgz in "$GITHUB_WORKSPACE"/dist/npm/*.tgz; do
+            npm publish "$tgz" --userconfig "$npmrc" --registry http://localhost:4873/
+          done
+          mkdir -p "$RUNNER_TEMP/project" && cd "$RUNNER_TEMP/project"
+          echo '{"name":"project","private":true,"type":"module"}' > package.json
+          npm install @brekkylab/ailoy --userconfig "$npmrc" --registry http://localhost:4873/
+          ls node_modules/@brekkylab
+
+      - name: Install the wheel pip picks
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          py="$RUNNER_TEMP/venv/bin/python"; [ -x "$py" ] || py="$RUNNER_TEMP/venv/Scripts/python.exe"
+          "$py" -m pip install --no-index --find-links dist/wheels ailoy-py
+          "$py" -m pip show ailoy-py
+          echo "SMOKE_PYTHON=$py" >> "$GITHUB_ENV"
+
+      # On macOS, first without FUSE-T, which a user may not have: the import and every
+      # call but a mount must work, and a mount must be an error rather than a crash.
+      - name: Smoke, without FUSE-T
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          SMOKE_MOUNT: "0"
+        run: |
+          cd "$RUNNER_TEMP/project" && VIRTX_HOME="$VIRTX_HOME_NODE" node "$GITHUB_WORKSPACE/scripts/packages/smoke/node.mjs"
+          VIRTX_HOME="$VIRTX_HOME_PYTHON" "$SMOKE_PYTHON" "$GITHUB_WORKSPACE/scripts/packages/smoke/python.py"
+
+      - name: FUSE-T
+        if: runner.os == 'macOS'
+        run: brew install --cask fuse-t
+
+      - name: Smoke, Node
+        shell: bash
+        env:
+          SMOKE_MOUNT: ${{ matrix.mount }}
+        run: cd "$RUNNER_TEMP/project" && VIRTX_HOME="$VIRTX_HOME_NODE" node "$GITHUB_WORKSPACE/scripts/packages/smoke/node.mjs"
+
+      - name: Smoke, Python
+        shell: bash
+        env:
+          SMOKE_MOUNT: ${{ matrix.mount }}
+        run: VIRTX_HOME="$VIRTX_HOME_PYTHON" "$SMOKE_PYTHON" "$GITHUB_WORKSPACE/scripts/packages/smoke/python.py"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: libclang
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -yq libclang-dev
+
+      # A registry on localhost holding only the packed crate, published from that archive
+      # as it is, and a project of its own that takes `ailoy` from it -- and virtx from
+      # crates.io -- built here, with this platform's toolchain, as a user's would be. A
+      # CARGO_HOME of its own, so that no crates.io token is within reach, and the smoke's own
+      # VIRTX_HOME, which its `ensure_virtx` fills with the release the virtx crate pins.
+      - name: Smoke, Rust
+        shell: bash
+        run: |
+          cargo install --locked --quiet cargo-http-registry
+          export CARGO_HOME="$RUNNER_TEMP/cargo-home" VIRTX_HOME="$VIRTX_HOME_RUST"
+          mkdir -p "$CARGO_HOME" "$RUNNER_TEMP/crate"
+          printf '[registries.local]\nindex = "http://127.0.0.1:35503/git"\n\n[net]\ngit-fetch-with-cli = true\n' > "$CARGO_HOME/config.toml"
+          cargo-http-registry --addr 127.0.0.1:35503 "$RUNNER_TEMP/registry" > "$RUNNER_TEMP/registry.log" 2>&1 &
+          for _ in $(seq 60); do [ -f "$RUNNER_TEMP/registry/config.json" ] && break; sleep 1; done
+
+          # From stdin: GNU tar takes the `D:` of a Windows path for a remote host.
+          (cd "$RUNNER_TEMP/crate" && tar -xzf - < "$(ls "$GITHUB_WORKSPACE"/dist/crate/*.crate)")
+          package=$(ls -d "$RUNNER_TEMP"/crate/*/)
+          (cd "$package" && cargo publish --registry local --no-verify --token local)
+
+          cp -R "$GITHUB_WORKSPACE/scripts/packages/smoke/rust" "$RUNNER_TEMP/smoke-rust"
+          cd "$RUNNER_TEMP/smoke-rust"
+          cargo build --quiet
+          grep -A2 '^name = "ailoy"$' Cargo.lock | grep -q 'registry+http://127.0.0.1:35503' \
+            || { echo "::error::ailoy did not come from the local registry"; exit 1; }
+          echo "PASS ailoy came from the local registry"
+          grep -A2 '^name = "virtx"$' Cargo.lock | grep -q 'registry+https://github.com/rust-lang/crates.io-index' \
+            || { echo "::error::virtx did not come from crates.io"; exit 1; }
+          echo "PASS virtx came from crates.io"
+          exe=target/debug/ailoy-smoke; [ -f "$exe" ] || exe=$exe.exe
+          "$exe"
+
+      - name: registry logs
+        if: failure()
+        shell: bash
+        run: |
+          cat "$RUNNER_TEMP/verdaccio.log" || true
+          cat "$RUNNER_TEMP/registry.log" || true
+
+  # The npm packages the tests installed. Every platform package before `@brekkylab/ailoy`, so
+  # that by the time anyone can install it, each optional dependency it names is there to
+  # resolve.
+  publish-npm:
+    needs: [resolve, test]
+    if: github.event_name == 'release' || (inputs.publish && !inputs.build-only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-packages
+          path: dist/npm
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          root="dist/npm/brekkylab-ailoy-$VERSION.tgz"
+          [ -f "$root" ] || { echo "::error::$root is not among the packed packages"; exit 1; }
+          publish() {
+            name=$(tar -xzOf "$1" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0)).name')
+            if [ "$(npm view "$name@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+              echo "$name@$VERSION is on npm already"
+              return
+            fi
+            npm publish "$1" --access public
+            echo "published $name@$VERSION"
+          }
+          for tgz in dist/npm/*.tgz; do
+            [ "$tgz" = "$root" ] || publish "$tgz"
+          done
+          publish "$root"
+
+  # The wheels the tests installed, one per platform.
+  publish-pypi:
+    needs: [resolve, test]
+    if: github.event_name == 'release' || (inputs.publish && !inputs.build-only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels
+          path: dist/wheels
+
+      - name: Publish
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          for whl in dist/wheels/*.whl; do
+            case "$(basename "$whl")" in
+              "ailoy_py-$VERSION-"*) ;;
+              *) echo "::error::$whl is not a wheel of ailoy-py $VERSION"; exit 1 ;;
+            esac
+          done
+          pipx run twine upload --non-interactive --skip-existing dist/wheels/*.whl
+
+  # The crate the tests built, published from its archive as the local registry was.
+  # `--no-verify` because `crate` built exactly this already.
+  publish-crate:
+    needs: [resolve, test]
+    if: github.event_name == 'release' || (inputs.publish && !inputs.build-only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: crate
+          path: dist/crate
+
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          fail() { echo "::error::$*"; exit 1; }
+          crate="dist/crate/ailoy-$VERSION.crate"
+          [ -f "$crate" ] || fail "$crate is not the packed crate: $(ls dist/crate)"
+          held=$(curl -s -o /dev/null -w '%{http_code}' \
+            -A 'ailoy release (https://github.com/brekkylab/ailoy)' \
+            "https://crates.io/api/v1/crates/ailoy/$VERSION")
+          if [ "$held" = 200 ]; then
+            echo "ailoy $VERSION is on crates.io already"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/crate"
+          tar -xzf "$crate" -C "$RUNNER_TEMP/crate"
+          cd "$RUNNER_TEMP/crate/ailoy-$VERSION"
+          cargo publish --no-verify

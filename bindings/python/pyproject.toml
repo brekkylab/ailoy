@@ -6,6 +6,7 @@ build-backend = "maturin"
 name = "ailoy-py"
 dynamic = ["version"]
 description = "Agents that drive a language model through tool-augmented turns, in a virtx console."
+readme = "../../README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 # `NotRequired`, for `ailoy.types`, is in `typing` from 3.11.
@@ -13,7 +14,13 @@ dependencies = ["typing_extensions>=4; python_version < '3.11'"]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
 ]
+
+[project.urls]
+Repository = "https://github.com/brekkylab/ailoy"
 
 [dependency-groups]
 dev = ["maturin>=1.9,<2", "pytest>=8", "pytest-asyncio>=1"]

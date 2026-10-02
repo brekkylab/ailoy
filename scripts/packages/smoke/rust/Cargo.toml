@@ -1,0 +1,21 @@
+# The crate as a user takes it: `ailoy` from a registry -- `local`, the one the workflow
+# stands up on localhost -- and virtx from crates.io, as the published crate names it; built
+# here, and run.
+[package]
+name = "ailoy-smoke"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# A workspace of its own, not a member of the repository's.
+[workspace]
+
+[dependencies]
+ailoy = { version = "0.3", registry = "local" }
+# The same crate `ailoy` depends on, for the console, the image client and `ensure_virtx`,
+# which it does not re-export.
+virtx = { version = "0.1", default-features = false, features = ["ensure"] }
+anyhow = "1"
+futures = "0.3"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

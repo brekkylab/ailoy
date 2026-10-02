@@ -12,7 +12,7 @@ import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import ailoy from 'ailoy-node'
+import ailoy from '@brekkylab/ailoy'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 

@@ -1,5 +1,5 @@
 [tool.bumpversion]
-current_version = "0.2.5"
+current_version = "0.3.0"
 parse = """(?x)
     (?P<major>0|[1-9]\\d*)\\.
     (?P<minor>0|[1-9]\\d*)\\.
@@ -38,29 +38,34 @@ values = ["", "rc", "final"]
 first_value = ""
 optional_value = "final"
 
+# Every manifest `.github/workflows/packages.yml` checks against the release tag. The wheel and
+# the bindings' crates take the workspace's version.
 [[tool.bumpversion.files]]
 filename = "Cargo.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
 
 [[tool.bumpversion.files]]
-filename = "crates/macros/Cargo.toml"
+filename = "bindings/node/package.json"
+search = '"version": "{current_version}"'
+replace = '"version": "{new_version}"'
 
 [[tool.bumpversion.files]]
-filename = "crates/faiss-sys/Cargo.toml"
+filename = "bindings/node/npm/darwin-arm64/package.json"
+search = '"version": "{current_version}"'
+replace = '"version": "{new_version}"'
 
 [[tool.bumpversion.files]]
-filename = "bindings/nodejs/package.json"
+filename = "bindings/node/npm/linux-arm64-gnu/package.json"
+search = '"version": "{current_version}"'
+replace = '"version": "{new_version}"'
 
 [[tool.bumpversion.files]]
-filename = "bindings/nodejs/src/ailoy_core.js"
+filename = "bindings/node/npm/linux-x64-gnu/package.json"
+search = '"version": "{current_version}"'
+replace = '"version": "{new_version}"'
 
 [[tool.bumpversion.files]]
-filename = "bindings/nodejs/npm/darwin-arm64/package.json"
-
-[[tool.bumpversion.files]]
-filename = "bindings/nodejs/npm/linux-x64-gnu/package.json"
-
-[[tool.bumpversion.files]]
-filename = "bindings/nodejs/npm/win32-x64-msvc/package.json"
-
-[[tool.bumpversion.files]]
-filename = "bindings/web/package.json"
+filename = "bindings/node/npm/win32-x64-msvc/package.json"
+search = '"version": "{current_version}"'
+replace = '"version": "{new_version}"'

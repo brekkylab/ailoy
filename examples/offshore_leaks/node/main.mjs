@@ -36,7 +36,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import ailoy from 'ailoy-node'
+import ailoy from '@brekkylab/ailoy'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 // Absolute, because a mount is named to the server as a `file://` URL.

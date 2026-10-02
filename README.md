@@ -9,7 +9,7 @@
 <p align="center">
   <img src="https://cdn.simpleicons.org/rust/000000/ffffff" width="16"/> <a href="https://crates.io/crates/ailoy"><img src="https://img.shields.io/crates/v/ailoy?label=ailoy&color=dea584" alt="crates.io"></a>
   <img src="https://cdn.simpleicons.org/python" width="16"/> <a href="https://pypi.org/project/ailoy-py/"><img src="https://img.shields.io/pypi/v/ailoy-py?color=blue&label=ailoy-py" alt="PyPI"></a>
-  <img src="https://cdn.simpleicons.org/nodedotjs" width="16"/> <a href="https://www.npmjs.com/package/ailoy-node"><img src="https://img.shields.io/npm/v/ailoy-node?label=ailoy-node&color=339933" alt="npm node"></a>
+  <img src="https://cdn.simpleicons.org/nodedotjs" width="16"/> <a href="https://www.npmjs.com/package/@brekkylab/ailoy"><img src="https://img.shields.io/npm/v/@brekkylab/ailoy?label=@brekkylab/ailoy&color=339933" alt="npm node"></a>
 </p>
 
 </p>
@@ -108,11 +108,11 @@ asyncio.run(main())
 <summary><b>Node.js</b></summary>
 
 ```sh
-npm install ailoy-node
+npm install @brekkylab/ailoy
 ```
 
 ```js
-const { AgentBuilder, ConsoleClient, Recipe } = require('ailoy-node')
+const { AgentBuilder, ConsoleClient, Recipe } = require('@brekkylab/ailoy')
 
 const console_ = await ConsoleClient.builder()
   .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))
