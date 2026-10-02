@@ -43,8 +43,7 @@ export default defineConfig({
     search: { provider: 'local' },
 
     footer: {
-      message: 'Released under the Apache-2.0 License.',
-      copyright: '© Brekkylab',
+      copyright: `Copyright © ${new Date().getFullYear()} Brekkylab Inc.`,
     },
   },
 })
