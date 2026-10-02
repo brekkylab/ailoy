@@ -30,10 +30,14 @@ gets its own VM, with the workspace mounted read-only and `artifacts/` writable,
 path it has on the host; anything else a command writes stays on the VM's disk and goes away
 with it.
 
-The server is not bundled. The first run that needs a console calls `ensure_virtx`, which
-fetches the release the `virtx` crate pins into virtx's cache (`~/Library/Caches/virtx/bin`,
-or `$VIRTX_HOME/bin`) when that has none, and the first boot pulls the image. Both happen
-once per host, not per run, and a run waits on them.
+The server is not bundled. It, the image and the model list are fetched when the app starts
+(`core/src/bootstrap.rs`), with a card above the composer showing each step; a chat cannot
+be sent until all three are done, and a failed step offers Retry. `ensure_virtx` fetches
+the server release the `virtx` crate pins into virtx's cache (`~/Library/Caches/virtx/bin`,
+or `$VIRTX_HOME/bin`) when that has none, and the server builds the image once. Both happen
+once per host, and on later starts the steps finish at once. To see the downloads again
+without touching your cache, start with an empty one:
+`VIRTX_HOME=$(mktemp -d) npm run tauri:dev`.
 
 For an `.app` bundle, run `npm run tauri:build`. The result lands at
 `src-tauri/target/release/bundle/macos/Ailoy.app`. It fetches the model list from

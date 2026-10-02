@@ -14,6 +14,9 @@ pub enum EngineError {
     AlreadyRunning,
     #[error("{0}")]
     Invalid(String),
+    /// A run asked for before the bootstrap finished; the text names what it still waits on.
+    #[error("{0}")]
+    NotReady(String),
     #[error("workspace: {0}")]
     Workspace(String),
     #[error("storage: {0}")]
@@ -32,6 +35,7 @@ impl EngineError {
             EngineError::NotFound(_) => "not_found",
             EngineError::AlreadyRunning => "already_running",
             EngineError::Invalid(_) => "invalid",
+            EngineError::NotReady(_) => "not_ready",
             EngineError::Workspace(_) => "workspace",
             EngineError::Storage(_) => "storage",
             EngineError::Io(_) => "io",

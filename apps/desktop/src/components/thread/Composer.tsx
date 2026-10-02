@@ -19,11 +19,13 @@ import { ArrowUp, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import * as api from "@/api";
+import { BootstrapCard } from "@/components/thread/BootstrapCard";
 import { ModelPicker } from "@/components/thread/ModelPicker";
 import { UsageBar } from "@/components/thread/UsageBar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cancelRun, startRun } from "@/events";
+import { isReady, useBootstrap } from "@/lib/bootstrap";
 import { catalogQuery, useRefreshModels } from "@/lib/catalog";
 import { useComposerInbox } from "@/store/composer";
 import { hasAnyKey } from "@/lib/settings";
@@ -60,7 +62,13 @@ export function Composer({
   // open onto nothing, so the row says which of the two it is waiting on.
   const catalog = useQuery(catalogQuery);
   const refreshModels = useRefreshModels();
-  const noModels = catalog.data?.models === 0;
+  // The start's downloads: until they are done the engine refuses a run, so the button does
+  // too, and the card above the box says what is still coming. Typing is left open — a
+  // message written while the image pulls goes out the moment it is there.
+  const bootstrap = useBootstrap();
+  const ready = isReady(bootstrap);
+  // During the setup the card already says the list is coming; the row is for after it.
+  const noModels = ready && catalog.data?.models === 0;
   const session = sessions.data?.find((s) => s.id === sessionId);
   // No key anywhere means the engine cannot build a model and would fail the run at
   // `build()`; say so in the place the user is about to type instead.
@@ -135,7 +143,7 @@ export function Composer({
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["sessions"] }),
   });
 
-  const canSend = text.trim().length > 0 && !running && !noKey && !send.isPending;
+  const canSend = ready && text.trim().length > 0 && !running && !noKey && !send.isPending;
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // `isComposing` is the whole reason this is `keydown` and not `keypress`: an IME
     // commits a Hangul syllable with Enter, and sending there would eat the character.
@@ -153,6 +161,7 @@ export function Composer({
   return (
     <div className="px-6 pt-2 pb-4">
       <div className="mx-auto max-w-3xl">
+        {bootstrap && !bootstrap.ready && <BootstrapCard status={bootstrap} />}
         {/* One card, the way Claude and ChatGPT draw it: the box you type in, and under it the
             row of what the message will be sent with — the model on the left, the context
             it has used and the send button on the right. The textarea wears no field chrome
@@ -163,7 +172,7 @@ export function Composer({
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKey}
-            placeholder={noKey ? S.noKey : S.composerPlaceholder}
+            placeholder={noKey ? S.noKey : ready ? S.composerPlaceholder : S.bootstrapComposerPlaceholder}
             rows={1}
             aria-label={S.messageInput}
             className="max-h-60 min-h-12 resize-none border-0 bg-transparent px-4 pt-3.5 pb-1 text-[15px] shadow-none focus-visible:ring-0 dark:bg-transparent"

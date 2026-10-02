@@ -75,6 +75,21 @@ fn forward_catalog_status(app: tauri::AppHandle, engine: &Arc<Engine>) {
     });
 }
 
+/// Tells the window how the start's downloads are going, as the `bootstrap` event carrying
+/// the new `BootstrapStatus`: the console server, its image and the model list, which a chat
+/// waits on (see `ailoy_desktop_core::bootstrap`).
+fn forward_bootstrap_status(app: tauri::AppHandle, engine: &Arc<Engine>) {
+    let mut rx = engine.bootstrap_subscribe();
+    tauri::async_runtime::spawn(async move {
+        while rx.changed().await.is_ok() {
+            let status = rx.borrow_and_update().clone();
+            if let Err(e) = app.emit("bootstrap", status) {
+                tracing::warn!("telling the window about the setup: {e}");
+            }
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
@@ -102,10 +117,13 @@ pub fn run() {
                 Err(e) => fail_to_start(&e),
             };
             forward_catalog_status(app.handle().clone(), &engine);
+            forward_bootstrap_status(app.handle().clone(), &engine);
             app.manage(engine);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::bootstrap::bootstrap_status,
+            commands::bootstrap::bootstrap_retry,
             commands::sessions::session_list,
             commands::sessions::session_create,
             commands::sessions::session_rename,

@@ -474,16 +474,41 @@ impl Catalog {
     /// A cache that cannot be written is not a failure: the list is still good for as long
     /// as the app runs, and the next start fetches again.
     pub async fn refresh(&self, cache: &Path) -> anyhow::Result<()> {
-        self.refresh_from(cache, fetch_models_dev()).await
+        self.refresh_from(cache, fetch_models_dev(), |_| true).await
+    }
+
+    /// [`refresh`](Self::refresh) only if the list is due: the background loop's fetch.
+    pub async fn refresh_if_due(&self, cache: &Path) -> anyhow::Result<()> {
+        self.refresh_from(cache, fetch_models_dev(), |c| is_due(c.age()))
+            .await
+    }
+
+    /// [`refresh`](Self::refresh) only if there is no list at all: what a first start waits
+    /// on before a chat can run. Whatever the refresh setting says, since without a list
+    /// there is nothing to pick.
+    pub async fn ensure(&self, cache: &Path) -> anyhow::Result<()> {
+        self.refresh_from(cache, fetch_models_dev(), Catalog::is_empty)
+            .await
+    }
+
+    fn is_empty(&self) -> bool {
+        self.status.borrow().models == 0
     }
 
     /// [`Catalog::refresh`] over any fetch, so the tests can fail one without a network.
+    ///
+    /// `needed` is asked under the fetch lock, so of a start's bootstrap and the background
+    /// loop landing together, the second sees what the first fetched and does not repeat it.
     async fn refresh_from(
         &self,
         cache: &Path,
         fetch: impl Future<Output = anyhow::Result<CatalogData>>,
+        needed: impl FnOnce(&Self) -> bool,
     ) -> anyhow::Result<()> {
         let _one = self.fetching.lock().await;
+        if !needed(self) {
+            return Ok(());
+        }
         self.status.send_modify(|s| s.refreshing = true);
         let outcome = self.keep(cache, fetch).await;
         self.status.send_modify(|s| {
@@ -990,7 +1015,11 @@ mod tests {
         let before = cat.status();
         let rx = cat.subscribe();
         let failed = cat
-            .refresh_from(&cache, async { anyhow::bail!("models.dev is unreachable") })
+            .refresh_from(
+                &cache,
+                async { anyhow::bail!("models.dev is unreachable") },
+                |_| true,
+            )
             .await;
         assert!(failed.is_err());
         let after = cat.status();
@@ -1006,12 +1035,40 @@ mod tests {
 
         // The next success replaces the list, writes the cache, and clears the error.
         let fresh = stored(Some(before.fetched_at.unwrap() + 1), "claude-3-embed");
-        cat.refresh_from(&cache, async { Ok(fresh) }).await.unwrap();
+        cat.refresh_from(&cache, async { Ok(fresh) }, |_| true)
+            .await
+            .unwrap();
         let after = cat.status();
         assert_eq!(after.error, None);
         assert_eq!(after.models, 1);
         assert!(cat.lookup("anthropic/claude-opus-5").is_none());
         assert_eq!(Catalog::load_from("", Some(&cache)).status().models, 1);
+    }
+
+    /// `ensure`'s condition: a list already there is not fetched again, and an empty one is.
+    #[tokio::test]
+    async fn ensuring_fetches_only_an_empty_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("models.json");
+        let cat = fixture();
+        cat.refresh_from(
+            &cache,
+            async { anyhow::bail!("must not be fetched") },
+            Catalog::is_empty,
+        )
+        .await
+        .expect("a list that is there is left alone");
+
+        let empty = Catalog::from_data(CatalogData::default());
+        empty
+            .refresh_from(
+                &cache,
+                async { Ok(stored(Some(1), "claude-3-embed")) },
+                Catalog::is_empty,
+            )
+            .await
+            .unwrap();
+        assert_eq!(empty.status().models, 1);
     }
 
     #[test]

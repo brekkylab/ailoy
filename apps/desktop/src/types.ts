@@ -55,6 +55,7 @@ export type EngineErrorKind =
   | "not_found"
   | "already_running"
   | "invalid"
+  | "not_ready"
   | "workspace"
   | "storage"
   | "io"
@@ -163,5 +164,19 @@ export interface CatalogStatus {
   refreshing: boolean;
   /** Why the last fetch failed, until one succeeds. */
   error: string | null;
+}
+/** One download a chat waits on. See `core/src/bootstrap.rs` and `lib/bootstrap`. */
+export type BootstrapStepId = "console_server" | "console_image" | "catalog";
+export type BootstrapStepState =
+  | { state: "pending" }
+  | { state: "running"; started_at: number }
+  | { state: "done" }
+  | { state: "skipped" }
+  | { state: "failed"; message: string };
+export type BootstrapStep = { id: BootstrapStepId } & BootstrapStepState;
+export interface BootstrapStatus {
+  steps: BootstrapStep[];
+  /** Every step done or skipped: a run may start. */
+  ready: boolean;
 }
 export interface ModelInfo { id: string; provider: string; name: string; context: number | null; output: number | null; cost: ModelCost | null; reasoning: boolean; tool_call: boolean; available: boolean }

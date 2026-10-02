@@ -21,10 +21,7 @@ use anyhow::Context as _;
 use futures::{FutureExt as _, StreamExt as _};
 use tokio::sync::{Mutex, broadcast};
 use tokio_util::sync::CancellationToken;
-use virtx::{
-    console::ConsoleClient,
-    image::{ImageSource, Recipe},
-};
+use virtx::{console::ConsoleClient, image::Recipe};
 
 use crate::{
     assembler::{AssembledItem, MessageAssembler},
@@ -52,17 +49,18 @@ pub struct RunDeps {
 /// How a run's console is made: a virtx-uvm micro-VM, booted on `image`.
 ///
 /// A VM backend boots on an image or refuses, so the image is part of the setup rather than
-/// left to the server.
+/// left to the server. A recipe rather than any image source, so the bootstrap can build it
+/// ahead of the first run (see `Engine::start`) and that run boots on what is already there.
 #[derive(Clone, Debug)]
 pub struct ConsoleSetup {
-    pub image: ImageSource,
+    pub image: Recipe,
 }
 
 impl Default for ConsoleSetup {
     /// Debian with Python, the base virtx's and ailoy's own examples run on.
     fn default() -> Self {
         Self {
-            image: Recipe::new("python:3.12-slim-trixie").into(),
+            image: Recipe::new("python:3.12-slim-trixie"),
         }
     }
 }

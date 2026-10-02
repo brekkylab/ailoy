@@ -177,6 +177,12 @@ async fn a_run_reads_a_workspace_file_through_the_shell_tool() {
     cfg.mount_workspace = false; // the console stands in files/ directly
     cfg.catalog_refresh = false;
     let engine = Engine::start(cfg).await.unwrap();
+    // A run is refused until the console server and image are on the host.
+    assert!(
+        engine.bootstrap_wait().await,
+        "{:?}",
+        engine.bootstrap_status()
+    );
     // The root defaults to `$HOME` — My Computer — so without this the write below would land
     // in the home directory of whoever runs the test.
     let files = dir.path().join("files");
@@ -264,6 +270,12 @@ async fn a_mounted_run_reads_a_connector_through_the_kernel() {
     cfg.mount_workspace = true;
     cfg.catalog_refresh = false;
     let engine = Engine::start(cfg).await.unwrap();
+    // A run is refused until the console server and image are on the host.
+    assert!(
+        engine.bootstrap_wait().await,
+        "{:?}",
+        engine.bootstrap_status()
+    );
     assert!(
         matches!(
             engine.workspace_info().status,

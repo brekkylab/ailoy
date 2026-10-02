@@ -1,6 +1,7 @@
 //! Ailoy Desktop's session engine: everything the window does, without the window.
 
 pub mod assembler;
+pub mod bootstrap;
 pub mod catalog;
 pub mod config;
 pub mod engine;
@@ -14,6 +15,7 @@ pub mod types;
 pub mod usage;
 pub mod workspace;
 
+pub use bootstrap::{BootstrapStatus, StepId};
 pub use catalog::Catalog;
 pub use config::EngineConfig;
 pub use engine::Engine;

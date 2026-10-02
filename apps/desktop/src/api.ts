@@ -74,5 +74,9 @@ export const catalogStatus = () => invoke<T.CatalogStatus>("catalog_status");
 /** Fetch the model list now. Resolves either way; a failure is `error` in the status. */
 export const modelsRefresh = () => invoke<T.CatalogStatus>("models_refresh");
 export const openLogs = () => invoke<void>("open_logs");
+/** What a chat still waits on. Changes arrive as the `bootstrap` event; see `lib/bootstrap`. */
+export const bootstrapStatus = () => invoke<T.BootstrapStatus>("bootstrap_status");
+/** Run the unfinished downloads again. Answers at once; progress comes as events. */
+export const bootstrapRetry = () => invoke<T.BootstrapStatus>("bootstrap_retry");
 
 export { kindOf, messageOf } from "./lib/errors";

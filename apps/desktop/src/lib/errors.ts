@@ -14,6 +14,7 @@ const KINDS: readonly EngineErrorKind[] = [
   "not_found",
   "already_running",
   "invalid",
+  "not_ready",
   "workspace",
   "storage",
   "io",

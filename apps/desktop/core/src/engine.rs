@@ -15,6 +15,7 @@ use ailoy::message::Part;
 use virtx::fs::FileSystem;
 
 use crate::{
+    bootstrap::{Bootstrap, BootstrapStatus, Step, StepId, Task},
     catalog::{self, Catalog, split_model_id},
     config::EngineConfig,
     error::{EngineError, Result},
@@ -35,6 +36,12 @@ pub struct Engine {
     /// Wakes the background refresh loop early: the setting was just turned on.
     catalog_wake: Arc<tokio::sync::Notify>,
     runs: RunManager,
+    /// What has to be downloaded before a run may start. See `bootstrap`.
+    bootstrap: Arc<Bootstrap>,
+    /// The runtime the engine started on, for work a synchronous caller sets going: a sync
+    /// Tauri command runs on the main thread, which has no runtime of its own, and a bare
+    /// `tokio::spawn` there panics the app.
+    rt: tokio::runtime::Handle,
     /// The exclusive lock on `<data_dir>/engine.lock`, held for the engine's whole life.
     /// Never read — the value *is* the lock, and the OS releases it when this file closes
     /// (on drop, or when the process dies however it dies).
@@ -93,9 +100,14 @@ impl Engine {
             tracing::warn!("applying provider settings at start: {e}");
         }
 
-        // Nothing is started here: the first run that needs a console fetches the server if
-        // the host has none and boots its VM, so a window with no run yet has spent nothing.
+        // No VM is booted here: the first run that needs a console boots its own. What it
+        // boots on — the server and the image — is fetched by the bootstrap below.
         let console = cfg.console.then(ConsoleSetup::default);
+        let bootstrap = Bootstrap::new(bootstrap_steps(
+            console.as_ref(),
+            cfg.catalog_refresh
+                .then(|| (catalog.clone(), catalog_cache.clone())),
+        ));
 
         let runs = RunManager::new(RunDeps {
             store: store.clone(),
@@ -111,10 +123,19 @@ impl Engine {
             catalog_cache,
             catalog_wake,
             runs,
+            bootstrap,
+            rt: tokio::runtime::Handle::current(),
             _instance_lock: instance_lock,
             restored: Arc::new(tokio::sync::watch::channel(false).0),
             settings_lock: tokio::sync::Mutex::new(()),
         });
+
+        // Fetched in the background, with the window up: it shows each step as it goes, and
+        // a run is refused until they are done (`run_start`).
+        {
+            let bootstrap = engine.bootstrap.clone();
+            tokio::spawn(async move { bootstrap.run().await });
+        }
 
         // Restoring connectors is not on the path to a usable window. `build_and_probe`
         // gives a remote store 15 seconds to answer, and a laptop that woke up off-network
@@ -241,6 +262,22 @@ impl Engine {
     pub async fn run_start(&self, session_id: &str, parts: Vec<Part>) -> Result<RunHandle> {
         if parts.is_empty() {
             return Err(EngineError::Invalid("The message is empty".into()));
+        }
+        if !self.bootstrap.is_ready() {
+            let waiting: Vec<&str> = self
+                .bootstrap
+                .unfinished()
+                .into_iter()
+                .map(|id| match id {
+                    StepId::ConsoleServer => "the console server",
+                    StepId::ConsoleImage => "the Linux image",
+                    StepId::Catalog => "the model list",
+                })
+                .collect();
+            return Err(EngineError::NotReady(format!(
+                "Ailoy is still setting up: waiting on {}.",
+                waiting.join(", ")
+            )));
         }
         let title = title_from(&parts);
         let handle = self.runs.start(session_id, parts).await?;
@@ -442,6 +479,28 @@ impl Engine {
         Ok(settings)
     }
 
+    pub fn bootstrap_status(&self) -> BootstrapStatus {
+        self.bootstrap.status()
+    }
+
+    /// Every change to [`Engine::bootstrap_status`], for the Tauri layer to pass on.
+    pub fn bootstrap_subscribe(&self) -> tokio::sync::watch::Receiver<BootstrapStatus> {
+        self.bootstrap.subscribe()
+    }
+
+    /// Run again every step that has not finished: the Retry after a failed download.
+    /// Answers at once; the steps report through the status as they go.
+    pub fn bootstrap_retry(&self) -> BootstrapStatus {
+        let bootstrap = self.bootstrap.clone();
+        self.rt.spawn(async move { bootstrap.run().await });
+        self.bootstrap.status()
+    }
+
+    /// Resolves once the bootstrap is done (`true`) or has stopped on a failure (`false`).
+    pub async fn bootstrap_wait(&self) -> bool {
+        self.bootstrap.wait().await
+    }
+
     pub fn catalog_status(&self) -> CatalogStatus {
         self.catalog.status()
     }
@@ -575,6 +634,58 @@ fn name_untitled_sessions(store: &Store) {
 /// first start is right away — and then sleeps until it next will be, sooner after a
 /// failure. The setting is read on every pass rather than once, so switching it off stops
 /// the next fetch and switching it on (see `settings_set`) wakes the loop.
+/// The bootstrap's steps, with work only for what this engine uses: no console, and the
+/// console's two steps are skipped; no fetching (`catalog_refresh` off, as in the tests), and
+/// neither is the model list's.
+///
+/// Two chains: the image is built by the server the step before fetches, and the model list
+/// waits on neither.
+fn bootstrap_steps(
+    console: Option<&ConsoleSetup>,
+    catalog: Option<(Arc<Catalog>, PathBuf)>,
+) -> Vec<Vec<Step>> {
+    let server: Option<Task> = console.map(|_| -> Task {
+        Arc::new(|| {
+            Box::pin(async {
+                virtx::ensure_virtx()
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| e.context("fetching the console server"))
+            })
+        })
+    });
+    let image: Option<Task> = console.map(|setup| -> Task {
+        let recipe = setup.image.clone();
+        Arc::new(move || {
+            let recipe = recipe.clone();
+            Box::pin(async move {
+                // Built once here so a run's VM boots on it rather than pulling it then.
+                let mut images = virtx::image::ImageClient::try_new()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("starting the image server: {e}"))?;
+                images
+                    .build(recipe, None)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("building the image: {e}"))?;
+                Ok(())
+            })
+        })
+    });
+    let list: Option<Task> = catalog.map(|(catalog, cache)| -> Task {
+        Arc::new(move || {
+            let (catalog, cache) = (catalog.clone(), cache.clone());
+            Box::pin(async move { catalog.ensure(&cache).await })
+        })
+    });
+    vec![
+        vec![
+            (StepId::ConsoleServer, server),
+            (StepId::ConsoleImage, image),
+        ],
+        vec![(StepId::Catalog, list)],
+    ]
+}
+
 async fn refresh_catalog(
     catalog: Arc<Catalog>,
     store: Arc<Store>,
@@ -588,7 +699,7 @@ async fn refresh_catalog(
         let mut failed = false;
         if enabled
             && catalog::is_due(catalog.age())
-            && let Err(e) = catalog.refresh(&cache).await
+            && let Err(e) = catalog.refresh_if_due(&cache).await
         {
             tracing::warn!("catalog refresh failed: {e:#}");
             failed = true;
@@ -1002,6 +1113,20 @@ mod tests {
         drop(first);
         let third = Engine::start(config(dir.path())).await.unwrap();
         third.shutdown().await;
+    }
+
+    /// A retry asked for from a thread with no runtime — a synchronous Tauri command runs on
+    /// the main thread — sets the steps going on the engine's own instead of panicking.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_bootstrap_retry_from_a_thread_with_no_runtime_does_not_panic() {
+        let (_dir, e) = engine().await;
+        let from_main = e.clone();
+        let status = std::thread::spawn(move || from_main.bootstrap_retry())
+            .join()
+            .expect("the retry panicked");
+        // Nothing to fetch on this engine: every step is skipped, so it is ready as it was.
+        assert!(status.ready);
+        assert!(e.bootstrap_wait().await);
     }
 
     /// A connector whose store is gone comes back as a row with its error, not as a missing
