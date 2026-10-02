@@ -1,0 +1,16 @@
+{
+  "name": "ailoy-example-gameplay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An agent playing OpenTTD while you watch over VNC, on ailoy's Node bindings.",
+  "type": "module",
+  "scripts": {
+    "start": "node main.mjs"
+  },
+  "dependencies": {
+    "ailoy-node": "file:../../../bindings/node"
+  },
+  "engines": {
+    "node": ">= 20.12"
+  }
+}
