@@ -48,7 +48,7 @@ Turn the optional feature on from an administrator PowerShell and restart, with 
 Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform
 ```
 
-## Quick start
+## Quickstart
 
 Set the API key for your model's provider, either in the environment or in a `.env` file:
 
