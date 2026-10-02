@@ -104,25 +104,25 @@ async def main():
         check(not os.path.exists(os.path.join(point, "a.txt")), "dropping the HostMount takes it down")
 
     # The console server, as the guides have it: `ensure_virtx()` first.
-    server = None
+    bin_dir = None
     try:
-        server = await virtx.ensure_virtx()
-        print(f"  ensure_virtx: {server}")
+        bin_dir = await virtx.ensure_virtx()
+        print(f"  ensure_virtx: {bin_dir}")
     except Exception as e:
         print(f"  ensure_virtx: {e}")
-    check((server is not None) == want("SMOKE_SERVER"), f"ensure_virtx {'fetched' if server else 'fetched no'} server")
-    if server:
+    check((bin_dir is not None) == want("SMOKE_SERVER"), f"ensure_virtx {'fetched' if bin_dir else 'fetched no'} server")
+    if bin_dir:
         exe = ".exe" if os.name == "nt" else ""
-        check(os.path.isfile(os.path.join(server, f"virtx-uvm{exe}")), f"virtx-uvm{exe} is in {server}")
+        check(os.path.isfile(os.path.join(bin_dir, f"virtx-uvm{exe}")), f"virtx-uvm{exe} is in {bin_dir}")
         if os.environ.get("VIRTX_HOME"):
-            check(os.path.relpath(server, os.environ["VIRTX_HOME"]) == "bin", "into $VIRTX_HOME/bin")
+            check(os.path.relpath(bin_dir, os.environ["VIRTX_HOME"]) == "bin", "into $VIRTX_HOME/bin")
         # The server runs on this machine, and answers -- no VM needed to ask its version.
         images = await virtx.ImageClient.try_new()
         version = await images.version()
         await images.close()
         check(bool(version), f"the console server answers (protocol {version})")
 
-    if server and want("SMOKE_VM"):
+    if bin_dir and want("SMOKE_VM"):
         # An agent's shell tool, in a VM session that sees a host directory.
         host = tempfile.mkdtemp(prefix="ailoy-smoke-host-")
         open(os.path.join(host, "from-host.txt"), "w").write("by path")
