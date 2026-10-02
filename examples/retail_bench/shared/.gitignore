@@ -1,0 +1,4 @@
+# Fetched or built by the simulator.
+.cache
+simulator/upstream
+__pycache__

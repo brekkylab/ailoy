@@ -94,7 +94,6 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
- "pkg-config",
  "serde",
  "tokio",
  "url",
@@ -110,7 +109,6 @@ dependencies = [
  "anyhow",
  "async-stream",
  "futures",
- "pkg-config",
  "pyo3",
  "pyo3-async-runtimes",
  "pythonize",
@@ -4071,6 +4069,8 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "virtx"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b17d4adad3b09542d932fa022e8c7b7259df8b05b82231d9ff75a973e2a4e468"
 dependencies = [
  "anyhow",
  "bson",
@@ -4094,6 +4094,7 @@ dependencies = [
 [[package]]
 name = "virtx-node"
 version = "0.1.0"
+source = "git+https://github.com/brekkylab/virtx?tag=v0.1.0#382457ce3d49680789febeea7b89ec8d52a548e9"
 dependencies = [
  "anyhow",
  "napi",
@@ -4106,6 +4107,7 @@ dependencies = [
 [[package]]
 name = "virtx-python"
 version = "0.1.0"
+source = "git+https://github.com/brekkylab/virtx?tag=v0.1.0#382457ce3d49680789febeea7b89ec8d52a548e9"
 dependencies = [
  "anyhow",
  "pyo3",

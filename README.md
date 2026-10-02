@@ -199,21 +199,40 @@ async fn main() -> anyhow::Result<()> {
 
 ## What can an agent do?
 
-Rust examples are in [`examples/`](./examples) and run with `cargo run --example <name>`.
-
 > You'll need a GPU (any GPU that supports Vulkan, or Metal on Macs) for the examples that run ML models.
 
-| Example | Description | Requirements |
-| --- | --- | :---: |
-| [hello](./examples/hello) | One turn with no tools and no console | |
-| [cad](./examples/cad) | Writes CadQuery, renders the model from four sides, looks at the renders and iterates | |
-| [offshore_leaks](./examples/offshore_leaks) | Analyses the ICIJ Offshore Leaks database with SQL and Python that the agent writes itself | |
-| [retail_bench](./examples/retail_bench) | Runs a supermarket simulator, one day per turn | |
-| [sam3](./examples/sam3) | Segments images and videos with SAM3 on the guest GPU (ncnn + Vulkan) | GPU |
-| [tts](./examples/tts) | Speaks text in a voice described in words, using Qwen3-TTS | GPU |
-| [laya](./examples/laya) | Answers typed decision questions with a local model on the GPU | GPU |
+| Example | Description | Code | Requirements |
+| --- | --- | --- | :---: |
+| hello | One turn with no tools and no console | [Rust](./examples/hello/rust) · [Python](./examples/hello/python) · [Node](./examples/hello/node) |  |
+| cad | Writes CadQuery, renders the model from four sides, looks at the renders and iterates | [Rust](./examples/cad/rust) · [Python](./examples/cad/python) · [Node](./examples/cad/node) |  |
+| offshore_leaks | Analyses the ICIJ Offshore Leaks database with SQL and Python that the agent writes itself | [Rust](./examples/offshore_leaks/rust) · [Python](./examples/offshore_leaks/python) · [Node](./examples/offshore_leaks/node) | Python (with uv) |
+| retail_bench | Runs a supermarket simulator, one day per turn | [Rust](./examples/retail_bench/rust) · [Python](./examples/retail_bench/python) · [Node](./examples/retail_bench/node) | Python (with uv) |
+| sam3 | Segments images and videos with SAM3 on the guest GPU (ncnn + Vulkan) | [Rust](./examples/sam3/rust) · [Python](./examples/sam3/python) · [Node](./examples/sam3/node) | GPU, Python (with uv) |
+| tts | Speaks text in a voice described in words, using Qwen3-TTS | [Rust](./examples/tts/rust) · [Python](./examples/tts/python) · [Node](./examples/tts/node) | GPU, Python (with uv) |
+| laya | Answers typed decision questions with a local model on the GPU | [Rust](./examples/laya/rust) · [Python](./examples/laya/python) · [Node](./examples/laya/node) | GPU, Python (with uv) |
 
-Python examples are in [`bindings/python/examples`](./bindings/python/examples), and Node examples are in [`bindings/node/examples`](./bindings/node/examples).
+Each example lives in `examples/<name>`, with one folder per language (`rust`, `python`, `node`) and, where the three share files (skills, prompts, model preparation scripts), a `shared` folder.
+
+Rust:
+
+```sh
+cargo run --example <name>
+```
+
+Python:
+
+```sh
+cd examples/<name>/python
+uv run main.py
+```
+
+Node:
+
+```sh
+cd examples/<name>/node
+npm install
+npm start
+```
 
 ## How It Works
 
