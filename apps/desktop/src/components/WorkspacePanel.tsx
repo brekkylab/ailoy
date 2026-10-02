@@ -23,6 +23,29 @@ import type { Entry, MountInfo } from "@/types";
 const NOTION_PAGES = "pages";
 
 export function WorkspacePanel({ source }: { source: string | null }) {
+  return (
+    // `min-h-0 flex-1` rather than `h-full`: the banners above this in `main` are part of
+    // the same column, and a full-height panel would push itself off the bottom by theirs.
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col border-t">
+      <SourceBrowser source={source} />
+    </section>
+  );
+}
+
+/**
+ * One connected source's files: the workspace view's whole body, and the Files tab of the
+ * panel beside a thread. What is passed through goes to `FileBrowser`.
+ */
+export function SourceBrowser({
+  source,
+  ...browser
+}: {
+  source: string | null;
+  layout?: "split" | "stacked";
+  open?: string | null;
+  onOpenChange?: (path: string | null) => void;
+  onAsk?: (path: string) => void;
+}) {
   // The same query the sidebar reads, so this is a cache hit rather than a second call.
   const mounts = useQuery({ queryKey: ["mounts"], queryFn: api.mountList });
   const rows: MountInfo[] = mounts.data ?? [];
@@ -56,25 +79,22 @@ export function WorkspacePanel({ source }: { source: string | null }) {
   );
 
   return (
-    // `min-h-0 flex-1` rather than `h-full`: the banners above this in `main` are part of
-    // the same column, and a full-height panel would push itself off the bottom by theirs.
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col border-t">
-      {/* Keyed on the root so switching sources drops the open file with the tree it came
-          from: a selection under the old root names nothing under the new one. */}
-      <FileBrowser
-        key={browseRoot}
-        root={browseRoot}
-        kind={notion ? "notion" : "plain"}
-        hide={hide}
-        // Local folders and buckets only, for now. Notion renders its own pages, and what
-        // sits under the workspace root is either one of these or something the agent
-        // wrote, which the artifacts view shows as written.
-        viewers={open?.kind === "local" || open?.kind === "s3"}
-        // A leading dot only means "hidden" on a disk. A bucket key or a Notion title that
-        // starts with one is just a name, and hiding it would lose the object.
-        hiddenFiles={open?.kind === "local"}
-      />
-    </section>
+    // Keyed on the root so switching sources drops the open file with the tree it came
+    // from: a selection under the old root names nothing under the new one.
+    <FileBrowser
+      key={browseRoot}
+      root={browseRoot}
+      kind={notion ? "notion" : "plain"}
+      hide={hide}
+      // Local folders and buckets only, for now. Notion renders its own pages, and what
+      // sits under the workspace root is either one of these or something the agent
+      // wrote, which the artifacts view shows as written.
+      viewers={open?.kind === "local" || open?.kind === "s3"}
+      // A leading dot only means "hidden" on a disk. A bucket key or a Notion title that
+      // starts with one is just a name, and hiding it would lose the object.
+      hiddenFiles={open?.kind === "local"}
+      {...browser}
+    />
   );
 }
 

@@ -5,12 +5,16 @@
 // explorer settles on. The tree scrolls on its own, so a deep directory does not push the
 // document out of view and a long document does not shorten the tree.
 //
+// Except where there is no room for two: the panel beside a thread is a column, and there
+// the tree and the file take turns (`layout: "stacked"`) — opening a file replaces the tree,
+// and the file's header has the way back.
+//
 // `kind` is the only thing that differs between the sources, and only because Notion's
 // layout means something. Everything else is files: what you click is what you read, and
 // showing bytes as anything but themselves would be a guess about what they are.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RotateCw } from "lucide-react";
+import { ArrowLeft, Check, Copy, Eye, EyeOff, FileSearch, MessageSquareQuote, RotateCw } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import * as api from "@/api";
@@ -28,6 +32,7 @@ import { PptxViewer } from "@/components/viewers/PptxViewer";
 import { TableViewer } from "@/components/viewers/TableViewer";
 import { XlsxViewer } from "@/components/viewers/XlsxViewer";
 import { BYTES_KEY } from "@/lib/bytes";
+import { copyText } from "@/lib/clipboard";
 import { notionMarkdown } from "@/lib/notion";
 import { readNotionNode } from "@/lib/notionNode";
 import { expandTo, isHidden, loadExpanded, saveExpanded, toggle } from "@/lib/treeState";
@@ -103,8 +108,25 @@ export function FileBrowser({
   hide,
   viewers = false,
   hiddenFiles = false,
+  layout = "split",
+  open,
+  onOpenChange,
+  onAsk,
+  placeholder,
 }: {
   root: string;
+  /** The tree beside the file, or — where there is one column — the two taking turns. */
+  layout?: "split" | "stacked";
+  /**
+   * The open file, when the caller holds it — the panel beside a thread does, so a tool
+   * call's row can open a file in it. Absent, the browser keeps its own.
+   */
+  open?: string | null;
+  onOpenChange?: (path: string | null) => void;
+  /** Offered on an open file: put a mention of it into the composer. */
+  onAsk?: (path: string) => void;
+  /** What to say while nothing is open, when the source has something better than the default. */
+  placeholder?: string;
   kind?: "plain" | "notion";
   /** Entries to leave out, on top of whatever the kind already hides. */
   hide?: (e: Entry) => boolean;
@@ -153,7 +175,22 @@ export function FileBrowser({
   // Keyed by path, so the pane follows the selection and an unopened browser fetches
   // nothing. Reset when the root changes, because a path under the old root means nothing
   // under the new one — which `WorkspacePanel` gets by keying this component on its root.
-  const [selected, setSelected] = useState<string | null>(null);
+  const [own, setOwn] = useState<string | null>(null);
+  const controlled = open !== undefined;
+  const selected = controlled ? open : own;
+  const setSelected = (path: string | null) => (controlled ? onOpenChange?.(path) : setOwn(path));
+  // A file opened from outside — a tool call's row — has had no click down the tree to it,
+  // so the tree opens the way there itself, once per file it is handed. During the render,
+  // not after it, which is React's pattern for state that follows a prop.
+  const [shownFor, setShownFor] = useState<string | null>(null);
+  if (selected && selected !== shownFor) {
+    setShownFor(selected);
+    const next = expandTo(expanded, root, selected);
+    if (next !== expanded) {
+      saveExpanded(root, next);
+      setExpanded(next);
+    }
+  }
   // Selecting also opens the way down to what was selected, for a path that did not come
   // from the tree — a link inside a page. Following one should leave the reader looking at
   // where they landed, not at a tree still showing where they were.
@@ -200,17 +237,25 @@ export function FileBrowser({
   // database, whose json has no body to render and is more use shown as what it is.
   const body = text !== null && kind === "notion" ? notionMarkdown(text) : null;
 
+  const stacked = layout === "stacked";
+  // In a column, the tree gives way to the file.
+  const showTree = !stacked || !selected;
+  const showFile = !stacked || !!selected;
+
   return (
     <div className="flex min-h-0 flex-1">
-      <div className="flex w-72 shrink-0 flex-col border-t border-r">
+      {showTree && (
+      <div className={stacked ? "flex min-w-0 flex-1 flex-col" : "flex w-72 shrink-0 flex-col border-r"}>
         <div className="flex shrink-0 items-center justify-end gap-1 px-2 pt-1">
           {hiddenFiles && (
             <button
-              className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
               aria-pressed={showHidden}
+              aria-label={showHidden ? S.hideHidden : S.showHidden}
+              title={showHidden ? S.hideHidden : S.showHidden}
               onClick={() => setShowHidden((v) => !v)}
             >
-              {showHidden ? S.hideHidden : S.showHidden}
+              {showHidden ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
             </button>
           )}
           <button
@@ -234,28 +279,27 @@ export function FileBrowser({
           />
         </ScrollArea>
       </div>
+      )}
       {/* A column rather than one scrolling box: the path line stays put, and what is under
           it either scrolls on its own padding or takes the rest of the height outright. */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col border-t">
+      {showFile && (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {!selected ? (
-          <div className="grid h-full place-items-center p-6 text-sm text-muted-foreground">
-            {S.pickFile}
+          <div className="grid h-full place-items-center p-6">
+            <div className="flex max-w-xs flex-col items-center gap-2 text-center text-sm text-muted-foreground">
+              <FileSearch className="size-6 opacity-60" />
+              {placeholder ?? S.pickFile}
+            </div>
           </div>
         ) : (
           <>
-            <div className="flex shrink-0 items-baseline gap-2 px-4 pt-4 pb-3 text-xs text-muted-foreground">
-              <span className="truncate font-mono" title={selected}>
-                {selected}
-              </span>
-              {viewer && (binary || text !== null) && (
-                <span className="shrink-0">· {viewer.label}</span>
-              )}
-              {/* Only when it was worked out rather than assumed. A file that had to be
-                  inferred is one whose reader should be told which way it was read. */}
-              {file.data?.encoding && file.data.encoding !== "UTF-8" && (
-                <span className="shrink-0">· {file.data.encoding}</span>
-              )}
-            </div>
+            <FileHeader
+              path={selected}
+              label={viewer && (binary || text !== null) ? viewer.label : null}
+              encoding={file.data?.encoding && file.data.encoding !== "UTF-8" ? file.data.encoding : null}
+              onBack={stacked ? () => setSelected(null) : undefined}
+              onAsk={onAsk}
+            />
             {/* A filling viewer gets the height and no padding; everything else scrolls
                 inside its own. */}
             <div
@@ -301,6 +345,70 @@ export function FileBrowser({
           </>
         )}
       </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The open file's line: where it is, what it was read as, and what can be done with it.
+ *
+ * The path as its folders, dimmed, and its name — the part a reader is looking for — in
+ * full weight at the end, where truncation takes the folders first.
+ */
+function FileHeader({
+  path,
+  label,
+  encoding,
+  onBack,
+  onAsk,
+}: {
+  path: string;
+  label: string | null;
+  /** Only when it was worked out rather than assumed: a file that had to be inferred is
+   *  one whose reader should be told which way it was read. */
+  encoding: string | null;
+  onBack?: () => void;
+  onAsk?: (path: string) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const cut = path.lastIndexOf("/");
+  const dir = path.slice(0, cut + 1);
+  const name = path.slice(cut + 1) || path;
+  const button = "rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground";
+  return (
+    <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2 text-xs">
+      {onBack && (
+        <button className={button} onClick={onBack} aria-label={S.back} title={S.back}>
+          <ArrowLeft className="size-3.5" />
+        </button>
+      )}
+      <span className="flex min-w-0 items-baseline font-mono" title={path}>
+        <span className="truncate text-muted-foreground">{dir}</span>
+        <span className="shrink-0 font-medium text-foreground">{name}</span>
+      </span>
+      {label && <span className="shrink-0 text-muted-foreground">· {label}</span>}
+      {encoding && <span className="shrink-0 text-muted-foreground">· {encoding}</span>}
+      <span className="ml-auto flex shrink-0 items-center gap-0.5">
+        <button
+          className={button}
+          aria-label={copied ? S.copied : S.copyPath}
+          title={copied ? S.copied : S.copyPath}
+          onClick={() =>
+            void copyText(path).then((ok) => {
+              setCopied(ok);
+              if (ok) setTimeout(() => setCopied(false), 1500);
+            })
+          }
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </button>
+        {onAsk && (
+          <button className={button} aria-label={S.askAbout} title={S.askAbout} onClick={() => onAsk(path)}>
+            <MessageSquareQuote className="size-3.5" />
+          </button>
+        )}
+      </span>
     </div>
   );
 }

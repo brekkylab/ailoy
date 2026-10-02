@@ -5,6 +5,7 @@ import type { CSSProperties } from "react";
 
 import * as api from "@/api";
 import { ArtifactsPanel } from "@/components/ArtifactsPanel";
+import { FilePanel } from "@/components/FilePanel";
 import { Banner } from "@/components/Banner";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { Sidebar } from "@/components/Sidebar";
@@ -15,6 +16,7 @@ import { useCatalogEvents } from "@/lib/catalog";
 import { makeQueryClient } from "@/lib/queryClient";
 import { sessionTitle } from "@/lib/sessionTitle";
 import { hasAnyKey } from "@/lib/settings";
+import { usePanel } from "@/store/panel";
 import { S } from "@/strings";
 import type { MainView } from "@/views";
 
@@ -112,6 +114,8 @@ function Shell() {
     }
   }, [stored]);
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspaceInfo });
+  const panelOpen = usePanel((p) => p.open);
+  const togglePanel = usePanel((p) => p.toggle);
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settingsGet });
   const noKey = !hasAnyKey(settings.data);
   // Every panel is named up here, and only here — see `TitleBar`.
@@ -164,6 +168,8 @@ function Shell() {
         onToggleSidebar={toggleSidebar}
         settingsActive={view === "settings"}
         onOpenSettings={() => setView("settings")}
+        filePanel={view === "session" ? panelOpen : null}
+        onToggleFilePanel={togglePanel}
       />
       {/* Unmounted rather than hidden when collapsed: a sidebar of zero width still takes
           tab stops, and its session list would keep polling behind the fold. */}
@@ -186,7 +192,13 @@ function Shell() {
         {ws.data?.status.status === "degraded" && <Banner text={`${S.degraded} (${ws.data.status.reason})`} />}
         {noKey && <Banner text={S.noKey} tone="error" />}
         {view === "session" && (
-          <Thread sessionId={effective} draft={draft} onCreated={selectSession} />
+          // The thread and, when it is open, the files beside it — see `FilePanel`.
+          <div className="flex min-h-0 flex-1">
+            <div className="flex min-w-0 flex-1 flex-col">
+              <Thread sessionId={effective} draft={draft} onCreated={selectSession} />
+            </div>
+            {panelOpen && <FilePanel />}
+          </div>
         )}
         {view === "workspace" && <WorkspacePanel source={source} />}
         {view === "artifacts" && <ArtifactsPanel />}

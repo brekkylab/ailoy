@@ -29,7 +29,13 @@
 // hence `settingsActive`, which marks it the way the sidebar marks its own rows.
 
 import { cn } from "cn";
-import { PanelLeftClose, PanelLeftOpen, Settings as SettingsIcon } from "lucide-react";
+import {
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  Settings as SettingsIcon,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { S } from "@/strings";
@@ -69,6 +75,8 @@ export function TitleBar({
   onToggleSidebar,
   settingsActive,
   onOpenSettings,
+  filePanel,
+  onToggleFilePanel,
 }: {
   /** What the main panel is showing — a session's title, a source, a page — or `null`. */
   title: React.ReactNode;
@@ -77,6 +85,12 @@ export function TitleBar({
   /** Whether the settings panel is what the main panel is showing. */
   settingsActive: boolean;
   onOpenSettings: () => void;
+  /**
+   * Whether the files beside the thread are open — `null` where there is no thread for them
+   * to be beside, which leaves the button out.
+   */
+  filePanel: boolean | null;
+  onToggleFilePanel: () => void;
 }) {
   return (
     <header
@@ -100,10 +114,23 @@ export function TitleBar({
         {/* Empty on a draft, which has no name yet. A heading with nothing in it is still a
             heading, so it is only rendered when it has something to name. */}
         {title && <h1 className="flex min-w-0 items-center gap-2 truncate text-sm font-medium">{title}</h1>}
+        {filePanel !== null && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="ml-auto"
+            onClick={onToggleFilePanel}
+            aria-label={S.filePanel}
+            title={S.filePanel}
+            aria-pressed={filePanel}
+          >
+            {filePanel ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"
-          className={cn("ml-auto", settingsActive && "bg-accent text-accent-foreground")}
+          className={cn(filePanel === null && "ml-auto", settingsActive && "bg-accent text-accent-foreground")}
           onClick={onOpenSettings}
           aria-label={S.settings}
           aria-pressed={settingsActive}

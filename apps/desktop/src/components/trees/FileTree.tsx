@@ -7,10 +7,11 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
-import { ChevronRight, File, Folder } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 
 import * as api from "@/api";
+import { EntryIcon } from "@/components/icons/EntryIcon";
 import { expandable } from "@/lib/treeState";
 import { S } from "@/strings";
 import type { Entry } from "@/types";
@@ -178,8 +179,7 @@ function Row({
         ) : (
           <span className="w-3 shrink-0" />
         )}
-        {icon ??
-          (e.kind === "dir" ? <Folder className="size-3.5 shrink-0" /> : <File className="size-3.5 shrink-0" />)}
+        {icon ?? <EntryIcon entry={e} open={open} />}
         <span className="truncate">{label ?? adapter?.label?.(e) ?? e.name}</span>
       </button>
       {isExpandable && open && (

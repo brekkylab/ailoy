@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cancelRun, startRun } from "@/events";
 import { catalogQuery, useRefreshModels } from "@/lib/catalog";
+import { useComposerInbox } from "@/store/composer";
 import { hasAnyKey } from "@/lib/settings";
 import { selectRun, useRunStore } from "@/store/runs";
 import { S } from "@/strings";
@@ -70,6 +71,26 @@ export function Composer({
   // does with no model, so an untouched draft and the engine agree without being told.
   const [draftModel, setDraftModel] = useState<string | null>(null);
   const model = sessionId ? (session?.model ?? null) : (draftModel ?? settings.data?.default_model ?? null);
+
+  // What another part of the window asked to have written here — a file's "Ask about this".
+  // Added after what is already typed, and the cursor put at the end of it. A subscription
+  // rather than a render of the store's value, so the insert is a thing that happens once.
+  useEffect(
+    () =>
+      useComposerInbox.subscribe((s) => {
+        if (!s.pending) return;
+        const { text: add } = s.pending;
+        s.take();
+        setText((was) => (was.trim() ? `${was.trimEnd()} ${add}` : add));
+        requestAnimationFrame(() => {
+          const el = box.current;
+          if (!el) return;
+          el.focus();
+          el.setSelectionRange(el.value.length, el.value.length);
+        });
+      }),
+    [],
+  );
 
   const setModel = useMutation({
     mutationFn: (m: string) => api.sessionSetModel(sessionId!, m),

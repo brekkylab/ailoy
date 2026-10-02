@@ -10,9 +10,11 @@
 // Live and stored calls render through the same component, so a call does not jump when
 // the run ends and the thread refetches.
 
-import { Ban, CheckCircle2, ChevronRight, Loader2, XCircle } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Ban, CheckCircle2, ChevronRight, Loader2, PanelRightOpen, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import * as api from "@/api";
 import { ROW } from "@/components/thread/row";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -26,6 +28,8 @@ import {
   type PathRoot,
 } from "@/lib/toolCall";
 import { usePathRoots } from "@/lib/usePathRoots";
+import { placeOf } from "@/lib/workspacePath";
+import { usePanel } from "@/store/panel";
 import type { ToolStatus } from "@/store/runs";
 import { S } from "@/strings";
 
@@ -224,7 +228,8 @@ function CallDetail({
           )}
         </>
       )}
-      <div className="flex justify-end border-t px-2 py-1">
+      <div className="flex items-center justify-end gap-3 border-t px-2 py-1">
+        <OpenInPanel name={name} args={args} />
         <button
           className="font-sans text-[11px] text-muted-foreground hover:text-foreground"
           onClick={() => setRaw((r) => !r)}
@@ -234,6 +239,33 @@ function CallDetail({
         </button>
       </div>
     </div>
+  );
+}
+
+/** The tools whose `path` is a file worth opening. */
+const FILE_TOOLS = new Set(["read", "write", "edit"]);
+
+/**
+ * "Open" for a call that touched a file the window can show: into the panel beside the
+ * thread, on the tab and source that hold it (`lib/workspacePath`). Nothing for a path the
+ * window cannot open — the run's scratch, `/tmp`.
+ */
+function OpenInPanel({ name, args }: { name: string; args: unknown }) {
+  const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspaceInfo });
+  const mounts = useQuery({ queryKey: ["mounts"], queryFn: api.mountList });
+  const show = usePanel((p) => p.show);
+  const path =
+    FILE_TOOLS.has(name) && args && typeof args === "object" ? (args as Record<string, unknown>).path : undefined;
+  const place = typeof path === "string" ? placeOf(path, ws.data, mounts.data) : null;
+  if (!place) return null;
+  return (
+    <button
+      className="mr-auto flex items-center gap-1 font-sans text-[11px] text-muted-foreground hover:text-foreground"
+      onClick={() => show(place)}
+    >
+      <PanelRightOpen className="size-3" />
+      {S.openFile}
+    </button>
   );
 }
 
