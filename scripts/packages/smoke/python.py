@@ -103,14 +103,26 @@ async def main():
         del m
         check(not os.path.exists(os.path.join(point, "a.txt")), "dropping the HostMount takes it down")
 
-    if want("SMOKE_SERVER"):
+    # The console server, as the guides have it: `ensure_virtx()` first.
+    server = None
+    try:
+        server = await virtx.ensure_virtx()
+        print(f"  ensure_virtx: {server}")
+    except Exception as e:
+        print(f"  ensure_virtx: {e}")
+    check((server is not None) == want("SMOKE_SERVER"), f"ensure_virtx {'fetched' if server else 'fetched no'} server")
+    if server:
+        exe = ".exe" if os.name == "nt" else ""
+        check(os.path.isfile(os.path.join(server, f"virtx-uvm{exe}")), f"virtx-uvm{exe} is in {server}")
+        if os.environ.get("VIRTX_HOME"):
+            check(os.path.relpath(server, os.environ["VIRTX_HOME"]) == "bin", "into $VIRTX_HOME/bin")
         # The server runs on this machine, and answers -- no VM needed to ask its version.
         images = await virtx.ImageClient.try_new()
         version = await images.version()
         await images.close()
         check(bool(version), f"the console server answers (protocol {version})")
 
-    if want("SMOKE_VM"):
+    if server and want("SMOKE_VM"):
         # An agent's shell tool, in a VM session that sees a host directory.
         host = tempfile.mkdtemp(prefix="ailoy-smoke-host-")
         open(os.path.join(host, "from-host.txt"), "w").write("by path")

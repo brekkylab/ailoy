@@ -1,7 +1,8 @@
 //! The crate as a user takes it, on the platform this runs on -- as `node.mjs` and
 //! `python.py` are for the bindings, and told what this platform can do the same way:
 //!
-//!   SMOKE_SERVER  1 if the console server is in $VIRTX_HOME/bin, else 0
+//!   SMOKE_SERVER  1 if virtx-uvm publishes a server for this platform, which
+//!                 `ensure_virtx()` fetches into $VIRTX_HOME, else 0
 //!   SMOKE_VM      1 if this machine can boot one (KVM or HVF), else 0
 //!
 //! A turn's model is served from this process, as `fake.mjs` serves it: no network, and no
@@ -119,7 +120,25 @@ async fn main() -> anyhow::Result<()> {
     let said: Vec<&str> = outputs.iter().flat_map(|o| o.message.contents.iter().filter_map(Part::as_text)).collect();
     check(said == ["hello"], "a turn against the model answers");
 
-    if want("SMOKE_SERVER") {
+    // The console server, as the guides have it: `ensure_virtx()` first -- the release the
+    // virtx from crates.io pins.
+    let server = match virtx::ensure_virtx().await {
+        Ok(bin) => {
+            println!("  ensure_virtx: {}", bin.display());
+            Some(bin)
+        }
+        Err(e) => {
+            println!("  ensure_virtx: {e:#}");
+            None
+        }
+    };
+    check(server.is_some() == want("SMOKE_SERVER"), &format!("ensure_virtx {} server", if server.is_some() { "fetched" } else { "fetched no" }));
+    if let Some(bin) = &server {
+        let exe = if cfg!(windows) { ".exe" } else { "" };
+        check(bin.join(format!("virtx-uvm{exe}")).is_file(), &format!("virtx-uvm{exe} is in {}", bin.display()));
+        if let Some(home) = std::env::var_os("VIRTX_HOME") {
+            check(*bin == std::path::Path::new(&home).join("bin"), "into $VIRTX_HOME/bin");
+        }
         // The server runs on this machine, and answers -- no VM needed to ask its version.
         let mut images = ImageClient::try_new().await.map_err(|e| anyhow::anyhow!("{e:?}"))?;
         let version = images.version().await.map_err(|e| anyhow::anyhow!("{e:?}"))?;
@@ -127,7 +146,7 @@ async fn main() -> anyhow::Result<()> {
         check(!version.is_empty(), &format!("the console server answers (protocol {version})"));
     }
 
-    if want("SMOKE_VM") {
+    if server.is_some() && want("SMOKE_VM") {
         // An agent's shell tool, in a VM session that sees a host directory.
         let host = std::env::temp_dir().join(format!("ailoy-smoke-rust-{}", std::process::id()));
         std::fs::create_dir_all(&host)?;

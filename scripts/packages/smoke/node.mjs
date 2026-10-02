@@ -3,7 +3,8 @@
 // Run from a project that installed `@brekkylab/ailoy`, so it resolves the way that
 // project's code would. What this platform can do is said in the environment:
 //   SMOKE_MOUNT   1 if a FUSE provider is installed here, else 0
-//   SMOKE_SERVER  1 if the console server is in $VIRTX_HOME/bin, else 0
+//   SMOKE_SERVER  1 if virtx-uvm publishes a server for this platform, which `ensureVirtx()`
+//                 fetches into $VIRTX_HOME, else 0
 //   SMOKE_VM      1 if this machine can boot one (KVM or HVF), else 0
 //
 // A turn's model is served from this process (`fake.mjs`): no network, and no API key.
@@ -78,7 +79,21 @@ try {
     check(!fs.existsSync(path.join(point, 'a.txt')), 'HostMount.unmount() takes it down')
   }
 
-  if (want('SMOKE_SERVER')) {
+  // The console server, as the guides have it: `ensureVirtx()` first.
+  let server = null
+  try {
+    server = await ailoy.ensureVirtx()
+    console.log(`  ensureVirtx: ${server}`)
+  } catch (e) {
+    console.log(`  ensureVirtx: ${e.message}`)
+  }
+  check(!!server === want('SMOKE_SERVER'), `ensureVirtx ${server ? 'fetched' : 'fetched no'} server`)
+  if (server) {
+    const exe = process.platform === 'win32' ? '.exe' : ''
+    check(fs.existsSync(path.join(server, `virtx-uvm${exe}`)), `virtx-uvm${exe} is in ${server}`)
+    if (process.env.VIRTX_HOME) {
+      check(path.relative(process.env.VIRTX_HOME, server) === 'bin', 'into $VIRTX_HOME/bin')
+    }
     // The server runs on this machine, and answers -- no VM needed to ask its version.
     const images = await ailoy.ImageClient.tryNew()
     const version = await images.version()
@@ -86,7 +101,7 @@ try {
     check(typeof version === 'string' && version.length > 0, `the console server answers (protocol ${version})`)
   }
 
-  if (want('SMOKE_VM')) {
+  if (server && want('SMOKE_VM')) {
     // An agent's shell tool, in a VM session that sees a host directory.
     const host = fs.mkdtempSync(path.join(os.tmpdir(), 'ailoy-smoke-host-'))
     fs.writeFileSync(path.join(host, 'from-host.txt'), 'by path')

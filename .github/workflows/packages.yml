@@ -454,26 +454,15 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           ls -la /dev/kvm
 
-      # The console server, fetched by virtx itself -- `ensure_virtx` from virtx's own package
-      # of the release Cargo.toml takes (a file at the root, which a sparse checkout keeps) --
-      # into a VIRTX_HOME of this run's own. Only while that release starts the server it
-      # finds and never fetches one: once building a console fetches it (brekkylab/virtx#61),
-      # this step goes, and the smokes fetch it themselves.
-      - name: The console server
+      # Each smoke with a VIRTX_HOME of its own, empty, so that each fetches the console server
+      # itself with `ensure_virtx`, as the guides have a user do, rather than finding one
+      # another smoke left.
+      - name: A VIRTX_HOME for each smoke
         shell: bash
         run: |
-          version=$(sed -n 's/^virtx = {.*version = "\([^"]*\)".*/\1/p' Cargo.toml | head -1)
-          home="$RUNNER_TEMP/virtx-home"
-          python -m venv "$RUNNER_TEMP/virtx-venv"
-          py="$RUNNER_TEMP/virtx-venv/bin/python"; [ -x "$py" ] || py="$RUNNER_TEMP/virtx-venv/Scripts/python.exe"
-          "$py" -m pip install -q "virtx==$version"
-          VIRTX_HOME="$home" "$py" -c '
-          import asyncio, virtx
-          async def fetch():
-              return await virtx.ensure_virtx()
-          print(asyncio.run(fetch()))'
-          ls -la "$home/bin"
-          echo "VIRTX_HOME=$home" >> "$GITHUB_ENV"
+          for smoke in node python rust; do
+            echo "VIRTX_HOME_$(echo "$smoke" | tr a-z A-Z)=$RUNNER_TEMP/virtx-home-$smoke" >> "$GITHUB_ENV"
+          done
 
       # A registry on localhost holding only what `assemble` packed. Published with an
       # explicit --registry and a config of its own: the packages' publishConfig names
@@ -514,8 +503,8 @@ jobs:
         env:
           SMOKE_MOUNT: "0"
         run: |
-          cd "$RUNNER_TEMP/project" && node "$GITHUB_WORKSPACE/scripts/packages/smoke/node.mjs"
-          "$SMOKE_PYTHON" "$GITHUB_WORKSPACE/scripts/packages/smoke/python.py"
+          cd "$RUNNER_TEMP/project" && VIRTX_HOME="$VIRTX_HOME_NODE" node "$GITHUB_WORKSPACE/scripts/packages/smoke/node.mjs"
+          VIRTX_HOME="$VIRTX_HOME_PYTHON" "$SMOKE_PYTHON" "$GITHUB_WORKSPACE/scripts/packages/smoke/python.py"
 
       - name: FUSE-T
         if: runner.os == 'macOS'
@@ -525,13 +514,13 @@ jobs:
         shell: bash
         env:
           SMOKE_MOUNT: ${{ matrix.mount }}
-        run: cd "$RUNNER_TEMP/project" && node "$GITHUB_WORKSPACE/scripts/packages/smoke/node.mjs"
+        run: cd "$RUNNER_TEMP/project" && VIRTX_HOME="$VIRTX_HOME_NODE" node "$GITHUB_WORKSPACE/scripts/packages/smoke/node.mjs"
 
       - name: Smoke, Python
         shell: bash
         env:
           SMOKE_MOUNT: ${{ matrix.mount }}
-        run: '"$SMOKE_PYTHON" "$GITHUB_WORKSPACE/scripts/packages/smoke/python.py"'
+        run: VIRTX_HOME="$VIRTX_HOME_PYTHON" "$SMOKE_PYTHON" "$GITHUB_WORKSPACE/scripts/packages/smoke/python.py"
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -542,12 +531,13 @@ jobs:
       # A registry on localhost holding only the packed crate, published from that archive
       # as it is, and a project of its own that takes `ailoy` from it -- and virtx from
       # crates.io -- built here, with this platform's toolchain, as a user's would be. A
-      # CARGO_HOME of its own, so that no crates.io token is within reach.
+      # CARGO_HOME of its own, so that no crates.io token is within reach, and the smoke's own
+      # VIRTX_HOME, which its `ensure_virtx` fills with the release the virtx crate pins.
       - name: Smoke, Rust
         shell: bash
         run: |
           cargo install --locked --quiet cargo-http-registry
-          export CARGO_HOME="$RUNNER_TEMP/cargo-home"
+          export CARGO_HOME="$RUNNER_TEMP/cargo-home" VIRTX_HOME="$VIRTX_HOME_RUST"
           mkdir -p "$CARGO_HOME" "$RUNNER_TEMP/crate"
           printf '[registries.local]\nindex = "http://127.0.0.1:35503/git"\n\n[net]\ngit-fetch-with-cli = true\n' > "$CARGO_HOME/config.toml"
           cargo-http-registry --addr 127.0.0.1:35503 "$RUNNER_TEMP/registry" > "$RUNNER_TEMP/registry.log" 2>&1 &

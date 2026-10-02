@@ -12,8 +12,9 @@ publish = false
 
 [dependencies]
 ailoy = { version = "0.3", registry = "local" }
-# The same crate `ailoy` depends on, for the console and the image client it does not re-export.
-virtx = { version = "0.1", default-features = false }
+# The same crate `ailoy` depends on, for the console, the image client and `ensure_virtx`,
+# which it does not re-export.
+virtx = { version = "0.1", default-features = false, features = ["ensure"] }
 anyhow = "1"
 futures = "0.3"
 serde_json = "1"
