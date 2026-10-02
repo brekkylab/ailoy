@@ -1,6 +1,6 @@
 # Laya
 
-An agent answers typed decision questions (a choice, a score, a yes/no) about a text such as an email or a ticket, using the [Laya](https://huggingface.co/convaiinnovations/laya) decision model on the guest's GPU.
+An agent routes a support inbox to departments (engineering, finance, sales, legal, marketing), asking the [Laya](https://huggingface.co/convaiinnovations/laya) decision model on the guest's GPU where each ticket belongs. Each ticket in `shared/tickets/` is filed under `artifacts/routes/<department>/`, with a summary in `artifacts/routing.md`.
 
 ## Requirements
 

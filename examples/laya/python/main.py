@@ -1,7 +1,8 @@
 """Answer typed questions with Laya through ncnn on the guest's Vulkan device, as an agent's
 skill.
 
-    uv run main.py "Triage this ticket: we were billed twice for March ..."
+    uv run main.py
+    uv run main.py "Route the tickets in /context/inbox, but send anything about contracts to legal"
 
 The Python side of the Rust `laya` example in `examples/laya/rust`, whose `main.rs` has the
 long form. The skill is `SKILL.md` and `run_laya.py`, mounted at `/skills/laya` from memory,
@@ -10,8 +11,13 @@ converts the model into `data/` on the first run, are the ones the three sides s
 `examples/laya/shared`. What a run uses is in this folder, which is a uv project of its own
 (`pyproject.toml`) that `uv run` sets up with ailoy from this checkout; run it from here.
 
+Without a prompt the agent routes a support inbox: it asks Laya which department each ticket in
+`shared/tickets/` belongs to and files a copy in that department's folder.
+
 * `context/` at `/context`, read-only — what to decide on, when it is not in the prompt.
-* `artifacts/` at `/artifacts`, writable — where what the agent hands back goes.
+  `context/inbox/` is a fresh copy of `shared/tickets/` on every run.
+* `artifacts/` at `/artifacts`, writable — where what the agent hands back goes: the tickets
+  filed under `artifacts/routes/<department>/`, emptied at the start of every run.
 
 Environment:
 
@@ -24,6 +30,7 @@ Read from `.env` as well.
 import asyncio
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -44,6 +51,14 @@ if Path(sys.prefix).resolve() != HERE / ".venv" and "AILOY_EXAMPLE_REEXEC" not i
 import ailoy  # noqa: E402
 from ailoy.virtx import ConsoleClient, Directory, HostMount, Recipe, ensure_virtx  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
+
+# The request when none is given.
+QUERY = (
+    "Route every ticket in /context/inbox to the department that should handle it, by what the "
+    "customer needs rather than the words they use: engineering, finance, sales, legal or "
+    "marketing. Decide each one with Laya, copy the ticket into /artifacts/routes/<department>/, "
+    "and write what went where to /artifacts/routing.md."
+)
 
 INSTRUCTION = (
     "# Context\n\n"
@@ -81,11 +96,29 @@ async def prepare(shared: Path, project: Path) -> None:
         sys.exit(f"preparing the model: exit status {proc.returncode}")
 
 
+def fill_inbox(shared: Path, project: Path) -> None:
+    """Reset `project/context/inbox` to a copy of `shared/tickets`, so every run routes the same
+    inbox."""
+    inbox = project / "context" / "inbox"
+    shutil.rmtree(inbox, ignore_errors=True)
+    inbox.mkdir(parents=True)
+    for ticket in (shared / "tickets").iterdir():
+        if ticket.is_file():
+            shutil.copy(ticket, inbox / ticket.name)
+
+
+def clear_routes(project: Path) -> None:
+    """Empty `project/artifacts/routes`, so what is filed there is only this run's."""
+    shutil.rmtree(project / "artifacts" / "routes", ignore_errors=True)
+
+
 async def main(prompt: str) -> None:
     await prepare(SHARED, PROJECT)
     # `skill` too, which is empty on the host: it is where the skill is mounted from memory.
     for name in ["context", "artifacts", "skill"]:
         (PROJECT / name).mkdir(parents=True, exist_ok=True)
+    fill_inbox(SHARED, PROJECT)
+    clear_routes(PROJECT)
 
     # The console server, fetched into virtx's cache the first time: a host that installed only
     # ailoy has none.
@@ -160,4 +193,4 @@ async def main(prompt: str) -> None:
 if __name__ == "__main__":
     # From the nearest `.env` up from this file.
     load_dotenv()
-    asyncio.run(main(" ".join(sys.argv[1:])))
+    asyncio.run(main(" ".join(sys.argv[1:]) or QUERY))
