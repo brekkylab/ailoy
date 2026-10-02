@@ -79,6 +79,7 @@ async fn main() -> anyhow::Result<()> {
         "Write every result here, such as a report, a figure, or the file the user came for. ",
         "Everything in this folder is collected and handed back to the user, and a result left anywhere else is not delivered.",
     ))
+    .max_tokens(64000)
     .system_tools()
     .web_fetch_tool()
     .web_search_tool(vec![])
