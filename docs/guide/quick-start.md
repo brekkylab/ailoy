@@ -19,7 +19,7 @@ pip install ailoy-py
 ```
 
 ```sh [Node.js]
-npm install ailoy-node
+npm install @brekkylab/ailoy
 ```
 
 ```toml [Rust (Cargo.toml)]
@@ -70,7 +70,7 @@ asyncio.run(main())
 ```
 
 ```js [Node.js]
-const { AgentBuilder, ConsoleClient, Recipe } = require('ailoy-node')
+const { AgentBuilder, ConsoleClient, Recipe } = require('@brekkylab/ailoy')
 
 const console_ = await ConsoleClient.builder()
   .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))

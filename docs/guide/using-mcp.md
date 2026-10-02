@@ -35,7 +35,7 @@ asyncio.run(main())
 ```
 
 ```js [Node.js]
-const { AgentBuilder, registerMcpStdio } = require('ailoy-node')
+const { AgentBuilder, registerMcpStdio } = require('@brekkylab/ailoy')
 
 const tools = await registerMcpStdio('fetch', 'uvx', ['mcp-server-fetch'])
 
@@ -106,7 +106,7 @@ tools = await register_mcp_streamable_http("deepwiki", "https://mcp.deepwiki.com
 ```
 
 ```js [Node.js]
-const { registerMcpStreamableHttp } = require('ailoy-node')
+const { registerMcpStreamableHttp } = require('@brekkylab/ailoy')
 
 const tools = await registerMcpStreamableHttp('deepwiki', 'https://mcp.deepwiki.com/mcp')
 ```
@@ -134,7 +134,7 @@ unregister_mcp("fetch")
 ```
 
 ```js [Node.js]
-const { unregisterMcp } = require('ailoy-node')
+const { unregisterMcp } = require('@brekkylab/ailoy')
 
 unregisterMcp('fetch')
 ```

@@ -3,7 +3,7 @@
 The computer an agent works on is a Linux VM run by [virtx](https://github.com/brekkylab/virtx). Ailoy ships virtx with it, so there is nothing else to install:
 
 - **Python:** `ailoy.virtx`
-- **Node.js:** exported from `ailoy-node`
+- **Node.js:** exported from `@brekkylab/ailoy`
 - **Rust:** the `virtx` crate (`ailoy::console::ConsoleClient` is the same type as `virtx::console::ConsoleClient`)
 
 In Python and Node, use the classes from `ailoy`, not from the standalone `virtx` package: a `ConsoleClient` built by `virtx` cannot be handed to an `AgentBuilder`.
@@ -45,7 +45,7 @@ asyncio.run(main())
 ```
 
 ```js [Node.js]
-const { ImageClient, ImageSource, Recipe, ensureVirtx } = require('ailoy-node')
+const { ImageClient, ImageSource, Recipe, ensureVirtx } = require('@brekkylab/ailoy')
 
 // Fetches virtx's server into its cache the first time; a no-op after.
 await ensureVirtx()
@@ -125,7 +125,7 @@ asyncio.run(main())
 ```
 
 ```js [Node.js]
-const { ConsoleClient, ImageSource } = require('ailoy-node')
+const { ConsoleClient, ImageSource } = require('@brekkylab/ailoy')
 
 const console_ = await ConsoleClient.builder()
   .image(ImageSource.reference('plot:latest'))
