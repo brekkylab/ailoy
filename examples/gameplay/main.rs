@@ -124,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&artifacts)
         .with_context(|| format!("creating {}", artifacts.display()))?;
 
+    virtx::ensure_virtx().await?;
     let mut game = ConsoleClient::builder()
         .image(
             // All of it in `main`: the game, and the free graphics, sounds and music it needs,
