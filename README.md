@@ -24,34 +24,22 @@
 
 <br>
 
-Most agent development frameworks focuses on how to connect an LLM to tools (e.g. MCP).
-Ailoy can do that too, but it also offers a way to make agents far more powerful: **give the agent a computer of its own**.
+Ailoy is a library for building any kind of AI agents right in your own code.
 
-This lets you build agents that do more than call predefined tools: they can install and use software, create their own scripts, and operate in a general-purpose computing environment—without touching the host system beyond what you explicitly expose.
+<p align="center">
+  <img src="docs/images/ailoy-demos.gif" alt="Ailoy demo">
+</p>
 
-To make this possible, Ailoy **gives each agent a virtual machine of its own** without a separate VM daemon to install.  
-Inside this isolated Linux VM, regardless of your host OS, the agent can freely:
-
-- install packages
-- run code
-- work with files
-- use the network
-- **even run ML models on the GPU**
-
-Ailoy works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width="16"/> Linux, <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/windows11/windows11-original.svg" width="16"/> Windows, and <img src="https://cdn.simpleicons.org/apple/000000/ffffff" width="16"/> macOS.
+It works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width="16"/> Linux, <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/windows11/windows11-original.svg" width="16"/> Windows, and <img src="https://cdn.simpleicons.org/apple/000000/ffffff" width="16"/> macOS.
 
 > [!WARNING]
 > Ailoy is under active development, and its API may change between versions.
 
 ## Requirements
-**All you need is an API key** for the LLM provider you want to use for the agent.
 
-**Nothing to install on your machine.** You don't need to install and run a VM daemon such as Docker or Kubernetes.  
+No system dependencies are required, but you need an API key for the LLM provider your agent will use.
 
-The only exception is [virtx](https://github.com/brekkylab/virtx)'s virtual filesystem feature, which relies on host mounts and therefore needs FUSE support:
-install [FUSE-T](https://www.fuse-t.org/) on macOS, [Dokany](https://github.com/dokan-dev/dokany) on Windows, or `fuse3` on Linux (only for non-root users; usually preinstalled).  
-Without it everything else still works, and a mount fails with an error that says what to install.  
-See the [virtx README](https://github.com/brekkylab/virtx) for details.
+Mounting host folders into the console (`virtx`'s virtual filesystem) needs FUSE: install FUSE-T on macOS or Dokany on Windows. See the [`virtx` documentation](https://github.com/brekkylab/virtx) for details.
 
 On Windows, the console's micro-VM runs on the *Windows Hypervisor Platform*, which is off by default.
 Turn the optional feature on from an administrator PowerShell and restart, with virtualization enabled in the firmware:
@@ -60,7 +48,7 @@ Turn the optional feature on from an administrator PowerShell and restart, with 
 Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform
 ```
 
-## Quick start
+## Quickstart
 
 Set the API key for your model's provider, either in the environment or in a `.env` file:
 
@@ -213,16 +201,16 @@ async fn main() -> anyhow::Result<()> {
 
 > You'll need a GPU (any GPU that supports Vulkan, or Metal on Macs) for the examples that run ML models.
 
-| Example | Description | Code | Requirements |
-| --- | --- | --- | :---: |
-| hello | One turn with no tools and no console | [Rust](./examples/hello/rust) · [Python](./examples/hello/python) · [Node](./examples/hello/node) |  |
-| cad | Writes CadQuery, renders the model from four sides, looks at the renders and iterates | [Rust](./examples/cad/rust) · [Python](./examples/cad/python) · [Node](./examples/cad/node) |  |
-| offshore_leaks | Analyses the ICIJ Offshore Leaks database with SQL and Python that the agent writes itself | [Rust](./examples/offshore_leaks/rust) · [Python](./examples/offshore_leaks/python) · [Node](./examples/offshore_leaks/node) | Python (with uv) |
-| retail_bench | Runs a supermarket simulator, one day per turn | [Rust](./examples/retail_bench/rust) · [Python](./examples/retail_bench/python) · [Node](./examples/retail_bench/node) | Python (with uv) |
-| gameplay | Plays OpenTTD (Transport Tycoon Deluxe) while you watch over VNC | [Rust](./examples/gameplay/rust) · [Python](./examples/gameplay/python) · [Node](./examples/gameplay/node) |  |
-| sam3 | Segments images and videos with SAM3 on the guest GPU (ncnn + Vulkan) | [Rust](./examples/sam3/rust) · [Python](./examples/sam3/python) · [Node](./examples/sam3/node) | GPU, Python (with uv) |
-| tts | Speaks text in a voice described in words, using Qwen3-TTS | [Rust](./examples/tts/rust) · [Python](./examples/tts/python) · [Node](./examples/tts/node) | GPU, Python (with uv) |
-| laya | Answers typed decision questions with a local model on the GPU | [Rust](./examples/laya/rust) · [Python](./examples/laya/python) · [Node](./examples/laya/node) | GPU, Python (with uv) |
+| Example | Description |
+| --- | --- |
+| [hello](./examples/hello) | One turn with no tools and no console |
+| [cad](./examples/cad) | Writes CadQuery, renders the model from four sides, looks at the renders and iterates |
+| [offshore_leaks](./examples/offshore_leaks) | Analyses the ICIJ Offshore Leaks database with SQL and Python that the agent writes itself |
+| [retail_bench](./examples/retail_bench) | Runs a supermarket simulator, one day per turn |
+| [gameplay](./examples/gameplay) | Plays OpenTTD (Transport Tycoon Deluxe) while you watch over VNC |
+| [sam3](./examples/sam3) | Segments images and videos with SAM3 on the guest GPU (ncnn + Vulkan) |
+| [tts](./examples/tts) | Speaks text in a voice described in words, using Qwen3-TTS |
+| [laya](./examples/laya) | Answers typed decision questions with a local model on the GPU |
 
 Each example lives in `examples/<name>`, with one folder per language (`rust`, `python`, `node`) and, where the three share files (skills, prompts, model preparation scripts), a `shared` folder.
 
@@ -247,9 +235,19 @@ npm install
 npm start
 ```
 
-## Building from source
+## How It Works
 
-Ailoy builds on [virtx](https://github.com/brekkylab/virtx); see its README for what it needs on your host.
+Ailoy give the agent **a computer of its own**.
+
+This lets you build agents that do more than call predefined tools: they can install and use software, create their own scripts, and operate in a general-purpose computing environment—without touching the host system beyond what you explicitly expose.
+
+To make this possible, Ailoy uses krun-based virtualization to **give each agent a virtual machine of its own**, with no separate VM daemon to install.
+
+The virtualization used in Ailoy also **supports the GPU**, so an agent can run ML models, or even games, inside its VM.
+
+See [virtx](https://github.com/brekkylab/virtx) for more details.
+
+## Building from source
 
 ```sh
 git clone https://github.com/brekkylab/ailoy
