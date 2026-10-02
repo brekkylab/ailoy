@@ -16,12 +16,12 @@ license = "Apache-2.0"
 repository = "https://github.com/brekkylab/ailoy"
 
 [workspace.dependencies]
-virtx = { version = "0.1.0", default-features = false }
-virtx-node = { git = "https://github.com/brekkylab/virtx", tag = "v0.1.0", default-features = false }
-virtx-python = { git = "https://github.com/brekkylab/virtx", tag = "v0.1.0", default-features = false }
+virtx = { version = "0.1.1", default-features = false }
+virtx-node = { git = "https://github.com/brekkylab/virtx", tag = "v0.1.1", default-features = false }
+virtx-python = { git = "https://github.com/brekkylab/virtx", tag = "v0.1.1", default-features = false }
 
 [patch."https://github.com/brekkylab/virtx"]
-virtx = { version = "0.1.0" }
+virtx = { version = "0.1.1" }
 
 [package]
 name = "ailoy"
@@ -35,9 +35,11 @@ readme = "README.md"
 keywords = ["agent", "llm", "ai", "tool-use", "sandbox"]
 categories = ["development-tools"]
 # What a dependent builds: the library. The bindings are packages of their own, and the
-# examples need files and keys beside them that a dependent has no use for.
+# examples need files and keys beside them that a dependent has no use for. Only `.rs`
+# under `src/`: `include` overrides `.gitignore`, so `/src/**` would pack a stray
+# `.DS_Store` too.
 include = [
-    "/src/**",
+    "/src/**/*.rs",
     "/README.md",
     "/LICENSE.md",
 ]
