@@ -40,6 +40,8 @@ url = "2.5"
 
 [features]
 # `mount` on by default: `HostMount` gives an agent a directory held in memory, and needs the
-# host's FUSE provider (setup in virtx's README).
-default = ["mount"]
+# host's FUSE provider (setup in virtx's README). `ensure` too: `ensure_virtx` fetches the
+# console server a host that installed only this package lacks.
+default = ["mount", "ensure"]
 mount = ["virtx-python/mount"]
+ensure = ["virtx-python/ensure"]
