@@ -2,7 +2,7 @@
 // skill.
 //
 //     node main.mjs
-//     node main.mjs "Triage this ticket: we were billed twice for March ..."
+//     node main.mjs "Route the tickets in /context/inbox, but send anything about contracts to legal"
 //
 // The Node side of the Rust `laya` example, whose `main.rs` has the long form. The skill
 // (`SKILL.md`, `run_laya.py`, mounted from memory at `/skills/laya`) and `prepare_model.py` are
@@ -11,7 +11,12 @@
 // these two:
 //
 // * `context/` at `/context`, read-only — what to decide on, when it is not in the prompt.
-// * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes.
+//   `context/inbox/` is a fresh copy of `shared/tickets/` on every run.
+// * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes: the tickets
+//   filed under `artifacts/routes/<department>/`, emptied at the start of every run.
+//
+// Without a prompt the agent routes a support inbox: it asks Laya which department each ticket in
+// `shared/tickets/` belongs to and files a copy in that department's folder.
 //
 // Environment, also read from `.env`:
 //
@@ -23,7 +28,7 @@
 
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -37,6 +42,13 @@ const SHARED = resolve(HERE, '../shared')
 const PROJECT = HERE
 
 const { AgentBuilder, ConsoleClient, Directory, HostMount, Recipe, ensureVirtx } = ailoy
+
+// The request when none is given.
+const QUERY =
+  'Route every ticket in /context/inbox to the department that should handle it, by what the ' +
+  'customer needs rather than the words they use: engineering, finance, sales, legal or ' +
+  'marketing. Decide each one with Laya, copy the ticket into /artifacts/routes/<department>/, ' +
+  'and write what went where to /artifacts/routing.md.'
 
 const INSTRUCTION =
   '# Context\n\n' +
@@ -89,12 +101,30 @@ async function prepare(shared, project) {
   if (code !== 0) throw new Error(`preparing the model: ${signal ?? `exit status ${code}`}`)
 }
 
+// Reset `project/context/inbox` to a copy of `shared/tickets`, so every run routes the same inbox.
+function fillInbox(shared, project) {
+  const inbox = join(project, 'context', 'inbox')
+  rmSync(inbox, { recursive: true, force: true })
+  mkdirSync(inbox, { recursive: true })
+  const tickets = join(shared, 'tickets')
+  for (const entry of readdirSync(tickets, { withFileTypes: true })) {
+    if (entry.isFile()) copyFileSync(join(tickets, entry.name), join(inbox, entry.name))
+  }
+}
+
+// Empty `project/artifacts/routes`, so what is filed there is only this run's.
+function clearRoutes(project) {
+  rmSync(join(project, 'artifacts', 'routes'), { recursive: true, force: true })
+}
+
 async function main(prompt) {
   await prepare(SHARED, PROJECT)
   // `skill` too, which is empty on the host: it is where the skill is mounted from memory.
   for (const name of ['context', 'artifacts', 'skill']) {
     mkdirSync(join(PROJECT, name), { recursive: true })
   }
+  fillInbox(SHARED, PROJECT)
+  clearRoutes(PROJECT)
 
   // Held here, not left to garbage collection: Node runs no finalizer on exit, and a mount
   // comes down only when the last holder lets go.
@@ -171,4 +201,4 @@ async function main(prompt) {
 }
 
 loadDotenv()
-await main(process.argv.slice(2).join(' '))
+await main(process.argv.slice(2).join(' ') || QUERY)

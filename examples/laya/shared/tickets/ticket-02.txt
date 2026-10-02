@@ -1,0 +1,5 @@
+From: Priya Raman <priya@northwind.example>
+Subject: Refund events for orders nobody refunded
+
+Our webhook endpoint received "refund.created" events for three orders that were never
+refunded. Our finance team checked and no money moved. Can you find out why these are being sent?

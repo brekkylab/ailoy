@@ -1,0 +1,5 @@
+From: Grace Kim <grace@harbor.example>
+Subject: DPA before the EU rollout
+
+We're ready to roll the product out to our EU staff, but our security team needs a signed data
+processing agreement first. Can you send one over?

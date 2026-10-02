@@ -1,0 +1,5 @@
+From: Marcus Lee <marcus@fernway.example>
+Subject: Can't delete a user's personal data
+
+A former employee asked us to delete their personal data under GDPR. When we press "Delete user
+data" on their profile we get "500 Internal Server Error" every time. We need this done this week.

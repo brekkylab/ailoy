@@ -1,0 +1,5 @@
+From: Tom Becker <tom@quarry.example>
+Subject: VAT number missing on invoices
+
+Our invoices don't show our VAT number, so our accountant can't book them. Could you add
+DE298374651 and reissue the invoices for July and August?
