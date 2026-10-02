@@ -1,5 +1,0 @@
-# Fetched, built or written by a run.
-.cache
-runs
-simulator/upstream
-__pycache__

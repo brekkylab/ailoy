@@ -109,6 +109,13 @@ class HostMount:
     @property
     def mountpoint(self) -> str: ...
 
+async def ensure_virtx() -> str:
+    """Fetch the console server into virtx's cache if missing; resolves to its directory.
+
+    Console builders start ``virtx-uvm`` from that cache, which a host that installed only
+    this package lacks, so such a host calls this first. An existing server is left alone.
+    """
+
 class ExecResult:
     code: int
     stdout: bytes
