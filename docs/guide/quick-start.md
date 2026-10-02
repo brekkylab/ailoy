@@ -139,4 +139,3 @@ async fn main() -> anyhow::Result<()> {
 
 `agent.run` yields one complete message for each step of the tool loop, and `run_stream` yields token deltas as the model writes them.
 
-Next, see what agents can do in the [examples](./examples).
