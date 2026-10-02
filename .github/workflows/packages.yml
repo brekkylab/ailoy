@@ -34,17 +34,27 @@
 #
 # # Platforms
 #
-# | package suffix  | runner            | built                          | the test can                  |
-# |-----------------|-------------------|--------------------------------|-------------------------------|
-# | darwin-arm64    | macos-15          | native                         | mount (FUSE-T), serve         |
-# | linux-x64-gnu   | ubuntu-24.04      | glibc 2.17 (napi-cross, manylinux2014) | mount, serve, boot    |
-# | linux-arm64-gnu | ubuntu-24.04-arm  | glibc 2.17 (napi-cross, manylinux2014) | mount, serve          |
-# | win32-x64-msvc  | windows-2025      | native                         | load without Dokany, serve    |
+# | package suffix  | built on                            | tested on        | the test can                  |
+# |-----------------|-------------------------------------|------------------|-------------------------------|
+# | darwin-arm64    | macos-15                            | macos-15         | mount (FUSE-T), serve         |
+# | linux-x64-gnu   | ubuntu-24.04, in manylinux_2_28     | ubuntu-22.04     | mount, serve, boot            |
+# | linux-arm64-gnu | ubuntu-24.04-arm, in manylinux_2_28 | ubuntu-22.04-arm | mount, serve                  |
+# | win32-x64-msvc  | windows-2025                        | windows-2025     | load without Dokany, serve    |
 #
 # "serve" is the console server answering -- everything short of a VM. macOS runners are
 # virtual M1s without nested virtualization, the arm64 Linux runners have no /dev/kvm, and
 # the Windows ones have no Hypervisor Platform, so only linux-x64 boots a session, and runs
 # an agent's shell tool in it.
+#
+# # The glibc floor
+#
+# The Linux packages run on glibc 2.28 and later, as virtx's do and as the virtx-uvm server
+# they fetch does: the addon and the wheel are built in a manylinux_2_28 container
+# (AlmaLinux 8), against its glibc's headers, and `The glibc each Linux artifact needs` fails
+# a build that needs more. Built on the runner itself they would need its glibc: the C in
+# aws-lc and BoringSSL, compiled against the runner's 2.39 headers, takes 2.38's
+# `__isoc23_*`. The Linux tests run on ubuntu-22.04, below the runner's glibc, where an
+# artifact needing more fails.
 #
 # # When it runs, and the virtx it is built with
 #
@@ -141,18 +151,20 @@ jobs:
           - platform: linux-x64-gnu
             runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-            napi-flags: --use-napi-cross
-            manylinux: "2_17"
+            container: quay.io/pypa/manylinux_2_28_x86_64
+            manylinux: "2_28"
           - platform: linux-arm64-gnu
             runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            napi-flags: --use-napi-cross
-            manylinux: "2_17"
+            container: quay.io/pypa/manylinux_2_28_aarch64
+            manylinux: "2_28"
           - platform: win32-x64-msvc
             runner: windows-2025
             target: x86_64-pc-windows-msvc
             manylinux: "off"
     runs-on: ${{ matrix.runner }}
+    # The Linux packages' glibc floor -- see above. None for macOS and Windows.
+    container: ${{ matrix.container }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -165,7 +177,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          # Apart from anything built on the runner itself: C compiled against its newer
+          # glibc's headers, restored here, would put that glibc back into the package.
+          key: ${{ matrix.target }}${{ matrix.container && '-manylinux_2_28' || '' }}
 
       - uses: actions/setup-node@v4
         with:
@@ -173,11 +187,11 @@ jobs:
           cache: npm
           cache-dependency-path: bindings/node/package-lock.json
 
-      # wreq's BoringSSL (`btls-sys`) generates its bindings with bindgen, which needs libclang;
-      # napi-cross points it at the glibc 2.17 sysroot.
+      # wreq's BoringSSL (`btls-sys`) generates its bindings with bindgen, which needs libclang:
+      # AlmaLinux's, in the container, as root.
       - name: libclang
-        if: runner.os == 'Linux'
-        run: sudo apt-get update -q && sudo apt-get install -yq libclang-dev
+        if: matrix.container
+        run: dnf install -yq clang-devel
 
       # `binding.js` (the loader) and `binding.d.ts` are generated beside the addon, and the
       # root package takes them from one platform's build -- see `assemble`.
@@ -186,24 +200,28 @@ jobs:
         shell: bash
         run: |
           npm ci
-          npx napi build --platform --release --target ${{ matrix.target }} ${{ matrix.napi-flags }} \
+          npx napi build --platform --release --target ${{ matrix.target }} \
             --js binding.js --dts binding.d.ts --output-dir "$GITHUB_WORKSPACE/dist/node"
           ls -la "$GITHUB_WORKSPACE/dist/node"
 
-      # In manylinux2014, bindgen gets libclang from PyPI's `libclang`, which ships no headers
-      # of clang's own, so `stddef.h` and the like come from gcc's.
+      # maturin-action, building in the container itself, installs what it needs with
+      # `python3 -m pip`: the image's own Python, since AlmaLinux's has no pip.
+      - name: Python (Linux)
+        if: matrix.container
+        run: echo /opt/python/cp312-cp312/bin >> "$GITHUB_PATH"
+
       - name: Python wheel
         uses: PyO3/maturin-action@v1
         with:
           working-directory: bindings/python
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
-          args: --release --out ${{ github.workspace }}/dist/wheels
-          before-script-linux: |
-            py=/opt/python/cp312-cp312/bin/python
-            "$py" -m pip install -q libclang
-            export LIBCLANG_PATH=$("$py" -c 'import clang, os; print(os.path.join(os.path.dirname(clang.__file__), "native"))')
-            export BINDGEN_EXTRA_CLANG_ARGS="-I$(gcc -print-file-name=include)"
+          # Already in the manylinux container on Linux: maturin builds where it is, rather
+          # than in a container of its own.
+          container: ${{ matrix.container && 'off' || '' }}
+          # Relative: in a container job `github.workspace` is the runner's path, not the
+          # container's, and a wheel written there is gone with the container.
+          args: --release --out ../../dist/wheels
 
       # What the addon and the extension need from the loader to be loaded at all. Neither
       # may need a DLL Windows does not ship: the C runtime is linked in (`.cargo/config.toml`)
@@ -225,16 +243,25 @@ jobs:
           done
           exit ${fail:-0}
 
+      # Above 2.28, or glibc 2.38's `__isoc23_*` -- which comes in unversioned, so the version
+      # alone would not show it -- and the build stops here rather than on a user's machine.
       - name: The glibc each Linux artifact needs
         if: runner.os == 'Linux'
         shell: bash
         run: |
           cd dist
-          unzip -oq wheels/*.whl -d wheel
+          python3 -m zipfile -e wheels/*.whl wheel
           for f in node/*.node wheel/ailoy/*.so; do
             need=$(objdump -T "$f" | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1)
             echo "$f needs $need"
+            if [ "$(printf '%s\n' "$need" GLIBC_2.28 | sort -V | tail -1)" != GLIBC_2.28 ]; then
+              echo "::error::$f needs $need, above glibc 2.28"; fail=1
+            fi
+            if objdump -T "$f" | grep -q __isoc23_; then
+              echo "::error::$f references __isoc23_*, glibc 2.38's"; fail=1
+            fi
           done
+          exit ${fail:-0}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -374,11 +401,11 @@ jobs:
             mount: "1"
             vm: "0"
           - platform: linux-x64-gnu
-            runner: ubuntu-24.04
+            runner: ubuntu-22.04
             mount: "1"
             vm: "1"
           - platform: linux-arm64-gnu
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-22.04-arm
             mount: "1"
             vm: "0"
           - platform: win32-x64-msvc
