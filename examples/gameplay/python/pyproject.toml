@@ -1,0 +1,14 @@
+[project]
+name = "ailoy-example-gameplay"
+version = "0.1.0"
+description = "An agent playing OpenTTD while you watch over VNC, on ailoy's Python bindings."
+requires-python = ">=3.10"
+dependencies = ["ailoy-py", "python-dotenv>=1"]
+
+[tool.uv]
+# Scripts, not a package: `uv run` only needs the environment.
+package = false
+
+[tool.uv.sources]
+# The bindings in this checkout, built by maturin on the first `uv run`.
+ailoy-py = { path = "../../../bindings/python", editable = true }

@@ -6,13 +6,13 @@
 //! would arrive there as an `EIO` on a listing with nothing to say about which field was wrong.
 //! So each connector makes exactly one request here, and the caller mounts only what answered.
 //!
-//! The store comes back as an `Arc<dyn FileSystem>` rather than a `Box`: cortex implements
+//! The store comes back as an `Arc<dyn FileSystem>` rather than a `Box`: virtx implements
 //! `FileSystem` for `Arc<T: FileSystem + ?Sized>` and not for `Box<dyn FileSystem>`, and
 //! `ContextFs::mount` needs a `FileSystem` by value.
 
 use std::{path::Path, sync::Arc, time::Duration};
 
-use cortex::fs::{FileSystem, NotionConfig, NotionFs, PassthroughFs, S3Config, S3Fs};
+use virtx::fs::{FileSystem, NotionConfig, NotionFs, PassthroughFs, S3Config, S3Fs};
 
 use crate::{
     error::{EngineError, Result},

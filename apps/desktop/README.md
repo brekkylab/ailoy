@@ -6,17 +6,10 @@ real work happens in the engine at `apps/desktop/core`.
 ## Prerequisites
 
 - **macOS.** v1 is macOS-only, because the workspace mount is tied to FUSE-T.
-- **FUSE-T** — `brew install --cask fuse-t`. Required: the bundle links `libfuse-t.dylib`
-  directly, so on a machine without FUSE-T the app fails at the dyld stage, with no window,
-  no log and no error dialog. A development run (`tauri:dev`) behaves the same way.
+- **FUSE-T** — `brew install --cask fuse-t`. virtx loads `libfuse-t.dylib` when the
+  workspace is first mounted rather than linking it, so the app starts without FUSE-T; the
+  workspace then comes up degraded (the root directory only, no connectors).
 - **Rust ≥ 1.95** (the workspace `rust-version`) and **Node ≥ 22**.
-- **A `../cortex` checkout.** `cortex` is a path dependency, so it has to sit next to this
-  repository. It has to carry the console `Backend` (`feat/console-backend`, not yet on
-  `main`): the app no longer ships `cortex-local-console` beside itself, and instead runs the
-  server cortex builds and embeds — see [the console](#the-console). That branch already
-  holds what the app needed from `main` before it: `#43`, which split workfs into the
-  context, artifacts and scratch layers, and `#38`, which enforces the shell tool's
-  `timeout_secs` and reaps what a command spawned.
 
 ## Running it
 
@@ -31,15 +24,16 @@ which is what lets the debug build's MCP bridge be reached (see `src-tauri/src/l
 
 ### The console
 
-A run's shell tool talks to a console server, and that server comes from cortex itself:
-`Backend::local()`, which cortex's `local` feature builds and carries inside the app's own
-binary. The first run that needs it writes it out to `cortex/bin/` in the data directory
-(below), so there is nothing to build, bundle or keep at the right version by hand.
+A run's shell tool runs in a [virtx](https://github.com/brekkylab/virtx) console: a
+`virtx-uvm` micro-VM booted on `python:3.12-slim-trixie` (`run::ConsoleSetup`). Each run
+gets its own VM, with the workspace mounted read-only and `artifacts/` writable, each at the
+path it has on the host; anything else a command writes stays on the VM's disk and goes away
+with it.
 
-What it costs is build time. The embedded server is always a release build with fat LTO,
-made by cortex's build script the first time and again whenever cortex's sources change.
-Working on cortex itself, `CORTEX_EMBED_FAST=1` trades a few megabytes for minutes, and
-`CORTEX_LOCAL_CONSOLE_BIN=<path>` runs another build of the server without re-embedding one.
+The server is not bundled. The first run that needs a console calls `ensure_virtx`, which
+fetches the release the `virtx` crate pins into virtx's cache (`~/Library/Caches/virtx/bin`,
+or `$VIRTX_HOME/bin`) when that has none, and the first boot pulls the image. Both happen
+once per host, not per run, and a run waits on them.
 
 For an `.app` bundle, run `npm run tauri:build`. The result lands at
 `src-tauri/target/release/bundle/macos/Ailoy.app`. It fetches the model list from
@@ -63,13 +57,12 @@ Everything lives under `~/Library/Application Support/com.brekkylab.ailoy/`.
 | `files/`       | The workspace root only when the process has no `HOME`; otherwise unused |
 | `workspace/`   | The FUSE-T mountpoint. The path the agent reads                         |
 | `cache/`       | The model list fetched from models.dev (`models.json`), and remote-source caches |
-| `cortex/`      | What cortex writes for itself: the console server, under `bin/`, on the first run that needs it |
 | `artifacts/`   | Files the agent produced. Inside the workspace these appear at `/artifacts` |
-| `scratch/`     | One temporary directory per run. The shell starts here, and it is deleted when the run ends |
 | `logs/`        | `ailoy.log.<date>`, rolled daily                                        |
 | `engine.lock`  | The lock that allows one instance per data directory                    |
 
-Delete the directory to get back to a first-run state.
+Delete the directory to get back to a first-run state. The console server and its images
+are virtx's, under `~/Library/Caches/virtx/`, and survive that.
 
 ## Logs
 
@@ -115,8 +108,8 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml   # the Tauri comma
 Do not run a bare `cargo test` at the repository root. The root crate has tests that call
 real APIs with the keys in `.env`.
 
-The console-backed tests (`run::tests::the_three_trees_…`, and the unmounted `live_run`) run with the rest:
-the console is the one cortex embeds, so they need nothing installed. The two that need
+The console-backed tests (`run::tests::the_two_trees_…`, and the unmounted `live_run`) run with the rest
+and boot a real VM: the first one on a host fetches the server and pulls the image. The two that need
 FUSE-T are `#[ignore]`d — `live_workspace`, and the `live_run` test that goes through a
 mounted workspace. Again from the repository root:
 

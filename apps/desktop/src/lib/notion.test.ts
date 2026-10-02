@@ -23,7 +23,7 @@ const page = (extra: Record<string, unknown> = {}) =>
   });
 
 describe("notionTitle", () => {
-  it("drops the page id cortex appends to the directory name", () => {
+  it("drops the page id virtx appends to the directory name", () => {
     expect(notionTitle("Roadmap__2f1c9a0e")).toBe("Roadmap");
   });
 
@@ -101,7 +101,7 @@ describe("notionIcon", () => {
     expect(notionIcon(page({ icon: "🚀" }))).toBe("🚀");
   });
 
-  it("is null when there is none, or when cortex never wrote the key", () => {
+  it("is null when there is none, or when virtx never wrote the key", () => {
     expect(notionIcon(page({ icon: null }))).toBeNull();
     expect(notionIcon(page())).toBeNull();
     expect(notionIcon("not json")).toBeNull();
@@ -111,7 +111,7 @@ describe("notionIcon", () => {
 describe("notionChildren", () => {
   it("finds a child however deep the layout buried it", () => {
     // Notion's two-column layout puts sub-pages two blocks below the page, and they are
-    // children of the page all the same — which is how cortex decides what directories to
+    // children of the page all the same — which is how virtx decides what directories to
     // put beside `page.json`.
     const text = page({
       blocks: [
@@ -169,7 +169,7 @@ describe("withChildLinks", () => {
     { title: "Tasks", kind: "database" as const, icon: "🗂️", href: "n:2" },
   ];
 
-  it("turns cortex's markers into links, keeping the line around them", () => {
+  it("turns virtx's markers into links, keeping the line around them", () => {
     const body = "- [page: 회의록]\n\ntext\n\n[database: Tasks]";
     expect(withChildLinks(body, links)).toBe(
       "- [📝 회의록](n:1)\n\ntext\n\n[🗂️ Tasks](n:2)",

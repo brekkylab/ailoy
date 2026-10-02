@@ -1,0 +1,32 @@
+{
+  "name": "@brekkylab/ailoy-linux-x64-gnu",
+  "version": "0.3.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "ailoy.linux-x64-gnu.node",
+  "files": [
+    "ailoy.linux-x64-gnu.node"
+  ],
+  "description": "Agents that drive a language model through tool-augmented turns, in a virtx console.",
+  "homepage": "https://github.com/brekkylab/ailoy#readme",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">= 18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brekkylab/ailoy.git",
+    "directory": "bindings/node"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

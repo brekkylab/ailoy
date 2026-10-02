@@ -43,7 +43,7 @@ function useNotionRow(e: Entry): RowInfo {
   // its chevrons rather than filling them in one row at a time. See `lib/notionRows`.
   const recalled = useMemo(() => (e.kind === "dir" ? recalledRow(e.path) : null), [e.kind, e.path]);
   const icon = text ? notionIcon(text) : null;
-  // The page's own title, which is the one with the spaces in it: cortex names the directory
+  // The page's own title, which is the one with the spaces in it: virtx names the directory
   // `<sanitized-title>__<id>`, because that is a path component and a path component cannot
   // hold every character a Notion title can. The json inside carries the real one, and this
   // row is already reading it.
@@ -76,7 +76,7 @@ function useNotionRow(e: Entry): RowInfo {
  *
  * A page is a directory holding `page.json`, so the directory *is* the page: it carries
  * the title, and clicking it is asking for the body. The json files are hidden because
- * they are that body rather than siblings of it, and the id cortex sanitizes into the
+ * they are that body rather than siblings of it, and the id virtx sanitizes into the
  * directory name comes off, since the tree is a list of pages and not of paths.
  */
 export const NOTION: TreeAdapter = {

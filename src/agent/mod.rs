@@ -5,6 +5,7 @@ mod control;
 mod error;
 mod provider;
 mod rt;
+mod skill;
 mod spec;
 mod state;
 mod subagent;

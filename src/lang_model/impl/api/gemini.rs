@@ -73,8 +73,7 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
                 let (mime_type, b64) = match image {
                     PartImage::Embedded { mime_type, data } => (mime_type.clone(), data.base64()),
                     PartImage::Url { url } => {
-                        // If url is a form of base64 data uri, use the data part as inline data.
-                        // Otherwise, Gemini does not support public url image inputs.
+                        // Only a base64 data URI works, as inline data; Gemini takes no image URLs.
                         let re = fancy_regex::Regex::new(
                             r"^data:([a-z]+/[a-z0-9-+.]+(;[a-z-]+=[a-z0-9-]+)?)?;base64,(.*)$",
                         )
@@ -105,10 +104,8 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             .split_once('/')
             .expect("Tool call id must be in \"{name}/call-{id}\" format");
 
-        // Split contents: images become sibling inline_data parts alongside functionResponse;
-        // non-image parts go into the functionResponse.response object.
-        // The Gemini REST API FunctionResponse proto has no "parts" field — multimodal data
-        // must live as separate parts in the outer parts array.
+        // Images become inline_data parts beside functionResponse, since the REST
+        // FunctionResponse has no `parts` field; other parts go into its `response`.
         let mut response_value: Option<Value> = None;
         let mut inline_data_parts: Vec<Value> = Vec::new();
         for part in msg.contents.iter() {
@@ -129,8 +126,7 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
         let response_body = if let Some(rv) = response_value {
             to_value!({"result": rv})
         } else if !inline_data_parts.is_empty() {
-            // Image-only result: provide a text description in response; actual bytes go
-            // as sibling inline_data parts in the outer parts array.
+            // Image-only result: `response` gets a placeholder; the bytes travel beside it.
             let mime = inline_data_parts
                 .iter()
                 .find_map(|p| p.pointer("/inline_data/mime_type").and_then(|v| v.as_str()))
@@ -147,7 +143,6 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             }
         });
 
-        // Combine functionResponse and any inline_data blobs as sibling parts
         let mut parts = vec![function_response_part];
         parts.extend(inline_data_parts);
 
@@ -157,7 +152,6 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
         });
     }
 
-    // Role
     let role: String = if msg.role == Role::Assistant {
         "model".into()
     } else if msg.role == Role::User {
@@ -166,7 +160,6 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
         panic!("Gemini accepts \"model\" and \"user\" role only.")
     };
 
-    // Collecting contents
     let mut parts = Vec::<Value>::new();
     if let Some(thinking) = &msg.thinking
         && !thinking.is_empty()
@@ -190,7 +183,6 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
             .map(part_to_value),
     );
 
-    // Final message object with role and collected parts
     to_value!({"role": role, "parts": parts})
 }
 
@@ -233,7 +225,6 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
         let LangModelProviderElem::API { url, api_key, .. } = req.provider;
         let options = req.options;
 
-        // Extract system instruction from system message if present
         let system_instruction = req
             .messages
             .iter()
@@ -319,6 +310,20 @@ impl Marshal<LangModelRequest<'_>> for GeminiMarshal {
                 .as_object_mut()
                 .unwrap()
                 .insert("topK".into(), (top_k as i64).into());
+        }
+        // Gemini 2.x takes a thinking budget, Gemini 3 onwards a level. Thoughts come back
+        // only when asked for.
+        if let Some(effort) = options.reasoning {
+            let thinking_config = if req.model.starts_with("gemini-2") {
+                let budget = effort.budget_tokens() as i64;
+                to_value!({"thinkingBudget": budget, "includeThoughts": true})
+            } else {
+                to_value!({"thinkingLevel": effort.as_str(), "includeThoughts": true})
+            };
+            generation_config
+                .as_object_mut()
+                .unwrap()
+                .insert("thinkingConfig".into(), thinking_config);
         }
         if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
             generation_config
@@ -406,13 +411,9 @@ impl GeminiUnmarshal {
     }
 }
 
-/// Parses one Gemini SSE chunk (`?alt=sse`) into a delta. Each chunk is a
-/// partial `GenerateContentResponse` of the same shape as the final response
-/// and carries incremental text, so it reuses `parse_candidate_content` and
-/// accumulates. A chunk without a candidate yields no delta; `finishReason` marks the
-/// final chunk (alongside the function call, if any — Gemini sends `STOP` even for tool
-/// calls, adjusted to `ToolCall`). `usageMetadata` is repeated on every chunk and only
-/// the terminal one's is complete, so only that one is attached to a delta.
+/// Parses one `?alt=sse` chunk, a partial `GenerateContentResponse`, into a delta; a
+/// chunk without a candidate yields none. Only the terminal chunk's `usageMetadata` is
+/// attached (see below).
 impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;
@@ -427,32 +428,23 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
 
         let delta = match (&finish_reason, candidate.pointer("/content")) {
             // A finish-only or refusal chunk may omit content. Still set the role
-            // (candidates are always model output) so a stream whose only/first
-            // chunk is finish-only doesn't accumulate to a role-less message that
-            // makes `finish()` bail.
+            // (candidates are always model output), or a stream starting with such
+            // a chunk accumulates to a role-less message `finish()` rejects.
             (Some(FinishReason::Refusal { .. }), _) | (_, None) => {
                 MessageDelta::new().with_role(Role::Assistant)
             }
             _ => parse_candidate_content(&candidate)?,
         };
 
-        // NOTE: Gemini reports "STOP" even for tool calls, and can split the
-        // functionCall part and the terminal STOP across separate SSE chunks
-        // (2.5 Pro / 3.x), so neither chunk alone carries both. The
-        // STOP→ToolCall promotion therefore can't be done per chunk — it lives
-        // in `MessageDeltaOutput::finish()`, on the fully accumulated message.
+        // Gemini reports "STOP" even for tool calls and may send the functionCall
+        // and STOP in separate chunks (2.5 Pro / 3.x), so STOP→ToolCall promotion
+        // happens on the accumulated message in `MessageDeltaOutput::finish()`.
 
-        // Only the terminal chunk's usage is kept. Gemini repeats `usageMetadata` on
-        // every chunk, growing it as the turn goes, and the fields don't all appear at
-        // once: an early chunk can carry `promptTokenCount: 100` with no
-        // `cachedContentTokenCount` yet, so it normalizes to input 100 / cache `None`,
-        // while the final one (100 / 80) normalizes to input 20 / cache 80. Accumulation
-        // takes a field-wise max, which would merge those into 100 + 80 — a 180-token
-        // prompt that was 100. The terminal reading is the complete one, so it is the
-        // only one worth keeping. The trade: a stream that ends without a `finishReason`
-        // (connection dropped, synthesized terminal Stop in `lang_model::rt`) now reports
-        // no usage for the turn instead of the last inflated intermediate reading, so
-        // `last_input_tokens` stays at the previous turn's value for that one turn.
+        // Only the terminal chunk's usage is kept. `usageMetadata` repeats on every chunk
+        // and fills in as the turn goes (an early one can have `promptTokenCount` without
+        // `cachedContentTokenCount`), and accumulation takes a field-wise max, which would
+        // count the cached prefix twice. A stream that ends without a `finishReason`
+        // therefore reports no usage for that turn.
         let usage = finish_reason
             .is_some()
             .then(|| Self::parse_usage(&val))
@@ -494,7 +486,6 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
             finish_reason = Some(FinishReason::ToolCall {});
         }
 
-        // Parse usage (Gemini: usageMetadata.promptTokenCount / candidatesTokenCount)
         let usage = Self::parse_usage(&val);
 
         Ok(MessageDeltaOutput {
@@ -533,7 +524,6 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
         rv.role = Some(Role::Assistant);
     }
 
-    // Parse parts
     if let Some(parts) = content.pointer("/parts")
         && !parts.is_null()
     {
@@ -582,8 +572,7 @@ fn parse_candidate_content(candidate: &Value) -> anyhow::Result<MessageDelta> {
                         rv.signature = Some(sig.to_owned());
                     }
                     rv.tool_calls.push(PartDelta::Function {
-                        // Generate tool call id with a form of "{tool_name}/{random_id}",
-                        // and use {tool_name} part only on Marshal.
+                        // Id is "{tool_name}/call-{random}"; marshal reads the name back from it.
                         id: Some(format!(
                             "{}/call-{}",
                             name,
@@ -617,6 +606,38 @@ mod tests {
         message::{Delta, FinishReason, Message, MessageDeltaOutput, Part, Role, TokenUsage},
         tool::{ToolDesc, ToolDescBuilder},
     };
+
+    fn marshal_reasoning(model: &str, options: LangModelOptions) -> serde_json::Value {
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+        let provider = LangModelProvider::gemini("k".into());
+        let req = LangModelRequest {
+            model,
+            messages: &messages,
+            tools: &[],
+            provider: &provider,
+            options: &options,
+            stream: false,
+        };
+        GeminiMarshal.marshal(&req).into()
+    }
+
+    #[test]
+    fn reasoning_is_a_budget_on_gemini_2_and_a_level_after() {
+        let options = LangModelOptions {
+            reasoning: Some(crate::lang_model::ReasoningEffort::Medium),
+            ..Default::default()
+        };
+        let v = marshal_reasoning("gemini-2.5-flash", options.clone());
+        assert_eq!(
+            v["body"]["generationConfig"]["thinkingConfig"],
+            serde_json::json!({"thinkingBudget": 8192, "includeThoughts": true})
+        );
+        let v = marshal_reasoning("gemini-3-pro-preview", options);
+        assert_eq!(
+            v["body"]["generationConfig"]["thinkingConfig"],
+            serde_json::json!({"thinkingLevel": "medium", "includeThoughts": true})
+        );
+    }
 
     /// Feeds Gemini SSE chunk payloads through `unmarshal_event`, accumulating
     /// to a final `MessageDeltaOutput`.
@@ -708,11 +729,8 @@ mod tests {
 
     #[test]
     fn test_unmarshal_event_tool_call_split_stream() {
-        // Gemini 2.5 Pro / 3.x can deliver the functionCall part and the
-        // terminal `finishReason: STOP` in *separate* SSE chunks. Neither chunk
-        // alone carries both, so the STOP→ToolCall promotion must happen on the
-        // accumulated message (in finish()), not per chunk — otherwise the turn
-        // looks like a plain Stop and the tool call is silently dropped.
+        // functionCall and STOP in separate chunks: the promotion must happen on the
+        // accumulated message, or the tool call is dropped.
         let inputs = [
             r#"{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"location":"Paris"}}}]}}]}"#,
             r#"{"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":6}}"#,
@@ -770,9 +788,7 @@ mod tests {
         );
     }
 
-    /// Register a one-off [`LangModelProvider`] under `provider_name` in the
-    /// global registry and build the [`LangModel`] via
-    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    /// Registers a one-off provider under `provider_name` and builds the model from it.
     fn build_gemini_model(provider_name: &str, model: &str, api_key: String) -> LangModel {
         let elem = LangModelProviderElem::API {
             schema: LangModelAPISchema::Gemini,
@@ -892,15 +908,7 @@ mod tests {
         assert_eq!(usage.cache_creation_input_tokens, None);
     }
 
-    /// Verifies functionResponse.response.result marshaling for all Part variants.
-    ///
-    /// Gemini accepts arbitrary values in `result`, so:
-    /// - Part::Text  → {"text": "..."} object (no double-encoding issue; object is valid)
-    /// - Part::Value(String) → plain string "..." (no double-encoding via value.to_owned())
-    /// - Part::Value(Object) → the object itself passed through
-    /// - Part::Image (embedded) → image-only: functionResponse gets a {mimeType, type:"image"}
-    ///   placeholder and the actual bytes appear as a sibling inline_data part; mixed with text:
-    ///   text goes into functionResponse.response.result and image becomes a sibling inline_data part
+    /// Checks how each Part variant marshals into `functionResponse.response.result`.
     #[test]
     fn test_function_response_result_marshaling() {
         let get_result = |msg: &Message| -> Value {
@@ -1172,11 +1180,9 @@ mod tests {
         assert_eq!(resp.finish_reason, FinishReason::Length {});
     }
 
-    /// Verifies that an image embedded in a Role::Tool message is accepted by the Gemini API
-    /// via functionResponse.parts[].inlineData and that the model can respond after seeing it.
-    ///
-    /// Uses a 2-turn interaction so the model's own functionCall (with thoughtSignature) is used
-    /// in the conversation history — required by Gemini 3 thinking models.
+    /// Live: an image in a Tool message (sent as a sibling inline_data part) is accepted and
+    /// described. Two turns, so history carries the model's own functionCall with its
+    /// thoughtSignature, which Gemini 3 requires.
     #[tokio::test]
     async fn test_tool_result_with_image() {
         dotenvy::dotenv().ok();
@@ -1185,7 +1191,6 @@ mod tests {
             Err(_) => return,
         };
 
-        // Fetch a real JPEG image to use as the tool result
         let img_bytes = reqwest::get(
             "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg",
         )
@@ -1269,152 +1274,156 @@ mod tests {
     }
 }
 
-// #[cfg(test)]
-// mod dialect_tests {
-//     use super::*;
-//     use crate::{
-//         datatype::Bytes,
-//         message::{Marshaled, Message, Role},
-//     };
+#[cfg(test)]
+mod dialect_tests {
+    use super::*;
+    use crate::{
+        datatype::Bytes,
+        message::{Marshaled, Message, Role},
+    };
 
-//     #[test]
-//     pub fn serialize_text() {
-//         let msg = Message::new(Role::User).with_contents([
-//             Part::text("Explain me about Riemann hypothesis."),
-//             Part::text("How cold brew is different from the normal coffee?"),
-//         ]);
-//         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"{"role":"user","parts":[{"text":"Explain me about Riemann hypothesis."},{"text":"How cold brew is different from the normal coffee?"}]}"#
-//         );
-//     }
+    #[test]
+    pub fn serialize_text() {
+        let msg = Message::new(Role::User).with_contents([
+            Part::text("Explain me about Riemann hypothesis."),
+            Part::text("How cold brew is different from the normal coffee?"),
+        ]);
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"role":"user","parts":[{"text":"Explain me about Riemann hypothesis."},{"text":"How cold brew is different from the normal coffee?"}]}"#
+        );
+    }
 
-//     #[test]
-//     pub fn serialize_messages_with_thinkings() {
-//         let msgs = vec![
-//             Message::new(Role::User)
-//                 .with_contents([Part::text("Hello there."), Part::text("How are you?")]),
-//             Message::new(Role::Assistant)
-//                 .with_thinking_signature("This is thinking text would be vanished.", "")
-//                 .with_contents([Part::text("I'm fine, thank you. And you?")]),
-//             Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
-//             Message::new(Role::Assistant)
-//                 .with_thinking_signature(
-//                     "This is thinking text would be remaining.",
-//                     "Ev4MCkYIBxgCKkDl5A",
-//                 )
-//                 .with_contents([Part::text("Is there anything I can help with?")]),
-//         ];
-//         // Use marshal_messages directly to test position-aware thinking inclusion.
-//         let marshaled = marshal_messages(&msgs);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"[{"role":"user","parts":[{"text":"Hello there."},{"text":"How are you?"}]},{"role":"model","parts":[{"text":"I'm fine, thank you. And you?"}]},{"role":"user","parts":[{"text":"I'm okay."}]},{"role":"model","parts":[{"text":"This is thinking text would be remaining.","thought":true},{"text":"Is there anything I can help with?"}]}]"#
-//         );
-//     }
+    #[test]
+    pub fn serialize_messages_with_thinkings() {
+        let msgs = vec![
+            Message::new(Role::User)
+                .with_contents([Part::text("Hello there."), Part::text("How are you?")]),
+            Message::new(Role::Assistant)
+                .with_signatured_thinking("Earlier thinking text.", "")
+                .with_contents([Part::text("I'm fine, thank you. And you?")]),
+            Message::new(Role::User).with_contents([Part::text("I'm okay.")]),
+            Message::new(Role::Assistant)
+                .with_signatured_thinking("Later thinking text.", "Ev4MCkYIBxgCKkDl5A")
+                .with_contents([Part::text("Is there anything I can help with?")]),
+        ];
+        // Thinking and its signature are replayed on every model turn.
+        let marshaled = marshal_messages(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","parts":[{"text":"Hello there."},{"text":"How are you?"}]},{"role":"model","parts":[{"text":"Earlier thinking text.","thought":true,"thoughtSignature":""},{"text":"I'm fine, thank you. And you?"}]},{"role":"user","parts":[{"text":"I'm okay."}]},{"role":"model","parts":[{"text":"Later thinking text.","thought":true,"thoughtSignature":"Ev4MCkYIBxgCKkDl5A"},{"text":"Is there anything I can help with?"}]}]"#
+        );
+    }
 
-//     #[test]
-//     pub fn serialize_function() {
-//         let msg = Message::new(Role::Assistant).with_tool_calls([
-//             Part::function("temperature", Value::object([("unit", "celsius")])),
-//             Part::function("temperature", Value::object([("unit", "fahrenheit")])),
-//         ]);
-//         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"{"role":"model","parts":[{"functionCall":{"name":"temperature","args":{"unit":"celsius"}}},{"functionCall":{"name":"temperature","args":{"unit":"fahrenheit"}}}]}"#
-//         );
-//     }
+    #[test]
+    pub fn serialize_function() {
+        let msg = Message::new(Role::Assistant).with_tool_calls([
+            Part::function(
+                "temperature/call-1",
+                "temperature",
+                Value::object([("unit", "celsius")]),
+            ),
+            Part::function(
+                "temperature/call-2",
+                "temperature",
+                Value::object([("unit", "fahrenheit")]),
+            ),
+        ]);
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"role":"model","parts":[{"functionCall":{"name":"temperature","args":{"unit":"celsius"}}},{"functionCall":{"name":"temperature","args":{"unit":"fahrenheit"}}}]}"#
+        );
+    }
 
-//     #[test]
-//     pub fn serialize_tool_response() {
-//         let msgs = vec![
-//             Message::new(Role::Tool)
-//                 .with_id("temperature/call-1")
-//                 .with_contents(vec![Part::Value {
-//                     value: to_value!({"temperature": 30, "unit": "celsius"}),
-//                 }]),
-//             Message::new(Role::Tool)
-//                 .with_id("temperature/call-2")
-//                 .with_contents(vec![Part::Value {
-//                     value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
-//                 }]),
-//         ];
-//         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msgs);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"[{"role":"user","parts":[{"functionResponse":{"name":"temperature","response":{"result":{"temperature":30,"unit":"celsius"}}}}]},{"role":"user","parts":[{"functionResponse":{"name":"temperature","response":{"result":{"temperature":86,"unit":"fahrenheit"}}}}]}]"#
-//         );
-//     }
+    #[test]
+    pub fn serialize_tool_response() {
+        let msgs = vec![
+            Message::new(Role::Tool)
+                .with_id("temperature/call-1")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 30, "unit": "celsius"}),
+                }]),
+            Message::new(Role::Tool)
+                .with_id("temperature/call-2")
+                .with_contents(vec![Part::Value {
+                    value: to_value!({"temperature": 86, "unit": "fahrenheit"}),
+                }]),
+        ];
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&msgs);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"[{"role":"user","parts":[{"functionResponse":{"name":"temperature","response":{"result":{"temperature":30,"unit":"celsius"}}}}]},{"role":"user","parts":[{"functionResponse":{"name":"temperature","response":{"result":{"temperature":86,"unit":"fahrenheit"}}}}]}]"#
+        );
+    }
 
-//     #[test]
-//     pub fn serialize_image() {
-//         use base64::prelude::*;
+    #[test]
+    pub fn serialize_image() {
+        use base64::prelude::*;
 
-//         let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAD0lEQVR4nGPh4uJikYNgAANQAI8386KKAAAAAElFTkSuQmCC";
-//         let png_bytes = BASE64_STANDARD.decode(png_base64).unwrap();
-//         let msg = Message::new(Role::User).with_contents([
-//             Part::text("What you can see in this image?"),
-//             Part::image_embedded("image/png".to_owned(), Bytes::from(png_bytes)).unwrap(),
-//         ]);
-//         let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
-//         assert_eq!(
-//             serde_json::to_string(&marshaled).unwrap(),
-//             r#"{"role":"user","parts":[{"text":"What you can see in this image?"},{"inline_data":{"mime_type":"image/png","data":""#.to_owned()
-//                 + png_base64
-//                 + r#""}}]}"#,
-//         );
-//     }
+        let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAAAAABzQ+pjAAAAD0lEQVR4nGPh4uJikYNgAANQAI8386KKAAAAAElFTkSuQmCC";
+        let png_bytes = BASE64_STANDARD.decode(png_base64).unwrap();
+        let msg = Message::new(Role::User).with_contents([
+            Part::text("What you can see in this image?"),
+            Part::image_embedded("image/png".to_owned(), Bytes::from(png_bytes)).unwrap(),
+        ]);
+        let marshaled = Marshaled::<_, GeminiMarshal>::new(&msg);
+        assert_eq!(
+            serde_json::to_string(&marshaled).unwrap(),
+            r#"{"role":"user","parts":[{"text":"What you can see in this image?"},{"inline_data":{"mime_type":"image/png","data":""#.to_owned()
+                + png_base64
+                + r#""}}]}"#,
+        );
+    }
 
-//     #[test]
-//     pub fn deserialize_text() {
-//         let input =
-//             r#"{"candidates":[{"content":{"parts":[{"text":"Hello world!"}],"role":"model"},"finishReason":"STOP"}]}"#;
-//         let mut u = GeminiUnmarshal;
-//         let val = serde_json::from_str::<Value>(input).unwrap();
-//         let output = u.unmarshal(val).unwrap();
-//         assert_eq!(output.finish_reason, Some(FinishReason::Stop {}));
-//         let mut delta = output.delta;
-//         assert_eq!(delta.role, Some(Role::Assistant));
-//         assert_eq!(delta.contents.len(), 1);
-//         let content = delta.contents.pop().unwrap();
-//         assert_eq!(content.to_text().unwrap(), "Hello world!");
-//     }
+    #[test]
+    pub fn deserialize_text() {
+        let input = r#"{"candidates":[{"content":{"parts":[{"text":"Hello world!"}],"role":"model"},"finishReason":"STOP"}]}"#;
+        let mut u = GeminiUnmarshal;
+        let val = serde_json::from_str::<Value>(input).unwrap();
+        let output = u.unmarshal(val).unwrap();
+        assert_eq!(output.finish_reason, Some(FinishReason::Stop {}));
+        let mut delta = output.delta;
+        assert_eq!(delta.role, Some(Role::Assistant));
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
+    }
 
-//     #[test]
-//     pub fn deserialize_text_with_thinking() {
-//         let input = r#"{"candidates":[{"content":{"parts":[{"text":"**Answering a simple question**\n\nUser is saying hello.","thought":true},{"text":"Hello world!"}],"role":"model"},"finishReason":"STOP"}]}"#;
-//         let mut u = GeminiUnmarshal;
-//         let val = serde_json::from_str::<Value>(input).unwrap();
-//         let output = u.unmarshal(val).unwrap();
-//         assert_eq!(output.finish_reason, Some(FinishReason::Stop {}));
-//         let mut delta = output.delta;
-//         assert_eq!(delta.role, Some(Role::Assistant));
-//         assert_eq!(
-//             delta.thinking,
-//             Some("**Answering a simple question**\n\nUser is saying hello.".into())
-//         );
-//         assert_eq!(delta.contents.len(), 1);
-//         let content = delta.contents.pop().unwrap();
-//         assert_eq!(content.to_text().unwrap(), "Hello world!");
-//     }
+    #[test]
+    pub fn deserialize_text_with_thinking() {
+        let input = r#"{"candidates":[{"content":{"parts":[{"text":"**Answering a simple question**\n\nUser is saying hello.","thought":true},{"text":"Hello world!"}],"role":"model"},"finishReason":"STOP"}]}"#;
+        let mut u = GeminiUnmarshal;
+        let val = serde_json::from_str::<Value>(input).unwrap();
+        let output = u.unmarshal(val).unwrap();
+        assert_eq!(output.finish_reason, Some(FinishReason::Stop {}));
+        let mut delta = output.delta;
+        assert_eq!(delta.role, Some(Role::Assistant));
+        assert_eq!(
+            delta.thinking,
+            Some("**Answering a simple question**\n\nUser is saying hello.".into())
+        );
+        assert_eq!(delta.contents.len(), 1);
+        let content = delta.contents.pop().unwrap();
+        assert_eq!(content.to_text().unwrap(), "Hello world!");
+    }
 
-//     #[test]
-//     pub fn deserialize_tool_call() {
-//         let input = r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"location":"Paris, France"}}}],"role":"model"},"finishReason":"STOP"}]}"#;
-//         let mut u = GeminiUnmarshal;
-//         let val = serde_json::from_str::<Value>(input).unwrap();
-//         let output = u.unmarshal(val).unwrap();
-//         assert_eq!(output.finish_reason, Some(FinishReason::ToolCall {}));
-//         let mut delta = output.delta;
-//         assert_eq!(delta.tool_calls.len(), 1);
-//         let tool_call = delta.tool_calls.pop().unwrap();
-//         let (_, name, args) = tool_call.to_parsed_function().unwrap();
-//         assert_eq!(name, "get_weather");
-//         assert_eq!(
-//             serde_json::to_string(&args).unwrap(),
-//             "{\"location\":\"Paris, France\"}"
-//         );
-//     }
-// }
+    #[test]
+    pub fn deserialize_tool_call() {
+        let input = r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"location":"Paris, France"}}}],"role":"model"},"finishReason":"STOP"}]}"#;
+        let mut u = GeminiUnmarshal;
+        let val = serde_json::from_str::<Value>(input).unwrap();
+        let output = u.unmarshal(val).unwrap();
+        assert_eq!(output.finish_reason, Some(FinishReason::ToolCall {}));
+        let mut delta = output.delta;
+        assert_eq!(delta.tool_calls.len(), 1);
+        let tool_call = delta.tool_calls.pop().unwrap();
+        let (_, name, args) = tool_call.to_parsed_function().unwrap();
+        assert_eq!(name, "get_weather");
+        assert_eq!(
+            serde_json::to_string(&args).unwrap(),
+            "{\"location\":\"Paris, France\"}"
+        );
+    }
+}

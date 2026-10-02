@@ -1,0 +1,47 @@
+[package]
+name = "ailoy-python"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# Native half of the `ailoy` package, imported as `ailoy._ailoy`. Must match the
+# `#[pymodule]` name, or the import finds a library with no init function.
+name = "_ailoy"
+crate-type = ["cdylib"]
+
+[dependencies]
+ailoy = { path = "../.." }
+# For `Failure`, a console's refusal inside an agent's error. Must be the same crate `ailoy`
+# depends on, so the type matches the one ailoy's errors carry.
+virtx = { workspace = true }
+# virtx's Python classes, linked into this extension rather than imported from virtx's own:
+# a `ConsoleClient` built by another extension module is an opaque copy of virtx this module
+# cannot unwrap to hand to an agent. virtx-python builds an `rlib` for this.
+virtx-python = { workspace = true }
+# `abi3-py310`: one wheel per platform, not per interpreter. `extension-module` is set in
+# `pyproject.toml` instead: it leaves libpython unlinked, which suits the interpreter-loaded
+# module but breaks `cargo test`.
+pyo3 = { version = "0.29", features = ["abi3-py310"] }
+# An agent's turn runs as tokio futures, which asyncio cannot drive, so Python awaitables are
+# bridged onto this crate's tokio runtime — shared with `virtx-python`, as both are one extension.
+pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
+# Messages, specs and tool arguments cross as their serde dicts, not per-type mirrors —
+# ailoy's JSON shape *is* its interface.
+pythonize = "0.29"
+anyhow = "1"
+async-stream = "0.3"
+futures = "0.3"
+serde = "1"
+tokio = { version = "1", features = ["sync", "rt"] }
+url = "2.5"
+
+[features]
+# `mount` on by default: `HostMount` gives an agent a directory held in memory, and needs the
+# host's FUSE provider (setup in virtx's README). `ensure` too: `ensure_virtx` fetches the
+# console server a host that installed only this package lacks.
+default = ["mount", "ensure"]
+mount = ["virtx-python/mount"]
+ensure = ["virtx-python/ensure"]

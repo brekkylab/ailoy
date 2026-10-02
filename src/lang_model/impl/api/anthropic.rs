@@ -6,7 +6,7 @@ use crate::{
     datatype::Value,
     lang_model::{
         LangModelAPISchema, LangModelProvider, LangModelProviderElem, LangModelRequest,
-        ResponseFormat,
+        ReasoningEffort, ResponseFormat,
     },
     message::{
         FinishReason, Marshal, Message, MessageDelta, MessageDeltaOutput, Part, PartDelta,
@@ -22,6 +22,70 @@ impl LangModelProvider {
             schema: LangModelAPISchema::Anthropic,
             url: Url::parse("https://api.anthropic.com/v1/messages").unwrap(),
             api_key: Some(api_key),
+        }
+    }
+}
+
+/// Anthropic requires an explicit max_tokens value; this is the one sent when none is asked.
+const DEFAULT_MAX_TOKENS: u64 = 8192;
+
+/// Whether a Claude model predates adaptive thinking (Claude 4.6) and thinks only on a
+/// `budget_tokens` budget. Reads the version from Anthropic (`claude-opus-5-5`), dated
+/// (`claude-haiku-4-5-20251001`, legacy `claude-3-7-sonnet-…`) and Bedrock
+/// (`anthropic.claude-haiku-4-5-20251001-v1:0`) ids; an unreadable id counts as newer.
+fn takes_thinking_budget(model: &str) -> bool {
+    let Some((_, rest)) = model.split_once("claude-") else {
+        return false;
+    };
+    let is_num = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let mut tokens = rest.split('-').skip_while(|t| !is_num(t));
+    let Some(major) = tokens.next().and_then(|t| t.parse::<u32>().ok()) else {
+        return false;
+    };
+    // A date (`20250514`) after the major version is no minor version.
+    let minor = tokens
+        .next()
+        .filter(|t| is_num(t) && t.len() <= 2)
+        .and_then(|t| t.parse::<u32>().ok())
+        .unwrap_or(0);
+    (major, minor) < (4, 6)
+}
+
+/// How a Claude model is asked to think at `effort`: the `thinking` field, the
+/// `output_config.effort` to go with it, and the `max_tokens` to send.
+pub(super) struct ThinkingConfig {
+    pub thinking: Value,
+    pub effort: Option<&'static str>,
+    /// The caller's `max_tokens`, or one that leaves room past the thinking, which
+    /// counts against it.
+    pub max_tokens: u64,
+}
+
+/// Adaptive thinking with a summarized display and `effort`, or, on a model before
+/// Claude 4.6, a thinking budget sized by `effort` and kept below `max_tokens`.
+pub(super) fn thinking_config(
+    model: &str,
+    effort: ReasoningEffort,
+    max_tokens: Option<u64>,
+) -> ThinkingConfig {
+    let max_tokens = max_tokens.unwrap_or(effort.budget_tokens() + DEFAULT_MAX_TOKENS);
+    if takes_thinking_budget(model) {
+        // The budget must be at least 1024 and below max_tokens.
+        let budget = effort
+            .budget_tokens()
+            .min(max_tokens.saturating_sub(1))
+            .max(1024) as i64;
+        ThinkingConfig {
+            thinking: to_value!({"type": "enabled", "budget_tokens": budget}),
+            effort: None,
+            max_tokens,
+        }
+    } else {
+        // Newer models omit the thinking text unless a summary is asked for.
+        ThinkingConfig {
+            thinking: to_value!({"type": "adaptive", "display": "summarized"}),
+            effort: Some(effort.as_str()),
+            max_tokens,
         }
     }
 }
@@ -121,11 +185,8 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
     to_value!({"role": item.role.to_string(), "content": contents})
 }
 
-/// Marshal a message slice with position-aware thinking inclusion.
-///
-/// Thinking blocks are only included for assistant messages that appear after
-/// the last user message, matching Anthropic's extended-thinking requirements.
-/// System messages are extracted separately and excluded from the array.
+/// Thinking is replayed only for assistant turns after the last user message, as
+/// extended thinking requires. System messages are left out; they go in the top-level `system`.
 fn marshal_messages(messages: &[Message]) -> Value {
     let last_user_index = messages
         .iter()
@@ -170,7 +231,6 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
         let options = req.options;
         let model = Value::from(req.model);
 
-        // Extract system message text if present
         let system = req
             .messages
             .iter()
@@ -211,8 +271,13 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
             "true".into(),
         );
 
-        // Anthropic requires an explicit max_tokens value, so we set it as 8192
-        let max_tokens = options.max_tokens.unwrap_or(8192) as i64;
+        let thinking = options
+            .reasoning
+            .map(|effort| thinking_config(req.model, effort, options.max_tokens));
+        let max_tokens = match &thinking {
+            Some(cfg) => cfg.max_tokens,
+            None => options.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+        } as i64;
         let mut body = to_value!({
             "model": model,
             "max_tokens": max_tokens,
@@ -231,27 +296,47 @@ impl Marshal<LangModelRequest<'_>> for AnthropicMarshal {
                 .unwrap()
                 .insert("tools".to_owned(), tools);
         }
-        if let Some(temperature) = options.temperature {
-            body.as_object_mut()
-                .unwrap()
-                .insert("temperature".to_owned(), temperature.into());
+        // Thinking does not take the sampling knobs; drop them silently.
+        if thinking.is_none() {
+            if let Some(temperature) = options.temperature {
+                body.as_object_mut()
+                    .unwrap()
+                    .insert("temperature".to_owned(), temperature.into());
+            }
+            if let Some(top_p) = options.top_p {
+                body.as_object_mut()
+                    .unwrap()
+                    .insert("top_p".to_owned(), top_p.into());
+            }
+            if let Some(top_k) = options.top_k {
+                body.as_object_mut()
+                    .unwrap()
+                    .insert("top_k".to_owned(), (top_k as i64).into());
+            }
         }
-        if let Some(top_p) = options.top_p {
-            body.as_object_mut()
-                .unwrap()
-                .insert("top_p".to_owned(), top_p.into());
-        }
-        if let Some(top_k) = options.top_k {
-            body.as_object_mut()
-                .unwrap()
-                .insert("top_k".to_owned(), (top_k as i64).into());
-        }
+        let mut output_config = Value::object_empty();
         if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
             let wire_schema = self.marshal_response_schema(schema);
-            body.as_object_mut().unwrap().insert(
-                "output_config".into(),
-                to_value!({"format": {"type": "json_schema", "schema": wire_schema}}),
+            output_config.as_object_mut().unwrap().insert(
+                "format".into(),
+                to_value!({"type": "json_schema", "schema": wire_schema}),
             );
+        }
+        if let Some(cfg) = thinking {
+            body.as_object_mut()
+                .unwrap()
+                .insert("thinking".into(), cfg.thinking);
+            if let Some(effort) = cfg.effort {
+                output_config
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("effort".into(), effort.into());
+            }
+        }
+        if !output_config.as_object().unwrap().is_empty() {
+            body.as_object_mut()
+                .unwrap()
+                .insert("output_config".into(), output_config);
         }
 
         if req.stream {
@@ -327,17 +412,7 @@ impl AnthropicUnmarshal {
     }
 }
 
-/// Parses one Anthropic SSE stream event into an incremental delta.
-///
-/// Each event type contributes a fragment that [`MessageDelta::accumulate`]
-/// stitches together:
-/// - `message_start`: role + initial usage (input / cache tokens)
-/// - `content_block_start`: begins a `tool_use` function call (id + name)
-/// - `content_block_delta`: a text / thinking / signature / tool-args fragment
-/// - `message_delta`: `stop_reason` + final usage (output tokens)
-/// - `ping` / `content_block_stop` / `message_stop`: no delta → `Ok(None)`
-/// - `error`: fails with the server-reported error type + message
-/// - any other (future) type: ignored → `Ok(None)`
+/// Parses one Anthropic SSE event into a delta; control and unknown events yield `Ok(None)`.
 impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;
@@ -408,8 +483,8 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             }
             // Control events carry no delta.
             "ping" | "content_block_stop" | "message_stop" => return Ok(None),
-            // Mid-stream error (e.g. `overloaded_error`, rate limit). Surface the
-            // server's own type + message rather than a generic "unknown event".
+            // Mid-stream error (e.g. `overloaded_error`, rate limit): surface the
+            // server's own type + message.
             "error" => {
                 let err_type = val
                     .pointer("/error/type")
@@ -444,13 +519,11 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("Root should be an object"))?;
 
-        // Parse stop_reason -> finish_reason
         let finish_reason = root
             .get("stop_reason")
             .and_then(|v| v.as_str())
             .map(Self::parse_finish_reason);
 
-        // Parse role
         let role = root
             .get("role")
             .and_then(|v| v.as_str())
@@ -459,7 +532,6 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
 
         let mut delta = MessageDelta::new().with_role(role);
 
-        // Parse content array
         if let Some(contents) = root.get("content")
             && !contents.is_null()
         {
@@ -533,7 +605,6 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             }
         }
 
-        // Parse usage
         let usage = root.get("usage").and_then(Self::parse_usage);
 
         Ok(MessageDeltaOutput {
@@ -562,9 +633,116 @@ mod tests {
         tool::{ToolDesc, ToolDescBuilder},
     };
 
-    /// Register a one-off [`LangModelProvider`] under `provider_name` in the
-    /// global registry and build the [`LangModel`] via
-    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    fn marshal_reasoning(model: &str, options: LangModelOptions) -> serde_json::Value {
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+        let provider = LangModelProvider::anthropic("k".into());
+        let req = LangModelRequest {
+            model,
+            messages: &messages,
+            tools: &[],
+            provider: &provider,
+            options: &options,
+            stream: false,
+        };
+        AnthropicMarshal.marshal(&req).into()
+    }
+
+    #[test]
+    fn thinking_budget_models_are_those_before_4_6() {
+        for model in [
+            "claude-haiku-4-5",
+            "claude-sonnet-4-5-20250929",
+            "claude-sonnet-4-20250514",
+            "claude-opus-4-1",
+            "claude-3-7-sonnet-20250219",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+        ] {
+            assert!(takes_thinking_budget(model), "{model}");
+        }
+        for model in [
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-opus-4-8",
+            "claude-sonnet-5",
+            "claude-opus-5-5",
+            "claude-fable-5-1",
+            "global.anthropic.claude-sonnet-5",
+            "some-proxy-alias",
+        ] {
+            assert!(!takes_thinking_budget(model), "{model}");
+        }
+    }
+
+    #[test]
+    fn reasoning_turns_on_adaptive_thinking_and_drops_sampling() {
+        let options = LangModelOptions {
+            temperature: Some(0.3),
+            top_p: Some(0.9),
+            top_k: Some(5),
+            response_format: Some(
+                crate::lang_model::ResponseFormat::json_schema(to_value!({"type": "object"}))
+                    .unwrap(),
+            ),
+            reasoning: Some(ReasoningEffort::High),
+            ..Default::default()
+        };
+        let v = marshal_reasoning("claude-sonnet-5", options);
+        let body = &v["body"];
+        assert_eq!(
+            body["thinking"],
+            serde_json::json!({"type": "adaptive", "display": "summarized"})
+        );
+        assert_eq!(body["output_config"]["effort"], "high");
+        assert_eq!(body["output_config"]["format"]["type"], "json_schema");
+        assert_eq!(body["max_tokens"], 24576 + 8192);
+        for knob in ["temperature", "top_p", "top_k"] {
+            assert!(body.get(knob).is_none(), "{knob} sent while thinking");
+        }
+    }
+
+    #[test]
+    fn reasoning_on_older_models_takes_a_budget_below_max_tokens() {
+        let v = marshal_reasoning(
+            "claude-haiku-4-5",
+            LangModelOptions {
+                reasoning: Some(ReasoningEffort::Medium),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            v["body"]["thinking"],
+            serde_json::json!({"type": "enabled", "budget_tokens": 8192})
+        );
+        assert_eq!(v["body"]["max_tokens"], 8192 + 8192);
+        assert!(v["body"].get("output_config").is_none());
+
+        let v = marshal_reasoning(
+            "claude-haiku-4-5",
+            LangModelOptions {
+                max_tokens: Some(4096),
+                reasoning: Some(ReasoningEffort::Medium),
+                ..Default::default()
+            },
+        );
+        assert_eq!(v["body"]["thinking"]["budget_tokens"], 4095);
+        assert_eq!(v["body"]["max_tokens"], 4096);
+    }
+
+    #[test]
+    fn no_reasoning_sends_no_thinking() {
+        let v = marshal_reasoning(
+            "claude-sonnet-5",
+            LangModelOptions {
+                temperature: Some(0.3),
+                ..Default::default()
+            },
+        );
+        assert!(v["body"].get("thinking").is_none());
+        assert!(v["body"].get("output_config").is_none());
+        assert_eq!(v["body"]["temperature"], 0.3);
+    }
+
+    /// Registers a one-off provider under `provider_name` and builds the model from it.
     fn build_anthropic_model(provider_name: &str, model: &str, api_key: String) -> LangModel {
         let elem = LangModelProviderElem::API {
             schema: LangModelAPISchema::Anthropic,
@@ -1050,7 +1228,7 @@ mod tests {
         let api_key =
             std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set in .env");
 
-        // Intentionally omit additionalProperties to verify normalize_schema adds it.
+        // No additionalProperties: the marshal must add it.
         let schema = to_value!({
             "type": "object",
             "properties": {
@@ -1130,7 +1308,6 @@ mod tests {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap();
 
-        // Fetch a real JPEG image to use as the tool result
         let img_bytes = reqwest::get(
             "https://cdn.britannica.com/60/257460-050-62FF74CB/NVIDIA-Jensen-Huang.jpg",
         )

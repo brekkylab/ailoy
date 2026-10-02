@@ -13,7 +13,7 @@
 //!   and says when it hit the cap. Without that, opening one wrong object out of a bucket is a
 //!   session that stops answering.
 //!
-//! [`Dirent::stat`]: cortex::fs::Dirent::stat
+//! [`Dirent::stat`]: virtx::fs::Dirent::stat
 //!
 //! # Timing
 //!
@@ -30,7 +30,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use cortex::fs::{DirentKind, FileSystem};
+use virtx::fs::{DirentKind, FileSystem};
 
 use crate::{
     error::{EngineError, Result},
@@ -518,7 +518,7 @@ mod tests {
     fn every_store_call_says_what_it_cost() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.txt"), b"hello").unwrap();
-        let fs = cortex::fs::PassthroughFs::new(dir.path());
+        let fs = virtx::fs::PassthroughFs::new(dir.path());
 
         let captured = Captured::default();
         let subscriber = tracing_subscriber::fmt()
@@ -643,9 +643,10 @@ mod tests {
         let (_, encoding) = as_text(cut, true).expect("still text");
         assert_eq!(encoding, "CP949");
     }
-    use cortex::fs::{ContextFs, InMemFs};
+    use virtx::fs::InMemFs;
 
     use super::*;
+    use crate::workspace::ContextFs;
 
     fn ws() -> ContextFs {
         ContextFs::new().try_with_mount("", InMemFs::new()).unwrap()

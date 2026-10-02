@@ -1,15 +1,15 @@
-// Reading what cortex's Notion filesystem actually writes.
+// Reading what virtx's Notion filesystem actually writes.
 //
 // It does not hand back markdown. Every page is a directory holding a `page.json` whose
 // shape is Notion's API response, normalized — page_id, title, properties, blocks, and a
 // `markdown` key with the body already rendered out of those blocks. Picking that key out
-// is ours to do: cortex's job ends at serializing what Notion said.
+// is ours to do: virtx's job ends at serializing what Notion said.
 //
 // A database is the same layout with a `database.json` that has no body at all — it is a
 // schema and an index of rows — so "is there a markdown key" is also how a reader tells
 // the two apart, without a second request to find out which it is holding.
 
-/** Marks a database directory: `<title>__db__<database-id>`. Cortex's own separator. */
+/** Marks a database directory: `<title>__db__<database-id>`. virtx's own separator. */
 const DB_MARKER = "__db__";
 
 /** What a page with no icon of its own is drawn with, as Notion draws it. */
@@ -20,7 +20,7 @@ export const DB_ICON = "\u{1f5c2}\ufe0f";
 /**
  * The title out of a page directory's name.
  *
- * Cortex names them `<sanitized-title>__<page-id>`, so the id is everything after the last
+ * virtx names them `<sanitized-title>__<page-id>`, so the id is everything after the last
  * double underscore. A title that itself contains `__` keeps it: the split is from the
  * right, and the id is the part that never does.
  */
@@ -35,7 +35,7 @@ export function notionTitle(dirName: string): string {
 /**
  * Whether a directory is a database rather than a page.
  *
- * The name is the whole answer, and deliberately so on cortex's side: a path there
+ * The name is the whole answer, and deliberately so on virtx's side: a path there
  * resolves without fetching its parent, so the kind has to be in the segment. It means a
  * reader knows which of `page.json` / `database.json` to ask for without spending a
  * refused request to find out.
@@ -66,9 +66,9 @@ export function notionHeading(text: string): string | null {
 
 /**
  * The page's emoji, or `null` — including for a page whose icon is an uploaded image,
- * which cortex does not carry because its URL is signed and expires.
+ * which virtx does not carry because its URL is signed and expires.
  *
- * `null` is also what an older cortex gives, which had no `icon` key at all. The caller
+ * `null` is also what an older virtx gives, which had no `icon` key at all. The caller
  * falls back to [`PAGE_ICON`] either way, so the tree draws the same rows against either
  * one rather than refusing to draw at all.
  */
@@ -90,7 +90,7 @@ export type NotionChild = {
  *
  * Depth is the point: Notion puts the sub-pages of a two-column page inside a `column`
  * two blocks down, and they are children of the page all the same — which is exactly how
- * cortex decides what directories to put beside `page.json`, so walking the same tree the
+ * virtx decides what directories to put beside `page.json`, so walking the same tree the
  * same way is what keeps the two agreeing.
  *
  * A database index has no blocks and answers empty; its children are its rows, which
@@ -135,7 +135,7 @@ export function notionRowCount(text: string): number {
 /**
  * The directory in `dirs` that holds `child`, matched on the id rather than the title.
  *
- * Cortex builds the name from a *sanitized* title, so rebuilding it here would mean
+ * virtx builds the name from a *sanitized* title, so rebuilding it here would mean
  * carrying a copy of its sanitizer and keeping the two in step forever. The id is in both
  * and is altered by neither.
  *
@@ -165,7 +165,7 @@ export type ChildLink = {
  * matter — a dated log page really is called `[2024-07-14] numpy build` — and a pattern
  * that stops at the first `]` reads a title that belongs to nobody.
  *
- * Searched forward from the last one, which is what makes the marker unambiguous: cortex
+ * Searched forward from the last one, which is what makes the marker unambiguous: virtx
  * renders the markers in the order [`notionChildren`] walks the same blocks, so three
  * sub-pages sharing a title still land on their own three markers, in order. A child whose
  * marker is nowhere in the body is skipped without disturbing the ones after it.
@@ -178,7 +178,7 @@ export function withChildLinks(body: string, links: ChildLink[]): string {
     const found = body.indexOf(marker, at);
     if (found < 0) continue;
     out += body.slice(at, found);
-    // A child the listing could not place keeps the line cortex wrote: it still says where
+    // A child the listing could not place keeps the line virtx wrote: it still says where
     // the content went, which is more than a link to nowhere would.
     out += link.href
       ? `[${escapeLabel(`${link.icon} ${link.title}`)}](${link.href})`

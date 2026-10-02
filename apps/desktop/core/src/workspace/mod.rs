@@ -2,9 +2,11 @@
 //! operations a tree is drawn from.
 
 pub mod connectors;
+pub mod context_fs;
 pub mod fsops;
 pub mod manager;
 pub mod shared;
 
+pub use context_fs::ContextFs;
 pub use manager::*;
 pub use shared::SharedFs;

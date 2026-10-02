@@ -39,8 +39,8 @@ export function makeQueryClient(): QueryClient {
 /**
  * Whether a finished run could have changed what this query holds.
  *
- * A run writes to one place. The agent's console mounts the workspace as *context*, which
- * cortex refuses writes under, and its output goes to the artifacts tree — so after a run
+ * A run writes to one place. The agent's console mounts the workspace as *context*,
+ * read-only, and its output goes to the artifacts tree — so after a run
  * the listings and files under `/artifacts` are the ones worth asking about again, and
  * nothing else in the tree is.
  *

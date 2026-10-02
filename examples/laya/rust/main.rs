@@ -1,0 +1,220 @@
+//! Answer typed questions with Laya through ncnn on the guest's Vulkan device, as an agent's
+//! skill.
+//!
+//! ```sh
+//! cargo run --example laya
+//! cargo run --example laya -- "Route the tickets in /context/inbox, but send anything about contracts to legal"
+//! ```
+//!
+//! [Laya](https://huggingface.co/convaiinnovations/laya) is a decision model: given a state
+//! (a text, an email, a ticket) and typed questions — a choice, a score, a yes/no — it answers
+//! each with calibrated probabilities in one forward pass, and generates no text.
+//!
+//! Without a prompt the agent routes a support inbox: it asks Laya which department each ticket in
+//! `shared/tickets/` belongs to and files a copy in that department's folder.
+//!
+//! The skill (`SKILL.md`, `run_laya.py`) is mounted from memory at `/skills/laya`.
+//!
+//! * `context/` at `/context`, read-only — what to decide on, when it is not in the prompt.
+//!   `context/inbox/` is a fresh copy of `shared/tickets/` on every run.
+//! * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes: the tickets
+//!   filed under `artifacts/routes/<department>/`, emptied at the start of every run.
+//!
+//! Environment, also read from `.env`:
+//!
+//! * `UV` — the `uv` binary `prepare_model.py` runs with; `uv` on `PATH` by default.
+//! * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its provider's
+//!   API key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …).
+
+use std::{io::Write as _, path::Path};
+
+use ailoy::{
+    agent::AgentBuilder,
+    console::ConsoleClient,
+    message::{Message, Part, Role},
+};
+use anyhow::Context as _;
+// One host binding per platform (mounts on `try_new`, unmounts on `Drop`), so the tree
+// below is written once. Three arms, not `not(windows)`: virtx's default `mount` feature
+// compiles only its target's binding, each a distinct guard type.
+use futures::StreamExt as _;
+#[cfg(windows)]
+use virtx::fs::DokanMount as HostMount;
+#[cfg(target_os = "linux")]
+use virtx::fs::FuseMount as HostMount;
+#[cfg(target_os = "macos")]
+use virtx::fs::FuseTMount as HostMount;
+use virtx::{fs::Directory, image::Recipe};
+
+/// The request when none is given.
+const QUERY: &str = "Route every ticket in /context/inbox to the department that should handle it, \
+    by what the customer needs rather than the words they use: engineering, finance, sales, legal \
+    or marketing. Decide each one with Laya, copy the ticket into /artifacts/routes/<department>/, \
+    and write what went where to /artifacts/routing.md.";
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+    // What the Rust, Python and Node sides share: the skill and the scripts that fetch its data.
+    let shared_path = examples.join("laya/shared");
+    // What a run reads and writes, beside this file.
+    let project_path = examples.join("laya/rust");
+    let prompt = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
+    let prompt = if prompt.is_empty() {
+        QUERY.to_string()
+    } else {
+        prompt
+    };
+
+    prepare(&shared_path, &project_path).await?;
+
+    for dir in ["context", "artifacts", "skill"] {
+        let dir = project_path.join(dir);
+        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    fill_inbox(&shared_path, &project_path)?;
+    clear_routes(&project_path)?;
+
+    // The console server, fetched into virtx's cache the first time: a host that installed only
+    // ailoy has none.
+    virtx::ensure_virtx().await?;
+    let mut agent = AgentBuilder::new(
+        std::env::var("AILOY_MODEL").unwrap_or_else(|_| "anthropic/claude-sonnet-5".to_string()),
+    )
+    .instruction(concat!(
+        "# Context\n\n",
+        "Path: `/context`\n\n",
+        "This folder holds the data and context the user wants to share with you. ",
+        "When the user refers to something whose context you cannot figure out, the files in this folder might help. ",
+        "The information that settles the answer may be here too, and so may hints toward it, so look through this folder for them.\n\n",
+        "# Artifacts\n\n",
+        "Path: `/artifacts`\n\n",
+        "This folder is where what the user asked for goes. ",
+        "Write every result here, such as a report, a figure, or the file the user came for. ",
+        "Everything in this folder is collected and handed back to the user, and a result left anywhere else is not delivered.",
+    ))
+    .max_tokens(64000)
+    .system_tools()
+    .web_fetch_tool()
+    .web_search_tool(vec![])
+    .console(
+        ConsoleClient::builder()
+            // Debian, not Alpine: PyPI's musllinux ncnn wheel crashes freeing its first `Mat`,
+            // where the manylinux (glibc) one runs laya.
+            .image(
+                Recipe::new("python:3.12-slim-trixie")
+                    // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader
+                    // the wheel opens. Mesa from backports: venus passes VK_KHR_shader_bfloat16
+                    // through from 26.0 on, and trixie itself has 25.0.
+                    .step(
+                        "echo 'deb http://deb.debian.org/debian trixie-backports main' \
+                        > /etc/apt/sources.list.d/backports.list \
+                        && apt-get update && apt-get install -y --no-install-recommends \
+                        -t trixie-backports mesa-vulkan-drivers \
+                        && apt-get install -y --no-install-recommends libvulkan1 \
+                        && rm -rf /var/lib/apt/lists/*",
+                    )
+                    .step("pip install --no-cache-dir ncnn numpy tokenizers"),
+            )
+            .mount_readonly(project_path.join("data/ncnn"), "/models")
+            .mount_readonly(
+                HostMount::try_new(
+                    Directory::new()
+                        .with_file("SKILL.md", include_str!("../shared/SKILL.md").as_bytes())?
+                        .with_file("run_laya.py", include_str!("../shared/run_laya.py").as_bytes())?,
+                    &project_path.join("skill"),
+                )
+                .with_context(|| "mounting the skill")?,
+                "/skills/laya",
+            )
+            .mount_readonly(project_path.join("context"), "/context")
+            .mount(project_path.join("artifacts"), "/artifacts")
+            .gpu(true)
+            .vcpus(2)
+            .memory_mib(4096)
+            .gpu_memory_mib(12288)
+            .build()
+            .await
+            .with_context(|| format!("starting the console"))?,
+    )
+    .skill("/skills/laya")
+    .build()
+    .await?;
+
+    let query = Message::new(Role::User).with_contents([Part::text(prompt)]);
+    let mut stream = agent.run(query);
+    while let Some(output) = stream.next().await {
+        let message = output?.message;
+        match message.role {
+            Role::Assistant => {
+                for text in message.contents.iter().filter_map(Part::as_text) {
+                    println!("{text}");
+                }
+                for call in message.tool_calls.iter().flatten() {
+                    if let Some((_, name, args)) = call.as_function() {
+                        println!("→ {name} {}", serde_json::to_string_pretty(args)?);
+                    }
+                }
+            }
+            // Laya's answers are small, and they are what the reply is made from: shown whole.
+            Role::Tool => {
+                for part in &message.contents {
+                    println!("← {}", serde_json::to_string_pretty(part)?);
+                }
+            }
+            _ => {}
+        }
+        std::io::stdout().flush()?;
+    }
+
+    Ok(())
+}
+
+/// Reset `project/context/inbox` to a copy of `shared/tickets`, so every run routes the same inbox.
+fn fill_inbox(shared: &Path, project: &Path) -> anyhow::Result<()> {
+    let inbox = project.join("context/inbox");
+    if inbox.exists() {
+        std::fs::remove_dir_all(&inbox).with_context(|| format!("clearing {}", inbox.display()))?;
+    }
+    std::fs::create_dir_all(&inbox).with_context(|| format!("creating {}", inbox.display()))?;
+    let tickets = shared.join("tickets");
+    for entry in
+        std::fs::read_dir(&tickets).with_context(|| format!("reading {}", tickets.display()))?
+    {
+        let path = entry?.path();
+        if path.is_file() {
+            std::fs::copy(&path, inbox.join(path.file_name().unwrap()))
+                .with_context(|| format!("copying {}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Empty `project/artifacts/routes`, so what is filed there is only this run's.
+fn clear_routes(project: &Path) -> anyhow::Result<()> {
+    let routes = project.join("artifacts/routes");
+    if routes.exists() {
+        std::fs::remove_dir_all(&routes)
+            .with_context(|| format!("clearing {}", routes.display()))?;
+    }
+    Ok(())
+}
+
+/// Download and convert the model into `project/data`
+async fn prepare(shared: &Path, project: &Path) -> anyhow::Result<()> {
+    let uv = std::env::var("UV").unwrap_or_else(|_| "uv".to_string());
+    let status = tokio::process::Command::new(&uv)
+        .args(["run", "prepare_model.py"])
+        .arg(project.join("data"))
+        .current_dir(shared)
+        // An activated environment elsewhere is not this project's, and uv says so.
+        .env_remove("VIRTUAL_ENV")
+        // `transformers` probes for TensorFlow at import, which can hang model construction.
+        .env("USE_TF", "0")
+        .status()
+        .await
+        .with_context(|| format!("running `{uv}`. Install uv, or point $UV at it."))?;
+    anyhow::ensure!(status.success(), "preparing the model: {status}");
+    Ok(())
+}

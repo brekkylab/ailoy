@@ -1,0 +1,16 @@
+{
+  "name": "ailoy-example-laya",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Laya on ncnn as an agent's skill, on ailoy's Node bindings.",
+  "type": "module",
+  "scripts": {
+    "start": "node main.mjs"
+  },
+  "dependencies": {
+    "@brekkylab/ailoy": "file:../../../bindings/node"
+  },
+  "engines": {
+    "node": ">= 20.12"
+  }
+}

@@ -12,14 +12,14 @@ use std::{
 
 use ailoy::message::Part;
 
-use cortex::fs::FileSystem;
+use virtx::fs::FileSystem;
 
 use crate::{
     catalog::{self, Catalog, split_model_id},
     config::EngineConfig,
     error::{EngineError, Result},
     providers,
-    run::{RunDeps, RunHandle, RunManager},
+    run::{ConsoleSetup, RunDeps, RunHandle, RunManager},
     store::{MountRow, Store},
     types::*,
     workspace::{WorkspaceManager, connectors, fsops},
@@ -93,18 +93,15 @@ impl Engine {
             tracing::warn!("applying provider settings at start: {e}");
         }
 
-        // Nothing is started here: the server is written out and run by the first run that
-        // needs a console, so a window with no run yet has spent nothing on one.
-        let console = cfg
-            .console
-            .then(|| cortex::console::Backend::local().home(cfg.cortex_home()));
+        // Nothing is started here: the first run that needs a console fetches the server if
+        // the host has none and boots its VM, so a window with no run yet has spent nothing.
+        let console = cfg.console.then(ConsoleSetup::default);
 
         let runs = RunManager::new(RunDeps {
             store: store.clone(),
             console,
             workspace: workspace.clone(),
             catalog: catalog.clone(),
-            scratch_root: cfg.scratch_root(),
         });
         let engine = Arc::new(Engine {
             cfg,

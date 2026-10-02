@@ -2,8 +2,8 @@
 //
 // A row needs two things the listing above it does not carry: the page's icon, and whether
 // it holds any sub-pages. Both live in the page's own json, so the tree reads one per
-// visible row — a page render on cortex's side, which is a retrieve and, cold, a walk of
-// the page's whole block tree. cortex keeps those renders between runs, so the *second*
+// visible row — a page render on virtx's side, which is a retrieve and, cold, a walk of
+// the page's whole block tree. virtx keeps those renders between runs, so the *second*
 // time a window asks it is cheap. It is still a request, and there are as many of them as
 // there are rows on screen, which is the second or two of icons and chevrons arriving one
 // by one after a restart.

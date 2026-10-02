@@ -22,10 +22,10 @@ pub use yandex::Yandex;
 
 use super::engine::SearchEngine;
 
-/// Identifies a specific web search engine available to [`MetaSearcher`](super::aggregator::MetaSearcher).
+/// A web search engine the `web_search` tool can query.
 ///
-/// Pass a subset to [`MetaSearcher::new`](super::aggregator::MetaSearcher::new) to restrict
-/// which engines are used. An empty slice falls back to all engines.
+/// Pass a subset to [`AgentSpec::web_search_tool`](crate::agent::AgentSpec::web_search_tool)
+/// to restrict which engines are used. An empty list falls back to all engines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum WebSearchEngineKind {
     Bing,
@@ -67,7 +67,7 @@ impl WebSearchEngineKind {
         }
     }
 
-    /// Constructs a boxed [`SearchEngine`] for this kind.
+    /// Constructs a boxed `SearchEngine` for this kind.
     pub fn instantiate(&self) -> Box<dyn SearchEngine> {
         match self {
             WebSearchEngineKind::Bing => Box::new(Bing::new().expect("Bing init failed")),

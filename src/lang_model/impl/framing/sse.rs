@@ -59,8 +59,7 @@ mod tests {
 
     #[test]
     fn test_extract_event_data_recovers_eof_terminated_event() {
-        // The run_stream EOF flush relies on this: a final event left in the
-        // buffer without a trailing blank line must still yield its payload.
+        // A final event without a trailing blank line still yields its payload.
         assert_eq!(extract_event_data(b"data: {\"k\":1}"), "{\"k\":1}");
         // Non-`data:` lines (comments / event:) are dropped.
         assert_eq!(extract_event_data(b": keep-alive"), "");

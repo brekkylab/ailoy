@@ -1,11 +1,11 @@
 // A Notion page's body, with its sub-pages as links.
 //
-// Cortex renders a `child_page` block as a marker — `[page: 회의록]` — because the content
+// virtx renders a `child_page` block as a marker — `[page: 회의록]` — because the content
 // is not there: it lives behind that child's own directory, and a line saying where it
 // went reads better than a gap where a page used to be. Here, where the directory is one
 // click away, the marker becomes the link it stands for.
 //
-// The child's directory is found by id rather than by rebuilding the name cortex
+// The child's directory is found by id rather than by rebuilding the name virtx
 // sanitized, and its icon comes from its own json, on the same query the tree row beside
 // it already made.
 
@@ -47,7 +47,7 @@ export function NotionViewer({
   onOpen: (path: string) => void;
 }) {
   const children = useMemo(() => notionChildren(text), [text]);
-  // Only when there is something to place: a leaf page would pay cortex a whole render for
+  // Only when there is something to place: a leaf page would pay virtx a whole render for
   // a listing with nothing in it to match against.
   const listing = useQuery({
     queryKey: ["fs", path],
@@ -93,7 +93,7 @@ export function NotionViewer({
   return (
     // One measure for the title and the body under it, so the two start at the same edge.
     <div className="mx-auto max-w-[72ch] text-[15px]">
-      {/* The title lives beside the body rather than in it: cortex renders the blocks, and
+      {/* The title lives beside the body rather than in it: virtx renders the blocks, and
           a page's name is not one of them. */}
       {heading && (
         <h2 className="mb-4 flex items-baseline gap-2 text-[1.6em] font-semibold tracking-tight">

@@ -1,7 +1,7 @@
 // Reading one node of a Notion tree.
 //
 // A page directory holds `page.json` and a database directory holds `database.json`, and
-// the directory's own name says which — cortex puts `__db__` in one and not the other so a
+// the directory's own name says which — virtx puts `__db__` in one and not the other so a
 // path there resolves without fetching its parent. Asking for the right file outright is
 // what that marker is for; trying one and falling back to the other would spend a refused
 // request on every database in the tree.
@@ -26,7 +26,7 @@ export function readNotionNode(path: string): Promise<FileContent> {
 /**
  * The shared query for a node.
  *
- * `staleTime: Infinity` because a render costs cortex a page fetch and a walk of its whole
+ * `staleTime: Infinity` because a render costs virtx a page fetch and a walk of its whole
  * block tree — worth paying when a row first appears, not again every time the window is
  * focused. A failure is not retried for the same reason: the row falls back to the plain
  * page icon, which is a better answer than three more requests.

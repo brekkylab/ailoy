@@ -1,10 +1,6 @@
 //! Decoder for `application/vnd.amazon.eventstream`, the binary framing Amazon
 //! Bedrock uses for streamed responses (`InvokeModelWithResponseStream` and
 //! `ConverseStream`) in place of SSE.
-//!
-//! Frame layout: a 12-byte prelude (`total_len`, `headers_len`, prelude CRC),
-//! then headers, payload, and a trailing CRC over everything before it. All
-//! integers are big-endian; both CRCs are CRC-32 (IEEE).
 
 use anyhow::{Context as _, bail};
 
@@ -35,6 +31,10 @@ impl Frame {
 /// buffer does not yet hold a whole frame; the partial bytes stay for the next
 /// network chunk. Fails on a CRC mismatch or malformed header, since the
 /// stream cannot be resynchronised after either.
+///
+/// Frame layout: a 12-byte prelude (`total_len`, `headers_len`, prelude CRC),
+/// then headers, payload, and a trailing CRC over everything before it. All
+/// integers are big-endian; both CRCs are CRC-32 (IEEE).
 pub(crate) fn drain_next_frame(buf: &mut Vec<u8>) -> anyhow::Result<Option<Frame>> {
     if buf.len() < PRELUDE_LEN {
         return Ok(None);

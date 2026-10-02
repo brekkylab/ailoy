@@ -40,6 +40,15 @@ impl LangModelProvider {
         }
     }
 
+    /// Its model ids are `<vendor>/<model>` (`openai/gpt-5`), so they are registered as `openrouter/<vendor>/<model>`.
+    pub fn openrouter(api_key: String) -> LangModelProviderElem {
+        LangModelProviderElem::API {
+            schema: LangModelAPISchema::ChatCompletion,
+            url: Url::parse("https://openrouter.ai/api/v1/chat/completions").unwrap(),
+            api_key: Some(api_key),
+        }
+    }
+
     pub fn chat_completion(
         url: &str,
         api_key: Option<String>,
@@ -105,8 +114,7 @@ impl Marshal<Message> for ChatCompletionMarshal {
             let contents: Vec<Value> = item
                 .contents
                 .iter()
-                // Some ChatCompletion-compatible backends (e.g. Kimi)
-                // reject content arrays containing an empty-text part
+                // Some backends (e.g. Kimi) reject content arrays with an empty-text part.
                 .filter(|p| !matches!(p, Part::Text { text } if text.is_empty()))
                 .map(|p| {
                     // ChatCompletion backends don't reliably accept images in tool results;
@@ -235,6 +243,11 @@ impl Marshal<LangModelRequest<'_>> for ChatCompletionMarshal {
                 .insert("top_p".to_owned(), top_p.into());
         }
         // top_k is not part of the OpenAI ChatCompletion spec; intentionally ignored.
+        if let Some(effort) = options.reasoning {
+            body.as_object_mut()
+                .unwrap()
+                .insert("reasoning_effort".to_owned(), effort.as_str().into());
+        }
         if let Some(ResponseFormat::JsonSchema(schema)) = &options.response_format {
             let wire_schema = self.marshal_response_schema(schema);
             body.as_object_mut().unwrap().insert(
@@ -281,10 +294,6 @@ pub struct ChatCompletionUnmarshal;
 // quota signal can be assumed; treat 429 as transient and retry.
 impl super::QuotaClassifier for ChatCompletionUnmarshal {}
 
-/// Parses one ChatCompletion SSE chunk (`chat.completion.chunk`) into a delta:
-/// the incremental `choices[0].delta` (role / content / reasoning_content /
-/// tool_call fragments), `finish_reason`, and usage from the final chunk.
-/// `[DONE]` carries no delta.
 impl ChatCompletionUnmarshal {
     fn parse_finish_reason(val: &Value) -> FinishReason {
         match val.as_str() {
@@ -377,6 +386,7 @@ impl ChatCompletionUnmarshal {
     }
 }
 
+/// Parses one `chat.completion.chunk` SSE event into a delta.
 impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         // OpenAI-compatible streams end with a `[DONE]` sentinel (not JSON).
@@ -407,11 +417,9 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
 
         let mut delta = MessageDelta::new();
 
-        // role: usually present only on the first chunk. Default to Assistant
-        // when a chunk omits it (some OpenAI-compatible backends do), mirroring
-        // the non-streaming `unmarshal` default — otherwise a role-less stream
-        // accumulates to a message with no role and `finish()` bails with
-        // "Role not specified".
+        // role: usually only on the first chunk, and some OpenAI-compatible
+        // backends omit it entirely. Default to Assistant, or a role-less stream
+        // accumulates to a message `finish()` rejects with "Role not specified".
         let role = choice
             .pointer("/delta/role")
             .and_then(|v| v.as_str())
@@ -486,12 +494,10 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             .pointer("/choices/0")
             .ok_or_else(|| anyhow::anyhow!("Missing 'choices[0]' in response"))?;
 
-        // Parse finish_reason
         let finish_reason = choice
             .pointer("/finish_reason")
             .map(Self::parse_finish_reason);
 
-        // Check for refusal
         let message = choice
             .pointer("/message")
             .ok_or_else(|| anyhow::anyhow!("Missing 'message' in choice"))?;
@@ -510,7 +516,6 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             });
         }
 
-        // Parse role
         let role: Role = message
             .pointer("/role")
             .and_then(|v| v.as_str())
@@ -518,23 +523,20 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             .parse()
             .unwrap_or(Role::Assistant);
 
-        // Parse content
         let contents = message
             .pointer("/content")
             .filter(|v| !v.is_null())
             .map(Self::parse_content)
             .unwrap_or_default();
 
-        // Parse tool_calls
         let tool_calls = message
             .pointer("/tool_calls")
             .filter(|v| !v.is_null())
             .map(Self::parse_tool_calls)
             .unwrap_or_default();
 
-        // DeepSeek thinking-mode responses include `reasoning_content` as a
-        // sibling of `content`. Map it onto ailoy's canonical `thinking` field
-        // so the same value gets replayed on follow-up turns.
+        // DeepSeek thinking-mode `reasoning_content` maps onto `thinking` so it
+        // is replayed on follow-up turns.
         let thinking = message
             .pointer("/reasoning_content")
             .and_then(|v| v.as_str())
@@ -552,7 +554,6 @@ impl Unmarshal<MessageDeltaOutput> for ChatCompletionUnmarshal {
             delta.thinking = Some(t);
         }
 
-        // Parse usage (Chat Completion: usage.prompt_tokens / completion_tokens)
         let usage = Self::parse_usage(&val);
 
         Ok(MessageDeltaOutput {
@@ -579,6 +580,34 @@ mod tests {
         message::{Delta, FinishReason, Message, MessageDeltaOutput, Part, Role},
         tool::ToolDesc,
     };
+
+    fn marshal_reasoning(model: &str, options: LangModelOptions) -> serde_json::Value {
+        let messages = vec![Message::new(Role::User).with_contents([Part::text("hi")])];
+        let provider = LangModelProvider::deepseek("k".into());
+        let req = LangModelRequest {
+            model,
+            messages: &messages,
+            tools: &[],
+            provider: &provider,
+            options: &options,
+            stream: false,
+        };
+        ChatCompletionMarshal.marshal(&req).into()
+    }
+
+    #[test]
+    fn reasoning_maps_to_reasoning_effort() {
+        let v = marshal_reasoning(
+            "grok-4",
+            LangModelOptions {
+                reasoning: Some(crate::lang_model::ReasoningEffort::High),
+                ..Default::default()
+            },
+        );
+        assert_eq!(v["body"]["reasoning_effort"], "high");
+        let v = marshal_reasoning("grok-4", LangModelOptions::default());
+        assert!(v["body"].get("reasoning_effort").is_none());
+    }
 
     #[test]
     fn test_marshal_stream_options() {
@@ -748,9 +777,7 @@ mod tests {
         assert!(usage.output_tokens > 0, "output_tokens should be > 0");
     }
 
-    /// Register a one-off [`LangModelProvider`] under `provider_name` in the
-    /// global registry and build the [`LangModel`] via
-    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    /// Registers a one-off provider under `provider_name` and builds the model from it.
     fn build_chat_completion_model(provider_name: &str, model: &str, api_key: String) -> LangModel {
         let elem = LangModelProviderElem::API {
             schema: LangModelAPISchema::ChatCompletion,

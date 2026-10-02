@@ -1,5 +1,5 @@
-//! A run that calls the `shell` tool through a real console — the local server cortex carries,
-//! so there is nothing to build or install first.
+//! A run that calls the `shell` tool through a real console — a virtx-uvm VM on the app's
+//! default image, fetched and pulled on a host's first run.
 //!
 //! The second test also needs FUSE-T installed, and is `#[ignore]`d for it:
 //! `cargo test -p ailoy-desktop-core --test live_run -- --ignored`
@@ -26,8 +26,8 @@ use ailoy_desktop_core::{Engine, EngineConfig, MountConfig, MountRequest, RunEve
 use axum::{Router, body::Body, response::Response, routing::post};
 
 /// The first turn: one `shell` tool call reading `path`, no text. `cmd` is the parameter
-/// name in ailoy's `shell` tool descriptor. The path is absolute: the session starts in its
-/// scratch tree, so a relative one would read the throwaway directory instead.
+/// name in ailoy's `shell` tool descriptor. The path is absolute: the shell starts on the VM's
+/// own disk, so a relative one would read the throwaway scratch instead.
 fn tool_call(path: &str) -> String {
     format!(
         "data: {{\"choices\":[{{\"delta\":{{\"role\":\"assistant\",\"tool_calls\":[{{\"index\":0,\"id\":\"c1\",\"type\":\"function\",\"function\":{{\"name\":\"shell\",\"arguments\":\"{{\\\"cmd\\\":\\\"cat {path}\\\"}}\"}}}}]}}}}]}}\n\n\
@@ -140,18 +140,21 @@ async fn run_to_done(engine: &Engine, session_id: &str, query: &str) {
     assert!(tool_started, "the run never announced the shell call");
 }
 
-/// The `stdout` the console reported for the run's one tool call.
-async fn tool_stdout(engine: &Engine, session_id: &str) -> String {
+/// The `stdout` the console reported for the run's one tool call, and the whole result to
+/// show when it is not what was expected.
+async fn tool_stdout(engine: &Engine, session_id: &str) -> (String, String) {
     let msgs = engine.message_list(session_id).await.unwrap();
     let tool = msgs
         .iter()
         .find(|m| m.message.role == Role::Tool)
         .expect("a tool result was persisted");
     let v = tool.message.contents[0].as_value().expect("a value part");
-    v.pointer("/stdout")
+    let stdout = v
+        .pointer("/stdout")
         .and_then(|s| s.as_str())
         .unwrap_or_default()
-        .to_string()
+        .to_string();
+    (stdout, format!("{v:?}"))
 }
 
 /// The unmounted path: the workspace is `files/` on the host, handed to the console as its
@@ -160,9 +163,14 @@ async fn tool_stdout(engine: &Engine, session_id: &str) -> String {
 async fn a_run_reads_a_workspace_file_through_the_shell_tool() {
     let _serial = SERIAL.lock().await;
     let dir = tempfile::tempdir().unwrap();
-    // By its own path, not a relative one: the session starts in its scratch directory, so
-    // `cat hello.txt` would read the throwaway tree and find nothing.
-    let hello = dir.path().join("files").join("hello.txt");
+    // By its own path, not a relative one: the shell starts on the VM's own disk, so
+    // `cat hello.txt` would read the throwaway scratch and find nothing. And canonical, as
+    // `workspace_set_root` stores it: the console mounts the root at that spelling, and the
+    // VM has no `/var` → `/private/var` link to resolve another one.
+    std::fs::create_dir_all(dir.path().join("files")).unwrap();
+    let hello = std::fs::canonicalize(dir.path().join("files"))
+        .unwrap()
+        .join("hello.txt");
     point_default_at(scripted_model(&hello.display().to_string()).await);
 
     let mut cfg = EngineConfig::new(dir.path());
@@ -202,10 +210,10 @@ async fn a_run_reads_a_workspace_file_through_the_shell_tool() {
         "what does hello.txt say?"
     );
 
-    let stdout = tool_stdout(&engine, &s.id).await;
+    let (stdout, result) = tool_stdout(&engine, &s.id).await;
     assert!(
         stdout.contains("hi from the workspace"),
-        "the console did not read the workspace file: {stdout:?}"
+        "the console did not read the workspace file: {result}"
     );
     assert_eq!(
         engine
@@ -247,8 +255,8 @@ async fn a_mounted_run_reads_a_connector_through_the_kernel() {
     std::fs::write(host.path().join("f.txt"), b"hi from docs").unwrap();
 
     let dir = tempfile::tempdir().unwrap().keep();
-    // Through the mount point, by absolute path: the session stands in its scratch, and the
-    // connector exists for a separate process only because the kernel answers for it here.
+    // Through the mount point, by absolute path: the shell starts on the VM's own disk, and
+    // the connector exists outside this process only because the kernel answers for it here.
     let through_the_mount = dir.join("workspace").join("docs").join("f.txt");
     point_default_at(scripted_model(&through_the_mount.display().to_string()).await);
 
@@ -279,15 +287,15 @@ async fn a_mounted_run_reads_a_connector_through_the_kernel() {
     let s = engine.session_create(Some("fake/m".into())).await.unwrap();
     run_to_done(&engine, &s.id, "what does docs/f.txt say?").await;
 
-    let stdout = tool_stdout(&engine, &s.id).await;
+    let (stdout, result) = tool_stdout(&engine, &s.id).await;
     assert!(
         stdout.contains("hi from docs"),
-        "the console did not read the connector through the mount: {stdout:?}"
+        "the console did not read the connector through the mount: {result}"
     );
 
     // The mount comes down with the engine. `FuseTMount::drop` alone is not enough — the
-    // console that just ran had its cwd inside the mount and takes a moment to die, so the
-    // kernel answers the first `umount` with `EBUSY`; `WorkspaceManager::shutdown` is what
+    // console server that just ran shared paths inside the mount and takes a moment to die,
+    // so the kernel can answer the first `umount` with `EBUSY`; `WorkspaceManager::shutdown` is what
     // checks and escalates. Asserted here because a leaked FUSE mount outlives the process.
     engine.shutdown().await;
     let mountpoint = engine.config().mountpoint();

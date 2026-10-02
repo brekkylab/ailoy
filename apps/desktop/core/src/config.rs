@@ -58,29 +58,12 @@ impl EngineConfig {
         self.data_dir.join("cache")
     }
 
-    /// What cortex writes for itself: the console server it carries, under `bin/`, written out
-    /// the first time a run needs it. The app's own rather than `~/.cortex`, so that deleting
-    /// the data directory is still all it takes to get back to a first run.
-    pub fn cortex_home(&self) -> PathBuf {
-        self.data_dir.join("cortex")
-    }
-
     /// Where the agent's own output is kept.
     ///
-    /// Its own directory beside `files/` rather than a folder inside it: cortex refuses a
-    /// write anywhere under the tree it was given as context, so the place the agent writes
-    /// has to be a tree of its own. The workspace shows it to the user all the same — the
+    /// Its own directory beside `files/` rather than a folder inside it: the console mounts
+    /// the workspace read-only, so the place the agent writes has to be a tree of its own. The workspace shows it to the user all the same — the
     /// manager grafts it in at `/artifacts`.
     pub fn artifacts_root(&self) -> PathBuf {
         self.data_dir.join("artifacts")
-    }
-
-    /// Where each run's throwaway directory is made.
-    ///
-    /// Cortex starts a session in its scratch tree, so everything a command writes to a
-    /// relative path lands here rather than in the user's workspace. One directory per run,
-    /// removed when the run ends; this is only the root they are made under.
-    pub fn scratch_root(&self) -> PathBuf {
-        self.data_dir.join("scratch")
     }
 }

@@ -569,3 +569,4 @@ test_*
 # registries are mounted over, and what lands under it is API responses.
 examples/company_analysis/workspace/
 examples/company_analysis/live/
+

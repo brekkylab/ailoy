@@ -1,13 +1,13 @@
 [workspace]
 members = [
     "./",
+    "bindings/node",
+    "bindings/python",
     "apps/desktop/core",
 ]
-# A bare `cargo build`/`cargo check`/`cargo test` at the root builds the root crate only.
-# `ailoy-desktop-core` enables cortex's `fuse-t` feature, whose build script panics on a
-# machine without FUSE-T installed — so leaving the engine in the default set would stop
-# every contributor who only works on `ailoy` itself. The engine is built explicitly, with
-# `-p ailoy-desktop-core`.
+# A bare `cargo build`/`cargo check`/`cargo test` at the root builds the root crate only:
+# the engine brings virtx's S3 and Notion stores, which a contributor working on `ailoy`
+# itself has no use for. It is built explicitly, with `-p ailoy-desktop-core`.
 default-members = ["./"]
 exclude = [
     ".worktrees",
@@ -23,12 +23,34 @@ rust-version = "1.95.0"
 license = "Apache-2.0"
 repository = "https://github.com/brekkylab/ailoy"
 
+[workspace.dependencies]
+virtx = { version = "0.1.1", default-features = false }
+virtx-node = { git = "https://github.com/brekkylab/virtx", tag = "v0.1.1", default-features = false }
+virtx-python = { git = "https://github.com/brekkylab/virtx", tag = "v0.1.1", default-features = false }
+
+[patch."https://github.com/brekkylab/virtx"]
+virtx = { version = "0.1.1" }
+
 [package]
 name = "ailoy"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Agents that drive a language model through tool-augmented turns, in a virtx console."
+readme = "README.md"
+keywords = ["agent", "llm", "ai", "tool-use", "sandbox"]
+categories = ["development-tools"]
+# What a dependent builds: the library. The bindings are packages of their own, and the
+# examples need files and keys beside them that a dependent has no use for. Only `.rs`
+# under `src/`: `include` overrides `.gitignore`, so `/src/**` would pack a stray
+# `.DS_Store` too.
+include = [
+    "/src/**/*.rs",
+    "/README.md",
+    "/LICENSE.md",
+]
 
 [lib]
 crate-type = ["rlib"]
@@ -43,16 +65,7 @@ anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"
 base64 = "0.23"
-# The console library `runenv_v2` is built on. Still developed alongside this
-# crate in a sibling checkout, so it is a path dependency until it is published
-# — moving it to a version or git pin is what makes this crate buildable
-# elsewhere.
-#
-# Without cortex's defaults: its one default, `local`, carries a console server
-# inside whatever links it, and this crate never starts a console — its caller
-# hands one in, and picks the backend. The tests do start one, so `local` comes
-# back under `[dev-dependencies]`.
-cortex = { path = "../cortex/cortex", default-features = false }
+virtx = { workspace = true, features = ["mount", "ensure"] }
 dedent = "0.1.1"
 derive_builder = "0.20.2"
 fancy-regex = "0.18"
@@ -68,9 +81,8 @@ ordered-float = { version = "5.0.0", features = ["serde"] }
 parking_lot = "0.12.4"
 png = "0.18"
 reqwest = { version = "0.13", features = ["form", "json", "stream"] }
-# MCP client. `default-features = false` drops the server/macros defaults we do
-# not use; the feature list is exactly the client plus the two transports the
-# `ToolProvider` exposes (stdio child process, streamable HTTP).
+# MCP client only: no server/macros defaults, and just the two transports
+# `MCPToolProviderElem` names (stdio child process, streamable HTTP).
 rmcp = { version = "3", default-features = false, features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 scraper = "0.27"
 jsonschema = { version = "0.49", default-features = false }
@@ -93,36 +105,52 @@ unicode-segmentation = "1.12.0"
 url = { version = "2.5", features = ["serde"] }
 urlencoding = "2.1"
 uuid = { version = "1.18.0", features = ["v4"] }
-# Document text extraction for the `docread` tool. `default-features = false`
-# drops the tokio/simd defaults we re-request by name; the feature list is the
-# set of format backends, all pure Rust — no ONNX, no OCR models, nothing
-# downloaded at runtime. Adding a format here is the only change a new
-# extension needs. Keep `ocr` out: it pulls tesseract and a model cache.
-xberg = { version = "1.1", default-features = false, features = ["pdf", "office", "excel", "hwp", "hwpx", "html", "tokio-runtime"] }
-# wreq 6 trimmed its default feature set down to webpki-roots and tokio-rt, so
-# everything else this crate relies on has to be requested by name. charset and
-# system-proxy were in wreq 5's defaults; the decompression features and stream
-# were already explicit; emulation-compression restores the content-encoding
-# profile that wreq-util 2.x applied on its own. Re-check this list whenever the
-# pin moves, since a feature leaving default is a silent behavior change.
+# wreq 6 defaults to only webpki-roots and tokio-rt, so every other feature this
+# crate relies on is named here; wreq-util's emulation-compression supplies the
+# content-encoding profile. Re-check this list whenever the pin moves, since a
+# feature leaving default is a silent behavior change.
 wreq = { version = "=6.0.0-rc.29", features = ["brotli", "charset", "deflate", "gzip", "stream", "system-proxy", "zstd"] }
 wreq-util = { version = "=3.0.0-rc.14", features = ["emulation-compression"] }
 
 [dev-dependencies]
 axum = "0.8"
-# The console the tests start (`crate::test_console`): `Backend::local`, the
-# server cortex builds and carries, so a test needs no program installed.
-cortex = { path = "../cortex/cortex", features = ["local"] }
 dotenvy = "0.15"
-# The MCP *server* half, used only to stand up an in-process server for the
-# `mcp` tests. Feature unification means the lib picks these up under
-# `cargo test` too, which is why they are not in the main dependency.
-# `default-features = false` is required, not tidiness: rmcp 3.3.0's default
-# feature set pulls `rmcp-macros = "3.3.0"`, which is not published.
+# MCP *server* half, only for the in-process server in the `mcp` tests (feature
+# unification also enables it for the lib under `cargo test`).
+# `default-features = false` is required: rmcp 3.3.0's defaults pull
+# `rmcp-macros = "3.3.0"`, which is not published.
 rmcp = { version = "3", default-features = false, features = ["server"] }
 test-with = { version = "0.17", default-features = false, features = ["executable"] }
 tokio = { version = "1.0", features = ["net"] }
-# Builds the OOXML/EPUB fixtures `docread`'s tests extract from, so they stay
-# readable XML in the test file instead of checked-in binaries.
-zip = { version = "8", default-features = false, features = ["deflate"] }
 
+[[example]]
+name = "hello"
+path = "examples/hello/rust/main.rs"
+
+[[example]]
+name = "cad"
+path = "examples/cad/rust/main.rs"
+
+[[example]]
+name = "laya"
+path = "examples/laya/rust/main.rs"
+
+[[example]]
+name = "offshore_leaks"
+path = "examples/offshore_leaks/rust/main.rs"
+
+[[example]]
+name = "retail_bench"
+path = "examples/retail_bench/rust/main.rs"
+
+[[example]]
+name = "gameplay"
+path = "examples/gameplay/rust/main.rs"
+
+[[example]]
+name = "sam3"
+path = "examples/sam3/rust/main.rs"
+
+[[example]]
+name = "tts"
+path = "examples/tts/rust/main.rs"

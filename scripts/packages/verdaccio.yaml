@@ -1,0 +1,17 @@
+# A registry on localhost that holds only what this workflow packed, so `npm install
+# @brekkylab/ailoy` resolves its optional platform packages the way npmjs would.
+storage: ./verdaccio-storage
+# A platform package is one addon, some 12 MB packed -- over verdaccio's default of 10mb.
+max_body_size: 200mb
+auth:
+  htpasswd:
+    file: ./verdaccio-htpasswd
+    max_users: 10
+uplinks: {}
+packages:
+  '@brekkylab/*':
+    access: $all
+    publish: $authenticated
+  '**':
+    access: $all
+log: { type: stdout, format: pretty, level: warn }

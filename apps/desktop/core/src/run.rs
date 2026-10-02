@@ -17,10 +17,14 @@ use ailoy::{
     agent::{AgentBuilder, AgentError, RunControl},
     message::{Message, Part, RateLimitInfo, Role, TokenUsage},
 };
-use cortex::console::{Console, LocalBackend};
+use anyhow::Context as _;
 use futures::{FutureExt as _, StreamExt as _};
 use tokio::sync::{Mutex, broadcast};
 use tokio_util::sync::CancellationToken;
+use virtx::{
+    console::ConsoleClient,
+    image::{ImageSource, Recipe},
+};
 
 use crate::{
     assembler::{AssembledItem, MessageAssembler},
@@ -38,14 +42,29 @@ use crate::{
 #[derive(Clone)]
 pub struct RunDeps {
     pub store: Arc<Store>,
-    /// The console server each run starts its own console on; `None` runs without one, and
-    /// only the tools that need a shell fail, saying so.
-    pub console: Option<LocalBackend>,
+    /// What each run boots its own console on; `None` runs without one, and only the tools
+    /// that need a shell fail, saying so.
+    pub console: Option<ConsoleSetup>,
     pub workspace: Arc<WorkspaceManager>,
     pub catalog: Arc<Catalog>,
-    /// Where each run's scratch directory is made. Cortex starts the session in it, so a
-    /// relative path a command writes lands there rather than among the user's files.
-    pub scratch_root: PathBuf,
+}
+
+/// How a run's console is made: a virtx-uvm micro-VM, booted on `image`.
+///
+/// A VM backend boots on an image or refuses, so the image is part of the setup rather than
+/// left to the server.
+#[derive(Clone, Debug)]
+pub struct ConsoleSetup {
+    pub image: ImageSource,
+}
+
+impl Default for ConsoleSetup {
+    /// Debian with Python, the base virtx's and ailoy's own examples run on.
+    fn default() -> Self {
+        Self {
+            image: Recipe::new("python:3.12-slim-trixie").into(),
+        }
+    }
 }
 
 /// A subscription to one run: its id, and the events it will emit from now on.
@@ -427,29 +446,15 @@ async fn drive(
         extra: extra.as_deref(),
     });
 
-    // No backend means no console: the pure tools still work, and a tool that needs a shell
+    // No setup means no console: the pure tools still work, and a tool that needs a shell
     // answers "needs a console" instead of the run failing outright.
-    //
-    // The scratch directory is this run's alone and goes away with it: kept as a `TempDir`
-    // for the length of this function so it is removed however the run ends — done,
-    // cancelled, failed or panicking — rather than on a path only the happy ending reaches.
-    let (console, _scratch) = match &deps.console {
-        None => (None, None),
-        Some(backend) => {
-            std::fs::create_dir_all(&deps.scratch_root)
-                .map_err(|e| fail("console_unavailable", e.to_string()))?;
-            let scratch = tempfile::TempDir::new_in(&deps.scratch_root)
-                .map_err(|e| fail("console_unavailable", e.to_string()))?;
-            let console = open_console(
-                backend.clone(),
-                context,
-                artifacts,
-                scratch.path().to_path_buf(),
-            )
-            .await
-            .map_err(|e| fail("console_unavailable", format!("{e:#}")))?;
-            (Some(console), Some(scratch))
-        }
+    let console = match &deps.console {
+        None => None,
+        Some(setup) => Some(
+            open_console(setup, context, artifacts)
+                .await
+                .map_err(|e| fail("console_unavailable", format!("{e:#}")))?,
+        ),
     };
 
     let mut builder = AgentBuilder::new(model)
@@ -466,6 +471,7 @@ async fn drive(
     // context ("unknown model") — `{:#}` is `with_causes` for a type that isn't `Error`.
     let mut agent = builder
         .build()
+        .await
         .map_err(|e| fail("model", format!("{e:#}")))?;
 
     let ctl = RunControl {
@@ -709,30 +715,34 @@ fn persist(
     }
 }
 
-/// One console over the three trees a run works with.
+/// One console over the two trees a run works with, each at its host path.
 ///
-/// * `context` — the user's own files and their connectors. Cortex refuses a write that
-///   lands here, which is the point: this tree is managed outside the agent's life and an
-///   agent reads it.
+/// * `context` — the user's own files and their connectors, mounted read-only: this tree is
+///   managed outside the agent's life and an agent reads it.
 /// * `artifacts` — what this agent produces. Part of the workspace the user sees, and the
 ///   one tree here the agent may write.
-/// * `scratch` — the run's `/tmp`. The session *starts* here, so a relative path a command
-///   writes lands in something thrown away rather than among the user's files.
 ///
-/// Its own function only so that `tests::the_three_trees_have_the_access_each_is_meant_to`
-/// can hold this arrangement to account: swapping two of these still starts a console, and
-/// fails a whole run away, at the first write.
+/// Each is mounted at the path it has on the host, so the paths a model writes, the ones the
+/// window links back to the workspace, and the ones on disk are the same strings. What a
+/// command writes anywhere else lands on the VM's own disk and goes away with the console:
+/// that is the run's scratch.
+///
+/// Its own function only so that `tests::the_two_trees_have_the_access_each_is_meant_to`
+/// can hold this arrangement to account: swapping the two still starts a console, and fails
+/// a whole run away, at the first write.
 async fn open_console(
-    backend: LocalBackend,
+    setup: &ConsoleSetup,
     context: PathBuf,
     artifacts: PathBuf,
-    scratch: PathBuf,
-) -> anyhow::Result<Console> {
-    Console::builder()
-        .backend(backend)
-        .context(context)
-        .artifacts(artifacts)
-        .scratch(scratch)
+) -> anyhow::Result<ConsoleClient> {
+    // Present is enough: this fetches the server only on a host that has none.
+    virtx::ensure_virtx()
+        .await
+        .context("fetching the console server")?;
+    ConsoleClient::builder()
+        .image(setup.image.clone())
+        .mount_readonly(context.clone(), context)
+        .mount(artifacts.clone(), artifacts)
         .build()
         .await
 }
@@ -856,7 +866,6 @@ mod tests {
             console: None,
             workspace,
             catalog: Arc::new(Catalog::from_data(CatalogData::default())),
-            scratch_root: dir.join("scratch"),
         }
     }
 
@@ -1263,45 +1272,35 @@ mod tests {
         assert!(merge_usage(None, None).is_none());
     }
 
-    /// The three trees a run is given, and what each one is for.
+    /// The two trees a run is given, and what each one is for.
     ///
     /// This is the arrangement the whole desktop rests on, and every part of it fails quietly if
-    /// the roles are swapped: the user's workspace goes in as the *context*, which cortex refuses
-    /// to let the agent write; what the agent produces goes in its *artifacts*; and the session
-    /// stands in its *scratch*, so a relative path is a throwaway one. Getting context and
-    /// artifacts the wrong way round still starts a console — it fails at the first write, which
-    /// is a whole run away from here.
+    /// the roles are swapped: the user's workspace goes in read-only, what the agent produces
+    /// goes in writable, and everything else a command writes stays on the VM's own disk.
+    /// Getting the two the wrong way round still starts a console — it fails at the first
+    /// write, which is a whole run away from here.
+    ///
+    /// Boots a real virtx-uvm VM on the default image, so the first run on a host fetches the
+    /// server and pulls the image.
     #[tokio::test]
-    async fn the_three_trees_have_the_access_each_is_meant_to() {
+    async fn the_two_trees_have_the_access_each_is_meant_to() {
         let workspace = tempfile::tempdir().unwrap();
         let artifacts = tempfile::tempdir().unwrap();
-        let scratch = tempfile::tempdir().unwrap();
         std::fs::write(workspace.path().join("theirs.txt"), b"the user's").unwrap();
 
-        // A real console: the local server cortex carries, written out under a home of its own.
-        let home = tempfile::tempdir().unwrap();
         let mut console = open_console(
-            cortex::console::Backend::local().home(home.path()),
+            &ConsoleSetup::default(),
             workspace.path().to_path_buf(),
             artifacts.path().to_path_buf(),
-            scratch.path().to_path_buf(),
         )
         .await
         .unwrap();
+        const BOOT: Option<u64> = Some(300_000);
 
-        // Where it stands: a relative path is the scratch, not the user's files.
-        let out = console.exec(["pwd"], Some(5_000)).await.unwrap();
-        let cwd = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        assert_eq!(
-            std::fs::canonicalize(&cwd).unwrap(),
-            std::fs::canonicalize(scratch.path()).unwrap(),
-            "the session should start in its scratch"
-        );
-
-        // The workspace is readable.
+        // The workspace is readable, at the path it has on the host.
         let theirs = workspace.path().join("theirs.txt");
         let out = console
-            .exec(["cat", &theirs.display().to_string()], Some(5_000))
+            .exec(["cat", &theirs.display().to_string()], BOOT)
             .await
             .unwrap();
         assert_eq!(
@@ -1312,7 +1311,8 @@ mod tests {
         );
         assert_eq!(out.stdout, b"the user's".to_vec());
 
-        // And not writable: the user's tree is managed outside the agent's life.
+        // And not writable, by a write call or by a command: the user's tree is managed
+        // outside the agent's life.
         let refused = console
             .write(
                 workspace.path().join("mine.txt").display().to_string(),
@@ -1324,9 +1324,16 @@ mod tests {
             refused.is_err(),
             "a write into the context should be refused"
         );
+        let script = format!("echo no > '{}'", workspace.path().join("cmd.txt").display());
+        let out = console.exec(["sh", "-c", &script], BOOT).await.unwrap();
+        assert_ne!(
+            out.code, 0,
+            "a command's write into the context should fail"
+        );
         assert!(
-            !workspace.path().join("mine.txt").exists(),
-            "the refused write must not have landed"
+            !workspace.path().join("mine.txt").exists()
+                && !workspace.path().join("cmd.txt").exists(),
+            "a refused write must not have landed"
         );
 
         // The artifacts tree is where the agent's own files go, and it takes the write.
@@ -1340,5 +1347,19 @@ mod tests {
             .await
             .expect("the artifacts tree takes a write");
         assert_eq!(std::fs::read_to_string(&mine).unwrap(), "from the session");
+
+        // A relative path is the VM's own, not either tree.
+        let out = console
+            .exec(["sh", "-c", "echo scratch > relative.txt"], BOOT)
+            .await
+            .unwrap();
+        assert_eq!(
+            out.code,
+            0,
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(!workspace.path().join("relative.txt").exists());
+        assert!(!artifacts.path().join("relative.txt").exists());
     }
 }

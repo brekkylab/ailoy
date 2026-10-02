@@ -18,11 +18,13 @@
 
 use std::{io, path::Path, sync::Arc};
 
-use cortex::{
-    BoxFuture,
-    fs::{ContextFs, Dirent, FileSystem, Stat},
-};
 use tokio::sync::RwLock;
+use virtx::{
+    BoxFuture,
+    fs::{Dirent, FileSystem, Stat},
+};
+
+use crate::workspace::ContextFs;
 
 /// A cloneable handle onto the window's workspace.
 #[derive(Clone)]

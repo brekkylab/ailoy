@@ -111,7 +111,6 @@ impl Delta for MessageDelta {
             mut signature,
         } = self;
 
-        // Merge role
         if let Some(lhs) = &role
             && let Some(rhs) = &other.role
         {
@@ -126,12 +125,10 @@ impl Delta for MessageDelta {
             role = Some(rhs);
         };
 
-        // Merge ID
         if let Some(id_incoming) = other.id {
             id = Some(id_incoming);
         }
 
-        // Merge think
         if let Some(thinking_rhs) = other.thinking {
             if let Some(mut thinking_lhs) = thinking {
                 thinking_lhs.push_str(&thinking_rhs);
@@ -141,7 +138,6 @@ impl Delta for MessageDelta {
             }
         }
 
-        // Merge content
         for part_incoming in other.contents {
             if let Some(part_last) = contents.last() {
                 match (part_last, &part_incoming) {
@@ -157,26 +153,16 @@ impl Delta for MessageDelta {
             }
         }
 
-        // Merge tool calls.
+        // Assumes calls stream *sequentially*, with the `id` on each call's first
+        // fragment and `id = None` continuations merging into the last call. True for
+        // OpenAI, Anthropic, Gemini, Bedrock and the OpenAI-compatible backends
+        // (DeepSeek / Kimi / Grok).
         //
-        // Assumes the provider streams calls *sequentially* — all fragments of
-        // one call before the next — with the call `id` on each call's first
-        // fragment; continuation fragments have `id = None` and merge into the
-        // last call. Holds for OpenAI and Anthropic today, and in practice for
-        // the OpenAI-compatible backends (DeepSeek / Kimi / Grok).
-        //
-        // KNOWN LIMITATION: this relies on arrival order, but the documented
-        // contract for OpenAI-compatible streaming is to concatenate arguments
-        // by the `tool_calls[].index` field — which is currently ignored here.
-        // A backend is spec-permitted to interleave parallel calls by `index`
-        // (or to omit the id on a new call's first fragment). That doesn't just
-        // misroute fragments: every continuation lands on `last()`, so one call
-        // ends with empty arguments and another accumulates concatenated JSON
-        // fragments that are no longer valid JSON — which finish() rejects (an
-        // error now, previously a panic). Not reachable with current providers
-        // (OpenAI sends parallel calls sequentially). Full correctness needs
-        // carrying `index` through `PartDelta::Function` and matching on it here
-        // instead of comparing against `last()`.
+        // KNOWN LIMITATION: `tool_calls[].index`, the documented OpenAI-compatible merge
+        // key, is ignored. A backend interleaving parallel calls by `index` (or omitting
+        // a new call's id) would leave one call with empty arguments and another with
+        // invalid concatenated JSON, which finish() rejects. Fixing it needs `index`
+        // carried through `PartDelta::Function` and matched here instead of `last()`.
         for part_incoming in other.tool_calls {
             if let Some(part_last) = tool_calls.last() {
                 match (part_last, &part_incoming) {
@@ -215,12 +201,10 @@ impl Delta for MessageDelta {
             }
         }
 
-        // Merge signature
         if let Some(sig_incoming) = other.signature {
             signature = Some(sig_incoming);
         }
 
-        // Return
         Ok(Self {
             role,
             contents,
@@ -276,22 +260,8 @@ impl fmt::Display for MessageDelta {
     }
 }
 
-/// A container for a streamed message delta and its termination signal.
-///
-/// During streaming, `delta` carries the incremental payload; once a terminal
-/// condition is reached, `finish_reason` may be populated to explain why.
-///
-/// # Examples
-/// ```rust
-/// # use ailoy::message::{MessageDeltaOutput, MessageDelta, PartDelta, Role};
-/// let mut out = MessageDeltaOutput::new();
-/// out.delta = MessageDelta::new().with_role(Role::Assistant).with_contents([PartDelta::Text { text: "Hi".into() }]);
-/// assert!(out.finish_reason.is_none());
-/// ```
-///
-/// # Lifecycle
-/// - While streaming: `finish_reason` is typically `None`.
-/// - On completion: `finish_reason` is set; callers can then `finish()` the delta to obtain a concrete [`Message`].
+/// A streamed [`MessageDelta`] plus its termination signal; `finish_reason` is
+/// set on the delta that ends a message.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct MessageDeltaOutput {
     pub delta: MessageDelta,
@@ -364,14 +334,9 @@ impl From<MessageOutput> for MessageDeltaOutput {
     }
 }
 
-/// Adapts a stream of [`MessageDeltaOutput`]s (e.g. from `Agent::run_stream`)
-/// into a stream of completed [`MessageOutput`]s: deltas accumulate until one
-/// carries a `finish_reason` (the message boundary), then the accumulated
-/// message is finished and emitted. ailoy's producers close the contract that
-/// every message ends with a `finish_reason` delta, so this single signal is
-/// sufficient. This recovers the blocking `Agent::run` view from the streaming
-/// one, so consumers that only want completed messages don't hand-roll boundary
-/// detection.
+/// Adapts a [`MessageDeltaOutput`] stream (e.g. from `Agent::run_stream`) into completed
+/// [`MessageOutput`]s, the view `Agent::run` gives. A delta carrying a `finish_reason`
+/// ends each message; ailoy's producers guarantee every message has one.
 pub fn into_messages<S>(
     deltas: S,
 ) -> impl futures::Stream<Item = anyhow::Result<MessageOutput>> + Send
@@ -389,9 +354,7 @@ where
                 yield done.finish()?;
             }
         }
-        // Defensive: ailoy's producers close the contract (every message ends
-        // with a finish_reason), so this only fires for a non-conforming stream
-        // that ends mid-message — finalize the partial as Stop so it isn't lost.
+        // Only for a non-conforming stream ending mid-message: keep the partial as Stop.
         if acc.delta.role.is_some() {
             acc.finish_reason = Some(FinishReason::Stop {});
             yield acc.finish()?;
@@ -427,12 +390,9 @@ impl Delta for MessageDeltaOutput {
         let mut finish_reason = self
             .finish_reason
             .ok_or_else(|| anyhow::anyhow!("finish_reason not specified"))?;
-        // A turn that produced tool calls is a tool-call turn, even if the
-        // provider reported a plain Stop. Gemini can split the functionCall part
-        // and the terminal `finishReason: STOP` across separate SSE chunks (2.5
-        // Pro / 3.x): neither chunk alone carries both, so a per-chunk fix can't
-        // see it. Promote here on the fully accumulated message instead — a
-        // no-op for OpenAI/Anthropic, which already report ToolCall.
+        // Promote Stop to ToolCall when tool calls exist. Done on the accumulated
+        // message because Gemini (2.5 Pro / 3.x) can send the functionCall part and
+        // `finishReason: STOP` in separate SSE chunks.
         if matches!(finish_reason, FinishReason::Stop {})
             && message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty())
         {
@@ -459,12 +419,9 @@ impl fmt::Display for MessageDeltaOutput {
 /// Merges two streamed [`TokenUsage`] snapshots field-wise, taking the larger
 /// value per field.
 ///
-/// Providers spread usage across stream events — e.g. Anthropic reports
-/// `input_tokens` (and cache tokens) once in `message_start` and the final
-/// cumulative `output_tokens` in `message_delta`. A whole-value replace would
-/// drop whichever the latest event omits, so each counter is merged
-/// independently; `max` is correct because these counters are monotonic
-/// (constant input, cumulative output).
+/// Providers spread usage across events (e.g. Anthropic sends `input_tokens` in
+/// `message_start` and cumulative `output_tokens` in `message_delta`), so replacing the
+/// whole value would drop counters. `max` is correct because the counters are monotonic.
 fn merge_token_usage(a: Option<TokenUsage>, b: Option<TokenUsage>) -> Option<TokenUsage> {
     match (a, b) {
         (Some(a), Some(b)) => Some(TokenUsage {
@@ -546,10 +503,8 @@ mod tests {
         assert_eq!(messages[1].depth, Some(0));
     }
 
-    /// A role change with no intervening finish_reason violates the producer
-    /// contract (every message ends with a finish_reason). into_messages does
-    /// NOT silently split on it — accumulate surfaces the role mismatch as an
-    /// error. Locks the intent: don't reintroduce a silent role-based split.
+    /// A role change without an intervening finish_reason violates the producer contract
+    /// and must error rather than silently split.
     #[tokio::test]
     async fn test_into_messages_errors_on_role_change_without_finish() {
         let tool_delta = MessageDeltaOutput {

@@ -9,8 +9,8 @@ pub struct PromptInput<'a> {
     pub workfs_path: &'a Path,
     /// Where this run's output belongs, as the agent must spell it.
     ///
-    /// The host path, not the one inside the workspace: the workspace is the session's
-    /// context and cortex refuses a write anywhere under it. The same files show up in the
+    /// The host path, not the one inside the workspace: the console mounts the workspace
+    /// read-only, and this tree writable at the same path it has on the host. The same files show up in the
     /// workspace at `/artifacts`, which is where the user looks for them.
     pub artifacts_path: &'a Path,
     pub mounts: &'a [MountInfo],
@@ -28,8 +28,10 @@ pub struct PromptInput<'a> {
 pub fn build(input: &PromptInput) -> String {
     let mut s = String::new();
     s.push_str("You are Ailoy, a desktop assistant that works inside the user's workspace: a directory tree the user assembled from local folders and connected services. You read it, produce files of your own, run commands, and explain what you did in plain language.\n\n");
+    // The user's machine and the shell's are not the same one: commands run in a Linux VM,
+    // and a model told only "macos" reaches for `brew` and BSD flags.
     s.push_str(&format!(
-        "Today is {}. The host OS is {}.\n\n",
+        "Today is {}. The user's computer runs {}; your shell runs in a Linux virtual machine (Debian, with Python 3.12), so use Linux commands there.\n\n",
         input.today, input.os
     ));
     s.push_str(&format!(
@@ -44,11 +46,11 @@ pub fn build(input: &PromptInput) -> String {
             " you may write. The user sees the same files inside their workspace at `/{}`, so anything",
             " you leave there is delivered — name it by the path above when you write, and by the",
             " workspace path when you tell the user where it is.\n\n",
-            "Your shell starts in neither: it starts in a scratch directory that is thrown away when",
-            " this run ends. Use it for intermediates — downloads, unpacked archives, anything you",
-            " write only to read back — and put nothing there that the user is meant to keep. Because",
-            " that is where you stand, a relative path is always the scratch: name the workspace and",
-            " your output by the paths above.\n\n",
+            "Everywhere else in the virtual machine is scratch: it is thrown away when this run ends.",
+            " Use it for intermediates — downloads, unpacked archives, anything you write only to read",
+            " back — and put nothing there that the user is meant to keep. Your shell does not start",
+            " in the workspace or your output, so a relative path is always the scratch: name the",
+            " workspace and your output by the paths above.\n\n",
         ),
         input.workfs_path.display(),
         input.artifacts_path.display(),
@@ -103,7 +105,7 @@ pub fn build(input: &PromptInput) -> String {
     } else {
         s.push_str("\nA read-only mount rejects writes; do not retry them — tell the user.\n\n");
     }
-    s.push_str("# Tools\n\n`shell` runs `sh -c` in the workspace (output over 30k characters is middle-truncated, with the omission marked inline; a command past its timeout is killed and reported `timed_out`, and anything it had written is lost). ");
+    s.push_str("# Tools\n\n`shell` runs `sh -c` in the virtual machine (output over 30k characters is middle-truncated, with the omission marked inline; a command past its timeout is killed and reported `timed_out`, and anything it had written is lost). ");
     // Exactly the tools `AgentSpec::system_tools` attaches for this model family. Naming a
     // tool the model was not given is worse than naming none: it spends a turn calling
     // something that is not in its schema and gets an error back instead of an answer.

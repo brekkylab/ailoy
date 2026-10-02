@@ -1,0 +1,16 @@
+{
+  "name": "ailoy-example-retail-bench",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RetailBench run against an agent, one day a turn, on ailoy's Node bindings.",
+  "type": "module",
+  "scripts": {
+    "start": "node main.mjs"
+  },
+  "dependencies": {
+    "@brekkylab/ailoy": "file:../../../bindings/node"
+  },
+  "engines": {
+    "node": ">= 20.12"
+  }
+}

@@ -1,0 +1,3 @@
+# LF on every host: examples hand their scripts and data to a Linux guest, whose `sh` stops on a
+# CRLF line, and Git for Windows checks text out as CRLF by default (`core.autocrlf=true`).
+* text=auto eol=lf

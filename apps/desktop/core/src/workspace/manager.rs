@@ -1,11 +1,11 @@
 //! The workspace: one `ContextFs`, mounted for the life of the engine.
 //!
-//! Two kinds of tree live in it, and cortex keeps them apart on purpose. The user's own —
-//! what they put there and what their connectors expose — is a session's *context*, which an
-//! agent reads and may not write. What an agent produces goes in its *artifacts*, which is
-//! grafted in at [`ARTIFACTS_PATH`] so it is part of the workspace the user sees rather than
-//! somewhere else they have to go looking. (A session's third tree, its scratch, is not the
-//! workspace's business: it is made per run and thrown away with it — see `run`.)
+//! Two kinds of tree live in it, and a run's console keeps them apart on purpose. The user's
+//! own — what they put there and what their connectors expose — is a session's *context*,
+//! which an agent reads and may not write. What an agent produces goes in its *artifacts*,
+//! which is grafted in at [`ARTIFACTS_PATH`] so it is part of the workspace the user sees
+//! rather than somewhere else they have to go looking. (A session's scratch is not the
+//! workspace's business: it is the console VM's own disk, thrown away with it — see `run`.)
 
 use std::{
     path::{Path, PathBuf},
@@ -13,13 +13,13 @@ use std::{
     sync::{Arc, Mutex as StdMutex},
 };
 
-use cortex::fs::{ContextFs, FileSystem, FuseTMount, PassthroughFs};
 use tokio::sync::RwLock;
+use virtx::fs::{FileSystem, FuseTMount, PassthroughFs};
 
 use crate::{
     error::{EngineError, Result},
     types::{MountInfo, MountKind, MountStatus, WorkspaceInfo, WorkspaceStatus},
-    workspace::shared::SharedFs,
+    workspace::{ContextFs, shared::SharedFs},
 };
 
 /// Where the agent's output is grafted into the workspace, one segment under its root.
@@ -40,9 +40,9 @@ pub struct WorkspaceManager {
     /// Where the agent's own output goes, on the host.
     ///
     /// Handed to a console as its *artifacts* tree, and grafted into the workspace at
-    /// `/artifacts` so the user sees it among their own files. Cortex is given this path
-    /// rather than the one inside the mount: it refuses a write anywhere under the context,
-    /// and the whole point of this tree is that the agent may write in it.
+    /// `/artifacts` so the user sees it among their own files. The console is given this path
+    /// rather than the one inside the mount: it mounts the context read-only, and the whole
+    /// point of this tree is that the agent may write in it.
     artifacts_root: PathBuf,
     mountpoint: PathBuf,
     /// Held for the life of the engine; dropping it unmounts. Behind a std mutex because
@@ -219,7 +219,7 @@ impl WorkspaceManager {
 
     /// The tree a console is given to *read*: the user's files and every connector under
     /// them, through the kernel when the workspace is mounted and straight off the disk when
-    /// it is not. Cortex mounts this read-only — it is the user's, not the agent's.
+    /// it is not. The console mounts this read-only — it is the user's, not the agent's.
     ///
     /// Degraded is the lesser tree on purpose: without the mount the connectors exist only
     /// inside this process, so a separate console can reach the passthrough root and nothing
@@ -233,9 +233,9 @@ impl WorkspaceManager {
 
     /// The tree a console is given to *write*: where its output goes.
     ///
-    /// The host path, never the one inside the mount. Cortex refuses a write to anything
-    /// under the context, and `/artifacts` is visible there — so a console handed the mounted
-    /// spelling would be refused on the one tree it is supposed to fill. The two paths are
+    /// The host path, never the one inside the mount. The context is mounted read-only, and
+    /// `/artifacts` is visible there — so a console handed the mounted spelling would be
+    /// refused on the one tree it is supposed to fill. The two paths are
     /// the same directory; the user reaches it through the workspace, the agent through this.
     pub fn console_artifacts(&self) -> PathBuf {
         self.artifacts_root.clone()
@@ -308,9 +308,9 @@ impl WorkspaceManager {
         let Some(m) = taken else { return };
         let mountpoint = self.mountpoint.clone();
         // `FuseTMount::drop` asks the kernel to unmount and does not look at the answer, and
-        // the answer here is often `EBUSY`: a `cortex-local-console` spawned for the last run
-        // had its working directory *inside* this mount, and the process takes a moment to
-        // die after the run that owned it ended. A mount left behind outlives the app — it
+        // the answer here is often `EBUSY`: the console server of the last run shares paths
+        // *inside* this mount with its VM, and the process takes a moment to die after the
+        // run that owned it ended. A mount left behind outlives the app — it
         // still shows in Finder, and anything that walks the data directory (a backup, a
         // `remove_dir_all`) blocks in it uninterruptibly — so the drop is checked and
         // escalated rather than trusted.
@@ -440,7 +440,7 @@ pub fn force_unmount(path: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use cortex::fs::InMemFs;
+    use virtx::fs::InMemFs;
 
     use super::*;
     use crate::{

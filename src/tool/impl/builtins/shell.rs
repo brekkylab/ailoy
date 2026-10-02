@@ -1,12 +1,26 @@
-use cortex::console::Error;
+use virtx::protocol::Error;
 
 use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
-    util::truncate::middle_truncate,
 };
 
 const MAX_OUTPUT_CHARS: usize = 30_000; // same as Claude Code
+
+/// Truncate `s` to at most `max_chars` characters, keeping equal-sized head and
+/// tail and inserting an omission notice in the middle.
+fn middle_truncate(s: String, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars {
+        return s;
+    }
+    let head = max_chars / 2;
+    let tail = max_chars - head;
+    let omitted = chars.len() - head - tail;
+    let head_str: String = chars[..head].iter().collect();
+    let tail_str: String = chars[chars.len() - tail..].iter().collect();
+    format!("{head_str}\n\n... [{omitted} characters omitted] ...\n\n{tail_str}")
+}
 
 pub fn get_shell_tool_desc() -> ToolDesc {
     ToolDescBuilder::new("shell")
@@ -31,7 +45,7 @@ pub fn get_shell_tool_desc() -> ToolDesc {
 }
 
 pub fn get_shell_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &mut Console| -> Value {
+    tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value {
         let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
@@ -44,18 +58,18 @@ pub fn get_shell_tool_func() -> ToolFunc {
             }
         };
 
-        // 0 or absent means the default. The protocol's expiry is a kill with no output,
-        // so a bound has to exist: an agent that hangs a shell forever hangs the run.
-        const DEFAULT_TIMEOUT_SECS: u64 = 600;
-        let timeout_ms = args
+        // Fractional seconds allowed; 0 or absent means the default. The protocol's expiry
+        // is a kill with no output, so a bound has to exist: an agent that hangs a shell
+        // forever hangs the run.
+        const DEFAULT_TIMEOUT_SECS: f64 = 600.0;
+        let timeout_secs = args
             .pointer("/timeout_secs")
-            .and_then(|v| v.as_integer())
-            .filter(|s| *s > 0)
-            .map(|s| s as u64)
-            .unwrap_or(DEFAULT_TIMEOUT_SECS)
-            .saturating_mul(1000);
+            .and_then(|v| v.as_float().or_else(|| v.as_unsigned().map(|u| u as f64)))
+            .filter(|secs| *secs > 0.0)
+            .unwrap_or(DEFAULT_TIMEOUT_SECS);
+        let timeout_ms = (timeout_secs * 1000.0).ceil() as u64;
 
-        // cortex consults no shell, so asking for shell semantics means asking for a
+        // virtx consults no shell, so asking for shell semantics means asking for a
         // shell.
         let out = match console
             .exec(["sh", "-c", cmd.as_str()], Some(timeout_ms))
@@ -63,7 +77,7 @@ pub fn get_shell_tool_func() -> ToolFunc {
         {
             Ok(out) => out,
             // A killed command has no result — no exit code, and whatever it wrote is
-            // gone with it — so cortex refuses the execution instead of inventing one.
+            // gone with it — so virtx refuses the execution instead of inventing one.
             Err(e) if e.code() == Some(Error::TIMED_OUT) => {
                 return crate::to_value!({
                     "stdout": "",
@@ -89,9 +103,8 @@ pub fn get_shell_tool_func() -> ToolFunc {
             "stderr": middle_truncate(stderr, MAX_OUTPUT_CHARS).as_str(),
             "exit_code": out.code as i64,
             "timed_out": false,
-            // The console cut the output because it would not fit one message. Said
-            // out loud, because a model reading a partial result it believes is whole
-            // draws a conclusion from it.
+            // The console cut output that would not fit one message. Said out loud,
+            // since a model that takes a partial result as whole draws conclusions from it.
             "truncated": out.truncated
         })
     })

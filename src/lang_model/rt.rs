@@ -14,7 +14,7 @@ use crate::{
     tool::ToolDesc,
 };
 
-/// Runtime
+/// A model id bound to its resolved provider endpoint.
 pub struct LangModel {
     model: String,
     provider: LangModelProviderElem,
@@ -29,7 +29,7 @@ pub(super) struct LangModelRequest<'a> {
     pub tools: &'a [ToolDesc],
     pub provider: &'a LangModelProviderElem,
     pub options: &'a LangModelOptions,
-    /// When true, the marshal requests a streaming (SSE) response.
+    /// When true, the marshal requests a streamed response.
     pub stream: bool,
 }
 
@@ -43,27 +43,16 @@ impl LangModel {
         }
     }
 
-    /// Resolve `model` against the `"default"` entry of
-    /// [`get_lm_providers`](crate::lang_model::get_lm_providers).  Convenience
-    /// over [`try_from_provider`](Self::try_from_provider).
-    ///
-    /// Returns an error if the `"default"` provider is missing or has no
-    /// entry matching `model`.
+    /// [`try_from_provider`](Self::try_from_provider) on the `"default"` provider.
     pub fn try_new(model: String) -> anyhow::Result<Self> {
         Self::try_from_provider(model, "default")
     }
 
     /// Resolve `model` against the [`LangModelProvider`](super::LangModelProvider)
-    /// registered under `provider` in
-    /// [`get_lm_providers`](crate::lang_model::get_lm_providers).
+    /// registered under `provider` in [`get_lm_providers`] (exact, then glob).
     ///
-    /// `model` is the spec-side name (e.g. `"openai/gpt-4o"`) used to look up
-    /// the registered pattern; the stored API-side id has any `provider/`
-    /// prefix stripped (e.g. `"gpt-4o"`) so it matches what the upstream
-    /// endpoint expects.
-    ///
-    /// Returns an error if `provider` is not registered, or if no entry
-    /// inside it matches `model` (with the usual exact-then-glob lookup).
+    /// The API-side id drops the `provider/` prefix (`"openai/gpt-6-astra"` →
+    /// `"gpt-6-astra"`). Errors if `provider` is not registered or no entry matches.
     pub fn try_from_provider(model: String, provider: impl AsRef<str>) -> anyhow::Result<Self> {
         let provider_name = provider.as_ref();
         let registry = get_lm_providers();
@@ -142,18 +131,17 @@ impl LangModel {
         let response_value: Value =
             serde_json::from_str::<serde_json::Value>(&response_text)?.into();
 
-        // Decode the whole response into a single delta.
         let delta_output = provider.unmarshal_response(response_value)?;
 
-        // In non-streaming API, a single delta is the complete output, so finalize now.
+        // A non-streamed response is one complete delta.
         let mut out = delta_output.finish()?;
         out.rate_limit = rate_limit;
         Ok(out)
     }
 
-    /// Streaming counterpart to [`run`](Self::run): requests an SSE response and
-    /// yields one [`MessageDeltaOutput`] per incremental update. Callers
-    /// accumulate the deltas (via [`Delta::accumulate`]) to build the final
+    /// Streaming counterpart to [`run`](Self::run): yields one
+    /// [`MessageDeltaOutput`] per incremental update. Callers
+    /// accumulate the deltas (via [`Delta::accumulate`](crate::message::Delta::accumulate)) to build the final
     /// message. The stream ends when the response body ends (after the terminal
     /// SSE event), not at the first `finish_reason` — some providers send usage
     /// in a final chunk after it.
@@ -169,10 +157,9 @@ impl LangModel {
         tools: &[ToolDesc],
         options: &LangModelOptions,
     ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
-        // Marshal up front so the stream captures only the owned wire artifacts,
-        // not a copy of the history. The `'static` return is deliberate: it lets
-        // the caller mutate its own history (e.g. Agent::run_stream's rollback)
-        // while the stream is alive — don't turn this into a borrowing stream.
+        // Marshal up front so the stream owns only wire artifacts. It must stay
+        // `'static`: callers mutate their history (e.g. rolling back a failed
+        // turn) while the stream is alive.
         let req = LangModelRequest {
             model: &self.model,
             messages,
@@ -184,8 +171,7 @@ impl LangModel {
         let LangModelProviderElem::API { schema, .. } = &self.provider;
         let (url, header_map, body) = match marshal_request(schema, &req) {
             Ok(parts) => parts,
-            // Errors surface through the stream, not via `Result`: emit the
-            // marshal failure as a one-shot stream.
+            // A marshal failure surfaces as a one-shot error stream.
             Err(e) => {
                 return Box::pin(futures::stream::once(async move {
                     Err::<MessageDeltaOutput, anyhow::Error>(e)
@@ -219,15 +205,8 @@ impl LangModel {
                 std::time::SystemTime::now(),
             );
 
-            // Read the body chunk by chunk, framing complete events out of a
-            // buffer (network chunks don't align with event boundaries). We drain
-            // until the body ends rather than stopping at the first `finish_reason`
-            // — some providers (ChatCompletion with `stream_options.include_usage`)
-            // send the usage in a final chunk *after* the finish_reason one. The
-            // server ends the body right after the terminal event, so this exits
-            // promptly without waiting on the connection.
-            // Track enough to close the contract at EOF: the role seen so far
-            // and whether any event carried a finish_reason.
+            // Network chunks don't align with event boundaries, so events are
+            // framed out of a buffer; role/finish tracking closes the contract at EOF.
             let mut seen_role: Option<Role> = None;
             let mut saw_finish = false;
 
@@ -264,14 +243,11 @@ impl LangModel {
                 }
             }
 
-            // Close the contract: provider ended the stream with no finish_reason
-            // (clean EOF / quirk / truncation). Synthesize a terminal Stop delta
-            // so every message ends with one; no role seen → nothing to close.
-            // Must stay after the EOF-flush (which may set `saw_finish` from a
-            // real terminal event, e.g. Gemini's) or a genuine finish + closer
-            // both emit. A mid-stream error ends the generator before here, so a
-            // failed turn gets no fake Stop — required, not incidental.
-            // Not a let-chain: the `try_stream!` macro rejects them (Rust 2024).
+            // No finish_reason arrived: synthesize a terminal Stop (nothing to
+            // close if no role was seen). Must follow the EOF flush, which may
+            // carry the real finish, or both would emit. A mid-stream error ends
+            // the generator before here, so a failed turn never gets a fake Stop.
+            // Not a let-chain: `try_stream!` rejects them (Rust 2024).
             #[allow(clippy::collapsible_if)]
             if !saw_finish {
                 if let Some(role) = seen_role {
@@ -471,7 +447,7 @@ mod tests {
 
     /// Register a one-off [`LangModelProvider`] under a unique key in the
     /// global registry and build a [`LangModel`] from it via
-    /// [`LangModel::try_from_provider`].  Test fixtures only.
+    /// [`LangModel::try_from_provider`].
     fn build_test_model(
         provider_name: &str,
         model: &str,
@@ -559,7 +535,6 @@ mod tests {
             .await
             .unwrap();
 
-        // The model should respond with a tool call
         assert_eq!(resp.finish_reason, FinishReason::ToolCall {});
         let tool_calls = resp
             .message
@@ -901,8 +876,6 @@ mod tests {
             .map(|d| d.unwrap())
             .collect();
 
-        // The provider never sent a finish_reason; the last delta is the
-        // synthesized terminal closer: role set, Stop, no content.
         let last = deltas.last().expect("at least one delta");
         assert_eq!(last.finish_reason, Some(FinishReason::Stop {}));
         assert_eq!(last.delta.role, Some(Role::Assistant));
@@ -932,8 +905,6 @@ mod tests {
 
         let app = Router::new().route(
             "/",
-            // Two framed events, then a final finish event closed by EOF (no
-            // trailing blank line) so it surfaces via the EOF-flush path.
             post(|| async {
                 let sse = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"}}]}\n\n\
                            data: {\"choices\":[{\"delta\":{\"content\":\"!\"}}]}\n\n\
@@ -1033,10 +1004,9 @@ mod tests {
         assert!(deltas[1..].iter().all(|d| d.rate_limit.is_none()));
     }
 
-    /// A mid-stream error ends the stream WITHOUT a synthesized closer: `?`
-    /// propagates and the generator stops before the closer. Required, not
-    /// incidental — a fake Stop on a failed turn would make the agent commit it
-    /// to history instead of rolling it back.
+    /// A mid-stream error ends the stream WITHOUT a synthesized closer; a fake
+    /// Stop on a failed turn would make the agent commit it to history instead
+    /// of rolling it back.
     #[tokio::test]
     async fn test_run_stream_error_yields_no_closer() {
         use axum::{Router, body::Body, response::Response, routing::post};
