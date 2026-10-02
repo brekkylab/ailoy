@@ -15,4 +15,20 @@ hero:
 
 ---
 
-![Ailoy demo](./images/ailoy-sam3.gif)
+<div class="demo-grid">
+  <figure><img src="./images/ailoy-cad.gif" alt="CAD demo"></figure>
+  <figure><img src="./images/ailoy-sam3-video.gif" alt="SAM3 demo"></figure>
+  <figure><img src="./images/ailoy-openttd.gif" alt="Gameplay demo"></figure>
+  <figure><img src="./images/ailoy-laya.gif" alt="Laya demo"></figure>
+</div>
+
+<style>
+.demo-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+.demo-grid figure { margin: 0; }
+.demo-grid img { width: 100%; border-radius: 8px; }
+@media (max-width: 640px) { .demo-grid { grid-template-columns: 1fr; } }
+</style>
