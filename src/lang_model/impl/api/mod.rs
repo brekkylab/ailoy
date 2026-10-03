@@ -1,4 +1,4 @@
-mod anthropic;
+pub(crate) mod anthropic;
 pub(crate) mod bedrock;
 mod chat_completion;
 mod gemini;

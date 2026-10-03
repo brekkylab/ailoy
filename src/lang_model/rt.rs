@@ -138,37 +138,41 @@ impl LangModel {
                 }));
             }
         };
-        let mut provider = api::provider_api(schema);
-        let mut framing = Framing::for_schema(schema);
+        stream_response(
+            url,
+            header_map,
+            body,
+            api::provider_api(schema),
+            Framing::for_schema(schema),
+        )
+    }
+}
 
-        Box::pin(async_stream::try_stream! {
-            let client = reqwest::Client::new();
-            let response =
-                send_with_retry(&client, &url, header_map, &body, provider.as_ref()).await?;
+/// Sends a streaming request and yields its events as deltas, under
+/// [`LangModel::run_stream`]'s contract: the stream runs to the end of the body, and a
+/// message the provider leaves without a `finish_reason` gets a terminal `Stop`.
+pub(crate) fn stream_response(
+    url: String,
+    header_map: HeaderMap,
+    body: serde_json::Value,
+    mut provider: Box<dyn api::ProviderApi + Send + Sync>,
+    mut framing: Framing,
+) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
+    Box::pin(async_stream::try_stream! {
+        let client = reqwest::Client::new();
+        let response =
+            send_with_retry(&client, &url, header_map, &body, provider.as_ref()).await?;
 
-            // Network chunks don't align with event boundaries, so events are
-            // framed out of a buffer; role/finish tracking closes the contract at EOF.
-            let mut seen_role: Option<Role> = None;
-            let mut saw_finish = false;
+        // Network chunks don't align with event boundaries, so events are
+        // framed out of a buffer; role/finish tracking closes the contract at EOF.
+        let mut seen_role: Option<Role> = None;
+        let mut saw_finish = false;
 
-            let mut byte_stream = response.bytes_stream();
-            let mut buf: Vec<u8> = Vec::new();
-            while let Some(chunk) = byte_stream.next().await {
-                buf.extend_from_slice(&chunk?);
-                for data in framing.drain(&mut buf)? {
-                    if let Some(output) = provider.unmarshal_event(&data)? {
-                        if seen_role.is_none() {
-                            seen_role = output.delta.role.clone();
-                        }
-                        saw_finish |= output.finish_reason.is_some();
-                        yield output;
-                    }
-                }
-            }
-
-            // Whatever is left at EOF is the last event for framings that allow
-            // an unterminated final event (SSE without a trailing blank line).
-            for data in framing.flush(&buf)? {
+        let mut byte_stream = response.bytes_stream();
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = byte_stream.next().await {
+            buf.extend_from_slice(&chunk?);
+            for data in framing.drain(&mut buf)? {
                 if let Some(output) = provider.unmarshal_event(&data)? {
                     if seen_role.is_none() {
                         seen_role = output.delta.role.clone();
@@ -177,23 +181,35 @@ impl LangModel {
                     yield output;
                 }
             }
+        }
 
-            // No finish_reason arrived: synthesize a terminal Stop (nothing to
-            // close if no role was seen). Must follow the EOF flush, which may
-            // carry the real finish, or both would emit. A mid-stream error ends
-            // the generator before here, so a failed turn never gets a fake Stop.
-            // Not a let-chain: `try_stream!` rejects them (Rust 2024).
-            #[allow(clippy::collapsible_if)]
-            if !saw_finish {
-                if let Some(role) = seen_role {
-                    let mut closer = MessageDeltaOutput::new();
-                    closer.delta.role = Some(role);
-                    closer.finish_reason = Some(FinishReason::Stop {});
-                    yield closer;
+        // Whatever is left at EOF is the last event for framings that allow
+        // an unterminated final event (SSE without a trailing blank line).
+        for data in framing.flush(&buf)? {
+            if let Some(output) = provider.unmarshal_event(&data)? {
+                if seen_role.is_none() {
+                    seen_role = output.delta.role.clone();
                 }
+                saw_finish |= output.finish_reason.is_some();
+                yield output;
             }
-        })
-    }
+        }
+
+        // No finish_reason arrived: synthesize a terminal Stop (nothing to
+        // close if no role was seen). Must follow the EOF flush, which may
+        // carry the real finish, or both would emit. A mid-stream error ends
+        // the generator before here, so a failed turn never gets a fake Stop.
+        // Not a let-chain: `try_stream!` rejects them (Rust 2024).
+        #[allow(clippy::collapsible_if)]
+        if !saw_finish {
+            if let Some(role) = seen_role {
+                let mut closer = MessageDeltaOutput::new();
+                closer.delta.role = Some(role);
+                closer.finish_reason = Some(FinishReason::Stop {});
+                yield closer;
+            }
+        }
+    })
 }
 
 /// Marshals a [`LangModelRequest`] for `schema` into the wire `(url, headers,
@@ -257,7 +273,7 @@ fn marshal_request(
 /// successful (2xx) response **unconsumed** so the caller decides whether to
 /// read it whole (`run`) or stream it (`run_stream`). Bails on a non-2xx
 /// response or exhausted retries.
-async fn send_with_retry(
+pub(crate) async fn send_with_retry(
     client: &reqwest::Client,
     url: &str,
     headers: HeaderMap,

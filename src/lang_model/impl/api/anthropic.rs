@@ -187,7 +187,7 @@ fn marshal_message(item: &Message, include_thinking: bool) -> Value {
 
 /// Thinking is replayed only for assistant turns after the last user message, as
 /// extended thinking requires. System messages are left out; they go in the top-level `system`.
-fn marshal_messages(messages: &[Message]) -> Value {
+pub(crate) fn marshal_messages(messages: &[Message]) -> Value {
     let last_user_index = messages
         .iter()
         .rposition(|m| m.role == Role::User)
