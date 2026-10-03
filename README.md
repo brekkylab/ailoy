@@ -24,9 +24,16 @@
 
 Ailoy is a library for building any kind of AI agents right in your own code.
 
-<p align="center">
-  <img src="docs/images/ailoy-demos.gif" alt="Ailoy demo">
-</p>
+<table align="center">
+  <tr>
+    <td align="center"><img src="docs/images/ailoy-cad.gif" alt="CAD modeling"><br><sub>CAD modeling</sub></td>
+    <td align="center"><img src="docs/images/ailoy-sam3-video.gif" alt="Image editing"><br><sub>Image editing</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/ailoy-openttd.gif" alt="Gameplay"><br><sub>Gameplay</sub></td>
+    <td align="center"><img src="docs/images/ailoy-laya.gif" alt="Laya(JEV)"><br><sub>Laya(JEV)</sub></td>
+  </tr>
+</table>
 
 It works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width="16"/> Linux, <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/windows11/windows11-original.svg" width="16"/> Windows, and <img src="https://cdn.simpleicons.org/apple/000000/ffffff" width="16"/> macOS.
 
