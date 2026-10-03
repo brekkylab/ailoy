@@ -4,7 +4,9 @@ use crate::message::{Message, Part, Role};
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ContextManager {
-    /// Triggers truncation when input_tokens from the previous API call exceeds this value.
+    /// Triggers truncation when the previous API call's whole prompt exceeded this value
+    /// — `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`, not
+    /// `input_tokens` alone, which counts only the uncached remainder.
     pub max_input_tokens: u64,
     /// Number of recent user turns to preserve after truncation (system message is always preserved separately).
     pub preserve_recent_turns: usize,

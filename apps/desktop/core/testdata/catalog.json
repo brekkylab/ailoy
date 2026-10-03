@@ -1,0 +1,506 @@
+{
+  "format": 1,
+  "fetched_at": 1789776000000,
+  "providers": {
+    "anthropic": {
+      "name": "Anthropic",
+      "models": {
+        "claude-fable-5": {
+          "id": "claude-fable-5",
+          "name": "Claude Fable 5",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 128000,
+          "cost": {
+            "input": 10.0,
+            "output": 50.0,
+            "cache_read": 1.0,
+            "cache_write": 12.5
+          }
+        },
+        "claude-fable-5-1": {
+          "id": "claude-fable-5-1",
+          "name": "Claude Fable 5.1",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 128000,
+          "cost": {
+            "input": 10.0,
+            "output": 50.0,
+            "cache_read": 0.25,
+            "cache_write": 12.5
+          }
+        },
+        "claude-haiku-4-5": {
+          "id": "claude-haiku-4-5",
+          "name": "Claude Haiku 4.5 (latest)",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 200000,
+          "output": 64000,
+          "cost": {
+            "input": 1.0,
+            "output": 5.0,
+            "cache_read": 0.1,
+            "cache_write": 1.25
+          }
+        },
+        "claude-haiku-4-5-20251001": {
+          "id": "claude-haiku-4-5-20251001",
+          "name": "Claude Haiku 4.5",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 200000,
+          "output": 64000,
+          "cost": {
+            "input": 1.0,
+            "output": 5.0,
+            "cache_read": 0.1,
+            "cache_write": 1.25
+          }
+        },
+        "claude-opus-4-5": {
+          "id": "claude-opus-4-5",
+          "name": "Claude Opus 4.5 (latest)",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 200000,
+          "output": 64000,
+          "cost": {
+            "input": 5.0,
+            "output": 25.0,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          }
+        },
+        "claude-opus-4-5-20251101": {
+          "id": "claude-opus-4-5-20251101",
+          "name": "Claude Opus 4.5",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 200000,
+          "output": 64000,
+          "cost": {
+            "input": 5.0,
+            "output": 25.0,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          }
+        },
+        "claude-opus-4-6": {
+          "id": "claude-opus-4-6",
+          "name": "Claude Opus 4.6",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 128000,
+          "cost": {
+            "input": 5.0,
+            "output": 25.0,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          }
+        },
+        "claude-opus-4-7": {
+          "id": "claude-opus-4-7",
+          "name": "Claude Opus 4.7",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 128000,
+          "cost": {
+            "input": 5.0,
+            "output": 25.0,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          }
+        },
+        "claude-opus-4-8": {
+          "id": "claude-opus-4-8",
+          "name": "Claude Opus 4.8",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 128000,
+          "cost": {
+            "input": 5.0,
+            "output": 25.0,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          }
+        },
+        "claude-opus-5": {
+          "id": "claude-opus-5",
+          "name": "Claude Opus 5",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 128000,
+          "cost": {
+            "input": 5.0,
+            "output": 25.0,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          }
+        },
+        "claude-sonnet-4-5": {
+          "id": "claude-sonnet-4-5",
+          "name": "Claude Sonnet 4.5 (latest)",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 64000,
+          "cost": {
+            "input": 3.0,
+            "output": 15.0,
+            "cache_read": 0.3,
+            "cache_write": 3.75
+          }
+        },
+        "claude-sonnet-4-5-20250929": {
+          "id": "claude-sonnet-4-5-20250929",
+          "name": "Claude Sonnet 4.5",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 64000,
+          "cost": {
+            "input": 3.0,
+            "output": 15.0,
+            "cache_read": 0.3,
+            "cache_write": 3.75
+          }
+        },
+        "claude-sonnet-4-6": {
+          "id": "claude-sonnet-4-6",
+          "name": "Claude Sonnet 4.6",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 128000,
+          "cost": {
+            "input": 3.0,
+            "output": 15.0,
+            "cache_read": 0.3,
+            "cache_write": 3.75
+          }
+        },
+        "claude-sonnet-5": {
+          "id": "claude-sonnet-5",
+          "name": "Claude Sonnet 5",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 128000,
+          "cost": {
+            "input": 2.0,
+            "output": 10.0,
+            "cache_read": 0.2,
+            "cache_write": 2.5
+          }
+        }
+      }
+    },
+    "amazon-bedrock": {
+      "name": "Amazon Bedrock",
+      "models": {
+        "amazon.nova-pro-v1:0": {
+          "id": "amazon.nova-pro-v1:0",
+          "name": "Nova Pro",
+          "reasoning": false,
+          "tool_call": true,
+          "context": 300000,
+          "output": 10000,
+          "cost": {
+            "input": 0.8,
+            "output": 3.2,
+            "cache_read": 0.2,
+            "cache_write": 0.8
+          }
+        },
+        "anthropic.claude-opus-5": {
+          "id": "anthropic.claude-opus-5",
+          "name": "Claude Opus 5",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 128000,
+          "cost": {
+            "input": 5.0,
+            "output": 25.0,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          }
+        },
+        "anthropic.claude-sonnet-4-5-20250929-v1:0": {
+          "id": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+          "name": "Claude Sonnet 4.5",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 200000,
+          "output": 64000,
+          "cost": {
+            "input": 3.0,
+            "output": 15.0,
+            "cache_read": 0.3,
+            "cache_write": 3.75
+          }
+        },
+        "apac.amazon.nova-pro-v1:0": {
+          "id": "apac.amazon.nova-pro-v1:0",
+          "name": "Nova Pro (APAC)",
+          "reasoning": false,
+          "tool_call": true,
+          "context": 300000,
+          "output": 10000,
+          "cost": {
+            "input": 0.84,
+            "output": 3.36,
+            "cache_read": 0.21,
+            "cache_write": 0.84
+          }
+        },
+        "au.anthropic.claude-opus-5": {
+          "id": "au.anthropic.claude-opus-5",
+          "name": "Claude Opus 5 (AU)",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 128000,
+          "cost": {
+            "input": 5.0,
+            "output": 25.0,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          }
+        },
+        "au.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+          "id": "au.anthropic.claude-sonnet-4-5-20250929-v1:0",
+          "name": "Claude Sonnet 4.5 (AU)",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 200000,
+          "output": 64000,
+          "cost": {
+            "input": 3.0,
+            "output": 15.0,
+            "cache_read": 0.3,
+            "cache_write": 3.75
+          }
+        },
+        "deepseek.v3.2": {
+          "id": "deepseek.v3.2",
+          "name": "DeepSeek-V3.2",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 163840,
+          "output": 81920,
+          "cost": {
+            "input": 0.62,
+            "output": 1.85,
+            "cache_read": null,
+            "cache_write": null
+          }
+        },
+        "eu.amazon.nova-pro-v1:0": {
+          "id": "eu.amazon.nova-pro-v1:0",
+          "name": "Nova Pro (EU)",
+          "reasoning": false,
+          "tool_call": true,
+          "context": 300000,
+          "output": 10000,
+          "cost": {
+            "input": 0.92,
+            "output": 3.68,
+            "cache_read": 0.23,
+            "cache_write": 0.92
+          }
+        },
+        "eu.anthropic.claude-opus-5": {
+          "id": "eu.anthropic.claude-opus-5",
+          "name": "Claude Opus 5 (EU)",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 128000,
+          "cost": {
+            "input": 5.5,
+            "output": 27.5,
+            "cache_read": 0.55,
+            "cache_write": 6.875
+          }
+        },
+        "eu.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+          "id": "eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+          "name": "Claude Sonnet 4.5 (EU)",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 200000,
+          "output": 64000,
+          "cost": {
+            "input": 3.3,
+            "output": 16.5,
+            "cache_read": 0.33,
+            "cache_write": 4.125
+          }
+        },
+        "eu.mistral.pixtral-large-2502-v1:0": {
+          "id": "eu.mistral.pixtral-large-2502-v1:0",
+          "name": "Pixtral Large (25.02) (EU)",
+          "reasoning": false,
+          "tool_call": true,
+          "context": 128000,
+          "output": 8192,
+          "cost": {
+            "input": 2.0,
+            "output": 6.0,
+            "cache_read": null,
+            "cache_write": null
+          }
+        },
+        "global.anthropic.claude-opus-5": {
+          "id": "global.anthropic.claude-opus-5",
+          "name": "Claude Opus 5 (Global)",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 128000,
+          "cost": {
+            "input": 5.0,
+            "output": 25.0,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          }
+        },
+        "global.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+          "id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+          "name": "Claude Sonnet 4.5 (Global)",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 200000,
+          "output": 64000,
+          "cost": {
+            "input": 3.0,
+            "output": 15.0,
+            "cache_read": 0.3,
+            "cache_write": 3.75
+          }
+        },
+        "jp.anthropic.claude-opus-5": {
+          "id": "jp.anthropic.claude-opus-5",
+          "name": "Claude Opus 5 (JP)",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 128000,
+          "cost": {
+            "input": 5.0,
+            "output": 25.0,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          }
+        },
+        "jp.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+          "id": "jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
+          "name": "Claude Sonnet 4.5 (JP)",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 200000,
+          "output": 64000,
+          "cost": {
+            "input": 3.0,
+            "output": 15.0,
+            "cache_read": 0.3,
+            "cache_write": 3.75
+          }
+        },
+        "mistral.pixtral-large-2502-v1:0": {
+          "id": "mistral.pixtral-large-2502-v1:0",
+          "name": "Pixtral Large (25.02)",
+          "reasoning": false,
+          "tool_call": true,
+          "context": 128000,
+          "output": 8192,
+          "cost": {
+            "input": 2.0,
+            "output": 6.0,
+            "cache_read": null,
+            "cache_write": null
+          }
+        },
+        "us.amazon.nova-premier-v1:0": {
+          "id": "us.amazon.nova-premier-v1:0",
+          "name": "Nova Premier (US)",
+          "reasoning": false,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 10000,
+          "cost": {
+            "input": 2.5,
+            "output": 12.5,
+            "cache_read": 0.625,
+            "cache_write": 2.5
+          }
+        },
+        "us.amazon.nova-pro-v1:0": {
+          "id": "us.amazon.nova-pro-v1:0",
+          "name": "Nova Pro (US)",
+          "reasoning": false,
+          "tool_call": true,
+          "context": 300000,
+          "output": 10000,
+          "cost": {
+            "input": 0.8,
+            "output": 3.2,
+            "cache_read": 0.2,
+            "cache_write": 0.8
+          }
+        },
+        "us.anthropic.claude-opus-5": {
+          "id": "us.anthropic.claude-opus-5",
+          "name": "Claude Opus 5 (US)",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 1000000,
+          "output": 128000,
+          "cost": {
+            "input": 5.0,
+            "output": 25.0,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          }
+        },
+        "us.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+          "id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+          "name": "Claude Sonnet 4.5 (US)",
+          "reasoning": true,
+          "tool_call": true,
+          "context": 200000,
+          "output": 64000,
+          "cost": {
+            "input": 3.0,
+            "output": 15.0,
+            "cache_read": 0.3,
+            "cache_write": 3.75
+          }
+        },
+        "us.mistral.pixtral-large-2502-v1:0": {
+          "id": "us.mistral.pixtral-large-2502-v1:0",
+          "name": "Pixtral Large (25.02) (US)",
+          "reasoning": false,
+          "tool_call": true,
+          "context": 128000,
+          "output": 8192,
+          "cost": {
+            "input": 2.0,
+            "output": 6.0,
+            "cache_read": null,
+            "cache_write": null
+          }
+        }
+      }
+    }
+  }
+}

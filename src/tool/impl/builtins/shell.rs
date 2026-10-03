@@ -36,7 +36,7 @@ pub fn get_shell_tool_desc() -> ToolDesc {
                 },
                 "timeout_secs": {
                     "type": "integer",
-                    "description": "Timeout in seconds. 0 or omitted means no timeout."
+                    "description": "Timeout in seconds. 0 or omitted means the default (600)."
                 }
             },
             "required": ["cmd"]
@@ -58,16 +58,23 @@ pub fn get_shell_tool_func() -> ToolFunc {
             }
         };
 
-        // Fractional seconds allowed; 0 or absent defers to the console's own timeout.
-        let timeout_ms = args
+        // Fractional seconds allowed; 0 or absent means the default. The protocol's expiry
+        // is a kill with no output, so a bound has to exist: an agent that hangs a shell
+        // forever hangs the run.
+        const DEFAULT_TIMEOUT_SECS: f64 = 600.0;
+        let timeout_secs = args
             .pointer("/timeout_secs")
             .and_then(|v| v.as_float().or_else(|| v.as_unsigned().map(|u| u as f64)))
             .filter(|secs| *secs > 0.0)
-            .map(|secs| (secs * 1000.0).ceil() as u64);
+            .unwrap_or(DEFAULT_TIMEOUT_SECS);
+        let timeout_ms = (timeout_secs * 1000.0).ceil() as u64;
 
         // virtx consults no shell, so asking for shell semantics means asking for a
         // shell.
-        let out = match console.exec(["sh", "-c", cmd.as_str()], timeout_ms).await {
+        let out = match console
+            .exec(["sh", "-c", cmd.as_str()], Some(timeout_ms))
+            .await
+        {
             Ok(out) => out,
             // A killed command has no result — no exit code, and whatever it wrote is
             // gone with it — so virtx refuses the execution instead of inventing one.
@@ -159,31 +166,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_timeout_secs_bounds_the_command() {
-        let provider = provider().await;
-        let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
-        let f = funcs.get("shell").unwrap();
-        let mut console = test_console().await;
-        let msg = f
-            .call(
-                to_value!({ "cmd": "sleep 30", "timeout_secs": 1 }),
-                "",
-                &mut console,
-            )
-            .next()
-            .await
-            .unwrap()
-            .message;
-        let timed_out = msg.contents[0]
-            .as_value()
-            .unwrap()
-            .pointer("/timed_out")
-            .and_then(|v| v.as_bool())
-            .unwrap();
-        assert!(timed_out);
-    }
-
-    #[tokio::test]
     async fn test_exit_code_is_captured() {
         let provider = provider().await;
         let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
@@ -202,6 +184,32 @@ mod tests {
             .and_then(|v| v.as_integer())
             .unwrap();
         assert_eq!(exit_code, 42);
+    }
+
+    #[tokio::test]
+    async fn test_timeout_secs_kills_and_reports_timed_out() {
+        let provider = provider().await;
+        let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
+        let f = funcs.get("shell").unwrap();
+        let mut console = test_console().await;
+        let started = std::time::Instant::now();
+        let msg = f
+            .call(
+                to_value!({ "cmd": "sleep 10", "timeout_secs": 1 }),
+                "",
+                &mut console,
+            )
+            .next()
+            .await
+            .unwrap()
+            .message;
+        let v = msg.contents[0].as_value().unwrap();
+        assert_eq!(
+            v.pointer("/timed_out").and_then(|b| b.as_bool()),
+            Some(true),
+            "{v:?}"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[tokio::test]

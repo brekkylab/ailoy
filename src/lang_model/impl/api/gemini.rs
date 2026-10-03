@@ -381,29 +381,39 @@ impl GeminiUnmarshal {
     }
 
     /// Parses Gemini `usageMetadata` (`promptTokenCount` / `candidatesTokenCount`).
-    /// `promptTokenCount` includes any cached-content tokens (folded into `input_tokens`).
+    /// `promptTokenCount` is the *total* prompt size and already includes any
+    /// cached-content tokens reported by `cachedContentTokenCount`, whereas
+    /// [`TokenUsage::input_tokens`] is the uncached input only (cache fields are additive
+    /// components of the prompt). Normalize by subtracting the cached count. Gemini
+    /// reports no cache-write count, so `cache_creation_input_tokens` stays `None`.
     fn parse_usage(root: &Value) -> Option<TokenUsage> {
         let u = root
             .pointer("/usageMetadata")
             .filter(|u| !u.is_null())?
             .as_object()?;
+        let cache_read_input_tokens = u
+            .get("cachedContentTokenCount")
+            .and_then(|v| v.as_integer())
+            .map(|v| v as u64);
+        let prompt_tokens = u
+            .get("promptTokenCount")
+            .and_then(|v| v.as_integer())
+            .unwrap_or(0) as u64;
         Some(TokenUsage {
-            input_tokens: u
-                .get("promptTokenCount")
-                .and_then(|v| v.as_integer())
-                .unwrap_or(0) as u64,
+            input_tokens: prompt_tokens.saturating_sub(cache_read_input_tokens.unwrap_or(0)),
             output_tokens: u
                 .get("candidatesTokenCount")
                 .and_then(|v| v.as_integer())
                 .unwrap_or(0) as u64,
             cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
+            cache_read_input_tokens,
         })
     }
 }
 
 /// Parses one `?alt=sse` chunk, a partial `GenerateContentResponse`, into a delta; a
-/// chunk without a candidate yields none.
+/// chunk without a candidate yields none. Only the terminal chunk's `usageMetadata` is
+/// attached (see below).
 impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
     fn unmarshal_event(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let val: Value = serde_json::from_str(data)?;
@@ -429,7 +439,16 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
         // Gemini reports "STOP" even for tool calls and may send the functionCall
         // and STOP in separate chunks (2.5 Pro / 3.x), so STOP→ToolCall promotion
         // happens on the accumulated message in `MessageDeltaOutput::finish()`.
-        let usage = Self::parse_usage(&val);
+
+        // Only the terminal chunk's usage is kept. `usageMetadata` repeats on every chunk
+        // and fills in as the turn goes (an early one can have `promptTokenCount` without
+        // `cachedContentTokenCount`), and accumulation takes a field-wise max, which would
+        // count the cached prefix twice. A stream that ends without a `finishReason`
+        // therefore reports no usage for that turn.
+        let usage = finish_reason
+            .is_some()
+            .then(|| Self::parse_usage(&val))
+            .flatten();
 
         Ok(Some(MessageDeltaOutput {
             delta,
@@ -437,6 +456,7 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
             usage,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         }))
     }
 
@@ -474,6 +494,7 @@ impl Unmarshal<MessageDeltaOutput> for GeminiUnmarshal {
             usage,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         })
     }
 }
@@ -648,6 +669,29 @@ mod tests {
         assert_eq!(result.message.role, Role::Assistant);
         assert_eq!(result.message.contents.len(), 1);
         assert_eq!(result.message.contents[0].as_text(), Some("Hello world!"));
+    }
+
+    /// Gemini repeats `usageMetadata` on every chunk, and the cache count shows up later
+    /// than the prompt count. Normalization subtracts the cache count from the prompt, so
+    /// an intermediate reading (100 / no cache → input 100) and the terminal one
+    /// (100 / 80 → input 20, cache 80) disagree about `input_tokens`. Accumulation takes
+    /// a field-wise max, so keeping both would report a 180-token prompt for a 100-token
+    /// one. Only the terminal chunk's usage is attached, so the final reading stands
+    /// alone.
+    #[test]
+    fn intermediate_usage_chunks_do_not_inflate_the_prompt() {
+        let inputs = [
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"Hi"}]}}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":1}}"#,
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"!"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":2,"cachedContentTokenCount":80}}"#,
+        ];
+        let usage = accumulate_stream(&inputs)
+            .finish()
+            .unwrap()
+            .usage
+            .expect("the terminal chunk carries usage");
+        assert_eq!(usage.input_tokens, 20, "{usage:?}");
+        assert_eq!(usage.cache_read_input_tokens, Some(80), "{usage:?}");
+        assert_eq!(usage.output_tokens, 2, "{usage:?}");
     }
 
     #[test]
@@ -846,6 +890,22 @@ mod tests {
                 cache_read_input_tokens: None,
             })
         );
+    }
+
+    /// Cached prompt tokens are reported via `usageMetadata.cachedContentTokenCount`.
+    /// The wire `promptTokenCount` includes the cached tokens, so it is normalized down to
+    /// the uncached remainder (`TokenUsage` carries Anthropic semantics: input + cache reads
+    /// + cache writes = total prompt).
+    #[test]
+    fn test_unmarshal_usage_cached_content_tokens() {
+        let val = to_value!({
+            "candidates": [{"content":{"role":"model","parts":[{"text":"x"}]},"finishReason":"STOP"}],
+            "usageMetadata": {"promptTokenCount": 15, "candidatesTokenCount": 6, "cachedContentTokenCount": 10}
+        });
+        let usage = GeminiUnmarshal.unmarshal(val).unwrap().usage.unwrap();
+        assert_eq!(usage.input_tokens, 5);
+        assert_eq!(usage.cache_read_input_tokens, Some(10));
+        assert_eq!(usage.cache_creation_input_tokens, None);
     }
 
     /// Checks how each Part variant marshals into `functionResponse.response.result`.

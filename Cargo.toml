@@ -3,9 +3,17 @@ members = [
     "./",
     "bindings/node",
     "bindings/python",
+    "apps/desktop/core",
 ]
+# A bare `cargo build`/`cargo check`/`cargo test` at the root builds the root crate only:
+# the engine brings virtx's S3 and Notion stores, which a contributor working on `ailoy`
+# itself has no use for. It is built explicitly, with `-p ailoy-desktop-core`.
+default-members = ["./"]
 exclude = [
     ".worktrees",
+    # Tauri pulls the whole webview stack; it is its own workspace so a root `cargo test`
+    # does not pay for it. See apps/desktop/src-tauri/Cargo.toml.
+    "apps/desktop/src-tauri",
 ]
 
 [workspace.package]
@@ -64,6 +72,7 @@ fancy-regex = "0.18"
 futures = "0.3"
 hex = "0.4"
 html-to-markdown-rs = { version = "3.4", features = ["metadata"] }
+humantime = "2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 indexmap = { version = "2", features = ["serde"] }
 infer = "0.22"
@@ -91,6 +100,7 @@ tar = "0.4"
 strum_macros = "0.28"
 thiserror = "2.0.15"
 tokio = { version = "1.0", default-features = false, features = ["macros", "process", "rt-multi-thread", "sync", "time"] }
+tokio-util = "0.7"
 unicode-segmentation = "1.12.0"
 url = { version = "2.5", features = ["serde"] }
 urlencoding = "2.1"
