@@ -35,7 +35,7 @@ Ailoy is a library for building any kind of AI agents right in your own code.
   </tr>
 </table>
 
-It works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width="16"/> Linux, <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/windows11/windows11-original.svg" width="16"/> Windows, and <img src="https://cdn.simpleicons.org/apple/000000/ffffff" width="16"/> macOS.
+It supports <img src="https://cdn.simpleicons.org/python" width="16"/> Python, <img src="https://cdn.simpleicons.org/javascript" width="16"/> JavaScript, and <img src="https://cdn.simpleicons.org/rust/000000/ffffff" width="16"/> Rust APIs, and works on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width="16"/> Linux, <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/windows11/windows11-original.svg" width="16"/> Windows, and <img src="https://cdn.simpleicons.org/apple/000000/ffffff" width="16"/> macOS.
 
 > [!WARNING]
 > Ailoy is under active development, and its API may change between versions.
