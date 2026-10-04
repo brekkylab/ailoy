@@ -35,6 +35,8 @@ Choose a model, define its instructions, connect your tools, and give it an isol
 Inside that environment, the agent can write and execute code, use installed software, and install additional packages as needed.
 You define the environment and access; the agent works out the steps to complete the task.
 
+Here's what agents built with Ailoy can do, well beyond a simple chatbot:
+
 <table align="center">
   <tr>
     <td align="center"><img src="docs/images/ailoy-cad.gif" alt="CAD modeling"><br><sub>CAD modeling</sub></td>
