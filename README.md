@@ -4,7 +4,7 @@
   </picture>
 </p>
 
-<h3 align="center">An AI agent development tool for building your own AI agents.</h3>
+<h3 align="center">Build AI agents with their own tools, context, and computing environment.</h3>
 
 <p align="center">
   <img src="https://cdn.simpleicons.org/rust/000000/ffffff" width="16"/> <a href="https://crates.io/crates/ailoy"><img src="https://img.shields.io/crates/v/ailoy?label=ailoy&color=dea584" alt="crates.io"></a>
@@ -22,12 +22,15 @@
 
 <br>
 
-For general agentic tasks, apps like ChatGPT, Claude, or Gemini work well enough.
+For many everyday tasks, apps like ChatGPT, Claude, or Gemini are all you need.
 
-But when an agent has to understand a specific context, reach into internal resources, or work with specialized tools and equipment, someone has to build that agent and optimize it for its users.
-That's why AI agent developers exist.
+But some tasks require an agent built around your users’ needs: one that understands their context, accesses internal resources, and works with specialized software or equipment.
 
-Ailoy is built for them: **a library for building any kind of AI agent right in your own code**.
+Building that agent takes more than connecting an LLM to tools. You need to prepare the software it will use, control which resources it can access, and give it a place to run its code.
+
+**Ailoy brings the agent and its computing environment together in your code**. Choose a model, define its instructions, connect your tools, and give it an isolated Linux VM with the software and files it needs.
+
+Inside that environment, the agent can write and execute code, use installed software, and install additional packages as needed. You define the environment and access; the agent works out the steps to complete the task.
 
 <table align="center">
   <tr>
