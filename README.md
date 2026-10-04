@@ -24,9 +24,10 @@
 
 For general agentic tasks, apps like ChatGPT, Claude, or Gemini work well enough.
 
-But when an agent has to understand a specific context, reach into internal resources, or work with specialized tools and equipment, someone has to build that agent and optimize it for its users, and that's the job of AI agent developers.
+But when an agent has to understand a specific context, reach into internal resources, or work with specialized tools and equipment, someone has to build that agent and optimize it for its users.
+That's why AI agent developers exist.
 
-Ailoy is built for them: a library for building any kind of AI agent right in your own code.
+Ailoy is built for them: **a library for building any kind of AI agent right in your own code**.
 
 <table align="center">
   <tr>
