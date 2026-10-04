@@ -1,82 +1,28 @@
-use futures::{StreamExt as _, future::BoxFuture, stream::BoxStream};
-use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
+use futures::{future::BoxFuture, stream::BoxStream};
+use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
+use super::utils::{
+    EventParser, assistant_output, bearer, close_objects, last_user_index, rate_limit_only,
+    request_json, request_stream, secret_header, system_text, tokens, value_text,
+};
 use crate::{
     datatype::Value,
-    experimental::model::LangModelInference,
-    lang_model::{
-        r#impl::{
-            api::{AnthropicMarshal, AnthropicUnmarshal, anthropic::marshal_messages},
-            framing::Framing,
-            response_format::ResponseSchemaMarshal as _,
-        },
-        stream_response,
+    experimental::model::{Credential, LangModelInference, find_credential},
+    message::{
+        FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part, PartDelta,
+        PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
-    message::{Delta as _, Marshal as _, Message, MessageDeltaOutput, MessageOutput, Part, Role},
     tool::ToolDesc,
 };
 
 const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
 
-/// Sent when [`ClaudeOption::max_tokens`] is `None`. Every request streams, so a large cap
-/// does not risk an HTTP timeout.
+/// Sent when [`ClaudeOption::max_tokens`] is `None`. A non-streaming request that runs
+/// toward this cap can take long enough to hit an HTTP timeout; stream those, or set a
+/// lower cap.
 const DEFAULT_MAX_TOKENS: u64 = 64000;
-
-/// Credentials for the Claude API. Both bill the Console organization they belong to; a
-/// claude.ai subscription (Pro/Max) login is not one of them, as Anthropic does not allow
-/// third-party products to offer it without approval.
-#[derive(Clone)]
-pub enum ClaudeAuth {
-    /// A Console API key (`sk-ant-api...`), sent as `x-api-key`.
-    ApiKey(String),
-    /// An OAuth access token, e.g. from `ant auth print-credentials --access-token` after
-    /// `ant auth login`, sent as a bearer token with the OAuth beta header.
-    OAuthToken(String),
-}
-
-impl ClaudeAuth {
-    /// `ANTHROPIC_API_KEY`, then `ANTHROPIC_AUTH_TOKEN`: the order the official SDKs check them.
-    pub fn from_env() -> anyhow::Result<Self> {
-        let var = |name| std::env::var(name).ok().filter(|v: &String| !v.is_empty());
-        if let Some(key) = var("ANTHROPIC_API_KEY") {
-            Ok(Self::ApiKey(key))
-        } else if let Some(token) = var("ANTHROPIC_AUTH_TOKEN") {
-            Ok(Self::OAuthToken(token))
-        } else {
-            anyhow::bail!("neither ANTHROPIC_API_KEY nor ANTHROPIC_AUTH_TOKEN is set")
-        }
-    }
-
-    /// The headers every request carries: credentials and the API version.
-    pub(crate) fn headers(&self) -> anyhow::Result<HeaderMap> {
-        let mut headers = HeaderMap::new();
-        headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
-        let (name, credential) = match self {
-            Self::ApiKey(key) => ("x-api-key", key.clone()),
-            Self::OAuthToken(token) => {
-                headers.insert(
-                    "anthropic-beta",
-                    HeaderValue::from_static("oauth-2025-04-20"),
-                );
-                ("authorization", format!("Bearer {token}"))
-            }
-        };
-        let mut credential = HeaderValue::from_str(&credential)?;
-        credential.set_sensitive(true);
-        headers.insert(name, credential);
-        Ok(headers)
-    }
-}
-
-impl std::fmt::Debug for ClaudeAuth {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::ApiKey(_) => "ApiKey(..)",
-            Self::OAuthToken(_) => "OAuthToken(..)",
-        })
-    }
-}
 
 /// Request options for [`Claude`]. `None` leaves a field out of the request, so the API's
 /// default applies. What a model accepts differs by generation and is not checked here: a
@@ -185,17 +131,27 @@ pub enum ClaudeToolChoice {
 #[derive(Clone, Debug)]
 pub struct Claude {
     model: String,
-    auth: ClaudeAuth,
+    /// Name of the [`ModelProvider`](crate::experimental::model::ModelProvider) in the
+    /// registry whose `anthropic` credential each request uses.
+    provider: String,
     option: ClaudeOption,
 }
 
 impl Claude {
-    pub fn new(model: impl Into<String>, auth: ClaudeAuth) -> Self {
+    /// Uses the `"default"` provider; see [`with_provider`](Self::with_provider).
+    pub fn new(model: impl Into<String>) -> Self {
         Self {
             model: model.into(),
-            auth,
+            provider: "default".to_owned(),
             option: ClaudeOption::default(),
         }
+    }
+
+    /// Takes credentials from the provider registered under `provider`, looked up on
+    /// every request.
+    pub fn with_provider(mut self, provider: impl Into<String>) -> Self {
+        self.provider = provider.into();
+        self
     }
 
     pub fn with_option(mut self, option: ClaudeOption) -> Self {
@@ -207,6 +163,10 @@ impl Claude {
         &self.model
     }
 
+    pub fn provider(&self) -> &str {
+        &self.provider
+    }
+
     pub fn get_option(&self) -> &ClaudeOption {
         &self.option
     }
@@ -215,37 +175,29 @@ impl Claude {
         &mut self.option
     }
 
-    /// The streaming Messages API body. System messages are joined into the top-level
-    /// `system`; `effort` and `format` go under `output_config`.
+    /// The Messages API body. System messages are joined into the top-level `system`;
+    /// `effort` and `format` go under `output_config`.
     fn request_body(
         &self,
         messages: &[Message],
         tools: &[ToolDesc],
+        stream: bool,
     ) -> anyhow::Result<serde_json::Value> {
         let option = &self.option;
-        let mut body = serde_json::json!({
+        let mut body = json!({
             "model": self.model,
             "max_tokens": option.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
-            "messages": serde_json::Value::from(marshal_messages(messages)),
-            "stream": true,
+            "messages": wire_messages(messages),
+            "stream": stream,
         });
         let fields = body.as_object_mut().unwrap();
 
-        let system = messages
-            .iter()
-            .filter(|m| m.role == Role::System)
-            .flat_map(|m| &m.contents)
-            .filter_map(|p| match p {
-                Part::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
+        let system = system_text(messages);
         if !system.is_empty() {
             fields.insert("system".into(), system.into());
         }
         if !tools.is_empty() {
-            fields.insert("tools".into(), AnthropicMarshal.marshal(tools).into());
+            fields.insert("tools".into(), tools.iter().map(wire_tool).collect());
         }
         if let Some(thinking) = &option.thinking {
             fields.insert("thinking".into(), serde_json::to_value(thinking)?);
@@ -254,10 +206,7 @@ impl Claude {
             fields.insert("tool_choice".into(), serde_json::to_value(tool_choice)?);
         }
         if !option.stop_sequences.is_empty() {
-            fields.insert(
-                "stop_sequences".into(),
-                serde_json::to_value(&option.stop_sequences)?,
-            );
+            fields.insert("stop_sequences".into(), json!(option.stop_sequences));
         }
 
         let mut output_config = serde_json::Map::new();
@@ -266,10 +215,10 @@ impl Claude {
         }
         if let Some(ClaudeOutputFormat::JsonSchema { schema }) = &option.format {
             // Structured outputs need `additionalProperties: false` on every object.
-            let schema = serde_json::Value::from(AnthropicMarshal.marshal_response_schema(schema));
+            let schema = close_objects(&schema.clone().into());
             output_config.insert(
                 "format".into(),
-                serde_json::json!({"type": "json_schema", "schema": schema}),
+                json!({"type": "json_schema", "schema": schema}),
             );
         }
         if !output_config.is_empty() {
@@ -278,9 +227,28 @@ impl Claude {
         Ok(body)
     }
 
-    fn request_headers(&self) -> anyhow::Result<HeaderMap> {
-        let mut headers = self.auth.headers()?;
-        headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
+    /// Credentials, API version, and for a stream the event-stream `accept`. An API key
+    /// goes in `x-api-key`; an OAuth token as a bearer token with the OAuth beta header.
+    fn request_headers(&self, stream: bool) -> anyhow::Result<HeaderMap> {
+        let mut headers = HeaderMap::new();
+        headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+        let (name, credential) = match find_credential(&self.provider, "anthropic")? {
+            Credential::ApiKey(key) => (HeaderName::from_static("x-api-key"), secret_header(&key)?),
+            Credential::OAuthToken(token) => {
+                headers.insert(
+                    "anthropic-beta",
+                    HeaderValue::from_static("oauth-2025-04-20"),
+                );
+                (AUTHORIZATION, bearer(&token)?)
+            }
+            Credential::Bedrock { .. } => {
+                anyhow::bail!("the Claude API takes an API key or OAuth token; use Bedrock")
+            }
+        };
+        headers.insert(name, credential);
+        if stream {
+            headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
+        }
         #[cfg(target_arch = "wasm32")]
         headers.insert(
             "anthropic-dangerous-direct-browser-access",
@@ -296,36 +264,243 @@ impl LangModelInference for Claude {
         messages: &[Message],
         tools: &[ToolDesc],
     ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
-        // Built up front so the stream borrows nothing from the caller.
         let request = self
-            .request_headers()
-            .and_then(|headers| Ok((headers, self.request_body(messages, tools)?)));
-        match request {
-            Ok((headers, body)) => stream_response(
-                MESSAGES_URL.to_owned(),
-                headers,
-                body,
-                Box::new(AnthropicUnmarshal),
-                Framing::Sse,
-            ),
-            Err(e) => Box::pin(futures::stream::once(async move { Err(e) })),
-        }
+            .request_headers(true)
+            .and_then(|headers| Ok((headers, self.request_body(messages, tools, true)?)));
+        request_stream(
+            MESSAGES_URL.to_owned(),
+            request,
+            rate_limit_only,
+            ClaudeEvents,
+        )
     }
 
-    /// [`infer_stream`](Self::infer_stream) accumulated into one message, so a long
-    /// response does not hit an HTTP timeout.
     fn infer<'a>(
         &'a self,
         messages: &'a [Message],
         tools: &'a [ToolDesc],
     ) -> BoxFuture<'a, anyhow::Result<MessageOutput>> {
         Box::pin(async move {
-            let mut stream = self.infer_stream(messages, tools);
-            let mut output = MessageDeltaOutput::new();
-            while let Some(delta) = stream.next().await {
-                output = output.accumulate(delta?)?;
-            }
-            output.finish()
+            let headers = self.request_headers(false)?;
+            let body = self.request_body(messages, tools, false)?;
+            parse_response(&request_json(MESSAGES_URL, headers, &body, rate_limit_only).await?)
         })
     }
+}
+
+/// `messages` for the Messages API. System messages are left out, as they go in the
+/// top-level `system`. Thinking is replayed only for assistant turns after the last user
+/// message, as the API requires.
+fn wire_messages(messages: &[Message]) -> serde_json::Value {
+    let last_user = last_user_index(messages);
+    messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role != Role::System)
+        .map(|(i, m)| wire_message(m, i > last_user))
+        .collect()
+}
+
+/// A tool message becomes a user turn holding one `tool_result`; the others keep their
+/// role, with thinking first, then contents, then tool calls.
+fn wire_message(msg: &Message, with_thinking: bool) -> serde_json::Value {
+    if msg.role == Role::Tool {
+        let content: Vec<_> = msg
+            .contents
+            .iter()
+            .filter_map(|part| match part {
+                Part::Value { value } => Some(json!({"type": "text", "text": value_text(value)})),
+                Part::Function { .. } => None,
+                part => Some(wire_part(part)),
+            })
+            .collect();
+        return json!({
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": msg.id.as_deref().unwrap_or_default(),
+                "content": content,
+            }],
+        });
+    }
+
+    let mut content = Vec::new();
+    if with_thinking && let Some(thinking) = msg.thinking.as_deref().filter(|t| !t.is_empty()) {
+        let mut block = json!({"type": "thinking", "thinking": thinking});
+        if let Some(signature) = &msg.signature {
+            block["signature"] = signature.as_str().into();
+        }
+        content.push(block);
+    }
+    content.extend(msg.contents.iter().map(wire_part));
+    content.extend(msg.tool_calls.iter().flatten().map(wire_part));
+    json!({"role": msg.role.to_string(), "content": content})
+}
+
+fn wire_part(part: &Part) -> serde_json::Value {
+    match part {
+        Part::Text { text } => json!({"type": "text", "text": text}),
+        Part::Function { id, function } => json!({
+            "type": "tool_use",
+            "id": id,
+            "name": function.name,
+            "input": serde_json::Value::from(function.arguments.clone()),
+        }),
+        Part::Value { value } => value.clone().into(),
+        Part::Image {
+            image: PartImage::Embedded { mime_type, data },
+        } => json!({
+            "type": "image",
+            "source": {"type": "base64", "media_type": mime_type, "data": data.base64()},
+        }),
+        Part::Image {
+            image: PartImage::Url { url },
+        } => json!({"type": "image", "source": {"type": "url", "url": url}}),
+    }
+}
+
+fn wire_tool(tool: &ToolDesc) -> serde_json::Value {
+    let mut wire = json!({
+        "name": tool.name,
+        "input_schema": serde_json::Value::from(tool.parameters.clone()),
+    });
+    if let Some(description) = &tool.description {
+        wire["description"] = description.as_str().into();
+    }
+    wire
+}
+
+/// The Messages API's server-sent events. Each event stands alone: a tool call's first
+/// delta carries its id and name, and later argument fragments merge into it.
+struct ClaudeEvents;
+
+impl EventParser for ClaudeEvents {
+    fn parse(&mut self, data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
+        let event: serde_json::Value = serde_json::from_str(data)?;
+        let mut out = MessageDeltaOutput::new();
+        match event["type"].as_str().unwrap_or_default() {
+            "message_start" => {
+                out.delta = MessageDelta::new().with_role(Role::Assistant);
+                out.usage = parse_usage(&event["message"]["usage"]);
+            }
+            "content_block_start" => {
+                let block = &event["content_block"];
+                match block["type"].as_str() {
+                    Some("tool_use") => {
+                        out.delta.tool_calls = vec![PartDelta::Function {
+                            id: block["id"].as_str().map(str::to_owned),
+                            function: PartDeltaFunction::WithStringArgs {
+                                name: block["name"].as_str().unwrap_or_default().to_owned(),
+                                arguments: String::new(),
+                            },
+                        }];
+                    }
+                    _ => return Ok(None),
+                }
+            }
+            "content_block_delta" => {
+                let delta = &event["delta"];
+                match delta["type"].as_str() {
+                    Some("text_delta") => {
+                        out.delta.contents = vec![PartDelta::Text {
+                            text: delta["text"].as_str().unwrap_or_default().to_owned(),
+                        }];
+                    }
+                    Some("thinking_delta") => {
+                        out.delta.thinking = delta["thinking"].as_str().map(str::to_owned);
+                    }
+                    Some("signature_delta") => {
+                        out.delta.signature = delta["signature"].as_str().map(str::to_owned);
+                    }
+                    Some("input_json_delta") => {
+                        out.delta.tool_calls = vec![PartDelta::Function {
+                            id: None,
+                            function: PartDeltaFunction::WithStringArgs {
+                                name: String::new(),
+                                arguments: delta["partial_json"]
+                                    .as_str()
+                                    .unwrap_or_default()
+                                    .to_owned(),
+                            },
+                        }];
+                    }
+                    _ => return Ok(None),
+                }
+            }
+            "message_delta" => {
+                out.finish_reason = event["delta"]["stop_reason"]
+                    .as_str()
+                    .map(parse_stop_reason);
+                out.usage = parse_usage(&event["usage"]);
+            }
+            "error" => anyhow::bail!(
+                "Claude stream error ({}): {}",
+                event["error"]["type"].as_str().unwrap_or("unknown"),
+                event["error"]["message"].as_str().unwrap_or("(no message)"),
+            ),
+            // `ping`, `content_block_stop`, `message_stop`, and event types added later.
+            _ => return Ok(None),
+        }
+        Ok(Some(out))
+    }
+}
+
+/// A whole Messages API response. Thinking blocks concatenate, keeping the last signature;
+/// redacted thinking is dropped.
+fn parse_response(response: &serde_json::Value) -> anyhow::Result<MessageOutput> {
+    let mut contents = Vec::new();
+    let mut thinking: Option<String> = None;
+    let mut signature = None;
+    let mut tool_calls = Vec::new();
+    for block in response["content"].as_array().into_iter().flatten() {
+        match block["type"].as_str() {
+            Some("text") => contents.push(Part::text(block["text"].as_str().unwrap_or_default())),
+            Some("thinking") => {
+                thinking
+                    .get_or_insert_default()
+                    .push_str(block["thinking"].as_str().unwrap_or_default());
+                signature = block["signature"].as_str().map(str::to_owned).or(signature);
+            }
+            Some("tool_use") => tool_calls.push(Part::Function {
+                id: block["id"].as_str().unwrap_or_default().to_owned(),
+                function: PartFunction {
+                    name: block["name"].as_str().unwrap_or_default().to_owned(),
+                    arguments: block["input"].clone().into(),
+                },
+            }),
+            _ => {}
+        }
+    }
+    let finish_reason = response["stop_reason"]
+        .as_str()
+        .map(parse_stop_reason)
+        .ok_or_else(|| anyhow::anyhow!("Claude response has no stop_reason: {response}"))?;
+    Ok(assistant_output(
+        contents,
+        thinking,
+        signature,
+        tool_calls,
+        finish_reason,
+        parse_usage(&response["usage"]),
+    ))
+}
+
+fn parse_stop_reason(reason: &str) -> FinishReason {
+    match reason {
+        "end_turn" | "pause_turn" | "stop_sequence" => FinishReason::Stop {},
+        "max_tokens" | "model_context_window_exceeded" => FinishReason::Length {},
+        "tool_use" => FinishReason::ToolCall {},
+        other => FinishReason::Refusal {
+            reason: other.to_owned(),
+        },
+    }
+}
+
+fn parse_usage(usage: &serde_json::Value) -> Option<TokenUsage> {
+    usage.is_object().then(|| TokenUsage {
+        input_tokens: tokens(&usage["input_tokens"]).unwrap_or(0),
+        output_tokens: tokens(&usage["output_tokens"]).unwrap_or(0),
+        cache_creation_input_tokens: tokens(&usage["cache_creation_input_tokens"]),
+        cache_read_input_tokens: tokens(&usage["cache_read_input_tokens"]),
+    })
 }
