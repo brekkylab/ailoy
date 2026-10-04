@@ -22,9 +22,9 @@
 
 <br>
 
-For most everyday tasks, apps like ChatGPT, Claude, or Gemini are all you need.
-But when an agent has to understand a specific context, reach into internal resources, or work with specialized tools and equipment, no off-the-shelf app will do.
-Someone has to build that agent and optimize it for its users, and that's the job of AI agent developers.
+For general agentic tasks, apps like ChatGPT, Claude, or Gemini work well enough.
+
+But when an agent has to understand a specific context, reach into internal resources, or work with specialized tools and equipment, someone has to build that agent and optimize it for its users, and that's the job of AI agent developers.
 
 Ailoy is built for them: a library for building any kind of AI agent right in your own code.
 
