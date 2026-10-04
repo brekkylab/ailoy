@@ -4,7 +4,7 @@
   </picture>
 </p>
 
-<h3 align="center">An AI agent development tool for building highly optimized AI agents.</h3>
+<h3 align="center">An AI agent development tool for building your own AI agents.</h3>
 
 <p align="center">
   <img src="https://cdn.simpleicons.org/rust/000000/ffffff" width="16"/> <a href="https://crates.io/crates/ailoy"><img src="https://img.shields.io/crates/v/ailoy?label=ailoy&color=dea584" alt="crates.io"></a>
