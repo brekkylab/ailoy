@@ -9,7 +9,7 @@ use super::utils::{
 };
 use crate::{
     datatype::Value,
-    experimental::model::{Credential, LangModelInference, find_credential},
+    experimental::model::{LangModelInference, ProviderEntry, find_entry},
     message::{
         FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
@@ -126,7 +126,7 @@ impl GeminiToolChoice {
 pub struct Gemini {
     model: String,
     /// Name of the [`ModelProvider`](crate::experimental::model::ModelProvider) in the
-    /// registry whose `gemini` credential each request uses.
+    /// registry whose `gemini` entry each request uses.
     provider: String,
     option: GeminiOption,
 }
@@ -241,10 +241,10 @@ impl Gemini {
     /// An API key goes in `x-goog-api-key`; an OAuth token as a bearer token.
     fn request_headers(&self, stream: bool) -> anyhow::Result<HeaderMap> {
         let mut headers = HeaderMap::new();
-        match find_credential(&self.provider, "gemini")? {
-            Credential::ApiKey(key) => headers.insert("x-goog-api-key", secret_header(&key)?),
-            Credential::OAuthToken(token) => headers.insert(AUTHORIZATION, bearer(&token)?),
-            Credential::Bedrock { .. } => {
+        match find_entry(&self.provider, "gemini")? {
+            ProviderEntry::ApiKey(key) => headers.insert("x-goog-api-key", secret_header(&key)?),
+            ProviderEntry::OAuthToken(token) => headers.insert(AUTHORIZATION, bearer(&token)?),
+            ProviderEntry::Bedrock { .. } => {
                 anyhow::bail!("the Gemini API takes an API key or OAuth token")
             }
         };

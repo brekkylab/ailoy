@@ -9,7 +9,7 @@ use super::utils::{
 };
 use crate::{
     datatype::Value,
-    experimental::model::{Credential, LangModelInference, find_credential},
+    experimental::model::{LangModelInference, ProviderEntry, find_entry},
     message::{
         FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
@@ -132,7 +132,7 @@ pub enum ClaudeToolChoice {
 pub struct Claude {
     model: String,
     /// Name of the [`ModelProvider`](crate::experimental::model::ModelProvider) in the
-    /// registry whose `anthropic` credential each request uses.
+    /// registry whose `anthropic` entry each request uses.
     provider: String,
     option: ClaudeOption,
 }
@@ -232,16 +232,18 @@ impl Claude {
     fn request_headers(&self, stream: bool) -> anyhow::Result<HeaderMap> {
         let mut headers = HeaderMap::new();
         headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
-        let (name, credential) = match find_credential(&self.provider, "anthropic")? {
-            Credential::ApiKey(key) => (HeaderName::from_static("x-api-key"), secret_header(&key)?),
-            Credential::OAuthToken(token) => {
+        let (name, credential) = match find_entry(&self.provider, "anthropic")? {
+            ProviderEntry::ApiKey(key) => {
+                (HeaderName::from_static("x-api-key"), secret_header(&key)?)
+            }
+            ProviderEntry::OAuthToken(token) => {
                 headers.insert(
                     "anthropic-beta",
                     HeaderValue::from_static("oauth-2025-04-20"),
                 );
                 (AUTHORIZATION, bearer(&token)?)
             }
-            Credential::Bedrock { .. } => {
+            ProviderEntry::Bedrock { .. } => {
                 anyhow::bail!("the Claude API takes an API key or OAuth token; use Bedrock")
             }
         };

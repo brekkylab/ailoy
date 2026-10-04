@@ -5,7 +5,7 @@ use serde_json::json;
 
 use super::utils::{bearer, chat, request_json, request_stream};
 use crate::{
-    experimental::model::{Credential, LangModelInference, find_credential},
+    experimental::model::{LangModelInference, ProviderEntry, find_entry},
     message::{Message, MessageDeltaOutput, MessageOutput},
     tool::ToolDesc,
 };
@@ -69,7 +69,7 @@ pub enum GlmOutputFormat {
 pub struct Glm {
     model: String,
     /// Name of the [`ModelProvider`](crate::experimental::model::ModelProvider) in the
-    /// registry whose `zai` credential each request uses.
+    /// registry whose `zai` entry each request uses.
     provider: String,
     option: GlmOption,
 }
@@ -156,7 +156,7 @@ impl Glm {
 
     /// The API key as a bearer token, and for a stream the event-stream `accept`.
     fn request_headers(&self, stream: bool) -> anyhow::Result<HeaderMap> {
-        let Credential::ApiKey(key) = find_credential(&self.provider, "zai")? else {
+        let ProviderEntry::ApiKey(key) = find_entry(&self.provider, "zai")? else {
             anyhow::bail!("The Z.ai API takes an API key");
         };
         let mut headers = HeaderMap::new();

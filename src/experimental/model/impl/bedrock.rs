@@ -10,7 +10,7 @@ use super::utils::{
 };
 use crate::{
     datatype::Value,
-    experimental::model::{Credential, LangModelInference, find_credential},
+    experimental::model::{LangModelInference, ProviderEntry, find_entry},
     message::{
         FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
@@ -73,7 +73,7 @@ pub enum BedrockToolChoice {
 }
 
 /// A model on Amazon Bedrock over the Converse API. The provider's `bedrock` entry, a
-/// [`Credential::Bedrock`], gives the API key and the region.
+/// [`ProviderEntry::Bedrock`], gives the API key and the region.
 ///
 /// The model id is one Bedrock accepts for on-demand throughput, e.g. the inference-profile
 /// id `global.anthropic.claude-sonnet-5`; plain foundation-model ids are rejected.
@@ -81,7 +81,7 @@ pub enum BedrockToolChoice {
 pub struct Bedrock {
     model: String,
     /// Name of the [`ModelProvider`](crate::experimental::model::ModelProvider) in the
-    /// registry whose `bedrock` credential each request uses.
+    /// registry whose `bedrock` entry each request uses.
     provider: String,
     option: BedrockOption,
 }
@@ -132,9 +132,9 @@ impl Bedrock {
         tools: &[ToolDesc],
         stream: bool,
     ) -> anyhow::Result<(String, HeaderMap, serde_json::Value)> {
-        let Credential::Bedrock { region, api_key } = find_credential(&self.provider, "bedrock")?
+        let ProviderEntry::Bedrock { region, api_key } = find_entry(&self.provider, "bedrock")?
         else {
-            anyhow::bail!("Bedrock takes a region and an API key, as `Credential::Bedrock`");
+            anyhow::bail!("Bedrock takes a region and an API key, as `ProviderEntry::Bedrock`");
         };
         Ok((
             self.request_url(&region, stream)?,

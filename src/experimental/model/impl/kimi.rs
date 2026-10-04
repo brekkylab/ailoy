@@ -5,7 +5,7 @@ use serde_json::json;
 
 use super::utils::{bearer, chat, request_json, request_stream};
 use crate::{
-    experimental::model::{Credential, LangModelInference, find_credential},
+    experimental::model::{LangModelInference, ProviderEntry, find_entry},
     message::{Message, MessageDeltaOutput, MessageOutput},
     tool::ToolDesc,
 };
@@ -94,7 +94,7 @@ impl KimiToolChoice {
 pub struct Kimi {
     model: String,
     /// Name of the [`ModelProvider`](crate::experimental::model::ModelProvider) in the
-    /// registry whose `moonshot` credential each request uses.
+    /// registry whose `moonshot` entry each request uses.
     provider: String,
     option: KimiOption,
 }
@@ -184,7 +184,7 @@ impl Kimi {
 
     /// The API key as a bearer token, and for a stream the event-stream `accept`.
     fn request_headers(&self, stream: bool) -> anyhow::Result<HeaderMap> {
-        let Credential::ApiKey(key) = find_credential(&self.provider, "moonshot")? else {
+        let ProviderEntry::ApiKey(key) = find_entry(&self.provider, "moonshot")? else {
             anyhow::bail!("The Moonshot API takes an API key");
         };
         let mut headers = HeaderMap::new();

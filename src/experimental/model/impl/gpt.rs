@@ -9,7 +9,7 @@ use super::utils::{
 };
 use crate::{
     datatype::Value,
-    experimental::model::{Credential, LangModelInference, find_credential},
+    experimental::model::{LangModelInference, ProviderEntry, find_entry},
     message::{
         FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
@@ -119,7 +119,7 @@ impl GptToolChoice {
 pub struct Gpt {
     model: String,
     /// Name of the [`ModelProvider`](crate::experimental::model::ModelProvider) in the
-    /// registry whose `openai` credential each request uses.
+    /// registry whose `openai` entry each request uses.
     provider: String,
     option: GptOption,
 }
@@ -219,7 +219,7 @@ impl Gpt {
 
     /// The API key as a bearer token, and for a stream the event-stream `accept`.
     fn request_headers(&self, stream: bool) -> anyhow::Result<HeaderMap> {
-        let Credential::ApiKey(key) = find_credential(&self.provider, "openai")? else {
+        let ProviderEntry::ApiKey(key) = find_entry(&self.provider, "openai")? else {
             anyhow::bail!("the OpenAI API takes an API key");
         };
         let mut headers = HeaderMap::new();

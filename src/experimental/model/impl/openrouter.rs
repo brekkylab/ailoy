@@ -6,7 +6,7 @@ use serde_json::json;
 use super::utils::{bearer, chat, close_objects, rate_limit_only, request_json, request_stream};
 use crate::{
     datatype::Value,
-    experimental::model::{Credential, LangModelInference, find_credential},
+    experimental::model::{LangModelInference, ProviderEntry, find_entry},
     message::{Message, MessageDeltaOutput, MessageOutput},
     tool::ToolDesc,
 };
@@ -121,7 +121,7 @@ impl OpenRouterToolChoice {
 pub struct OpenRouter {
     model: String,
     /// Name of the [`ModelProvider`](crate::experimental::model::ModelProvider) in the
-    /// registry whose `openrouter` credential each request uses.
+    /// registry whose `openrouter` entry each request uses.
     provider: String,
     option: OpenRouterOption,
 }
@@ -231,7 +231,7 @@ impl OpenRouter {
     /// The API key as a bearer token, and for a stream the event-stream `accept`.
     /// OpenRouter's OAuth flow ends in an API key too.
     fn request_headers(&self, stream: bool) -> anyhow::Result<HeaderMap> {
-        let Credential::ApiKey(key) = find_credential(&self.provider, "openrouter")? else {
+        let ProviderEntry::ApiKey(key) = find_entry(&self.provider, "openrouter")? else {
             anyhow::bail!("OpenRouter takes an API key");
         };
         let mut headers = HeaderMap::new();

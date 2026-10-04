@@ -7,7 +7,7 @@ use std::{
 /// to send it. How it goes on the wire (`x-api-key`, `Authorization: Bearer`, a beta
 /// header, …) is up to each model implementation.
 #[derive(Clone)]
-pub enum Credential {
+pub enum ProviderEntry {
     /// A long-lived API key issued by the vendor's console.
     ApiKey(String),
     /// An OAuth access token, e.g. from `ant auth print-credentials --access-token` after
@@ -18,7 +18,7 @@ pub enum Credential {
     Bedrock { region: String, api_key: String },
 }
 
-impl std::fmt::Debug for Credential {
+impl std::fmt::Debug for ProviderEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ApiKey(_) => f.write_str("ApiKey(..)"),
@@ -33,7 +33,7 @@ impl std::fmt::Debug for Credential {
 
 #[derive(Clone, Debug, Default)]
 pub struct ModelProvider {
-    inner: HashMap<String, Credential>,
+    inner: HashMap<String, ProviderEntry>,
 }
 
 impl ModelProvider {
@@ -44,31 +44,31 @@ impl ModelProvider {
         }
     }
 
-    /// Sets `vendor`'s credential, replacing any existing one.
-    pub fn insert(&mut self, vendor: impl Into<String>, credential: Credential) {
-        self.inner.insert(vendor.into(), credential);
+    /// Sets `vendor`'s entry, replacing any existing one.
+    pub fn insert(&mut self, vendor: impl Into<String>, entry: ProviderEntry) {
+        self.inner.insert(vendor.into(), entry);
     }
 
-    pub fn with(mut self, vendor: impl Into<String>, credential: Credential) -> Self {
-        self.insert(vendor, credential);
+    pub fn with(mut self, vendor: impl Into<String>, entry: ProviderEntry) -> Self {
+        self.insert(vendor, entry);
         self
     }
 
-    pub fn remove(&mut self, vendor: &str) -> Option<Credential> {
+    pub fn remove(&mut self, vendor: &str) -> Option<ProviderEntry> {
         self.inner.remove(vendor)
     }
 
-    pub fn get(&self, vendor: &str) -> Option<&Credential> {
+    pub fn get(&self, vendor: &str) -> Option<&ProviderEntry> {
         self.inner.get(vendor)
     }
 
     /// [`get`](Self::get), failing when `vendor` is not configured.
-    pub fn require(&self, vendor: &str) -> anyhow::Result<&Credential> {
+    pub fn require(&self, vendor: &str) -> anyhow::Result<&ProviderEntry> {
         self.get(vendor)
-            .ok_or_else(|| anyhow::anyhow!("no {vendor} credential in the model provider"))
+            .ok_or_else(|| anyhow::anyhow!("no {vendor} entry in the model provider"))
     }
 
-    /// Reads each known vendor's credential from the environment, in the order the vendor's
+    /// Reads each known vendor's entry from the environment, in the order the vendor's
     /// official SDKs check them. A vendor with none of its variables set is left out.
     ///
     /// - `anthropic`: `ANTHROPIC_API_KEY`, then `ANTHROPIC_AUTH_TOKEN` as an OAuth token.
@@ -86,8 +86,8 @@ impl ModelProvider {
     pub fn from_env() -> Self {
         let mut p = Self::new();
         let anthropic = env_var("ANTHROPIC_API_KEY")
-            .map(Credential::ApiKey)
-            .or_else(|| env_var("ANTHROPIC_AUTH_TOKEN").map(Credential::OAuthToken));
+            .map(ProviderEntry::ApiKey)
+            .or_else(|| env_var("ANTHROPIC_AUTH_TOKEN").map(ProviderEntry::OAuthToken));
         let api_keys = [
             ("openai", env_var("OPENAI_API_KEY")),
             (
@@ -109,11 +109,11 @@ impl ModelProvider {
             let region = env_var("AWS_REGION")
                 .or_else(|| env_var("AWS_DEFAULT_REGION"))
                 .unwrap_or_else(|| "us-east-1".to_owned());
-            p.insert("bedrock", Credential::Bedrock { region, api_key });
+            p.insert("bedrock", ProviderEntry::Bedrock { region, api_key });
         }
         for (vendor, key) in api_keys {
             if let Some(key) = key {
-                p.insert(vendor, Credential::ApiKey(key));
+                p.insert(vendor, ProviderEntry::ApiKey(key));
             }
         }
         p
@@ -126,9 +126,9 @@ fn env_var(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
 
-/// The `vendor` credential of the provider registered as `provider`, for a request about
+/// The `vendor` entry of the provider registered as `provider`, for a request about
 /// to be sent; read on every request, so a registry update reaches models already built.
-pub(crate) fn find_credential(provider: &str, vendor: &str) -> anyhow::Result<Credential> {
+pub(crate) fn find_entry(provider: &str, vendor: &str) -> anyhow::Result<ProviderEntry> {
     let providers = get_model_providers();
     let provider = providers
         .get(provider)
