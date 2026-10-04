@@ -24,13 +24,16 @@
 
 For many everyday tasks, apps like ChatGPT, Claude, or Gemini are all you need.
 
-But some tasks require an agent built around your users’ needs: one that understands their context, accesses internal resources, and works with specialized software or equipment.
+But some tasks require an agent built around your users' needs: one that understands their context, accesses internal resources, and works with specialized software or equipment.
 
-Building that agent takes more than connecting an LLM to tools. You need to prepare the software it will use, control which resources it can access, and give it a place to run its code.
+Building that agent takes more than connecting an LLM to tools.
+You need to prepare the software it will use, control which resources it can access, and give it a place to run its code.
 
-**Ailoy brings the agent and its computing environment together in your code**. Choose a model, define its instructions, connect your tools, and give it an isolated Linux VM with the software and files it needs.
+**Ailoy brings the agent and its computing environment together in your code**.
+Choose a model, define its instructions, connect your tools, and give it an isolated Linux VM with the software and files it needs.
 
-Inside that environment, the agent can write and execute code, use installed software, and install additional packages as needed. You define the environment and access; the agent works out the steps to complete the task.
+Inside that environment, the agent can write and execute code, use installed software, and install additional packages as needed.
+You define the environment and access; the agent works out the steps to complete the task.
 
 <table align="center">
   <tr>
