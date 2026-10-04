@@ -49,6 +49,7 @@ Here's what agents built with Ailoy can do, well beyond a simple chatbot:
 </table>
 
 You can build with Ailoy on <img src="https://cdn.simpleicons.org/linux/000000/ffffff" width="16"/> Linux, <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/windows11/windows11-original.svg" width="16"/> Windows, and <img src="https://cdn.simpleicons.org/apple/000000/ffffff" width="16"/> macOS.
+
 And it supports <img src="https://cdn.simpleicons.org/python" width="16"/> Python, <img src="https://cdn.simpleicons.org/javascript" width="16"/> JavaScript (<img src="https://cdn.simpleicons.org/typescript" width="16"/> TypeScript), and <img src="https://cdn.simpleicons.org/rust/000000/ffffff" width="16"/> Rust APIs.
 
 > [!WARNING]
