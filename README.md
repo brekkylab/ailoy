@@ -4,7 +4,7 @@
   </picture>
 </p>
 
-<h3 align="center">AI agent builder with a VM at its heart.</h3>
+<h3 align="center">An AI agent development tool for building highly optimized AI agents.</h3>
 
 <p align="center">
   <img src="https://cdn.simpleicons.org/rust/000000/ffffff" width="16"/> <a href="https://crates.io/crates/ailoy"><img src="https://img.shields.io/crates/v/ailoy?label=ailoy&color=dea584" alt="crates.io"></a>
@@ -22,7 +22,11 @@
 
 <br>
 
-Ailoy is a library for building any kind of AI agents right in your own code.
+For most everyday tasks, apps like ChatGPT, Claude, or Gemini are all you need.
+But when an agent has to understand a specific context, reach into internal resources, or work with specialized tools and equipment, no off-the-shelf app will do.
+Someone has to build that agent and optimize it for its users, and that's the job of AI agent developers.
+
+Ailoy is built for them: a library for building any kind of AI agent right in your own code.
 
 <table align="center">
   <tr>
