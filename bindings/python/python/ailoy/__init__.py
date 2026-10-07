@@ -9,8 +9,8 @@ tool.
 Messages, specs and tool descriptions are dicts in their JSON form; ``ailoy.types`` spells
 out their shapes.
 
-Tools run commands in a virtx console from ``ailoy.virtx``, built into this package so an
-``Agent`` can share its session.
+Tools run commands in a console from the ``virtx`` package (also at ``ailoy.virtx``): a
+``virtx.ConsoleClient`` handed to ``AgentBuilder.console`` is shared with the agent.
 
 See the Rust crate's documentation for details.
 """

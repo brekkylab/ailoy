@@ -4,10 +4,11 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+import virtx
+from virtx import ConsoleBroken, ConsoleClient, Recipe
 
 import ailoy
 from ailoy import AgentBuilder, AiloyError
-from ailoy.virtx import ConsoleClient, VirtxError, ErrorCode, Recipe
 
 
 def content_text(content):
@@ -127,9 +128,14 @@ async def run(agent, query):
 # ---- offline --------------------------------------------------------------------------
 
 
-def test_virtx_is_built_in():
-    assert ErrorCode.TIMED_OUT == -32000
-    assert "python:3.12-slim" in repr(Recipe("python:3.12-slim"))
+def test_ailoy_virtx_is_the_virtx_package():
+    assert ailoy.virtx.ConsoleClient is ConsoleClient
+    assert ailoy.virtx.ErrorCode.TIMED_OUT == -32000
+
+
+def test_console_takes_only_a_virtx_console():
+    with pytest.raises(TypeError, match="virtx.ConsoleClient"):
+        AgentBuilder(MODEL).console(object())
 
 
 def test_register_tool_hands_back_its_desc():
@@ -298,6 +304,17 @@ async def test_the_agent_shares_the_console(tmp_path):
     result = await console.exec(["cat", "/work/out.txt"])
     assert result.stdout == b"shared\n"
     await console.stop()
+
+    # The session is the console's: an agent attached to it fails once it is closed.
+    later = await (
+        AgentBuilder(MODEL)
+        .agent_provider(PROVIDER)
+        .shell_tool()
+        .console(console)
+        .build()
+    )
     await console.close()
-    with pytest.raises(VirtxError):
+    with pytest.raises(virtx.VirtxError):
         await console.exec(["true"])
+    with pytest.raises(ConsoleBroken, match="closed"):
+        await run(later, 'shell {"cmd": "true"}')

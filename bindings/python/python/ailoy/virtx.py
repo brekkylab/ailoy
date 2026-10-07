@@ -1,59 +1,8 @@
-"""virtx, as built into ailoy: the console an agent's tools run in, and what it sees.
+"""The ``virtx`` package, which ailoy depends on: the console an agent's tools run in.
 
-Each extension module links its own copy of virtx, so these are distinct types from
-``virtx``'s: a ``ConsoleClient`` built by ``virtx`` cannot be handed to an
-``AgentBuilder``.
+An alias, so ``ailoy.virtx.ConsoleClient`` is ``virtx.ConsoleClient``: build a console with
+either and hand it to ``AgentBuilder.console``. See ``virtx``'s documentation.
 """
 
-from enum import IntEnum
-
-from . import _ailoy
-from ._ailoy import (
-    BuildImageResult,
-    ConsoleBroken,
-    ConsoleClient,
-    ConsoleClientBuilder,
-    ConsoleRefused,
-    VirtxError,
-    Directory,
-    ExecResult,
-    ImageClient,
-    ImageEntry,
-    ImageSource,
-    ReadResult,
-    Recipe,
-    Step,
-)
-
-# The numbers a `ConsoleRefused.code` may hold, named as virtx names them.
-ErrorCode = IntEnum("ErrorCode", _ailoy.ERROR_CODES)
-
-__all__ = [
-    "BuildImageResult",
-    "ConsoleBroken",
-    "ConsoleClient",
-    "ConsoleClientBuilder",
-    "ConsoleRefused",
-    "VirtxError",
-    "Directory",
-    "ErrorCode",
-    "ExecResult",
-    "ImageClient",
-    "ImageEntry",
-    "ImageSource",
-    "ReadResult",
-    "Recipe",
-    "Step",
-]
-
-# Present only when the extension was built with the `mount` feature, which is the default.
-if hasattr(_ailoy, "HostMount"):
-    from ._ailoy import HostMount
-
-    __all__.append("HostMount")
-
-# Present only when the extension was built with the `ensure` feature, which is the default.
-if hasattr(_ailoy, "ensure_virtx"):
-    from ._ailoy import ensure_virtx
-
-    __all__.append("ensure_virtx")
+from virtx import *  # noqa: F403
+from virtx import __all__  # noqa: F401

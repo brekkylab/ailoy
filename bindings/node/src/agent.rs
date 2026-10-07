@@ -5,10 +5,10 @@
 //! lock's owned guard in its stream, which also makes a second `run` wait for the first to
 //! finish, as `&mut self` would in Rust.
 //!
-//! `AgentBuilder.console` puts a virtx `ConsoleClient`'s slot (the slot, not its contents) in
-//! the agent's state. The `ConsoleClient` stays usable: its calls and the agent's tools take
-//! turns on the one lock, the agent starts and stops its backend around each batch of tool
-//! calls, and `ConsoleClient.close()` ends the session for both.
+//! `AgentBuilder.console` attaches the agent to a `@brekkylab/virtx` `ConsoleClient`'s session
+//! (see [`crate::console`]). The `ConsoleClient` stays usable: its calls and the agent's take
+//! turns on its lock, one protocol call at a time, the agent starts and stops its backend
+//! around each batch of tool calls, and `ConsoleClient.close()` ends the session for both.
 //!
 //! `AgentRun`'s `next()` and `return()` are an async iterator's, and the package's `index.js`
 //! gives the class `Symbol.asyncIterator` so `for await` takes it. napi's own async-iterator
@@ -28,16 +28,16 @@ use ailoy::{
 use futures::{StreamExt as _, stream::BoxStream};
 use napi::{
     Env,
-    bindgen_prelude::{ClassInstance, Object, PromiseRaw, This, Unknown},
+    bindgen_prelude::{Object, PromiseRaw, This, Unknown},
 };
 use napi_derive::napi;
 use serde::Serialize;
 use tokio::{runtime::Handle, sync::Mutex};
-use virtx_node::console::{JsConsoleClient, promise, thrown};
 
 use crate::{
+    console,
     convert::{Json, from_js, query},
-    error::{self, Result, invalid, unsigned},
+    error::{self, Result, invalid, promise, thrown, unsigned},
 };
 
 /// A value let go of on the runtime it was made on. Dropping an agent or a turn's stream may
@@ -192,14 +192,15 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.history(history)))
     }
 
-    /// Run the agent's console tools in `console`'s session, which the agent then shares.
+    /// Run the agent's console tools in the session of `console`, a `@brekkylab/virtx`
+    /// `ConsoleClient`, which the agent then shares.
     #[napi]
     pub fn console<'env>(
         &mut self,
         this: This<'env>,
-        #[napi(ts_arg_type = "ConsoleClient")] console: &JsConsoleClient,
+        #[napi(ts_arg_type = "ConsoleClient")] console: Object<'_>,
     ) -> Result<This<'env>> {
-        let slot = console.slot();
+        let slot = console::attach(&console)?;
         self.update(this, |b| Ok(b.shared_console(slot)))
     }
 
@@ -399,11 +400,8 @@ impl JsAgent {
                         "a list of messages",
                     )?);
                 }
-                if let Some(console) = options
-                    .get::<ClassInstance<JsConsoleClient>>("console")
-                    .map_err(get)?
-                {
-                    state = state.with_console_slot(console.slot());
+                if let Some(console) = options.get::<Object>("console").map_err(get)? {
+                    state = state.with_console_slot(console::attach(&console)?);
                 }
                 if let Some(memfile) = options.get::<String>("memory").map_err(get)? {
                     state = state.with_memory(Memory::new(memfile));

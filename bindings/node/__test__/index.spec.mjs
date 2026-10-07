@@ -3,13 +3,20 @@ import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { test } from 'node:test'
 
-const ailoy = createRequire(import.meta.url)('../index.js')
+const require = createRequire(import.meta.url)
+const ailoy = require('../index.js')
+const virtx = require('@brekkylab/virtx')
 const { Agent, AgentBuilder, ConsoleClient, Recipe, registerLangModel, registerTool } = ailoy
 
-// ---- virtx, built in ----------------------------------------------------------------------
+// ---- virtx, from @brekkylab/virtx -----------------------------------------------------------
 
-test('virtx comes along', () => {
+test('virtx comes along, as @brekkylab/virtx itself', () => {
+  assert.equal(ConsoleClient, virtx.ConsoleClient)
   assert.match(new Recipe('python:3.12-slim').step('pip install duckdb').toString(), /duckdb/)
+})
+
+test('an agent takes only a virtx console', () => {
+  assert.throws(() => new AgentBuilder('any/model').console({}), { code: 'INVALID_ARG' })
 })
 
 test('a console without a server fails with virtx’s code', async () => {
@@ -46,10 +53,10 @@ const lastContent = (messages) => {
 }
 
 /**
- * An OpenAI-compatible chat-completions server that asks for `add(2, 3)` and then says what
- * the tool answered — in one JSON body, or as a stream of events when asked for one.
+ * An OpenAI-compatible chat-completions server that asks for `call` (`add(2, 3)` unless told
+ * otherwise) and then says what the tool answered — in one JSON body, or as a stream of events when asked for one.
  */
-const fakeModel = () =>
+const fakeModel = (call = { name: 'add', arguments: { a: 2, b: 3 } }) =>
   new Promise((resolve) => {
     const server = createServer((req, res) => {
       let body = ''
@@ -66,7 +73,7 @@ const fakeModel = () =>
                 {
                   id: 'call_1',
                   type: 'function',
-                  function: { name: 'add', arguments: JSON.stringify({ a: 2, b: 3 }) },
+                  function: { name: call.name, arguments: JSON.stringify(call.arguments) },
                 },
               ],
             }
@@ -190,4 +197,34 @@ test('an agent shares its console, and closing the agent leaves it open', async 
   } finally {
     await console_.close()
   }
+})
+
+test('an agent runs its console tools in the shared session, until the console closes', async (t) => {
+  const server = await fakeModel({ name: 'shell', arguments: { cmd: 'echo relayed > /tmp/out.txt' } })
+  t.after(() => server.close())
+  registerLangModel('fake-shell/*', 'chat_completion', `http://127.0.0.1:${server.address().port}/v1/chat/completions`)
+
+  const console_ = await virtx.ConsoleClient.builder()
+    .image(new Recipe('python:3.12-slim-trixie'))
+    .network(false)
+    .build()
+  const agent = await new AgentBuilder('fake-shell/model').shellTool().console(console_).build()
+  const later = await Agent.fromSpec({ model: 'fake-shell/model', tools: [] }, { console: console_ })
+  try {
+    const outputs = []
+    for await (const output of agent.run('write it')) outputs.push(output)
+    assert.equal(outputs[1].message.role, 'tool')
+    const result = await console_.exec(['cat', '/tmp/out.txt'])
+    assert.equal(result.stdout.toString(), 'relayed\n')
+  } finally {
+    await console_.close()
+  }
+
+  // The session was the console's: an agent attached to it fails once it is closed.
+  const shell = await new AgentBuilder('fake-shell/model').shellTool().console(console_).build()
+  await assert.rejects(async () => {
+    for await (const _ of shell.run('write it again'));
+  }, { code: 'CONSOLE_BROKEN', message: /closed/ })
+  await agent.close()
+  await later.close()
 })
