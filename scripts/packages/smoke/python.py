@@ -8,7 +8,7 @@ import asyncio, json, os, tempfile, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import ailoy
-from ailoy import virtx
+import virtx
 
 want = lambda name: os.environ.get(name) == "1"
 failures = []

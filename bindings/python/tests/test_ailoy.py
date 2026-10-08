@@ -128,11 +128,6 @@ async def run(agent, query):
 # ---- offline --------------------------------------------------------------------------
 
 
-def test_ailoy_virtx_is_the_virtx_package():
-    assert ailoy.virtx.ConsoleClient is ConsoleClient
-    assert ailoy.virtx.ErrorCode.TIMED_OUT == -32000
-
-
 def test_console_takes_only_a_virtx_console():
     with pytest.raises(TypeError, match="virtx.ConsoleClient"):
         AgentBuilder(MODEL).console(object())

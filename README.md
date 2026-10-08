@@ -76,7 +76,7 @@ pip install ailoy-py
 import asyncio
 
 from ailoy import AgentBuilder
-from ailoy.virtx import ConsoleClient, Recipe
+from virtx import ConsoleClient, Recipe
 
 
 async def main() -> None:

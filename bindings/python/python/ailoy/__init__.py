@@ -9,13 +9,13 @@ tool.
 Messages, specs and tool descriptions are dicts in their JSON form; ``ailoy.types`` spells
 out their shapes.
 
-Tools run commands in a console from the ``virtx`` package (also at ``ailoy.virtx``): a
+Tools run commands in a console from the ``virtx`` package, which ailoy depends on: a
 ``virtx.ConsoleClient`` handed to ``AgentBuilder.console`` is shared with the agent.
 
 See the Rust crate's documentation for details.
 """
 
-from . import virtx, types
+from . import types
 from ._ailoy import (
     Agent,
     AgentBuilder,
@@ -40,7 +40,6 @@ __all__ = [
     "add_agent_provider",
     "add_lang_model_provider",
     "add_tool_provider",
-    "virtx",
     "register_a2a",
     "register_lang_model",
     "register_mcp_stdio",

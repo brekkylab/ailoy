@@ -54,7 +54,7 @@ if (
     )
 
 import ailoy  # noqa: E402
-from ailoy.virtx import ConsoleClient, Directory, HostMount, Recipe, ensure_virtx  # noqa: E402
+from virtx import ConsoleClient, Directory, HostMount, Recipe, ensure_virtx  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
 # The request when none is given.

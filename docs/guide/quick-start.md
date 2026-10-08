@@ -40,7 +40,7 @@ This gives an agent a Python machine with `./artifacts` mounted at `/artifacts`,
 import asyncio
 
 from ailoy import AgentBuilder
-from ailoy.virtx import ConsoleClient, Recipe
+from virtx import ConsoleClient, Recipe
 
 
 async def main() -> None:
