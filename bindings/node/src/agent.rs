@@ -40,9 +40,10 @@ use crate::{
     error::{self, Result, invalid, promise, thrown, unsigned},
 };
 
-/// A value let go of on the runtime it was made on. Dropping an agent or a turn's stream may
-/// drop the last hold on its console, which says `quit` only when dropped on a runtime, and a
-/// garbage-collection finalizer is not on one.
+/// A value let go of on the runtime it was made on. Dropping an agent or a turn's stream drops
+/// its console, whose client is let go of on a task when dropped on a runtime (an attached
+/// console says no `quit`: the session is the virtx `ConsoleClient`'s), and a garbage-collection
+/// finalizer is not on one.
 struct OnRuntime<T> {
     value: Option<T>,
     runtime: Handle,

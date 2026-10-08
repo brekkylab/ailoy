@@ -19,13 +19,13 @@ pip install ailoy-py
 ```
 
 ```sh [Node.js]
-npm install @brekkylab/ailoy
+npm install @brekkylab/ailoy @brekkylab/virtx
 ```
 
 ```toml [Rust (Cargo.toml)]
 [dependencies]
 ailoy = "0.3"
-virtx = { git = "https://github.com/brekkylab/virtx" }
+virtx = "0.1"
 ```
 
 :::
@@ -70,7 +70,8 @@ asyncio.run(main())
 ```
 
 ```js [Node.js]
-const { AgentBuilder, ConsoleClient, Recipe } = require('@brekkylab/ailoy')
+const { AgentBuilder } = require('@brekkylab/ailoy')
+const { ConsoleClient, Recipe } = require('@brekkylab/virtx')
 
 const console_ = await ConsoleClient.builder()
   .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))

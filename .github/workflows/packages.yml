@@ -483,7 +483,8 @@ jobs:
           done
           mkdir -p "$RUNNER_TEMP/project" && cd "$RUNNER_TEMP/project"
           echo '{"name":"project","private":true,"type":"module"}' > package.json
-          npm install @brekkylab/ailoy --userconfig "$npmrc" --registry http://localhost:4873/
+          # virtx too, which a user's code requires itself: from npmjs, through the registry's uplink.
+          npm install @brekkylab/ailoy @brekkylab/virtx --userconfig "$npmrc" --registry http://localhost:4873/
           ls node_modules/@brekkylab
 
       - name: Install the wheel pip picks
@@ -491,7 +492,9 @@ jobs:
         run: |
           python -m venv "$RUNNER_TEMP/venv"
           py="$RUNNER_TEMP/venv/bin/python"; [ -x "$py" ] || py="$RUNNER_TEMP/venv/Scripts/python.exe"
-          "$py" -m pip install --no-index --find-links dist/wheels ailoy-py
+          "$py" -m pip install --no-index --find-links dist/wheels --no-deps ailoy-py
+          # Then what it depends on (virtx) from PyPI, as a user's pip would fetch it.
+          "$py" -m pip install ailoy-py
           "$py" -m pip show ailoy-py
           echo "SMOKE_PYTHON=$py" >> "$GITHUB_ENV"
 

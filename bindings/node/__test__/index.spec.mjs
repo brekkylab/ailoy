@@ -6,21 +6,18 @@ import { test } from 'node:test'
 const require = createRequire(import.meta.url)
 const ailoy = require('../index.js')
 const virtx = require('@brekkylab/virtx')
-const { Agent, AgentBuilder, ConsoleClient, Recipe, registerLangModel, registerTool } = ailoy
+const { Agent, AgentBuilder, registerLangModel, registerTool } = ailoy
+const { ConsoleClient, Recipe } = virtx
 
-// ---- virtx, from @brekkylab/virtx -----------------------------------------------------------
+// ---- the console, from @brekkylab/virtx -----------------------------------------------------
 
-test('virtx comes along, as @brekkylab/virtx itself', () => {
-  assert.equal(ConsoleClient, virtx.ConsoleClient)
-  assert.match(new Recipe('python:3.12-slim').step('pip install duckdb').toString(), /duckdb/)
+test('virtx is a dependency, not re-exported', () => {
+  assert.equal(ailoy.ConsoleClient, undefined)
+  assert.equal(typeof ConsoleClient, 'function')
 })
 
 test('an agent takes only a virtx console', () => {
   assert.throws(() => new AgentBuilder('any/model').console({}), { code: 'INVALID_ARG' })
-})
-
-test('a console without a server fails with virtx’s code', async () => {
-  await assert.rejects(ConsoleClient.builder().build(), { code: 'VIRTX_ERROR' })
 })
 
 // ---- the builder and the registries --------------------------------------------------------
@@ -204,7 +201,7 @@ test('an agent runs its console tools in the shared session, until the console c
   t.after(() => server.close())
   registerLangModel('fake-shell/*', 'chat_completion', `http://127.0.0.1:${server.address().port}/v1/chat/completions`)
 
-  const console_ = await virtx.ConsoleClient.builder()
+  const console_ = await ConsoleClient.builder()
     .image(new Recipe('python:3.12-slim-trixie'))
     .network(false)
     .build()

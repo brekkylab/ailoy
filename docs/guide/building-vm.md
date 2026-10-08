@@ -1,12 +1,15 @@
 # Building VM
 
-The computer an agent works on is a Linux VM run by [virtx](https://github.com/brekkylab/virtx). Ailoy depends on virtx, so installing ailoy installs it too:
+The computer an agent works on is a Linux VM run by [virtx](https://github.com/brekkylab/virtx). Ailoy depends on virtx, and your code uses it directly:
 
-- **Python:** the `virtx` package (`import virtx`)
-- **Node.js:** `@brekkylab/virtx`, whose exports `@brekkylab/ailoy` also re-exports
+- **Python:** the `virtx` package (`import virtx`), which `pip install ailoy-py` installs too
+- **Node.js:** `@brekkylab/virtx` (`npm install @brekkylab/virtx` beside `@brekkylab/ailoy`)
 - **Rust:** the `virtx` crate (`ailoy::console::ConsoleClient` is the same type as `virtx::console::ConsoleClient`)
 
-A `ConsoleClient` built with virtx is handed to an `AgentBuilder` as is, and the agent shares its session.
+A `ConsoleClient` built with virtx is handed to an `AgentBuilder` as is, and the agent shares its session. The session stays the console's:
+
+- Closing the agent leaves the console open; closing the console ends the session for the agent too, whose next command then fails.
+- Your own calls on the console and the agent's take turns, one call at a time.
 
 Two clients do the work:
 
@@ -45,7 +48,7 @@ asyncio.run(main())
 ```
 
 ```js [Node.js]
-const { ImageClient, ImageSource, Recipe, ensureVirtx } = require('@brekkylab/ailoy')
+const { ImageClient, ImageSource, Recipe, ensureVirtx } = require('@brekkylab/virtx')
 
 // Fetches virtx's server into its cache the first time; a no-op after.
 await ensureVirtx()
@@ -125,7 +128,7 @@ asyncio.run(main())
 ```
 
 ```js [Node.js]
-const { ConsoleClient, ImageSource } = require('@brekkylab/ailoy')
+const { ConsoleClient, ImageSource } = require('@brekkylab/virtx')
 
 const console_ = await ConsoleClient.builder()
   .image(ImageSource.reference('plot:latest'))

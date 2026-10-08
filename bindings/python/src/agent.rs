@@ -34,9 +34,10 @@ use crate::{
     error::{self, AiloyError},
 };
 
-/// A value let go of on the binding's runtime. Dropping an agent or a turn's stream may drop
-/// the last hold on its console, which says `quit` only when dropped on a runtime, and a
-/// Python finalizer is not on one.
+/// A value let go of on the binding's runtime. Dropping an agent or a turn's stream drops its
+/// console, whose client is let go of on a task when dropped on a runtime (an attached console
+/// says no `quit`: the session is the `virtx.ConsoleClient`'s), and a Python finalizer is not on
+/// one.
 struct OnRuntime<T>(Option<T>);
 
 impl<T> Drop for OnRuntime<T> {

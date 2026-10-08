@@ -113,11 +113,12 @@ asyncio.run(main())
 <summary><b>Node.js</b></summary>
 
 ```sh
-npm install @brekkylab/ailoy
+npm install @brekkylab/ailoy @brekkylab/virtx
 ```
 
 ```js
-const { AgentBuilder, ConsoleClient, Recipe } = require('@brekkylab/ailoy')
+const { AgentBuilder } = require('@brekkylab/ailoy')
+const { ConsoleClient, Recipe } = require('@brekkylab/virtx')
 
 const console_ = await ConsoleClient.builder()
   .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))
