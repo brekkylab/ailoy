@@ -8,9 +8,9 @@
 // Messages, specs and tool descriptions are plain objects in their JSON form; `types.d.ts`
 // spells out their shapes.
 //
-// Tools run commands in a virtx console (`ConsoleClient`, `Directory`, `Recipe`, ...), exported
-// here too. These classes are built into this addon and are distinct types from `virtx`'s:
-// a `ConsoleClient` built by `virtx` cannot be handed to an `AgentBuilder`.
+// Tools run commands in a console from `@brekkylab/virtx` (`ConsoleClient`, `Recipe`, ...),
+// which ailoy depends on but does not re-export: build one with virtx and hand it to
+// `AgentBuilder.console`, which shares its session with the agent.
 //
 // `binding.js` is the loader `napi build` generates; this file adds what napi cannot declare
 // from Rust: a turn is an async iterable.

@@ -9,8 +9,11 @@ description = "Agents that drive a language model through tool-augmented turns, 
 readme = "../../README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
-# `NotRequired`, for `ailoy.types`, is in `typing` from 3.11.
-dependencies = ["typing_extensions>=4; python_version < '3.11'"]
+dependencies = [
+    "virtx>=0.1.1,<0.2",
+    # `NotRequired`, for `ailoy.types`, is in `typing` from 3.11.
+    "typing_extensions>=4; python_version < '3.11'",
+]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -24,6 +27,9 @@ Repository = "https://github.com/brekkylab/ailoy"
 
 [dependency-groups]
 dev = ["maturin>=1.9,<2", "pytest>=8", "pytest-asyncio>=1"]
+
+[tool.uv.sources]
+virtx = { path = "../../../virtx/bindings/python", editable = true }
 
 [tool.maturin]
 python-source = "python"

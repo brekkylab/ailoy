@@ -8,7 +8,7 @@ import asyncio, json, os, tempfile, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import ailoy
-from ailoy import virtx
+import virtx
 
 want = lambda name: os.environ.get(name) == "1"
 failures = []
@@ -60,7 +60,7 @@ async def run(agent, query):
 
 async def main():
     check(hasattr(ailoy, "AgentBuilder"), f"the package loads from {os.path.dirname(ailoy.__file__)}")
-    check("echo hi" in repr(virtx.Recipe("alpine:latest").step("echo hi")), "virtx comes built in")
+    check("echo hi" in repr(virtx.Recipe("alpine:latest").step("echo hi")), "virtx comes along")
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeModel)
     threading.Thread(target=server.serve_forever, daemon=True).start()

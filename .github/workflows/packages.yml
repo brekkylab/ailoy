@@ -483,7 +483,7 @@ jobs:
           done
           mkdir -p "$RUNNER_TEMP/project" && cd "$RUNNER_TEMP/project"
           echo '{"name":"project","private":true,"type":"module"}' > package.json
-          npm install @brekkylab/ailoy --userconfig "$npmrc" --registry http://localhost:4873/
+          npm install @brekkylab/ailoy @brekkylab/virtx --userconfig "$npmrc" --registry http://localhost:4873/
           ls node_modules/@brekkylab
 
       - name: Install the wheel pip picks
@@ -491,7 +491,8 @@ jobs:
         run: |
           python -m venv "$RUNNER_TEMP/venv"
           py="$RUNNER_TEMP/venv/bin/python"; [ -x "$py" ] || py="$RUNNER_TEMP/venv/Scripts/python.exe"
-          "$py" -m pip install --no-index --find-links dist/wheels ailoy-py
+          "$py" -m pip install --no-index --find-links dist/wheels --no-deps ailoy-py
+          "$py" -m pip install ailoy-py
           "$py" -m pip show ailoy-py
           echo "SMOKE_PYTHON=$py" >> "$GITHUB_ENV"
 

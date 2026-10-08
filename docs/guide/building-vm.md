@@ -1,12 +1,15 @@
 # Building VM
 
-The computer an agent works on is a Linux VM run by [virtx](https://github.com/brekkylab/virtx). Ailoy ships virtx with it, so there is nothing else to install:
+The computer an agent works on is a Linux VM run by [virtx](https://github.com/brekkylab/virtx). Ailoy depends on virtx, and your code uses it directly:
 
-- **Python:** `ailoy.virtx`
-- **Node.js:** exported from `@brekkylab/ailoy`
+- **Python:** the `virtx` package (`import virtx`), which `pip install ailoy-py` installs too
+- **Node.js:** `@brekkylab/virtx` (`npm install @brekkylab/virtx` beside `@brekkylab/ailoy`)
 - **Rust:** the `virtx` crate (`ailoy::console::ConsoleClient` is the same type as `virtx::console::ConsoleClient`)
 
-In Python and Node, use the classes from `ailoy`, not from the standalone `virtx` package: a `ConsoleClient` built by `virtx` cannot be handed to an `AgentBuilder`.
+A `ConsoleClient` built with virtx is handed to an `AgentBuilder` as is, and the agent shares its session. The session stays the console's:
+
+- Closing the agent leaves the console open; closing the console ends the session for the agent too, whose next command then fails.
+- Your own calls on the console and the agent's take turns, one call at a time.
 
 Two clients do the work:
 
@@ -22,7 +25,7 @@ A `Recipe` is a base image plus steps, much like a Dockerfile. `ImageClient` bui
 ```python [Python]
 import asyncio
 
-from ailoy.virtx import ImageClient, ImageSource, Recipe, ensure_virtx
+from virtx import ImageClient, ImageSource, Recipe, ensure_virtx
 
 
 async def main() -> None:
@@ -45,7 +48,7 @@ asyncio.run(main())
 ```
 
 ```js [Node.js]
-const { ImageClient, ImageSource, Recipe, ensureVirtx } = require('@brekkylab/ailoy')
+const { ImageClient, ImageSource, Recipe, ensureVirtx } = require('@brekkylab/virtx')
 
 // Fetches virtx's server into its cache the first time; a no-op after.
 await ensureVirtx()
@@ -103,7 +106,7 @@ You don't have to build ahead of time: passing a `Recipe` straight to a console 
 ```python [Python]
 import asyncio
 
-from ailoy.virtx import ConsoleClient, ImageSource
+from virtx import ConsoleClient, ImageSource
 
 
 async def main() -> None:
@@ -125,7 +128,7 @@ asyncio.run(main())
 ```
 
 ```js [Node.js]
-const { ConsoleClient, ImageSource } = require('@brekkylab/ailoy')
+const { ConsoleClient, ImageSource } = require('@brekkylab/virtx')
 
 const console_ = await ConsoleClient.builder()
   .image(ImageSource.reference('plot:latest'))

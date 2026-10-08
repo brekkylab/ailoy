@@ -50,7 +50,7 @@ if (
     )
 
 import ailoy
-from ailoy.virtx import (  # noqa: E402
+from virtx import (  # noqa: E402
     ConsoleClient,
     Directory,
     HostMount,

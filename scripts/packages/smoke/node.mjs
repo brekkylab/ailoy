@@ -1,7 +1,7 @@
 // The Node package as a user installs it, on the platform this runs on.
 //
-// Run from a project that installed `@brekkylab/ailoy`, so it resolves the way that
-// project's code would. What this platform can do is said in the environment:
+// Run from a project that installed `@brekkylab/ailoy` and `@brekkylab/virtx`, so each resolves
+// the way that project's code would. What this platform can do is said in the environment:
 //   SMOKE_MOUNT   1 if a FUSE provider is installed here, else 0
 //   SMOKE_SERVER  1 if virtx-uvm publishes a server for this platform, which `ensureVirtx()`
 //                 fetches into $VIRTX_HOME, else 0
@@ -29,15 +29,16 @@ const run = async (agent, query) => {
 }
 
 const ailoy = require('@brekkylab/ailoy')
+const virtx = require('@brekkylab/virtx')
 check(typeof ailoy.AgentBuilder === 'function', 'the package loads')
 
 // Only this platform's binary, as npm's os/cpu/libc filter chose it.
 const scope = path.join(process.cwd(), 'node_modules', '@brekkylab')
 const installed = fs.readdirSync(scope).sort()
 console.log(`  installed: ${installed.join(' ')}`)
-check(installed.length === 2, 'exactly one platform package was installed beside the root')
+check(installed.length === 4, 'exactly one platform package was installed beside each root (ailoy, virtx)')
 
-check(new ailoy.Recipe('alpine:latest').step('echo hi').toString().includes('echo hi'), 'virtx comes built in')
+check(new virtx.Recipe('alpine:latest').step('echo hi').toString().includes('echo hi'), 'virtx comes along')
 
 const model = await fakeModel()
 try {
@@ -68,7 +69,7 @@ try {
   const point = fs.mkdtempSync(path.join(os.tmpdir(), 'ailoy-smoke-'))
   let mount = null
   try {
-    mount = new ailoy.HostMount(new ailoy.Directory().withFile('a.txt', 'hi'), point)
+    mount = new virtx.HostMount(new virtx.Directory().withFile('a.txt', 'hi'), point)
   } catch (e) {
     console.log(`  HostMount: ${e.message}`)
   }
@@ -82,7 +83,7 @@ try {
   // The console server, as the guides have it: `ensureVirtx()` first.
   let server = null
   try {
-    server = await ailoy.ensureVirtx()
+    server = await virtx.ensureVirtx()
     console.log(`  ensureVirtx: ${server}`)
   } catch (e) {
     console.log(`  ensureVirtx: ${e.message}`)
@@ -95,7 +96,7 @@ try {
       check(path.relative(process.env.VIRTX_HOME, server) === 'bin', 'into $VIRTX_HOME/bin')
     }
     // The server runs on this machine, and answers -- no VM needed to ask its version.
-    const images = await ailoy.ImageClient.tryNew()
+    const images = await virtx.ImageClient.tryNew()
     const version = await images.version()
     await images.close()
     check(typeof version === 'string' && version.length > 0, `the console server answers (protocol ${version})`)
@@ -105,7 +106,7 @@ try {
     // An agent's shell tool, in a VM session that sees a host directory.
     const host = fs.mkdtempSync(path.join(os.tmpdir(), 'ailoy-smoke-host-'))
     fs.writeFileSync(path.join(host, 'from-host.txt'), 'by path')
-    const console_ = await ailoy.ConsoleClient.builder().image(new ailoy.Recipe('alpine:latest')).mount(host, '/host').build()
+    const console_ = await virtx.ConsoleClient.builder().image(new virtx.Recipe('alpine:latest')).mount(host, '/host').build()
     const agent = await new ailoy.AgentBuilder('fake/model').shellTool().console(console_).build()
     const cmd = 'uname -m; cat /host/from-host.txt; echo written > /host/from-vm.txt'
     const outputs = await run(agent, `shell ${JSON.stringify({ cmd })}`)

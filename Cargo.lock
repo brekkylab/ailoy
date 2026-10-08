@@ -98,7 +98,6 @@ dependencies = [
  "tokio",
  "url",
  "virtx",
- "virtx-node",
 ]
 
 [[package]]
@@ -116,7 +115,6 @@ dependencies = [
  "tokio",
  "url",
  "virtx",
- "virtx-python",
 ]
 
 [[package]]
@@ -4069,8 +4067,6 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "virtx"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "696c945460126f8691e19ab131d84af56eb0fd3831bf7f3d4b17a86031da150a"
 dependencies = [
  "anyhow",
  "bson",
@@ -4089,31 +4085,6 @@ dependencies = [
  "tokio",
  "widestring",
  "winapi",
-]
-
-[[package]]
-name = "virtx-node"
-version = "0.1.1"
-source = "git+https://github.com/brekkylab/virtx?tag=v0.1.1#f01da90038325cfe7a33460c7f8ae77533f0951e"
-dependencies = [
- "anyhow",
- "napi",
- "napi-build",
- "napi-derive",
- "tokio",
- "virtx",
-]
-
-[[package]]
-name = "virtx-python"
-version = "0.1.1"
-source = "git+https://github.com/brekkylab/virtx?tag=v0.1.1#f01da90038325cfe7a33460c7f8ae77533f0951e"
-dependencies = [
- "anyhow",
- "pyo3",
- "pyo3-async-runtimes",
- "tokio",
- "virtx",
 ]
 
 [[package]]
