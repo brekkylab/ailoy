@@ -14,8 +14,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ailoy = { path = "../.." }
-# The console an agent runs in: the `virtx` package's `ConsoleClient`, attached to through
-# `virtx::console::Relay` (see `src/console.rs`), and `Failure` for its errors.
 virtx = { workspace = true }
 # `abi3-py310`: one wheel per platform, not per interpreter. `extension-module` is set in
 # `pyproject.toml` instead: it leaves libpython unlinked, which suits the interpreter-loaded

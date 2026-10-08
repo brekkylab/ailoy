@@ -1,6 +1,5 @@
 # A registry on localhost that holds what this workflow packed, so `npm install
-# @brekkylab/ailoy` resolves its optional platform packages the way npmjs would. virtx, which
-# ailoy depends on, is not built here and comes from npmjs.
+# @brekkylab/ailoy` resolves its optional platform packages the way npmjs would.
 storage: ./verdaccio-storage
 # A platform package is one addon, some 12 MB packed -- over verdaccio's default of 10mb.
 max_body_size: 200mb

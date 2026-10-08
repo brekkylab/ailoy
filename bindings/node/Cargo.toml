@@ -14,8 +14,6 @@ napi-build = "2"
 
 [dependencies]
 ailoy = { path = "../.." }
-# The console an agent runs in: `@brekkylab/virtx`'s `ConsoleClient`, attached to through
-# `virtx::console::Relay` (see `src/console.rs`), and `Failure` for its errors.
 virtx = { workspace = true }
 # `serde-json` for `Env::to_js_value`/`from_js_value`: messages, specs and tool arguments cross
 # as their serde objects, not per-type mirrors — ailoy's JSON shape *is* its interface.

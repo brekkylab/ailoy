@@ -16,13 +16,8 @@ license = "Apache-2.0"
 repository = "https://github.com/brekkylab/ailoy"
 
 [workspace.dependencies]
-# The bindings take virtx's classes from the virtx packages (PyPI `virtx`, npm
-# `@brekkylab/virtx`), not from virtx's binding crates, and drive a console of theirs through
-# `virtx::console::Relay`. So this crate is all of virtx that ailoy builds.
 virtx = { version = "0.1.1", default-features = false }
 
-# TEMPORARY: virtx's checkout beside this one, for `ConsoleClient::relay`/`attach`, until a
-# virtx release carries them. Remove with the `../virtx` links in the bindings' packages.
 [patch.crates-io]
 virtx = { path = "../virtx" }
 
@@ -60,8 +55,6 @@ anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"
 base64 = "0.23"
-# Only the console: no host mount (FUSE-T, Dokany) or `ensure_virtx` (an HTTP stack), which a
-# caller takes from virtx itself. The examples use both; see `[dev-dependencies]`.
 virtx = { workspace = true }
 dedent = "0.1.1"
 derive_builder = "0.20.2"
@@ -109,7 +102,6 @@ wreq-util = { version = "=3.0.0-rc.14", features = ["emulation-compression"] }
 
 [dev-dependencies]
 axum = "0.8"
-# `HostMount`/`Directory` and `ensure_virtx`, for the examples.
 virtx = { workspace = true, features = ["mount", "ensure"] }
 dotenvy = "0.15"
 # MCP *server* half, only for the in-process server in the `mcp` tests (feature
