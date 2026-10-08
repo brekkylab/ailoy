@@ -5,6 +5,7 @@ description = "ICIJ's Offshore Leaks database analyzed by an agent, on ailoy's P
 requires-python = ">=3.10"
 dependencies = [
     "ailoy-py",
+    "virtx",
     # Pinned: the guest opens the file this writes and must install the same version.
     "duckdb==1.5.5",
     "python-dotenv>=1",
@@ -17,3 +18,6 @@ package = false
 [tool.uv.sources]
 # The bindings in this checkout, built by maturin on the first `uv run`.
 ailoy-py = { path = "../../../bindings/python", editable = true }
+# TEMPORARY: virtx's checkout beside this one, as the bindings take it, until a virtx
+# release carries `_relay`.
+virtx = { path = "../../../../virtx/bindings/python", editable = true }

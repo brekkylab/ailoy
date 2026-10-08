@@ -5,6 +5,7 @@ description = "Qwen3-TTS on ncnn as an agent's skill, on ailoy's Python bindings
 requires-python = ">=3.10"
 dependencies = [
     "ailoy-py",
+    "virtx",
     "huggingface_hub",
     "ncnn",
     "numpy",
@@ -22,3 +23,6 @@ package = false
 [tool.uv.sources]
 # The bindings in this checkout, built by maturin on the first `uv run`.
 ailoy-py = { path = "../../../bindings/python", editable = true }
+# TEMPORARY: virtx's checkout beside this one, as the bindings take it, until a virtx
+# release carries `_relay`.
+virtx = { path = "../../../../virtx/bindings/python", editable = true }
