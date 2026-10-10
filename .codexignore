@@ -1,0 +1,36 @@
+# What an agent client should not pull into context when it loads this plugin: everything here is
+# built, downloaded, or local to one machine. Mirrors .gitignore, minus the entries git alone
+# cares about.
+
+# Rust build output, which is most of the checkout by size.
+target/
+
+# Built bindings: the Node addon and the Python extension, and their installed dependencies.
+*.node
+*.so
+*.abi3.so
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# The docs site's dependencies and build.
+docs/node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+
+# Local secrets, runtime state and scratch.
+.env
+daemon-root/
+.claude/worktrees/
+.omc/
+
+# Editor / OS cruft.
+.DS_Store
+.idea/
+.vscode/
