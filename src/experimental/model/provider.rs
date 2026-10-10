@@ -48,7 +48,7 @@ use anyhow::Context as _;
 use super::{
     BedrockModel, ClaudeApiModel, ClaudeCliModel, CodexCliModel, DeepSeekApiModel, GeminiApiModel,
     GeminiCliModel, GlmApiModel, GptApiModel, InferLangModel, KimiApiModel, OpenRouterModel,
-    r#impl::claude_alias,
+    r#impl::{claude_alias, gpt_alias},
 };
 
 /// Decides how a model is run (its CLI, its API, …) and builds it. Takes the desc's model
@@ -173,7 +173,8 @@ impl FromModelName for GlmApiModel {
 }
 
 /// The name is the Bedrock model id, or for `"claude"` one of the CLI's aliases
-/// (`"claude/sonnet"` runs `global.anthropic.claude-sonnet-5-5`). `<vendor>.` is put in
+/// (`"claude/sonnet"` runs `global.anthropic.claude-sonnet-5-5`) and for `"gpt"` one of
+/// its family aliases (`"gpt/astra"` runs `global.openai.gpt-6-astra`). `<vendor>.` is put in
 /// front of an id unless it already names
 /// a vendor or region (has a `.`) or is an ARN: `"claude/claude-3-5-haiku-20241022-v1:0"`
 /// runs `anthropic.claude-3-5-haiku-20241022-v1:0`, and
@@ -182,11 +183,14 @@ impl FromModelName for GlmApiModel {
 impl FromModelName for BedrockModel {
     fn from_model_name(model: &str, name: Option<&str>) -> anyhow::Result<Self> {
         let name = required(name)?;
-        // Claude's aliases run the global inference profile of their model.
-        if model == "claude"
-            && let Some(id) = claude_alias(name)
-        {
-            return Self::from_env(format!("global.anthropic.{id}"));
+        // Aliases run the global inference profile of their model.
+        let alias = match model {
+            "claude" => claude_alias(name),
+            "gpt" => gpt_alias(name),
+            _ => None,
+        };
+        if let Some(id) = alias {
+            return Self::from_env(format!("global.{}.{id}", bedrock_vendor(model)));
         }
         let id = if name.contains('.') || name.starts_with("arn:") {
             name.to_owned()

@@ -126,9 +126,10 @@ impl CodexCliModel {
         }
     }
 
-    /// Model name (e.g. `"gpt-5.5"`); unset keeps the CLI default.
+    /// Model name (e.g. `"gpt-5.5"`) or alias (e.g. `"sol"`); unset keeps the CLI default.
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
-        self.model = Some(model.into());
+        let model = model.into();
+        self.model = Some(super::gpt_alias(&model).map_or(model, str::to_owned));
         self
     }
 

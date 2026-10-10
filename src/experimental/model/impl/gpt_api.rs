@@ -24,6 +24,17 @@ use crate::{
 
 const API_URL: &str = "https://api.openai.com/v1/responses";
 
+/// The model id for an alias naming the latest GPT model of a family, so the same name
+/// works through the CLI, the API and Bedrock.
+pub(crate) fn gpt_alias(name: &str) -> Option<&'static str> {
+    match name {
+        "astra" => Some("gpt-6-astra"),
+        "sol" => Some("gpt-6.1-sol"),
+        "luna" => Some("gpt-6-luna"),
+        _ => None,
+    }
+}
+
 /// Runs OpenAI models through the Responses API (`/v1/responses`).
 ///
 /// Unlike [`CodexCliModel`](super::CodexCliModel), images are sent too. Reasoning is not
@@ -35,10 +46,14 @@ pub struct GptApiModel {
 }
 
 impl GptApiModel {
-    /// Runs `model`, an API model id (e.g. "gpt-5.5"), with `api_key`.
+    /// Runs `model`, an API model id (e.g. "gpt-5.5") or alias (e.g. "sol"), with
+    /// `api_key`.
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
-            model: model.into(),
+            model: {
+                let model = model.into();
+                gpt_alias(&model).map_or(model, str::to_owned)
+            },
             api_key: api_key.into(),
         }
     }
