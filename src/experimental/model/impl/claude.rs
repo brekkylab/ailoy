@@ -34,7 +34,7 @@ use tokio::{
 
 use crate::{
     datatype::Value,
-    experimental::model::InferLangModel,
+    experimental::model::{InferLangModel, LangModelOptions, ThinkingEffort},
     message::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, Role, TokenUsage,
@@ -42,6 +42,8 @@ use crate::{
     tool::ToolDesc,
 };
 
+/// The tool the CLI adds for `--json-schema`; the reply is its arguments.
+const STRUCTURED_OUTPUT: &str = "StructuredOutput";
 const CALLS_OPEN: &str = "<function_calls>";
 const CALLS_CLOSE: &str = "</function_calls>";
 const INVOKE_OPEN: &str = "<invoke name=\"";
@@ -93,7 +95,12 @@ impl ClaudeModel {
     }
 
     /// Builds the command for one call, without starting it.
-    fn invocation(&self, messages: &[Message], tools: &[ToolDesc]) -> anyhow::Result<Invocation> {
+    fn invocation(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDesc],
+        options: &LangModelOptions,
+    ) -> anyhow::Result<Invocation> {
         let (system, conversation): (Vec<&Message>, Vec<&Message>) =
             messages.iter().partition(|m| m.role == Role::System);
         let mut system = system
@@ -128,6 +135,19 @@ impl ClaudeModel {
         if let Some(model) = &self.model {
             command.args(["--model", model.as_str()]);
         }
+        // Unset keeps the CLI's own default effort.
+        if let Some(effort) = options.thinking_effort {
+            let effort = match effort {
+                ThinkingEffort::Low => "low",
+                ThinkingEffort::Medium => "medium",
+                ThinkingEffort::High => "high",
+            };
+            command.args(["--effort", effort]);
+        }
+        if let Some(schema) = &options.output_schema {
+            // The CLI answers through its own `StructuredOutput` tool, read in place of text.
+            command.args(["--json-schema", serde_json::to_string(schema)?.as_str()]);
+        }
         // Always set, even empty: otherwise Claude Code's own coding-agent prompt is used.
         command.args(["--system-prompt", system.as_str()]);
         command
@@ -150,8 +170,9 @@ impl InferLangModel for ClaudeModel {
         &self,
         messages: &[Message],
         tools: &[ToolDesc],
+        options: &LangModelOptions,
     ) -> BoxFuture<'static, anyhow::Result<MessageOutput>> {
-        let mut deltas = self.infer_stream(messages, tools);
+        let mut deltas = self.infer_stream(messages, tools, options);
         Box::pin(async move {
             let mut acc = MessageDeltaOutput::new();
             while let Some(delta) = deltas.next().await {
@@ -165,11 +186,15 @@ impl InferLangModel for ClaudeModel {
         &self,
         messages: &[Message],
         tools: &[ToolDesc],
+        options: &LangModelOptions,
     ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
-        let invocation = match self.invocation(messages, tools) {
+        let invocation = match self.invocation(messages, tools, options) {
             Ok(invocation) => invocation,
             Err(e) => return Box::pin(stream::once(async move { Err(e) })),
         };
+        // With a schema the reply is the `StructuredOutput` call alone; plain text the model
+        // writes around it is dropped, though tool calls in it are still taken.
+        let structured = options.output_schema.is_some();
 
         Box::pin(async_stream::try_stream! {
             let tools = invocation.tools.clone();
@@ -187,6 +212,9 @@ impl InferLangModel for ClaudeModel {
             let mut scanner = CallScanner::default();
             // Input usage from `message_start`, for a reply cut short at a tool call.
             let mut start_usage = None;
+            // Inside the `StructuredOutput` call, whose arguments are the reply, and past it.
+            let mut in_structured = false;
+            let mut structured_done = false;
             let mut started = false;
             let mut finished = false;
             while let Some(line) = lines.next_line().await? {
@@ -205,10 +233,32 @@ impl InferLangModel for ClaudeModel {
                             start_usage = parse_usage(&inner["message"]["usage"]);
                             continue;
                         }
+                        if inner["type"] == "content_block_start" {
+                            let block = &inner["content_block"];
+                            in_structured = block["type"] == "tool_use"
+                                && block["name"] == STRUCTURED_OUTPUT;
+                            continue;
+                        }
+                        if inner["type"] == "content_block_stop" && in_structured {
+                            in_structured = false;
+                            structured_done = true;
+                            continue;
+                        }
                         let delta = &inner["delta"];
-                        if let Some(piece) = delta["text"].as_str() {
+                        if in_structured {
+                            let Some(json) = delta["partial_json"].as_str() else {
+                                continue;
+                            };
+                            if json.is_empty() {
+                                continue;
+                            }
+                            out.delta = out.delta.with_contents([PartDelta::Text { text: json.to_owned() }]);
+                        } else if structured_done {
+                            // Whatever the model says after the structured reply is not part of it.
+                            continue;
+                        } else if let Some(piece) = delta["text"].as_str() {
                             let (text, block) = scanner.push(piece);
-                            if !text.is_empty() {
+                            if !text.is_empty() && !structured {
                                 out.delta = out.delta.with_contents([PartDelta::Text { text }]);
                             }
                             if let Some(block) = block {
@@ -232,7 +282,7 @@ impl InferLangModel for ClaudeModel {
                             Err(anyhow::anyhow!("the reply ended inside {CALLS_OPEN}"))?;
                         }
                         let text = scanner.flush();
-                        if !text.is_empty() {
+                        if !text.is_empty() && !structured {
                             out.delta = out.delta.with_contents([PartDelta::Text { text }]);
                         }
                         out.finish_reason = Some(FinishReason::Stop {});

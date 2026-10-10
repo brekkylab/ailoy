@@ -1,5 +1,5 @@
 use ailoy::{
-    experimental::model::{ClaudeModel, InferLangModel},
+    experimental::model::{ClaudeModel, InferLangModel, LangModelOptions},
     message::{Message, Part, Role},
     tool::ToolDescBuilder,
 };
@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Turn 1: streamed, should stop at the tool calls.
     print!("[turn 1] ");
-    let mut stream = model.infer_stream(&messages, &tools);
+    let mut stream = model.infer_stream(&messages, &tools, &LangModelOptions::default());
     let mut acc = ailoy::message::MessageDeltaOutput::new();
     while let Some(delta) = stream.next().await {
         let delta = delta?;
@@ -68,7 +68,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Turn 2: non-streamed, should answer from the results.
-    let output = model.infer(&messages, &tools).await?;
+    let output = model
+        .infer(&messages, &tools, &LangModelOptions::default())
+        .await?;
     println!("[turn 2] {:?}", output.message.contents);
     println!("[finish] {:?}", output.finish_reason);
     println!("[usage] {:?}", output.usage);

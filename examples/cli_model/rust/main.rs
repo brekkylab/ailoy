@@ -1,9 +1,9 @@
 //! Runs one tool-calling exchange through a model's CLI.
 //!
-//! Usage: `cargo run --example cli_model -- <claude|codex|gemini> [model]`
+//! Usage: `cargo run --example cli_model -- <claude|openai|gemini> [model]`
 
 use ailoy::{
-    experimental::model::{ClaudeModel, CodexModel, GeminiModel, InferLangModel},
+    experimental::model::{LangModelOptions, create_lang_model},
     message::{Message, Part, Role},
     tool::ToolDescBuilder,
 };
@@ -13,22 +13,11 @@ use futures::StreamExt as _;
 async fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let backend = args.next().unwrap_or_else(|| "claude".to_owned());
-    let name = args.next();
-    let model: Box<dyn InferLangModel> = match backend.as_str() {
-        "claude" => Box::new(match name {
-            Some(name) => ClaudeModel::new().with_model(name),
-            None => ClaudeModel::new(),
-        }),
-        "codex" => Box::new(match name {
-            Some(name) => CodexModel::new().with_model(name),
-            None => CodexModel::new(),
-        }),
-        "gemini" => Box::new(match name {
-            Some(name) => GeminiModel::new().with_model(name),
-            None => GeminiModel::new(),
-        }),
-        other => anyhow::bail!("unknown backend {other}: use claude, codex or gemini"),
+    let desc = match args.next() {
+        Some(name) => format!("{backend}/{name}"),
+        None => backend,
     };
+    let model = create_lang_model(&desc)?;
     let tools = [ToolDescBuilder::new("get_weather")
         .description("Get the current weather for a city.")
         .parameters(serde_json::json!({
@@ -48,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Turn 1: streamed, should stop at the tool calls.
     print!("[turn 1] ");
-    let mut stream = model.infer_stream(&messages, &tools);
+    let mut stream = model.infer_stream(&messages, &tools, &LangModelOptions::default());
     let mut acc = ailoy::message::MessageDeltaOutput::new();
     while let Some(delta) = stream.next().await {
         let delta = delta?;
@@ -86,7 +75,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Turn 2: non-streamed, should answer from the results.
-    let output = model.infer(&messages, &tools).await?;
+    let output = model
+        .infer(&messages, &tools, &LangModelOptions::default())
+        .await?;
     println!("[turn 2] {:?}", output.message.contents);
     println!("[finish] {:?}", output.finish_reason);
     println!("[tool_calls] {:?}", output.message.tool_calls);

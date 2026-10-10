@@ -38,7 +38,7 @@ use tokio::{
 };
 
 use crate::{
-    experimental::model::InferLangModel,
+    experimental::model::{InferLangModel, LangModelOptions, ThinkingEffort},
     message::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, Role, TokenUsage,
@@ -202,11 +202,17 @@ fn direct_catalog(mut catalog: serde_json::Value) -> serde_json::Value {
             continue;
         };
         model.remove("tool_mode");
-        model.insert("experimental_supported_tools".to_owned(), serde_json::json!([]));
+        model.insert(
+            "experimental_supported_tools".to_owned(),
+            serde_json::json!([]),
+        );
         model.insert("use_responses_lite".to_owned(), false.into());
         model.remove("multi_agent_version");
         model.remove("multi_agent_reasoning_effort");
-        if let Some(messages) = model.get_mut("model_messages").and_then(|m| m.as_object_mut()) {
+        if let Some(messages) = model
+            .get_mut("model_messages")
+            .and_then(|m| m.as_object_mut())
+        {
             messages.remove("multi_agent");
         }
     }
@@ -218,8 +224,9 @@ impl InferLangModel for CodexModel {
         &self,
         messages: &[Message],
         tools: &[ToolDesc],
+        options: &LangModelOptions,
     ) -> BoxFuture<'static, anyhow::Result<MessageOutput>> {
-        let mut deltas = self.infer_stream(messages, tools);
+        let mut deltas = self.infer_stream(messages, tools, options);
         Box::pin(async move {
             let mut acc = MessageDeltaOutput::new();
             while let Some(delta) = deltas.next().await {
@@ -233,12 +240,27 @@ impl InferLangModel for CodexModel {
         &self,
         messages: &[Message],
         tools: &[ToolDesc],
+        options: &LangModelOptions,
     ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
         let plan = match Plan::new(messages, tools) {
             Ok(plan) => plan,
             Err(e) => return Box::pin(stream::once(async move { Err(e) })),
         };
         let this = self.clone();
+        let mut turn = serde_json::json!({"input": plan.input});
+        // Unset keeps the model's default effort.
+        if let Some(effort) = options.thinking_effort {
+            turn["effort"] = match effort {
+                ThinkingEffort::Low => "low",
+                ThinkingEffort::Medium => "medium",
+                ThinkingEffort::High => "high",
+            }
+            .into();
+        }
+        if let Some(schema) = &options.output_schema {
+            // Codex sends it in strict mode, which needs every object closed.
+            turn["outputSchema"] = super::schema::close_objects(schema).into();
+        }
 
         Box::pin(async_stream::try_stream! {
             let workdir = tempfile::tempdir()?;
@@ -303,11 +325,8 @@ impl InferLangModel for CodexModel {
             }
 
             // Its response is checked by the reader, along with the turn's events.
-            send(&mut stdin, serde_json::json!({
-                "id": 3,
-                "method": "turn/start",
-                "params": {"threadId": thread_id, "input": plan.input},
-            })).await?;
+            turn["threadId"] = thread_id.into();
+            send(&mut stdin, serde_json::json!({"id": 3, "method": "turn/start", "params": turn})).await?;
 
             let mut reader = Reader::new(plan.tool_names, plan.history_call_ids);
             let mut finished = false;
@@ -365,7 +384,10 @@ impl Plan {
             .map(text_of)
             .collect::<anyhow::Result<Vec<_>>>()?
             .join("\n\n");
-        let tool_names = tools.iter().map(|tool| tool.name.clone()).collect::<Vec<_>>();
+        let tool_names = tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
         let tools = tools
             .iter()
             .map(|tool| {
@@ -384,7 +406,9 @@ impl Plan {
         let (earlier, input) = match latest.role {
             Role::User => (
                 earlier,
-                vec![serde_json::json!({"type": "text", "text": text_of(latest)?, "text_elements": []})],
+                vec![
+                    serde_json::json!({"type": "text", "text": text_of(latest)?, "text_elements": []}),
+                ],
             ),
             // The results go into the history, and the turn starts without input.
             Role::Tool => (&conversation[..], Vec::new()),
@@ -497,7 +521,10 @@ impl Reader {
     }
 
     /// Handles one message. A delta with a finish reason ends the reply.
-    fn on_message(&mut self, message: serde_json::Value) -> anyhow::Result<Option<MessageDeltaOutput>> {
+    fn on_message(
+        &mut self,
+        message: serde_json::Value,
+    ) -> anyhow::Result<Option<MessageDeltaOutput>> {
         let Some(method) = message["method"].as_str() else {
             // A response to one of our requests: only its error matters.
             if let Some(error) = message.get("error") {
@@ -673,7 +700,8 @@ mod tests {
 
     #[test]
     fn tool_results_go_into_the_history() {
-        let mut messages = vec![Message::new(Role::System).with_contents([Part::text("Be brief.")])];
+        let mut messages =
+            vec![Message::new(Role::System).with_contents([Part::text("Be brief.")])];
         messages.extend(weather_call());
         let plan = Plan::new(&messages, &[]).unwrap();
         assert_eq!(plan.instructions, "Be brief.");
@@ -730,7 +758,11 @@ mod tests {
                 else {
                     panic!("not a parsed call: {call:?}");
                 };
-                (id.clone(), name.clone(), serde_json::to_value(arguments).unwrap())
+                (
+                    id.clone(),
+                    name.clone(),
+                    serde_json::to_value(arguments).unwrap(),
+                )
             })
             .collect()
     }
@@ -758,16 +790,30 @@ mod tests {
         .unwrap();
         assert_eq!(outs[0].delta.role, Some(Role::Assistant));
         let last = outs.last().unwrap();
-        assert!(matches!(last.finish_reason, Some(FinishReason::ToolCall {})));
+        assert!(matches!(
+            last.finish_reason,
+            Some(FinishReason::ToolCall {})
+        ));
         assert_eq!(
             calls(last),
             [
-                (Some("call_1".to_owned()), "get_weather".to_owned(), serde_json::json!({"city": "Seoul"})),
-                (Some("call_2".to_owned()), "get_weather".to_owned(), serde_json::json!({"city": "Tokyo"})),
+                (
+                    Some("call_1".to_owned()),
+                    "get_weather".to_owned(),
+                    serde_json::json!({"city": "Seoul"})
+                ),
+                (
+                    Some("call_2".to_owned()),
+                    "get_weather".to_owned(),
+                    serde_json::json!({"city": "Tokyo"})
+                ),
             ]
         );
         let usage = last.usage.as_ref().unwrap();
-        assert_eq!((usage.input_tokens, usage.cache_read_input_tokens), (10, Some(4)));
+        assert_eq!(
+            (usage.input_tokens, usage.cache_read_input_tokens),
+            (10, Some(4))
+        );
     }
 
     #[test]
@@ -778,7 +824,9 @@ mod tests {
             serde_json::json!({"method": "turn/completed", "params": {"turn": {"status": "completed", "error": null}}}),
         ])
         .unwrap();
-        assert!(matches!(&outs[1].delta.contents[..], [PartDelta::Text { text }] if text == "\n\nBye."));
+        assert!(
+            matches!(&outs[1].delta.contents[..], [PartDelta::Text { text }] if text == "\n\nBye.")
+        );
         assert!(matches!(outs[2].finish_reason, Some(FinishReason::Stop {})));
 
         let err = read(&[serde_json::json!({"method": "turn/completed", "params": {"turn": {"status": "failed", "error": {"message": "401 Unauthorized"}}}})])

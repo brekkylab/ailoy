@@ -1,11 +1,9 @@
 pub(crate) mod r#impl;
 mod infer_lang_model;
+mod provider;
 
-pub use r#impl::{ClaudeModel, CodexModel, GeminiModel};
+pub use r#impl::{
+    ClaudeApiModel, ClaudeModel, CodexModel, GeminiApiModel, GeminiModel, OpenAIApiModel,
+};
 pub use infer_lang_model::*;
-
-pub enum LangModel {
-    Claude(ClaudeModel),
-    Codex(CodexModel),
-    Gemini(GeminiModel),
-}
+pub use provider::*;

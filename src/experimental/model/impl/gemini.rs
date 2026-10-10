@@ -34,7 +34,7 @@ use tokio::{
 };
 
 use crate::{
-    experimental::model::InferLangModel,
+    experimental::model::{InferLangModel, LangModelOptions, ThinkingEffort},
     message::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, Role, TokenUsage,
@@ -139,7 +139,12 @@ impl GeminiModel {
 
     /// Writes the files for one call into `workdir` and builds the command,
     /// without starting it.
-    fn command(&self, plan: &Plan, workdir: &Path) -> anyhow::Result<Command> {
+    fn command(
+        &self,
+        plan: &Plan,
+        options: &LangModelOptions,
+        workdir: &Path,
+    ) -> anyhow::Result<Command> {
         let project = project_dir()?;
         let system_md = workdir.join("system.md");
         std::fs::write(&system_md, &plan.system)?;
@@ -166,6 +171,22 @@ impl GeminiModel {
             std::fs::write(&session, &plan.session)?;
             command.arg("--session-file").arg(session);
         }
+        if let Some(config) = self.generate_config(options) {
+            // The options go in a system settings file of the call's own, which leaves the
+            // shared project settings untouched. The override applies to the main chat only,
+            // whichever model it runs on.
+            let system_settings = workdir.join("system-settings.json");
+            let settings = serde_json::json!({
+                "modelConfigs": {
+                    "customOverrides": [{
+                        "match": {"isChatModel": true},
+                        "modelConfig": {"generateContentConfig": config},
+                    }],
+                },
+            });
+            std::fs::write(&system_settings, serde_json::to_string(&settings)?)?;
+            command.env("GEMINI_CLI_SYSTEM_SETTINGS_PATH", &system_settings);
+        }
         command
             // Always set, even empty: otherwise the CLI's own coding-agent prompt is used.
             .env("GEMINI_SYSTEM_MD", &system_md)
@@ -179,6 +200,34 @@ impl GeminiModel {
             // Dropping a stream mid-reply ends the process with it.
             .kill_on_drop(true);
         Ok(command)
+    }
+}
+
+impl GeminiModel {
+    /// The `generateContentConfig` fields `options` set, or `None` when they set none.
+    fn generate_config(&self, options: &LangModelOptions) -> Option<serde_json::Value> {
+        let mut config = serde_json::Map::new();
+        if let Some(effort) = options.thinking_effort {
+            // Gemini 2.x takes a token budget, later models a level.
+            let legacy = self
+                .model
+                .as_deref()
+                .is_some_and(|m| m.starts_with("gemini-2"));
+            let thinking = match (legacy, effort) {
+                (true, ThinkingEffort::Low) => serde_json::json!({"thinkingBudget": 2048}),
+                (true, ThinkingEffort::Medium) => serde_json::json!({"thinkingBudget": 8192}),
+                (true, ThinkingEffort::High) => serde_json::json!({"thinkingBudget": 24576}),
+                (false, ThinkingEffort::Low) => serde_json::json!({"thinkingLevel": "LOW"}),
+                (false, ThinkingEffort::Medium) => serde_json::json!({"thinkingLevel": "MEDIUM"}),
+                (false, ThinkingEffort::High) => serde_json::json!({"thinkingLevel": "HIGH"}),
+            };
+            config.insert("thinkingConfig".to_owned(), thinking);
+        }
+        if let Some(schema) = &options.output_schema {
+            config.insert("responseMimeType".to_owned(), "application/json".into());
+            config.insert("responseJsonSchema".to_owned(), schema.clone().into());
+        }
+        (!config.is_empty()).then(|| config.into())
     }
 }
 
@@ -231,8 +280,9 @@ impl InferLangModel for GeminiModel {
         &self,
         messages: &[Message],
         tools: &[ToolDesc],
+        options: &LangModelOptions,
     ) -> BoxFuture<'static, anyhow::Result<MessageOutput>> {
-        let mut deltas = self.infer_stream(messages, tools);
+        let mut deltas = self.infer_stream(messages, tools, options);
         Box::pin(async move {
             let mut acc = MessageDeltaOutput::new();
             while let Some(delta) = deltas.next().await {
@@ -246,17 +296,19 @@ impl InferLangModel for GeminiModel {
         &self,
         messages: &[Message],
         tools: &[ToolDesc],
+        options: &LangModelOptions,
     ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
         let plan = match Plan::new(messages, tools) {
             Ok(plan) => plan,
             Err(e) => return Box::pin(stream::once(async move { Err(e) })),
         };
         let this = self.clone();
+        let options = options.clone();
 
         Box::pin(async_stream::try_stream! {
             let workdir = tempfile::tempdir()?;
             let mut child = this
-                .command(&plan, workdir.path())?
+                .command(&plan, &options, workdir.path())?
                 .spawn()
                 .context("failed to start the gemini CLI")?;
             let mut stdin = child.stdin.take().expect("stdin is piped");
@@ -429,7 +481,8 @@ fn session_record(conversation: &[&Message]) -> anyhow::Result<String> {
         }
     }
 
-    let mut lines = vec![serde_json::json!({"sessionId": "ailoy", "projectHash": "ailoy"}).to_string()];
+    let mut lines =
+        vec![serde_json::json!({"sessionId": "ailoy", "projectHash": "ailoy"}).to_string()];
     lines.extend(records.iter().map(|r| r.to_string()));
     Ok(lines.join("\n") + "\n")
 }
@@ -572,7 +625,14 @@ mod tests {
             Message::new(Role::User).with_contents([Part::text("hi")]),
         ];
         let plan = Plan::new(&messages, &[]).unwrap();
-        assert_eq!((plan.system.as_str(), plan.prompt.as_str(), plan.session.as_str()), ("Be brief.", "hi", ""));
+        assert_eq!(
+            (
+                plan.system.as_str(),
+                plan.prompt.as_str(),
+                plan.session.as_str()
+            ),
+            ("Be brief.", "hi", "")
+        );
     }
 
     /// Runs `events` through a reader; returns the deltas until the first finish.
@@ -593,9 +653,7 @@ mod tests {
 
     #[test]
     fn calls_end_the_reply_with_usage() {
-        let tool_use = |id: &str, city: &str| {
-            serde_json::json!({"type": "tool_use", "tool_name": "discovered_tool_get_weather", "tool_id": id, "parameters": {"city": city}})
-        };
+        let tool_use = |id: &str, city: &str| serde_json::json!({"type": "tool_use", "tool_name": "discovered_tool_get_weather", "tool_id": id, "parameters": {"city": city}});
         let outs = read(&[
             serde_json::json!({"type": "init", "session_id": "s", "model": "gemini"}),
             serde_json::json!({"type": "message", "role": "user", "content": "weather?"}),
@@ -608,21 +666,34 @@ mod tests {
         .unwrap();
         assert_eq!(outs[0].delta.role, Some(Role::Assistant));
         let last = outs.last().unwrap();
-        assert!(matches!(last.finish_reason, Some(FinishReason::ToolCall {})));
+        assert!(matches!(
+            last.finish_reason,
+            Some(FinishReason::ToolCall {})
+        ));
         let names: Vec<_> = last
             .delta
             .tool_calls
             .iter()
             .map(|c| match c {
-                PartDelta::Function { id, function: PartDeltaFunction::WithParsedArgs { name, .. } } => {
-                    (id.clone().unwrap(), name.clone())
-                }
+                PartDelta::Function {
+                    id,
+                    function: PartDeltaFunction::WithParsedArgs { name, .. },
+                } => (id.clone().unwrap(), name.clone()),
                 other => panic!("not a parsed call: {other:?}"),
             })
             .collect();
-        assert_eq!(names, [("t1".to_owned(), "get_weather".to_owned()), ("t2".to_owned(), "get_weather".to_owned())]);
+        assert_eq!(
+            names,
+            [
+                ("t1".to_owned(), "get_weather".to_owned()),
+                ("t2".to_owned(), "get_weather".to_owned())
+            ]
+        );
         let usage = last.usage.as_ref().unwrap();
-        assert_eq!((usage.input_tokens, usage.cache_read_input_tokens), (10, Some(4)));
+        assert_eq!(
+            (usage.input_tokens, usage.cache_read_input_tokens),
+            (10, Some(4))
+        );
     }
 
     #[test]
@@ -632,7 +703,10 @@ mod tests {
             serde_json::json!({"type": "result", "status": "success", "stats": {"input_tokens": 3, "output_tokens": 1, "cached": 0}}),
         ])
         .unwrap();
-        assert!(matches!(outs.last().unwrap().finish_reason, Some(FinishReason::Stop {})));
+        assert!(matches!(
+            outs.last().unwrap().finish_reason,
+            Some(FinishReason::Stop {})
+        ));
 
         let err = read(&[serde_json::json!({"type": "result", "status": "error", "error": {"type": "Error", "message": "quota"}, "stats": {}})])
             .unwrap_err();
