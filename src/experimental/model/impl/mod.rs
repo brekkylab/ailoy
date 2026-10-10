@@ -9,7 +9,9 @@ mod glm_api;
 mod gpt_api;
 mod kimi_api;
 mod openrouter;
+mod qwen_api;
 mod schema;
+mod vllm;
 
 pub use bedrock::*;
 pub use claude_api::*;
@@ -22,3 +24,5 @@ pub use glm_api::*;
 pub use gpt_api::*;
 pub use kimi_api::*;
 pub use openrouter::*;
+pub use qwen_api::*;
+pub use vllm::*;

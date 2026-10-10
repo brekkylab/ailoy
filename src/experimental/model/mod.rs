@@ -5,7 +5,8 @@ mod provider;
 
 pub use r#impl::{
     BedrockModel, ClaudeApiModel, ClaudeCliModel, CodexCliModel, DeepSeekApiModel, GeminiApiModel,
-    GeminiCliModel, GlmApiModel, GptApiModel, KimiApiModel, OpenRouterModel,
+    GeminiCliModel, GlmApiModel, GptApiModel, KimiApiModel, OpenRouterModel, QwenApiModel,
+    VllmModel,
 };
 pub use infer_decision_model::*;
 pub use infer_lang_model::*;

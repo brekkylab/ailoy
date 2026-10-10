@@ -1,7 +1,7 @@
 //! Builds language models from a desc, choosing how each one runs.
 //!
 //! A desc names a model, optionally with a model name after a `/`. The provider set for
-//! that model decides how it runs, through its CLI, its API, Bedrock or OpenRouter:
+//! that model decides how it runs, through its CLI, its API, Bedrock, OpenRouter or vLLM:
 //!
 //! ```ignore
 //! use ailoy::experimental::model::*;
@@ -22,21 +22,23 @@
 //! set_lang_model_provider("mine", Arc::new(|_, name| Ok(Arc::new(MyModel::new(name)))));
 //! ```
 //!
-//! | Model        | CLI                | API                  | Bedrock          | OpenRouter          |
-//! |--------------|--------------------|----------------------|------------------|---------------------|
-//! | `"claude"`   | [`ClaudeCliModel`] | [`ClaudeApiModel`]   | [`BedrockModel`] | [`OpenRouterModel`] |
-//! | `"gpt"`      | [`CodexCliModel`]  | [`GptApiModel`]      | [`BedrockModel`] | [`OpenRouterModel`] |
-//! | `"gemini"`   | [`GeminiCliModel`] | [`GeminiApiModel`]   | —                | [`OpenRouterModel`] |
-//! | `"deepseek"` | —                  | [`DeepSeekApiModel`] | [`BedrockModel`] | [`OpenRouterModel`] |
-//! | `"kimi"`     | —                  | [`KimiApiModel`]     | [`BedrockModel`] | [`OpenRouterModel`] |
-//! | `"glm"`      | —                  | [`GlmApiModel`]      | [`BedrockModel`] | [`OpenRouterModel`] |
+//! | Model        | CLI                | API                  | Others                                               |
+//! |--------------|--------------------|----------------------|------------------------------------------------------|
+//! | `"claude"`   | [`ClaudeCliModel`] | [`ClaudeApiModel`]   | [`BedrockModel`], [`OpenRouterModel`]                |
+//! | `"gpt"`      | [`CodexCliModel`]  | [`GptApiModel`]      | [`BedrockModel`], [`OpenRouterModel`]                |
+//! | `"gemini"`   | [`GeminiCliModel`] | [`GeminiApiModel`]   | [`OpenRouterModel`]                                  |
+//! | `"deepseek"` | —                  | [`DeepSeekApiModel`] | [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
+//! | `"kimi"`     | —                  | [`KimiApiModel`]     | [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
+//! | `"glm"`      | —                  | [`GlmApiModel`]      | [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
+//! | `"qwen"`     | —                  | [`QwenApiModel`]     | [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
 //!
 //! The default is the CLI where there is one, the API otherwise. Each is set with
 //! `lang_model_provider::<M>()`. The API models read their key from `ANTHROPIC_API_KEY`,
-//! `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY` and
-//! `ZAI_API_KEY`; Bedrock from
-//! `AWS_BEARER_TOKEN_BEDROCK` (and `AWS_REGION`); OpenRouter from `OPENROUTER_API_KEY`. All
-//! but the CLIs need a model name in the desc.
+//! `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`,
+//! `ZAI_API_KEY` and `DASHSCOPE_API_KEY`; Bedrock from
+//! `AWS_BEARER_TOKEN_BEDROCK` (and `AWS_REGION`); OpenRouter from `OPENROUTER_API_KEY`; vLLM
+//! from the server at `VLLM_BASE_URL` (by default `http://localhost:8000/v1`), with
+//! `VLLM_API_KEY` if it is set. All but the CLIs need a model name in the desc.
 
 use std::{
     collections::HashMap,
@@ -48,6 +50,7 @@ use anyhow::Context as _;
 use super::{
     BedrockModel, ClaudeApiModel, ClaudeCliModel, CodexCliModel, DeepSeekApiModel, GeminiApiModel,
     GeminiCliModel, GlmApiModel, GptApiModel, InferLangModel, KimiApiModel, OpenRouterModel,
+    QwenApiModel, VllmModel,
     r#impl::{claude_alias, gpt_alias},
 };
 
@@ -80,6 +83,18 @@ fn bedrock_vendor(model: &str) -> &str {
         "gpt" => "openai",
         "kimi" => "moonshot",
         "glm" => "zai",
+        other => other,
+    }
+}
+
+/// The organization that publishes `model`'s weights on Hugging Face, whose repo ids vLLM
+/// serves models as by default.
+fn huggingface_org(model: &str) -> &str {
+    match model {
+        "deepseek" => "deepseek-ai",
+        "kimi" => "moonshotai",
+        "glm" => "zai-org",
+        "qwen" => "Qwen",
         other => other,
     }
 }
@@ -172,6 +187,13 @@ impl FromModelName for GlmApiModel {
     }
 }
 
+/// The key is read from `DASHSCOPE_API_KEY` each time a model is built.
+impl FromModelName for QwenApiModel {
+    fn from_model_name(_: &str, name: Option<&str>) -> anyhow::Result<Self> {
+        Self::from_env(required(name)?)
+    }
+}
+
 /// The name is the Bedrock model id, or for `"claude"` one of the CLI's aliases
 /// (`"claude/sonnet"` runs `global.anthropic.claude-sonnet-5-5`) and for `"gpt"` one of
 /// its family aliases (`"gpt/astra"` runs `global.openai.gpt-6-astra`). `<vendor>.` is put in
@@ -216,6 +238,22 @@ impl FromModelName for OpenRouterModel {
     }
 }
 
+/// The name is the model as the server serves it, by default its Hugging Face repo id, with
+/// `<org>/` put in front unless it has a `/` already: `"glm/GLM-4.6"` runs
+/// `zai-org/GLM-4.6`. The server is read from `VLLM_BASE_URL` and its key from
+/// `VLLM_API_KEY` each time a model is built.
+impl FromModelName for VllmModel {
+    fn from_model_name(model: &str, name: Option<&str>) -> anyhow::Result<Self> {
+        let name = required(name)?;
+        let id = if name.contains('/') {
+            name.to_owned()
+        } else {
+            format!("{}/{name}", huggingface_org(model))
+        };
+        Self::from_env(id)
+    }
+}
+
 /// Providers keyed by model, seeded to run each one through its CLI, or its API when it
 /// has no CLI.
 static LANG_MODEL_PROVIDERS: LazyLock<RwLock<HashMap<String, LangModelProvider>>> =
@@ -230,6 +268,7 @@ static LANG_MODEL_PROVIDERS: LazyLock<RwLock<HashMap<String, LangModelProvider>>
             ),
             ("kimi".to_owned(), lang_model_provider::<KimiApiModel>()),
             ("glm".to_owned(), lang_model_provider::<GlmApiModel>()),
+            ("qwen".to_owned(), lang_model_provider::<QwenApiModel>()),
         ]))
     });
 
