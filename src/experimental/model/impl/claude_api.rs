@@ -48,15 +48,15 @@ fn budget_tokens(effort: ThinkingEffort) -> u64 {
     }
 }
 
-/// The API id for one of the `claude` CLI's aliases, which name the latest model of a
-/// family, so the same name works through either; any other name as is.
-fn resolve_alias(model: String) -> String {
-    match model.as_str() {
-        "fable" => "claude-fable-5-1".to_owned(),
-        "opus" => "claude-opus-5-5".to_owned(),
-        "sonnet" => "claude-sonnet-5-5".to_owned(),
-        "haiku" => "claude-haiku-4-5-20251001".to_owned(),
-        _ => model,
+/// The model id for one of the `claude` CLI's aliases, which name the latest model of a
+/// family, so the same name works through the CLI, the API and Bedrock.
+pub(crate) fn claude_alias(name: &str) -> Option<&'static str> {
+    match name {
+        "fable" => Some("claude-fable-5-1"),
+        "opus" => Some("claude-opus-5-5"),
+        "sonnet" => Some("claude-sonnet-5-5"),
+        "haiku" => Some("claude-haiku-5-5"),
+        _ => None,
     }
 }
 
@@ -74,7 +74,10 @@ impl ClaudeApiModel {
     /// Runs `model`, an API model id (e.g. "claude-opus-5-5"), with `api_key`.
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
-            model: resolve_alias(model.into()),
+            model: {
+                let model = model.into();
+                claude_alias(&model).map_or(model, str::to_owned)
+            },
             api_key: api_key.into(),
         }
     }

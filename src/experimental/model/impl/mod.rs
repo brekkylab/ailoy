@@ -1,14 +1,24 @@
+mod bedrock;
 mod claude;
 mod claude_api;
 mod codex;
+mod deepseek_api;
 mod gemini;
 mod gemini_api;
+mod glm_api;
+mod kimi_api;
 mod openai_api;
+mod openrouter;
 mod schema;
 
+pub use bedrock::*;
 pub use claude::*;
 pub use claude_api::*;
 pub use codex::*;
+pub use deepseek_api::*;
 pub use gemini::*;
 pub use gemini_api::*;
+pub use glm_api::*;
+pub use kimi_api::*;
 pub use openai_api::*;
+pub use openrouter::*;
