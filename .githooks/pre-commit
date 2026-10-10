@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Installed by `git config core.hooksPath .githooks`. Checks formatting only, so a commit stays a
+# matter of seconds; clippy and the tests run on push. `cargo fmt --all` repairs what it reports.
+#
+# SKIP_HOOKS=1 git commit ...   skips it once.
+set -euo pipefail
+
+if [[ "${SKIP_HOOKS:-}" == "1" ]]; then
+  exit 0
+fi
+
+cd "$(git rev-parse --show-toplevel)"
+cargo fmt --all --check

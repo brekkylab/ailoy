@@ -45,6 +45,8 @@ cd bindings/python && uv run maturin develop && uv run pytest   # Python
 cd bindings/node && npm install && npm run build:debug && npm test   # Node
 ```
 
+- `git config core.hooksPath .githooks` runs the format check on every commit and clippy plus
+  the library's tests on every push; `SKIP_HOOKS=1` skips one.
 - Tests that need a provider read its key from the environment or a `.env` file
   (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK`) and skip
   without it. A run without keys is quietly narrower than the suite; say which keys were set when

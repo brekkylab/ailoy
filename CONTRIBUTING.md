@@ -6,6 +6,9 @@ each binding. [`AGENTS.md`](AGENTS.md) says where each kind of change goes.
 
 ## Development setup
 
+The toolchain is pinned in `rust-toolchain.toml`; `rustup` installs it on the first `cargo`
+call.
+
 ```bash
 git clone https://github.com/brekkylab/ailoy
 cd ailoy
@@ -30,8 +33,10 @@ cd bindings/python && uv run pytest   # after `maturin develop`
 cd bindings/node && npm test          # after `npm run build:debug`
 ```
 
-There is no pull-request CI, so what you run locally is the gate. A run without provider keys
-covers less than the suite: say which keys were set when you report one.
+There is no pull-request CI, so what you run locally is the gate. `git config core.hooksPath
+.githooks` runs the format check on every commit and clippy plus the library's tests on every
+push; `SKIP_HOOKS=1` skips one. A run without provider keys covers less than the suite: say
+which keys were set when you report one.
 
 ## Pull requests
 

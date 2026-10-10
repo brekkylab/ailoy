@@ -1,0 +1,17 @@
+# The Rust this repository builds with, everywhere.
+#
+# `stable` is a subscription, not a pin: clippy adds lints every six weeks, and the first run after
+# a release fails on code nobody touched. Pinning also makes the gate a contributor runs before
+# pushing the gate that judges them.
+#
+# Bumping is a deliberate change. Move `channel` here and the `dtolnay/rust-toolchain@<version>`
+# lines in `.github/workflows/packages.yml` together; they must agree, or CI installs one toolchain
+# and builds with another. `rust-version` in `Cargo.toml` is the floor a dependent may build with
+# and moves independently.
+#
+# Cross-compilation targets stay out of this file: the release jobs ask for theirs through the
+# action, and listing them here would make every contributor download standard libraries they
+# never build against.
+[toolchain]
+channel = "1.98.0"
+components = ["clippy", "rustfmt"]
