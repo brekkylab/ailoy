@@ -38,7 +38,11 @@ There is no pull-request CI, so what you run locally is the gate. A run without 
 
 ## Reporting bugs and requesting features
 
-Open an issue at https://github.com/brekkylab/ailoy/issues with what you ran, what you expected, and what happened, including the language you used Ailoy from.
+Open an issue at https://github.com/brekkylab/ailoy/issues with what you ran, what you expected, and what happened, including the language you used Ailoy from. A suspected vulnerability goes through [SECURITY.md](SECURITY.md) instead, never a public issue.
+
+## Code of Conduct
+
+Taking part in this project means following our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
