@@ -432,7 +432,7 @@ fn tool_output_part(part: &Part) -> Value {
     }
 }
 
-fn image_url(image: &PartImage) -> String {
+pub(super) fn image_url(image: &PartImage) -> String {
     match image {
         PartImage::Embedded { mime_type, data } => {
             format!("data:{mime_type};base64,{}", data.base64())

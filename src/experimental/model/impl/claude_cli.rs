@@ -1,7 +1,8 @@
 //! A language model backed by the Claude Code CLI in headless mode (`claude -p`).
 //!
-//! Each call starts one `claude` process, writes the prompt to its stdin and
-//! reads the reply as one JSON event per line from its stdout
+//! Each call starts one `claude` process, writes the prompt to its stdin as one
+//! user message (`--input-format stream-json`), so images can go with the text,
+//! and reads the reply as one JSON event per line from its stdout
 //! (`--output-format stream-json`).
 //!
 //! Claude Code's own tools and MCP servers are switched off. Tools are instead
@@ -42,6 +43,8 @@ use crate::{
     tool::ToolDesc,
 };
 
+use super::claude_api::image_block;
+
 /// The tool the CLI adds for `--json-schema`; the reply is its arguments.
 const STRUCTURED_OUTPUT: &str = "StructuredOutput";
 const CALLS_OPEN: &str = "<function_calls>";
@@ -65,9 +68,10 @@ const MAX_STRAY_WORD: usize = 12;
 /// Limits of going through the CLI:
 /// - Tools are described in the prompt rather than declared to the API, so a
 ///   call is only as reliable as the model's adherence to the format.
-/// - Text only: image parts are rejected.
 /// - The CLI takes a single prompt, so earlier turns, tool calls and tool
-///   results are written into it as a transcript.
+///   results are written into it as a transcript, with images in user
+///   messages and tool results placed where they were.
+/// - System and assistant messages are text only.
 #[derive(Clone, Debug)]
 pub struct ClaudeCliModel {
     program: String,
@@ -128,6 +132,8 @@ impl ClaudeCliModel {
         let mut command = Command::new(&self.program);
         command.args([
             "-p",
+            "--input-format",
+            "stream-json",
             "--tools",
             "",
             "--strict-mcp-config",
@@ -337,7 +343,8 @@ impl InferLangModel for ClaudeCliModel {
 /// whose schemas type the parsed call arguments.
 struct Invocation {
     command: Command,
-    prompt: String,
+    /// The prompt's content blocks.
+    prompt: Vec<serde_json::Value>,
     tools: Vec<ToolDesc>,
 }
 
@@ -347,9 +354,13 @@ impl Invocation {
             .command
             .spawn()
             .context("failed to start the claude CLI")?;
+        let message = serde_json::json!({
+            "type": "user",
+            "message": {"role": "user", "content": self.prompt},
+        });
         let mut stdin = child.stdin.take().expect("stdin is piped");
-        stdin.write_all(self.prompt.as_bytes()).await?;
-        // Closing stdin ends the prompt.
+        stdin.write_all(format!("{message}\n").as_bytes()).await?;
+        // Closing stdin ends the input.
         drop(stdin);
         Ok(child)
     }
@@ -615,17 +626,92 @@ Here are the functions available in JSONSchema format:
     prompt
 }
 
-/// One turn of the transcript, already rendered.
-enum Turn {
-    User(String),
-    Assistant(String),
-    Results(String),
+/// One turn of the transcript.
+enum Turn<'a> {
+    User(&'a Message),
+    Assistant(&'a Message),
+    Results(&'a [&'a Message]),
+}
+
+/// The prompt as content blocks: runs of text, with each image where it was.
+#[derive(Default)]
+struct Content(Vec<serde_json::Value>);
+
+impl Content {
+    fn text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(last) = self.0.last_mut()
+            && let Some(serde_json::Value::String(run)) = last.get_mut("text")
+        {
+            run.push_str(text);
+            return;
+        }
+        self.0
+            .push(serde_json::json!({"type": "text", "text": text}));
+    }
+
+    /// The text, image and value parts of a message, one line apart.
+    fn parts(&mut self, parts: &[Part]) -> anyhow::Result<()> {
+        for (i, part) in parts.iter().enumerate() {
+            if i > 0 {
+                self.text("\n");
+            }
+            match part {
+                Part::Text { text } => self.text(text),
+                Part::Value { value } => match value.as_str() {
+                    Some(s) => self.text(s),
+                    None => self.text(&serde_json::to_string(value)?),
+                },
+                Part::Image { image } => self.0.push(image_block(image).into()),
+                Part::Function { .. } => {
+                    anyhow::bail!("ClaudeCliModel takes no function parts in message contents")
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn turn(&mut self, turn: &Turn, names: &HashMap<&str, &str>) -> anyhow::Result<()> {
+        match turn {
+            Turn::User(message) => {
+                if message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()) {
+                    anyhow::bail!("only assistant messages can carry tool calls");
+                }
+                self.parts(&message.contents)
+            }
+            Turn::Assistant(message) => {
+                self.text(&render_assistant(message)?);
+                Ok(())
+            }
+            Turn::Results(results) => self.results(results, names),
+        }
+    }
+
+    /// A run of tool-result messages as one `<function_results>` block.
+    fn results(&mut self, results: &[&Message], names: &HashMap<&str, &str>) -> anyhow::Result<()> {
+        self.text("<function_results>\n");
+        for message in results {
+            let name = message
+                .id
+                .as_deref()
+                .and_then(|id| names.get(id))
+                .copied()
+                .unwrap_or("unknown");
+            self.text(&format!("<result>\n<name>{name}</name>\n<output>"));
+            self.parts(&message.contents)?;
+            self.text("</output>\n</result>\n");
+        }
+        self.text("</function_results>");
+        Ok(())
+    }
 }
 
 /// The prompt for a conversation that ends with a user message or with tool
 /// results. A lone user message is sent as is; earlier turns go in front of
 /// the latest one as a transcript.
-fn render_prompt(conversation: &[&Message]) -> anyhow::Result<String> {
+fn render_prompt(conversation: &[&Message]) -> anyhow::Result<Vec<serde_json::Value>> {
     // Tool results carry only the call id; the name comes from the call.
     let names: HashMap<&str, &str> = conversation
         .iter()
@@ -641,18 +727,15 @@ fn render_prompt(conversation: &[&Message]) -> anyhow::Result<String> {
     while i < conversation.len() {
         let message = conversation[i];
         match &message.role {
-            Role::User => turns.push(Turn::User(text_of(message)?)),
-            Role::Assistant => turns.push(Turn::Assistant(render_assistant(message)?)),
+            Role::User => turns.push(Turn::User(message)),
+            Role::Assistant => turns.push(Turn::Assistant(message)),
             Role::Tool => {
                 // Results of the calls in one turn go back in one block.
                 let end = conversation[i..]
                     .iter()
                     .position(|m| m.role != Role::Tool)
                     .map_or(conversation.len(), |n| i + n);
-                turns.push(Turn::Results(render_results(
-                    &conversation[i..end],
-                    &names,
-                )?));
+                turns.push(Turn::Results(&conversation[i..end]));
                 i = end;
                 continue;
             }
@@ -664,30 +747,34 @@ fn render_prompt(conversation: &[&Message]) -> anyhow::Result<String> {
     let Some((latest, history)) = turns.split_last() else {
         anyhow::bail!("no message to send");
     };
-    let latest = match latest {
-        Turn::User(text) | Turn::Results(text) => text,
-        Turn::Assistant(_) => {
-            anyhow::bail!("the last message must be a user message or tool results")
-        }
-    };
-    if history.is_empty() {
-        return Ok(latest.clone());
+    if let Turn::Assistant(_) = latest {
+        anyhow::bail!("the last message must be a user message or tool results");
     }
 
-    let mut prompt =
-        String::from("Continue this conversation as the assistant. The earlier turns:\n\n");
-    for turn in history {
-        match turn {
-            Turn::User(text) => prompt.push_str(&format!("<user>\n{text}\n</user>\n\n")),
-            Turn::Assistant(text) => {
-                prompt.push_str(&format!("<assistant>\n{text}\n</assistant>\n\n"))
+    let mut prompt = Content::default();
+    if !history.is_empty() {
+        prompt.text("Continue this conversation as the assistant. The earlier turns:\n\n");
+        for turn in history {
+            match turn {
+                Turn::User(_) => prompt.text("<user>\n"),
+                Turn::Assistant(_) => prompt.text("<assistant>\n"),
+                Turn::Results(_) => {}
             }
-            Turn::Results(block) => prompt.push_str(&format!("{block}\n\n")),
+            prompt.turn(turn, &names)?;
+            match turn {
+                Turn::User(_) => prompt.text("\n</user>"),
+                Turn::Assistant(_) => prompt.text("\n</assistant>"),
+                Turn::Results(_) => {}
+            }
+            prompt.text("\n\n");
         }
+        prompt.text("Now reply to the latest message:\n\n");
     }
-    prompt.push_str("Now reply to the latest message:\n\n");
-    prompt.push_str(latest);
-    Ok(prompt)
+    prompt.turn(latest, &names)?;
+    if prompt.0.is_empty() {
+        anyhow::bail!("the user message is empty");
+    }
+    Ok(prompt.0)
 }
 
 /// An assistant turn: its text, then its tool calls as a `<function_calls>` block.
@@ -719,36 +806,6 @@ fn render_assistant(message: &Message) -> anyhow::Result<String> {
     Ok(text)
 }
 
-/// A run of tool-result messages as one `<function_results>` block.
-fn render_results(results: &[&Message], names: &HashMap<&str, &str>) -> anyhow::Result<String> {
-    let mut block = String::from("<function_results>\n");
-    for message in results {
-        let name = message
-            .id
-            .as_deref()
-            .and_then(|id| names.get(id))
-            .copied()
-            .unwrap_or("unknown");
-        let mut output = Vec::new();
-        for part in &message.contents {
-            match part {
-                Part::Text { text } => output.push(text.clone()),
-                Part::Value { value } => output.push(match value.as_str() {
-                    Some(s) => s.to_owned(),
-                    None => serde_json::to_string(value)?,
-                }),
-                _ => anyhow::bail!("ClaudeCliModel supports only text and value tool results"),
-            }
-        }
-        block.push_str(&format!(
-            "<result>\n<name>{name}</name>\n<output>{}</output>\n</result>\n",
-            output.join("\n")
-        ));
-    }
-    block.push_str("</function_results>");
-    Ok(block)
-}
-
 /// The text of a message that cannot carry tool calls.
 fn text_of(message: &Message) -> anyhow::Result<String> {
     if message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()) {
@@ -757,14 +814,18 @@ fn text_of(message: &Message) -> anyhow::Result<String> {
     texts_of(message)
 }
 
-/// The text parts of a message joined; any other part is an error.
+/// The text parts of a message joined; any other part is an error. For system
+/// and assistant messages, which go into the prompt as plain text.
 fn texts_of(message: &Message) -> anyhow::Result<String> {
     let texts = message
         .contents
         .iter()
         .map(|part| {
-            part.as_text()
-                .ok_or_else(|| anyhow::anyhow!("ClaudeCliModel supports only text parts"))
+            part.as_text().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "ClaudeCliModel supports only text in system and assistant messages"
+                )
+            })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(texts.join("\n"))
@@ -938,7 +999,9 @@ mod tests {
                 .with_id("c1")
                 .with_contents([Part::text("sunny")]),
         ];
-        let prompt = render_prompt(&messages.iter().collect::<Vec<_>>()).unwrap();
+        let blocks = render_prompt(&messages.iter().collect::<Vec<_>>()).unwrap();
+        assert_eq!(blocks.len(), 1);
+        let prompt = blocks[0]["text"].as_str().unwrap();
         assert!(prompt.contains(
             "<invoke name=\"get_weather\">\n<parameter name=\"city\">Seoul</parameter>\n\
              <parameter name=\"days\">1</parameter>\n</invoke>"
@@ -947,5 +1010,33 @@ mod tests {
             "<function_results>\n<result>\n<name>get_weather</name>\n<output>sunny</output>\n\
              </result>\n</function_results>"
         ));
+    }
+
+    #[test]
+    fn images_go_where_they_were() {
+        let image = || Part::image_embedded("image/png", vec![1, 2, 3].into()).unwrap();
+        let messages = [
+            Message::new(Role::User).with_contents([Part::text("look"), image()]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function(
+                "c1",
+                "imgread",
+                serde_json::json!({"path": "a.png"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("c1")
+                .with_contents([image()]),
+        ];
+        let blocks = render_prompt(&messages.iter().collect::<Vec<_>>()).unwrap();
+        let types: Vec<_> = blocks.iter().map(|b| b["type"].as_str().unwrap()).collect();
+        assert_eq!(types, ["text", "image", "text", "image", "text"]);
+        assert!(
+            blocks[0]["text"]
+                .as_str()
+                .unwrap()
+                .ends_with("<user>\nlook\n")
+        );
+        assert_eq!(blocks[1]["source"]["data"], "AQID");
+        assert!(blocks[2]["text"].as_str().unwrap().ends_with("<output>"));
+        assert!(blocks[4]["text"].as_str().unwrap().starts_with("</output>"));
     }
 }

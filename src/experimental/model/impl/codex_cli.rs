@@ -46,6 +46,8 @@ use crate::{
     tool::ToolDesc,
 };
 
+use super::gpt_api::image_url;
+
 /// Codex features that give the model tools of its own. Keys unknown to the
 /// installed version are ignored by Codex with a warning.
 const DISABLED_FEATURES: &[&str] = &[
@@ -100,7 +102,7 @@ const OWN_TOOL_ITEMS: &[&str] = &[
 /// Limits of going through the app server:
 /// - It is experimental, and the raw events it relies on are meant for
 ///   internal use, so it may change between Codex versions.
-/// - Text only: image parts are rejected.
+/// - System and assistant messages are text only.
 #[derive(Clone, Debug)]
 pub struct CodexCliModel {
     program: String,
@@ -404,12 +406,7 @@ impl Plan {
             anyhow::bail!("no message to send");
         };
         let (earlier, input) = match latest.role {
-            Role::User => (
-                earlier,
-                vec![
-                    serde_json::json!({"type": "text", "text": text_of(latest)?, "text_elements": []}),
-                ],
-            ),
+            Role::User => (earlier, turn_input(latest)?),
             // The results go into the history, and the turn starts without input.
             Role::Tool => (&conversation[..], Vec::new()),
             _ => anyhow::bail!("the last message must be a user message or tool results"),
@@ -446,7 +443,7 @@ fn response_items(message: &Message) -> anyhow::Result<Vec<serde_json::Value>> {
         Role::User => items.push(serde_json::json!({
             "type": "message",
             "role": "user",
-            "content": [{"type": "input_text", "text": text_of(message)?}],
+            "content": content_items(user_contents(message)?)?,
         })),
         Role::Assistant => {
             let text = texts_of(message)?;
@@ -474,21 +471,16 @@ fn response_items(message: &Message) -> anyhow::Result<Vec<serde_json::Value>> {
                 .id
                 .as_deref()
                 .context("a tool result must carry its call id")?;
-            let mut output = Vec::new();
-            for part in &message.contents {
-                match part {
-                    Part::Text { text } => output.push(text.clone()),
-                    Part::Value { value } => output.push(match value.as_str() {
-                        Some(s) => s.to_owned(),
-                        None => serde_json::to_string(value)?,
-                    }),
-                    _ => anyhow::bail!("CodexCliModel supports only text and value tool results"),
-                }
-            }
+            // Text alone goes as a string, with images as content items.
+            let output = if message.contents.iter().any(Part::is_image) {
+                serde_json::Value::Array(content_items(&message.contents)?)
+            } else {
+                content_text(&message.contents)?.into()
+            };
             items.push(serde_json::json!({
                 "type": "function_call_output",
                 "call_id": call_id,
-                "output": output.join("\n"),
+                "output": output,
             }));
         }
         ref role => anyhow::bail!("CodexCliModel does not support {role} messages here"),
@@ -656,6 +648,68 @@ fn text_of(message: &Message) -> anyhow::Result<String> {
         anyhow::bail!("only assistant messages can carry tool calls");
     }
     texts_of(message)
+}
+
+/// The contents of a user message, which carries no tool calls.
+fn user_contents(message: &Message) -> anyhow::Result<&[Part]> {
+    if message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()) {
+        anyhow::bail!("only assistant messages can carry tool calls");
+    }
+    Ok(&message.contents)
+}
+
+/// The latest user message as `turn/start` input: its text, then each image.
+fn turn_input(message: &Message) -> anyhow::Result<Vec<serde_json::Value>> {
+    let contents = user_contents(message)?;
+    let mut input = vec![serde_json::json!({
+        "type": "text",
+        "text": content_text(contents)?,
+        "text_elements": [],
+    })];
+    for part in contents {
+        if let Part::Image { image } = part {
+            input.push(serde_json::json!({"type": "image", "url": image_url(image)}));
+        }
+    }
+    Ok(input)
+}
+
+/// Parts as Responses API input content: text and values as `input_text`,
+/// images as `input_image`.
+fn content_items(parts: &[Part]) -> anyhow::Result<Vec<serde_json::Value>> {
+    parts
+        .iter()
+        .map(|part| {
+            Ok(match part {
+                Part::Image { image } => {
+                    serde_json::json!({"type": "input_image", "image_url": image_url(image)})
+                }
+                _ => serde_json::json!({"type": "input_text", "text": part_text(part)?}),
+            })
+        })
+        .collect()
+}
+
+/// The text and value parts joined, images left out.
+fn content_text(parts: &[Part]) -> anyhow::Result<String> {
+    let texts = parts
+        .iter()
+        .filter(|part| !part.is_image())
+        .map(part_text)
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(texts.join("\n"))
+}
+
+/// A text or value part as text, strings without their quotes.
+fn part_text(part: &Part) -> anyhow::Result<String> {
+    Ok(match part {
+        Part::Text { text } => text.clone(),
+        Part::Value { value } => match value.as_str() {
+            Some(s) => s.to_owned(),
+            None => serde_json::to_string(value)?,
+        },
+        _ => anyhow::bail!("CodexCliModel takes only text, values and images in message contents"),
+    })
 }
 
 /// The text parts of a message joined; any other part is an error.
@@ -860,5 +914,42 @@ mod tests {
         let err = read(&[serde_json::json!({"method": "item/started", "params": {"item": {"type": "commandExecution", "id": "x"}}})])
             .unwrap_err();
         assert!(err.to_string().contains("commandExecution"), "{err}");
+    }
+
+    #[test]
+    fn images_go_as_input_images() {
+        let image = || Part::image_embedded("image/png", vec![1, 2, 3].into()).unwrap();
+        let url = "data:image/png;base64,AQID";
+        let messages = [
+            Message::new(Role::User).with_contents([Part::text("look"), image()]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function(
+                "c1",
+                "imgread",
+                serde_json::json!({"path": "a.png"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("c1")
+                .with_contents([image()]),
+            Message::new(Role::User).with_contents([Part::text("and this?"), image()]),
+        ];
+        let plan = Plan::new(&messages, &[]).unwrap();
+        assert_eq!(
+            plan.history[0]["content"],
+            serde_json::json!([
+                {"type": "input_text", "text": "look"},
+                {"type": "input_image", "image_url": url},
+            ])
+        );
+        assert_eq!(
+            plan.history[2]["output"],
+            serde_json::json!([{"type": "input_image", "image_url": url}])
+        );
+        assert_eq!(
+            serde_json::Value::Array(plan.input),
+            serde_json::json!([
+                {"type": "text", "text": "and this?", "text_elements": []},
+                {"type": "image", "url": url},
+            ])
+        );
     }
 }

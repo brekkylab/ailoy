@@ -506,7 +506,7 @@ fn content_part(part: &Part) -> anyhow::Result<Value> {
 }
 
 /// An image as `inlineData`. The API takes no image URLs, so only `data:` URIs pass.
-fn inline_image(image: &PartImage) -> anyhow::Result<Value> {
+pub(super) fn inline_image(image: &PartImage) -> anyhow::Result<Value> {
     let (mime_type, data) = match image {
         PartImage::Embedded { mime_type, data } => (mime_type.clone(), data.base64()),
         PartImage::Url { url } => {

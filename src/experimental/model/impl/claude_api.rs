@@ -456,15 +456,20 @@ fn marshal_part(part: &Part) -> Value {
             function: PartFunction { name, arguments },
         } => to_value!({"type": "tool_use", "id": id, "name": name, "input": arguments.clone()}),
         Part::Value { value } => value.clone(),
-        Part::Image {
-            image: PartImage::Embedded { mime_type, data },
-        } => to_value!({
+        Part::Image { image } => image_block(image),
+    }
+}
+
+/// An image as a content block.
+pub(super) fn image_block(image: &PartImage) -> Value {
+    match image {
+        PartImage::Embedded { mime_type, data } => to_value!({
             "type": "image",
             "source": {"type": "base64", "media_type": mime_type, "data": data.base64()},
         }),
-        Part::Image {
-            image: PartImage::Url { url },
-        } => to_value!({"type": "image", "source": {"type": "url", "url": url}}),
+        PartImage::Url { url } => {
+            to_value!({"type": "image", "source": {"type": "url", "url": url}})
+        }
     }
 }
 

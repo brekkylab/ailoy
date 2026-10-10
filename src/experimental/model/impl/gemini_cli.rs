@@ -42,6 +42,8 @@ use crate::{
     tool::ToolDesc,
 };
 
+use super::gemini_api::inline_image;
+
 /// The project directory every call runs in, under the system's temporary directory.
 const PROJECT_DIR: &str = "ailoy-gemini";
 
@@ -88,6 +90,9 @@ const TOOL_PREFIX: &str = "discovered_tool_";
 /// The prompt when the conversation ends with tool results: the CLI needs one,
 /// and the results themselves are in the session.
 const CONTINUE_PROMPT: &str = "Continue from the tool results above.";
+/// The prompt when the latest user message has images: the CLI takes only text
+/// through stdin, so the message itself is in the session.
+const IMAGE_PROMPT: &str = "Reply to the message above.";
 
 /// Runs Gemini through the `gemini` CLI instead of calling the API directly.
 ///
@@ -96,11 +101,13 @@ const CONTINUE_PROMPT: &str = "Continue from the tool results above.";
 /// Tools are declared to the model, so it calls them as it would any tool.
 ///
 /// Limits of going through the CLI:
-/// - Text only: image parts are rejected. Thinking is not reported.
+/// - System and assistant messages are text only. Thinking is not reported.
 /// - A tool's description gets the CLI's note on discovered tools appended.
 /// - After tool results, the turn goes on from a short user prompt
 ///   ([`CONTINUE_PROMPT`]), since the CLI needs one; before it, the CLI puts
-///   a model turn noting that the previous response was interrupted.
+///   a model turn noting that the previous response was interrupted. A latest
+///   user message with images likewise goes into the session, followed by
+///   [`IMAGE_PROMPT`].
 /// - The CLI drops earlier user messages that start with `/` or `?` from the
 ///   session, and takes a latest message that starts with `/` as a command.
 /// - Each call leaves a session record under `~/.gemini/tmp`.
@@ -394,6 +401,10 @@ impl Plan {
             anyhow::bail!("no message to send");
         };
         let (earlier, prompt) = match latest.role {
+            // Only text goes through stdin, so a message with images goes into the session.
+            Role::User if latest.contents.iter().any(Part::is_image) => {
+                (&conversation[..], IMAGE_PROMPT.to_owned())
+            }
             Role::User => (earlier, text_of(latest)?),
             // The results go into the session, and the turn goes on from a short prompt.
             Role::Tool => (&conversation[..], CONTINUE_PROMPT.to_owned()),
@@ -424,7 +435,7 @@ fn session_record(conversation: &[&Message]) -> anyhow::Result<String> {
             Role::User => records.push(serde_json::json!({
                 "id": format!("m{}", records.len()),
                 "type": "user",
-                "content": [{"text": text_of(message)?}],
+                "content": user_parts(message)?,
             })),
             Role::Assistant => {
                 let text = texts_of(message)?;
@@ -458,16 +469,11 @@ fn session_record(conversation: &[&Message]) -> anyhow::Result<String> {
                     .as_deref()
                     .context("a tool result must carry its call id")?;
                 let mut output = Vec::new();
+                let mut images = Vec::new();
                 for part in &message.contents {
                     match part {
-                        Part::Text { text } => output.push(text.clone()),
-                        Part::Value { value } => output.push(match value.as_str() {
-                            Some(s) => s.to_owned(),
-                            None => serde_json::to_string(value)?,
-                        }),
-                        _ => anyhow::bail!(
-                            "GeminiCliModel supports only text and value tool results"
-                        ),
+                        Part::Image { image } => images.push(inline_image(image)?.into()),
+                        _ => output.push(part_text(part)?),
                     }
                 }
                 let call = records
@@ -477,7 +483,20 @@ fn session_record(conversation: &[&Message]) -> anyhow::Result<String> {
                     .flat_map(|r| r["toolCalls"].as_array_mut().into_iter().flatten())
                     .find(|c| c["id"] == call_id)
                     .with_context(|| format!("no call {call_id} for its result"))?;
-                call["result"] = output.join("\n").into();
+                let output = output.join("\n");
+                call["result"] = if images.is_empty() {
+                    output.into()
+                } else {
+                    // As parts, the response is the CLI's own for a text result, and the
+                    // images go beside it.
+                    let mut parts = vec![serde_json::json!({"functionResponse": {
+                        "id": call_id,
+                        "name": call["name"],
+                        "response": {"output": output},
+                    }})];
+                    parts.extend(images);
+                    serde_json::Value::Array(parts)
+                };
             }
             ref role => anyhow::bail!("GeminiCliModel does not support {role} messages here"),
         }
@@ -556,6 +575,35 @@ fn text_of(message: &Message) -> anyhow::Result<String> {
         anyhow::bail!("only assistant messages can carry tool calls");
     }
     texts_of(message)
+}
+
+/// A user message as Gemini parts: text and values as `text`, images as `inlineData`.
+fn user_parts(message: &Message) -> anyhow::Result<Vec<serde_json::Value>> {
+    if message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()) {
+        anyhow::bail!("only assistant messages can carry tool calls");
+    }
+    message
+        .contents
+        .iter()
+        .map(|part| {
+            Ok(match part {
+                Part::Image { image } => inline_image(image)?.into(),
+                _ => serde_json::json!({"text": part_text(part)?}),
+            })
+        })
+        .collect()
+}
+
+/// A text or value part as text, strings without their quotes.
+fn part_text(part: &Part) -> anyhow::Result<String> {
+    Ok(match part {
+        Part::Text { text } => text.clone(),
+        Part::Value { value } => match value.as_str() {
+            Some(s) => s.to_owned(),
+            None => serde_json::to_string(value)?,
+        },
+        _ => anyhow::bail!("GeminiCliModel takes only text, values and images in message contents"),
+    })
 }
 
 /// The text parts of a message joined; any other part is an error.
@@ -717,5 +765,41 @@ mod tests {
         let err = read(&[serde_json::json!({"type": "tool_use", "tool_name": "run_shell_command", "tool_id": "x", "parameters": {}})])
             .unwrap_err();
         assert!(err.to_string().contains("run_shell_command"), "{err}");
+    }
+
+    #[test]
+    fn images_go_into_the_session() {
+        let image = || Part::image_embedded("image/png", vec![1, 2, 3].into()).unwrap();
+        let inline = serde_json::json!({"inlineData": {"mimeType": "image/png", "data": "AQID"}});
+        let messages = [
+            Message::new(Role::User).with_contents([Part::text("read a.png")]),
+            Message::new(Role::Assistant).with_tool_calls([Part::function(
+                "c1",
+                "imgread",
+                serde_json::json!({"path": "a.png"}),
+            )]),
+            Message::new(Role::Tool)
+                .with_id("c1")
+                .with_contents([image()]),
+            Message::new(Role::User).with_contents([Part::text("and this?"), image()]),
+        ];
+        let plan = Plan::new(&messages, &[]).unwrap();
+        assert_eq!(plan.prompt, IMAGE_PROMPT);
+        let lines: Vec<serde_json::Value> = plan
+            .session
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(
+            lines[2]["toolCalls"][0]["result"],
+            serde_json::json!([
+                {"functionResponse": {"id": "c1", "name": "discovered_tool_imgread", "response": {"output": ""}}},
+                inline,
+            ])
+        );
+        assert_eq!(
+            lines[3]["content"],
+            serde_json::json!([{"text": "and this?"}, inline])
+        );
     }
 }
