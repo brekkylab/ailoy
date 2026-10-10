@@ -126,6 +126,10 @@ impl ClaudeCliModel {
             "",
             "--strict-mcp-config",
             "--no-session-persistence",
+            // The user's and project's settings (hooks, output style, …) stay out of the
+            // model, as does the auto-memory set below.
+            "--setting-sources",
+            "",
             // `stream-json` under `-p` requires `--verbose`.
             "--output-format",
             "stream-json",
@@ -151,6 +155,8 @@ impl ClaudeCliModel {
         // Always set, even empty: otherwise Claude Code's own coding-agent prompt is used.
         command.args(["--system-prompt", system.as_str()]);
         command
+            // Memories the CLI saved for the working directory would reach the model.
+            .env("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
