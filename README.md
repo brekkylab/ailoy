@@ -200,7 +200,12 @@ async fn main() -> anyhow::Result<()> {
 </details>
 
 
-...Or skip the reading: point your coding agent (Claude Code, Codex, Cursor, ...) at this README and tell it what agent you want to build.
+...Or skip the reading: point your coding agent (Claude Code, Codex, Cursor, ...) at this README and tell it what agent you want to build. This repo is its own plugin marketplace, so the [agent skill](skills/ailoy/SKILL.md) installs with no clone first:
+
+```bash
+claude plugin marketplace add brekkylab/ailoy && claude plugin install ailoy@brekkylab
+codex plugin marketplace add brekkylab/ailoy && codex plugin add ailoy@brekkylab
+```
 
 ## What can an agent do?
 

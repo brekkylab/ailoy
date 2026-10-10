@@ -1,0 +1,15 @@
+{
+  "name": "brekkylab",
+  "description": "Plugins from brekkylab: Ailoy, for building AI agents with a VM of their own.",
+  "owner": {
+    "name": "brekkylab",
+    "url": "https://github.com/brekkylab"
+  },
+  "plugins": [
+    {
+      "name": "ailoy",
+      "source": "./",
+      "description": "Build an AI agent in Python, Node.js or Rust, with a Linux micro-VM of its own to run code in."
+    }
+  ]
+}
