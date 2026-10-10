@@ -1,5 +1,5 @@
 use ailoy::{
-    experimental::model::{ClaudeModel, InferLangModel, LangModelOptions},
+    experimental::model::{ClaudeCliModel, InferLangModel, LangModelOptions},
     message::{Message, Part, Role},
     tool::ToolDescBuilder,
 };
@@ -8,8 +8,8 @@ use futures::StreamExt as _;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let model = match std::env::args().nth(1) {
-        Some(name) => ClaudeModel::new().with_model(name),
-        None => ClaudeModel::new(),
+        Some(name) => ClaudeCliModel::new().with_model(name),
+        None => ClaudeCliModel::new(),
     };
     let tools = [ToolDescBuilder::new("get_weather")
         .description("Get the current weather for a city.")

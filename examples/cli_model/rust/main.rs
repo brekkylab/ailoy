@@ -1,6 +1,6 @@
 //! Runs one tool-calling exchange through a model's CLI.
 //!
-//! Usage: `cargo run --example cli_model -- <claude|openai|gemini> [model]`
+//! Usage: `cargo run --example cli_model -- <claude|gpt|gemini> [model]`
 
 use ailoy::{
     experimental::model::{LangModelOptions, create_lang_model},

@@ -62,7 +62,7 @@ pub(crate) fn claude_alias(name: &str) -> Option<&'static str> {
 
 /// Runs Claude through the Anthropic Messages API (`/v1/messages`).
 ///
-/// Unlike [`ClaudeModel`](super::ClaudeModel), tools are declared to the API
+/// Unlike [`ClaudeCliModel`](super::ClaudeCliModel), tools are declared to the API
 /// and the full message history, images included, is sent as is.
 #[derive(Clone, Debug)]
 pub struct ClaudeApiModel {

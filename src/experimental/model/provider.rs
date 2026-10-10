@@ -22,14 +22,14 @@
 //! set_lang_model_provider("mine", Arc::new(|_, name| Ok(Arc::new(MyModel::new(name)))));
 //! ```
 //!
-//! | Model        | CLI             | API                  | Bedrock          | OpenRouter          |
-//! |--------------|-----------------|----------------------|------------------|---------------------|
-//! | `"claude"`   | [`ClaudeModel`] | [`ClaudeApiModel`]   | [`BedrockModel`] | [`OpenRouterModel`] |
-//! | `"openai"`   | [`CodexModel`]  | [`OpenAIApiModel`]   | [`BedrockModel`] | [`OpenRouterModel`] |
-//! | `"gemini"`   | [`GeminiModel`] | [`GeminiApiModel`]   | —                | [`OpenRouterModel`] |
-//! | `"deepseek"` | —               | [`DeepSeekApiModel`] | [`BedrockModel`] | [`OpenRouterModel`] |
-//! | `"kimi"`     | —               | [`KimiApiModel`]     | [`BedrockModel`] | [`OpenRouterModel`] |
-//! | `"glm"`      | —               | [`GlmApiModel`]      | [`BedrockModel`] | [`OpenRouterModel`] |
+//! | Model        | CLI                | API                  | Bedrock          | OpenRouter          |
+//! |--------------|--------------------|----------------------|------------------|---------------------|
+//! | `"claude"`   | [`ClaudeCliModel`] | [`ClaudeApiModel`]   | [`BedrockModel`] | [`OpenRouterModel`] |
+//! | `"gpt"`      | [`CodexCliModel`]  | [`GptApiModel`]      | [`BedrockModel`] | [`OpenRouterModel`] |
+//! | `"gemini"`   | [`GeminiCliModel`] | [`GeminiApiModel`]   | —                | [`OpenRouterModel`] |
+//! | `"deepseek"` | —                  | [`DeepSeekApiModel`] | [`BedrockModel`] | [`OpenRouterModel`] |
+//! | `"kimi"`     | —                  | [`KimiApiModel`]     | [`BedrockModel`] | [`OpenRouterModel`] |
+//! | `"glm"`      | —                  | [`GlmApiModel`]      | [`BedrockModel`] | [`OpenRouterModel`] |
 //!
 //! The default is the CLI where there is one, the API otherwise. Each is set with
 //! `lang_model_provider::<M>()`. The API models read their key from `ANTHROPIC_API_KEY`,
@@ -46,8 +46,8 @@ use std::{
 use anyhow::Context as _;
 
 use super::{
-    BedrockModel, ClaudeApiModel, ClaudeModel, CodexModel, DeepSeekApiModel, GeminiApiModel,
-    GeminiModel, GlmApiModel, InferLangModel, KimiApiModel, OpenAIApiModel, OpenRouterModel,
+    BedrockModel, ClaudeApiModel, ClaudeCliModel, CodexCliModel, DeepSeekApiModel, GeminiApiModel,
+    GeminiCliModel, GlmApiModel, GptApiModel, InferLangModel, KimiApiModel, OpenRouterModel,
     r#impl::claude_alias,
 };
 
@@ -77,6 +77,7 @@ pub fn lang_model_provider<M: FromModelName>() -> LangModelProvider {
 fn bedrock_vendor(model: &str) -> &str {
     match model {
         "claude" => "anthropic",
+        "gpt" => "openai",
         "kimi" => "moonshot",
         "glm" => "zai",
         other => other,
@@ -87,6 +88,7 @@ fn bedrock_vendor(model: &str) -> &str {
 fn openrouter_vendor(model: &str) -> &str {
     match model {
         "claude" => "anthropic",
+        "gpt" => "openai",
         "gemini" => "google",
         "kimi" => "moonshotai",
         "glm" => "z-ai",
@@ -98,7 +100,7 @@ fn required(name: Option<&str>) -> anyhow::Result<&str> {
     name.context("this provider needs a model name, as in \"<model>/<name>\"")
 }
 
-impl FromModelName for ClaudeModel {
+impl FromModelName for ClaudeCliModel {
     fn from_model_name(_: &str, name: Option<&str>) -> anyhow::Result<Self> {
         let model = Self::new();
         Ok(match name {
@@ -108,7 +110,7 @@ impl FromModelName for ClaudeModel {
     }
 }
 
-impl FromModelName for CodexModel {
+impl FromModelName for CodexCliModel {
     fn from_model_name(_: &str, name: Option<&str>) -> anyhow::Result<Self> {
         let model = Self::new();
         Ok(match name {
@@ -118,7 +120,7 @@ impl FromModelName for CodexModel {
     }
 }
 
-impl FromModelName for GeminiModel {
+impl FromModelName for GeminiCliModel {
     fn from_model_name(_: &str, name: Option<&str>) -> anyhow::Result<Self> {
         let model = Self::new();
         Ok(match name {
@@ -136,7 +138,7 @@ impl FromModelName for ClaudeApiModel {
 }
 
 /// The key is read from `OPENAI_API_KEY` each time a model is built.
-impl FromModelName for OpenAIApiModel {
+impl FromModelName for GptApiModel {
     fn from_model_name(_: &str, name: Option<&str>) -> anyhow::Result<Self> {
         Self::from_env(required(name)?)
     }
@@ -215,9 +217,9 @@ impl FromModelName for OpenRouterModel {
 static LANG_MODEL_PROVIDERS: LazyLock<RwLock<HashMap<String, LangModelProvider>>> =
     LazyLock::new(|| {
         RwLock::new(HashMap::from([
-            ("claude".to_owned(), lang_model_provider::<ClaudeModel>()),
-            ("openai".to_owned(), lang_model_provider::<CodexModel>()),
-            ("gemini".to_owned(), lang_model_provider::<GeminiModel>()),
+            ("claude".to_owned(), lang_model_provider::<ClaudeCliModel>()),
+            ("gpt".to_owned(), lang_model_provider::<CodexCliModel>()),
+            ("gemini".to_owned(), lang_model_provider::<GeminiCliModel>()),
             (
                 "deepseek".to_owned(),
                 lang_model_provider::<DeepSeekApiModel>(),
@@ -241,7 +243,7 @@ pub fn remove_lang_model_provider(model: &str) -> Option<LangModelProvider> {
 }
 
 /// Builds a model from a desc of the form `<model>` or `<model>/<name>`,
-/// e.g. `"claude"` or `"openai/gpt-5"`, through the provider set for `<model>`.
+/// e.g. `"claude"` or `"gpt/gpt-6-sol"`, through the provider set for `<model>`.
 pub fn create_lang_model(desc: &str) -> anyhow::Result<Arc<dyn InferLangModel>> {
     let (model, name) = match desc.split_once('/') {
         Some((model, name)) => (model, Some(name)),

@@ -28,7 +28,7 @@ const API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models"
 
 /// Runs Gemini through the Gemini API.
 ///
-/// Unlike [`GeminiModel`](super::GeminiModel), images are sent too, as inline data;
+/// Unlike [`GeminiCliModel`](super::GeminiCliModel), images are sent too, as inline data;
 /// image URLs other than `data:` URIs are rejected.
 #[derive(Clone, Debug)]
 pub struct GeminiApiModel {

@@ -3,7 +3,7 @@
 //! Each call starts one `codex app-server` process and talks JSON-RPC to it
 //! over stdio, one message per line:
 //!
-//! 0. Once per [`CodexModel`], the model catalog is read (`codex debug models`)
+//! 0. Once per [`CodexCliModel`], the model catalog is read (`codex debug models`)
 //!    and rewritten so the models call tools directly (see [`direct_catalog`]);
 //!    each process is started on it.
 //! 1. `initialize`, opting into the experimental API, then `initialized`.
@@ -102,20 +102,20 @@ const OWN_TOOL_ITEMS: &[&str] = &[
 ///   internal use, so it may change between Codex versions.
 /// - Text only: image parts are rejected.
 #[derive(Clone, Debug)]
-pub struct CodexModel {
+pub struct CodexCliModel {
     program: String,
     model: Option<String>,
     /// The rewritten model catalog, read on the first call.
     catalog: Arc<OnceCell<String>>,
 }
 
-impl Default for CodexModel {
+impl Default for CodexCliModel {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl CodexModel {
+impl CodexCliModel {
     pub fn new() -> Self {
         Self {
             program: "codex".to_owned(),
@@ -219,7 +219,7 @@ fn direct_catalog(mut catalog: serde_json::Value) -> serde_json::Value {
     catalog
 }
 
-impl InferLangModel for CodexModel {
+impl InferLangModel for CodexCliModel {
     fn infer(
         &self,
         messages: &[Message],
@@ -482,7 +482,7 @@ fn response_items(message: &Message) -> anyhow::Result<Vec<serde_json::Value>> {
                         Some(s) => s.to_owned(),
                         None => serde_json::to_string(value)?,
                     }),
-                    _ => anyhow::bail!("CodexModel supports only text and value tool results"),
+                    _ => anyhow::bail!("CodexCliModel supports only text and value tool results"),
                 }
             }
             items.push(serde_json::json!({
@@ -491,7 +491,7 @@ fn response_items(message: &Message) -> anyhow::Result<Vec<serde_json::Value>> {
                 "output": output.join("\n"),
             }));
         }
-        ref role => anyhow::bail!("CodexModel does not support {role} messages here"),
+        ref role => anyhow::bail!("CodexCliModel does not support {role} messages here"),
     }
     Ok(items)
 }
@@ -665,7 +665,7 @@ fn texts_of(message: &Message) -> anyhow::Result<String> {
         .iter()
         .map(|part| {
             part.as_text()
-                .ok_or_else(|| anyhow::anyhow!("CodexModel supports only text parts"))
+                .ok_or_else(|| anyhow::anyhow!("CodexCliModel supports only text parts"))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(texts.join("\n"))

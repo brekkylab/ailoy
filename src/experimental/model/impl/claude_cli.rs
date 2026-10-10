@@ -63,18 +63,18 @@ const PARAM_CLOSE: &str = "</parameter>";
 /// - The CLI takes a single prompt, so earlier turns, tool calls and tool
 ///   results are written into it as a transcript.
 #[derive(Clone, Debug)]
-pub struct ClaudeModel {
+pub struct ClaudeCliModel {
     program: String,
     model: Option<String>,
 }
 
-impl Default for ClaudeModel {
+impl Default for ClaudeCliModel {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ClaudeModel {
+impl ClaudeCliModel {
     pub fn new() -> Self {
         Self {
             program: "claude".to_owned(),
@@ -165,7 +165,7 @@ impl ClaudeModel {
     }
 }
 
-impl InferLangModel for ClaudeModel {
+impl InferLangModel for ClaudeCliModel {
     fn infer(
         &self,
         messages: &[Message],
@@ -541,7 +541,7 @@ fn render_prompt(conversation: &[&Message]) -> anyhow::Result<String> {
                 i = end;
                 continue;
             }
-            role => anyhow::bail!("ClaudeModel does not support {role} messages here"),
+            role => anyhow::bail!("ClaudeCliModel does not support {role} messages here"),
         }
         i += 1;
     }
@@ -622,7 +622,7 @@ fn render_results(results: &[&Message], names: &HashMap<&str, &str>) -> anyhow::
                     Some(s) => s.to_owned(),
                     None => serde_json::to_string(value)?,
                 }),
-                _ => anyhow::bail!("ClaudeModel supports only text and value tool results"),
+                _ => anyhow::bail!("ClaudeCliModel supports only text and value tool results"),
             }
         }
         block.push_str(&format!(
@@ -649,7 +649,7 @@ fn texts_of(message: &Message) -> anyhow::Result<String> {
         .iter()
         .map(|part| {
             part.as_text()
-                .ok_or_else(|| anyhow::anyhow!("ClaudeModel supports only text parts"))
+                .ok_or_else(|| anyhow::anyhow!("ClaudeCliModel supports only text parts"))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(texts.join("\n"))

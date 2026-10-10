@@ -106,18 +106,18 @@ const CONTINUE_PROMPT: &str = "Continue from the tool results above.";
 /// - Each call leaves a session record under `~/.gemini/tmp`.
 /// - The discovery command and the hook run through `sh`, so not on Windows.
 #[derive(Clone, Debug)]
-pub struct GeminiModel {
+pub struct GeminiCliModel {
     program: String,
     model: Option<String>,
 }
 
-impl Default for GeminiModel {
+impl Default for GeminiCliModel {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl GeminiModel {
+impl GeminiCliModel {
     pub fn new() -> Self {
         Self {
             program: "gemini".to_owned(),
@@ -203,7 +203,7 @@ impl GeminiModel {
     }
 }
 
-impl GeminiModel {
+impl GeminiCliModel {
     /// The `generateContentConfig` fields `options` set, or `None` when they set none.
     fn generate_config(&self, options: &LangModelOptions) -> Option<serde_json::Value> {
         let mut config = serde_json::Map::new();
@@ -275,7 +275,7 @@ fn settings() -> serde_json::Value {
     })
 }
 
-impl InferLangModel for GeminiModel {
+impl InferLangModel for GeminiCliModel {
     fn infer(
         &self,
         messages: &[Message],
@@ -465,7 +465,9 @@ fn session_record(conversation: &[&Message]) -> anyhow::Result<String> {
                             Some(s) => s.to_owned(),
                             None => serde_json::to_string(value)?,
                         }),
-                        _ => anyhow::bail!("GeminiModel supports only text and value tool results"),
+                        _ => anyhow::bail!(
+                            "GeminiCliModel supports only text and value tool results"
+                        ),
                     }
                 }
                 let call = records
@@ -477,7 +479,7 @@ fn session_record(conversation: &[&Message]) -> anyhow::Result<String> {
                     .with_context(|| format!("no call {call_id} for its result"))?;
                 call["result"] = output.join("\n").into();
             }
-            ref role => anyhow::bail!("GeminiModel does not support {role} messages here"),
+            ref role => anyhow::bail!("GeminiCliModel does not support {role} messages here"),
         }
     }
 
@@ -563,7 +565,7 @@ fn texts_of(message: &Message) -> anyhow::Result<String> {
         .iter()
         .map(|part| {
             part.as_text()
-                .ok_or_else(|| anyhow::anyhow!("GeminiModel supports only text parts"))
+                .ok_or_else(|| anyhow::anyhow!("GeminiCliModel supports only text parts"))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(texts.join("\n"))

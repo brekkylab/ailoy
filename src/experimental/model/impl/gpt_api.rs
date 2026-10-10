@@ -26,15 +26,15 @@ const API_URL: &str = "https://api.openai.com/v1/responses";
 
 /// Runs OpenAI models through the Responses API (`/v1/responses`).
 ///
-/// Unlike [`CodexModel`](super::CodexModel), images are sent too. Reasoning is not
+/// Unlike [`CodexCliModel`](super::CodexCliModel), images are sent too. Reasoning is not
 /// carried across calls: earlier turns are sent without it.
 #[derive(Clone, Debug)]
-pub struct OpenAIApiModel {
+pub struct GptApiModel {
     api_key: String,
     model: String,
 }
 
-impl OpenAIApiModel {
+impl GptApiModel {
     /// Runs `model`, an API model id (e.g. "gpt-5.5"), with `api_key`.
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
@@ -130,7 +130,7 @@ impl OpenAIApiModel {
     }
 }
 
-impl InferLangModel for OpenAIApiModel {
+impl InferLangModel for GptApiModel {
     fn infer(
         &self,
         messages: &[Message],
