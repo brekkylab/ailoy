@@ -1,0 +1,44 @@
+{
+  "name": "ailoy",
+  "version": "0.1.0",
+  "description": "Build an AI agent in Python, Node.js or Rust, with a Linux micro-VM of its own to run code in.",
+  "author": {
+    "name": "brekkylab",
+    "url": "https://github.com/brekkylab"
+  },
+  "homepage": "https://brekkylab.github.io/ailoy/",
+  "repository": "https://github.com/brekkylab/ailoy",
+  "license": "Apache-2.0",
+  "keywords": [
+    "agent",
+    "llm",
+    "ai",
+    "tool-use",
+    "sandbox",
+    "mcp",
+    "python",
+    "nodejs",
+    "rust"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Ailoy",
+    "shortDescription": "AI agent builder with a VM at its heart",
+    "developerName": "brekkylab",
+    "category": "Developer Tools",
+    "longDescription": "Ailoy is a library for building AI agents in Python, Node.js and Rust. An agent drives a language model through tool-augmented turns, and each agent can own a Linux micro-VM to work in: it installs software, writes and runs code, and keeps files there, touching the host only through the folders you mount. Tools come from the built-in set, from any MCP server, from your own functions and from skill directories you write, and the GPU reaches into the VM for models and games.",
+    "capabilities": [
+      "Build an agent with one builder call in Python, Node.js or Rust",
+      "Give each agent a Linux micro-VM booted from an image you declare",
+      "Mount only the host folders the agent may read or write",
+      "Use the tools of any MCP server, stdio or streamable HTTP",
+      "Register your own functions and skill directories as tools",
+      "Run on any provider by naming the model, with the key from the environment"
+    ],
+    "websiteURL": "https://brekkylab.github.io/ailoy/",
+    "screenshots": [
+      "./docs/images/ailoy-cad.gif",
+      "./docs/images/ailoy-sam3-video.gif"
+    ]
+  }
+}
