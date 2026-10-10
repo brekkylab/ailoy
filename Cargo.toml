@@ -118,14 +118,6 @@ name = "hello"
 path = "examples/hello/rust/main.rs"
 
 [[example]]
-name = "claude_model"
-path = "examples/claude_model/rust/main.rs"
-
-[[example]]
-name = "cli_model"
-path = "examples/cli_model/rust/main.rs"
-
-[[example]]
 name = "cad"
 path = "examples/cad/rust/main.rs"
 
