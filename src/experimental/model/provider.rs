@@ -22,20 +22,20 @@
 //! set_lang_model_provider("mine", Arc::new(|_, name| Ok(Arc::new(MyModel::new(name)))));
 //! ```
 //!
-//! | Model        | CLI                | API                  | Others                                               |
-//! |--------------|--------------------|----------------------|------------------------------------------------------|
-//! | `"claude"`   | [`ClaudeCliModel`] | [`ClaudeApiModel`]   | [`BedrockModel`], [`OpenRouterModel`]                |
-//! | `"gpt"`      | [`CodexCliModel`]  | [`GptApiModel`]      | [`BedrockModel`], [`OpenRouterModel`]                |
-//! | `"gemini"`   | [`GeminiCliModel`] | [`GeminiApiModel`]   | [`OpenRouterModel`]                                  |
-//! | `"deepseek"` | —                  | [`DeepSeekApiModel`] | [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
-//! | `"kimi"`     | —                  | [`KimiApiModel`]     | [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
-//! | `"glm"`      | —                  | [`GlmApiModel`]      | [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
-//! | `"qwen"`     | —                  | [`QwenApiModel`]     | [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
+//! | Model        | CLI                | APIs                                                                       |
+//! |--------------|--------------------|----------------------------------------------------------------------------|
+//! | `"claude"`   | [`ClaudeCliModel`] | [`ClaudeApiModel`], [`BedrockModel`], [`OpenRouterModel`]                  |
+//! | `"gpt"`      | [`CodexCliModel`]  | [`GptApiModel`], [`BedrockModel`], [`OpenRouterModel`]                     |
+//! | `"gemini"`   | [`GeminiCliModel`] | [`GeminiApiModel`], [`OpenRouterModel`]                                    |
+//! | `"deepseek"` | —                  | [`DeepSeekApiModel`], [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
+//! | `"kimi"`     | —                  | [`KimiApiModel`], [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`]     |
+//! | `"glm"`      | —                  | [`GlmApiModel`], [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`]      |
+//! | `"qwen"`     | —                  | [`QwenApiModel`], [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`]     |
 //!
-//! The default is the CLI where there is one, the API otherwise. Each is set with
-//! `lang_model_provider::<M>()`. The API models read their key from `ANTHROPIC_API_KEY`,
-//! `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`,
-//! `ZAI_API_KEY` and `DASHSCOPE_API_KEY`; Bedrock from
+//! The default is the CLI where there is one, otherwise the model's own API, listed first.
+//! Each is set with `lang_model_provider::<M>()`. The models' own APIs read their key from
+//! `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`,
+//! `KIMI_API_KEY`, `ZAI_API_KEY` and `DASHSCOPE_API_KEY`; Bedrock from
 //! `AWS_BEARER_TOKEN_BEDROCK` (and `AWS_REGION`); OpenRouter from `OPENROUTER_API_KEY`; vLLM
 //! from the server at `VLLM_BASE_URL` (by default `http://localhost:8000/v1`), with
 //! `VLLM_API_KEY` if it is set. All but the CLIs need a model name in the desc.
