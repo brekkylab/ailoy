@@ -32,6 +32,7 @@ cd bindings/python && uv run maturin develop && uv run pytest   # Python
 cd bindings/node && npm install && npm run build:debug && npm test   # Node
 ```
 
+- `git config core.hooksPath .githooks` installs the hooks in `.githooks/`: the format check on every commit, and clippy plus the library's tests on every push. `SKIP_HOOKS=1 git push` skips the hook for that one command.
 - Tests that need a provider read its key from the environment or a `.env` file (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK`) and skip without it. A run without keys is quietly narrower than the suite; say which keys were set when you report a run.
 - Tests that need a console start one on virtx's default server (`test_console` in `src/lib.rs`) and fail loudly when it is missing.
 - A bug fix brings a test that fails without it. A behaviour change brings the test that pins the new behaviour, in the same surface the behaviour lives in: the library's tests are in-module under `#[cfg(test)]`, the bindings' are `bindings/python/tests/` and `bindings/node/__test__/`.
