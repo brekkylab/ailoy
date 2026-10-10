@@ -67,7 +67,7 @@ cd bindings/node && npm install && npm run build:debug && npm test   # Node
 ## Commits and PRs
 
 - Commit titles are single declarative sentences describing the new state. No trailers.
-- A PR's title is one sentence saying what Ailoy does once it is merged. Its description
-  describes the finished state, not the rounds of work behind it, starting from
+- A PR's title and description follow Pull requests in `CONTRIBUTING.md`: one sentence saying
+  what Ailoy does once it is merged, and a description started from
   `.github/pull_request_template.md`, which `gh pr create --body` bypasses.
 - PR and issue bodies reflow paragraphs to one line; no hard wrapping.
