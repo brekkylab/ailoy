@@ -362,7 +362,7 @@ impl Agent {
                             let mut last: Option<MessageOutput> = None;
                             while let Some(item) = stream.next().await {
                                 if let Some(mut prev) = last.replace(item) {
-                                    prev.depth = Some(prev.depth.map_or(0, |d| d) + 1);
+                                    prev.depth = Some(prev.depth.unwrap_or(0) + 1);
                                     if tx_inner.send(Ok(prev)).is_err() {
                                         return anyhow::Ok(false);
                                     }
@@ -392,7 +392,7 @@ impl Agent {
                             let mut last: Option<MessageOutput> = None;
                             while let Some(item) = stream.next().await {
                                 if let Some(mut prev) = last.replace(item) {
-                                    prev.depth = Some(prev.depth.map_or(0, |d| d) + 1);
+                                    prev.depth = Some(prev.depth.unwrap_or(0) + 1);
                                     if tx_inner.send(Ok(prev)).is_err() {
                                         return anyhow::Ok(false);
                                     }
