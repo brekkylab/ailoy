@@ -46,5 +46,5 @@ cd bindings/node && npm install && npm run build:debug && npm test   # Node
 ## Commits and PRs
 
 - Commit titles are `type(scope): summary`, as in `fix(examples): give agents room for long replies` or `docs: add CONTRIBUTING.md`: a lower-case imperative summary of the new state, with no issue number (that goes in the PR).
-- A PR's title is one sentence saying what Ailoy does once it is merged. Its description describes the finished state, not the rounds of work behind it, starting from `.github/pull_request_template.md`, which `gh pr create --body` bypasses.
+- A PR's title and description follow Pull requests in `CONTRIBUTING.md`: one sentence saying what Ailoy does once it is merged, and a description started from `.github/pull_request_template.md`, which `gh pr create --body` bypasses.
 - PR and issue bodies are written one paragraph per line, never wrapped at a column: GitHub renders every newline as a line break, so a wrapped paragraph shows as ragged lines.
