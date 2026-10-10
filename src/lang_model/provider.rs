@@ -163,14 +163,7 @@ pub fn model_family(model: &str) -> (&str, &str) {
         // `[<geo>.]<vendor>.<model>`: an inference-profile id leads with where it
         // routes, a foundation-model id does not.
         let id = match id.split_once('.') {
-            Some((geo, rest))
-                if matches!(
-                    geo,
-                    "global" | "us" | "us-gov" | "eu" | "apac" | "jp" | "au" | "ca"
-                ) =>
-            {
-                rest
-            }
+            Some(("global" | "us" | "us-gov" | "eu" | "apac" | "jp" | "au" | "ca", rest)) => rest,
             _ => id,
         };
         return match id.split_once('.') {

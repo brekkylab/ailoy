@@ -12,16 +12,15 @@ use crate::{
     message::{FinishReason, Message, MessageOutput, Part, Role},
 };
 
+/// A tool body that borrows the console for as long as its stream runs.
+#[rustfmt::skip]
+type ConsoleFn =
+    dyn for<'a> Fn(Value, String, &'a mut ConsoleClient) -> BoxStream<'a, MessageOutput> + Send + Sync;
+
 #[derive(Clone)]
 enum ToolFuncInner {
     Pure(Arc<dyn Fn(Value, String) -> BoxStream<'static, MessageOutput> + Send + Sync>),
-    WithConsole(
-        Arc<
-            dyn for<'a> Fn(Value, String, &'a mut ConsoleClient) -> BoxStream<'a, MessageOutput>
-                + Send
-                + Sync,
-        >,
-    ),
+    WithConsole(Arc<ConsoleFn>),
 }
 
 #[derive(Clone)]
