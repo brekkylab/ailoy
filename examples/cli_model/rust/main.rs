@@ -1,0 +1,96 @@
+//! Runs one tool-calling exchange through a model's CLI.
+//!
+//! Usage: `cargo run --example cli_model -- <claude|codex|gemini> [model]`
+
+use ailoy::{
+    experimental::model::{ClaudeModel, CodexModel, GeminiModel, InferLangModel},
+    message::{Message, Part, Role},
+    tool::ToolDescBuilder,
+};
+use futures::StreamExt as _;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut args = std::env::args().skip(1);
+    let backend = args.next().unwrap_or_else(|| "claude".to_owned());
+    let name = args.next();
+    let model: Box<dyn InferLangModel> = match backend.as_str() {
+        "claude" => Box::new(match name {
+            Some(name) => ClaudeModel::new().with_model(name),
+            None => ClaudeModel::new(),
+        }),
+        "codex" => Box::new(match name {
+            Some(name) => CodexModel::new().with_model(name),
+            None => CodexModel::new(),
+        }),
+        "gemini" => Box::new(match name {
+            Some(name) => GeminiModel::new().with_model(name),
+            None => GeminiModel::new(),
+        }),
+        other => anyhow::bail!("unknown backend {other}: use claude, codex or gemini"),
+    };
+    let tools = [ToolDescBuilder::new("get_weather")
+        .description("Get the current weather for a city.")
+        .parameters(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "city": {"type": "string"},
+                "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
+                "days": {"type": "integer", "description": "Forecast days, 1 for today only"}
+            },
+            "required": ["city"]
+        }))
+        .build()];
+
+    let mut messages = vec![Message::new(Role::User).with_contents([Part::text(
+        "How's the weather in Seoul and Tokyo today, in celsius?",
+    )])];
+
+    // Turn 1: streamed, should stop at the tool calls.
+    print!("[turn 1] ");
+    let mut stream = model.infer_stream(&messages, &tools);
+    let mut acc = ailoy::message::MessageDeltaOutput::new();
+    while let Some(delta) = stream.next().await {
+        let delta = delta?;
+        for part in delta.delta.contents.clone() {
+            if let Some(text) = part.to_text() {
+                print!("{text}");
+            }
+        }
+        acc = ailoy::message::Delta::accumulate(acc, delta)?;
+    }
+    let output = ailoy::message::Delta::finish(acc)?;
+    println!();
+    println!("[finish] {:?}", output.finish_reason);
+    println!("[tool_calls] {:?}", output.message.tool_calls);
+    println!("[usage] {:?}", output.usage);
+
+    // Answer each call with a made-up result.
+    let calls = output.message.tool_calls.clone().unwrap_or_default();
+    messages.push(output.message);
+    for call in calls {
+        let Part::Function { id, function } = call else {
+            continue;
+        };
+        let city = function
+            .arguments
+            .pointer("/city")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        let result = format!("{city}: 18°C, light rain");
+        messages.push(
+            Message::new(Role::Tool)
+                .with_id(id)
+                .with_contents([Part::text(result)]),
+        );
+    }
+
+    // Turn 2: non-streamed, should answer from the results.
+    let output = model.infer(&messages, &tools).await?;
+    println!("[turn 2] {:?}", output.message.contents);
+    println!("[finish] {:?}", output.finish_reason);
+    println!("[tool_calls] {:?}", output.message.tool_calls);
+    println!("[usage] {:?}", output.usage);
+
+    Ok(())
+}
