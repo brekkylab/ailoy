@@ -50,6 +50,12 @@ const INVOKE_OPEN: &str = "<invoke name=\"";
 const INVOKE_CLOSE: &str = "</invoke>";
 const PARAM_OPEN: &str = "<parameter name=\"";
 const PARAM_CLOSE: &str = "</parameter>";
+/// The namespace Claude's own tool-call tags carry; the model sometimes writes it here too.
+const NAMESPACE: &str = "antml:";
+/// The tag names read with or without [`NAMESPACE`].
+const TAGS: [&str; 3] = ["function_calls", "invoke", "parameter"];
+/// The longest a stray word before a bare `<invoke>` is taken to be.
+const MAX_STRAY_WORD: usize = 12;
 
 /// Runs Claude through the `claude` CLI instead of calling the API directly.
 ///
@@ -284,14 +290,21 @@ impl InferLangModel for ClaudeCliModel {
                     // The run is over: close the message with its usage.
                     Some("result") => {
                         let usage = parse_result(&event)?;
-                        if scanner.in_calls {
+                        let block = scanner.finish_bare();
+                        if block.is_none() && scanner.in_calls {
                             Err(anyhow::anyhow!("the reply ended inside {CALLS_OPEN}"))?;
                         }
                         let text = scanner.flush();
                         if !text.is_empty() && !structured {
                             out.delta = out.delta.with_contents([PartDelta::Text { text }]);
                         }
-                        out.finish_reason = Some(FinishReason::Stop {});
+                        out.finish_reason = Some(match block {
+                            Some(block) => {
+                                out.delta = out.delta.with_tool_calls(parse_calls(&block, &tools)?);
+                                FinishReason::ToolCall {}
+                            }
+                            None => FinishReason::Stop {},
+                        });
                         out.usage = usage;
                         finished = true;
                     }
@@ -346,10 +359,19 @@ impl Invocation {
 ///
 /// Text that may be the start of the tag is held back until it is known not to
 /// be, and so is trailing whitespace, so the text before a call ends cleanly.
+///
+/// Also reads the ways the model is known to garble the block (anthropics/claude-code#49747
+/// and its duplicates): the tags with Claude's own `antml:` namespace, `<invoke>`s without
+/// the `<function_calls>` around them, and a stray word (`court`, `call`, …) on the line
+/// where `<function_calls>` should be, which is dropped.
 #[derive(Default)]
 struct CallScanner {
     buf: String,
     in_calls: bool,
+    /// The calls opened with a bare `<invoke>`, the `<function_calls>` around it left out,
+    /// as the model sometimes writes them. Such a block has no closing tag to stop at, so it
+    /// runs to `</function_calls>` if one comes, or else to the end of the reply.
+    bare: bool,
     emitted: bool,
 }
 
@@ -358,15 +380,29 @@ impl CallScanner {
     /// inside of the `<function_calls>` block once it closes.
     fn push(&mut self, piece: &str) -> (String, Option<String>) {
         self.buf.push_str(piece);
+        strip_namespace(&mut self.buf);
         let mut text = String::new();
         if !self.in_calls {
-            if let Some(at) = self.buf.find(CALLS_OPEN) {
-                text = self.take_text(at);
-                self.buf.drain(..CALLS_OPEN.len());
-                self.in_calls = true;
-            } else {
-                let held = held_len(&self.buf);
-                return (self.take_text(self.buf.len() - held), None);
+            let calls = self.buf.find(CALLS_OPEN);
+            let invoke = self.buf.find(INVOKE_OPEN);
+            match (calls, invoke) {
+                (Some(at), invoke) if invoke.is_none_or(|i| at < i) => {
+                    text = self.take_text(at);
+                    self.buf.drain(..CALLS_OPEN.len());
+                    self.in_calls = true;
+                }
+                // The `<invoke>` stays in the buffer: it is the block's first call.
+                (_, Some(at)) => {
+                    let stray = stray_word(&self.buf[..at], !self.emitted).unwrap_or(at);
+                    text = self.take_text(stray);
+                    self.buf.drain(..at - stray);
+                    self.in_calls = true;
+                    self.bare = true;
+                }
+                _ => {
+                    let held = held_len(&self.buf, !self.emitted);
+                    return (self.take_text(self.buf.len() - held), None);
+                }
             }
         }
         let block = self
@@ -374,6 +410,20 @@ impl CallScanner {
             .find(CALLS_CLOSE)
             .map(|end| self.buf[..end].to_owned());
         (text, block)
+    }
+
+    /// At the end of the reply, the block of bare `<invoke>`s still open, up to the last
+    /// `</invoke>`; whatever follows it is dropped. `None` if no call was opened that way, or
+    /// none of them closed.
+    fn finish_bare(&mut self) -> Option<String> {
+        if !(self.in_calls && self.bare) {
+            return None;
+        }
+        let end = self.buf.rfind(INVOKE_CLOSE)? + INVOKE_CLOSE.len();
+        let block = self.buf[..end].to_owned();
+        self.buf.clear();
+        self.in_calls = false;
+        Some(block)
     }
 
     /// Whatever text is still held back, at the end of the reply.
@@ -395,18 +445,60 @@ impl CallScanner {
     }
 }
 
+/// Drops [`NAMESPACE`] from every whole tool-call tag in `buf`; a tag still being streamed
+/// is held back by [`held_len`] until it is whole.
+fn strip_namespace(buf: &mut String) {
+    if !buf.contains(NAMESPACE) {
+        return;
+    }
+    for tag in TAGS {
+        for open in ["<", "</"] {
+            *buf = buf.replace(&format!("{open}{NAMESPACE}{tag}"), &format!("{open}{tag}"));
+        }
+    }
+}
+
+/// Where the line holding only a stray word starts, if `text` ends with one: what the model
+/// sometimes writes in place of `<function_calls>`. `at_line_start` says whether `text`
+/// starts a line, since a line begun before it was already shown.
+fn stray_word(text: &str, at_line_start: bool) -> Option<usize> {
+    let text = text.trim_end();
+    let start = match text.rfind('\n') {
+        Some(newline) => newline + 1,
+        None if at_line_start => 0,
+        None => return None,
+    };
+    let word = text[start..].trim();
+    (!word.is_empty()
+        && word.len() <= MAX_STRAY_WORD
+        && word.chars().all(|c| c.is_ascii_alphabetic()))
+    .then_some(start)
+}
+
 /// How many trailing bytes of `buf` to hold back: a possible start of
-/// [`CALLS_OPEN`], plus the whitespace before it.
-fn held_len(buf: &str) -> usize {
-    let partial = (1..CALLS_OPEN.len().min(buf.len()) + 1)
+/// [`CALLS_OPEN`] or [`INVOKE_OPEN`], namespaced or not, plus the whitespace before it, and
+/// before that a line that may be a stray word ([`stray_word`]).
+fn held_len(buf: &str, at_line_start: bool) -> usize {
+    let openers = [
+        CALLS_OPEN.to_owned(),
+        INVOKE_OPEN.to_owned(),
+        format!("<{NAMESPACE}{}", &CALLS_OPEN[1..]),
+        format!("<{NAMESPACE}{}", &INVOKE_OPEN[1..]),
+    ];
+    let longest = openers.iter().map(String::len).max().unwrap_or(0);
+    let partial = (1..longest.min(buf.len()) + 1)
         .rev()
         .find(|&n| {
             let at = buf.len() - n;
-            buf.is_char_boundary(at) && CALLS_OPEN.starts_with(&buf[at..])
+            buf.is_char_boundary(at) && openers.iter().any(|o| o.starts_with(&buf[at..]))
         })
         .unwrap_or(0);
     let rest = &buf[..buf.len() - partial];
-    partial + (rest.len() - rest.trim_end().len())
+    match stray_word(rest, at_line_start) {
+        // From the newline before it, so the next push still sees the word start a line.
+        Some(start) => buf.len() - rest[..start].trim_end().len(),
+        None => partial + (rest.len() - rest.trim_end().len()),
+    }
 }
 
 /// Parses the inside of a `<function_calls>` block into tool calls, typing each
@@ -424,6 +516,11 @@ fn parse_calls(block: &str, tools: &[ToolDesc]) -> anyhow::Result<Vec<PartDelta>
         rest = after;
 
         let schema = tools.iter().find(|t| t.name == name).map(|t| &t.parameters);
+        let keys: Vec<&str> = schema
+            .and_then(|s| s.pointer("/properties"))
+            .and_then(|p| p.as_object())
+            .map(|p| p.keys().map(String::as_str).collect())
+            .unwrap_or_default();
         let mut arguments = serde_json::Map::new();
         let mut params = body;
         while let Some(start) = params.find(PARAM_OPEN) {
@@ -434,6 +531,18 @@ fn parse_calls(block: &str, tools: &[ToolDesc]) -> anyhow::Result<Vec<PartDelta>
                 .split_once(PARAM_CLOSE)
                 .context("unterminated <parameter>")?;
             params = after;
+            // A value holding another parameter's opening tag is one the model failed to
+            // close (anthropics/claude-code#49747); taking it as is would hand the tool a
+            // corrupted value and drop that parameter, both silently.
+            if let Some(other) = keys
+                .iter()
+                .find(|k| value.contains(&format!("{PARAM_OPEN}{k}\">")))
+            {
+                anyhow::bail!(
+                    "malformed call to {name}: the value of `{key}` runs into the \
+                     <parameter> tag of `{other}`"
+                );
+            }
             arguments.insert(key.to_owned(), parse_argument(value, key, schema));
         }
 
@@ -716,6 +825,79 @@ mod tests {
         ]);
         assert_eq!(text, "Checking.");
         assert_eq!(block.as_deref(), Some("\n<invoke name=\"a\">\n</invoke>\n"));
+    }
+
+    #[test]
+    fn a_bare_invoke_opens_a_block_that_runs_to_the_end() {
+        let mut scanner = CallScanner::default();
+        let (text, block) = scanner.push("Reading the skill.\n<inv");
+        assert_eq!((text.as_str(), block), ("Reading the skill.", None));
+        let (text, block) =
+            scanner.push("oke name=\"a\">\n</invoke>\n<invoke name=\"b\">\n</invoke>\n");
+        assert_eq!((text.as_str(), block), ("", None));
+        assert_eq!(
+            scanner.finish_bare().as_deref(),
+            Some("<invoke name=\"a\">\n</invoke>\n<invoke name=\"b\">\n</invoke>")
+        );
+        assert_eq!(scanner.flush(), "");
+    }
+
+    #[test]
+    fn a_bare_invoke_closed_by_function_calls_ends_there() {
+        let (text, block) = scan(&["<invoke name=\"a\">\n</invoke>\n</function_calls>\nimagined"]);
+        assert_eq!(text, "");
+        assert_eq!(block.as_deref(), Some("<invoke name=\"a\">\n</invoke>\n"));
+    }
+
+    #[test]
+    fn a_stray_word_before_a_bare_invoke_is_dropped() {
+        let mut scanner = CallScanner::default();
+        let (text, _) = scanner.push("Reading it now.\ncou");
+        assert_eq!(text, "Reading it now.");
+        let (text, _) = scanner.push("rt\n<invoke name=\"a\">\n</invoke>");
+        assert_eq!(text, "");
+        assert_eq!(
+            scanner.finish_bare().as_deref(),
+            Some("<invoke name=\"a\">\n</invoke>")
+        );
+
+        // A word that runs on is text, not a stray.
+        let (text, block) = scan(&["call", " me later"]);
+        assert_eq!((text.as_str(), block), ("call me later", None));
+    }
+
+    #[test]
+    fn namespaced_tags_are_read_as_plain_ones() {
+        let ns = NAMESPACE;
+        let (text, block) = scan(&[
+            "Checking.\n<ant",
+            &format!(
+                "ml:function_calls>\n<{ns}invoke name=\"a\">\n<{ns}parameter name=\"x\">1</{ns}param"
+            ),
+            &format!("eter>\n</{ns}invoke>\n</{ns}function_calls>"),
+        ]);
+        assert_eq!(text, "Checking.");
+        assert_eq!(
+            block.as_deref(),
+            Some("\n<invoke name=\"a\">\n<parameter name=\"x\">1</parameter>\n</invoke>\n")
+        );
+    }
+
+    #[test]
+    fn a_value_running_into_another_parameter_is_an_error() {
+        let tools = [crate::tool::ToolDescBuilder::new("f")
+            .parameters(serde_json::json!({
+                "type": "object",
+                "properties": {"summary": {"type": "string"}, "files": {"type": "array"}}
+            }))
+            .build()];
+        let block = "<invoke name=\"f\">\n<parameter name=\"summary\">done.</summary>\n\
+                     <parameter name=\"files\">[\"a\"]</parameter>\n</invoke>";
+        let err = parse_calls(block, &tools).unwrap_err().to_string();
+        assert!(
+            err.contains("`summary`") && err.contains("`files`"),
+            "{err}"
+        );
     }
 
     #[test]
