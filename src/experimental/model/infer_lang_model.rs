@@ -1,4 +1,5 @@
 use futures::{future::BoxFuture, stream::BoxStream};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -8,7 +9,7 @@ use crate::{
 };
 
 /// How much a model thinks before it answers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ThinkingEffort {
     Low,
@@ -17,7 +18,7 @@ pub enum ThinkingEffort {
 }
 
 /// Settings every [`InferLangModel`] can apply, whichever way it runs the model.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct LangModelOptions {
     /// How much the model thinks; `None` keeps the model's or backend's default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
