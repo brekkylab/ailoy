@@ -52,7 +52,12 @@ covers less than the suite: say which keys were set when you report one.
 ## Reporting bugs and requesting features
 
 Open an issue at https://github.com/brekkylab/ailoy/issues with what you ran, what you
-expected, and what happened, including the language you used Ailoy from.
+expected, and what happened, including the language you used Ailoy from. A suspected
+vulnerability goes through [SECURITY.md](SECURITY.md) instead, never a public issue.
+
+## Code of Conduct
+
+Taking part in this project means following our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
