@@ -1,6 +1,6 @@
 <!-- Describe the finished state, not the rounds of work that got here. Closes #<issue>.
 
-Title: one sentence saying what Ailoy does once this is merged, with no issue number. Keep the headings and the three checkboxes below; a heading with nothing to say keeps one line saying so. -->
+Title: one sentence saying what Ailoy does once this is merged, with no issue number. Problem, Cause, Fix and Result are for a change that fixes something; drop the ones that do not apply. A change with no problem behind it, such as a new document or a refactor, has `## Changes` in place of Fix. Keep Verification and the three checkboxes. -->
 
 ## Problem
 

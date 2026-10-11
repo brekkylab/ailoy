@@ -36,7 +36,7 @@ There is no pull-request CI, so what you run locally is the gate. `git config co
 4. The shape to aim for is the crate first, with each binding connecting to it, but do not hold a PR back for it: a change that reaches one binding only, or one binding alone, is welcome as it is. A maintainer may suggest moving it into the crate, and that can be a follow-up PR.
 5. Run the checks above before opening the PR.
 6. Title the PR with one sentence saying what Ailoy does once it is merged, with no issue number. The issue goes in the description as `Closes #N` or `Resolves #N`.
-7. Fill in the pull request template: problem, cause, fix and result, the verification lines and the three checkboxes, describing the finished state rather than the rounds of work behind it. `gh pr create --body` does not load the template, so start the description from [`.github/pull_request_template.md`](.github/pull_request_template.md).
+7. Fill in the pull request template, describing the finished state rather than the rounds of work behind it. Problem, cause, fix and result are for a change that fixes something: drop the ones that do not apply, and a change with no problem behind it has a Changes section in place of Fix. The verification lines and the three checkboxes always stay. `gh pr create --body` does not load the template, so start the description from [`.github/pull_request_template.md`](.github/pull_request_template.md).
 
 ## Reporting bugs and requesting features
 
