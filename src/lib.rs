@@ -12,12 +12,21 @@ pub mod tool;
 
 /// A started console on virtx's default server, for tests.
 ///
-/// Panics on failure: a missing server binary should stop the test run loudly.
+/// Fetches the server when `$VIRTX_HOME/bin` has none, names an image because a session boots
+/// on one, and mounts the host's temp dir at its own path so a test can hand the console a
+/// `tempfile` it wrote and read the result back. Panics on failure: a console that cannot start
+/// should stop the test run loudly.
 #[cfg(test)]
 pub(crate) async fn test_console() -> virtx::console::ConsoleClient {
     dotenvy::dotenv().ok();
 
+    virtx::ensure_virtx()
+        .await
+        .unwrap_or_else(|e| panic!("fetching the console server: {e:#}"));
+    let tmp = std::env::temp_dir();
     let mut console = virtx::console::ConsoleClient::builder()
+        .image(virtx::image::Recipe::new("python:3.12-slim"))
+        .mount(tmp.clone(), tmp)
         .build()
         .await
         .unwrap_or_else(|e| panic!("starting the console server: {e:#}"));

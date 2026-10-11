@@ -362,7 +362,7 @@ impl Agent {
                             let mut last: Option<MessageOutput> = None;
                             while let Some(item) = stream.next().await {
                                 if let Some(mut prev) = last.replace(item) {
-                                    prev.depth = Some(prev.depth.map_or(0, |d| d) + 1);
+                                    prev.depth = Some(prev.depth.unwrap_or(0) + 1);
                                     if tx_inner.send(Ok(prev)).is_err() {
                                         return anyhow::Ok(false);
                                     }
@@ -392,7 +392,7 @@ impl Agent {
                             let mut last: Option<MessageOutput> = None;
                             while let Some(item) = stream.next().await {
                                 if let Some(mut prev) = last.replace(item) {
-                                    prev.depth = Some(prev.depth.map_or(0, |d| d) + 1);
+                                    prev.depth = Some(prev.depth.unwrap_or(0) + 1);
                                     if tx_inner.send(Ok(prev)).is_err() {
                                         return anyhow::Ok(false);
                                     }
@@ -775,7 +775,11 @@ mod tests {
         names: &[&str],
     ) -> virtx::console::ConsoleClient {
         dotenvy::dotenv().ok();
-        let mut builder = virtx::console::ConsoleClient::builder();
+        virtx::ensure_virtx()
+            .await
+            .unwrap_or_else(|e| panic!("fetching the console server: {e:#}"));
+        let mut builder = virtx::console::ConsoleClient::builder()
+            .image(virtx::image::Recipe::new("python:3.12-slim"));
         for name in names {
             let dir = root.join(name);
             std::fs::create_dir_all(&dir).unwrap();
@@ -897,7 +901,8 @@ mod tests {
     async fn test_console_without_mounts_leaves_the_system_message_alone() {
         let provider = default_test_provider();
         let spec = AgentSpec::new("openai/gpt-4o-mini").instruction("Be brief.");
-        let state = AgentState::new().with_console(crate::test_console().await);
+        let dir = tempfile::tempdir().unwrap();
+        let state = AgentState::new().with_console(console_with_mounts(dir.path(), &[]).await);
         let mut agent = Agent::try_with_provider_and_state(spec, provider, state)
             .await
             .unwrap();
