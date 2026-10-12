@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_system_tools_follow_the_model() {
-        let gpt = AgentSpec::new("gpt/gpt-6-sol").system_tools();
+        let gpt = AgentSpec::new("gpt/luna").system_tools();
         assert_eq!(names(&gpt), ["shell", "apply_patch", "imgread"]);
 
         let gemini = AgentSpec::new("gemini").system_tools();
