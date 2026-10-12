@@ -171,7 +171,7 @@ jobs:
         with:
           ref: ${{ env.REF }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
         with:
           targets: ${{ matrix.target }}
 
@@ -367,7 +367,7 @@ jobs:
         with:
           ref: ${{ env.REF }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -522,7 +522,7 @@ jobs:
           SMOKE_MOUNT: ${{ matrix.mount }}
         run: VIRTX_HOME="$VIRTX_HOME_PYTHON" "$SMOKE_PYTHON" "$GITHUB_WORKSPACE/scripts/packages/smoke/python.py"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
 
       - name: libclang
         if: runner.os == 'Linux'
@@ -641,7 +641,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
 
       - uses: actions/download-artifact@v4
         with:
