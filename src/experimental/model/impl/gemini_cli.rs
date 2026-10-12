@@ -1,14 +1,16 @@
 //! A language model backed by the Gemini CLI in headless mode.
 //!
-//! Each call starts one `gemini` process in a project directory shared by all
-//! calls ([`PROJECT_DIR`] under the system's temporary directory), whose
-//! `.gemini/settings.json` is the same for every call: it keeps the CLI's own
-//! tools and context files out, declares the tools through a discovery
-//! command that prints the file named by `AILOY_GEMINI_TOOLS`, and adds a
-//! `BeforeTool` hook that stops the agent before any tool runs. Keeping it the
-//! same keeps the CLI's record of trusted project hooks to one entry.
+//! Each call starts one `gemini` process, with no extensions (`-e none`), in
+//! an empty project directory shared by all calls and private to the user
+//! ([`PROJECT_DIR`] under the user's cache directory, see [`project_dir`]).
 //!
 //! The call's own files go in a temporary directory:
+//! - `system-settings.json`, the system settings (`GEMINI_CLI_SYSTEM_SETTINGS_PATH`),
+//!   which take precedence over the user's (see [`settings`]): they keep the
+//!   CLI's own tools and context files out, declare the tools through a
+//!   discovery command that prints the file named by `AILOY_GEMINI_TOOLS`, add
+//!   a `BeforeTool` hook that stops the agent before any tool runs, with hooks
+//!   on whatever the user's settings say, and disable the user's own hooks;
 //! - `system.md`, which replaces the CLI's system prompt (`GEMINI_SYSTEM_MD`);
 //! - `tools.json`, the function declarations (`AILOY_GEMINI_TOOLS`);
 //! - `session.jsonl`, the earlier turns as a session record (`--session-file`),
@@ -33,6 +35,7 @@ use tokio::{
     process::Command,
 };
 
+use super::gemini_api::inline_image;
 use crate::{
     experimental::model::{InferLangModel, LangModelOptions, ThinkingEffort},
     message::{
@@ -42,10 +45,12 @@ use crate::{
     tool::ToolDesc,
 };
 
-use super::gemini_api::inline_image;
+/// The project directory every call runs in, under ailoy's directory in the user's cache.
+const PROJECT_DIR: &str = "gemini";
 
-/// The project directory every call runs in, under the system's temporary directory.
-const PROJECT_DIR: &str = "ailoy-gemini";
+/// The name of the hook that stops the agent, unique so the user's hooks can
+/// be disabled by name without it.
+const STOP_HOOK: &str = "ailoy-stop-before-tool";
 
 /// The CLI's own tools, kept from the model. Names unknown to the installed
 /// version are ignored. (`tools.core`, the CLI's allowlist, cannot be used
@@ -104,12 +109,14 @@ const IMAGE_PROMPT: &str = "Reply to the message above.";
 /// - System and assistant messages are text only. Thinking is not reported.
 /// - A tool's description gets the CLI's note on discovered tools appended.
 /// - After tool results, the turn goes on from a short user prompt
-///   ([`CONTINUE_PROMPT`]), since the CLI needs one; before it, the CLI puts
-///   a model turn noting that the previous response was interrupted. A latest
-///   user message with images likewise goes into the session, followed by
-///   [`IMAGE_PROMPT`].
+///   (`"Continue from the tool results above."`), since the CLI needs one;
+///   before it, the CLI puts a model turn noting that the previous response
+///   was interrupted. A latest user message with images likewise goes into
+///   the session, followed by `"Reply to the message above."`.
 /// - The CLI drops earlier user messages that start with `/` or `?` from the
 ///   session, and takes a latest message that starts with `/` as a command.
+/// - The user's settings still apply where ailoy's do not override them, and
+///   the CLI's admin settings file is replaced by ailoy's.
 /// - Each call leaves a session record under `~/.gemini/tmp`.
 /// - The discovery command and the hook run through `sh`, so not on Windows.
 #[derive(Clone, Debug)]
@@ -153,6 +160,9 @@ impl GeminiCliModel {
         workdir: &Path,
     ) -> anyhow::Result<Command> {
         let project = project_dir()?;
+        let system_settings = workdir.join("system-settings.json");
+        let settings = self.settings(options)?;
+        std::fs::write(&system_settings, serde_json::to_string(&settings)?)?;
         let system_md = workdir.join("system.md");
         std::fs::write(&system_md, &plan.system)?;
         let tools_json = workdir.join("tools.json");
@@ -169,6 +179,9 @@ impl GeminiCliModel {
             // Names no configured server, so none is started.
             "--allowed-mcp-server-names",
             "ailoy-none",
+            // No extension is loaded, nor its hooks, tools or context.
+            "--extensions",
+            "none",
         ]);
         if let Some(model) = &self.model {
             command.args(["--model", model.as_str()]);
@@ -178,27 +191,12 @@ impl GeminiCliModel {
             std::fs::write(&session, &plan.session)?;
             command.arg("--session-file").arg(session);
         }
-        if let Some(config) = self.generate_config(options) {
-            // The options go in a system settings file of the call's own, which leaves the
-            // shared project settings untouched. The override applies to the main chat only,
-            // whichever model it runs on.
-            let system_settings = workdir.join("system-settings.json");
-            let settings = serde_json::json!({
-                "modelConfigs": {
-                    "customOverrides": [{
-                        "match": {"isChatModel": true},
-                        "modelConfig": {"generateContentConfig": config},
-                    }],
-                },
-            });
-            std::fs::write(&system_settings, serde_json::to_string(&settings)?)?;
-            command.env("GEMINI_CLI_SYSTEM_SETTINGS_PATH", &system_settings);
-        }
         command
+            .env("GEMINI_CLI_SYSTEM_SETTINGS_PATH", &system_settings)
             // Always set, even empty: otherwise the CLI's own coding-agent prompt is used.
             .env("GEMINI_SYSTEM_MD", &system_md)
             .env("AILOY_GEMINI_TOOLS", &tools_json)
-            // Without trust, the project settings are not loaded.
+            // Without trust, no hook runs. The project directory is the user's own.
             .env("GEMINI_CLI_TRUST_WORKSPACE", "true")
             .current_dir(project)
             .stdin(Stdio::piped())
@@ -211,6 +209,52 @@ impl GeminiCliModel {
 }
 
 impl GeminiCliModel {
+    /// The system settings for one call. Merged last, they override the user's
+    /// settings, except that lists of hooks and excluded tools add up.
+    fn settings(&self, options: &LangModelOptions) -> anyhow::Result<serde_json::Value> {
+        let mut settings = serde_json::json!({
+            "tools": {
+                "exclude": BUILTIN_TOOLS,
+                // Quoted so the CLI passes the variable to `sh` unexpanded.
+                "discoveryCommand": "sh -c 'cat \"$AILOY_GEMINI_TOOLS\"'",
+                // Never run: the hook stops the agent first.
+                "callCommand": "false",
+            },
+            "context": {
+                // No such file exists, so no GEMINI.md is added to the system prompt.
+                "fileName": "AILOY_NO_CONTEXT.md",
+                // Keeps the directory listing out of the context the CLI adds.
+                "includeDirectoryTree": false,
+            },
+            "hooksConfig": {
+                // On even if the user's settings turn hooks off, or the hook would not run.
+                "enabled": true,
+                // The user's hooks could change the requests or let a tool run.
+                "disabled": user_hook_names()?,
+            },
+            "hooks": {
+                "BeforeTool": [{
+                    "matcher": ".*",
+                    "hooks": [{
+                        "type": "command",
+                        "name": STOP_HOOK,
+                        "command": "echo '{\"continue\":false,\"stopReason\":\"the call goes back to the caller\"}'",
+                    }],
+                }],
+            },
+        });
+        if let Some(config) = self.generate_config(options) {
+            // Applies to the main chat only, whichever model it runs on.
+            settings["modelConfigs"] = serde_json::json!({
+                "customOverrides": [{
+                    "match": {"isChatModel": true},
+                    "modelConfig": {"generateContentConfig": config},
+                }],
+            });
+        }
+        Ok(settings)
+    }
+
     /// The `generateContentConfig` fields `options` set, or `None` when they set none.
     fn generate_config(&self, options: &LangModelOptions) -> Option<serde_json::Value> {
         let mut config = serde_json::Map::new();
@@ -238,48 +282,95 @@ impl GeminiCliModel {
     }
 }
 
-/// The shared project directory, with its settings written if they differ.
+/// The shared project directory, private to the user (see
+/// [`private_dir`](super::codex_cli::private_dir)) and left empty.
+///
+/// The CLI trusts it (`GEMINI_CLI_TRUST_WORKSPACE`), so loads its
+/// `.gemini/settings.json`, and looks for a `.env` file from it upwards
+/// (`.gemini/.env` or `.env` in each directory up to the root). Under the
+/// user's cache directory, the directories above it are the user's own up to
+/// the home directory, and the system's beyond, where other users cannot write.
 fn project_dir() -> anyhow::Result<std::path::PathBuf> {
-    let project = std::env::temp_dir().join(PROJECT_DIR);
-    let settings_dir = project.join(".gemini");
-    std::fs::create_dir_all(&settings_dir)?;
-    let path = settings_dir.join("settings.json");
-    let settings = serde_json::to_string_pretty(&settings())?;
-    if std::fs::read_to_string(&path).ok().as_deref() != Some(settings.as_str()) {
-        // Written aside and renamed, so a concurrent call never reads it half-written.
-        let staged = tempfile::NamedTempFile::new_in(&settings_dir)?;
-        std::fs::write(staged.path(), &settings)?;
-        staged.persist(&path)?;
-    }
-    Ok(project)
+    super::codex_cli::private_dir(PROJECT_DIR)
 }
 
-/// The project settings, the same for every call.
-fn settings() -> serde_json::Value {
-    serde_json::json!({
-        "tools": {
-            "exclude": BUILTIN_TOOLS,
-            // Quoted so the CLI passes the variable to `sh` unexpanded.
-            "discoveryCommand": "sh -c 'cat \"$AILOY_GEMINI_TOOLS\"'",
-            // Never run: the hook stops the agent first.
-            "callCommand": "false",
-        },
-        "context": {
-            // No such file exists, so no GEMINI.md is added to the system prompt.
-            "fileName": "AILOY_NO_CONTEXT.md",
-            // Keeps the directory listing out of the context the CLI adds.
-            "includeDirectoryTree": false,
-        },
-        "hooks": {
-            "BeforeTool": [{
-                "matcher": ".*",
-                "hooks": [{
-                    "type": "command",
-                    "command": "echo '{\"continue\":false,\"stopReason\":\"the call goes back to the caller\"}'",
-                }],
-            }],
-        },
-    })
+/// The names of the hooks in the user's settings, to disable them by: the
+/// CLI adds up the hooks of every settings file, so the user's cannot be
+/// overridden otherwise.
+///
+/// The CLI names a hook by its `name`, or by its command.
+fn user_hook_names() -> anyhow::Result<Vec<String>> {
+    let home = match std::env::var_os("GEMINI_CLI_HOME") {
+        Some(home) if !home.is_empty() => std::path::PathBuf::from(home),
+        _ => dirs::home_dir().context("no home directory for this user")?,
+    };
+    let path = home.join(".gemini").join("settings.json");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e).with_context(|| format!("failed to read {}", path.display())),
+    };
+    let settings: serde_json::Value = serde_json::from_str(&strip_comments(&text))
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    let mut names = Vec::new();
+    let events = settings["hooks"].as_object().into_iter().flatten();
+    for (_, definitions) in events {
+        let hooks = definitions
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|d| d["hooks"].as_array().into_iter().flatten());
+        for hook in hooks {
+            if let Some(name) = hook["name"].as_str().or(hook["command"].as_str())
+                && name != STOP_HOOK
+            {
+                names.push(name.to_owned());
+            }
+        }
+    }
+    Ok(names)
+}
+
+/// JSON with `//` and `/* */` comments, as the CLI takes its settings, with
+/// the comments taken out.
+fn strip_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        if in_string {
+            out.push(c);
+            match c {
+                '\\' => out.extend(chars.next()),
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match (c, chars.peek()) {
+            ('"', _) => {
+                in_string = true;
+                out.push(c);
+            }
+            ('/', Some('/')) => {
+                // Up to the end of the line, which is kept.
+                while chars.next_if(|&c| c != '\n').is_some() {}
+            }
+            ('/', Some('*')) => {
+                chars.next();
+                let mut last = '\0';
+                for c in chars.by_ref() {
+                    if last == '*' && c == '/' {
+                        break;
+                    }
+                    last = c;
+                }
+                out.push(' ');
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 impl InferLangModel for GeminiCliModel {
@@ -405,7 +496,7 @@ impl Plan {
             Role::User if latest.contents.iter().any(Part::is_image) => {
                 (&conversation[..], IMAGE_PROMPT.to_owned())
             }
-            Role::User => (earlier, text_of(latest)?),
+            Role::User => (earlier, user_text(latest)?),
             // The results go into the session, and the turn goes on from a short prompt.
             Role::Tool => (&conversation[..], CONTINUE_PROMPT.to_owned()),
             _ => anyhow::bail!("the last message must be a user message or tool results"),
@@ -577,8 +668,14 @@ fn text_of(message: &Message) -> anyhow::Result<String> {
     texts_of(message)
 }
 
-/// A user message as Gemini parts: text and values as `text`, images as `inlineData`.
+/// A user message as Gemini parts: text and values as `text`, images as
+/// `inlineData`. Without images, the message is one text part, as the CLI
+/// sends a prompt from stdin, so a latest message is sent the same way in the
+/// next call's session and the prompts share a prefix.
 fn user_parts(message: &Message) -> anyhow::Result<Vec<serde_json::Value>> {
+    if !message.contents.iter().any(Part::is_image) {
+        return Ok(vec![serde_json::json!({"text": user_text(message)?})]);
+    }
     if message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()) {
         anyhow::bail!("only assistant messages can carry tool calls");
     }
@@ -592,6 +689,19 @@ fn user_parts(message: &Message) -> anyhow::Result<Vec<serde_json::Value>> {
             })
         })
         .collect()
+}
+
+/// A user message without images as text: its text and value parts joined.
+fn user_text(message: &Message) -> anyhow::Result<String> {
+    if message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()) {
+        anyhow::bail!("only assistant messages can carry tool calls");
+    }
+    let texts = message
+        .contents
+        .iter()
+        .map(part_text)
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(texts.join("\n"))
 }
 
 /// A text or value part as text, strings without their quotes.

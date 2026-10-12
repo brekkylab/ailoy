@@ -82,6 +82,11 @@ pub enum DecisionAnswer {
 }
 
 /// A model that answers typed questions about a state, and generates no text.
+///
+/// An answer is read from scores the model computes over the labels (Laya reads them at its
+/// option markers and its act head), so a backend has to run the weights itself, as llama.cpp
+/// can; the CLI and API backends behind [`InferLangModel`](super::InferLangModel) return
+/// generated output only.
 pub trait InferDecisionModel: Send + Sync {
     /// Answer every question about `state`, keyed by the ids they were given.
     ///

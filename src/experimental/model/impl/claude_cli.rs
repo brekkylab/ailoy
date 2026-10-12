@@ -19,8 +19,10 @@
 //!
 //! The process is stopped at the first `</function_calls>`, since the CLI has
 //! no stop sequences and the model would otherwise go on to imagine the results.
+//! Only a `<function_calls>` at the start of a line and outside fenced code is
+//! taken as a call, and none is looked for when no tools were given.
 
-use std::{collections::HashMap, process::Stdio};
+use std::{collections::HashMap, io::Write as _, process::Stdio};
 
 use anyhow::Context as _;
 use futures::{
@@ -33,6 +35,7 @@ use tokio::{
     process::{Child, Command},
 };
 
+use super::claude_api::image_block;
 use crate::{
     datatype::Value,
     experimental::model::{InferLangModel, LangModelOptions, ThinkingEffort},
@@ -42,8 +45,6 @@ use crate::{
     },
     tool::ToolDesc,
 };
-
-use super::claude_api::image_block;
 
 /// The tool the CLI adds for `--json-schema`; the reply is its arguments.
 const STRUCTURED_OUTPUT: &str = "StructuredOutput";
@@ -128,6 +129,20 @@ impl ClaudeCliModel {
                 .join("\n");
         }
         let prompt = render_prompt(&conversation)?;
+        // In a file rather than in argv, where a long prompt would hit the OS's limit on
+        // argument size. An empty prompt is passed as is, as the CLI may read an empty
+        // file as no prompt at all.
+        let system_file = if system.is_empty() {
+            None
+        } else {
+            // Created readable by the owner only.
+            let mut file = tempfile::Builder::new()
+                .prefix("ailoy-claude-system-")
+                .tempfile()
+                .context("failed to create the system prompt file")?;
+            file.write_all(system.as_bytes())?;
+            Some(file.into_temp_path())
+        };
 
         let mut command = Command::new(&self.program);
         command.args([
@@ -165,7 +180,10 @@ impl ClaudeCliModel {
             command.args(["--json-schema", serde_json::to_string(schema)?.as_str()]);
         }
         // Always set, even empty: otherwise Claude Code's own coding-agent prompt is used.
-        command.args(["--system-prompt", system.as_str()]);
+        match &system_file {
+            Some(path) => command.arg("--system-prompt-file").arg(path.as_os_str()),
+            None => command.args(["--system-prompt", ""]),
+        };
         command
             // Memories the CLI saved for the working directory would reach the model.
             .env("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1")
@@ -179,6 +197,7 @@ impl ClaudeCliModel {
             command,
             prompt,
             tools: tools.to_vec(),
+            _system_file: system_file,
         })
     }
 }
@@ -206,7 +225,7 @@ impl InferLangModel for ClaudeCliModel {
         tools: &[ToolDesc],
         options: &LangModelOptions,
     ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
-        let invocation = match self.invocation(messages, tools, options) {
+        let mut invocation = match self.invocation(messages, tools, options) {
             Ok(invocation) => invocation,
             Err(e) => return Box::pin(stream::once(async move { Err(e) })),
         };
@@ -227,12 +246,24 @@ impl InferLangModel for ClaudeCliModel {
             });
 
             let mut lines = BufReader::new(stdout).lines();
-            let mut scanner = CallScanner::default();
-            // Input usage from `message_start`, for a reply cut short at a tool call.
+            // Without tools there is nothing to call, so the text is not searched for calls.
+            let mut scanner = CallScanner {
+                plain: tools.is_empty(),
+                ..Default::default()
+            };
+            // Usage from `message_start`, completed by `message_delta` once the message ends.
             let mut start_usage = None;
-            // Inside the `StructuredOutput` call, whose arguments are the reply, and past it.
+            // Why the latest message ended, from its `message_delta`.
+            let mut stop_reason = None;
+            // The arguments of the latest `StructuredOutput` call, which are the reply. Held
+            // to the end, since a call the CLI rejects is followed by another.
+            let mut structured_json = String::new();
+            // Inside the `StructuredOutput` call, and past it.
             let mut in_structured = false;
             let mut structured_done = false;
+            // The reply up to a closed `<function_calls>` block, held until the message's
+            // final usage arrives or the model is seen going on past the block.
+            let mut pending: Option<MessageDeltaOutput> = None;
             let mut started = false;
             let mut finished = false;
             while let Some(line) = lines.next_line().await? {
@@ -247,70 +278,123 @@ impl InferLangModel for ClaudeCliModel {
                     // Partial output: text (minus tool calls) and thinking are surfaced.
                     Some("stream_event") => {
                         let inner = &event["event"];
-                        if inner["type"] == "message_start" {
-                            start_usage = parse_usage(&inner["message"]["usage"]);
-                            continue;
-                        }
-                        if inner["type"] == "content_block_start" {
-                            let block = &inner["content_block"];
-                            in_structured = block["type"] == "tool_use"
-                                && block["name"] == STRUCTURED_OUTPUT;
-                            continue;
-                        }
-                        if inner["type"] == "content_block_stop" && in_structured {
-                            in_structured = false;
-                            structured_done = true;
-                            continue;
-                        }
+                        let kind = inner["type"].as_str();
                         let delta = &inner["delta"];
-                        if in_structured {
-                            let Some(json) = delta["partial_json"].as_str() else {
-                                continue;
-                            };
-                            if json.is_empty() {
-                                continue;
+                        if let Some(held) = pending.take() {
+                            // Past the block, whitespace is waited through to the message's
+                            // end and its usage. Anything more is the model going on to imagine
+                            // the results; it is cut off with the usage known so far, whose
+                            // output count falls short.
+                            match kind {
+                                Some("message_delta") => {
+                                    out = held;
+                                    out.usage = final_usage(start_usage.take(), &inner["usage"]);
+                                }
+                                Some("content_block_delta")
+                                    if delta["text"].as_str().is_some_and(|t| t.trim().is_empty()) =>
+                                {
+                                    pending = Some(held);
+                                    continue;
+                                }
+                                Some("content_block_start" | "content_block_delta") => {
+                                    out = held;
+                                    out.usage = start_usage.take();
+                                }
+                                _ => {
+                                    pending = Some(held);
+                                    continue;
+                                }
                             }
-                            out.delta = out.delta.with_contents([PartDelta::Text { text: json.to_owned() }]);
-                        } else if structured_done {
-                            // Whatever the model says after the structured reply is not part of it.
-                            continue;
-                        } else if let Some(piece) = delta["text"].as_str() {
-                            let (text, block) = scanner.push(piece);
-                            if !text.is_empty() && !structured {
-                                out.delta = out.delta.with_contents([PartDelta::Text { text }]);
-                            }
-                            if let Some(block) = block {
-                                out.delta = out.delta.with_tool_calls(parse_calls(&block, &tools)?);
-                                out.finish_reason = Some(FinishReason::ToolCall {});
-                                out.usage = start_usage.take();
-                                finished = true;
-                            } else if out.delta.contents.is_empty() {
-                                continue;
-                            }
-                        } else if let Some(thinking) = delta["thinking"].as_str() {
-                            out.delta.thinking = Some(thinking.to_owned());
+                            finished = true;
                         } else {
-                            continue;
+                            match kind {
+                                Some("message_start") => {
+                                    start_usage = parse_usage(&inner["message"]["usage"]);
+                                    continue;
+                                }
+                                Some("message_delta") => {
+                                    stop_reason = delta["stop_reason"].as_str().map(str::to_owned);
+                                    continue;
+                                }
+                                Some("content_block_start") => {
+                                    let block = &inner["content_block"];
+                                    in_structured = block["type"] == "tool_use"
+                                        && block["name"] == STRUCTURED_OUTPUT;
+                                    if in_structured {
+                                        structured_json.clear();
+                                    }
+                                    continue;
+                                }
+                                Some("content_block_stop") if in_structured => {
+                                    in_structured = false;
+                                    structured_done = true;
+                                    continue;
+                                }
+                                Some("content_block_delta") => {}
+                                _ => continue,
+                            }
+                            if in_structured {
+                                if let Some(json) = delta["partial_json"].as_str() {
+                                    structured_json.push_str(json);
+                                }
+                                continue;
+                            } else if structured_done {
+                                // Whatever the model says after the structured reply is not part of it.
+                                continue;
+                            } else if let Some(piece) = delta["text"].as_str() {
+                                let (text, block) = scanner.push(piece);
+                                if !text.is_empty() && !structured {
+                                    out.delta = out.delta.with_contents([PartDelta::Text { text }]);
+                                }
+                                if let Some(block) = block {
+                                    out.delta = out.delta.with_tool_calls(parse_calls(&block, &tools)?);
+                                    out.finish_reason = Some(FinishReason::ToolCall {});
+                                    pending = Some(out);
+                                    continue;
+                                } else if out.delta.contents.is_empty() {
+                                    continue;
+                                }
+                            } else if let Some(thinking) = delta["thinking"].as_str() {
+                                out.delta.thinking = Some(thinking.to_owned());
+                            } else {
+                                continue;
+                            }
                         }
                     }
                     // The run is over: close the message with its usage.
                     Some("result") => {
                         let usage = parse_result(&event)?;
-                        let block = scanner.finish_bare();
-                        if block.is_none() && scanner.in_calls {
-                            Err(anyhow::anyhow!("the reply ended inside {CALLS_OPEN}"))?;
-                        }
-                        let text = scanner.flush();
-                        if !text.is_empty() && !structured {
-                            out.delta = out.delta.with_contents([PartDelta::Text { text }]);
-                        }
-                        out.finish_reason = Some(match block {
-                            Some(block) => {
-                                out.delta = out.delta.with_tool_calls(parse_calls(&block, &tools)?);
-                                FinishReason::ToolCall {}
+                        if let Some(held) = pending.take() {
+                            out = held;
+                        } else {
+                            let block = scanner.finish_bare();
+                            if block.is_none() && scanner.in_calls {
+                                Err(anyhow::anyhow!("the reply ended inside {CALLS_OPEN}"))?;
                             }
-                            None => FinishReason::Stop {},
-                        });
+                            let text = scanner.flush();
+                            if !text.is_empty() && !structured {
+                                out.delta = out.delta.with_contents([PartDelta::Text { text }]);
+                            }
+                            if structured {
+                                // The reply the CLI accepted; attempts it rejected are left out.
+                                let json = match &event["structured_output"] {
+                                    serde_json::Value::Null => std::mem::take(&mut structured_json),
+                                    output => serde_json::to_string(output)?,
+                                };
+                                if !json.is_empty() {
+                                    out.delta = out.delta.with_contents([PartDelta::Text { text: json }]);
+                                }
+                            }
+                            out.finish_reason = Some(match block {
+                                Some(block) => {
+                                    out.delta = out.delta.with_tool_calls(parse_calls(&block, &tools)?);
+                                    FinishReason::ToolCall {}
+                                }
+                                None => parse_finish_reason(
+                                    event["stop_reason"].as_str().or(stop_reason.as_deref()),
+                                ),
+                            });
+                        }
                         out.usage = usage;
                         finished = true;
                     }
@@ -325,6 +409,15 @@ impl InferLangModel for ClaudeCliModel {
                     break;
                 }
             }
+            // The output ended between a closed block and the message's end.
+            if let Some(mut out) = pending.take() {
+                out.usage = start_usage.take();
+                if !started {
+                    out.delta.role = Some(Role::Assistant);
+                }
+                yield out;
+                finished = true;
+            }
 
             if finished {
                 // Stops a reply cut short at a tool call; a no-op once the run has ended.
@@ -335,6 +428,8 @@ impl InferLangModel for ClaudeCliModel {
                 let stderr = stderr.await.unwrap_or_default();
                 Err(anyhow::anyhow!("claude exited with {status} before finishing: {stderr}"))?;
             }
+            // The system prompt file is kept until the process is done with it.
+            drop(invocation);
         })
     }
 }
@@ -346,17 +441,20 @@ struct Invocation {
     /// The prompt's content blocks.
     prompt: Vec<serde_json::Value>,
     tools: Vec<ToolDesc>,
+    /// The file holding the system prompt, removed when dropped; kept for as long as the
+    /// process runs.
+    _system_file: Option<tempfile::TempPath>,
 }
 
 impl Invocation {
-    async fn spawn(mut self) -> anyhow::Result<Child> {
+    async fn spawn(&mut self) -> anyhow::Result<Child> {
         let mut child = self
             .command
             .spawn()
             .context("failed to start the claude CLI")?;
         let message = serde_json::json!({
             "type": "user",
-            "message": {"role": "user", "content": self.prompt},
+            "message": {"role": "user", "content": std::mem::take(&mut self.prompt)},
         });
         let mut stdin = child.stdin.take().expect("stdin is piped");
         stdin.write_all(format!("{message}\n").as_bytes()).await?;
@@ -368,8 +466,10 @@ impl Invocation {
 
 /// Splits streamed reply text into plain text and the first `<function_calls>` block.
 ///
-/// Text that may be the start of the tag is held back until it is known not to
-/// be, and so is trailing whitespace, so the text before a call ends cleanly.
+/// Only a tag at the start of a line (after any indentation) and outside fenced code
+/// opens a block, so a reply can quote the format. Text that may be the start of
+/// such a tag is held back until it is known not to be, and so is trailing
+/// whitespace, so the text before a call ends cleanly.
 ///
 /// Also reads the ways the model is known to garble the block (anthropics/claude-code#49747
 /// and its duplicates): the tags with Claude's own `antml:` namespace, `<invoke>`s without
@@ -378,12 +478,29 @@ impl Invocation {
 #[derive(Default)]
 struct CallScanner {
     buf: String,
+    /// Passes all text through without looking for calls, as when no tools were given.
+    plain: bool,
     in_calls: bool,
     /// The calls opened with a bare `<invoke>`, the `<function_calls>` around it left out,
     /// as the model sometimes writes them. Such a block has no closing tag to stop at, so it
     /// runs to `</function_calls>` if one comes, or else to the end of the reply.
     bare: bool,
     emitted: bool,
+    /// Where the text taken out of `buf` left off.
+    lines: Lines,
+}
+
+/// What the scanner found in its buffer.
+enum Opener {
+    /// A tag at `at`, `len` bytes long; `bare` for an `<invoke>`.
+    Tag {
+        at: usize,
+        len: usize,
+        bare: bool,
+    },
+    /// What may be the start of a tag, from `at` to the end.
+    Partial(usize),
+    None,
 }
 
 impl CallScanner {
@@ -391,36 +508,81 @@ impl CallScanner {
     /// inside of the `<function_calls>` block once it closes.
     fn push(&mut self, piece: &str) -> (String, Option<String>) {
         self.buf.push_str(piece);
-        strip_namespace(&mut self.buf);
+        if self.plain {
+            let len = self.buf.trim_end().len();
+            return (self.take_text(len), None);
+        }
         let mut text = String::new();
         if !self.in_calls {
-            let calls = self.buf.find(CALLS_OPEN);
-            let invoke = self.buf.find(INVOKE_OPEN);
-            match (calls, invoke) {
-                (Some(at), invoke) if invoke.is_none_or(|i| at < i) => {
+            let held = match self.find_opener() {
+                Opener::Tag {
+                    at,
+                    len,
+                    bare: false,
+                } => {
                     text = self.take_text(at);
-                    self.buf.drain(..CALLS_OPEN.len());
+                    self.buf.drain(..len);
                     self.in_calls = true;
+                    0
                 }
                 // The `<invoke>` stays in the buffer: it is the block's first call.
-                (_, Some(at)) => {
-                    let stray = stray_word(&self.buf[..at], !self.emitted).unwrap_or(at);
+                Opener::Tag { at, bare: true, .. } => {
+                    let stray =
+                        stray_word(&self.buf[..at], self.lines.at_line_start()).unwrap_or(at);
                     text = self.take_text(stray);
                     self.buf.drain(..at - stray);
                     self.in_calls = true;
                     self.bare = true;
+                    0
                 }
-                _ => {
-                    let held = held_len(&self.buf, !self.emitted);
-                    return (self.take_text(self.buf.len() - held), None);
-                }
+                Opener::Partial(at) => at,
+                Opener::None => self.buf.len(),
+            };
+            if !self.in_calls {
+                let len = shown_len(&self.buf[..held], self.lines.at_line_start());
+                return (self.take_text(len), None);
             }
         }
+        strip_namespace(&mut self.buf);
         let block = self
             .buf
             .find(CALLS_CLOSE)
             .map(|end| self.buf[..end].to_owned());
         (text, block)
+    }
+
+    /// The first tag in `buf` that opens a block, or what may become one at its end.
+    fn find_opener(&self) -> Opener {
+        let openers = [
+            (CALLS_OPEN.to_owned(), false),
+            (INVOKE_OPEN.to_owned(), true),
+            (format!("<{NAMESPACE}{}", &CALLS_OPEN[1..]), false),
+            (format!("<{NAMESPACE}{}", &INVOKE_OPEN[1..]), true),
+        ];
+        let mut lines = self.lines.clone();
+        let mut pos = 0;
+        loop {
+            let end = self.buf[pos..].find('\n').map(|n| pos + n + 1);
+            let line = &self.buf[pos..end.unwrap_or(self.buf.len())];
+            if lines.at_line_start() {
+                let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+                let rest = &line[indent..];
+                for (opener, bare) in &openers {
+                    if rest.starts_with(opener.as_str()) {
+                        let (at, len, bare) = (pos + indent, opener.len(), *bare);
+                        return Opener::Tag { at, len, bare };
+                    }
+                    if end.is_none() && !rest.is_empty() && opener.starts_with(rest) {
+                        return Opener::Partial(pos + indent);
+                    }
+                }
+            }
+            lines.advance(line);
+            match end {
+                Some(end) => pos = end,
+                None => return Opener::None,
+            }
+        }
     }
 
     /// At the end of the reply, the block of bare `<invoke>`s still open, up to the last
@@ -447,6 +609,7 @@ impl CallScanner {
     /// at the end of the reply's text, since it is held back until more follows.
     fn take_text(&mut self, len: usize) -> String {
         let mut text: String = self.buf.drain(..len).collect();
+        self.lines.advance(&text);
         if !self.emitted {
             text = text.trim_start().to_owned();
         }
@@ -456,8 +619,51 @@ impl CallScanner {
     }
 }
 
-/// Drops [`NAMESPACE`] from every whole tool-call tag in `buf`; a tag still being streamed
-/// is held back by [`held_len`] until it is whole.
+/// Where a run of text leaves off: in fenced code or not, and on which line.
+#[derive(Clone, Default)]
+struct Lines {
+    /// The fence character and length of the code block the text is in, if any.
+    fence: Option<(char, usize)>,
+    /// The text of the current line so far.
+    line: String,
+}
+
+impl Lines {
+    /// At the start of a line outside fenced code, whitespace aside: where a tag opens a block.
+    fn at_line_start(&self) -> bool {
+        self.fence.is_none() && self.line.trim().is_empty()
+    }
+
+    fn advance(&mut self, text: &str) {
+        let mut segments = text.split('\n');
+        if let Some(first) = segments.next() {
+            self.line.push_str(first);
+        }
+        for segment in segments {
+            self.end_line();
+            self.line.push_str(segment);
+        }
+    }
+
+    /// Opens or closes a fence on a line of three or more backticks or tildes.
+    fn end_line(&mut self) {
+        let line = self.line.trim();
+        if let Some(c @ ('`' | '~')) = line.chars().next() {
+            let run = line.chars().take_while(|&x| x == c).count();
+            match self.fence {
+                None if run >= 3 => self.fence = Some((c, run)),
+                Some((fence, len)) if fence == c && run >= len && line[run..].trim().is_empty() => {
+                    self.fence = None
+                }
+                _ => {}
+            }
+        }
+        self.line.clear();
+    }
+}
+
+/// Drops [`NAMESPACE`] from every whole tool-call tag in a block's `buf`; a tag still being
+/// streamed is left as is until it is whole.
 fn strip_namespace(buf: &mut String) {
     if !buf.contains(NAMESPACE) {
         return;
@@ -486,29 +692,13 @@ fn stray_word(text: &str, at_line_start: bool) -> Option<usize> {
     .then_some(start)
 }
 
-/// How many trailing bytes of `buf` to hold back: a possible start of
-/// [`CALLS_OPEN`] or [`INVOKE_OPEN`], namespaced or not, plus the whitespace before it, and
-/// before that a line that may be a stray word ([`stray_word`]).
-fn held_len(buf: &str, at_line_start: bool) -> usize {
-    let openers = [
-        CALLS_OPEN.to_owned(),
-        INVOKE_OPEN.to_owned(),
-        format!("<{NAMESPACE}{}", &CALLS_OPEN[1..]),
-        format!("<{NAMESPACE}{}", &INVOKE_OPEN[1..]),
-    ];
-    let longest = openers.iter().map(String::len).max().unwrap_or(0);
-    let partial = (1..longest.min(buf.len()) + 1)
-        .rev()
-        .find(|&n| {
-            let at = buf.len() - n;
-            buf.is_char_boundary(at) && openers.iter().any(|o| o.starts_with(&buf[at..]))
-        })
-        .unwrap_or(0);
-    let rest = &buf[..buf.len() - partial];
-    match stray_word(rest, at_line_start) {
+/// How much of `text` can be shown: all but its trailing whitespace, and before that a
+/// line that may be a stray word ([`stray_word`]).
+fn shown_len(text: &str, at_line_start: bool) -> usize {
+    match stray_word(text, at_line_start) {
         // From the newline before it, so the next push still sees the word start a line.
-        Some(start) => buf.len() - rest[..start].trim_end().len(),
-        None => partial + (rest.len() - rest.trim_end().len()),
+        Some(start) => text[..start].trim_end().len(),
+        None => text.trim_end().len(),
     }
 }
 
@@ -534,7 +724,22 @@ fn parse_calls(block: &str, tools: &[ToolDesc]) -> anyhow::Result<Vec<PartDelta>
             .unwrap_or_default();
         let mut arguments = serde_json::Map::new();
         let mut params = body;
-        while let Some(start) = params.find(PARAM_OPEN) {
+        let mut last = None;
+        loop {
+            let start = params.find(PARAM_OPEN);
+            // Text after a value is the rest of it, cut at a `</parameter>` the model failed
+            // to escape.
+            if let Some(key) = last
+                && !params[..start.unwrap_or(params.len())].trim().is_empty()
+            {
+                anyhow::bail!(
+                    "malformed call to {name}: text follows the value of `{key}`, which may \
+                     hold an unescaped {PARAM_CLOSE}"
+                );
+            }
+            let Some(start) = start else {
+                break;
+            };
             let (key, after) = params[start + PARAM_OPEN.len()..]
                 .split_once("\">")
                 .context("malformed <parameter> tag")?;
@@ -554,7 +759,11 @@ fn parse_calls(block: &str, tools: &[ToolDesc]) -> anyhow::Result<Vec<PartDelta>
                      <parameter> tag of `{other}`"
                 );
             }
-            arguments.insert(key.to_owned(), parse_argument(value, key, schema));
+            arguments.insert(
+                key.to_owned(),
+                parse_argument(&unescape(value), key, schema),
+            );
+            last = Some(key);
         }
 
         calls.push(PartDelta::Function {
@@ -571,8 +780,8 @@ fn parse_calls(block: &str, tools: &[ToolDesc]) -> anyhow::Result<Vec<PartDelta>
     Ok(calls)
 }
 
-/// Every argument arrives as text: string parameters keep it as is, the rest
-/// are read as JSON and fall back to the text when that fails.
+/// Every argument arrives as text, already unescaped: string parameters keep it as
+/// is, the rest are read as JSON and fall back to the text when that fails.
 fn parse_argument(value: &str, key: &str, schema: Option<&Value>) -> serde_json::Value {
     let ty = schema
         .and_then(|s| s.pointer(&format!("/properties/{key}/type")))
@@ -610,6 +819,7 @@ You can invoke functions by writing a \"<function_calls>\" block like the follow
 </invoke>
 </function_calls>
 String and scalar parameters should be specified as is, while lists and objects should use JSON format. Note that spaces for string values are not stripped. The output is not expected to be valid XML and is parsed with regular expressions.
+In parameter values, always write \"&\" as \"&amp;\" and \"<\" as \"&lt;\", so that a value can hold any text; values are unescaped before use.
 Here are the functions available in JSONSchema format:
 <functions>
 ",
@@ -633,38 +843,49 @@ enum Turn<'a> {
     Results(&'a [&'a Message]),
 }
 
+/// The start of every prompt, before the transcript.
+const TRANSCRIPT_INTRO: &str = "Below is the conversation so far, as a transcript. Write the assistant's reply to its last turn: only the reply itself, without an <assistant> tag.
+In the transcript, \"&\" and \"<\" in the turns' contents are escaped as \"&amp;\" and \"&lt;\"; read them as those characters, and write your reply's text unescaped.
+
+";
+
 /// The prompt as content blocks: runs of text, with each image where it was.
 #[derive(Default)]
-struct Content(Vec<serde_json::Value>);
+struct Content {
+    blocks: Vec<serde_json::Value>,
+    /// The next text starts a block of its own instead of extending the last one.
+    split: bool,
+}
 
 impl Content {
     fn text(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
-        if let Some(last) = self.0.last_mut()
+        if !std::mem::take(&mut self.split)
+            && let Some(last) = self.blocks.last_mut()
             && let Some(serde_json::Value::String(run)) = last.get_mut("text")
         {
             run.push_str(text);
             return;
         }
-        self.0
+        self.blocks
             .push(serde_json::json!({"type": "text", "text": text}));
     }
 
-    /// The text, image and value parts of a message, one line apart.
+    /// The text, image and value parts of a message, one line apart, with the text escaped.
     fn parts(&mut self, parts: &[Part]) -> anyhow::Result<()> {
         for (i, part) in parts.iter().enumerate() {
             if i > 0 {
                 self.text("\n");
             }
             match part {
-                Part::Text { text } => self.text(text),
+                Part::Text { text } => self.text(&escape(text)),
                 Part::Value { value } => match value.as_str() {
-                    Some(s) => self.text(s),
-                    None => self.text(&serde_json::to_string(value)?),
+                    Some(s) => self.text(&escape(s)),
+                    None => self.text(&escape(&serde_json::to_string(value)?)),
                 },
-                Part::Image { image } => self.0.push(image_block(image).into()),
+                Part::Image { image } => self.blocks.push(image_block(image).into()),
                 Part::Function { .. } => {
                     anyhow::bail!("ClaudeCliModel takes no function parts in message contents")
                 }
@@ -679,10 +900,14 @@ impl Content {
                 if message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()) {
                     anyhow::bail!("only assistant messages can carry tool calls");
                 }
-                self.parts(&message.contents)
+                self.text("<user>\n");
+                self.parts(&message.contents)?;
+                self.text("\n</user>");
+                Ok(())
             }
             Turn::Assistant(message) => {
-                self.text(&render_assistant(message)?);
+                let text = render_assistant(message)?;
+                self.text(&format!("<assistant>\n{text}\n</assistant>"));
                 Ok(())
             }
             Turn::Results(results) => self.results(results, names),
@@ -699,7 +924,10 @@ impl Content {
                 .and_then(|id| names.get(id))
                 .copied()
                 .unwrap_or("unknown");
-            self.text(&format!("<result>\n<name>{name}</name>\n<output>"));
+            self.text(&format!(
+                "<result>\n<name>{}</name>\n<output>",
+                escape(name)
+            ));
             self.parts(&message.contents)?;
             self.text("</output>\n</result>\n");
         }
@@ -709,8 +937,11 @@ impl Content {
 }
 
 /// The prompt for a conversation that ends with a user message or with tool
-/// results. A lone user message is sent as is; earlier turns go in front of
-/// the latest one as a transcript.
+/// results: all of it as a transcript.
+///
+/// Every turn is written the same way whether it is the latest or an earlier one,
+/// and starts a content block of its own, so the prompt of one call is the start of
+/// the next one's, block for block, as the prompt cache needs to reuse it.
 fn render_prompt(conversation: &[&Message]) -> anyhow::Result<Vec<serde_json::Value>> {
     // Tool results carry only the call id; the name comes from the call.
     let names: HashMap<&str, &str> = conversation
@@ -744,42 +975,33 @@ fn render_prompt(conversation: &[&Message]) -> anyhow::Result<Vec<serde_json::Va
         i += 1;
     }
 
-    let Some((latest, history)) = turns.split_last() else {
-        anyhow::bail!("no message to send");
-    };
-    if let Turn::Assistant(_) = latest {
-        anyhow::bail!("the last message must be a user message or tool results");
+    match turns.last() {
+        None => anyhow::bail!("no message to send"),
+        Some(Turn::Assistant(_)) => {
+            anyhow::bail!("the last message must be a user message or tool results")
+        }
+        Some(Turn::User(message)) if message.contents.is_empty() => {
+            anyhow::bail!("the user message is empty")
+        }
+        _ => {}
     }
 
     let mut prompt = Content::default();
-    if !history.is_empty() {
-        prompt.text("Continue this conversation as the assistant. The earlier turns:\n\n");
-        for turn in history {
-            match turn {
-                Turn::User(_) => prompt.text("<user>\n"),
-                Turn::Assistant(_) => prompt.text("<assistant>\n"),
-                Turn::Results(_) => {}
-            }
-            prompt.turn(turn, &names)?;
-            match turn {
-                Turn::User(_) => prompt.text("\n</user>"),
-                Turn::Assistant(_) => prompt.text("\n</assistant>"),
-                Turn::Results(_) => {}
-            }
+    prompt.text(TRANSCRIPT_INTRO);
+    for (i, turn) in turns.iter().enumerate() {
+        if i > 0 {
+            prompt.split = true;
             prompt.text("\n\n");
         }
-        prompt.text("Now reply to the latest message:\n\n");
+        prompt.turn(turn, &names)?;
     }
-    prompt.turn(latest, &names)?;
-    if prompt.0.is_empty() {
-        anyhow::bail!("the user message is empty");
-    }
-    Ok(prompt.0)
+    Ok(prompt.blocks)
 }
 
-/// An assistant turn: its text, then its tool calls as a `<function_calls>` block.
+/// An assistant turn: its text, then its tool calls as a `<function_calls>` block,
+/// escaped as the transcript and the call format have it.
 fn render_assistant(message: &Message) -> anyhow::Result<String> {
-    let mut text = texts_of(message)?;
+    let mut text = escape(&texts_of(message)?);
     let calls = message.tool_calls.iter().flatten();
     let mut block = String::new();
     for part in calls {
@@ -789,8 +1011,8 @@ fn render_assistant(message: &Message) -> anyhow::Result<String> {
         block.push_str(&format!("{INVOKE_OPEN}{}\">\n", function.name));
         for (key, value) in function.arguments.as_object().into_iter().flatten() {
             let value = match value.as_str() {
-                Some(s) => s.to_owned(),
-                None => serde_json::to_string(value)?,
+                Some(s) => escape(s),
+                None => escape(&serde_json::to_string(value)?),
             };
             block.push_str(&format!("{PARAM_OPEN}{key}\">{value}{PARAM_CLOSE}\n"));
         }
@@ -804,6 +1026,31 @@ fn render_assistant(message: &Message) -> anyhow::Result<String> {
         text.push_str(&format!("{CALLS_OPEN}\n{block}{CALLS_CLOSE}"));
     }
     Ok(text)
+}
+
+/// Escapes `&` and `<`, so that text in the transcript or in a parameter value cannot
+/// open or close its tags.
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;")
+}
+
+/// Undoes [`escape`] in a parameter value the model wrote, and `&gt;` too, which it may
+/// write out of habit. Text it left unescaped passes through, these entities aside.
+fn unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let (entity, c) = [("&amp;", '&'), ("&lt;", '<'), ("&gt;", '>')]
+            .into_iter()
+            .find(|(entity, _)| rest.starts_with(entity))
+            .unwrap_or(("&", '&'));
+        out.push(c);
+        rest = &rest[entity.len()..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The text of a message that cannot carry tool calls.
@@ -848,6 +1095,39 @@ fn parse_usage(u: &serde_json::Value) -> Option<TokenUsage> {
         cache_creation_input_tokens: u["cache_creation_input_tokens"].as_u64(),
         cache_read_input_tokens: u["cache_read_input_tokens"].as_u64(),
     })
+}
+
+/// The usage of a message once it has ended: `message_delta` carries the final output
+/// count, and the input counts only in some versions, so `message_start`'s fill the rest.
+fn final_usage(start: Option<TokenUsage>, u: &serde_json::Value) -> Option<TokenUsage> {
+    let Some(mut usage) = start else {
+        return parse_usage(u);
+    };
+    if let Some(n) = u["output_tokens"].as_u64() {
+        usage.output_tokens = n;
+    }
+    if let Some(n) = u["input_tokens"].as_u64() {
+        usage.input_tokens = n;
+    }
+    if let Some(n) = u["cache_creation_input_tokens"].as_u64() {
+        usage.cache_creation_input_tokens = Some(n);
+    }
+    if let Some(n) = u["cache_read_input_tokens"].as_u64() {
+        usage.cache_read_input_tokens = Some(n);
+    }
+    Some(usage)
+}
+
+/// How a reply without tool calls ended, by the API's `stop_reason`.
+fn parse_finish_reason(reason: Option<&str>) -> FinishReason {
+    match reason {
+        Some("max_tokens" | "model_context_window_exceeded") => FinishReason::Length {},
+        Some("refusal") => FinishReason::Refusal {
+            reason: "reason: refusal".to_owned(),
+        },
+        // `end_turn`, `stop_sequence`, and `tool_use` for the CLI's `StructuredOutput` call.
+        _ => FinishReason::Stop {},
+    }
 }
 
 #[cfg(test)]
@@ -1000,8 +1280,9 @@ mod tests {
                 .with_contents([Part::text("sunny")]),
         ];
         let blocks = render_prompt(&messages.iter().collect::<Vec<_>>()).unwrap();
-        assert_eq!(blocks.len(), 1);
-        let prompt = blocks[0]["text"].as_str().unwrap();
+        // A block per turn.
+        assert_eq!(blocks.len(), 3);
+        let prompt: String = blocks.iter().map(|b| b["text"].as_str().unwrap()).collect();
         assert!(prompt.contains(
             "<invoke name=\"get_weather\">\n<parameter name=\"city\">Seoul</parameter>\n\
              <parameter name=\"days\">1</parameter>\n</invoke>"
@@ -1028,7 +1309,10 @@ mod tests {
         ];
         let blocks = render_prompt(&messages.iter().collect::<Vec<_>>()).unwrap();
         let types: Vec<_> = blocks.iter().map(|b| b["type"].as_str().unwrap()).collect();
-        assert_eq!(types, ["text", "image", "text", "image", "text"]);
+        assert_eq!(
+            types,
+            ["text", "image", "text", "text", "text", "image", "text"]
+        );
         assert!(
             blocks[0]["text"]
                 .as_str()
@@ -1036,7 +1320,7 @@ mod tests {
                 .ends_with("<user>\nlook\n")
         );
         assert_eq!(blocks[1]["source"]["data"], "AQID");
-        assert!(blocks[2]["text"].as_str().unwrap().ends_with("<output>"));
-        assert!(blocks[4]["text"].as_str().unwrap().starts_with("</output>"));
+        assert!(blocks[4]["text"].as_str().unwrap().ends_with("<output>"));
+        assert!(blocks[6]["text"].as_str().unwrap().starts_with("</output>"));
     }
 }

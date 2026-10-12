@@ -97,7 +97,7 @@ impl AgentSpec {
     pub fn system_tools(mut self) -> Self {
         self.tools.push(get_shell_tool_desc());
 
-        let (model, name) = split_desc(&self.model);
+        let model = split_desc(&self.model).0;
         // GPT reads files through `shell`, as in Codex.
         if model == "gpt" {
             self.tools.push(get_apply_patch_tool_desc());
@@ -112,18 +112,9 @@ impl AgentSpec {
             self.tools.push(get_edit_tool_desc());
         }
 
-        // Text-only models (no image input) get no `imgread`. The name may carry a
-        // backend's vendor prefix (`moonshotai/…`, `moonshot.…`).
-        let name = name.rsplit(['/', '.']).next().unwrap_or(name);
-        let text_only = match model {
-            "deepseek" => true,
-            "kimi" => {
-                name.starts_with("kimi-k2-")
-                    || (name.starts_with("moonshot-v1-") && !name.contains("vision"))
-            }
-            _ => false,
-        };
-        if !text_only {
+        // `imgread` only where the image reaches the model: the backends of these take tool
+        // results as text alone (an image becomes a label), even for vision models.
+        if !matches!(model, "deepseek" | "kimi" | "glm" | "qwen") {
             self.tools.push(get_imgread_tool_desc());
         }
 

@@ -34,11 +34,22 @@ const DEFAULT_BASE_URL: &str = "http://localhost:8000/v1";
 ///   back when the server runs a reasoning parser, as `reasoning` (or `reasoning_content`
 ///   on older servers), and is not sent back.
 /// - An output schema is enforced by vLLM's guided decoding.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct VllmModel {
     model: String,
     base_url: String,
     api_key: Option<String>,
+}
+
+// Hand-written so the key stays out of logs.
+impl std::fmt::Debug for VllmModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VllmModel")
+            .field("model", &self.model)
+            .field("base_url", &self.base_url)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 impl VllmModel {
@@ -199,7 +210,18 @@ impl InferLangModel for VllmModel {
     }
 }
 
-/// POSTs `body`, retrying 429s with backoff, and returns the successful response unread.
+/// One client for every call, so connections are reused. The read timeout bounds each
+/// read, not the whole stream, so a long reply is not cut off.
+static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .read_timeout(std::time::Duration::from_secs(300))
+        .build()
+        .expect("the HTTP client builds")
+});
+
+/// POSTs `body`, retrying 429s and 5xx overloads with backoff, and returns the successful
+/// response unread.
 async fn send(
     url: &str,
     api_key: Option<&str>,
@@ -207,10 +229,11 @@ async fn send(
 ) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
     const MAX_WAIT_SECS: u64 = 10;
+    // Rate limits, and the transient errors and overloads (529) servers recover from.
+    const RETRY_STATUSES: [u16; 6] = [429, 500, 502, 503, 504, 529];
 
-    let client = reqwest::Client::new();
     for attempt in 0..=MAX_RETRIES {
-        let mut request = client.post(url).header("accept", "text/event-stream");
+        let mut request = CLIENT.post(url).header("accept", "text/event-stream");
         if let Some(api_key) = api_key {
             request = request.bearer_auth(api_key);
         }
@@ -220,10 +243,10 @@ async fn send(
         if status.is_success() {
             return Ok(response);
         }
-        if status.as_u16() == 429 && attempt < MAX_RETRIES {
+        if RETRY_STATUSES.contains(&status.as_u16()) && attempt < MAX_RETRIES {
             let wait_secs = (1u64 << attempt).min(MAX_WAIT_SECS);
             log::warn!(
-                "Rate limited (429). Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
+                "Got {status}. Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
                 attempt + 1
             );
             tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
@@ -280,9 +303,9 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
     if let Some(choice) = val.pointer("/choices/0") {
         let delta = &choice["delta"];
         if let Some(text) = delta["content"].as_str().filter(|t| !t.is_empty()) {
-            out.delta = out.delta.with_contents([PartDelta::Text {
+            out.delta.contents.push(PartDelta::Text {
                 text: text.to_owned(),
-            }]);
+            });
             empty = false;
         }
         // Newer servers name it `reasoning`, older ones `reasoning_content`.
@@ -296,7 +319,7 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         }
         // A call's first piece has its id and name; the rest continue the last call.
         for call in delta["tool_calls"].as_array().into_iter().flatten() {
-            out.delta = out.delta.with_tool_calls([PartDelta::Function {
+            out.delta.tool_calls.push(PartDelta::Function {
                 id: call["id"]
                     .as_str()
                     .filter(|id| !id.is_empty())
@@ -311,7 +334,7 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
                         .unwrap_or_default()
                         .to_owned(),
                 },
-            }]);
+            });
             empty = false;
         }
         if let Some(reason) = choice["finish_reason"].as_str() {
@@ -356,12 +379,19 @@ fn chat_messages(messages: &[Message]) -> anyhow::Result<Vec<Value>> {
                     .contents
                     .iter()
                     .map(|p| match p {
-                        Part::Text { text } => Ok(text.clone()),
-                        Part::Value { value } => Ok(value_text(value)),
-                        Part::Image { .. } => bail!("vLLM takes no images in tool results"),
-                        Part::Function { .. } => Ok(String::new()),
+                        Part::Text { text } => text.clone(),
+                        Part::Value { value } => value_text(value),
+                        // A tool result stays in the history, so rejecting its image would
+                        // fail every later call; a label tells the model one was returned.
+                        Part::Image {
+                            image: PartImage::Embedded { mime_type, .. },
+                        } => format!("[image: {mime_type}]"),
+                        Part::Image {
+                            image: PartImage::Url { url },
+                        } => format!("[image at {url}]"),
+                        Part::Function { .. } => String::new(),
                     })
-                    .collect::<anyhow::Result<String>>()?;
+                    .collect::<String>();
                 out.push(to_value!({"role": "tool", "tool_call_id": id, "content": text}));
             }
             Role::User => {

@@ -256,6 +256,7 @@ impl Agent {
 
     /// Add `query` to the history and tell the model where its console mounts are.
     async fn begin_turn(&mut self, query: Message) {
+        close_dangling_calls(&mut self.state.history);
         self.state.history.push(query);
         self.seed_mounts().await;
     }
@@ -368,6 +369,34 @@ fn tool_output(message: Message) -> MessageOutput {
         depth: None,
         source_agent: None,
     }
+}
+
+/// Answer every call of the last assistant message that has no result yet, as when the
+/// caller dropped the stream mid-turn or the console failed to start. Without this the
+/// next request carries calls without results, which APIs reject (Claude with a 400).
+fn close_dangling_calls(history: &mut Vec<Message>) {
+    let Some(at) = history.iter().rposition(|m| m.role == Role::Assistant) else {
+        return;
+    };
+    let answered = history[at + 1..]
+        .iter()
+        .take_while(|m| m.role == Role::Tool)
+        .count();
+    let results: Vec<Message> = history[at]
+        .tool_calls
+        .iter()
+        .flatten()
+        .filter_map(Part::as_function)
+        .map(|(id, ..)| id)
+        .filter(|id| {
+            !history[at + 1..at + 1 + answered]
+                .iter()
+                .any(|m| m.id.as_deref() == Some(*id))
+        })
+        .map(|id| tool_error(id.to_owned(), "the call was interrupted before it returned"))
+        .collect();
+    let end = at + 1 + answered;
+    history.splice(end..end, results);
 }
 
 fn tool_error(id: String, text: impl Into<String>) -> Message {

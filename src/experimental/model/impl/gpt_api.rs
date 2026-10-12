@@ -2,7 +2,8 @@
 //!
 //! Every call is streamed (`"stream": true`) and read as server-sent events;
 //! [`infer`](InferLangModel::infer) accumulates the same stream. Nothing is stored on
-//! OpenAI's side (`"store": false`): each call sends the whole conversation.
+//! OpenAI's side (`"store": false`): each call sends the whole conversation, reasoning
+//! included, as the encrypted items the API returned.
 
 use anyhow::{Context as _, bail};
 use futures::{
@@ -37,12 +38,22 @@ pub(crate) fn gpt_alias(name: &str) -> Option<&'static str> {
 
 /// Runs OpenAI models through the Responses API (`/v1/responses`).
 ///
-/// Unlike [`CodexCliModel`](super::CodexCliModel), images are sent too. Reasoning is not
-/// carried across calls: earlier turns are sent without it.
-#[derive(Clone, Debug)]
+/// Unlike [`CodexCliModel`](super::CodexCliModel), images are sent too. Reasoning is
+/// carried across calls as the API's encrypted reasoning items, kept as JSON in the
+/// message's `signature`; its `thinking` holds only the summary.
+#[derive(Clone)]
 pub struct GptApiModel {
     api_key: String,
     model: String,
+}
+
+impl std::fmt::Debug for GptApiModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GptApiModel")
+            .field("api_key", &"<redacted>")
+            .field("model", &self.model)
+            .finish()
+    }
 }
 
 impl GptApiModel {
@@ -125,6 +136,11 @@ impl GptApiModel {
                 "reasoning".into(),
                 to_value!({"effort": effort, "summary": "auto"}),
             );
+        }
+        // Unstored reasoning can be replayed only in its encrypted form, which comes back
+        // only when asked for; a model that cannot reason rejects the ask.
+        if options.thinking_effort.is_some() || reasons(&self.model) {
+            obj.insert("include".into(), to_value!(["reasoning.encrypted_content"]));
         }
 
         if let Some(schema) = &options.output_schema {
@@ -211,15 +227,32 @@ impl InferLangModel for GptApiModel {
     }
 }
 
-/// POSTs `body`, retrying transient 429s with backoff, and returns the successful response
-/// unread.
+/// Whether `model` reasons, and so returns reasoning items, without being asked to. GPT-4
+/// and earlier and the `-chat` models do not; an unknown id counts as one that does.
+fn reasons(model: &str) -> bool {
+    !(model.starts_with("gpt-3") || model.starts_with("gpt-4") || model.contains("-chat"))
+}
+
+/// One client for every call, so connections are reused. The read timeout bounds each
+/// read, not the whole stream, so a long reply is not cut off.
+static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .read_timeout(std::time::Duration::from_secs(300))
+        .build()
+        .expect("the HTTP client builds")
+});
+
+/// POSTs `body`, retrying transient 429s and 5xx overloads with backoff, and returns the
+/// successful response unread.
 async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
     const MAX_WAIT_SECS: u64 = 10;
+    // Rate limits, and the transient errors and overloads (529) servers recover from.
+    const RETRY_STATUSES: [u16; 6] = [429, 500, 502, 503, 504, 529];
 
-    let client = reqwest::Client::new();
     for attempt in 0..=MAX_RETRIES {
-        let response = client
+        let response = CLIENT
             .post(API_URL)
             .bearer_auth(api_key)
             .header("accept", "text/event-stream")
@@ -231,7 +264,7 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
         if status.is_success() {
             return Ok(response);
         }
-        if status.as_u16() == 429 && attempt < MAX_RETRIES {
+        if RETRY_STATUSES.contains(&status.as_u16()) && attempt < MAX_RETRIES {
             let wait_secs = response
                 .headers()
                 .get("retry-after")
@@ -245,7 +278,7 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
                 bail!("OpenAI API request failed with status {status}: {text}");
             }
             log::warn!(
-                "Rate limited (429). Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
+                "Request failed with status {status}. Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
                 attempt + 1
             );
             tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
@@ -316,8 +349,39 @@ fn parse_event(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
                 }]);
         }
         "response.completed" => {
-            // Reported for tool calls too; `finish` turns it into a tool call.
-            out.finish_reason = Some(FinishReason::Stop {});
+            let output = val
+                .pointer("/response/output")
+                .and_then(|v| v.as_array())
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            // A refusal comes as a content part of its own, in place of the text.
+            let refusal = output
+                .iter()
+                .flat_map(|item| item.pointer("/content").and_then(|v| v.as_array()))
+                .flatten()
+                .find(|part| part.pointer("/type").and_then(|v| v.as_str()) == Some("refusal"))
+                .and_then(|part| part.pointer("/refusal").and_then(|v| v.as_str()));
+            out.finish_reason = Some(match refusal {
+                Some(reason) => FinishReason::Refusal {
+                    reason: reason.to_owned(),
+                },
+                // Reported for tool calls too; `finish` turns it into a tool call.
+                None => FinishReason::Stop {},
+            });
+            // The reasoning items, kept to be sent back with the next call. Without its
+            // encrypted content, an unstored item cannot be.
+            let reasoning: Vec<Value> = output
+                .iter()
+                .filter(|item| item.pointer("/type").and_then(|v| v.as_str()) == Some("reasoning"))
+                .filter(|item| {
+                    item.pointer("/encrypted_content")
+                        .is_some_and(|v| v.is_string())
+                })
+                .cloned()
+                .collect();
+            if !reasoning.is_empty() {
+                out.delta.signature = serde_json::to_string(&reasoning).ok();
+            }
             out.usage = val.pointer("/response/usage").and_then(parse_usage);
         }
         "response.incomplete" => {
@@ -370,7 +434,7 @@ fn parse_usage(usage: &Value) -> Option<TokenUsage> {
 }
 
 /// The conversation as Responses API input items. System messages go in `instructions`
-/// instead; earlier reasoning is left out, since it cannot be replayed without being stored.
+/// instead; reasoning goes back as the items it came as, ahead of the reply it led to.
 fn input_items(messages: &[Message]) -> Value {
     let mut items = Vec::new();
     for msg in messages {
@@ -386,6 +450,9 @@ fn input_items(messages: &[Message]) -> Value {
                 }));
             }
             Role::User | Role::Assistant => {
+                if msg.role == Role::Assistant {
+                    items.extend(reasoning_items(msg.signature.as_deref()));
+                }
                 if !msg.contents.is_empty() {
                     let content: Vec<Value> = msg
                         .contents
@@ -464,43 +531,114 @@ fn value_text(value: &Value) -> String {
     }
 }
 
-/// Closes every object sub-schema (`"additionalProperties": false`) that does not say
-/// otherwise, as strict mode requires.
-fn strict_schema(schema: &Value) -> Value {
-    match schema {
-        Value::Object(obj) => {
-            let mut out: indexmap::IndexMap<String, Value> = obj
+/// The reasoning items kept in a message's `signature`; none if it holds something else,
+/// such as another API's signature.
+fn reasoning_items(signature: Option<&str>) -> Vec<Value> {
+    signature
+        .and_then(|sig| serde_json::from_str::<Vec<Value>>(sig).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|item| item.pointer("/type").and_then(|v| v.as_str()) == Some("reasoning"))
+        .collect()
+}
+
+/// Readies a response schema for strict mode, which requires every object sub-schema to be
+/// closed and to list all of its properties in `required`.
+///
+/// Adds `"additionalProperties": false` to every object sub-schema that omits it, and
+/// makes every property `required`. A property that was optional becomes nullable
+/// instead (`"type": ["integer", "null"]`, or `anyOf` with `{"type": "null"}` where it
+/// has no `type`), so the model can still leave it out by sending `null`.
+pub(super) fn strict_schema(schema: &Value) -> Value {
+    let Value::Object(obj) = schema else {
+        return schema.clone();
+    };
+    let map_values = |v: &Value| match v {
+        Value::Object(inner) => Value::Object(
+            inner
                 .iter()
-                .map(|(k, v)| {
-                    let v = match k.as_str() {
-                        // Maps of sub-schemas.
-                        "properties" | "$defs" | "definitions" => match v {
-                            Value::Object(inner) => Value::Object(
-                                inner
-                                    .iter()
-                                    .map(|(k, v)| (k.clone(), strict_schema(v)))
-                                    .collect(),
-                            ),
-                            other => other.clone(),
-                        },
-                        // A sub-schema, or a list of them.
-                        "items" | "not" | "prefixItems" | "anyOf" | "oneOf" | "allOf" => {
-                            strict_schema(v)
-                        }
-                        _ => v.clone(),
-                    };
-                    (k.clone(), v)
-                })
-                .collect();
-            let is_object = out.get("type").and_then(|t| t.as_str()) == Some("object");
-            if (is_object || out.contains_key("properties"))
-                && !out.contains_key("additionalProperties")
-            {
-                out.insert("additionalProperties".into(), Value::Bool(false));
-            }
-            Value::Object(out)
-        }
+                .map(|(k, v)| (k.clone(), strict_schema(v)))
+                .collect(),
+        ),
+        other => other.clone(),
+    };
+    let map_items = |v: &Value| match v {
         Value::Array(items) => Value::Array(items.iter().map(strict_schema).collect()),
         other => other.clone(),
+    };
+    let mut out: indexmap::IndexMap<String, Value> = obj
+        .iter()
+        .map(|(k, v)| {
+            let v = match k.as_str() {
+                "properties" | "$defs" | "definitions" => map_values(v),
+                "items" | "not" => strict_schema(v),
+                "prefixItems" | "anyOf" | "oneOf" | "allOf" => map_items(v),
+                _ => v.clone(),
+            };
+            (k.clone(), v)
+        })
+        .collect();
+    let is_object = out.get("type").and_then(|t| t.as_str()) == Some("object");
+    if (is_object || out.contains_key("properties")) && !out.contains_key("additionalProperties") {
+        out.insert("additionalProperties".into(), Value::Bool(false));
     }
+    if let Some(Value::Object(props)) = out.get("properties") {
+        let required: Vec<&str> = out
+            .get("required")
+            .and_then(|r| r.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str())
+            .collect();
+        let props: indexmap::IndexMap<String, Value> = props
+            .iter()
+            .map(|(k, v)| {
+                let v = if required.contains(&k.as_str()) {
+                    v.clone()
+                } else {
+                    nullable(v)
+                };
+                (k.clone(), v)
+            })
+            .collect();
+        let all: Vec<Value> = props.keys().map(|k| Value::String(k.clone())).collect();
+        out.insert("properties".into(), Value::Object(props));
+        out.insert("required".into(), Value::Array(all));
+    }
+    Value::Object(out)
+}
+
+/// `schema`, also accepting `null`.
+fn nullable(schema: &Value) -> Value {
+    let null = || Value::String("null".into());
+    let Value::Object(obj) = schema else {
+        return schema.clone();
+    };
+    let mut out = obj.clone();
+    match out.get_mut("type") {
+        Some(Value::String(ty)) if ty == "null" => return schema.clone(),
+        Some(Value::String(ty)) => {
+            let ty = std::mem::take(ty);
+            out.insert("type".into(), Value::Array(vec![Value::String(ty), null()]));
+        }
+        Some(Value::Array(types)) => {
+            if !types.iter().any(|t| t.as_str() == Some("null")) {
+                types.push(null());
+            }
+        }
+        _ => {
+            let wrapped: Value = Value::Array(vec![
+                schema.clone(),
+                Value::Object([("type".to_owned(), null())].into_iter().collect()),
+            ]);
+            return Value::Object([("anyOf".to_owned(), wrapped)].into_iter().collect());
+        }
+    }
+    // An `enum` lists every value allowed, so it must list `null` too.
+    if let Some(Value::Array(values)) = out.get_mut("enum")
+        && !values.iter().any(|v| matches!(v, Value::Null))
+    {
+        values.push(Value::Null);
+    }
+    Value::Object(out)
 }

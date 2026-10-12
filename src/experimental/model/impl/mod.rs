@@ -10,7 +10,6 @@ mod gpt_api;
 mod kimi_api;
 mod openrouter;
 mod qwen_api;
-mod schema;
 mod vllm;
 
 pub use bedrock::*;

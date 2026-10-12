@@ -21,8 +21,6 @@ use crate::{
     tool::ToolDesc,
 };
 
-use super::schema::close_objects;
-
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
 
@@ -64,10 +62,19 @@ pub(crate) fn claude_alias(name: &str) -> Option<&'static str> {
 ///
 /// Unlike [`ClaudeCliModel`](super::ClaudeCliModel), tools are declared to the API
 /// and the full message history, images included, is sent as is.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ClaudeApiModel {
     api_key: String,
     model: String,
+}
+
+impl std::fmt::Debug for ClaudeApiModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClaudeApiModel")
+            .field("api_key", &"<redacted>")
+            .field("model", &self.model)
+            .finish()
+    }
 }
 
 impl ClaudeApiModel {
@@ -126,7 +133,9 @@ impl ClaudeApiModel {
 
         let mut output_config = Value::object_empty();
         obj.insert("max_tokens".into(), (MAX_TOKENS as i64).into());
-        // Without an effort, thinking stays off, the API default.
+        // Without an effort, the model's default holds: older models do not think, newer
+        // ones (e.g. claude-opus-5-5) think adaptively and send each thinking block with
+        // its text omitted (empty) but signed.
         if let Some(effort) = options.thinking_effort {
             if takes_thinking_budget(&self.model) {
                 // The budget must be below max_tokens, which every level's is.
@@ -151,7 +160,7 @@ impl ClaudeApiModel {
         if let Some(schema) = &options.output_schema {
             output_config.as_object_mut().unwrap().insert(
                 "format".into(),
-                to_value!({"type": "json_schema", "schema": close_objects(schema)}),
+                to_value!({"type": "json_schema", "schema": closed_schema(schema)}),
             );
         }
         if !output_config.as_object().unwrap().is_empty() {
@@ -240,14 +249,26 @@ impl InferLangModel for ClaudeApiModel {
     }
 }
 
-/// POSTs `body`, retrying 429s with backoff, and returns the successful response unread.
+/// One client for every call, so connections are reused. The read timeout bounds each
+/// read, not the whole stream, so a long reply is not cut off.
+static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .read_timeout(std::time::Duration::from_secs(300))
+        .build()
+        .expect("the HTTP client builds")
+});
+
+/// POSTs `body`, retrying 429s and 5xx overloads with backoff, and returns the successful
+/// response unread.
 async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
     const MAX_WAIT_SECS: u64 = 10;
+    // Rate limits, and the transient errors and overloads (529) servers recover from.
+    const RETRY_STATUSES: [u16; 6] = [429, 500, 502, 503, 504, 529];
 
-    let client = reqwest::Client::new();
     for attempt in 0..=MAX_RETRIES {
-        let request = client
+        let request = CLIENT
             .post(API_URL)
             .header("x-api-key", api_key)
             .header("anthropic-version", API_VERSION)
@@ -261,7 +282,7 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
         if status.is_success() {
             return Ok(response);
         }
-        if status.as_u16() == 429 && attempt < MAX_RETRIES {
+        if RETRY_STATUSES.contains(&status.as_u16()) && attempt < MAX_RETRIES {
             let wait_secs = response
                 .headers()
                 .get("retry-after")
@@ -270,7 +291,7 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
                 .unwrap_or(1u64 << attempt)
                 .min(MAX_WAIT_SECS);
             log::warn!(
-                "Rate limited (429). Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
+                "Request failed with status {status}. Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
                 attempt + 1
             );
             tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
@@ -370,7 +391,7 @@ fn parse_event(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
 fn parse_finish_reason(reason: &str) -> FinishReason {
     match reason {
         "end_turn" | "pause_turn" | "stop_sequence" => FinishReason::Stop {},
-        "max_tokens" => FinishReason::Length {},
+        "max_tokens" | "model_context_window_exceeded" => FinishReason::Length {},
         "tool_use" => FinishReason::ToolCall {},
         other => FinishReason::Refusal {
             reason: format!("reason: {other}"),
@@ -435,7 +456,10 @@ fn marshal_message(msg: &Message, include_thinking: bool) -> Value {
     }
 
     let mut content = Vec::new();
-    if include_thinking && let Some(thinking) = msg.thinking.as_ref().filter(|t| !t.is_empty()) {
+    // Thinking whose text was omitted comes back empty but signed, and goes back as is.
+    // Redacted thinking (`redacted_thinking`) is not kept: `Message` has no place for it.
+    let thinking = msg.thinking.as_deref().unwrap_or_default();
+    if include_thinking && (!thinking.is_empty() || msg.signature.is_some()) {
         let mut part = to_value!({"type": "thinking", "thinking": thinking});
         if let Some(sig) = &msg.signature {
             part.as_object_mut()
@@ -503,4 +527,42 @@ fn takes_thinking_budget(model: &str) -> bool {
         .and_then(|t| t.parse::<u32>().ok())
         .unwrap_or(0);
     (major, minor) < (4, 6)
+}
+
+/// Adds `"additionalProperties": false` to every object sub-schema that omits it, as
+/// structured outputs require; optional properties stay optional.
+fn closed_schema(schema: &Value) -> Value {
+    let Value::Object(obj) = schema else {
+        return schema.clone();
+    };
+    let map_values = |v: &Value| match v {
+        Value::Object(inner) => Value::Object(
+            inner
+                .iter()
+                .map(|(k, v)| (k.clone(), closed_schema(v)))
+                .collect(),
+        ),
+        other => other.clone(),
+    };
+    let map_items = |v: &Value| match v {
+        Value::Array(items) => Value::Array(items.iter().map(closed_schema).collect()),
+        other => other.clone(),
+    };
+    let mut out: indexmap::IndexMap<String, Value> = obj
+        .iter()
+        .map(|(k, v)| {
+            let v = match k.as_str() {
+                "properties" | "$defs" | "definitions" => map_values(v),
+                "items" | "not" => closed_schema(v),
+                "prefixItems" | "anyOf" | "oneOf" | "allOf" => map_items(v),
+                _ => v.clone(),
+            };
+            (k.clone(), v)
+        })
+        .collect();
+    let is_object = out.get("type").and_then(|t| t.as_str()) == Some("object");
+    if (is_object || out.contains_key("properties")) && !out.contains_key("additionalProperties") {
+        out.insert("additionalProperties".into(), Value::Bool(false));
+    }
+    Value::Object(out)
 }

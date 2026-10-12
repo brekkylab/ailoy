@@ -35,11 +35,21 @@ const CLAUDE_THINKING_MAX_TOKENS: i64 = 32000;
 /// Converse takes the same request for every model family; what it has no common field
 /// for, the thinking effort, goes in as the family's own field (Claude and OpenAI models).
 /// Image URLs are rejected, since Bedrock does not fetch them.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct BedrockModel {
     model: String,
     api_key: String,
     region: String,
+}
+
+impl std::fmt::Debug for BedrockModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BedrockModel")
+            .field("model", &self.model)
+            .field("api_key", &"<redacted>")
+            .field("region", &self.region)
+            .finish()
+    }
 }
 
 impl BedrockModel {
@@ -290,8 +300,18 @@ fn takes_thinking_budget(model: &str) -> bool {
     (major, minor) < (4, 6)
 }
 
-/// POSTs `body`, retrying throttled requests (429) with backoff, and returns the successful
-/// response unread.
+/// One client for every call, so connections are reused. The read timeout bounds each
+/// read, not the whole stream, so a long reply is not cut off.
+static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .read_timeout(std::time::Duration::from_secs(300))
+        .build()
+        .expect("the HTTP client builds")
+});
+
+/// POSTs `body`, retrying throttled requests (429) and 5xx overloads with backoff, and
+/// returns the successful response unread.
 async fn send(
     url: &str,
     api_key: &str,
@@ -299,10 +319,11 @@ async fn send(
 ) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
     const MAX_WAIT_SECS: u64 = 10;
+    // Throttling, and the transient errors and overloads (529) servers recover from.
+    const RETRY_STATUSES: [u16; 6] = [429, 500, 502, 503, 504, 529];
 
-    let client = reqwest::Client::new();
     for attempt in 0..=MAX_RETRIES {
-        let response = client
+        let response = CLIENT
             .post(url)
             .bearer_auth(api_key)
             .header("accept", "application/vnd.amazon.eventstream")
@@ -314,10 +335,10 @@ async fn send(
         if status.is_success() {
             return Ok(response);
         }
-        if status.as_u16() == 429 && attempt < MAX_RETRIES {
+        if RETRY_STATUSES.contains(&status.as_u16()) && attempt < MAX_RETRIES {
             let wait_secs = (1u64 << attempt).min(MAX_WAIT_SECS);
             log::warn!(
-                "Throttled (429). Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
+                "Request failed with status {status}. Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
                 attempt + 1
             );
             tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
@@ -539,7 +560,8 @@ fn parse_frame(frame: &Frame) -> anyhow::Result<Option<MessageDeltaOutput>> {
 /// results become user turns, and consecutive turns of one role are merged, since Converse
 /// requires users and the assistant to alternate. Thinking is replayed, when
 /// `replay_thinking`, only on assistant turns after the last user message, as Claude
-/// requires; other models are not sent it, since some echo it back as text.
+/// requires; other models are not sent it, since some echo it back as text. Redacted
+/// reasoning (`redactedContent`) is not kept, since `Message` has no place for it.
 fn conversation(messages: &[Message], replay_thinking: bool) -> anyhow::Result<Value> {
     let last_user = messages
         .iter()
@@ -570,9 +592,12 @@ fn conversation(messages: &[Message], replay_thinking: bool) -> anyhow::Result<V
             }
             Role::User | Role::Assistant => {
                 let mut blocks = Vec::new();
+                // Thinking whose text was omitted comes back empty but signed, and goes
+                // back as is.
+                let thinking = msg.thinking.as_deref().unwrap_or_default();
                 if replay_thinking
                     && i > last_user
-                    && let Some(thinking) = msg.thinking.as_ref().filter(|t| !t.is_empty())
+                    && (!thinking.is_empty() || msg.signature.is_some())
                 {
                     let mut text = to_value!({"text": thinking});
                     if let Some(sig) = &msg.signature {
@@ -667,43 +692,42 @@ fn image_block(image: &PartImage) -> anyhow::Result<Value> {
     }
 }
 
-/// Closes every object sub-schema (`"additionalProperties": false`) that does not say
-/// otherwise, as structured output requires.
+/// Adds `"additionalProperties": false` to every object sub-schema that omits it, as
+/// structured outputs require; optional properties stay optional.
 fn closed_schema(schema: &Value) -> Value {
-    match schema {
-        Value::Object(obj) => {
-            let mut out: indexmap::IndexMap<String, Value> = obj
+    let Value::Object(obj) = schema else {
+        return schema.clone();
+    };
+    let map_values = |v: &Value| match v {
+        Value::Object(inner) => Value::Object(
+            inner
                 .iter()
-                .map(|(k, v)| {
-                    let v = match k.as_str() {
-                        "properties" | "$defs" | "definitions" => match v {
-                            Value::Object(inner) => Value::Object(
-                                inner
-                                    .iter()
-                                    .map(|(k, v)| (k.clone(), closed_schema(v)))
-                                    .collect(),
-                            ),
-                            other => other.clone(),
-                        },
-                        "items" | "not" | "prefixItems" | "anyOf" | "oneOf" | "allOf" => {
-                            closed_schema(v)
-                        }
-                        _ => v.clone(),
-                    };
-                    (k.clone(), v)
-                })
-                .collect();
-            let is_object = out.get("type").and_then(|t| t.as_str()) == Some("object");
-            if (is_object || out.contains_key("properties"))
-                && !out.contains_key("additionalProperties")
-            {
-                out.insert("additionalProperties".into(), Value::Bool(false));
-            }
-            Value::Object(out)
-        }
+                .map(|(k, v)| (k.clone(), closed_schema(v)))
+                .collect(),
+        ),
+        other => other.clone(),
+    };
+    let map_items = |v: &Value| match v {
         Value::Array(items) => Value::Array(items.iter().map(closed_schema).collect()),
         other => other.clone(),
+    };
+    let mut out: indexmap::IndexMap<String, Value> = obj
+        .iter()
+        .map(|(k, v)| {
+            let v = match k.as_str() {
+                "properties" | "$defs" | "definitions" => map_values(v),
+                "items" | "not" => closed_schema(v),
+                "prefixItems" | "anyOf" | "oneOf" | "allOf" => map_items(v),
+                _ => v.clone(),
+            };
+            (k.clone(), v)
+        })
+        .collect();
+    let is_object = out.get("type").and_then(|t| t.as_str()) == Some("object");
+    if (is_object || out.contains_key("properties")) && !out.contains_key("additionalProperties") {
+        out.insert("additionalProperties".into(), Value::Bool(false));
     }
+    Value::Object(out)
 }
 
 #[cfg(test)]

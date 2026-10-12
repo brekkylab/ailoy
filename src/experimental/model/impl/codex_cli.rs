@@ -1,7 +1,9 @@
 //! A language model backed by the Codex CLI's app server (`codex app-server`).
 //!
 //! Each call starts one `codex app-server` process and talks JSON-RPC to it
-//! over stdio, one message per line:
+//! over stdio, one message per line. Every process runs with a Codex home of
+//! ailoy's own (`CODEX_HOME`, see [`codex_home`]) that holds only the login,
+//! so nothing of the user's own Codex setup is picked up.
 //!
 //! 0. Once per [`CodexCliModel`], the model catalog is read (`codex debug models`)
 //!    and rewritten so the models call tools directly (see [`direct_catalog`]);
@@ -10,10 +12,10 @@
 //! 2. `thread/start` with the system prompt as the base instructions, the
 //!    tools as dynamic tools, so they are declared to the model like its own,
 //!    and raw events on.
-//! 3. `thread/inject_items` with the earlier turns as Responses API items,
-//!    tool calls and results included.
-//! 4. `turn/start` with the latest user message, or no input when the
-//!    conversation ends with tool results.
+//! 3. `thread/inject_items` with the whole conversation as Responses API
+//!    items, tool calls and results included.
+//! 4. `turn/start` with no input, so the model replies to the conversation
+//!    as injected.
 //!
 //! The reply streams in as `item/agentMessage/delta` notifications. Calls to
 //! the tools are taken from the raw Responses API items
@@ -23,7 +25,11 @@
 //! unanswered: they come one at a time, since Codex runs dynamic tools in
 //! turn, and its usage report waits for them.
 
-use std::{path::Path, process::Stdio, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::Arc,
+};
 
 use anyhow::Context as _;
 use futures::{
@@ -37,6 +43,7 @@ use tokio::{
     sync::OnceCell,
 };
 
+use super::gpt_api::{image_url, strict_schema};
 use crate::{
     experimental::model::{InferLangModel, LangModelOptions, ThinkingEffort},
     message::{
@@ -45,8 +52,6 @@ use crate::{
     },
     tool::ToolDesc,
 };
-
-use super::gpt_api::image_url;
 
 /// Codex features that give the model tools of its own. Keys unknown to the
 /// installed version are ignored by Codex with a warning.
@@ -69,6 +74,7 @@ const DISABLED_FEATURES: &[&str] = &[
 ];
 
 /// Config overrides that keep Codex's own context out of the conversation.
+/// (The user's own config is not read at all; see [`codex_home`].)
 const CONFIG: &[&str] = &[
     "web_search=\"disabled\"",
     "mcp_servers={}",
@@ -82,7 +88,8 @@ const CONFIG: &[&str] = &[
     "tools.experimental_request_user_input.enabled=false",
 ];
 
-/// Item types that mean the model used one of Codex's own tools.
+/// Item types that mean the model used one of Codex's own tools. None is
+/// declared to it, so these are a safeguard.
 const OWN_TOOL_ITEMS: &[&str] = &[
     "commandExecution",
     "fileChange",
@@ -95,13 +102,21 @@ const OWN_TOOL_ITEMS: &[&str] = &[
 
 /// Runs GPT through the `codex` CLI's app server instead of calling the API directly.
 ///
-/// The CLI's login (ChatGPT account or API key) is used as is. System messages
-/// replace Codex's own instructions; without any, the instructions are empty.
-/// Tools are declared to the model, so it calls them as it would any tool.
+/// The CLI's login (ChatGPT account or API key) is used as is, but nothing
+/// else of the user's Codex setup: the CLI runs with a Codex home of ailoy's
+/// own (under the user's cache directory, e.g. `~/.cache/ailoy/codex-home`)
+/// that holds only a link to the login in `$CODEX_HOME/auth.json`
+/// (`~/.codex/auth.json` by default). So the user's `config.toml`, with its
+/// MCP servers, and their `AGENTS.md` are left out. System messages replace
+/// Codex's own instructions; without any, the instructions are empty. Tools
+/// are declared to the model, so it calls them as it would any tool.
 ///
 /// Limits of going through the app server:
 /// - It is experimental, and the raw events it relies on are meant for
 ///   internal use, so it may change between Codex versions.
+/// - The login must be kept in `auth.json`, Codex's default; one kept in the
+///   system keyring (`cli_auth_credentials_store`) is not found. Settings in
+///   the user's `config.toml`, such as a model provider, do not apply.
 /// - System and assistant messages are text only.
 #[derive(Clone, Debug)]
 pub struct CodexCliModel {
@@ -147,6 +162,7 @@ impl CodexCliModel {
             .get_or_try_init(|| async {
                 let output = Command::new(&self.program)
                     .args(["debug", "models"])
+                    .env("CODEX_HOME", codex_home()?)
                     .stdin(Stdio::null())
                     .output()
                     .await
@@ -167,7 +183,7 @@ impl CodexCliModel {
     }
 
     /// Builds the command for one call, without starting it.
-    fn command(&self, workdir: &Path, catalog: &Path) -> anyhow::Result<Command> {
+    fn command(&self, home: &Path, workdir: &Path, catalog: &Path) -> anyhow::Result<Command> {
         let mut command = Command::new(&self.program);
         command.arg("app-server");
         for config in CONFIG {
@@ -181,6 +197,7 @@ impl CodexCliModel {
             command.args(["--disable", feature]);
         }
         command
+            .env("CODEX_HOME", home)
             // An empty directory, so no AGENTS.md or project config is picked up.
             .current_dir(workdir)
             .stdin(Stdio::piped())
@@ -190,6 +207,119 @@ impl CodexCliModel {
             .kill_on_drop(true);
         Ok(command)
     }
+}
+
+/// The Codex home every call runs with: a private directory of ailoy's own
+/// whose `auth.json` links to the user's login (see [`link_login`]). Codex
+/// reads its config, `AGENTS.md` and MCP servers from its home, so none of the
+/// user's is picked up; `-c` overrides only add to the user's config.
+fn codex_home() -> anyhow::Result<PathBuf> {
+    let home = private_dir("codex-home")?;
+    link_login(&home)?;
+    Ok(home)
+}
+
+/// The user's own login: `auth.json` under `$CODEX_HOME`, `~/.codex` by default.
+fn user_login() -> anyhow::Result<PathBuf> {
+    let home = match std::env::var_os("CODEX_HOME") {
+        Some(home) if !home.is_empty() => PathBuf::from(home),
+        _ => dirs::home_dir()
+            .context("no home directory for this user")?
+            .join(".codex"),
+    };
+    Ok(home.join("auth.json"))
+}
+
+/// Makes `auth.json` in `home` a link to the user's login, run before and
+/// after every call.
+///
+/// A link rather than a copy, so a login Codex refreshes reaches the user's
+/// own file, and one the user's Codex refreshes reaches ailoy: refresh tokens
+/// are used once, so a copy would soon log one side out. Codex writes the file
+/// in place, through the link. Should a version write a new file and rename
+/// it over the link instead, the file is copied back here, if newer than the
+/// user's, and the link put back.
+fn link_login(home: &Path) -> anyhow::Result<()> {
+    let link = home.join("auth.json");
+    let target = user_login()?;
+    match std::fs::symlink_metadata(&link) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            if std::fs::read_link(&link)? == target {
+                return Ok(());
+            }
+            std::fs::remove_file(&link)?;
+        }
+        Ok(meta) if meta.is_file() => {
+            let newer = match std::fs::metadata(&target) {
+                Ok(user) => meta.modified()? > user.modified()?,
+                Err(_) => true,
+            };
+            if newer {
+                let dir = target.parent().context("the login has no directory")?;
+                std::fs::create_dir_all(dir)?;
+                // Written aside and renamed, readable by the user only.
+                let staged = tempfile::NamedTempFile::new_in(dir)?;
+                std::fs::write(staged.path(), std::fs::read(&link)?)?;
+                staged.persist(&target)?;
+            }
+            std::fs::remove_file(&link)?;
+        }
+        Ok(_) => anyhow::bail!("{} is not a file", link.display()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    // Made even when the user has no login yet: logging in later writes through it.
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(&target, &link);
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_file(&target, &link);
+    match linked {
+        // A concurrent call made it first.
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        linked => linked.with_context(|| format!("failed to link {}", link.display())),
+    }
+}
+
+/// A directory of ailoy's own under the user's cache directory (e.g.
+/// `~/.cache/ailoy/<name>`), created if missing, that only the user can enter.
+///
+/// It fails if the directory is a link or another user's, since the CLIs run
+/// in it trust what they find there.
+pub(super) fn private_dir(name: &str) -> anyhow::Result<PathBuf> {
+    let base = dirs::cache_dir()
+        .context("no cache directory for this user")?
+        .join("ailoy");
+    std::fs::create_dir_all(&base)?;
+    let dir = base.join(name);
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    match builder.create(&dir) {
+        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
+            Err(e).with_context(|| format!("failed to create {}", dir.display()))?
+        }
+        _ => {}
+    }
+    let meta = std::fs::symlink_metadata(&dir)?;
+    anyhow::ensure!(meta.is_dir(), "{} is not a directory", dir.display());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+        // A file just made belongs to the user running this.
+        let uid = tempfile::tempfile()?.metadata()?.uid();
+        anyhow::ensure!(
+            meta.uid() == uid,
+            "{} belongs to another user",
+            dir.display()
+        );
+        if meta.mode() & 0o077 != 0 {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    Ok(dir)
 }
 
 /// The catalog with what makes Codex's models act as agents taken out of
@@ -250,7 +380,9 @@ impl InferLangModel for CodexCliModel {
             Err(e) => return Box::pin(stream::once(async move { Err(e) })),
         };
         let this = self.clone();
-        let mut turn = serde_json::json!({"input": plan.input});
+        // Everything is injected, the latest message too: as an item, it is sent the
+        // same way it is in the next call's history, so the prompts share a prefix.
+        let mut turn = serde_json::json!({"input": []});
         // Unset keeps the model's default effort.
         if let Some(effort) = options.thinking_effort {
             turn["effort"] = match effort {
@@ -261,16 +393,17 @@ impl InferLangModel for CodexCliModel {
             .into();
         }
         if let Some(schema) = &options.output_schema {
-            // Codex sends it in strict mode, which needs every object closed.
-            turn["outputSchema"] = super::schema::close_objects(schema).into();
+            // Codex sends it in strict mode, which needs every object closed and fully required.
+            turn["outputSchema"] = strict_schema(schema).into();
         }
 
         Box::pin(async_stream::try_stream! {
+            let home = codex_home()?;
             let workdir = tempfile::tempdir()?;
             let catalog = workdir.path().join("models.json");
             tokio::fs::write(&catalog, this.catalog().await?).await?;
             let mut child = this
-                .command(workdir.path(), &catalog)?
+                .command(&home, workdir.path(), &catalog)?
                 .spawn()
                 .context("failed to start the codex CLI")?;
             let mut stdin = child.stdin.take().expect("stdin is piped");
@@ -318,14 +451,12 @@ impl InferLangModel for CodexCliModel {
                 .context("thread/start returned no thread id")?
                 .to_owned();
 
-            if !plan.history.is_empty() {
-                send(&mut stdin, serde_json::json!({
-                    "id": 2,
-                    "method": "thread/inject_items",
-                    "params": {"threadId": thread_id, "items": plan.history},
-                })).await?;
-                response(&mut lines, 2).await?;
-            }
+            send(&mut stdin, serde_json::json!({
+                "id": 2,
+                "method": "thread/inject_items",
+                "params": {"threadId": thread_id, "items": plan.history},
+            })).await?;
+            response(&mut lines, 2).await?;
 
             // Its response is checked by the reader, along with the turn's events.
             turn["threadId"] = thread_id.into();
@@ -352,6 +483,8 @@ impl InferLangModel for CodexCliModel {
             // unanswered: either way the process is stopped here.
             let _ = child.start_kill();
             let status = child.wait().await?;
+            // Puts the link back, should Codex have replaced it refreshing the login.
+            link_login(&home)?;
             if !finished {
                 let stderr = stderr.await.unwrap_or_default();
                 Err(anyhow::anyhow!("codex exited with {status} before finishing: {stderr}"))?;
@@ -370,12 +503,10 @@ struct Plan {
     tools: Vec<serde_json::Value>,
     /// The tools' names, to tell their calls from Codex's own.
     tool_names: Vec<String>,
-    /// The earlier turns, as Responses API items for `thread/inject_items`.
+    /// The conversation, as Responses API items for `thread/inject_items`.
     history: Vec<serde_json::Value>,
-    /// The ids of the calls in the earlier turns.
+    /// The ids of the calls in the conversation.
     history_call_ids: Vec<String>,
-    /// `turn/start` input: the latest user message, or none after tool results.
-    input: Vec<serde_json::Value>,
 }
 
 impl Plan {
@@ -403,16 +534,13 @@ impl Plan {
             })
             .collect();
 
-        let Some((latest, earlier)) = conversation.split_last() else {
+        let Some(latest) = conversation.last() else {
             anyhow::bail!("no message to send");
         };
-        let (earlier, input) = match latest.role {
-            Role::User => (earlier, turn_input(latest)?),
-            // The results go into the history, and the turn starts without input.
-            Role::Tool => (&conversation[..], Vec::new()),
-            _ => anyhow::bail!("the last message must be a user message or tool results"),
-        };
-        let history: Vec<serde_json::Value> = earlier
+        if !matches!(latest.role, Role::User | Role::Tool) {
+            anyhow::bail!("the last message must be a user message or tool results");
+        }
+        let history: Vec<serde_json::Value> = conversation
             .iter()
             .map(|message| response_items(message))
             .collect::<anyhow::Result<Vec<_>>>()?
@@ -431,7 +559,6 @@ impl Plan {
             tool_names,
             history,
             history_call_ids,
-            input,
         })
     }
 }
@@ -659,22 +786,6 @@ fn user_contents(message: &Message) -> anyhow::Result<&[Part]> {
     Ok(&message.contents)
 }
 
-/// The latest user message as `turn/start` input: its text, then each image.
-fn turn_input(message: &Message) -> anyhow::Result<Vec<serde_json::Value>> {
-    let contents = user_contents(message)?;
-    let mut input = vec![serde_json::json!({
-        "type": "text",
-        "text": content_text(contents)?,
-        "text_elements": [],
-    })];
-    for part in contents {
-        if let Part::Image { image } = part {
-            input.push(serde_json::json!({"type": "image", "url": image_url(image)}));
-        }
-    }
-    Ok(input)
-}
-
 /// Parts as Responses API input content: text and values as `input_text`,
 /// images as `input_image`.
 fn content_items(parts: &[Part]) -> anyhow::Result<Vec<serde_json::Value>> {
@@ -760,7 +871,6 @@ mod tests {
         messages.extend(weather_call());
         let plan = Plan::new(&messages, &[]).unwrap();
         assert_eq!(plan.instructions, "Be brief.");
-        assert!(plan.input.is_empty());
         assert_eq!(plan.history_call_ids, ["c1"]);
         assert_eq!(
             serde_json::Value::Array(plan.history),
@@ -773,14 +883,14 @@ mod tests {
     }
 
     #[test]
-    fn latest_user_message_is_the_input() {
+    fn latest_user_message_goes_into_the_history() {
         let mut messages = weather_call().to_vec();
         messages.push(Message::new(Role::User).with_contents([Part::text("and Tokyo?")]));
         let plan = Plan::new(&messages, &[]).unwrap();
-        assert_eq!(plan.history.len(), 3);
+        assert_eq!(plan.history.len(), 4);
         assert_eq!(
-            serde_json::Value::Array(plan.input),
-            serde_json::json!([{"type": "text", "text": "and Tokyo?", "text_elements": []}])
+            plan.history[3],
+            serde_json::json!({"type": "message", "role": "user", "content": [{"type": "input_text", "text": "and Tokyo?"}]})
         );
     }
 
@@ -946,10 +1056,10 @@ mod tests {
             serde_json::json!([{"type": "input_image", "image_url": url}])
         );
         assert_eq!(
-            serde_json::Value::Array(plan.input),
+            plan.history[3]["content"],
             serde_json::json!([
-                {"type": "text", "text": "and this?", "text_elements": []},
-                {"type": "image", "url": url},
+                {"type": "input_text", "text": "and this?"},
+                {"type": "input_image", "image_url": url},
             ])
         );
     }

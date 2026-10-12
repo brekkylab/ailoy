@@ -30,10 +30,19 @@ const API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models"
 ///
 /// Unlike [`GeminiCliModel`](super::GeminiCliModel), images are sent too, as inline data;
 /// image URLs other than `data:` URIs are rejected.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct GeminiApiModel {
     api_key: String,
     model: String,
+}
+
+impl std::fmt::Debug for GeminiApiModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GeminiApiModel")
+            .field("api_key", &"<redacted>")
+            .field("model", &self.model)
+            .finish()
+    }
 }
 
 impl GeminiApiModel {
@@ -190,19 +199,25 @@ impl InferLangModel for GeminiApiModel {
                 }
             }
 
-            // Every message ends with a finish_reason, even if the stream closed without one.
             if !saw_finish {
-                let mut closer = MessageDeltaOutput::new();
-                closer.delta.role = Some(Role::Assistant);
-                closer.finish_reason = Some(FinishReason::Stop {});
-                yield closer;
+                Err(anyhow::anyhow!("the Gemini stream ended before the reply finished"))?;
             }
         })
     }
 }
 
-/// POSTs `body`, retrying transient 429s with backoff, and returns the successful response
-/// unread.
+/// One client for every call, so connections are reused. The read timeout bounds each
+/// read, not the whole stream, so a long reply is not cut off.
+static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .read_timeout(std::time::Duration::from_secs(300))
+        .build()
+        .expect("the HTTP client builds")
+});
+
+/// POSTs `body`, retrying transient 429s and 5xx overloads with backoff, and returns the
+/// successful response unread.
 async fn send(
     url: &str,
     api_key: &str,
@@ -210,10 +225,11 @@ async fn send(
 ) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
     const MAX_WAIT_SECS: u64 = 10;
+    // The transient errors and overloads (529) servers recover from; 429 is checked apart.
+    const RETRY_STATUSES: [u16; 5] = [500, 502, 503, 504, 529];
 
-    let client = reqwest::Client::new();
     for attempt in 0..=MAX_RETRIES {
-        let response = client
+        let response = CLIENT
             .post(url)
             .header("x-goog-api-key", api_key)
             .header("accept", "text/event-stream")
@@ -234,6 +250,15 @@ async fn send(
             let wait_secs = (1u64 << attempt).min(MAX_WAIT_SECS);
             log::warn!(
                 "Rate limited (429). Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
+                attempt + 1
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
+            continue;
+        }
+        if RETRY_STATUSES.contains(&status.as_u16()) && attempt < MAX_RETRIES {
+            let wait_secs = (1u64 << attempt).min(MAX_WAIT_SECS);
+            log::warn!(
+                "Request failed with status {status}. Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
                 attempt + 1
             );
             tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
@@ -269,12 +294,25 @@ fn next_event(buf: &mut Vec<u8>) -> Option<String> {
 }
 
 /// Parses one streamed `GenerateContentResponse` into a delta; a chunk without a candidate
-/// gives `None`.
+/// gives `None`, and an error chunk fails.
 fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
     if data.is_empty() {
         return Ok(None);
     }
     let val: Value = serde_json::from_str(data)?;
+    if let Some(error) = val.pointer("/error") {
+        bail!(
+            "Gemini stream error ({}): {}",
+            error
+                .pointer("/status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown"),
+            error
+                .pointer("/message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(no message)")
+        );
+    }
     if let Some(reason) = val
         .pointer("/promptFeedback/blockReason")
         .and_then(|v| v.as_str())
@@ -288,23 +326,31 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
     let mut out = MessageDeltaOutput::new();
     // Candidates are always the model's; the role is set even on a chunk without content.
     out.delta.role = Some(Role::Assistant);
+    // Whether the signature taken is a call's, which wins over a text's.
+    let mut call_signed = false;
     for part in candidate
         .pointer("/content/parts")
         .and_then(|v| v.as_array())
         .into_iter()
         .flatten()
     {
+        // Parallel calls carry the signature on the first only, which is where
+        // `contents` puts it back.
         if let Some(sig) = part.pointer("/thoughtSignature").and_then(|v| v.as_str()) {
-            out.delta.signature = Some(sig.to_owned());
+            let is_call = part.pointer("/functionCall").is_some();
+            if !call_signed && (is_call || out.delta.signature.is_none()) {
+                out.delta.signature = Some(sig.to_owned());
+                call_signed = is_call;
+            }
         }
         let is_thought = part.pointer("/thought").and_then(|v| v.as_bool()) == Some(true);
         if let Some(text) = part.pointer("/text").and_then(|v| v.as_str()) {
             if is_thought {
                 out.delta.thinking = Some(out.delta.thinking.unwrap_or_default() + text);
             } else if !text.is_empty() {
-                out.delta = out.delta.with_contents([PartDelta::Text {
+                out.delta.contents.push(PartDelta::Text {
                     text: text.to_owned(),
-                }]);
+                });
             }
         } else if let Some(call) = part.pointer("/functionCall") {
             // Newer models give each call an id; otherwise one is made up.
@@ -315,7 +361,7 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
                 .unwrap_or_else(|| {
                     format!("call-{}", &uuid::Uuid::new_v4().simple().to_string()[..12])
                 });
-            out.delta = out.delta.with_tool_calls([PartDelta::Function {
+            out.delta.tool_calls.push(PartDelta::Function {
                 id: Some(id),
                 function: PartDeltaFunction::WithParsedArgs {
                     name: call
@@ -325,7 +371,7 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
                         .to_owned(),
                     arguments: call.pointer("/args").cloned().unwrap_or(Value::Null),
                 },
-            }]);
+            });
         }
     }
 
