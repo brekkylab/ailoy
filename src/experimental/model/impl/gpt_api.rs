@@ -138,10 +138,8 @@ impl GptApiModel {
             );
         }
         // Unstored reasoning can be replayed only in its encrypted form, which comes back
-        // only when asked for; a model that cannot reason rejects the ask.
-        if options.thinking_effort.is_some() || reasons(&self.model) {
-            obj.insert("include".into(), to_value!(["reasoning.encrypted_content"]));
-        }
+        // only when asked for. A model that does not reason takes the ask all the same.
+        obj.insert("include".into(), to_value!(["reasoning.encrypted_content"]));
 
         if let Some(schema) = &options.output_schema {
             obj.insert(
@@ -225,12 +223,6 @@ impl InferLangModel for GptApiModel {
             }
         })
     }
-}
-
-/// Whether `model` reasons, and so returns reasoning items, without being asked to. GPT-4
-/// and earlier and the `-chat` models do not; an unknown id counts as one that does.
-fn reasons(model: &str) -> bool {
-    !(model.starts_with("gpt-3") || model.starts_with("gpt-4") || model.contains("-chat"))
 }
 
 /// One client for every call, so connections are reused. The read timeout bounds each

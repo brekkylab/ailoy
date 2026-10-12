@@ -15,6 +15,7 @@ use futures::{
     stream::{self, BoxStream},
 };
 
+use super::gpt_api::strict_schema;
 use crate::{
     datatype::Value,
     experimental::model::{InferLangModel, LangModelOptions, ThinkingEffort},
@@ -112,11 +113,13 @@ impl OpenRouterModel {
         }
 
         if let Some(schema) = &options.output_schema {
+            // Strict mode, as OpenAI's models take it, needs every object closed and
+            // fully required.
             obj.insert(
                 "response_format".into(),
                 to_value!({
                     "type": "json_schema",
-                    "json_schema": {"name": "output", "strict": true, "schema": closed_schema(schema)},
+                    "json_schema": {"name": "output", "strict": true, "schema": strict_schema(schema)},
                 }),
             );
         }
@@ -480,45 +483,6 @@ fn content_part(part: &Part) -> anyhow::Result<Value> {
         }),
         Part::Function { .. } => bail!("a function call cannot be message content"),
     })
-}
-
-/// Closes every object sub-schema (`"additionalProperties": false`) that does not say
-/// otherwise, as strict mode requires.
-fn closed_schema(schema: &Value) -> Value {
-    match schema {
-        Value::Object(obj) => {
-            let mut out: indexmap::IndexMap<String, Value> = obj
-                .iter()
-                .map(|(k, v)| {
-                    let v = match k.as_str() {
-                        "properties" | "$defs" | "definitions" => match v {
-                            Value::Object(inner) => Value::Object(
-                                inner
-                                    .iter()
-                                    .map(|(k, v)| (k.clone(), closed_schema(v)))
-                                    .collect(),
-                            ),
-                            other => other.clone(),
-                        },
-                        "items" | "not" | "prefixItems" | "anyOf" | "oneOf" | "allOf" => {
-                            closed_schema(v)
-                        }
-                        _ => v.clone(),
-                    };
-                    (k.clone(), v)
-                })
-                .collect();
-            let is_object = out.get("type").and_then(|t| t.as_str()) == Some("object");
-            if (is_object || out.contains_key("properties"))
-                && !out.contains_key("additionalProperties")
-            {
-                out.insert("additionalProperties".into(), Value::Bool(false));
-            }
-            Value::Object(out)
-        }
-        Value::Array(items) => Value::Array(items.iter().map(closed_schema).collect()),
-        other => other.clone(),
-    }
 }
 
 #[cfg(test)]

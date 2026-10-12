@@ -529,8 +529,24 @@ fn takes_thinking_budget(model: &str) -> bool {
     (major, minor) < (4, 6)
 }
 
+/// Schema keywords structured outputs refuse with a 400.
+const UNSUPPORTED_KEYWORDS: &[&str] = &[
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "minLength",
+    "maxLength",
+    "maxItems",
+    "uniqueItems",
+];
+
 /// Adds `"additionalProperties": false` to every object sub-schema that omits it, as
 /// structured outputs require; optional properties stay optional.
+///
+/// Drops the constraints structured outputs refuse ([`UNSUPPORTED_KEYWORDS`], and
+/// `minItems` above 1), so the reply is not held to them.
 fn closed_schema(schema: &Value) -> Value {
     let Value::Object(obj) = schema else {
         return schema.clone();
@@ -550,6 +566,11 @@ fn closed_schema(schema: &Value) -> Value {
     };
     let mut out: indexmap::IndexMap<String, Value> = obj
         .iter()
+        .filter(|(k, v)| match k.as_str() {
+            k if UNSUPPORTED_KEYWORDS.contains(&k) => false,
+            "minItems" => v.as_unsigned().is_some_and(|n| n <= 1),
+            _ => true,
+        })
         .map(|(k, v)| {
             let v = match k.as_str() {
                 "properties" | "$defs" | "definitions" => map_values(v),
@@ -565,4 +586,35 @@ fn closed_schema(schema: &Value) -> Value {
         out.insert("additionalProperties".into(), Value::Bool(false));
     }
     Value::Object(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closed_schema_drops_refused_constraints() {
+        let schema = to_value!({
+            "type": "object",
+            "properties": {
+                "minimum": {"type": "integer", "minimum": 0, "maximum": 9},
+                "name": {"type": "string", "maxLength": 5},
+                "tags": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 3},
+                "pair": {"type": "array", "minItems": 2},
+            },
+            "required": ["name"],
+        });
+        let expected = to_value!({
+            "type": "object",
+            "properties": {
+                "minimum": {"type": "integer"},
+                "name": {"type": "string"},
+                "tags": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "pair": {"type": "array"},
+            },
+            "required": ["name"],
+            "additionalProperties": false,
+        });
+        assert_eq!(closed_schema(&schema), expected);
+    }
 }

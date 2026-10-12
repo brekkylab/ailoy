@@ -118,6 +118,8 @@ const OWN_TOOL_ITEMS: &[&str] = &[
 ///   system keyring (`cli_auth_credentials_store`) is not found. Settings in
 ///   the user's `config.toml`, such as a model provider, do not apply.
 /// - System and assistant messages are text only.
+/// - Each call starts a new thread, and Codex keys the prompt cache on the
+///   thread, so nothing is read back from the cache across calls.
 #[derive(Clone, Debug)]
 pub struct CodexCliModel {
     program: String,
@@ -380,8 +382,8 @@ impl InferLangModel for CodexCliModel {
             Err(e) => return Box::pin(stream::once(async move { Err(e) })),
         };
         let this = self.clone();
-        // Everything is injected, the latest message too: as an item, it is sent the
-        // same way it is in the next call's history, so the prompts share a prefix.
+        // Everything is injected, the latest message too, so it is sent the same way
+        // it is in the next call's history.
         let mut turn = serde_json::json!({"input": []});
         // Unset keeps the model's default effort.
         if let Some(effort) = options.thinking_effort {

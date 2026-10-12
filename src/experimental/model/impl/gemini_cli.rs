@@ -1,16 +1,19 @@
 //! A language model backed by the Gemini CLI in headless mode.
 //!
 //! Each call starts one `gemini` process, with no extensions (`-e none`), in
-//! an empty project directory shared by all calls and private to the user
-//! ([`PROJECT_DIR`] under the user's cache directory, see [`project_dir`]).
+//! a project directory of its own: an empty temporary directory under a
+//! directory private to the user ([`PROJECT_DIR`] under the user's cache
+//! directory, see [`project_dir`]), holding only `.gemini/settings.json`.
+//! These project settings take precedence over the user's (see
+//! [`GeminiCliModel::settings`]): they keep the CLI's own tools and context
+//! files out, declare the tools through a discovery command that prints the
+//! file named by `AILOY_GEMINI_TOOLS`, add a `BeforeTool` hook that stops the
+//! agent before any tool runs, with hooks on whatever the user's settings say,
+//! disable the user's own hooks, and carry the call's model config. (They
+//! are not system settings: gemini-cli 0.60.0 and later skip a system settings
+//! file unless it and every directory above it belong to root.)
 //!
-//! The call's own files go in a temporary directory:
-//! - `system-settings.json`, the system settings (`GEMINI_CLI_SYSTEM_SETTINGS_PATH`),
-//!   which take precedence over the user's (see [`settings`]): they keep the
-//!   CLI's own tools and context files out, declare the tools through a
-//!   discovery command that prints the file named by `AILOY_GEMINI_TOOLS`, add
-//!   a `BeforeTool` hook that stops the agent before any tool runs, with hooks
-//!   on whatever the user's settings say, and disable the user's own hooks;
+//! The call's other files go in a second temporary directory:
 //! - `system.md`, which replaces the CLI's system prompt (`GEMINI_SYSTEM_MD`);
 //! - `tools.json`, the function declarations (`AILOY_GEMINI_TOOLS`);
 //! - `session.jsonl`, the earlier turns as a session record (`--session-file`),
@@ -45,7 +48,7 @@ use crate::{
     tool::ToolDesc,
 };
 
-/// The project directory every call runs in, under ailoy's directory in the user's cache.
+/// The directory the calls' project directories go in, under ailoy's directory in the user's cache.
 const PROJECT_DIR: &str = "gemini";
 
 /// The name of the hook that stops the agent, unique so the user's hooks can
@@ -116,7 +119,7 @@ const IMAGE_PROMPT: &str = "Reply to the message above.";
 /// - The CLI drops earlier user messages that start with `/` or `?` from the
 ///   session, and takes a latest message that starts with `/` as a command.
 /// - The user's settings still apply where ailoy's do not override them, and
-///   the CLI's admin settings file is replaced by ailoy's.
+///   system (admin) settings override ailoy's.
 /// - Each call leaves a session record under `~/.gemini/tmp`.
 /// - The discovery command and the hook run through `sh`, so not on Windows.
 #[derive(Clone, Debug)]
@@ -151,18 +154,22 @@ impl GeminiCliModel {
         self
     }
 
-    /// Writes the files for one call into `workdir` and builds the command,
-    /// without starting it.
+    /// Writes the files for one call into `project` (its project directory)
+    /// and `workdir`, and builds the command, without starting it.
     fn command(
         &self,
         plan: &Plan,
         options: &LangModelOptions,
+        project: &Path,
         workdir: &Path,
     ) -> anyhow::Result<Command> {
-        let project = project_dir()?;
-        let system_settings = workdir.join("system-settings.json");
+        let settings_dir = project.join(".gemini");
+        std::fs::create_dir(&settings_dir)?;
         let settings = self.settings(options)?;
-        std::fs::write(&system_settings, serde_json::to_string(&settings)?)?;
+        std::fs::write(
+            settings_dir.join("settings.json"),
+            serde_json::to_string(&settings)?,
+        )?;
         let system_md = workdir.join("system.md");
         std::fs::write(&system_md, &plan.system)?;
         let tools_json = workdir.join("tools.json");
@@ -192,11 +199,11 @@ impl GeminiCliModel {
             command.arg("--session-file").arg(session);
         }
         command
-            .env("GEMINI_CLI_SYSTEM_SETTINGS_PATH", &system_settings)
             // Always set, even empty: otherwise the CLI's own coding-agent prompt is used.
             .env("GEMINI_SYSTEM_MD", &system_md)
             .env("AILOY_GEMINI_TOOLS", &tools_json)
-            // Without trust, no hook runs. The project directory is the user's own.
+            // Without trust, neither the project settings nor any hook is
+            // loaded. The project directory is the user's own.
             .env("GEMINI_CLI_TRUST_WORKSPACE", "true")
             .current_dir(project)
             .stdin(Stdio::piped())
@@ -209,8 +216,8 @@ impl GeminiCliModel {
 }
 
 impl GeminiCliModel {
-    /// The system settings for one call. Merged last, they override the user's
-    /// settings, except that lists of hooks and excluded tools add up.
+    /// The project settings for one call. Merged after the user's, they
+    /// override them, except that lists of hooks and excluded tools add up.
     fn settings(&self, options: &LangModelOptions) -> anyhow::Result<serde_json::Value> {
         let mut settings = serde_json::json!({
             "tools": {
@@ -282,16 +289,20 @@ impl GeminiCliModel {
     }
 }
 
-/// The shared project directory, private to the user (see
-/// [`private_dir`](super::codex_cli::private_dir)) and left empty.
+/// A new project directory for one call, empty, in a directory private to the
+/// user (see [`private_dir`](super::codex_cli::private_dir)). Removed when dropped.
 ///
+/// Each call has its own, since the call's model config goes in its settings.
 /// The CLI trusts it (`GEMINI_CLI_TRUST_WORKSPACE`), so loads its
 /// `.gemini/settings.json`, and looks for a `.env` file from it upwards
 /// (`.gemini/.env` or `.env` in each directory up to the root). Under the
 /// user's cache directory, the directories above it are the user's own up to
 /// the home directory, and the system's beyond, where other users cannot write.
-fn project_dir() -> anyhow::Result<std::path::PathBuf> {
-    super::codex_cli::private_dir(PROJECT_DIR)
+fn project_dir() -> anyhow::Result<tempfile::TempDir> {
+    let parent = super::codex_cli::private_dir(PROJECT_DIR)?;
+    Ok(tempfile::Builder::new()
+        .prefix("call-")
+        .tempdir_in(parent)?)
 }
 
 /// The names of the hooks in the user's settings, to disable them by: the
@@ -404,9 +415,10 @@ impl InferLangModel for GeminiCliModel {
         let options = options.clone();
 
         Box::pin(async_stream::try_stream! {
+            let project = project_dir()?;
             let workdir = tempfile::tempdir()?;
             let mut child = this
-                .command(&plan, &options, workdir.path())?
+                .command(&plan, &options, project.path(), workdir.path())?
                 .spawn()
                 .context("failed to start the gemini CLI")?;
             let mut stdin = child.stdin.take().expect("stdin is piped");
@@ -451,6 +463,7 @@ impl InferLangModel for GeminiCliModel {
                 Err(anyhow::anyhow!("gemini exited with {status} before finishing: {stderr}"))?;
             }
             drop(workdir);
+            drop(project);
         })
     }
 }

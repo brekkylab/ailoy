@@ -692,8 +692,24 @@ fn image_block(image: &PartImage) -> anyhow::Result<Value> {
     }
 }
 
+/// Schema keywords structured outputs refuse with a 400.
+const UNSUPPORTED_KEYWORDS: &[&str] = &[
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "minLength",
+    "maxLength",
+    "maxItems",
+    "uniqueItems",
+];
+
 /// Adds `"additionalProperties": false` to every object sub-schema that omits it, as
 /// structured outputs require; optional properties stay optional.
+///
+/// Drops the constraints structured outputs refuse ([`UNSUPPORTED_KEYWORDS`], and
+/// `minItems` above 1), so the reply is not held to them.
 fn closed_schema(schema: &Value) -> Value {
     let Value::Object(obj) = schema else {
         return schema.clone();
@@ -713,6 +729,11 @@ fn closed_schema(schema: &Value) -> Value {
     };
     let mut out: indexmap::IndexMap<String, Value> = obj
         .iter()
+        .filter(|(k, v)| match k.as_str() {
+            k if UNSUPPORTED_KEYWORDS.contains(&k) => false,
+            "minItems" => v.as_unsigned().is_some_and(|n| n <= 1),
+            _ => true,
+        })
         .map(|(k, v)| {
             let v = match k.as_str() {
                 "properties" | "$defs" | "definitions" => map_values(v),

@@ -19,8 +19,8 @@
 //!
 //! The process is stopped at the first `</function_calls>`, since the CLI has
 //! no stop sequences and the model would otherwise go on to imagine the results.
-//! Only a `<function_calls>` at the start of a line and outside fenced code is
-//! taken as a call, and none is looked for when no tools were given.
+//! Only a `<function_calls>` at the start of a line and outside fenced or
+//! indented code is taken as a call, and none is looked for when no tools were given.
 
 use std::{collections::HashMap, io::Write as _, process::Stdio};
 
@@ -73,6 +73,11 @@ const MAX_STRAY_WORD: usize = 12;
 ///   results are written into it as a transcript, with images in user
 ///   messages and tool results placed where they were.
 /// - System and assistant messages are text only.
+/// - Consecutive prompts share a prefix, but the CLI does not read the earlier
+///   turns back from the prompt cache yet: its own cache breakpoint comes
+///   after the transcript, so each call writes the history to the cache again.
+/// - The CLI adds context of its own to the request: the signed-in user's
+///   email, the working directory and the date reach the model.
 #[derive(Clone, Debug)]
 pub struct ClaudeCliModel {
     program: String,
@@ -466,8 +471,8 @@ impl Invocation {
 
 /// Splits streamed reply text into plain text and the first `<function_calls>` block.
 ///
-/// Only a tag at the start of a line (after any indentation) and outside fenced code
-/// opens a block, so a reply can quote the format. Text that may be the start of
+/// Only a tag at the start of a line (after up to three spaces) and outside fenced or
+/// indented code opens a block, so a reply can quote the format. Text that may be the start of
 /// such a tag is held back until it is known not to be, and so is trailing
 /// whitespace, so the text before a call ends cleanly.
 ///
@@ -564,8 +569,9 @@ impl CallScanner {
         loop {
             let end = self.buf[pos..].find('\n').map(|n| pos + n + 1);
             let line = &self.buf[pos..end.unwrap_or(self.buf.len())];
-            if lines.at_line_start() {
-                let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+            let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+            // Four columns of indentation make a Markdown code block, as a tab does.
+            if lines.at_line_start() && indent < 4 && !line[..indent].contains('\t') {
                 let rest = &line[indent..];
                 for (opener, bare) in &openers {
                     if rest.starts_with(opener.as_str()) {
@@ -941,7 +947,8 @@ impl Content {
 ///
 /// Every turn is written the same way whether it is the latest or an earlier one,
 /// and starts a content block of its own, so the prompt of one call is the start of
-/// the next one's, block for block, as the prompt cache needs to reuse it.
+/// the next one's, block for block. (The CLI does not reuse it from the cache yet;
+/// see [`ClaudeCliModel`].)
 fn render_prompt(conversation: &[&Message]) -> anyhow::Result<Vec<serde_json::Value>> {
     // Tool results carry only the call id; the name comes from the call.
     let names: HashMap<&str, &str> = conversation
@@ -1166,6 +1173,22 @@ mod tests {
         ]);
         assert_eq!(text, "Checking.");
         assert_eq!(block.as_deref(), Some("\n<invoke name=\"a\">\n</invoke>\n"));
+    }
+
+    #[test]
+    fn a_tag_in_indented_code_is_text() {
+        let quoted = "Use this format:\n\n    <function_calls>\n    <invoke name=\"a\">\n    </invoke>\n    </function_calls>";
+        let (text, block) = scan(&[quoted]);
+        assert_eq!((text.as_str(), block), (quoted, None));
+        let (text, block) = scan(&["Format:\n\t<invoke name=\"a\">\n\t</invoke>"]);
+        assert_eq!(
+            (text.as_str(), block),
+            ("Format:\n\t<invoke name=\"a\">\n\t</invoke>", None)
+        );
+
+        // Up to three spaces still open a block.
+        let (text, block) = scan(&["Checking.\n   <function_calls>\n</function_calls>"]);
+        assert_eq!((text.as_str(), block.as_deref()), ("Checking.", Some("\n")));
     }
 
     #[test]
