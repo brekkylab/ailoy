@@ -77,6 +77,9 @@ impl OpenRouterModel {
             "messages": chat_messages(messages)?,
             "stream": true,
             "stream_options": {"include_usage": true},
+            // Without it, OpenRouter holds the model's whole output limit against the
+            // account's credit, and a low balance turns every call into a 402.
+            "max_tokens": 32000,
         });
         let obj = body.as_object_mut().unwrap();
 
