@@ -15,6 +15,7 @@ use std::sync::Arc;
 use _virtx::console::PyConsoleClient;
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
+    browser::{AskUser, Browser, BrowserSession},
     datatype::Value,
     lang_model::{ReasoningEffort, ResponseFormat},
     memory::Memory,
@@ -144,6 +145,32 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.shared_console(slot)))
     }
 
+    /// A browser the agent drives and a person watches at `Agent.browser_url`. `ask_user` is
+    /// how the agent waits on them: `"end_turn"` shows the request and ends the turn, `"wait"`
+    /// waits in the tool call until they press Done. `locale` is the language pages are asked
+    /// in, such as `"ko-KR"`; this host's by default. Needs a console with its network on.
+    #[pyo3(signature = (ask_user = "end_turn", locale = None))]
+    fn browser<'py>(
+        slf: PyRef<'py, Self>,
+        ask_user: &str,
+        locale: Option<String>,
+    ) -> PyResult<PyRef<'py, Self>> {
+        let mode = match ask_user {
+            "end_turn" => AskUser::EndTurn,
+            "wait" => AskUser::Wait,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "ask_user is \"end_turn\" or \"wait\", not {other:?}"
+                )));
+            }
+        };
+        let mut browser = Browser::sandboxed().ask_user(mode);
+        if let Some(locale) = locale {
+            browser = browser.locale(locale);
+        }
+        Self::update(slf, |b| Ok(b.browser(browser)))
+    }
+
     /// Remember into the memory store at `memfile`, a path in the console.
     fn memory(slf: PyRef<'_, Self>, memfile: String) -> PyResult<PyRef<'_, Self>> {
         Self::update(slf, |b| Ok(b.memory(Memory::new(memfile))))
@@ -218,12 +245,17 @@ type Held = Arc<Mutex<OnRuntime<Agent>>>;
 #[pyclass(name = "Agent", module = "ailoy", frozen)]
 pub struct PyAgent {
     agent: Held,
+
+    /// Kept apart from the agent so `browser_url` reads while a turn holds it.
+    browser: Option<Arc<BrowserSession>>,
 }
 
 impl PyAgent {
     fn new(agent: Agent) -> Self {
+        let browser = agent.browser();
         PyAgent {
             agent: Arc::new(Mutex::new(OnRuntime(Some(agent)))),
+            browser,
         }
     }
 }
@@ -316,6 +348,13 @@ impl PyAgent {
             .map_err(|_| AiloyError::new_err("this agent is in the middle of a turn"))?;
         let agent = guard.0.as_ref().ok_or_else(closed)?;
         to_py(py, &agent.get_history())
+    }
+
+    /// Where a person watches and uses the agent's browser, once it has booted; `None` before,
+    /// and for an agent without one. Readable during a turn.
+    #[getter]
+    fn browser_url(&self) -> Option<String> {
+        self.browser.as_ref()?.url()
     }
 
     /// Run one turn on `query` — a message dict, or a string as the user's text — and

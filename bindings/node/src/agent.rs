@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
+    browser::{AskUser, Browser, BrowserSession},
     datatype::Value,
     lang_model::{ReasoningEffort, ResponseFormat},
     memory::Memory,
@@ -86,6 +87,16 @@ impl JsAgentBuilder {
 
 fn built() -> napi::Error<String> {
     invalid("this AgentBuilder has already been built")
+}
+
+#[napi(object)]
+pub struct BrowserOptions {
+    /// How the agent waits on the person: `'endTurn'` (the default) shows its request and ends
+    /// the turn, `'wait'` waits until they press Done.
+    #[napi(ts_type = "'endTurn' | 'wait'")]
+    pub ask_user: Option<String>,
+    /// The language pages are asked in, such as `'ko-KR'`; this host's by default.
+    pub locale: Option<String>,
 }
 
 #[napi(object)]
@@ -203,6 +214,31 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.shared_console(slot)))
     }
 
+    /// A browser the agent drives and a person watches at `Agent.browserUrl`. Needs a console
+    /// with its network on.
+    #[napi]
+    pub fn browser<'env>(
+        &mut self,
+        this: This<'env>,
+        options: Option<BrowserOptions>,
+    ) -> Result<This<'env>> {
+        let (ask_user, locale) = options.map_or((None, None), |o| (o.ask_user, o.locale));
+        let mode = match ask_user.as_deref() {
+            None | Some("endTurn") => AskUser::EndTurn,
+            Some("wait") => AskUser::Wait,
+            Some(other) => {
+                return Err(invalid(format!(
+                    "askUser is 'endTurn' or 'wait', not {other:?}"
+                )));
+            }
+        };
+        let mut browser = Browser::sandboxed().ask_user(mode);
+        if let Some(locale) = locale {
+            browser = browser.locale(locale);
+        }
+        self.update(this, |b| Ok(b.browser(browser)))
+    }
+
     /// Remember into the memory store at `memfile`, a path in the console.
     #[napi]
     pub fn memory<'env>(&mut self, this: This<'env>, memfile: String) -> Result<This<'env>> {
@@ -303,6 +339,9 @@ type Held = Arc<Mutex<OnRuntime<Agent>>>;
 pub struct JsAgent {
     agent: Held,
 
+    /// Kept apart from the agent so `browserUrl` reads while a turn holds it.
+    browser: Option<Arc<BrowserSession>>,
+
     /// The runtime the agent was built on, which a turn's stream is let go of on too.
     runtime: Handle,
 }
@@ -311,8 +350,10 @@ impl JsAgent {
     /// Built inside a promise's future, so the current runtime is the one to keep.
     fn new(agent: Agent) -> Self {
         let runtime = Handle::current();
+        let browser = agent.browser();
         JsAgent {
             agent: Arc::new(Mutex::new(OnRuntime::new(agent, runtime.clone()))),
+            browser,
             runtime,
         }
     }
@@ -432,6 +473,13 @@ impl JsAgent {
             .map_err(|_| error::ailoy("this agent is in the middle of a turn"))?;
         let agent = guard.value.as_ref().ok_or_else(closed)?;
         Ok(Json(agent.get_history().to_vec()))
+    }
+
+    /// Where a person watches and uses the agent's browser, once it has booted; `null` before,
+    /// and for an agent without one. Readable during a turn.
+    #[napi(getter)]
+    pub fn browser_url(&self) -> Option<String> {
+        self.browser.as_ref()?.url()
     }
 
     /// Run one turn on `query` — a message, or a string as the user's text — and iterate what

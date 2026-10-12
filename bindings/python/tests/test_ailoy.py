@@ -175,6 +175,27 @@ async def test_an_unregistered_tool_is_an_error():
         await AgentBuilder(MODEL).agent_provider(PROVIDER).tool(missing).build()
 
 
+async def test_a_browser_needs_a_console():
+    with pytest.raises(AiloyError, match="needs a console"):
+        await AgentBuilder(MODEL).agent_provider(PROVIDER).browser().build()
+
+
+def test_ask_user_is_end_turn_or_wait():
+    AgentBuilder(MODEL).browser(ask_user="wait")
+    with pytest.raises(ValueError):
+        AgentBuilder(MODEL).browser(ask_user="later")
+
+
+def test_a_browser_takes_a_locale():
+    AgentBuilder(MODEL).browser(locale="ko-KR")
+    AgentBuilder(MODEL).browser(ask_user="wait", locale="ja")
+
+
+async def test_no_browser_has_no_url():
+    agent = await AgentBuilder(MODEL).agent_provider(PROVIDER).build()
+    assert agent.browser_url is None
+
+
 # ---- a turn, against the fake model ---------------------------------------------------
 
 
@@ -272,6 +293,14 @@ async def test_from_spec_and_closing():
 
 
 # ---- against the console server virtx starts by default ----------------------------
+
+
+async def test_a_browser_boots_only_when_used():
+    console = await ConsoleClient.builder().image(Recipe("python:3.12-slim-trixie")).network(True).build()
+    agent = await AgentBuilder(MODEL).agent_provider(PROVIDER).console(console).browser().build()
+    assert agent.browser_url is None
+    await agent.close()
+    await console.close()
 
 
 async def test_the_agent_shares_the_console(tmp_path):

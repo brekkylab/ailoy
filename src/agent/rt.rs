@@ -8,6 +8,7 @@ use crate::{
         skill::render_skills,
         subagent::{get_subagent_tool_desc, get_subagent_tool_func},
     },
+    browser::{self, BrowserSession},
     lang_model::{LangModel, LangModelOptions},
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
     tool::{
@@ -145,6 +146,13 @@ impl Agent {
             }
         }
 
+        // Like memory, bound to this agent's own browser rather than resolved by name.
+        if let Some(session) = state.browser.clone() {
+            let desc = browser::ask_user_tool_desc(session.ask_mode());
+            tools.insert(desc.name.clone(), browser::ask_user_tool_func(session));
+            tool_descs.push(desc);
+        }
+
         // `any` rather than index 0: seeding a second system message would shadow or
         // duplicate a stray one.
         if !state.history.iter().any(|m| m.role == Role::System) {
@@ -208,23 +216,30 @@ impl Agent {
             section.push_str(&format!("\n- `{}`", path.display()));
         }
 
+        Self::append_system_section(&mut self.state.history, &section);
+    }
+
+    /// Tell the model about its browser, the same way as its mounts.
+    fn seed_browser(&mut self) {
+        if let Some(browser) = &self.state.browser {
+            let section = browser::instruction(browser.ask_mode());
+            Self::append_system_section(&mut self.state.history, &section);
+        }
+    }
+
+    /// Append `section` to the system message once, making one if there is none.
+    fn append_system_section(history: &mut Vec<Message>, section: &str) {
         // Into the *first* text part: the openai, anthropic and gemini schemas keep only
         // `contents.first()` of the system message, silently dropping any later part.
-        let Some(at) = self
-            .state
-            .history
-            .iter()
-            .position(|m| m.role == Role::System)
-        else {
-            // No system message at all: the mounts become one.
-            self.state.history.insert(
+        let Some(at) = history.iter().position(|m| m.role == Role::System) else {
+            history.insert(
                 0,
                 Message::new(Role::System).with_contents([Part::text(section.trim_start())]),
             );
             return;
         };
 
-        let system = &mut self.state.history[at];
+        let system = &mut history[at];
         match system.contents.iter_mut().find_map(|p| match p {
             Part::Text { text } => Some(text),
             _ => None,
@@ -232,12 +247,10 @@ impl Agent {
             // Seeding runs every turn and may run over a history another `Agent` seeded;
             // the section is deterministic, so it serves as its own idempotence marker.
             Some(text) => {
-                if text.contains(section.as_str()) {
-                    return;
+                if !text.contains(section) {
+                    text.push_str(section);
                 }
-                text.push_str(&section);
             }
-            // System message without text: the mounts lead it.
             None => system.contents.insert(0, Part::text(section.trim_start())),
         }
     }
@@ -343,6 +356,8 @@ impl Agent {
                 .ok_or_else(|| anyhow::anyhow!("No tool found for '{}'", tool_name))?;
 
             let console_slot = self.state.console.clone();
+            let browser_for_call: Option<std::sync::Arc<BrowserSession>> =
+                self.state.browser.clone();
             let tx = tx.clone();
 
             futs.push(Box::pin(async move {
@@ -388,6 +403,16 @@ impl Agent {
                                      `AgentBuilder::console`"
                                 )
                             })?;
+                            // The browser boots on the first command that drives it.
+                            if let Some(browser) = &browser_for_call
+                                && tool_name_for_call == "shell"
+                                && call_args
+                                    .pointer("/cmd")
+                                    .and_then(|v| v.as_str())
+                                    .is_some_and(|cmd| cmd.contains("agent-browser"))
+                            {
+                                browser.ensure(console).await?;
+                            }
                             let mut stream = tool.call(call_args, call_id_for_call, console);
                             let mut last: Option<MessageOutput> = None;
                             while let Some(item) = stream.next().await {
@@ -485,6 +510,28 @@ impl Agent {
         &self.state.history
     }
 
+    /// Where a person watches and uses this agent's browser, once it has booted.
+    pub fn browser_url(&self) -> Option<String> {
+        self.state.browser.as_ref()?.url()
+    }
+
+    /// This agent's browser, to keep for reading its [`url`](BrowserSession::url) while a turn
+    /// holds the agent.
+    pub fn browser(&self) -> Option<std::sync::Arc<BrowserSession>> {
+        self.state.browser.clone()
+    }
+
+    /// `query`, led by what the person did in the browser since the last turn. A browser that
+    /// cannot be reached tells nothing rather than failing the turn.
+    async fn with_browser_news(&self, mut query: Message) -> Message {
+        if let Some(browser) = &self.state.browser
+            && let Ok(Some(note)) = browser.catch_up().await
+        {
+            query.contents.insert(0, Part::text(note));
+        }
+        query
+    }
+
     pub fn get_context_manager(&self) -> Option<&ContextManager> {
         self.context_manager.as_ref()
     }
@@ -496,6 +543,7 @@ impl Agent {
     ) -> Pin<Box<impl Stream<Item = anyhow::Result<MessageOutput>> + Send + '_>> {
         Box::pin(async_stream::try_stream! {
 
+            let query = self.with_browser_news(query).await;
             self.state.history.push(query);
             // Pop the query if the turn fails before its assistant message commits, so a
             // reused agent doesn't push two consecutive User messages (most providers
@@ -503,6 +551,7 @@ impl Agent {
             let mut committed = false;
 
             self.seed_console_mounts().await;
+            self.seed_browser();
 
             loop {
                 // Truncation check based on previous call's token usage.
@@ -590,6 +639,7 @@ impl Agent {
     ) -> Pin<Box<impl Stream<Item = anyhow::Result<MessageDeltaOutput>> + Send + '_>> {
         Box::pin(async_stream::try_stream! {
 
+            let query = self.with_browser_news(query).await;
             self.state.history.push(query);
             // Pop the query if the turn fails before its assistant message commits, so a
             // reused agent doesn't push two consecutive User messages (most providers
@@ -597,6 +647,7 @@ impl Agent {
             let mut committed = false;
 
             self.seed_console_mounts().await;
+            self.seed_browser();
 
             loop {
                 // Truncation check based on previous call's token usage.
@@ -713,6 +764,26 @@ mod tests {
         tool::{ToolDescBuilder, ToolProvider, get_tool_providers_mut},
         tool_func,
     };
+
+    // ── system sections ───────────────────────────────────────────────────────
+
+    /// A section goes into the system message's first text part once, however many turns seed it.
+    #[test]
+    fn test_system_section_is_appended_once() {
+        let mut history = vec![Message::new(Role::System).with_contents([Part::text("Be brief.")])];
+        Agent::append_system_section(&mut history, "\n\n# Browser\n\nhere");
+        Agent::append_system_section(&mut history, "\n\n# Browser\n\nhere");
+        assert_eq!(history.len(), 1);
+        assert_eq!(
+            history[0].contents[0].as_text(),
+            Some("Be brief.\n\n# Browser\n\nhere")
+        );
+
+        let mut empty = Vec::new();
+        Agent::append_system_section(&mut empty, "\n\n# Browser\n\nhere");
+        assert_eq!(empty[0].role, Role::System);
+        assert_eq!(empty[0].contents[0].as_text(), Some("# Browser\n\nhere"));
+    }
 
     // ── helpers ───────────────────────────────────────────────────────────────
 

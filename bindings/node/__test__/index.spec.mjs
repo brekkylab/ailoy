@@ -55,6 +55,24 @@ test('registering into a provider that does not exist throws', () => {
   })
 })
 
+test('a browser needs a console', async () => {
+  registerLangModel('fake-browser/*', 'chat_completion', 'http://127.0.0.1:9/v1/chat/completions')
+  await assert.rejects(new AgentBuilder('fake-browser/model').browser().build(), {
+    code: 'AILOY_ERROR',
+    message: /needs a console/,
+  })
+})
+
+test('askUser is endTurn or wait', () => {
+  new AgentBuilder('m').browser({ askUser: 'wait' })
+  assert.throws(() => new AgentBuilder('m').browser({ askUser: 'later' }), { code: 'INVALID_ARG' })
+})
+
+test('a browser takes a locale', () => {
+  new AgentBuilder('m').browser({ locale: 'ko-KR' })
+  new AgentBuilder('m').browser({ askUser: 'wait', locale: 'ja' })
+})
+
 // ---- a turn, against a model served from this process --------------------------------------
 
 /** The last message's text, or the tool results it carries. */
@@ -205,6 +223,21 @@ test('an agent shares its console, and closing the agent leaves it open', async 
     await agent.close()
     const result = await console_.exec(['echo', 'still here'])
     assert.equal(result.stdout.toString().trim(), 'still here')
+  } finally {
+    await console_.close()
+  }
+})
+
+test('a browser boots only when used', async () => {
+  const console_ = await ConsoleClient.builder()
+    .image(new Recipe('python:3.12-slim-trixie'))
+    .network(true)
+    .build()
+  try {
+    registerLangModel('fake-browser/*', 'chat_completion', 'http://127.0.0.1:9/v1/chat/completions')
+    const agent = await new AgentBuilder('fake-browser/model').console(console_).browser().build()
+    assert.equal(agent.browserUrl, null)
+    await agent.close()
   } finally {
     await console_.close()
   }

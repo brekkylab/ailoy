@@ -5,6 +5,7 @@ use virtx::console::ConsoleClient;
 
 use crate::{
     agent::{Agent, AgentSpec, AgentState, ContextManager},
+    browser::{Browser, BrowserSession},
     memory::Memory,
     message::Message,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -52,6 +53,8 @@ pub struct AgentBuilder {
     memory: Option<Memory>,
 
     context_manager: Option<ContextManager>,
+
+    browser: Option<Browser>,
 }
 
 impl AgentBuilder {
@@ -66,6 +69,7 @@ impl AgentBuilder {
             console: None,
             memory: None,
             context_manager: None,
+            browser: None,
         }
     }
 
@@ -156,6 +160,14 @@ impl AgentBuilder {
     /// The store must already exist (`mem init`); a missing file is reported by the first
     /// memory tool call, not by [`build`](Self::build). Memory tools run on the
     /// [`console`](Self::console), so one is required too.
+    /// Give the agent a browser, which a person watches and uses at
+    /// [`Agent::browser_url`]. Needs a [`console`](Self::console) with its network on: the
+    /// agent drives the browser from it. The browser boots the first time the agent uses it.
+    pub fn browser(mut self, browser: Browser) -> Self {
+        self.browser = Some(browser);
+        self
+    }
+
     pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
         self.memory = Some(memory.into());
         self
@@ -216,6 +228,7 @@ impl AgentBuilder {
             console,
             memory,
             context_manager,
+            browser,
         } = self;
 
         let mut state = AgentState::new();
@@ -224,6 +237,12 @@ impl AgentBuilder {
         }
         if let Some(m) = memory {
             state = state.with_memory(m);
+        }
+        if let Some(browser) = browser {
+            if !state.console.lock().await.is_some() {
+                anyhow::bail!("a browser needs a console: pass one to `AgentBuilder::console`");
+            }
+            state = state.with_browser(BrowserSession::new(browser));
         }
         if !history.is_empty() {
             state = state.with_history(history);
@@ -320,6 +339,24 @@ mod tests {
             .await
             .expect("exec failed");
         assert_eq!(result.stdout, b"ok\n");
+    }
+
+    /// A browser is driven from the console, so one without a console is refused at build.
+    #[tokio::test]
+    async fn test_builder_browser_needs_a_console() {
+        ensure_dummy_provider();
+        let refused = AgentBuilder::new(TEST_MODEL)
+            .agent_provider(TEST_PROVIDER_NAME)
+            .browser(crate::browser::Browser::sandboxed())
+            .build()
+            .await;
+        assert!(
+            refused
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("needs a console")
+        );
     }
 
     #[tokio::test]
