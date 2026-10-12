@@ -1,0 +1,13 @@
+{
+  "name": "ailoy",
+  "version": "0.1.0",
+  "description": "Build an AI agent in Python, Node.js or Rust, with a Linux micro-VM of its own to run code in.",
+  "author": {
+    "name": "brekkylab",
+    "url": "https://github.com/brekkylab"
+  },
+  "homepage": "https://brekkylab.github.io/ailoy/",
+  "repository": "https://github.com/brekkylab/ailoy",
+  "license": "Apache-2.0",
+  "keywords": ["agent", "llm", "ai", "tool-use", "sandbox", "mcp", "python", "nodejs", "rust"]
+}

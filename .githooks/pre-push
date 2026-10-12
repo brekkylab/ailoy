@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Installed by `git config core.hooksPath .githooks`. Runs the gate in AGENTS.md before anything
+# leaves the machine: clippy with warnings as errors, then the library's tests. The bindings'
+# suites are not run here; they need a built addon or wheel and take minutes.
+#
+# SKIP_HOOKS=1 git push ...   skips it once.
+set -euo pipefail
+
+if [[ "${SKIP_HOOKS:-}" == "1" ]]; then
+  exit 0
+fi
+
+cd "$(git rev-parse --show-toplevel)"
+cargo clippy --workspace -- -D warnings
+cargo test
