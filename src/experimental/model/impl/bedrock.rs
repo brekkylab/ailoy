@@ -178,6 +178,27 @@ impl BedrockModel {
             );
         }
 
+        if self.is_vendor("anthropic") {
+            let cache_point = || to_value!({"cachePoint": {"type": "default"}});
+            let prefix = if body.pointer("/system").is_some() {
+                "/system"
+            } else {
+                "/toolConfig/tools"
+            };
+            if let Some(prefix) = body.pointer_mut(prefix).and_then(|v| v.as_array_mut()) {
+                prefix.push(cache_point());
+            }
+            let latest = body
+                .pointer_mut("/messages")
+                .and_then(|v| v.as_array_mut())
+                .and_then(|turns| turns.last_mut())
+                .and_then(|turn| turn.pointer_mut("/content"))
+                .and_then(|v| v.as_array_mut());
+            if let Some(latest) = latest {
+                latest.push(cache_point());
+            }
+        }
+
         Ok(body.into())
     }
 }
@@ -741,5 +762,31 @@ mod tests {
         let calls = out.message.tool_calls.unwrap();
         assert_eq!(calls.len(), 1);
         assert!(matches!(out.finish_reason, FinishReason::ToolCall {}));
+    }
+
+    #[test]
+    fn claude_gets_cache_points_after_the_prefix_and_the_latest_turn() {
+        let messages = [
+            Message::new(Role::System).with_contents([Part::text("be brief")]),
+            Message::new(Role::User).with_contents([Part::text("hi")]),
+        ];
+        let cache_point = serde_json::json!({"cachePoint": {"type": "default"}});
+
+        let claude = BedrockModel::new("us.anthropic.claude-sonnet-4-5", "k", "us-east-1");
+        let body = claude
+            .body(&messages, &[], &LangModelOptions::default())
+            .unwrap();
+        assert_eq!(
+            body["system"].as_array().unwrap().last(),
+            Some(&cache_point)
+        );
+        let turn = &body["messages"][0]["content"];
+        assert_eq!(turn.as_array().unwrap().last(), Some(&cache_point));
+
+        let nova = BedrockModel::new("us.amazon.nova-pro-v1:0", "k", "us-east-1");
+        let body = nova
+            .body(&messages, &[], &LangModelOptions::default())
+            .unwrap();
+        assert!(!body.to_string().contains("cachePoint"));
     }
 }

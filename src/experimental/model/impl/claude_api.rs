@@ -102,6 +102,7 @@ impl ClaudeApiModel {
             "model": self.model.as_str(),
             "messages": marshal_messages(messages),
             "stream": true,
+            "cache_control": {"type": "ephemeral"},
         });
         let obj = body.as_object_mut().unwrap();
 
