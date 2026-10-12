@@ -26,10 +26,10 @@ Run these before pushing. There is no pull-request CI, so what you run locally i
 
 ```bash
 cargo fmt --all --check
-cargo clippy --workspace
+cargo clippy --workspace -- -D warnings
 cargo test
-cd bindings/python && uv run maturin develop && uv run pytest   # Python
-cd bindings/node && npm install && npm run build:debug && npm test   # Node
+(cd bindings/python && uv run maturin develop && uv run pytest)   # Python
+(cd bindings/node && npm install && npm run build:debug && npm test)   # Node
 ```
 
 - `git config core.hooksPath .githooks` installs the hooks in `.githooks/`: the format check on every commit, and clippy plus the library's tests on every push. `SKIP_HOOKS=1 git push` skips the hook for that one command.

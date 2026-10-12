@@ -10,8 +10,8 @@ The toolchain is pinned in `rust-toolchain.toml`; `rustup` installs it on the fi
 git clone https://github.com/brekkylab/ailoy
 cd ailoy
 cargo build
-cd bindings/python && uv run maturin develop     # Python
-cd bindings/node && npm install && npm run build  # Node
+(cd bindings/python && uv run maturin develop)     # Python
+(cd bindings/node && npm install && npm run build)  # Node
 ```
 
 An agent's console runs on [virtx](https://github.com/brekkylab/virtx)'s server, which `ensure_virtx()` (and the tests) fetch into `$VIRTX_HOME/bin` on first use. Mounting a host folder into it needs FUSE: FUSE-T on macOS, Dokany on Windows. Tests that drive a provider read its key from the environment or a `.env` file at the repository root (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK`), and skip without it.
@@ -22,8 +22,8 @@ An agent's console runs on [virtx](https://github.com/brekkylab/virtx)'s server,
 cargo fmt --all --check
 cargo clippy --workspace -- -D warnings
 cargo test
-cd bindings/python && uv run pytest   # after `maturin develop`
-cd bindings/node && npm test          # after `npm run build:debug`
+(cd bindings/python && uv run pytest)   # after `maturin develop`
+(cd bindings/node && npm test)          # after `npm run build:debug`
 ```
 
 There is no pull-request CI, so what you run locally is the gate. `git config core.hooksPath .githooks` installs the hooks in `.githooks/`: the format check on every commit, and clippy plus the library's tests on every push. `SKIP_HOOKS=1 git push` skips the hook for that one command. A run without provider keys covers less than the suite: say which keys were set when you report one.
