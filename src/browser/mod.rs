@@ -1,32 +1,22 @@
-//! A browser the agent drives, which a person watches and uses from their own browser.
+//! A browser the agent drives with `/abin/agent-browser` from its console, over CDP.
 //!
-//! The browser runs in a console of its own: Chromium, and `/abin/viewer` showing it on a port
-//! published to this host. The agent drives it from its console with `/abin/agent-browser`
-//! over CDP, so the browser outlives the agent's console stopping between tool batches.
-//! Nothing boots until the agent first runs `agent-browser`, or asks the person something.
-//!
-//! The browser console ends with the agent.
+//! [`Browser::sandboxed`] is Chromium in a console of its own, which a person watches and uses
+//! from their browser through a viewer. [`Browser::host`] is the person's own Chrome, lent with
+//! their consent. Either way the browser outlives the agent's console stopping between tool
+//! batches, nothing starts until the agent first runs `agent-browser` or asks the person
+//! something, and what ailoy started ends with the agent.
+
+mod host;
+mod sandboxed;
 
 use std::{
-    net::TcpListener,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::Duration,
+    fmt, future::Future, net::TcpListener, path::PathBuf, pin::Pin, sync::Arc, time::Duration,
 };
 
-use anyhow::{Context as _, bail};
-use tokio::sync::{Mutex, OnceCell};
-use virtx::{console::ConsoleClient, image::Recipe, protocol::Port};
+use anyhow::bail;
+use virtx::console::ConsoleClient;
 
 use crate::tool::{ToolDesc, ToolDescBuilder, ToolFunc};
-
-/// Where Chromium's DevTools and the viewer listen inside the browser console.
-const CDP_PORT: u16 = 9222;
-const VIEWER_PORT: u16 = 4849;
-/// HeadlessChrome in the user agent is what sites turn away.
-const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36";
 
 /// How `ask_user` waits for the person.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -34,16 +24,54 @@ pub enum AskUser {
     /// Show the request and end the turn; the next run picks up from whatever the person did.
     #[default]
     EndTurn,
-    /// Show the request and wait in the tool call until the person presses Done.
+    /// Wait in the tool call until the person answers: Done in the viewer, or what
+    /// [`Browser::on_ask`] returns.
     Wait,
 }
 
-/// A browser for an agent, set with [`AgentBuilder::browser`](crate::agent::AgentBuilder::browser).
+/// How the person answered a request, from an [`on_ask`](Browser::on_ask) handler.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AskResult {
+    Done,
+    Declined,
+    /// Done, with something to tell the agent.
+    Note(String),
+}
+
+/// Asks the person `message`, however the app does that, and returns their answer.
+pub type AskHandler =
+    Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = AskResult> + Send>> + Send + Sync>;
+
 #[derive(Clone, Debug, Default)]
+enum Mode {
+    #[default]
+    Sandboxed,
+    Host {
+        user_data_dir: Option<PathBuf>,
+    },
+}
+
+/// A browser for an agent, set with [`AgentBuilder::browser`](crate::agent::AgentBuilder::browser).
+#[derive(Clone, Default)]
 pub struct Browser {
+    mode: Mode,
     ask_user: AskUser,
-    /// A BCP 47 tag; this host's language when unset.
+    /// A BCP 47 tag; this host's language when unset. Sandboxed only.
     locale: Option<String>,
+    on_ask: Option<AskHandler>,
+    ask_timeout: Option<Duration>,
+}
+
+impl fmt::Debug for Browser {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Browser")
+            .field("mode", &self.mode)
+            .field("ask_user", &self.ask_user)
+            .field("locale", &self.locale)
+            .field("on_ask", &self.on_ask.is_some())
+            .field("ask_timeout", &self.ask_timeout)
+            .finish()
+    }
 }
 
 impl Browser {
@@ -52,208 +80,202 @@ impl Browser {
         Self::default()
     }
 
+    /// The person's own Chrome (144 or later, with remote debugging on at
+    /// `chrome://inspect/#remote-debugging`), which asks them before it lets the agent in. The
+    /// agent works in a window of its own but is not kept from the person's other tabs, and
+    /// is signed in wherever they are.
+    pub fn host() -> Self {
+        Self {
+            mode: Mode::Host {
+                user_data_dir: None,
+            },
+            ..Self::default()
+        }
+    }
+
+    /// For [`host`](Self::host): the Chrome whose user data directory this is, for Beta,
+    /// Canary or Chromium. The default is this OS's Chrome.
+    pub fn user_data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        if let Mode::Host { user_data_dir } = &mut self.mode {
+            *user_data_dir = Some(dir.into());
+        }
+        self
+    }
+
     pub fn ask_user(mut self, mode: AskUser) -> Self {
         self.ask_user = mode;
         self
     }
 
     /// The language pages are asked in and the browser speaks, such as `"ko-KR"`. This host's
-    /// language by default, and `en-US` when that is unknown.
+    /// language by default, and `en-US` when that is unknown. A [`host`](Self::host) browser
+    /// keeps its own and ignores this.
     pub fn locale(mut self, locale: impl Into<String>) -> Self {
         self.locale = Some(locale.into());
         self
     }
+
+    /// How [`AskUser::Wait`] asks: `handler` gets the request and returns the answer. A
+    /// [`host`](Self::host) browser has no viewer to press Done in, so it needs one.
+    pub fn on_ask<F, Fut>(mut self, handler: F) -> Self
+    where
+        F: Fn(String) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = AskResult> + Send + 'static,
+    {
+        self.on_ask = Some(Arc::new(move |message| Box::pin(handler(message))));
+        self
+    }
+
+    /// How long [`on_ask`](Self::on_ask) may take before the agent hears it timed out; no limit
+    /// by default.
+    pub fn ask_timeout(mut self, timeout: Duration) -> Self {
+        self.ask_timeout = Some(timeout);
+        self
+    }
+
+    fn is_host(&self) -> bool {
+        matches!(self.mode, Mode::Host { .. })
+    }
+
+    /// Refuses what cannot work, before anything starts.
+    pub(crate) fn check(&self) -> anyhow::Result<()> {
+        if self.is_host() && self.ask_user == AskUser::Wait && self.on_ask.is_none() {
+            bail!(
+                "`Browser::host` with `AskUser::Wait` needs `Browser::on_ask`: there is no viewer \
+                 to press Done in"
+            );
+        }
+        Ok(())
+    }
 }
 
-/// An agent's browser, from [`Agent::browser`](crate::agent::Agent::browser): booted on first
+/// Whether a browser command may go ahead.
+pub(crate) enum Ready {
+    /// Go ahead, telling the agent this alongside the command's result, if anything.
+    Go(Option<String>),
+    /// Do not; this is the command's result instead.
+    Refused(String),
+}
+
+enum Backend {
+    Sandboxed(sandboxed::Sandboxed),
+    Host(host::Host),
+}
+
+/// An agent's browser, from [`Agent::browser`](crate::agent::Agent::browser): started on first
 /// use, and ended when the last handle drops. Its [`url`](Self::url) can be read while the
 /// agent is in the middle of a turn.
 pub struct BrowserSession {
     config: Browser,
-    running: OnceCell<Running>,
-    /// The last viewer event already told to the agent.
-    seen: AtomicU64,
-}
-
-struct Running {
-    /// Held so the browser lives as long as the agent; never used after boot.
-    _console: Mutex<ConsoleClient>,
-    #[cfg_attr(not(test), allow(dead_code))]
-    cdp_port: u16,
-    viewer_port: u16,
-    token: String,
-    http: reqwest::Client,
+    backend: Backend,
 }
 
 impl BrowserSession {
     pub(crate) fn new(config: Browser) -> Arc<Self> {
-        Arc::new(Self {
-            config,
-            running: OnceCell::new(),
-            seen: AtomicU64::new(0),
-        })
+        let backend = match &config.mode {
+            Mode::Sandboxed => Backend::Sandboxed(sandboxed::Sandboxed::default()),
+            Mode::Host { user_data_dir } => Backend::Host(host::Host::new(user_data_dir.clone())),
+        };
+        Arc::new(Self { config, backend })
     }
 
-    pub(crate) fn ask_mode(&self) -> AskUser {
-        self.config.ask_user
+    pub(crate) fn config(&self) -> &Browser {
+        &self.config
     }
 
-    /// Where a person watches and uses the browser, token included, once it has booted.
+    /// Where a person watches and uses a [sandboxed](Browser::sandboxed) browser, token
+    /// included, once it has booted. `None` for a host one: the person has it in front of them.
     pub fn url(&self) -> Option<String> {
-        let running = self.running.get()?;
-        Some(format!(
-            "http://localhost:{}/#t={}",
-            running.viewer_port, running.token
-        ))
-    }
-
-    /// Boots the browser if it is not up, and points `agent`'s agent-browser at it.
-    pub(crate) async fn ensure(&self, agent: &mut ConsoleClient) -> anyhow::Result<()> {
-        self.running
-            .get_or_try_init(|| boot(agent, &self.config))
-            .await
-            .map(|_| ())
-    }
-
-    /// Shows `message` to the person; with [`AskUser::Wait`], returns once they press Done.
-    pub(crate) async fn request(&self, message: &str) -> anyhow::Result<()> {
-        let wait = self.config.ask_user == AskUser::Wait;
-        let body = serde_json::json!({ "message": message, "wait": wait });
-        let mut call = self.control(reqwest::Method::POST, "request")?.json(&body);
-        if !wait {
-            call = call.timeout(Duration::from_secs(10));
+        match &self.backend {
+            Backend::Sandboxed(sandboxed) => sandboxed.url(),
+            Backend::Host(_) => None,
         }
-        call.send().await?.error_for_status()?;
-        Ok(())
+    }
+
+    /// Starts the browser, or connects to it, if that has not happened, and points `agent`'s
+    /// agent-browser at it.
+    pub(crate) async fn ensure(&self, agent: &mut ConsoleClient) -> anyhow::Result<Ready> {
+        self.ensure_for(agent, false).await
+    }
+
+    /// As [`Self::ensure`]; `asking` is `ask_user`'s, which asks again after a refusal.
+    async fn ensure_for(&self, agent: &mut ConsoleClient, asking: bool) -> anyhow::Result<Ready> {
+        match &self.backend {
+            Backend::Sandboxed(sandboxed) => {
+                sandboxed
+                    .ensure(agent, self.config.locale.as_deref())
+                    .await?;
+                Ok(Ready::Go(None))
+            }
+            Backend::Host(host) => host.ensure(agent, asking).await,
+        }
     }
 
     /// What the person did in the viewer since the agent last heard, as one note for its next
-    /// message; and, for [`AskUser::EndTurn`], the request it was answering taken down.
+    /// message; and, for [`AskUser::EndTurn`], the request it was answering taken down. A host
+    /// browser has nothing to tell: the agent reads its pages again.
     pub(crate) async fn catch_up(&self) -> anyhow::Result<Option<String>> {
-        if self.running.get().is_none() {
-            return Ok(None);
+        match &self.backend {
+            Backend::Sandboxed(sandboxed) => {
+                sandboxed
+                    .catch_up(self.config.ask_user == AskUser::EndTurn)
+                    .await
+            }
+            Backend::Host(_) => Ok(None),
         }
-        let since = self.seen.load(Ordering::Relaxed);
-        let answer: serde_json::Value = self
-            .control(reqwest::Method::GET, &format!("events?since={since}"))?
-            .timeout(Duration::from_secs(10))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        if self.config.ask_user == AskUser::EndTurn {
-            self.control(reqwest::Method::POST, "clear")?
-                .timeout(Duration::from_secs(10))
-                .send()
-                .await?
-                .error_for_status()?;
-        }
-        if let Some(next) = answer["next"].as_u64() {
-            self.seen.store(next, Ordering::Relaxed);
-        }
-        let events = answer["events"].as_array().cloned().unwrap_or_default();
-        Ok(describe_events(&events))
     }
 
-    fn control(
-        &self,
-        method: reqwest::Method,
-        path: &str,
-    ) -> anyhow::Result<reqwest::RequestBuilder> {
-        let running = self.running.get().context("the browser is not running")?;
-        Ok(running
-            .http
-            .request(
-                method,
-                format!("http://127.0.0.1:{}/control/{path}", running.viewer_port),
-            )
-            .bearer_auth(&running.token))
-    }
-}
-
-/// The browser console, Chromium and the viewer in it, and the agent's agent-browser pointed
-/// at them.
-async fn boot(agent: &mut ConsoleClient, config: &Browser) -> anyhow::Result<Running> {
-    let locale = match &config.locale {
-        Some(locale) => {
-            language_tag(locale).with_context(|| format!("{locale:?} is not a language tag"))?
+    /// `ask_user`: the tool result for asking the person `message`.
+    async fn ask(&self, agent: &mut ConsoleClient, message: &str) -> crate::datatype::Value {
+        match self.ensure_for(agent, true).await {
+            Ok(Ready::Go(_)) => {}
+            Ok(Ready::Refused(why)) => {
+                return crate::to_value!({ "error": why, "phase": "browser" });
+            }
+            Err(e) => return crate::to_value!({ "error": format!("{e:#}"), "phase": "browser" }),
         }
-        None => sys_locale::get_locale()
-            .as_deref()
-            .and_then(language_tag)
-            .unwrap_or_else(|| "en-US".into()),
-    };
-    let accept = accept_languages(&locale);
-    let (cdp_port, viewer_port) = (free_port()?, free_port()?);
-    let mut console = ConsoleClient::builder()
-        .image(
-            Recipe::new("debian:trixie-slim").step(
-                "apt-get update \
-                 && apt-get install -y --no-install-recommends chromium fonts-noto-cjk ca-certificates \
-                 && rm -rf /var/lib/apt/lists/* /var/log/journal",
-            ),
-        )
-        .network(true)
-        .ports([
-            format!("{cdp_port}:{CDP_PORT}").parse::<Port>()?,
-            format!("{viewer_port}:{VIEWER_PORT}").parse::<Port>()?,
-        ])
-        .vcpus(2)
-        .memory_mib(2048)
-        .build()
-        .await
-        .context("booting the browser console")?;
-
-    require(&mut console, "/abin/viewer").await?;
-    require(agent, "/abin/agent-browser").await?;
-
-    let token = token();
-    run(
-        &mut console,
-        &format!(
-            "setsid nohup chromium --headless --no-sandbox --user-data-dir=/root/chromium \
-             --window-size=1280,860 --lang={locale} --accept-lang={accept} \
-             --user-agent='{USER_AGENT}' --remote-debugging-port={CDP_PORT} about:blank >/tmp/chromium.log 2>&1 &"
-        ),
-    )
-    .await?;
-    let http = reqwest::Client::builder().build()?;
-    let first_tab = first_tab(&http, cdp_port).await?;
-    run(
-        &mut console,
-        &format!(
-            "setsid nohup /abin/viewer --cdp 127.0.0.1:{CDP_PORT} --listen 127.0.0.1:{VIEWER_PORT} \
-             --token {token} >/tmp/viewer.log 2>&1 &"
-        ),
-    )
-    .await?;
-
-    // Pinned, so a tab the person opens does not pull the agent away; bound beforehand to
-    // Chromium's first tab, which a pinned session would otherwise leave behind for one of its own.
-    let config = serde_json::json!({ "cdp": cdp_port.to_string(), "pinTab": true });
-    let binding =
-        serde_json::json!({ "targetId": first_tab, "url": "about:blank", "pinned": true });
-    run(
-        agent,
-        &format!(
-            "mkdir -p \"$HOME/.agent-browser\" \
-             && printf '%s' '{config}' > \"$HOME/.agent-browser/config.json\" \
-             && printf '%s' '{binding}' > \"$HOME/.agent-browser/default.target\""
-        ),
-    )
-    .await?;
-
-    wait_for(&http, &format!("http://127.0.0.1:{viewer_port}/"))
-        .await
-        .context("the viewer did not come up")?;
-    Ok(Running {
-        _console: Mutex::new(console),
-        cdp_port,
-        viewer_port,
-        token,
-        http,
-    })
+        let sandboxed = match &self.backend {
+            Backend::Sandboxed(sandboxed) => Some(sandboxed),
+            Backend::Host(_) => None,
+        };
+        match (self.config.ask_user, &self.config.on_ask, sandboxed) {
+            (AskUser::Wait, Some(handler), _) => {
+                // Shown in the viewer too, without a Done: the app answers.
+                if let Some(sandboxed) = sandboxed {
+                    let _ = sandboxed.request(message, false).await;
+                }
+                let asked = handler(message.to_string());
+                let answer = match self.config.ask_timeout {
+                    Some(limit) => tokio::time::timeout(limit, asked).await.ok(),
+                    None => Some(asked.await),
+                };
+                if let Some(sandboxed) = sandboxed {
+                    let _ = sandboxed.clear().await;
+                }
+                match answer {
+                    Some(AskResult::Done) => crate::to_value!({ "done": true }),
+                    Some(AskResult::Declined) => crate::to_value!({ "declined": true }),
+                    Some(AskResult::Note(note)) => crate::to_value!({ "done": true, "note": note }),
+                    None => crate::to_value!({ "timeout": true }),
+                }
+            }
+            (mode, _, Some(sandboxed)) => {
+                let wait = mode == AskUser::Wait;
+                match sandboxed.request(message, wait).await {
+                    Ok(()) if wait => crate::to_value!({ "done": true }),
+                    Ok(()) => crate::to_value!({
+                        "shown": true,
+                        "next": "The request is in the user's viewer. End your turn now; their next message is when it is done."
+                    }),
+                    Err(e) => crate::to_value!({ "error": format!("{e:#}"), "phase": "viewer" }),
+                }
+            }
+            // Host and EndTurn (`check` refuses host and Wait without a handler).
+            _ => crate::to_value!({
+                "next": "Nothing is shown to the user: tell them in your reply exactly what to do in their Chrome, then end your turn. Their next message is when it is done."
+            }),
+        }
+    }
 }
 
 async fn run(console: &mut ConsoleClient, cmd: &str) -> anyhow::Result<()> {
@@ -278,21 +300,6 @@ async fn require(console: &mut ConsoleClient, path: &str) -> anyhow::Result<()> 
     Ok(())
 }
 
-/// Chromium's first page, once its DevTools answer.
-async fn first_tab(http: &reqwest::Client, cdp_port: u16) -> anyhow::Result<String> {
-    let url = format!("http://127.0.0.1:{cdp_port}/json/list");
-    wait_for(http, &url)
-        .await
-        .context("Chromium did not come up")?;
-    let targets: serde_json::Value = http.get(&url).send().await?.json().await?;
-    targets
-        .as_array()
-        .and_then(|all| all.iter().find(|t| t["type"] == "page"))
-        .and_then(|t| t["id"].as_str())
-        .map(str::to_string)
-        .context("Chromium has no page")
-}
-
 async fn wait_for(http: &reqwest::Client, url: &str) -> anyhow::Result<()> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
@@ -313,87 +320,41 @@ fn free_port() -> anyhow::Result<u16> {
     Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
 }
 
-/// `locale` as a BCP 47 tag (`ko_KR.UTF-8` is `ko-KR`), or `None` for one that names no
-/// language (`C`, `POSIX`). Only letters, digits and dashes come out, so it is safe in a shell.
-fn language_tag(locale: &str) -> Option<String> {
-    let tag = locale.split(['.', '@']).next()?.replace('_', "-");
-    let language = tag.split('-').next()?;
-    let valid = (2..=3).contains(&language.len())
-        && language.bytes().all(|b| b.is_ascii_alphabetic())
-        && tag.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-        && !tag.ends_with('-');
-    valid.then_some(tag)
-}
-
-/// The languages pages are asked for, in order: `ko-KR` asks for `ko-KR,ko,en`.
-fn accept_languages(tag: &str) -> String {
-    let language = tag.split('-').next().unwrap_or(tag);
-    let mut accept = vec![tag];
-    if language != tag {
-        accept.push(language);
-    }
-    if language != "en" {
-        accept.push("en");
-    }
-    accept.join(",")
-}
-
 /// 122 random bits from the OS, which is what a v4 UUID is.
 fn token() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
-/// The viewer's events as one sentence each, or `None` when the person did nothing.
-fn describe_events(events: &[serde_json::Value]) -> Option<String> {
-    let lines: Vec<String> = events
-        .iter()
-        .filter_map(|e| {
-            let url = e["url"].as_str().unwrap_or_default();
-            let whose = if e["agentTab"].as_bool() == Some(true) {
-                "your tab"
-            } else {
-                "their own tab"
-            };
-            match e["kind"].as_str()? {
-                "done" => Some(format!(
-                    "pressed Done on your request \"{}\"",
-                    e["request"].as_str().unwrap_or_default()
-                )),
-                "opened" => Some("opened a tab of their own".to_string()),
-                "navigated" => Some(format!("moved {whose} to {url}")),
-                "closed" => Some(format!("closed {whose} ({url})")),
-                _ => None,
-            }
-        })
-        .collect();
-    (!lines.is_empty()).then(|| {
-        format!(
-            "[browser] Since your last turn, the user, in the browser viewer: {}.",
-            lines.join("; ")
-        )
-    })
-}
-
 /// What the agent is told about its browser, beside its instruction.
-pub(crate) fn instruction(mode: AskUser) -> String {
-    let asking = match mode {
-        AskUser::EndTurn => {
+pub(crate) fn instruction(browser: &Browser) -> String {
+    let asking = match (browser.ask_user, browser.is_host()) {
+        (AskUser::EndTurn, false) => {
             "call `ask_user` saying exactly what to do in the viewer, then end your turn: \
              their next message is when it is done"
         }
-        AskUser::Wait => {
-            "call `ask_user` saying exactly what to do in the viewer; it returns when they \
-             press Done"
+        (AskUser::EndTurn, true) => {
+            "call `ask_user`, then tell them exactly what to do in their Chrome and end your \
+             turn: their next message is when it is done"
         }
+        (AskUser::Wait, _) => {
+            "call `ask_user` saying exactly what to do; it returns once they have answered"
+        }
+    };
+    let whose = if browser.is_host() {
+        "This is the user's own Chrome, signed in wherever they are. It is already connected \
+         and you have a window of your own: work only in your own tabs, and never read or touch \
+         the user's other tabs. Before anything that cannot be undone (paying, sending, \
+         deleting, posting), ask the user with `ask_user`. Never launch another browser."
+    } else {
+        "It is already connected and on a tab of its own; never launch another browser. The \
+         user watches this browser live and can use it too."
     };
     format!(
         "\n\n# Browser\n\n\
          A web browser is attached to your machine: drive it with the `agent-browser` CLI \
-         through your shell. It is already connected and on a tab of its own; never launch \
-         another browser. Use its default session, which that tab is bound to: never pass \
-         `--session` or set `AGENT_BROWSER_SESSION`. Run `agent-browser skills get core` \
-         before your first browser command. The user watches this browser live and can use it \
-         too.\n\n\
+         through your shell. {whose} Use its default session, which your tab is bound to: \
+         never pass `--session` or set `AGENT_BROWSER_SESSION`. Run `agent-browser skills get \
+         core` before your first browser command.\n\n\
          Read pages as text, not images: `agent-browser snapshot -i` lists the interactive \
          elements with refs, which `click @e3` and `fill @e5 \"...\"` act on; take contents \
          with `get text @e1` or `eval`. A screenshot costs far more: take one only when the \
@@ -404,15 +365,38 @@ pub(crate) fn instruction(mode: AskUser) -> String {
     )
 }
 
-pub(crate) fn ask_user_tool_desc(mode: AskUser) -> ToolDesc {
-    let returns = match mode {
-        AskUser::EndTurn => "It shows the request and returns at once: end your turn after it.",
-        AskUser::Wait => "It returns when the user presses Done in the viewer.",
+pub(crate) fn ask_user_tool_desc(browser: &Browser) -> ToolDesc {
+    let (place, returns) = match (
+        browser.ask_user,
+        browser.is_host(),
+        browser.on_ask.is_some(),
+    ) {
+        (AskUser::EndTurn, false, _) => (
+            "in the browser viewer",
+            "It shows the request and returns at once: end your turn after it.",
+        ),
+        (AskUser::EndTurn, true, _) => (
+            "in their Chrome",
+            "It returns at once: then tell them what to do and end your turn.",
+        ),
+        (AskUser::Wait, false, false) => (
+            "in the browser viewer",
+            "It returns when the user presses Done in the viewer.",
+        ),
+        (AskUser::Wait, host, true) => (
+            if host {
+                "in their Chrome"
+            } else {
+                "in the browser viewer"
+            },
+            "It returns with their answer: done, declined (with a note, perhaps), or timed out.",
+        ),
+        (AskUser::Wait, true, false) => ("in their Chrome", "It returns with their answer."),
     };
     ToolDescBuilder::new("ask_user")
         .description(format!(
-            "Ask the user to do something in the browser viewer that only they can do, such as \
-             signing in. Say exactly what to do, in the user's language. {returns}"
+            "Ask the user to do something {place} that only they can do, such as signing in, or \
+             to confirm something. Say exactly what to do, in the user's language. {returns}"
         ))
         .parameters(crate::to_value!({
             "type": "object",
@@ -431,19 +415,7 @@ pub(crate) fn ask_user_tool_func(session: Arc<BrowserSession>) -> ToolFunc {
         let Some(message) = args.pointer("/message").and_then(|v| v.as_str()).filter(|m| !m.trim().is_empty()) else {
             return crate::to_value!({ "error": "missing required parameter: message", "phase": "validation" });
         };
-        if let Err(e) = session.ensure(console).await {
-            return crate::to_value!({ "error": format!("{e:#}"), "phase": "browser" });
-        }
-        match session.request(message).await {
-            Ok(()) => match session.ask_mode() {
-                AskUser::EndTurn => crate::to_value!({
-                    "shown": true,
-                    "next": "The request is in the user's viewer. End your turn now; their next message is when it is done."
-                }),
-                AskUser::Wait => crate::to_value!({ "done": true }),
-            },
-            Err(e) => crate::to_value!({ "error": format!("{e:#}"), "phase": "viewer" }),
-        }
+        session.ask(console, message).await
     })
 }
 
@@ -452,171 +424,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_locale_becomes_a_language_tag() {
-        assert_eq!(language_tag("ko_KR.UTF-8").as_deref(), Some("ko-KR"));
-        assert_eq!(language_tag("ko-KR").as_deref(), Some("ko-KR"));
-        assert_eq!(language_tag("de_DE@euro").as_deref(), Some("de-DE"));
-        assert_eq!(language_tag("zh-Hant-TW").as_deref(), Some("zh-Hant-TW"));
-        assert_eq!(language_tag("ja").as_deref(), Some("ja"));
-        for no in ["C", "POSIX", "", "ko-KR'; rm -rf /", "ko-", "k1-KR"] {
-            assert_eq!(language_tag(no), None, "{no:?}");
-        }
-        assert_eq!(accept_languages("ko-KR"), "ko-KR,ko,en");
-        assert_eq!(accept_languages("en-US"), "en-US,en");
-        assert_eq!(accept_languages("ja"), "ja,en");
-    }
-
-    #[test]
-    fn events_become_one_note() {
-        assert_eq!(describe_events(&[]), None);
-        let note = describe_events(&[
-            serde_json::json!({ "kind": "done", "request": "Sign in" }),
-            serde_json::json!({ "kind": "navigated", "agentTab": true, "url": "https://x.test/" }),
-            serde_json::json!({ "kind": "closed", "agentTab": false, "url": "https://y.test/" }),
-            serde_json::json!({ "kind": "unknown" }),
-        ])
-        .unwrap();
-        assert_eq!(
-            note,
-            "[browser] Since your last turn, the user, in the browser viewer: pressed Done on your \
-             request \"Sign in\"; moved your tab to https://x.test/; closed their own tab \
-             (https://y.test/)."
-        );
-    }
-
-    /// Boots for real: needs a virtx whose `/abin` carries `viewer` and `agent-browser`
-    /// (`VIRTX_HOME` naming one), and the network.
-    #[tokio::test]
-    #[ignore = "needs a virtx with viewer and agent-browser in /abin"]
-    async fn boots_and_points_the_agent_at_the_browser() {
-        let mut agent = ConsoleClient::builder()
-            .image(Recipe::new("debian:trixie-slim"))
-            .network(true)
-            .build()
-            .await
-            .unwrap();
-        let session = BrowserSession::new(Browser::sandboxed().locale("ja-JP"));
-        assert_eq!(session.url(), None);
-        session.ensure(&mut agent).await.unwrap();
-        let url = session.url().unwrap();
-        let viewer = url.split('#').next().unwrap();
-
-        // The agent drives the tab Chromium started with, so there is still one.
-        let opened = agent
-            .exec(
-                [
-                    "sh",
-                    "-c",
-                    "agent-browser open https://example.com && agent-browser get title",
-                ],
-                Some(60_000),
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            opened.code,
-            0,
-            "{}",
-            String::from_utf8_lossy(&opened.stderr)
-        );
-        assert!(String::from_utf8_lossy(&opened.stdout).contains("Example Domain"));
-        let languages = agent
-            .exec(
-                ["agent-browser", "eval", "navigator.languages.join()"],
-                Some(60_000),
-            )
-            .await
-            .unwrap();
-        assert!(String::from_utf8_lossy(&languages.stdout).contains("ja-JP,ja,en"));
-        let running = session.running.get().unwrap();
-        let http = &running.http;
-        let tabs: serde_json::Value = http
-            .get(format!("http://127.0.0.1:{}/json/list", running.cdp_port))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        let pages = tabs
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|t| t["type"] == "page")
-            .count();
-        assert_eq!(pages, 1);
-        let page = http.get(viewer).send().await.unwrap();
-        assert!(page.status().is_success());
-        let unauthorized = http
-            .get(format!("{viewer}control/events"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(unauthorized.status(), reqwest::StatusCode::UNAUTHORIZED);
-
-        // EndTurn: shown at once, nothing to report, and taken down by the next catch-up.
-        session.request("Sign in, please").await.unwrap();
-        assert_eq!(session.catch_up().await.unwrap(), None);
-    }
-
-    /// A turn that boots the browser by driving it and ends on `ask_user`: needs the same virtx
-    /// as above, and `ANTHROPIC_API_KEY`.
-    #[tokio::test]
-    #[ignore = "needs a virtx with viewer and agent-browser in /abin, and ANTHROPIC_API_KEY"]
-    async fn a_turn_boots_the_browser_and_ends_on_ask_user() {
-        use futures::StreamExt as _;
-
-        dotenvy::dotenv().ok();
-        let console = ConsoleClient::builder()
-            .image(Recipe::new("debian:trixie-slim"))
-            .network(true)
-            .build()
-            .await
-            .unwrap();
-        let mut agent = crate::agent::AgentBuilder::new("anthropic/claude-haiku-4-5")
-            .system_tools()
-            .console(console)
-            .browser(Browser::sandboxed())
-            .build()
-            .await
-            .unwrap();
-        assert_eq!(agent.browser_url(), None);
-
-        let query = crate::message::Message::new(crate::message::Role::User).with_contents([
-            crate::message::Part::text(
-                "Open https://example.com in the browser and read its title. Then ask the user                  to press Done, and stop.",
-            ),
-        ]);
-        let mut called = Vec::new();
-        let mut last_text = String::new();
-        let mut run = agent.run(query);
-        while let Some(output) = run.next().await {
-            let message = output.unwrap().message;
-            for call in message.tool_calls.iter().flatten() {
-                if let Some((_, name, _)) = call.as_function() {
-                    called.push(name.to_string());
-                }
-            }
-            if let Some(text) = message.contents.iter().find_map(|p| p.as_text()) {
-                last_text = text.to_string();
-            }
-        }
-        drop(run);
-        assert!(called.iter().any(|n| n == "shell"), "{called:?}");
-        assert_eq!(
-            called.last().map(String::as_str),
-            Some("ask_user"),
-            "{called:?}"
-        );
-        assert!(agent.browser_url().is_some());
-        eprintln!("tools: {called:?}\nlast text: {last_text}");
-    }
-
-    #[test]
     fn a_token_is_32_hex_digits() {
         let t = token();
         assert_eq!(t.len(), 32);
         assert!(t.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(t, token());
+    }
+
+    #[test]
+    fn host_and_wait_needs_a_handler() {
+        assert!(Browser::host().ask_user(AskUser::Wait).check().is_err());
+        assert!(Browser::host().check().is_ok());
+        assert!(Browser::sandboxed().ask_user(AskUser::Wait).check().is_ok());
+        let answered = Browser::host()
+            .ask_user(AskUser::Wait)
+            .on_ask(async |_| AskResult::Done);
+        assert!(answered.check().is_ok());
+    }
+
+    #[test]
+    fn each_mode_tells_the_agent_its_own_browser() {
+        let host = instruction(&Browser::host());
+        assert!(host.contains("the user's own Chrome") && !host.contains("viewer"));
+        let sandboxed = instruction(&Browser::sandboxed());
+        assert!(sandboxed.contains("viewer") && !sandboxed.contains("own Chrome"));
+        let desc = ask_user_tool_desc(&Browser::host());
+        assert!(
+            desc.description
+                .as_deref()
+                .unwrap_or_default()
+                .contains("their Chrome")
+        );
     }
 }

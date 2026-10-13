@@ -191,6 +191,29 @@ def test_a_browser_takes_a_locale():
     AgentBuilder(MODEL).browser(ask_user="wait", locale="ja")
 
 
+def test_a_browser_is_sandboxed_or_host():
+    AgentBuilder(MODEL).browser("host", user_data_dir="/nonexistent")
+    with pytest.raises(ValueError):
+        AgentBuilder(MODEL).browser("remote")
+
+
+async def test_a_host_browser_waits_only_through_on_ask(tmp_path):
+    with pytest.raises(AiloyError, match="on_ask"):
+        await AgentBuilder(MODEL).agent_provider(PROVIDER).browser("host", ask_user="wait").build()
+
+    async def on_ask(message: str) -> str:
+        return "done"
+
+    # Past that check, to the next: a browser is driven from a console.
+    with pytest.raises(AiloyError, match="needs a console"):
+        await (
+            AgentBuilder(MODEL)
+            .agent_provider(PROVIDER)
+            .browser("host", ask_user="wait", on_ask=on_ask, ask_timeout=5, user_data_dir=tmp_path)
+            .build()
+        )
+
+
 async def test_no_browser_has_no_url():
     agent = await AgentBuilder(MODEL).agent_provider(PROVIDER).build()
     assert agent.browser_url is None

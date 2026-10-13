@@ -39,6 +39,7 @@ use virtx_node::console::{JsConsoleClient, promise, thrown};
 use crate::{
     convert::{Json, from_js, query},
     error::{self, Result, invalid, unsigned},
+    tool::Callback,
 };
 
 /// A value let go of on the runtime it was made on. Dropping an agent or a turn's stream may
@@ -89,13 +90,26 @@ fn built() -> napi::Error<String> {
     invalid("this AgentBuilder has already been built")
 }
 
-#[napi(object)]
+#[napi(object, object_to_js = false)]
 pub struct BrowserOptions {
+    /// `'sandboxed'` (the default), Chromium in a console of its own that a person watches at
+    /// `Agent.browserUrl`, or `'host'`, the person's own Chrome (144 or later, with remote
+    /// debugging on at `chrome://inspect/#remote-debugging`), which asks them first.
+    #[napi(ts_type = "'sandboxed' | 'host'")]
+    pub mode: Option<String>,
+    /// For `'host'`: another Chrome's user data directory, for Beta, Canary or Chromium.
+    pub user_data_dir: Option<String>,
     /// How the agent waits on the person: `'endTurn'` (the default) shows its request and ends
-    /// the turn, `'wait'` waits until they press Done.
+    /// the turn, `'wait'` waits for Done in the viewer, or for `onAsk`.
     #[napi(ts_type = "'endTurn' | 'wait'")]
     pub ask_user: Option<String>,
-    /// The language pages are asked in, such as `'ko-KR'`; this host's by default.
+    /// Given the request, returns (or resolves to) `'done'`, `'declined'`, or any other
+    /// string, a note for the agent; a throw is a decline. A host browser waits only this way.
+    #[napi(ts_type = "(message: string) => unknown")]
+    pub on_ask: Option<Callback>,
+    /// How long `onAsk` may take, in milliseconds; no limit by default.
+    pub ask_timeout_ms: Option<u32>,
+    /// The language a sandboxed browser asks pages in, such as `'ko-KR'`; this host's by default.
     pub locale: Option<String>,
 }
 
@@ -214,16 +228,31 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.shared_console(slot)))
     }
 
-    /// A browser the agent drives and a person watches at `Agent.browserUrl`. Needs a console
-    /// with its network on.
+    /// A browser the agent drives: see `BrowserOptions`. Needs a console with its network on.
     #[napi]
     pub fn browser<'env>(
         &mut self,
         this: This<'env>,
         options: Option<BrowserOptions>,
     ) -> Result<This<'env>> {
-        let (ask_user, locale) = options.map_or((None, None), |o| (o.ask_user, o.locale));
-        let mode = match ask_user.as_deref() {
+        let options = options.unwrap_or(BrowserOptions {
+            mode: None,
+            user_data_dir: None,
+            ask_user: None,
+            on_ask: None,
+            ask_timeout_ms: None,
+            locale: None,
+        });
+        let mut browser = match options.mode.as_deref() {
+            None | Some("sandboxed") => Browser::sandboxed(),
+            Some("host") => Browser::host(),
+            Some(other) => {
+                return Err(invalid(format!(
+                    "mode is 'sandboxed' or 'host', not {other:?}"
+                )));
+            }
+        };
+        browser = browser.ask_user(match options.ask_user.as_deref() {
             None | Some("endTurn") => AskUser::EndTurn,
             Some("wait") => AskUser::Wait,
             Some(other) => {
@@ -231,9 +260,18 @@ impl JsAgentBuilder {
                     "askUser is 'endTurn' or 'wait', not {other:?}"
                 )));
             }
-        };
-        let mut browser = Browser::sandboxed().ask_user(mode);
-        if let Some(locale) = locale {
+        });
+        if let Some(dir) = options.user_data_dir {
+            browser = browser.user_data_dir(dir);
+        }
+        if let Some(func) = options.on_ask {
+            let func = Arc::new(func);
+            browser = browser.on_ask(move |message| crate::tool::ask(func.clone(), message));
+        }
+        if let Some(ms) = options.ask_timeout_ms {
+            browser = browser.ask_timeout(std::time::Duration::from_millis(ms.into()));
+        }
+        if let Some(locale) = options.locale {
             browser = browser.locale(locale);
         }
         self.update(this, |b| Ok(b.browser(browser)))

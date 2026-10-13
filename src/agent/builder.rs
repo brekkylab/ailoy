@@ -239,6 +239,7 @@ impl AgentBuilder {
             state = state.with_memory(m);
         }
         if let Some(browser) = browser {
+            browser.check()?;
             if !state.console.lock().await.is_some() {
                 anyhow::bail!("a browser needs a console: pass one to `AgentBuilder::console`");
             }

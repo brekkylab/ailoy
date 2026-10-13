@@ -10,7 +10,7 @@
 //! turns on the one lock, the agent starts and stops its backend around each batch of tool
 //! calls, and `ConsoleClient.close()` ends the session for both.
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use _virtx::console::PyConsoleClient;
 use ailoy::{
@@ -145,17 +145,35 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.shared_console(slot)))
     }
 
-    /// A browser the agent drives and a person watches at `Agent.browser_url`. `ask_user` is
-    /// how the agent waits on them: `"end_turn"` shows the request and ends the turn, `"wait"`
-    /// waits in the tool call until they press Done. `locale` is the language pages are asked
-    /// in, such as `"ko-KR"`; this host's by default. Needs a console with its network on.
-    #[pyo3(signature = (ask_user = "end_turn", locale = None))]
+    /// A browser the agent drives. `mode` is `"sandboxed"`, Chromium in a console of its own that
+    /// a person watches at `Agent.browser_url`, or `"host"`, the person's own Chrome (144 or
+    /// later, remote debugging on), which asks them first; `user_data_dir` picks another
+    /// Chrome's. `ask_user` is how the agent waits on the person: `"end_turn"` ends the turn,
+    /// `"wait"` waits for Done in the viewer or for `on_ask`, a callable given the request that
+    /// returns `"done"`, `"declined"` or a note, within `ask_timeout` seconds if set. A host
+    /// browser waits only through `on_ask`. `locale` is the language a sandboxed browser asks
+    /// pages in, such as `"ko-KR"`; this host's by default. Needs a console with its network on.
+    #[pyo3(signature = (mode = "sandboxed", *, ask_user = "end_turn", locale = None, user_data_dir = None, on_ask = None, ask_timeout = None))]
+    #[allow(clippy::too_many_arguments)]
     fn browser<'py>(
         slf: PyRef<'py, Self>,
+        mode: &str,
         ask_user: &str,
         locale: Option<String>,
+        user_data_dir: Option<PathBuf>,
+        on_ask: Option<Py<PyAny>>,
+        ask_timeout: Option<f64>,
     ) -> PyResult<PyRef<'py, Self>> {
-        let mode = match ask_user {
+        let mut browser = match mode {
+            "sandboxed" => Browser::sandboxed(),
+            "host" => Browser::host(),
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "mode is \"sandboxed\" or \"host\", not {other:?}"
+                )));
+            }
+        };
+        browser = browser.ask_user(match ask_user {
             "end_turn" => AskUser::EndTurn,
             "wait" => AskUser::Wait,
             other => {
@@ -163,10 +181,22 @@ impl PyAgentBuilder {
                     "ask_user is \"end_turn\" or \"wait\", not {other:?}"
                 )));
             }
-        };
-        let mut browser = Browser::sandboxed().ask_user(mode);
+        });
         if let Some(locale) = locale {
             browser = browser.locale(locale);
+        }
+        if let Some(dir) = user_data_dir {
+            browser = browser.user_data_dir(dir);
+        }
+        if let Some(func) = on_ask {
+            let func = Arc::new(func);
+            browser = browser.on_ask(move |message| crate::tool::ask(func.clone(), message));
+        }
+        if let Some(seconds) = ask_timeout {
+            let timeout = Duration::try_from_secs_f64(seconds).map_err(|_| {
+                PyValueError::new_err("ask_timeout is a number of seconds, at least 0")
+            })?;
+            browser = browser.ask_timeout(timeout);
         }
         Self::update(slf, |b| Ok(b.browser(browser)))
     }

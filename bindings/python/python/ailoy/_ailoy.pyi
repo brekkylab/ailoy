@@ -190,14 +190,30 @@ class AgentBuilder:
     def history(self, history: list[Message]) -> Self: ...
     def console(self, console: ConsoleClient) -> Self: ...
     def browser(
-        self, ask_user: Literal["end_turn", "wait"] = "end_turn", locale: str | None = None
+        self,
+        mode: Literal["sandboxed", "host"] = "sandboxed",
+        *,
+        ask_user: Literal["end_turn", "wait"] = "end_turn",
+        locale: str | None = None,
+        user_data_dir: _Path | None = None,
+        on_ask: Callable[[str], str | None | Awaitable[str | None]] | None = None,
+        ask_timeout: float | None = None,
     ) -> Self:
-        """A browser the agent drives and a person watches at ``Agent.browser_url``.
+        """A browser the agent drives. Needs a console with its network on.
 
-        ``ask_user`` is how the agent waits on the person: ``"end_turn"`` shows its request and
-        ends the turn, ``"wait"`` waits until they press Done. ``locale`` is the language pages
-        are asked in, such as ``"ko-KR"``; this host's by default. Needs a console with its
-        network on.
+        ``mode`` is ``"sandboxed"``, Chromium in a console of its own that a person watches at
+        ``Agent.browser_url``, or ``"host"``, the person's own Chrome (144 or later, with remote
+        debugging on at ``chrome://inspect/#remote-debugging``), which asks them before it lets
+        the agent in; ``user_data_dir`` picks another Chrome's.
+
+        ``ask_user`` is how the agent waits on the person: ``"end_turn"`` ends the turn,
+        ``"wait"`` waits for Done in the viewer or for ``on_ask``. ``on_ask`` is given the
+        request and returns ``"done"``, ``"declined"``, or any other string, a note for the
+        agent; a raise is a decline. ``ask_timeout`` bounds it, in seconds. A host browser
+        waits only through ``on_ask``.
+
+        ``locale`` is the language a sandboxed browser asks pages in, such as ``"ko-KR"``;
+        this host's by default.
         """
         ...
     def memory(self, memfile: str) -> Self: ...

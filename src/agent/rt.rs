@@ -148,7 +148,7 @@ impl Agent {
 
         // Like memory, bound to this agent's own browser rather than resolved by name.
         if let Some(session) = state.browser.clone() {
-            let desc = browser::ask_user_tool_desc(session.ask_mode());
+            let desc = browser::ask_user_tool_desc(session.config());
             tools.insert(desc.name.clone(), browser::ask_user_tool_func(session));
             tool_descs.push(desc);
         }
@@ -222,7 +222,7 @@ impl Agent {
     /// Tell the model about its browser, the same way as its mounts.
     fn seed_browser(&mut self) {
         if let Some(browser) = &self.state.browser {
-            let section = browser::instruction(browser.ask_mode());
+            let section = browser::instruction(browser.config());
             Self::append_system_section(&mut self.state.history, &section);
         }
     }
@@ -403,7 +403,8 @@ impl Agent {
                                      `AgentBuilder::console`"
                                 )
                             })?;
-                            // The browser boots on the first command that drives it.
+                            // The browser starts on the first command that drives it.
+                            let mut note = None;
                             if let Some(browser) = &browser_for_call
                                 && tool_name_for_call == "shell"
                                 && call_args
@@ -411,7 +412,22 @@ impl Agent {
                                     .and_then(|v| v.as_str())
                                     .is_some_and(|cmd| cmd.contains("agent-browser"))
                             {
-                                browser.ensure(console).await?;
+                                match browser.ensure(console).await? {
+                                    browser::Ready::Go(said) => note = said,
+                                    // Not run: why is what the agent hears instead.
+                                    browser::Ready::Refused(why) => {
+                                        let _ = tx_inner.send(Ok(MessageOutput {
+                                            message: Message::new(Role::Tool)
+                                                .with_contents([Part::text(why)])
+                                                .with_id(call_id_for_call),
+                                            finish_reason: FinishReason::Stop {},
+                                            usage: None,
+                                            depth: Some(0),
+                                            source_agent: None,
+                                        }));
+                                        return anyhow::Ok(true);
+                                    }
+                                }
                             }
                             let mut stream = tool.call(call_args, call_id_for_call, console);
                             let mut last: Option<MessageOutput> = None;
@@ -427,6 +443,9 @@ impl Agent {
                                 Some(mut item) => {
                                     item.depth = Some(0);
                                     item.message.role = Role::Tool;
+                                    if let Some(note) = note {
+                                        item.message.contents.push(Part::text(note));
+                                    }
                                     let _ = tx_inner.send(Ok(item));
                                     anyhow::Ok(true)
                                 }

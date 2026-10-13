@@ -73,6 +73,26 @@ test('a browser takes a locale', () => {
   new AgentBuilder('m').browser({ askUser: 'wait', locale: 'ja' })
 })
 
+test('a browser is sandboxed or host', () => {
+  new AgentBuilder('m').browser({ mode: 'host', userDataDir: '/nonexistent' })
+  assert.throws(() => new AgentBuilder('m').browser({ mode: 'remote' }), { code: 'INVALID_ARG' })
+})
+
+test('a host browser waits only through onAsk', async () => {
+  registerLangModel('fake-browser/*', 'chat_completion', 'http://127.0.0.1:9/v1/chat/completions')
+  await assert.rejects(new AgentBuilder('fake-browser/model').browser({ mode: 'host', askUser: 'wait' }).build(), {
+    message: /onAsk|on_ask/,
+  })
+  // Past that check, to the next: a browser is driven from a console.
+  const onAsk = async () => 'done'
+  await assert.rejects(
+    new AgentBuilder('fake-browser/model')
+      .browser({ mode: 'host', askUser: 'wait', onAsk, askTimeoutMs: 5000, userDataDir: '/nonexistent' })
+      .build(),
+    { message: /needs a console/ },
+  )
+})
+
 // ---- a turn, against a model served from this process --------------------------------------
 
 /** The last message's text, or the tool results it carries. */
