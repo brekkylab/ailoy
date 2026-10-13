@@ -10,8 +10,8 @@ The toolchain is pinned in `rust-toolchain.toml`; `rustup` installs it on the fi
 git clone https://github.com/brekkylab/ailoy
 cd ailoy
 cargo build
-(cd bindings/python && uv run maturin develop)     # Python
-(cd bindings/node && npm install && npm run build)  # Node
+(cd bindings/python && uv run maturin develop)       # Python
+(cd bindings/node && npm install && npm run build)   # Node
 ```
 
 An agent's console runs on [virtx](https://github.com/brekkylab/virtx)'s server, which `ensure_virtx()` (and the tests) fetch into `$VIRTX_HOME/bin` on first use. Mounting a host folder into it needs FUSE: FUSE-T on macOS, Dokany on Windows. Tests that drive a provider read its key from the environment or a `.env` file at the repository root (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK`), and skip without it.
