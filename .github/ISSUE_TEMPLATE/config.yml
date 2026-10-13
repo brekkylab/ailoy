@@ -6,6 +6,3 @@ contact_links:
   - name: Guide
     url: https://brekkylab.github.io/ailoy/
     about: Quick start, model providers, the message format, MCP and building a VM.
-  - name: Report a vulnerability
-    url: https://github.com/brekkylab/ailoy/security/advisories/new
-    about: Privately, as SECURITY.md describes; never in a public issue.
