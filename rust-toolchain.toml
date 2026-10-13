@@ -4,9 +4,9 @@
 # a release fails on code nobody touched. Pinning also makes the gate a contributor runs before
 # pushing the gate that judges them.
 #
-# Bumping is a deliberate change. Move `channel` here and the `dtolnay/rust-toolchain@<version>`
-# lines in `.github/workflows/packages.yml` together; they must agree, or CI installs one toolchain
-# and builds with another. `rust-version` in `Cargo.toml` is the floor a dependent may build with
+# Bumping is a deliberate change, and `channel` is the one place to make it: the release jobs
+# that build in this checkout read it from here, and the smoke that builds the packed crate as a
+# user would stays on `stable`. `rust-version` in `Cargo.toml` is the floor a dependent may build with
 # and moves independently.
 #
 # Cross-compilation targets stay out of this file: the release jobs ask for theirs through the

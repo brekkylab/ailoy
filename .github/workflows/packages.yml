@@ -171,8 +171,13 @@ jobs:
         with:
           ref: ${{ env.REF }}
 
-      - uses: dtolnay/rust-toolchain@1.98.0
+      - id: toolchain
+        shell: bash
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
@@ -367,7 +372,13 @@ jobs:
         with:
           ref: ${{ env.REF }}
 
-      - uses: dtolnay/rust-toolchain@1.98.0
+      - id: toolchain
+        shell: bash
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
 
       - uses: Swatinem/rust-cache@v2
         with:
