@@ -40,11 +40,11 @@ use tokio::{
 
 use super::gemini_api::inline_image;
 use crate::{
-    experimental::model::{InferLangModel, LangModelOptions, ThinkingEffort},
     message::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, Role, TokenUsage,
     },
+    model::{InferLangModel, LangModelOptions, ThinkingEffort},
     tool::ToolDesc,
 };
 

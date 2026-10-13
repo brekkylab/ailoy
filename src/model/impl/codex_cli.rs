@@ -45,11 +45,11 @@ use tokio::{
 
 use super::gpt_api::{image_url, strict_schema};
 use crate::{
-    experimental::model::{InferLangModel, LangModelOptions, ThinkingEffort},
     message::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, Role, TokenUsage,
     },
+    model::{InferLangModel, LangModelOptions, ThinkingEffort},
     tool::ToolDesc,
 };
 

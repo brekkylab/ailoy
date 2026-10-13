@@ -172,7 +172,6 @@ async function main(goal) {
 
     agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'anthropic/claude-sonnet-5')
       .instruction(INSTRUCTION)
-      .maxTokens(32000)
       .systemTools()
       .console(consoleClient)
       .skill('/skills/openttd')

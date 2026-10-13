@@ -1,4 +1,4 @@
-//! A language model that calls the Kimi (Moonshot AI) API directly over HTTP.
+//! A language model that calls the DeepSeek API directly over HTTP.
 //!
 //! The API is OpenAI-compatible Chat Completions. Every call is streamed
 //! (`"stream": true`) and read as server-sent events; [`infer`](InferLangModel::infer)
@@ -13,43 +13,44 @@ use futures::{
 
 use crate::{
     datatype::Value,
-    experimental::model::{InferLangModel, LangModelOptions},
     message::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
+    model::{InferLangModel, LangModelOptions},
     to_value,
     tool::ToolDesc,
 };
 
-const API_URL: &str = "https://api.moonshot.ai/v1/chat/completions";
+const API_URL: &str = "https://api.deepseek.com/chat/completions";
 
-/// Runs Kimi models through the Moonshot AI API.
+/// Runs DeepSeek models through the DeepSeek API.
 ///
-/// - Thinking is on or off, not graded: any
-///   [`ThinkingEffort`](crate::experimental::model::ThinkingEffort) turns it on, on the
-///   models that can switch it. The thinking comes back as `reasoning_content`, and goes
-///   back with its turn, as the API needs while tools are in use.
-/// - The API takes no output schema it holds to, so the schema is put in the system prompt
-///   and the output constrained to JSON.
+/// - Thinking is on or off, not graded: any [`ThinkingEffort`](crate::model::ThinkingEffort)
+///   turns it on. The thinking comes back as `reasoning_content`, and goes back with its
+///   turn, as the API needs while tools are in use.
+/// - The API constrains output to JSON but takes no schema, so an output schema is put in
+///   the system prompt for the model to follow.
+/// - Text only: image parts are rejected, except in tool results, where they become a
+///   text label.
 #[derive(Clone)]
-pub struct KimiApiModel {
+pub struct DeepSeekApiModel {
     model: String,
     api_key: String,
 }
 
 // Hand-written so the key stays out of logs.
-impl std::fmt::Debug for KimiApiModel {
+impl std::fmt::Debug for DeepSeekApiModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("KimiApiModel")
+        f.debug_struct("DeepSeekApiModel")
             .field("model", &self.model)
             .field("api_key", &"<redacted>")
             .finish()
     }
 }
 
-impl KimiApiModel {
-    /// Runs `model`, an API model id (e.g. `"kimi-k2-thinking"`), with `api_key`.
+impl DeepSeekApiModel {
+    /// Runs `model`, an API model id (e.g. `"deepseek-chat"`), with `api_key`.
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             model: model.into(),
@@ -57,12 +58,12 @@ impl KimiApiModel {
         }
     }
 
-    /// Runs `model` with the key read from `KIMI_API_KEY`, or `MOONSHOT_API_KEY`.
+    /// Runs `model` with the key read from `DEEPSEEK_API_KEY`.
     pub fn from_env(model: impl Into<String>) -> anyhow::Result<Self> {
-        let env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
-        let api_key = env("KIMI_API_KEY")
-            .or_else(|| env("MOONSHOT_API_KEY"))
-            .context("KIMI_API_KEY is not set")?;
+        let api_key = std::env::var("DEEPSEEK_API_KEY")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .context("DEEPSEEK_API_KEY is not set")?;
         Ok(Self::new(model, api_key))
     }
 
@@ -105,21 +106,10 @@ impl KimiApiModel {
         let obj = body.as_object_mut().unwrap();
 
         if !tools.is_empty() {
-            let tools: Vec<Value> = tools
-                .iter()
-                .map(|tool| {
-                    let mut function =
-                        to_value!({"name": &tool.name, "parameters": tool.parameters.clone()});
-                    if let Some(desc) = &tool.description {
-                        function
-                            .as_object_mut()
-                            .unwrap()
-                            .insert("description".into(), desc.into());
-                    }
-                    to_value!({"type": "function", "function": function})
-                })
-                .collect();
-            obj.insert("tools".into(), Value::Array(tools));
+            obj.insert(
+                "tools".into(),
+                Value::Array(tools.iter().map(tool_spec).collect()),
+            );
             obj.insert("tool_choice".into(), "auto".into());
         }
         // Unset keeps the model's default.
@@ -134,7 +124,7 @@ impl KimiApiModel {
     }
 }
 
-impl InferLangModel for KimiApiModel {
+impl InferLangModel for DeepSeekApiModel {
     fn infer(
         &self,
         messages: &[Message],
@@ -170,7 +160,7 @@ impl InferLangModel for KimiApiModel {
             let mut bytes = response.bytes_stream();
             let mut buf = Vec::new();
             // Network chunks don't align with events, so events are cut out of a buffer.
-            // The stream goes on past the finish reason: the usage may come after it.
+            // The stream goes on past the finish reason: the usage comes after it.
             loop {
                 let chunk = bytes.next().await.transpose()?;
                 let at_eof = chunk.is_none();
@@ -190,7 +180,7 @@ impl InferLangModel for KimiApiModel {
                 }
             }
             if !saw_finish {
-                Err(anyhow::anyhow!("the Kimi stream ended before the reply finished"))?;
+                Err(anyhow::anyhow!("the DeepSeek stream ended before the reply finished"))?;
             }
         })
     }
@@ -228,11 +218,6 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
             return Ok(response);
         }
         if RETRY_STATUSES.contains(&status.as_u16()) && attempt < MAX_RETRIES {
-            let text = response.text().await.unwrap_or_default();
-            // An exhausted balance does not pass with time.
-            if text.contains("exceeded_current_quota") {
-                bail!("Kimi API request failed with status {status}: {text}");
-            }
             let wait_secs = (1u64 << attempt).min(MAX_WAIT_SECS);
             log::warn!(
                 "Got {status}. Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
@@ -242,7 +227,7 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        bail!("Kimi API request failed with status {status}: {text}");
+        bail!("DeepSeek API request failed with status {status}: {text}");
     }
     unreachable!("retry loop returns or bails on every path")
 }
@@ -279,7 +264,7 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
     let val: serde_json::Value = serde_json::from_str(data)?;
     if let Some(error) = val.get("error") {
         bail!(
-            "Kimi stream error: {}",
+            "DeepSeek stream error: {}",
             error["message"].as_str().unwrap_or("(no message)")
         );
     }
@@ -307,10 +292,7 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
         // A call's first piece has its id and name; the rest continue the last call.
         for call in delta["tool_calls"].as_array().into_iter().flatten() {
             out.delta.tool_calls.push(PartDelta::Function {
-                id: call["id"]
-                    .as_str()
-                    .filter(|id| !id.is_empty())
-                    .map(str::to_owned),
+                id: call["id"].as_str().map(str::to_owned),
                 function: PartDeltaFunction::WithStringArgs {
                     name: call["function"]["name"]
                         .as_str()
@@ -335,28 +317,31 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
             });
             empty = false;
         }
-        // Kimi may put the usage in the finishing choice instead of the chunk.
-        if let Some(usage) = choice.get("usage").filter(|u| u.is_object()) {
-            out.usage = Some(parse_usage(usage));
-            empty = false;
-        }
     }
+
     if let Some(usage) = val.get("usage").filter(|u| u.is_object()) {
-        out.usage = Some(parse_usage(usage));
+        let count = |key: &str| usage[key].as_u64();
+        out.usage = Some(TokenUsage {
+            input_tokens: count("prompt_tokens").unwrap_or(0),
+            output_tokens: count("completion_tokens").unwrap_or(0),
+            cache_creation_input_tokens: count("prompt_cache_miss_tokens"),
+            cache_read_input_tokens: count("prompt_cache_hit_tokens"),
+        });
         empty = false;
     }
 
     Ok((!empty).then_some(out))
 }
 
-fn parse_usage(usage: &serde_json::Value) -> TokenUsage {
-    let count = |key: &str| usage[key].as_u64();
-    TokenUsage {
-        input_tokens: count("prompt_tokens").unwrap_or(0),
-        output_tokens: count("completion_tokens").unwrap_or(0),
-        cache_creation_input_tokens: None,
-        cache_read_input_tokens: count("cached_tokens"),
+fn tool_spec(tool: &ToolDesc) -> Value {
+    let mut function = to_value!({"name": &tool.name, "parameters": tool.parameters.clone()});
+    if let Some(desc) = &tool.description {
+        function
+            .as_object_mut()
+            .unwrap()
+            .insert("description".into(), desc.into());
     }
+    to_value!({"type": "function", "function": function})
 }
 
 /// The conversation, system messages aside, as Chat Completions messages.
@@ -370,57 +355,11 @@ fn chat_messages(messages: &[Message]) -> anyhow::Result<Vec<Value>> {
                     .id
                     .as_deref()
                     .context("a tool message has no id to match its call")?;
-                let text = msg
-                    .contents
-                    .iter()
-                    .map(|p| match p {
-                        Part::Text { text } => text.clone(),
-                        Part::Value { value } => value_text(value),
-                        // A tool result stays in the history, so rejecting its image would
-                        // fail every later call; a label tells the model one was returned.
-                        Part::Image {
-                            image: PartImage::Embedded { mime_type, .. },
-                        } => format!("[image: {mime_type}]"),
-                        Part::Image {
-                            image: PartImage::Url { url },
-                        } => format!("[image at {url}]"),
-                        Part::Function { .. } => String::new(),
-                    })
-                    .collect::<String>();
-                out.push(to_value!({"role": "tool", "tool_call_id": id, "content": text}));
+                out.push(to_value!({"role": "tool", "tool_call_id": id, "content": text_of(msg)?}));
             }
-            Role::User => {
-                // Empty text parts are rejected, so they are left out.
-                let content: Vec<Value> = msg
-                    .contents
-                    .iter()
-                    .filter(|p| !matches!(p, Part::Text { text } if text.is_empty()))
-                    .map(|p| match p {
-                        Part::Text { text } => to_value!({"type": "text", "text": text}),
-                        Part::Value { value } => {
-                            to_value!({"type": "text", "text": value_text(value)})
-                        }
-                        Part::Image { image } => {
-                            let url = match image {
-                                PartImage::Embedded { mime_type, data } => {
-                                    format!("data:{mime_type};base64,{}", data.base64())
-                                }
-                                PartImage::Url { url } => url.clone(),
-                            };
-                            to_value!({"type": "image_url", "image_url": {"url": url}})
-                        }
-                        Part::Function { .. } => to_value!({"type": "text", "text": ""}),
-                    })
-                    .collect();
-                out.push(to_value!({"role": "user", "content": content}));
-            }
+            Role::User => out.push(to_value!({"role": "user", "content": text_of(msg)?})),
             Role::Assistant => {
-                let text = msg
-                    .contents
-                    .iter()
-                    .filter_map(|p| p.as_text())
-                    .collect::<String>();
-                let mut turn = to_value!({"role": "assistant", "content": text});
+                let mut turn = to_value!({"role": "assistant", "content": text_of(msg)?});
                 let obj = turn.as_object_mut().unwrap();
                 if let Some(thinking) = msg.thinking.as_ref().filter(|t| !t.is_empty()) {
                     obj.insert("reasoning_content".into(), thinking.into());
@@ -454,9 +393,51 @@ fn chat_messages(messages: &[Message]) -> anyhow::Result<Vec<Value>> {
     Ok(out)
 }
 
-fn value_text(value: &Value) -> String {
-    match value {
-        Value::String(s) => s.clone(),
-        other => serde_json::to_string(other).unwrap_or_default(),
+/// A message's contents as one text; images are rejected, except in tool results.
+fn text_of(msg: &Message) -> anyhow::Result<String> {
+    let mut text = String::new();
+    for part in &msg.contents {
+        match part {
+            Part::Text { text: t } => text.push_str(t),
+            Part::Value { value } => text.push_str(&match value {
+                Value::String(s) => s.clone(),
+                other => serde_json::to_string(other).unwrap_or_default(),
+            }),
+            // A tool result stays in the history, so rejecting its image would fail every
+            // later call; a label tells the model one was returned.
+            Part::Image {
+                image: PartImage::Embedded { mime_type, .. },
+            } if msg.role == Role::Tool => text.push_str(&format!("[image: {mime_type}]")),
+            Part::Image {
+                image: PartImage::Url { url },
+            } if msg.role == Role::Tool => text.push_str(&format!("[image at {url}]")),
+            Part::Image { .. } => bail!("the DeepSeek API takes no images"),
+            Part::Function { .. } => {}
+        }
+    }
+    Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reasoning_and_calls_accumulate() {
+        let chunks = [
+            r#"{"choices":[{"delta":{"role":"assistant","reasoning_content":"think"}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"f","arguments":"{}"}}]}}]}"#,
+            r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}"#,
+            "[DONE]",
+        ];
+        let mut acc = MessageDeltaOutput::new();
+        for chunk in chunks {
+            if let Some(out) = parse_chunk(chunk).unwrap() {
+                acc = acc.accumulate(out).unwrap();
+            }
+        }
+        let out = acc.finish().unwrap();
+        assert_eq!(out.message.thinking.as_deref(), Some("think"));
+        assert_eq!(out.message.tool_calls.unwrap().len(), 1);
     }
 }

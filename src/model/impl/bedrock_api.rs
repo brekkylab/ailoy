@@ -14,11 +14,11 @@ use futures::{
 
 use crate::{
     datatype::Value,
-    experimental::model::{InferLangModel, LangModelOptions, ThinkingEffort},
     message::{
         Delta as _, FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part,
         PartDelta, PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
+    model::{InferLangModel, LangModelOptions, ThinkingEffort},
     to_value,
     tool::ToolDesc,
 };

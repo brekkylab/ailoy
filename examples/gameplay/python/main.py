@@ -192,7 +192,6 @@ async def main(goal: str) -> None:
                 os.environ.get("AILOY_MODEL", "anthropic/claude-sonnet-5")
             )
             .instruction(INSTRUCTION)
-            .max_tokens(32000)
             .system_tools()
             .console(console)
             .skill("/skills/openttd")

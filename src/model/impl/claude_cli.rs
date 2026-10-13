@@ -38,11 +38,11 @@ use tokio::{
 use super::claude_api::image_block;
 use crate::{
     datatype::Value,
-    experimental::model::{InferLangModel, LangModelOptions, ThinkingEffort},
     message::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, Role, TokenUsage,
     },
+    model::{InferLangModel, LangModelOptions, ThinkingEffort},
     tool::ToolDesc,
 };
 

@@ -225,7 +225,6 @@ async fn main() -> anyhow::Result<()> {
         "vehicles, what each earns, and your plan. Update them as you go. Command output from ",
         "earlier rounds drops out of what you remember; the notes do not.",
     ))
-    .max_tokens(32000)
     .system_tools()
     // Python for `ttd.py`, and a network to reach the ports the game's console published.
     .console(

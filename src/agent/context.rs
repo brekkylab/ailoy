@@ -28,7 +28,7 @@ impl ContextManager {
     /// returns HTTP 400 for a tool-use id with no matching tool result.
     ///
     /// Whole turns are never dropped; that would need a post-truncation token estimate.
-    pub(crate) fn truncate_history(&self, history: &mut [Message]) {
+    pub(super) fn truncate_history(&self, history: &mut [Message]) {
         if history.is_empty() {
             return;
         }

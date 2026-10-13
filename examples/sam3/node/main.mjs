@@ -148,7 +148,6 @@ async function main(prompt) {
 
     agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'openai/gpt-6-astra')
       .instruction(INSTRUCTION)
-      .maxTokens(64000)
       .systemTools()
       .webFetchTool()
       .webSearchTool([])

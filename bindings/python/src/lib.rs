@@ -17,6 +17,7 @@ use pyo3::prelude::*;
 mod agent;
 mod convert;
 mod error;
+mod model;
 mod registry;
 mod tool;
 
@@ -26,5 +27,6 @@ fn _ailoy(m: &Bound<'_, PyModule>) -> PyResult<()> {
     error::register(m)?;
     registry::register(m)?;
     agent::register(m)?;
+    model::register(m)?;
     Ok(())
 }

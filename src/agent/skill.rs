@@ -4,8 +4,6 @@ use anyhow::Context as _;
 use tokio::sync::Mutex;
 use virtx::console::ConsoleClient;
 
-use crate::lang_model::model_family;
-
 /// The skills in `dirs`, as the section of the system message that lists them.
 ///
 /// Per the Agent Skills integration guide: a short preamble, then each skill's `name`,
@@ -13,11 +11,11 @@ use crate::lang_model::model_family;
 /// reads the body when it uses the skill.
 ///
 /// An `<available_skills>` XML block for Claude (trained on XML-tagged prompts), a
-/// Markdown list otherwise.
+/// Markdown list otherwise; `org` is the spec's model org, e.g. `"anthropic"`.
 pub(super) async fn render_skills(
     dirs: &[String],
     console: &Mutex<Option<ConsoleClient>>,
-    model: &str,
+    org: &str,
 ) -> anyhow::Result<String> {
     let mut guard = console.lock().await;
     let console = guard
@@ -38,7 +36,7 @@ pub(super) async fn render_skills(
             location,
         });
     }
-    Ok(if model_family(model).0 == "anthropic" {
+    Ok(if org == "anthropic" {
         render_xml(&skills)
     } else {
         render_markdown(&skills)

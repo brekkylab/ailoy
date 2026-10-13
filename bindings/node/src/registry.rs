@@ -1,12 +1,10 @@
-//! The process-wide registries an agent resolves its model and tools from.
+//! The process-wide registries an agent resolves its tools from: tool providers (every built-in
+//! tool) keyed by name, and agent providers, each naming the tool provider an agent is built
+//! against ([`AgentBuilder.agentProvider`](crate::agent), `'default'` if unset). Models have
+//! their own registry, keyed by org: see [`crate::model`].
 //!
-//! ailoy keeps three, keyed by name, each with a `'default'` entry: language-model providers
-//! (seeded from `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, … on first use), tool providers (every
-//! built-in tool), and agent providers, which pair one of each by name and are what an agent is
-//! built against ([`AgentBuilder.agentProvider`](crate::agent), `'default'` if unset).
-//!
-//! Every function takes the entry it works on as `{ provider }` in its last argument, defaulting
-//! to `'default'`. Registering into a missing entry throws rather than creating it, so a
+//! Every tool function takes the entry it works on as `{ provider }` in its last argument,
+//! defaulting to `'default'`. Registering into a missing entry throws rather than creating it, so a
 //! misspelt name is an error; `add*Provider` creates one.
 //!
 //! The registering functions return the tool descriptions they registered, to pass to
@@ -14,9 +12,6 @@
 
 use ailoy::{
     agent::{AgentProvider, get_agent_providers_mut},
-    lang_model::{
-        LangModelAPISchema, LangModelProvider, LangModelProviderElem, get_lm_providers_mut,
-    },
     tool::{
         ToolDesc, ToolProvider, get_tool_providers_mut, register_a2a as register_a2a_rs,
         register_mcp_stdio as register_mcp_stdio_rs,
@@ -54,63 +49,6 @@ fn provider(options: Option<ProviderOptions>) -> String {
 #[napi(object)]
 pub struct ProviderOptions {
     pub provider: Option<String>,
-}
-
-#[napi(object)]
-pub struct LangModelProviderOptions {
-    pub from_env: Option<bool>,
-}
-
-/// Add an empty language-model provider under `name`, or one seeded from the environment as
-/// `'default'` is when `fromEnv`. Replaces an entry of the same name.
-#[napi]
-pub fn add_lang_model_provider(name: String, options: Option<LangModelProviderOptions>) {
-    let provider = if options.and_then(|o| o.from_env).unwrap_or(false) {
-        LangModelProvider::default()
-    } else {
-        LangModelProvider::new()
-    };
-    get_lm_providers_mut().insert(name, provider);
-}
-
-#[napi(object)]
-pub struct RegisterLangModelOptions {
-    pub api_key: Option<String>,
-    pub provider: Option<String>,
-}
-
-/// Serve the models `pattern` matches — an exact name, or a glob with `*` and `?` — from the
-/// API at `url`, spoken in `schema`.
-#[napi]
-pub fn register_lang_model(
-    env: &Env,
-    pattern: String,
-    #[napi(ts_arg_type = "LangModelAPISchema")] schema: Unknown<'_>,
-    url: String,
-    options: Option<RegisterLangModelOptions>,
-) -> Result<()> {
-    let schema: LangModelAPISchema = from_js(env, schema, "an API schema")?;
-    let url = parse_url(&url)?;
-    let (api_key, provider) = match options {
-        Some(o) => (
-            o.api_key,
-            o.provider.unwrap_or_else(|| "default".to_string()),
-        ),
-        None => (None, "default".to_string()),
-    };
-    let mut registry = get_lm_providers_mut();
-    let lmp = registry
-        .get_mut(&provider)
-        .ok_or_else(|| not_registered("lang_model_provider", &provider))?;
-    lmp.insert(
-        pattern,
-        LangModelProviderElem::API {
-            schema,
-            url,
-            api_key,
-        },
-    );
-    Ok(())
 }
 
 #[napi(object)]
@@ -224,23 +162,15 @@ pub fn register_a2a<'env>(
 
 #[napi(object)]
 pub struct AgentProviderOptions {
-    pub lang_model_provider: Option<String>,
     pub tool_provider: Option<String>,
 }
 
-/// Pair a language-model provider and a tool provider, by name, as the agent provider
-/// `name`. Neither has to exist yet; both have to when an agent is built against it.
+/// Name a tool provider as the agent provider `name`. It need not exist yet; it has to when an
+/// agent is built against it.
 #[napi]
 pub fn add_agent_provider(name: String, options: Option<AgentProviderOptions>) {
-    let (lm, tp) = match options {
-        Some(o) => (o.lang_model_provider, o.tool_provider),
-        None => (None, None),
-    };
-    get_agent_providers_mut().insert(
-        name,
-        AgentProvider::new(
-            lm.unwrap_or_else(|| "default".to_string()),
-            tp.unwrap_or_else(|| "default".to_string()),
-        ),
-    );
+    let tool_provider = options
+        .and_then(|o| o.tool_provider)
+        .unwrap_or_else(|| "default".to_string());
+    get_agent_providers_mut().insert(name, AgentProvider::new(tool_provider));
 }

@@ -1,6 +1,6 @@
-//! A language model that calls the Qwen (Alibaba Cloud Model Studio) API directly over HTTP.
+//! A language model that calls the GLM (Z.ai) API directly over HTTP.
 //!
-//! The API is DashScope's OpenAI-compatible Chat Completions. Every call is streamed
+//! The API is OpenAI-compatible Chat Completions. Every call is streamed
 //! (`"stream": true`) and read as server-sent events; [`infer`](InferLangModel::infer)
 //! accumulates the same stream.
 
@@ -13,43 +13,42 @@ use futures::{
 
 use crate::{
     datatype::Value,
-    experimental::model::{InferLangModel, LangModelOptions},
     message::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
+    model::{InferLangModel, LangModelOptions},
     to_value,
     tool::ToolDesc,
 };
 
-const API_URL: &str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions";
+const API_URL: &str = "https://api.z.ai/api/paas/v4/chat/completions";
 
-/// Runs Qwen models through the Alibaba Cloud Model Studio (DashScope) API.
+/// Runs GLM models through the Z.ai API.
 ///
 /// - Thinking is on or off, not graded: any
-///   [`ThinkingEffort`](crate::experimental::model::ThinkingEffort) turns it on, on the
-///   models that can switch it. The thinking comes back as `reasoning_content`, and is not
-///   sent back.
+///   [`ThinkingEffort`](crate::model::ThinkingEffort) turns it on. The
+///   thinking comes back as `reasoning_content`, and goes back with its turn.
 /// - The API constrains output to JSON but takes no schema, so an output schema is put in
 ///   the system prompt for the model to follow.
 #[derive(Clone)]
-pub struct QwenApiModel {
+pub struct GlmApiModel {
     model: String,
     api_key: String,
 }
 
 // Hand-written so the key stays out of logs.
-impl std::fmt::Debug for QwenApiModel {
+impl std::fmt::Debug for GlmApiModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("QwenApiModel")
+        f.debug_struct("GlmApiModel")
             .field("model", &self.model)
             .field("api_key", &"<redacted>")
             .finish()
     }
 }
 
-impl QwenApiModel {
-    /// Runs `model`, an API model id (e.g. `"qwen3-max"`), with `api_key`.
+impl GlmApiModel {
+    /// Runs `model`, an API model id (e.g. `"glm-4.6"`), with `api_key`.
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             model: model.into(),
@@ -57,12 +56,12 @@ impl QwenApiModel {
         }
     }
 
-    /// Runs `model` with the key read from `DASHSCOPE_API_KEY`.
+    /// Runs `model` with the key read from `ZAI_API_KEY`.
     pub fn from_env(model: impl Into<String>) -> anyhow::Result<Self> {
-        let api_key = std::env::var("DASHSCOPE_API_KEY")
+        let api_key = std::env::var("ZAI_API_KEY")
             .ok()
             .filter(|v| !v.trim().is_empty())
-            .context("DASHSCOPE_API_KEY is not set")?;
+            .context("ZAI_API_KEY is not set")?;
         Ok(Self::new(model, api_key))
     }
 
@@ -100,7 +99,6 @@ impl QwenApiModel {
             "model": self.model.as_str(),
             "messages": chat,
             "stream": true,
-            "stream_options": {"include_usage": true},
         });
         let obj = body.as_object_mut().unwrap();
 
@@ -124,7 +122,7 @@ impl QwenApiModel {
         }
         // Unset keeps the model's default.
         if options.thinking_effort.is_some() {
-            obj.insert("enable_thinking".into(), true.into());
+            obj.insert("thinking".into(), to_value!({"type": "enabled"}));
         }
         if options.output_schema.is_some() {
             obj.insert("response_format".into(), to_value!({"type": "json_object"}));
@@ -134,7 +132,7 @@ impl QwenApiModel {
     }
 }
 
-impl InferLangModel for QwenApiModel {
+impl InferLangModel for GlmApiModel {
     fn infer(
         &self,
         messages: &[Message],
@@ -189,7 +187,7 @@ impl InferLangModel for QwenApiModel {
                 }
             }
             if !saw_finish {
-                Err(anyhow::anyhow!("the Qwen stream ended before the reply finished"))?;
+                Err(anyhow::anyhow!("the GLM stream ended before the reply finished"))?;
             }
         })
     }
@@ -236,7 +234,7 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        bail!("Qwen API request failed with status {status}: {text}");
+        bail!("GLM API request failed with status {status}: {text}");
     }
     unreachable!("retry loop returns or bails on every path")
 }
@@ -273,7 +271,7 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
     let val: serde_json::Value = serde_json::from_str(data)?;
     if let Some(error) = val.get("error") {
         bail!(
-            "Qwen stream error: {}",
+            "GLM stream error: {}",
             error["message"].as_str().unwrap_or("(no message)")
         );
     }
@@ -322,7 +320,10 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
             out.finish_reason = Some(match reason {
                 "stop" => FinishReason::Stop {},
                 "tool_calls" => FinishReason::ToolCall {},
-                "length" => FinishReason::Length {},
+                "length" | "model_context_window_exceeded" => FinishReason::Length {},
+                "sensitive" => FinishReason::Refusal {
+                    reason: "the content was flagged as sensitive".to_owned(),
+                },
                 other => FinishReason::Refusal {
                     reason: format!("reason: {other}"),
                 },
@@ -406,6 +407,9 @@ fn chat_messages(messages: &[Message]) -> anyhow::Result<Vec<Value>> {
                     .collect::<String>();
                 let mut turn = to_value!({"role": "assistant", "content": text});
                 let obj = turn.as_object_mut().unwrap();
+                if let Some(thinking) = msg.thinking.as_ref().filter(|t| !t.is_empty()) {
+                    obj.insert("reasoning_content".into(), thinking.into());
+                }
                 let calls: Vec<Value> = msg
                     .tool_calls
                     .iter()

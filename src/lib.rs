@@ -4,11 +4,10 @@ extern crate self as ailoy;
 pub mod agent;
 pub mod console;
 pub mod datatype;
-pub mod experimental;
-pub mod lang_model;
 mod macros;
 pub mod memory;
 pub mod message;
+pub mod model;
 pub mod tool;
 
 /// A started console on virtx's default server, for tests.

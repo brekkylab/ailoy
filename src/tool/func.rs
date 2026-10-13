@@ -69,9 +69,7 @@ impl ToolFunc {
     /// Invoke the tool without a console, or `None` if it needs one.
     ///
     /// The stream is `'static`, which is the point: a pure tool is driven without
-    /// taking the console lock, so a sub-agent tool can run its own nested turn —
-    /// which locks the same console — without deadlocking against the batch it is
-    /// part of.
+    /// taking the console lock, so it runs alongside the console tools of its batch.
     ///
     /// `None` for a console tool, since a live [`ConsoleClient`] can't be fabricated.
     pub fn call_pure(
@@ -114,8 +112,6 @@ pub mod __private {
                 .with_id(id),
             finish_reason: FinishReason::Stop {},
             usage: None,
-            depth: None,
-            source_agent: None,
         }))
         .boxed()
     }
@@ -125,8 +121,6 @@ pub mod __private {
             message,
             finish_reason: FinishReason::Stop {},
             usage: None,
-            depth: None,
-            source_agent: None,
         }))
         .boxed()
     }
@@ -142,8 +136,6 @@ pub mod __private {
                     .with_id(id),
                 finish_reason: FinishReason::Stop {},
                 usage: None,
-                depth: None,
-                source_agent: None,
             }
         }))
     }
@@ -154,8 +146,6 @@ pub mod __private {
                 message: fut.await,
                 finish_reason: FinishReason::Stop {},
                 usage: None,
-                depth: None,
-                source_agent: None,
             }
         }))
     }
@@ -171,8 +161,6 @@ pub mod __private {
                     .with_id(id.clone()),
                 finish_reason: FinishReason::Stop {},
                 usage: None,
-                depth: None,
-                source_agent: None,
             }
         }))
     }
@@ -184,8 +172,6 @@ pub mod __private {
             message,
             finish_reason: FinishReason::Stop {},
             usage: None,
-            depth: None,
-            source_agent: None,
         }))
     }
 }

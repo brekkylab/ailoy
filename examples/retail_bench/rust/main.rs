@@ -160,7 +160,6 @@ async fn main() -> anyhow::Result<()> {
     let mut agent = AgentBuilder::new(&model)
         .agent_provider(PROVIDER)
         .instruction(SYSTEM)
-        .max_tokens(64000)
         .system_tools()
         .tools(tools)
         .console(
@@ -387,10 +386,7 @@ async fn register_actions(
         );
     }
     get_tool_providers_mut().insert(PROVIDER.to_string(), provider);
-    get_agent_providers_mut().insert(
-        PROVIDER.to_string(),
-        AgentProvider::new("default", PROVIDER),
-    );
+    get_agent_providers_mut().insert(PROVIDER.to_string(), AgentProvider::new(PROVIDER));
     Ok(descs)
 }
 

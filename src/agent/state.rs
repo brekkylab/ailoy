@@ -5,6 +5,8 @@ use virtx::console::ConsoleClient;
 
 use crate::{memory::Memory, message::Message};
 
+/// What an [`Agent`](super::Agent) carries from one turn to the next.
+#[derive(Default)]
 pub struct AgentState {
     pub history: Vec<Message>,
 
@@ -13,37 +15,24 @@ pub struct AgentState {
     /// With `None`, pure tools still run and console tools fail with an error; nothing
     /// fills this in, since building a console means choosing a console server.
     ///
-    /// Need not be started: the first command that needs a booted session boots it.
+    /// Need not be started: each tool batch that has a console tool starts it.
     ///
-    /// `Arc` because tool execution hands out `'static` streams that each carry a handle;
+    /// `Arc` because tool calls run as `'static` futures that each carry a handle;
     /// `Mutex` because the protocol allows one outstanding request at a time (every
     /// `ConsoleClient` method takes `&mut self`).
     pub console: Arc<Mutex<Option<ConsoleClient>>>,
 
     /// The memory store this agent remembers into; `None` means no memory tools.
-    ///
-    /// A [`Memory`] is a path, not a handle, so it is cheap to clone into the memory tools
-    /// and safe to share with a sub-agent.
     pub memory: Option<Memory>,
 
-    /// Token count from the most recent model API call; used to decide when to truncate history.
+    /// Input tokens of the last model call, which a
+    /// [`ContextManager`](super::ContextManager) checks against its limit.
     pub last_input_tokens: Option<u64>,
-}
-
-impl Default for AgentState {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl AgentState {
     pub fn new() -> Self {
-        Self {
-            history: Vec::new(),
-            console: Arc::new(Mutex::new(None)),
-            memory: None,
-            last_input_tokens: None,
-        }
+        Self::default()
     }
 
     pub fn with_history(mut self, history: impl IntoIterator<Item = Message>) -> Self {
@@ -57,7 +46,7 @@ impl AgentState {
         self
     }
 
-    /// Share an existing console slot, e.g. a sub-agent using its parent's.
+    /// Share `console`'s slot with whoever else holds it, such as another agent.
     pub fn with_console_slot(mut self, console: Arc<Mutex<Option<ConsoleClient>>>) -> Self {
         self.console = console;
         self

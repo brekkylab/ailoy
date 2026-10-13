@@ -140,8 +140,6 @@ If the tool fails, the error still comes back as a `tool` message, so the model 
 | `message` | The complete message. |
 | `finish_reason` | Why the model stopped: `stop`, `length`, `tool_call` or `refusal` (with a `reason`). |
 | `usage` | Input and output token counts, when the provider reports them. |
-| `depth` | `0` for this agent, higher for messages from a sub-agent. |
-| `source_agent` | The name of the agent that wrote the message. |
 
 `agent.run_stream` (`runStream` in Node.js) yields `MessageDeltaOutput`s instead. Each `delta` holds a piece of a message, such as a few tokens of text or thinking. Concatenated, the deltas between two `finish_reason`s make up the same message `run` would yield. In Rust, the `Delta` trait's `accumulate` and `finish` do this for you.
 

@@ -4,7 +4,7 @@
 //! for the org decides how it runs: its CLI, its own API, Bedrock, OpenRouter or vLLM.
 //!
 //! ```ignore
-//! use ailoy::experimental::model::*;
+//! use ailoy::model::*;
 //!
 //! // By default, each model runs through its CLI.
 //! let model = create_lang_model("anthropic/claude-sonnet-5-5").await?;
@@ -73,8 +73,10 @@ use super::{
     OpenRouterApiModel, QwenApiModel, VllmModel, r#impl::env_key_and_region,
 };
 
-/// How a model is run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// How a model is run, spelled `"cli"`, `"api"`, `"bedrock"`, `"openrouter"` or `"vllm"`
+/// in its serde form.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Backend {
     /// The org's CLI: Claude Code, Codex or Gemini CLI.
     Cli,

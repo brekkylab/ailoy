@@ -1,6 +1,6 @@
-//! A language model that calls the GLM (Z.ai) API directly over HTTP.
+//! A language model served by vLLM, called over HTTP.
 //!
-//! The API is OpenAI-compatible Chat Completions. Every call is streamed
+//! vLLM serves an OpenAI-compatible Chat Completions API. Every call is streamed
 //! (`"stream": true`) and read as server-sent events; [`infer`](InferLangModel::infer)
 //! accumulates the same stream.
 
@@ -13,56 +13,72 @@ use futures::{
 
 use crate::{
     datatype::Value,
-    experimental::model::{InferLangModel, LangModelOptions},
     message::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
+    model::{InferLangModel, LangModelOptions},
     to_value,
     tool::ToolDesc,
 };
 
-const API_URL: &str = "https://api.z.ai/api/paas/v4/chat/completions";
+/// The server `from_env` uses when `VLLM_BASE_URL` is unset: `vllm serve`'s default.
+const DEFAULT_BASE_URL: &str = "http://localhost:8000/v1";
 
-/// Runs GLM models through the Z.ai API.
+/// Runs open-weight models served by vLLM.
 ///
 /// - Thinking is on or off, not graded: any
-///   [`ThinkingEffort`](crate::experimental::model::ThinkingEffort) turns it on. The
-///   thinking comes back as `reasoning_content`, and goes back with its turn.
-/// - The API constrains output to JSON but takes no schema, so an output schema is put in
-///   the system prompt for the model to follow.
+///   [`ThinkingEffort`](crate::model::ThinkingEffort) sets the chat
+///   template's `enable_thinking` (read by Qwen's and GLM's) and `thinking` (read by DeepSeek's);
+///   a template that reads neither keeps its default. The thinking comes
+///   back when the server runs a reasoning parser, as `reasoning` (or `reasoning_content`
+///   on older servers), and is not sent back.
+/// - An output schema is enforced by vLLM's guided decoding.
 #[derive(Clone)]
-pub struct GlmApiModel {
+pub struct VllmModel {
     model: String,
-    api_key: String,
+    base_url: String,
+    api_key: Option<String>,
 }
 
 // Hand-written so the key stays out of logs.
-impl std::fmt::Debug for GlmApiModel {
+impl std::fmt::Debug for VllmModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GlmApiModel")
+        f.debug_struct("VllmModel")
             .field("model", &self.model)
-            .field("api_key", &"<redacted>")
+            .field("base_url", &self.base_url)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
             .finish()
     }
 }
 
-impl GlmApiModel {
-    /// Runs `model`, an API model id (e.g. `"glm-4.6"`), with `api_key`.
-    pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
+impl VllmModel {
+    /// Runs `model`, the name the server serves it as (e.g. `"zai-org/GLM-4.6"`), on the
+    /// server at `base_url` (e.g. `"http://localhost:8000/v1"`).
+    pub fn new(model: impl Into<String>, base_url: impl Into<String>) -> Self {
         Self {
             model: model.into(),
-            api_key: api_key.into(),
+            base_url: base_url.into().trim_end_matches('/').to_owned(),
+            api_key: None,
         }
     }
 
-    /// Runs `model` with the key read from `ZAI_API_KEY`.
+    /// Sends `api_key` as a bearer token, for a server started with `--api-key`.
+    pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.api_key = Some(api_key.into());
+        self
+    }
+
+    /// Runs `model` on the server at `VLLM_BASE_URL` (by default
+    /// `http://localhost:8000/v1`), with the key from `VLLM_API_KEY` if it is set.
     pub fn from_env(model: impl Into<String>) -> anyhow::Result<Self> {
-        let api_key = std::env::var("ZAI_API_KEY")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .context("ZAI_API_KEY is not set")?;
-        Ok(Self::new(model, api_key))
+        let var = |name| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+        let base_url = var("VLLM_BASE_URL").unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
+        let model = Self::new(model, base_url);
+        Ok(match var("VLLM_API_KEY") {
+            Some(key) => model.with_api_key(key),
+            None => model,
+        })
     }
 
     /// The streamed request body for one call.
@@ -72,22 +88,12 @@ impl GlmApiModel {
         tools: &[ToolDesc],
         options: &LangModelOptions,
     ) -> anyhow::Result<serde_json::Value> {
-        let mut system = messages
+        let system = messages
             .iter()
             .filter(|m| m.role == Role::System)
             .flat_map(|m| m.contents.iter().filter_map(|p| p.as_text()))
             .collect::<Vec<_>>()
             .join("\n\n");
-        if let Some(schema) = &options.output_schema {
-            let schema: serde_json::Value = schema.clone().into();
-            if !system.is_empty() {
-                system.push_str("\n\n");
-            }
-            system.push_str(&format!(
-                "Reply with a single JSON object that matches this JSON schema, and nothing \
-                 else:\n{schema}"
-            ));
-        }
 
         let mut chat = Vec::new();
         if !system.is_empty() {
@@ -99,6 +105,7 @@ impl GlmApiModel {
             "model": self.model.as_str(),
             "messages": chat,
             "stream": true,
+            "stream_options": {"include_usage": true},
         });
         let obj = body.as_object_mut().unwrap();
 
@@ -122,17 +129,26 @@ impl GlmApiModel {
         }
         // Unset keeps the model's default.
         if options.thinking_effort.is_some() {
-            obj.insert("thinking".into(), to_value!({"type": "enabled"}));
+            obj.insert(
+                "chat_template_kwargs".into(),
+                to_value!({"enable_thinking": true, "thinking": true}),
+            );
         }
-        if options.output_schema.is_some() {
-            obj.insert("response_format".into(), to_value!({"type": "json_object"}));
+        if let Some(schema) = &options.output_schema {
+            obj.insert(
+                "response_format".into(),
+                to_value!({
+                    "type": "json_schema",
+                    "json_schema": {"name": "output", "schema": schema.clone()},
+                }),
+            );
         }
 
         Ok(body.into())
     }
 }
 
-impl InferLangModel for GlmApiModel {
+impl InferLangModel for VllmModel {
     fn infer(
         &self,
         messages: &[Message],
@@ -159,10 +175,11 @@ impl InferLangModel for GlmApiModel {
             Ok(body) => body,
             Err(e) => return Box::pin(stream::once(async move { Err(e) })),
         };
+        let url = format!("{}/chat/completions", self.base_url);
         let api_key = self.api_key.clone();
 
         Box::pin(async_stream::try_stream! {
-            let response = send(&api_key, &body).await?;
+            let response = send(&url, api_key.as_deref(), &body).await?;
 
             let mut saw_finish = false;
             let mut bytes = response.bytes_stream();
@@ -187,7 +204,7 @@ impl InferLangModel for GlmApiModel {
                 }
             }
             if !saw_finish {
-                Err(anyhow::anyhow!("the GLM stream ended before the reply finished"))?;
+                Err(anyhow::anyhow!("the vLLM stream ended before the reply finished"))?;
             }
         })
     }
@@ -205,20 +222,22 @@ static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|
 
 /// POSTs `body`, retrying 429s and 5xx overloads with backoff, and returns the successful
 /// response unread.
-async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest::Response> {
+async fn send(
+    url: &str,
+    api_key: Option<&str>,
+    body: &serde_json::Value,
+) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
     const MAX_WAIT_SECS: u64 = 10;
     // Rate limits, and the transient errors and overloads (529) servers recover from.
     const RETRY_STATUSES: [u16; 6] = [429, 500, 502, 503, 504, 529];
 
     for attempt in 0..=MAX_RETRIES {
-        let response = CLIENT
-            .post(API_URL)
-            .bearer_auth(api_key)
-            .header("accept", "text/event-stream")
-            .json(body)
-            .send()
-            .await?;
+        let mut request = CLIENT.post(url).header("accept", "text/event-stream");
+        if let Some(api_key) = api_key {
+            request = request.bearer_auth(api_key);
+        }
+        let response = request.json(body).send().await?;
 
         let status = response.status();
         if status.is_success() {
@@ -234,7 +253,7 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        bail!("GLM API request failed with status {status}: {text}");
+        bail!("vLLM request failed with status {status}: {text}");
     }
     unreachable!("retry loop returns or bails on every path")
 }
@@ -271,7 +290,7 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
     let val: serde_json::Value = serde_json::from_str(data)?;
     if let Some(error) = val.get("error") {
         bail!(
-            "GLM stream error: {}",
+            "vLLM stream error: {}",
             error["message"].as_str().unwrap_or("(no message)")
         );
     }
@@ -289,8 +308,10 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
             });
             empty = false;
         }
-        if let Some(text) = delta["reasoning_content"]
+        // Newer servers name it `reasoning`, older ones `reasoning_content`.
+        if let Some(text) = delta["reasoning"]
             .as_str()
+            .or_else(|| delta["reasoning_content"].as_str())
             .filter(|t| !t.is_empty())
         {
             out.delta.thinking = Some(text.to_owned());
@@ -320,10 +341,7 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
             out.finish_reason = Some(match reason {
                 "stop" => FinishReason::Stop {},
                 "tool_calls" => FinishReason::ToolCall {},
-                "length" | "model_context_window_exceeded" => FinishReason::Length {},
-                "sensitive" => FinishReason::Refusal {
-                    reason: "the content was flagged as sensitive".to_owned(),
-                },
+                "length" => FinishReason::Length {},
                 other => FinishReason::Refusal {
                     reason: format!("reason: {other}"),
                 },
@@ -407,9 +425,6 @@ fn chat_messages(messages: &[Message]) -> anyhow::Result<Vec<Value>> {
                     .collect::<String>();
                 let mut turn = to_value!({"role": "assistant", "content": text});
                 let obj = turn.as_object_mut().unwrap();
-                if let Some(thinking) = msg.thinking.as_ref().filter(|t| !t.is_empty()) {
-                    obj.insert("reasoning_content".into(), thinking.into());
-                }
                 let calls: Vec<Value> = msg
                     .tool_calls
                     .iter()

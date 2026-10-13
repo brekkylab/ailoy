@@ -15,5 +15,6 @@
 mod agent;
 mod convert;
 mod error;
+mod model;
 mod registry;
 mod tool;

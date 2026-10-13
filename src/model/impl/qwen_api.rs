@@ -1,12 +1,8 @@
-//! A language model served by OpenRouter, called through its OpenAI-compatible Chat
-//! Completions API.
+//! A language model that calls the Qwen (Alibaba Cloud Model Studio) API directly over HTTP.
 //!
-//! Every call is streamed (`"stream": true`) and read as server-sent events;
-//! [`infer`](InferLangModel::infer) accumulates the same stream.
-//!
-//! Some models need their reasoning sent back with the turn it came from, Gemini's thought
-//! signatures above all. OpenRouter returns it as `reasoning_details`, which is kept, as
-//! JSON, in the message's [`signature`](Message::signature) and sent back from there.
+//! The API is DashScope's OpenAI-compatible Chat Completions. Every call is streamed
+//! (`"stream": true`) and read as server-sent events; [`infer`](InferLangModel::infer)
+//! accumulates the same stream.
 
 use anyhow::{Context as _, bail};
 use futures::{
@@ -15,40 +11,45 @@ use futures::{
     stream::{self, BoxStream},
 };
 
-use super::gpt_api::strict_schema;
 use crate::{
     datatype::Value,
-    experimental::model::{InferLangModel, LangModelOptions, ThinkingEffort},
     message::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
+    model::{InferLangModel, LangModelOptions},
     to_value,
     tool::ToolDesc,
 };
 
-const API_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
+const API_URL: &str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions";
 
-/// Runs a model through OpenRouter.
+/// Runs Qwen models through the Alibaba Cloud Model Studio (DashScope) API.
+///
+/// - Thinking is on or off, not graded: any
+///   [`ThinkingEffort`](crate::model::ThinkingEffort) turns it on, on the
+///   models that can switch it. The thinking comes back as `reasoning_content`, and is not
+///   sent back.
+/// - The API constrains output to JSON but takes no schema, so an output schema is put in
+///   the system prompt for the model to follow.
 #[derive(Clone)]
-pub struct OpenRouterApiModel {
+pub struct QwenApiModel {
     model: String,
     api_key: String,
 }
 
 // Hand-written so the key stays out of logs.
-impl std::fmt::Debug for OpenRouterApiModel {
+impl std::fmt::Debug for QwenApiModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenRouterApiModel")
+        f.debug_struct("QwenApiModel")
             .field("model", &self.model)
             .field("api_key", &"<redacted>")
             .finish()
     }
 }
 
-impl OpenRouterApiModel {
-    /// Runs `model`, an OpenRouter model id (e.g. `"anthropic/claude-sonnet-4.5"`), with
-    /// `api_key`.
+impl QwenApiModel {
+    /// Runs `model`, an API model id (e.g. `"qwen3-max"`), with `api_key`.
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             model: model.into(),
@@ -56,12 +57,12 @@ impl OpenRouterApiModel {
         }
     }
 
-    /// Runs `model` with the key read from `OPENROUTER_API_KEY`.
+    /// Runs `model` with the key read from `DASHSCOPE_API_KEY`.
     pub fn from_env(model: impl Into<String>) -> anyhow::Result<Self> {
-        let api_key = std::env::var("OPENROUTER_API_KEY")
+        let api_key = std::env::var("DASHSCOPE_API_KEY")
             .ok()
             .filter(|v| !v.trim().is_empty())
-            .context("OPENROUTER_API_KEY is not set")?;
+            .context("DASHSCOPE_API_KEY is not set")?;
         Ok(Self::new(model, api_key))
     }
 
@@ -72,14 +73,34 @@ impl OpenRouterApiModel {
         tools: &[ToolDesc],
         options: &LangModelOptions,
     ) -> anyhow::Result<serde_json::Value> {
+        let mut system = messages
+            .iter()
+            .filter(|m| m.role == Role::System)
+            .flat_map(|m| m.contents.iter().filter_map(|p| p.as_text()))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        if let Some(schema) = &options.output_schema {
+            let schema: serde_json::Value = schema.clone().into();
+            if !system.is_empty() {
+                system.push_str("\n\n");
+            }
+            system.push_str(&format!(
+                "Reply with a single JSON object that matches this JSON schema, and nothing \
+                 else:\n{schema}"
+            ));
+        }
+
+        let mut chat = Vec::new();
+        if !system.is_empty() {
+            chat.push(to_value!({"role": "system", "content": system}));
+        }
+        chat.extend(chat_messages(messages)?);
+
         let mut body = to_value!({
             "model": self.model.as_str(),
-            "messages": chat_messages(messages)?,
+            "messages": chat,
             "stream": true,
             "stream_options": {"include_usage": true},
-            // Without it, OpenRouter holds the model's whole output limit against the
-            // account's credit, and a low balance turns every call into a 402.
-            "max_tokens": 32000,
         });
         let obj = body.as_object_mut().unwrap();
 
@@ -87,10 +108,8 @@ impl OpenRouterApiModel {
             let tools: Vec<Value> = tools
                 .iter()
                 .map(|tool| {
-                    let mut function = to_value!({
-                        "name": &tool.name,
-                        "parameters": tool.parameters.clone(),
-                    });
+                    let mut function =
+                        to_value!({"name": &tool.name, "parameters": tool.parameters.clone()});
                     if let Some(desc) = &tool.description {
                         function
                             .as_object_mut()
@@ -103,35 +122,19 @@ impl OpenRouterApiModel {
             obj.insert("tools".into(), Value::Array(tools));
             obj.insert("tool_choice".into(), "auto".into());
         }
-
-        // Unset keeps the model's default. OpenRouter maps the effort to each model's own
-        // control, a level or a token budget.
-        if let Some(effort) = options.thinking_effort {
-            let effort = match effort {
-                ThinkingEffort::Low => "low",
-                ThinkingEffort::Medium => "medium",
-                ThinkingEffort::High => "high",
-            };
-            obj.insert("reasoning".into(), to_value!({"effort": effort}));
+        // Unset keeps the model's default.
+        if options.thinking_effort.is_some() {
+            obj.insert("enable_thinking".into(), true.into());
         }
-
-        if let Some(schema) = &options.output_schema {
-            // Strict mode, as OpenAI's models take it, needs every object closed and
-            // fully required.
-            obj.insert(
-                "response_format".into(),
-                to_value!({
-                    "type": "json_schema",
-                    "json_schema": {"name": "output", "strict": true, "schema": strict_schema(schema)},
-                }),
-            );
+        if options.output_schema.is_some() {
+            obj.insert("response_format".into(), to_value!({"type": "json_object"}));
         }
 
         Ok(body.into())
     }
 }
 
-impl InferLangModel for OpenRouterApiModel {
+impl InferLangModel for QwenApiModel {
     fn infer(
         &self,
         messages: &[Message],
@@ -164,12 +167,9 @@ impl InferLangModel for OpenRouterApiModel {
             let response = send(&api_key, &body).await?;
 
             let mut saw_finish = false;
-            // `reasoning_details` arrive in pieces, and are sent on whole at the end.
-            let mut details: Vec<serde_json::Value> = Vec::new();
             let mut bytes = response.bytes_stream();
             let mut buf = Vec::new();
             // Network chunks don't align with events, so events are cut out of a buffer.
-            // The stream goes on past the finish reason: the usage comes after it.
             loop {
                 let chunk = bytes.next().await.transpose()?;
                 let at_eof = chunk.is_none();
@@ -179,7 +179,7 @@ impl InferLangModel for OpenRouterApiModel {
                     None => buf.extend_from_slice(b"\n\n"),
                 }
                 while let Some(data) = next_event(&mut buf) {
-                    if let Some(out) = parse_chunk(&data, &mut details)? {
+                    if let Some(out) = parse_chunk(&data)? {
                         saw_finish |= out.finish_reason.is_some();
                         yield out;
                     }
@@ -188,15 +188,8 @@ impl InferLangModel for OpenRouterApiModel {
                     break;
                 }
             }
-
             if !saw_finish {
-                Err(anyhow::anyhow!("the OpenRouter stream ended before the reply finished"))?;
-            }
-            if !details.is_empty() {
-                let mut out = MessageDeltaOutput::new();
-                out.delta.role = Some(Role::Assistant);
-                out.delta.signature = Some(serde_json::to_string(&details)?);
-                yield out;
+                Err(anyhow::anyhow!("the Qwen stream ended before the reply finished"))?;
             }
         })
     }
@@ -234,13 +227,7 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
             return Ok(response);
         }
         if RETRY_STATUSES.contains(&status.as_u16()) && attempt < MAX_RETRIES {
-            let wait_secs = response
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(1u64 << attempt)
-                .min(MAX_WAIT_SECS);
+            let wait_secs = (1u64 << attempt).min(MAX_WAIT_SECS);
             log::warn!(
                 "Got {status}. Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
                 attempt + 1
@@ -249,14 +236,14 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        bail!("OpenRouter request failed with status {status}: {text}");
+        bail!("Qwen API request failed with status {status}: {text}");
     }
     unreachable!("retry loop returns or bails on every path")
 }
 
 /// Cuts the next complete SSE event out of `buf` and returns its joined `data:` lines;
-/// `None` until a blank line ends one. Comments (OpenRouter's keep-alives) and events
-/// without data come back empty.
+/// `None` until a blank line ends one. Comments (keep-alives) and events without data come
+/// back empty.
 fn next_event(buf: &mut Vec<u8>) -> Option<String> {
     let (pos, len) = buf
         .windows(2)
@@ -278,19 +265,15 @@ fn next_event(buf: &mut Vec<u8>) -> Option<String> {
     )
 }
 
-/// Parses one stream chunk into a delta, gathering its `reasoning_details` into `details`;
-/// chunks that carry nothing else give `None`.
-fn parse_chunk(
-    data: &str,
-    details: &mut Vec<serde_json::Value>,
-) -> anyhow::Result<Option<MessageDeltaOutput>> {
+/// Parses one stream chunk into a delta; chunks that carry nothing give `None`.
+fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
     if data.is_empty() || data == "[DONE]" {
         return Ok(None);
     }
     let val: serde_json::Value = serde_json::from_str(data)?;
     if let Some(error) = val.get("error") {
         bail!(
-            "OpenRouter stream error: {}",
+            "Qwen stream error: {}",
             error["message"].as_str().unwrap_or("(no message)")
         );
     }
@@ -308,17 +291,20 @@ fn parse_chunk(
             });
             empty = false;
         }
-        if let Some(text) = delta["reasoning"].as_str().filter(|t| !t.is_empty()) {
+        if let Some(text) = delta["reasoning_content"]
+            .as_str()
+            .filter(|t| !t.is_empty())
+        {
             out.delta.thinking = Some(text.to_owned());
             empty = false;
-        }
-        for detail in delta["reasoning_details"].as_array().into_iter().flatten() {
-            merge_detail(details, detail);
         }
         // A call's first piece has its id and name; the rest continue the last call.
         for call in delta["tool_calls"].as_array().into_iter().flatten() {
             out.delta.tool_calls.push(PartDelta::Function {
-                id: call["id"].as_str().map(str::to_owned),
+                id: call["id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned),
                 function: PartDeltaFunction::WithStringArgs {
                     name: call["function"]["name"]
                         .as_str()
@@ -350,7 +336,7 @@ fn parse_chunk(
         out.usage = Some(TokenUsage {
             input_tokens: count("/prompt_tokens").unwrap_or(0),
             output_tokens: count("/completion_tokens").unwrap_or(0),
-            cache_creation_input_tokens: count("/prompt_tokens_details/cache_write_tokens"),
+            cache_creation_input_tokens: None,
             cache_read_input_tokens: count("/prompt_tokens_details/cached_tokens"),
         });
         empty = false;
@@ -359,67 +345,60 @@ fn parse_chunk(
     Ok((!empty).then_some(out))
 }
 
-/// Adds a streamed `reasoning_details` piece: a piece with the `index` of one already seen
-/// continues it, its text fields appended and the rest taken as they come.
-fn merge_detail(details: &mut Vec<serde_json::Value>, piece: &serde_json::Value) {
-    let index = piece.get("index").and_then(|v| v.as_u64());
-    let existing = index.and_then(|i| {
-        details
-            .iter_mut()
-            .find(|d| d.get("index").and_then(|v| v.as_u64()) == Some(i))
-    });
-    let Some(existing) = existing.and_then(|d| d.as_object_mut()) else {
-        details.push(piece.clone());
-        return;
-    };
-    for (key, value) in piece.as_object().into_iter().flatten() {
-        match (key.as_str(), existing.get_mut(key), value.as_str()) {
-            ("text" | "summary" | "data", Some(serde_json::Value::String(acc)), Some(more)) => {
-                acc.push_str(more)
-            }
-            _ => {
-                existing.insert(key.clone(), value.clone());
-            }
-        }
-    }
-}
-
-/// The conversation as Chat Completions messages.
-fn chat_messages(messages: &[Message]) -> anyhow::Result<Value> {
+/// The conversation, system messages aside, as Chat Completions messages.
+fn chat_messages(messages: &[Message]) -> anyhow::Result<Vec<Value>> {
     let mut out = Vec::new();
     for msg in messages {
         match msg.role {
-            Role::System => {
-                let text = msg
-                    .contents
-                    .iter()
-                    .filter_map(|p| p.as_text())
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                out.push(to_value!({"role": "system", "content": text}));
-            }
+            Role::System => {}
             Role::Tool => {
                 let id = msg
                     .id
                     .as_deref()
                     .context("a tool message has no id to match its call")?;
-                let content = msg
+                let text = msg
                     .contents
                     .iter()
-                    .map(content_part)
-                    .collect::<anyhow::Result<Vec<_>>>()?;
-                out.push(to_value!({"role": "tool", "tool_call_id": id, "content": content}));
+                    .map(|p| match p {
+                        Part::Text { text } => text.clone(),
+                        Part::Value { value } => value_text(value),
+                        // A tool result stays in the history, so rejecting its image would
+                        // fail every later call; a label tells the model one was returned.
+                        Part::Image {
+                            image: PartImage::Embedded { mime_type, .. },
+                        } => format!("[image: {mime_type}]"),
+                        Part::Image {
+                            image: PartImage::Url { url },
+                        } => format!("[image at {url}]"),
+                        Part::Function { .. } => String::new(),
+                    })
+                    .collect::<String>();
+                out.push(to_value!({"role": "tool", "tool_call_id": id, "content": text}));
             }
             Role::User => {
-                let content = msg
+                let content: Vec<Value> = msg
                     .contents
                     .iter()
-                    .map(content_part)
-                    .collect::<anyhow::Result<Vec<_>>>()?;
+                    .map(|p| match p {
+                        Part::Text { text } => to_value!({"type": "text", "text": text}),
+                        Part::Value { value } => {
+                            to_value!({"type": "text", "text": value_text(value)})
+                        }
+                        Part::Image { image } => {
+                            let url = match image {
+                                PartImage::Embedded { mime_type, data } => {
+                                    format!("data:{mime_type};base64,{}", data.base64())
+                                }
+                                PartImage::Url { url } => url.clone(),
+                            };
+                            to_value!({"type": "image_url", "image_url": {"url": url}})
+                        }
+                        Part::Function { .. } => to_value!({"type": "text", "text": ""}),
+                    })
+                    .collect();
                 out.push(to_value!({"role": "user", "content": content}));
             }
             Role::Assistant => {
-                // Assistant content is text only.
                 let text = msg
                     .contents
                     .iter()
@@ -449,102 +428,16 @@ fn chat_messages(messages: &[Message]) -> anyhow::Result<Value> {
                 if !calls.is_empty() {
                     obj.insert("tool_calls".into(), Value::Array(calls));
                 }
-                // The reasoning this turn came with, if it came through OpenRouter.
-                if let Some(details) = msg
-                    .signature
-                    .as_deref()
-                    .and_then(|s| serde_json::from_str::<Value>(s).ok())
-                    .filter(|d| d.is_array())
-                {
-                    obj.insert("reasoning_details".into(), details);
-                }
                 out.push(turn);
             }
         }
     }
-    Ok(Value::Array(out))
+    Ok(out)
 }
 
-fn content_part(part: &Part) -> anyhow::Result<Value> {
-    Ok(match part {
-        Part::Text { text } => to_value!({"type": "text", "text": text}),
-        Part::Image { image } => {
-            let url = match image {
-                PartImage::Embedded { mime_type, data } => {
-                    format!("data:{mime_type};base64,{}", data.base64())
-                }
-                PartImage::Url { url } => url.clone(),
-            };
-            to_value!({"type": "image_url", "image_url": {"url": url}})
-        }
-        Part::Value { value } => to_value!({
-            "type": "text",
-            "text": match value {
-                Value::String(s) => s.clone(),
-                other => serde_json::to_string(other).unwrap_or_default(),
-            },
-        }),
-        Part::Function { .. } => bail!("a function call cannot be message content"),
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn chunks_accumulate_into_text_calls_and_usage() {
-        let chunks = [
-            r#"{"choices":[{"delta":{"role":"assistant","content":"Hi"}}]}"#,
-            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"f","arguments":"{\"a\""}}]}}]}"#,
-            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":1}"}}]}}]}"#,
-            r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
-            r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#,
-            "[DONE]",
-        ];
-        let mut details = Vec::new();
-        let mut acc = MessageDeltaOutput::new();
-        for chunk in chunks {
-            if let Some(out) = parse_chunk(chunk, &mut details).unwrap() {
-                acc = acc.accumulate(out).unwrap();
-            }
-        }
-        let out = acc.finish().unwrap();
-        assert_eq!(out.message.contents[0].as_text(), Some("Hi"));
-        assert_eq!(out.message.tool_calls.unwrap().len(), 1);
-        assert_eq!(out.usage.unwrap().output_tokens, 5);
-    }
-
-    #[test]
-    fn reasoning_details_merge_by_index() {
-        let mut details = Vec::new();
-        merge_detail(
-            &mut details,
-            &serde_json::json!({"type": "reasoning.text", "index": 0, "text": "a"}),
-        );
-        merge_detail(
-            &mut details,
-            &serde_json::json!({"index": 0, "text": "b", "signature": "s"}),
-        );
-        merge_detail(
-            &mut details,
-            &serde_json::json!({"type": "reasoning.encrypted", "index": 1, "data": "x"}),
-        );
-        assert_eq!(
-            details,
-            vec![
-                serde_json::json!({"type": "reasoning.text", "index": 0, "text": "ab", "signature": "s"}),
-                serde_json::json!({"type": "reasoning.encrypted", "index": 1, "data": "x"}),
-            ]
-        );
-    }
-
-    #[test]
-    fn reasoning_details_go_back_with_their_turn() {
-        let msg = Message::new(Role::Assistant)
-            .with_contents([Part::text("ok")])
-            .with_signatured_thinking("", r#"[{"type":"reasoning.encrypted","data":"x"}]"#);
-        let out: serde_json::Value = chat_messages(&[msg]).unwrap().into();
-        assert_eq!(out[0]["reasoning_details"][0]["data"], "x");
+fn value_text(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        other => serde_json::to_string(other).unwrap_or_default(),
     }
 }
