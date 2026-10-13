@@ -36,21 +36,20 @@
 //! | Kimi                 | Hugging Face repo id            | `moonshotai/Kimi-K2-Thinking`        |
 //! | GLM                  | Hugging Face repo id            | `zai-org/GLM-4.6`                    |
 //! | Qwen                 | Hugging Face repo id            | `Qwen/Qwen3-235B-A22B-Instruct-2507` |
-//! | Other open-weight    | Hugging Face repo id            | `openai/gpt-oss-120b`                |
 //!
 //! `<org>` alone runs the CLI's default model.
 //!
 //! # Backends
 //!
-//! | Org           | CLI                | APIs                                                                |
-//! |---------------|--------------------|---------------------------------------------------------------------|
-//! | `anthropic`   | [`ClaudeCliModel`] | [`ClaudeApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`]           |
-//! | `openai`      | [`CodexCliModel`]  | [`GptApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`] |
-//! | `google`      | [`GeminiCliModel`] | [`GeminiApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`] |
+//! | Org           | CLI                | APIs                                                                             |
+//! |---------------|--------------------|----------------------------------------------------------------------------------|
+//! | `anthropic`   | [`ClaudeCliModel`] | [`ClaudeApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`]                  |
+//! | `openai`      | [`CodexCliModel`]  | [`GptApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`]                     |
+//! | `google`      | [`GeminiCliModel`] | [`GeminiApiModel`], [`OpenRouterApiModel`]                                       |
 //! | `deepseek-ai` | —                  | [`DeepSeekApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`] |
-//! | `moonshotai`  | —                  | [`KimiApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`] |
-//! | `zai-org`     | —                  | [`GlmApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`] |
-//! | `Qwen`        | —                  | [`QwenApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`] |
+//! | `moonshotai`  | —                  | [`KimiApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`]     |
+//! | `zai-org`     | —                  | [`GlmApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`]      |
+//! | `Qwen`        | —                  | [`QwenApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`]     |
 //!
 //! The default is the CLI where there is one, otherwise the org's own API. The own APIs
 //! read their key from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
