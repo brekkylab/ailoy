@@ -11,11 +11,11 @@ use virtx::console::ConsoleClient;
 /// reads the body when it uses the skill.
 ///
 /// An `<available_skills>` XML block for Claude (trained on XML-tagged prompts), a
-/// Markdown list otherwise; `model` is the spec's model, e.g. `"claude"`.
+/// Markdown list otherwise; `org` is the spec's model org, e.g. `"anthropic"`.
 pub(super) async fn render_skills(
     dirs: &[String],
     console: &Mutex<Option<ConsoleClient>>,
-    model: &str,
+    org: &str,
 ) -> anyhow::Result<String> {
     let mut guard = console.lock().await;
     let console = guard
@@ -36,7 +36,7 @@ pub(super) async fn render_skills(
             location,
         });
     }
-    Ok(if model == "claude" {
+    Ok(if org == "anthropic" {
         render_xml(&skills)
     } else {
         render_markdown(&skills)

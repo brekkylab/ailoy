@@ -71,12 +71,7 @@ impl BedrockModel {
     /// `AWS_REGION` or `AWS_DEFAULT_REGION` (`us-east-1` if neither is set), as the AWS
     /// SDKs read them.
     pub fn from_env(model: impl Into<String>) -> anyhow::Result<Self> {
-        let env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
-        let api_key =
-            env("AWS_BEARER_TOKEN_BEDROCK").context("AWS_BEARER_TOKEN_BEDROCK is not set")?;
-        let region = env("AWS_REGION")
-            .or_else(|| env("AWS_DEFAULT_REGION"))
-            .unwrap_or_else(|| DEFAULT_REGION.to_owned());
+        let (api_key, region) = env_key_and_region()?;
         Ok(Self::new(model, api_key, region))
     }
 
@@ -276,6 +271,17 @@ fn effort_name(effort: ThinkingEffort) -> &'static str {
         ThinkingEffort::Medium => "medium",
         ThinkingEffort::High => "high",
     }
+}
+
+/// The key from `AWS_BEARER_TOKEN_BEDROCK` and the region from `AWS_REGION` or
+/// `AWS_DEFAULT_REGION` (`us-east-1` if neither is set), as the AWS SDKs read them.
+pub(crate) fn env_key_and_region() -> anyhow::Result<(String, String)> {
+    let env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+    let api_key = env("AWS_BEARER_TOKEN_BEDROCK").context("AWS_BEARER_TOKEN_BEDROCK is not set")?;
+    let region = env("AWS_REGION")
+        .or_else(|| env("AWS_DEFAULT_REGION"))
+        .unwrap_or_else(|| DEFAULT_REGION.to_owned());
+    Ok((api_key, region))
 }
 
 /// Whether a Claude model predates adaptive thinking (Claude 4.6) and thinks only on a

@@ -98,7 +98,7 @@ impl ClaudeCliModel {
         }
     }
 
-    /// Model alias or full name for `--model` (e.g. `"sonnet"`); unset keeps the CLI default.
+    /// Model id for `--model` (e.g. `"claude-sonnet-5-5"`); unset keeps the CLI default.
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
         self

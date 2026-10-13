@@ -85,7 +85,7 @@ impl Agent {
             .cloned()
             .with_context(|| format!("agent_provider '{provider}' not registered"))?;
 
-        let model = create_lang_model(&spec.model)?;
+        let model = create_lang_model(&spec.model).await?;
 
         // Errors if any spec tool is missing.
         let mut tools = {
@@ -125,8 +125,8 @@ impl Agent {
             let skills = if spec.skills.is_empty() {
                 None
             } else {
-                let model = split_desc(&spec.model).0;
-                Some(render_skills(&spec.skills, &state.console, model).await?)
+                let org = split_desc(&spec.model).0;
+                Some(render_skills(&spec.skills, &state.console, org).await?)
             };
             let text = [spec.instruction, skills]
                 .into_iter()
@@ -500,7 +500,7 @@ mod tests {
     use crate::{
         experimental::{
             agent::{AgentProvider, get_agent_providers_mut},
-            model::set_lang_model_provider,
+            model::{LangModelProvider, set_lang_model_provider},
         },
         message::Role,
         suppress_panics, to_value,
@@ -584,7 +584,10 @@ mod tests {
             ..Default::default()
         });
         let shared = model.clone();
-        set_lang_model_provider(name, Arc::new(move |_, _| Ok(shared.clone())));
+        set_lang_model_provider(
+            name,
+            LangModelProvider::custom(move |_, _| Ok(shared.clone())),
+        );
 
         let mut tp = ToolProvider::new();
         tp.insert_func(

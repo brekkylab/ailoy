@@ -46,18 +46,6 @@ fn budget_tokens(effort: ThinkingEffort) -> u64 {
     }
 }
 
-/// The model id for one of the `claude` CLI's aliases, which name the latest model of a
-/// family, so the same name works through the CLI, the API and Bedrock.
-pub(crate) fn claude_alias(name: &str) -> Option<&'static str> {
-    match name {
-        "fable" => Some("claude-fable-5-1"),
-        "opus" => Some("claude-opus-5-5"),
-        "sonnet" => Some("claude-sonnet-5-5"),
-        "haiku" => Some("claude-haiku-5-5"),
-        _ => None,
-    }
-}
-
 /// Runs Claude through the Anthropic Messages API (`/v1/messages`).
 ///
 /// Unlike [`ClaudeCliModel`](super::ClaudeCliModel), tools are declared to the API
@@ -81,10 +69,7 @@ impl ClaudeApiModel {
     /// Runs `model`, an API model id (e.g. "claude-opus-5-5"), with `api_key`.
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
-            model: {
-                let model = model.into();
-                claude_alias(&model).map_or(model, str::to_owned)
-            },
+            model: model.into(),
             api_key: api_key.into(),
         }
     }

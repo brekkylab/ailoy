@@ -21,7 +21,7 @@ use crate::{
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSpec {
     /// The model's desc, as [`create_lang_model`](crate::experimental::model::create_lang_model)
-    /// takes it (e.g. `"claude/sonnet"`).
+    /// takes it (e.g. `"anthropic/claude-sonnet-5-5"`).
     pub model: String,
 
     /// System prompt that shapes how the model works.
@@ -48,7 +48,8 @@ pub struct AgentSpec {
     pub skills: Vec<String>,
 }
 
-/// The model a desc names (`"claude"` of `"claude/sonnet"`) and the name after it.
+/// The org a desc names (`"anthropic"` of `"anthropic/claude-sonnet-5-5"`) and the name
+/// after it.
 pub(super) fn split_desc(desc: &str) -> (&str, &str) {
     desc.split_once('/').unwrap_or((desc, ""))
 }
@@ -97,15 +98,15 @@ impl AgentSpec {
     pub fn system_tools(mut self) -> Self {
         self.tools.push(get_shell_tool_desc());
 
-        let model = split_desc(&self.model).0;
+        let org = split_desc(&self.model).0;
         // GPT reads files through `shell`, as in Codex.
-        if model == "gpt" {
+        if org == "openai" {
             self.tools.push(get_apply_patch_tool_desc());
         } else {
             // DeepSeek, Kimi and GLM serve Anthropic-compatible APIs for Claude Code, so
             // likely follow the Claude style.
-            self.tools.push(match model {
-                "gemini" => get_read_file_tool_desc(),
+            self.tools.push(match org {
+                "google" => get_read_file_tool_desc(),
                 _ => get_read_tool_desc(),
             });
             self.tools.push(get_write_tool_desc());
@@ -114,7 +115,7 @@ impl AgentSpec {
 
         // `imgread` only where the image reaches the model: the backends of these take tool
         // results as text alone (an image becomes a label), even for vision models.
-        if !matches!(model, "deepseek" | "kimi" | "glm" | "qwen") {
+        if !matches!(org, "deepseek-ai" | "moonshotai" | "zai-org" | "Qwen") {
             self.tools.push(get_imgread_tool_desc());
         }
 
@@ -171,44 +172,43 @@ mod tests {
 
     #[test]
     fn test_system_tools_follow_the_model() {
-        let gpt = AgentSpec::new("gpt/luna").system_tools();
+        let gpt = AgentSpec::new("openai/gpt-6-luna").system_tools();
         assert_eq!(names(&gpt), ["shell", "apply_patch", "imgread"]);
 
-        let gemini = AgentSpec::new("gemini").system_tools();
+        let gemini = AgentSpec::new("google").system_tools();
         assert!(
             names(&gemini).contains(&"read_file"),
             "{:?}",
             names(&gemini)
         );
 
-        let claude = AgentSpec::new("claude/sonnet").system_tools();
+        let claude = AgentSpec::new("anthropic/claude-sonnet-5-5").system_tools();
         assert!(names(&claude).contains(&"read"), "{:?}", names(&claude));
         assert!(names(&claude).contains(&"imgread"), "{:?}", names(&claude));
 
-        let deepseek = AgentSpec::new("deepseek/deepseek-chat").system_tools();
+        let deepseek = AgentSpec::new("deepseek-ai/deepseek-chat").system_tools();
         assert!(!names(&deepseek).contains(&"imgread"));
 
-        // Through OpenRouter the name carries the vendor.
-        let kimi = AgentSpec::new("kimi/moonshotai/kimi-k2-0905").system_tools();
+        let kimi = AgentSpec::new("moonshotai/Kimi-K2-Thinking").system_tools();
         assert!(!names(&kimi).contains(&"imgread"));
     }
 
     #[test]
     fn test_web_search_tool_empty_engines_keeps_field_none() {
-        let spec = AgentSpec::new("claude").web_search_tool(vec![]);
+        let spec = AgentSpec::new("anthropic").web_search_tool(vec![]);
         assert!(spec.web_search_engines.is_none());
         assert_eq!(names(&spec), ["web_search"]);
     }
 
     #[test]
     fn test_spec_roundtrip() {
-        let spec = AgentSpec::new("claude/sonnet")
+        let spec = AgentSpec::new("anthropic/claude-sonnet-5-5")
             .instruction("Be brief.")
             .thinking_effort(ThinkingEffort::Low)
             .web_search_tool(vec![WebSearchEngineKind::Google]);
         let json = serde_json::to_string(&spec).unwrap();
         let back: AgentSpec = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.model, "claude/sonnet");
+        assert_eq!(back.model, "anthropic/claude-sonnet-5-5");
         assert_eq!(
             back.model_options.unwrap().thinking_effort,
             Some(ThinkingEffort::Low)
