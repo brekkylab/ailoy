@@ -10,6 +10,11 @@ pub mod message;
 pub mod model;
 pub mod tool;
 
+/// For [`to_value!`], whose expansion names `IndexMap` in the caller's crate, which need not
+/// depend on `indexmap` itself.
+#[doc(hidden)]
+pub use indexmap as __indexmap;
+
 /// A started console on virtx's default server, for tests.
 ///
 /// Panics on failure: a missing server binary should stop the test run loudly.

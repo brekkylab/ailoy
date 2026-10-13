@@ -1,14 +1,20 @@
 # Quick start
 
-## Set your API key
+## Set up a model
 
-Set the API key for your model's provider, either in the environment or in a `.env` file:
+By default, Claude, GPT and Gemini run through their CLIs, so install and log in to the one for your model: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`), [Codex](https://github.com/openai/codex) (`codex`) or [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`).
+
+To call the provider's API instead, set its key in the environment and switch the org to the `api` backend before building the agent (`setLangModelProvider` in Node.js):
 
 ```sh
-export OPENAI_API_KEY=...
-export ANTHROPIC_API_KEY=...
-export GEMINI_API_KEY=...
+export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY
 ```
+
+```python
+ailoy.set_lang_model_provider("anthropic", "api")
+```
+
+[Model providers](./model-providers) lists every backend: the CLIs, each org's own API, Amazon Bedrock, OpenRouter and vLLM.
 
 ## Install
 

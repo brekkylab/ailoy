@@ -828,7 +828,8 @@ macro_rules! to_value {
 
     // Object
     ({ $($rest:tt)* }) => {{
-        let mut __map: indexmap::IndexMap<String, $crate::datatype::Value> = indexmap::IndexMap::new();
+        let mut __map: $crate::__indexmap::IndexMap<String, $crate::datatype::Value> =
+            $crate::__indexmap::IndexMap::new();
         $crate::__value_obj_kvs!(__map, $($rest)*);
         $crate::datatype::Value::Object(__map)
     }};
