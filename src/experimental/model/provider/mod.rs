@@ -44,13 +44,13 @@
 //!
 //! | Org           | CLI                | APIs                                                                |
 //! |---------------|--------------------|---------------------------------------------------------------------|
-//! | `anthropic`   | [`ClaudeCliModel`] | [`ClaudeApiModel`], [`BedrockModel`], [`OpenRouterModel`]           |
-//! | `openai`      | [`CodexCliModel`]  | [`GptApiModel`], [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
-//! | `google`      | [`GeminiCliModel`] | [`GeminiApiModel`], [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
-//! | `deepseek-ai` | —                  | [`DeepSeekApiModel`], [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
-//! | `moonshotai`  | —                  | [`KimiApiModel`], [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
-//! | `zai-org`     | —                  | [`GlmApiModel`], [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
-//! | `Qwen`        | —                  | [`QwenApiModel`], [`BedrockModel`], [`OpenRouterModel`], [`VllmModel`] |
+//! | `anthropic`   | [`ClaudeCliModel`] | [`ClaudeApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`]           |
+//! | `openai`      | [`CodexCliModel`]  | [`GptApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`] |
+//! | `google`      | [`GeminiCliModel`] | [`GeminiApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`] |
+//! | `deepseek-ai` | —                  | [`DeepSeekApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`] |
+//! | `moonshotai`  | —                  | [`KimiApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`] |
+//! | `zai-org`     | —                  | [`GlmApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`] |
+//! | `Qwen`        | —                  | [`QwenApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`VllmModel`] |
 //!
 //! The default is the CLI where there is one, otherwise the org's own API. The own APIs
 //! read their key from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
@@ -69,9 +69,9 @@ use std::{
 use anyhow::{Context as _, bail};
 
 use super::{
-    BedrockModel, ClaudeApiModel, ClaudeCliModel, CodexCliModel, DeepSeekApiModel, GeminiApiModel,
-    GeminiCliModel, GlmApiModel, GptApiModel, InferLangModel, KimiApiModel, OpenRouterModel,
-    QwenApiModel, VllmModel, r#impl::env_key_and_region,
+    BedrockApiModel, ClaudeApiModel, ClaudeCliModel, CodexCliModel, DeepSeekApiModel,
+    GeminiApiModel, GeminiCliModel, GlmApiModel, GptApiModel, InferLangModel, KimiApiModel,
+    OpenRouterApiModel, QwenApiModel, VllmModel, r#impl::env_key_and_region,
 };
 
 /// How a model is run.
@@ -182,7 +182,7 @@ fn required(name: Option<&str>) -> anyhow::Result<&str> {
 /// - vLLM: `<org>/<name>`, the Hugging Face repo id it serves the model as.
 ///
 /// The catalogs are fetched once per process; to run an id as is, build the model directly
-/// (`BedrockModel::from_env("arn:…")`).
+/// (`BedrockApiModel::from_env("arn:…")`).
 async fn build(
     backend: Backend,
     org: &str,
@@ -234,7 +234,7 @@ async fn build(
                 .await
                 .and_then(|c| c.find(bedrock_vendor(org), name))
                 .unwrap_or_else(|| bedrock_rule(org, name));
-            Arc::new(BedrockModel::new(id, api_key, region))
+            Arc::new(BedrockApiModel::new(id, api_key, region))
         }
         (Backend::OpenRouter, _) => {
             let name = required(name)?;
@@ -242,7 +242,7 @@ async fn build(
                 .await
                 .and_then(|c| c.find(org, openrouter_vendor(org), name))
                 .unwrap_or_else(|| openrouter_rule(org, name));
-            Arc::new(OpenRouterModel::from_env(id)?)
+            Arc::new(OpenRouterApiModel::from_env(id)?)
         }
         (Backend::Vllm, _) => Arc::new(VllmModel::from_env(format!("{org}/{}", required(name)?))?),
     })

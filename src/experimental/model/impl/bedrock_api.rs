@@ -36,15 +36,15 @@ const CLAUDE_THINKING_MAX_TOKENS: i64 = 32000;
 /// for, the thinking effort, goes in as the family's own field (Claude and OpenAI models).
 /// Image URLs are rejected, since Bedrock does not fetch them.
 #[derive(Clone)]
-pub struct BedrockModel {
+pub struct BedrockApiModel {
     model: String,
     api_key: String,
     region: String,
 }
 
-impl std::fmt::Debug for BedrockModel {
+impl std::fmt::Debug for BedrockApiModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BedrockModel")
+        f.debug_struct("BedrockApiModel")
             .field("model", &self.model)
             .field("api_key", &"<redacted>")
             .field("region", &self.region)
@@ -52,7 +52,7 @@ impl std::fmt::Debug for BedrockModel {
     }
 }
 
-impl BedrockModel {
+impl BedrockApiModel {
     /// Runs `model`, a Bedrock model id or inference profile (e.g.
     /// `"us.anthropic.claude-sonnet-4-5-20250929-v1:0"`), in `region` with `api_key`.
     pub fn new(
@@ -208,7 +208,7 @@ impl BedrockModel {
     }
 }
 
-impl InferLangModel for BedrockModel {
+impl InferLangModel for BedrockApiModel {
     fn infer(
         &self,
         messages: &[Message],
@@ -823,7 +823,7 @@ mod tests {
         ];
         let cache_point = serde_json::json!({"cachePoint": {"type": "default"}});
 
-        let claude = BedrockModel::new("us.anthropic.claude-sonnet-4-5", "k", "us-east-1");
+        let claude = BedrockApiModel::new("us.anthropic.claude-sonnet-4-5", "k", "us-east-1");
         let body = claude
             .body(&messages, &[], &LangModelOptions::default())
             .unwrap();
@@ -834,7 +834,7 @@ mod tests {
         let turn = &body["messages"][0]["content"];
         assert_eq!(turn.as_array().unwrap().last(), Some(&cache_point));
 
-        let nova = BedrockModel::new("us.amazon.nova-pro-v1:0", "k", "us-east-1");
+        let nova = BedrockApiModel::new("us.amazon.nova-pro-v1:0", "k", "us-east-1");
         let body = nova
             .body(&messages, &[], &LangModelOptions::default())
             .unwrap();

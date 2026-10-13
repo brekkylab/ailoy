@@ -31,22 +31,22 @@ const API_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
 /// Runs a model through OpenRouter.
 #[derive(Clone)]
-pub struct OpenRouterModel {
+pub struct OpenRouterApiModel {
     model: String,
     api_key: String,
 }
 
 // Hand-written so the key stays out of logs.
-impl std::fmt::Debug for OpenRouterModel {
+impl std::fmt::Debug for OpenRouterApiModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenRouterModel")
+        f.debug_struct("OpenRouterApiModel")
             .field("model", &self.model)
             .field("api_key", &"<redacted>")
             .finish()
     }
 }
 
-impl OpenRouterModel {
+impl OpenRouterApiModel {
     /// Runs `model`, an OpenRouter model id (e.g. `"anthropic/claude-sonnet-4.5"`), with
     /// `api_key`.
     pub fn new(model: impl Into<String>, api_key: impl Into<String>) -> Self {
@@ -131,7 +131,7 @@ impl OpenRouterModel {
     }
 }
 
-impl InferLangModel for OpenRouterModel {
+impl InferLangModel for OpenRouterApiModel {
     fn infer(
         &self,
         messages: &[Message],

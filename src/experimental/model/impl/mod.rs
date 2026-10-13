@@ -1,4 +1,4 @@
-mod bedrock;
+mod bedrock_api;
 mod claude_api;
 mod claude_cli;
 mod codex_cli;
@@ -8,11 +8,11 @@ mod gemini_cli;
 mod glm_api;
 mod gpt_api;
 mod kimi_api;
-mod openrouter;
+mod openrouter_api;
 mod qwen_api;
 mod vllm;
 
-pub use bedrock::*;
+pub use bedrock_api::*;
 pub use claude_api::*;
 pub use claude_cli::*;
 pub use codex_cli::*;
@@ -22,6 +22,6 @@ pub use gemini_cli::*;
 pub use glm_api::*;
 pub use gpt_api::*;
 pub use kimi_api::*;
-pub use openrouter::*;
+pub use openrouter_api::*;
 pub use qwen_api::*;
 pub use vllm::*;
