@@ -1,0 +1,37 @@
+name: Feature request
+description: Something Ailoy does not do yet, or could do better
+type: Feature
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The agent or the workflow you are building, and where Ailoy gets in the way.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: The API or the behaviour you have in mind. A sketch in the language you use is welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: A workaround, or another library that does this.
+
+  - type: dropdown
+    id: languages
+    attributes:
+      label: Language
+      description: Where you would use it.
+      multiple: true
+      options:
+        - Python
+        - Node.js
+        - Rust
