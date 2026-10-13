@@ -5,22 +5,13 @@
 //! and reads the reply as one JSON event per line from its stdout
 //! (`--output-format stream-json`).
 //!
-//! Claude Code's own tools and MCP servers are switched off. Tools are instead
-//! described in the system prompt, and the model calls them in Claude's XML
-//! format, which is parsed out of its reply:
-//!
-//! ```text
-//! <function_calls>
-//! <invoke name="get_weather">
-//! <parameter name="city">Seoul</parameter>
-//! </invoke>
-//! </function_calls>
-//! ```
-//!
-//! The process is stopped at the first `</function_calls>`, since the CLI has
-//! no stop sequences and the model would otherwise go on to imagine the results.
-//! Only a `<function_calls>` at the start of a line and outside fenced or
-//! indented code is taken as a call, and none is looked for when no tools were given.
+//! Claude Code's own tools and MCP servers are switched off. The tools a call is given are
+//! declared to the CLI by an MCP server that runs in this process, as the Agent SDK's
+//! in-process servers do: the CLI is told its name in an `initialize` control request, and
+//! sends its MCP messages over the same stdin and stdout, as `mcp_message` control requests.
+//! The model calls the tools natively, and the reply streams each call as a `tool_use` block.
+//! The process is stopped once the reply ends with them, before the CLI would run them, so
+//! the server only ever lists the tools.
 
 use std::{collections::HashMap, io::Write as _, process::Stdio};
 
@@ -32,12 +23,11 @@ use futures::{
 };
 use tokio::{
     io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader},
-    process::{Child, Command},
+    process::{Child, ChildStdin, Command},
 };
 
 use super::claude_api::image_block;
 use crate::{
-    datatype::Value,
     message::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, Role, TokenUsage,
@@ -48,18 +38,10 @@ use crate::{
 
 /// The tool the CLI adds for `--json-schema`; the reply is its arguments.
 const STRUCTURED_OUTPUT: &str = "StructuredOutput";
-const CALLS_OPEN: &str = "<function_calls>";
-const CALLS_CLOSE: &str = "</function_calls>";
-const INVOKE_OPEN: &str = "<invoke name=\"";
-const INVOKE_CLOSE: &str = "</invoke>";
-const PARAM_OPEN: &str = "<parameter name=\"";
-const PARAM_CLOSE: &str = "</parameter>";
-/// The namespace Claude's own tool-call tags carry; the model sometimes writes it here too.
-const NAMESPACE: &str = "antml:";
-/// The tag names read with or without [`NAMESPACE`].
-const TAGS: [&str; 3] = ["function_calls", "invoke", "parameter"];
-/// The longest a stray word before a bare `<invoke>` is taken to be.
-const MAX_STRAY_WORD: usize = 12;
+/// The in-process MCP server that declares the tools.
+const SERVER: &str = "ailoy";
+/// What the CLI puts before the name of each of [`SERVER`]'s tools.
+const TOOL_PREFIX: &str = "mcp__ailoy__";
 
 /// Runs Claude through the `claude` CLI instead of calling the API directly.
 ///
@@ -67,8 +49,8 @@ const MAX_STRAY_WORD: usize = 12;
 /// replace Claude Code's own system prompt; without any, the prompt is empty.
 ///
 /// Limits of going through the CLI:
-/// - Tools are described in the prompt rather than declared to the API, so a
-///   call is only as reliable as the model's adherence to the format.
+/// - Tools reach the model as an MCP server's, named `mcp__ailoy__<name>`. The API takes
+///   names of up to 64 characters, so a tool's own name can have 52.
 /// - The CLI takes a single prompt, so earlier turns, tool calls and tool
 ///   results are written into it as a transcript, with images in user
 ///   messages and tool results placed where they were.
@@ -119,20 +101,11 @@ impl ClaudeCliModel {
     ) -> anyhow::Result<Invocation> {
         let (system, conversation): (Vec<&Message>, Vec<&Message>) =
             messages.iter().partition(|m| m.role == Role::System);
-        let mut system = system
+        let system = system
             .into_iter()
             .map(text_of)
             .collect::<anyhow::Result<Vec<_>>>()?
             .join("\n\n");
-        if !tools.is_empty() {
-            // Laid out like the API's own tool-use system prompt: tools, then the
-            // user's system prompt, then the tool configuration.
-            system = [render_tools(tools), system, TOOL_CONFIG.to_owned()]
-                .into_iter()
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
-        }
         let prompt = render_prompt(&conversation)?;
         // In a file rather than in argv, where a long prompt would hit the OS's limit on
         // argument size. An empty prompt is passed as is, as the CLI may read an empty
@@ -154,12 +127,13 @@ impl ClaudeCliModel {
             "-p",
             "--input-format",
             "stream-json",
+            // Claude Code's own tools; the given ones come from the in-process server.
             "--tools",
             "",
             "--strict-mcp-config",
             "--no-session-persistence",
-            // The user's and project's settings (hooks, output style, …) stay out of the
-            // model, as does the auto-memory set below.
+            // The user's and project's settings (hooks, output style, permissions, …) stay out
+            // of the model, as does the auto-memory set below.
             "--setting-sources",
             "",
             // `stream-json` under `-p` requires `--verbose`.
@@ -235,12 +209,12 @@ impl InferLangModel for ClaudeCliModel {
             Err(e) => return Box::pin(stream::once(async move { Err(e) })),
         };
         // With a schema the reply is the `StructuredOutput` call alone; plain text the model
-        // writes around it is dropped, though tool calls in it are still taken.
+        // writes around it is dropped, though tool calls are still taken.
         let structured = options.output_schema.is_some();
 
         Box::pin(async_stream::try_stream! {
             let tools = invocation.tools.clone();
-            let mut child = invocation.spawn().await?;
+            let (mut child, mut stdin) = invocation.spawn().await?;
             let stdout = child.stdout.take().expect("stdout is piped");
             let mut stderr = child.stderr.take().expect("stderr is piped");
             // Drained alongside stdout so a full stderr pipe cannot stall the process.
@@ -251,24 +225,17 @@ impl InferLangModel for ClaudeCliModel {
             });
 
             let mut lines = BufReader::new(stdout).lines();
-            // Without tools there is nothing to call, so the text is not searched for calls.
-            let mut scanner = CallScanner {
-                plain: tools.is_empty(),
-                ..Default::default()
-            };
             // Usage from `message_start`, completed by `message_delta` once the message ends.
             let mut start_usage = None;
             // Why the latest message ended, from its `message_delta`.
             let mut stop_reason = None;
+            // The `tool_use` block being streamed.
+            let mut tool_use: Option<ToolUse> = None;
+            // The calls of the latest message to the given tools.
+            let mut calls = Vec::new();
             // The arguments of the latest `StructuredOutput` call, which are the reply. Held
             // to the end, since a call the CLI rejects is followed by another.
             let mut structured_json = String::new();
-            // Inside the `StructuredOutput` call, and past it.
-            let mut in_structured = false;
-            let mut structured_done = false;
-            // The reply up to a closed `<function_calls>` block, held until the message's
-            // final usage arrives or the model is seen going on past the block.
-            let mut pending: Option<MessageDeltaOutput> = None;
             let mut started = false;
             let mut finished = false;
             while let Some(line) = lines.next_line().await? {
@@ -280,127 +247,120 @@ impl InferLangModel for ClaudeCliModel {
 
                 let mut out = MessageDeltaOutput::new();
                 match event["type"].as_str() {
-                    // Partial output: text (minus tool calls) and thinking are surfaced.
+                    // The CLI asking this process, as the in-process server's host.
+                    Some("control_request") => {
+                        let response = control_response(&event, &tools);
+                        stdin.write_all(format!("{response}\n").as_bytes()).await?;
+                        stdin.flush().await?;
+                        continue;
+                    }
+                    // The answer to the `initialize` request.
+                    Some("control_response") => {
+                        let response = &event["response"];
+                        if response["subtype"] == "error" {
+                            let error = response["error"].as_str().unwrap_or_default();
+                            Err(anyhow::anyhow!("claude did not take the tools: {error}"))?;
+                        }
+                        continue;
+                    }
+                    // Partial output: text and thinking are surfaced as they come, calls once
+                    // the message ends with them.
                     Some("stream_event") => {
                         let inner = &event["event"];
-                        let kind = inner["type"].as_str();
                         let delta = &inner["delta"];
-                        if let Some(held) = pending.take() {
-                            // Past the block, whitespace is waited through to the message's
-                            // end and its usage. Anything more is the model going on to imagine
-                            // the results; it is cut off with the usage known so far, whose
-                            // output count falls short.
-                            match kind {
-                                Some("message_delta") => {
-                                    out = held;
-                                    out.usage = final_usage(start_usage.take(), &inner["usage"]);
-                                }
-                                Some("content_block_delta")
-                                    if delta["text"].as_str().is_some_and(|t| t.trim().is_empty()) =>
-                                {
-                                    pending = Some(held);
-                                    continue;
-                                }
-                                Some("content_block_start" | "content_block_delta") => {
-                                    out = held;
-                                    out.usage = start_usage.take();
-                                }
-                                _ => {
-                                    pending = Some(held);
-                                    continue;
-                                }
+                        match inner["type"].as_str() {
+                            Some("message_start") => {
+                                start_usage = parse_usage(&inner["message"]["usage"]);
+                                calls.clear();
+                                continue;
                             }
-                            finished = true;
-                        } else {
-                            match kind {
-                                Some("message_start") => {
-                                    start_usage = parse_usage(&inner["message"]["usage"]);
-                                    continue;
+                            Some("content_block_start") => {
+                                let block = &inner["content_block"];
+                                if block["type"] == "tool_use" {
+                                    tool_use = Some(ToolUse {
+                                        id: block["id"].as_str().unwrap_or_default().to_owned(),
+                                        name: block["name"].as_str().unwrap_or_default().to_owned(),
+                                        input: String::new(),
+                                    });
                                 }
-                                Some("message_delta") => {
-                                    stop_reason = delta["stop_reason"].as_str().map(str::to_owned);
-                                    continue;
-                                }
-                                Some("content_block_start") => {
-                                    let block = &inner["content_block"];
-                                    in_structured = block["type"] == "tool_use"
-                                        && block["name"] == STRUCTURED_OUTPUT;
-                                    if in_structured {
-                                        structured_json.clear();
+                                continue;
+                            }
+                            Some("content_block_delta") => {
+                                if let Some(tool_use) = tool_use.as_mut() {
+                                    if let Some(json) = delta["partial_json"].as_str() {
+                                        tool_use.input.push_str(json);
                                     }
                                     continue;
                                 }
-                                Some("content_block_stop") if in_structured => {
-                                    in_structured = false;
-                                    structured_done = true;
+                                if let Some(text) = delta["text"].as_str() {
+                                    if text.is_empty() || structured {
+                                        continue;
+                                    }
+                                    out.delta = out.delta.with_contents([PartDelta::Text {
+                                        text: text.to_owned(),
+                                    }]);
+                                } else if let Some(thinking) = delta["thinking"].as_str() {
+                                    out.delta.thinking = Some(thinking.to_owned());
+                                } else {
                                     continue;
                                 }
-                                Some("content_block_delta") => {}
-                                _ => continue,
                             }
-                            if in_structured {
-                                if let Some(json) = delta["partial_json"].as_str() {
-                                    structured_json.push_str(json);
-                                }
-                                continue;
-                            } else if structured_done {
-                                // Whatever the model says after the structured reply is not part of it.
-                                continue;
-                            } else if let Some(piece) = delta["text"].as_str() {
-                                let (text, block) = scanner.push(piece);
-                                if !text.is_empty() && !structured {
-                                    out.delta = out.delta.with_contents([PartDelta::Text { text }]);
-                                }
-                                if let Some(block) = block {
-                                    out.delta = out.delta.with_tool_calls(parse_calls(&block, &tools)?);
-                                    out.finish_reason = Some(FinishReason::ToolCall {});
-                                    pending = Some(out);
+                            Some("content_block_stop") => {
+                                let Some(ToolUse { id, name, input }) = tool_use.take() else {
                                     continue;
-                                } else if out.delta.contents.is_empty() {
-                                    continue;
+                                };
+                                if name == STRUCTURED_OUTPUT {
+                                    structured_json = input;
+                                } else if let Some(name) = name.strip_prefix(TOOL_PREFIX) {
+                                    let arguments: serde_json::Value = if input.trim().is_empty() {
+                                        serde_json::json!({})
+                                    } else {
+                                        serde_json::from_str(&input).with_context(|| {
+                                            format!("the arguments of a call to {name}: {input}")
+                                        })?
+                                    };
+                                    calls.push(PartDelta::Function {
+                                        id: Some(id),
+                                        function: PartDeltaFunction::WithParsedArgs {
+                                            name: name.to_owned(),
+                                            arguments: arguments.into(),
+                                        },
+                                    });
                                 }
-                            } else if let Some(thinking) = delta["thinking"].as_str() {
-                                out.delta.thinking = Some(thinking.to_owned());
-                            } else {
                                 continue;
                             }
+                            Some("message_delta") => {
+                                stop_reason = delta["stop_reason"].as_str().map(str::to_owned);
+                                // The reply ends with calls to the given tools. They are the
+                                // caller's to run, so the run ends here, before the CLI would
+                                // turn to them.
+                                if stop_reason.as_deref() != Some("tool_use") || calls.is_empty() {
+                                    continue;
+                                }
+                                out.delta = out.delta.with_tool_calls(std::mem::take(&mut calls));
+                                out.finish_reason = Some(FinishReason::ToolCall {});
+                                out.usage = final_usage(start_usage.take(), &inner["usage"]);
+                                finished = true;
+                            }
+                            _ => continue,
                         }
                     }
                     // The run is over: close the message with its usage.
                     Some("result") => {
-                        let usage = parse_result(&event)?;
-                        if let Some(held) = pending.take() {
-                            out = held;
-                        } else {
-                            let block = scanner.finish_bare();
-                            if block.is_none() && scanner.in_calls {
-                                Err(anyhow::anyhow!("the reply ended inside {CALLS_OPEN}"))?;
+                        out.usage = parse_result(&event)?;
+                        if structured {
+                            // The reply the CLI accepted; attempts it rejected are left out.
+                            let json = match &event["structured_output"] {
+                                serde_json::Value::Null => std::mem::take(&mut structured_json),
+                                output => serde_json::to_string(output)?,
+                            };
+                            if !json.is_empty() {
+                                out.delta = out.delta.with_contents([PartDelta::Text { text: json }]);
                             }
-                            let text = scanner.flush();
-                            if !text.is_empty() && !structured {
-                                out.delta = out.delta.with_contents([PartDelta::Text { text }]);
-                            }
-                            if structured {
-                                // The reply the CLI accepted; attempts it rejected are left out.
-                                let json = match &event["structured_output"] {
-                                    serde_json::Value::Null => std::mem::take(&mut structured_json),
-                                    output => serde_json::to_string(output)?,
-                                };
-                                if !json.is_empty() {
-                                    out.delta = out.delta.with_contents([PartDelta::Text { text: json }]);
-                                }
-                            }
-                            out.finish_reason = Some(match block {
-                                Some(block) => {
-                                    out.delta = out.delta.with_tool_calls(parse_calls(&block, &tools)?);
-                                    FinishReason::ToolCall {}
-                                }
-                                None => parse_finish_reason(
-                                    event["stop_reason"].as_str().or(stop_reason.as_deref()),
-                                ),
-                            });
                         }
-                        out.usage = usage;
+                        out.finish_reason = Some(parse_finish_reason(
+                            event["stop_reason"].as_str().or(stop_reason.as_deref()),
+                        ));
                         finished = true;
                     }
                     _ => continue,
@@ -414,21 +374,13 @@ impl InferLangModel for ClaudeCliModel {
                     break;
                 }
             }
-            // The output ended between a closed block and the message's end.
-            if let Some(mut out) = pending.take() {
-                out.usage = start_usage.take();
-                if !started {
-                    out.delta.role = Some(Role::Assistant);
-                }
-                yield out;
-                finished = true;
-            }
 
             if finished {
-                // Stops a reply cut short at a tool call; a no-op once the run has ended.
+                // Stops a run that ended at calls, or one that waits for more input.
                 let _ = child.start_kill();
                 let _ = child.wait().await;
             } else {
+                drop(stdin);
                 let status = child.wait().await?;
                 let stderr = stderr.await.unwrap_or_default();
                 Err(anyhow::anyhow!("claude exited with {status} before finishing: {stderr}"))?;
@@ -439,8 +391,16 @@ impl InferLangModel for ClaudeCliModel {
     }
 }
 
-/// A ready-to-start `claude` command, the prompt for its stdin, and the tools
-/// whose schemas type the parsed call arguments.
+/// A `tool_use` block as it streams in: the call's id, the tool's name as the CLI has it,
+/// and the JSON of its arguments so far.
+struct ToolUse {
+    id: String,
+    name: String,
+    input: String,
+}
+
+/// A ready-to-start `claude` command, the prompt for its stdin, and the tools its
+/// in-process server declares.
 struct Invocation {
     command: Command,
     /// The prompt's content blocks.
@@ -452,394 +412,92 @@ struct Invocation {
 }
 
 impl Invocation {
-    async fn spawn(&mut self) -> anyhow::Result<Child> {
+    /// Starts the CLI and writes the prompt, after the request that registers the in-process
+    /// server when there are tools. Stdin is handed back open, for the answers to the CLI's
+    /// requests.
+    async fn spawn(&mut self) -> anyhow::Result<(Child, ChildStdin)> {
         let mut child = self
             .command
             .spawn()
             .context("failed to start the claude CLI")?;
+        let mut stdin = child.stdin.take().expect("stdin is piped");
+        let mut input = String::new();
+        if !self.tools.is_empty() {
+            let initialize = serde_json::json!({
+                "type": "control_request",
+                "request_id": "ailoy-initialize",
+                "request": {"subtype": "initialize", "sdkMcpServers": [SERVER]},
+            });
+            input.push_str(&format!("{initialize}\n"));
+        }
         let message = serde_json::json!({
             "type": "user",
             "message": {"role": "user", "content": std::mem::take(&mut self.prompt)},
         });
-        let mut stdin = child.stdin.take().expect("stdin is piped");
-        stdin.write_all(format!("{message}\n").as_bytes()).await?;
-        // Closing stdin ends the input.
-        drop(stdin);
-        Ok(child)
+        input.push_str(&format!("{message}\n"));
+        stdin.write_all(input.as_bytes()).await?;
+        stdin.flush().await?;
+        Ok((child, stdin))
     }
 }
 
-/// Splits streamed reply text into plain text and the first `<function_calls>` block.
-///
-/// Only a tag at the start of a line (after up to three spaces) and outside fenced or
-/// indented code opens a block, so a reply can quote the format. Text that may be the start of
-/// such a tag is held back until it is known not to be, and so is trailing
-/// whitespace, so the text before a call ends cleanly.
-///
-/// Also reads the ways the model is known to garble the block (anthropics/claude-code#49747
-/// and its duplicates): the tags with Claude's own `antml:` namespace, `<invoke>`s without
-/// the `<function_calls>` around them, and a stray word (`court`, `call`, …) on the line
-/// where `<function_calls>` should be, which is dropped.
-#[derive(Default)]
-struct CallScanner {
-    buf: String,
-    /// Passes all text through without looking for calls, as when no tools were given.
-    plain: bool,
-    in_calls: bool,
-    /// The calls opened with a bare `<invoke>`, the `<function_calls>` around it left out,
-    /// as the model sometimes writes them. Such a block has no closing tag to stop at, so it
-    /// runs to `</function_calls>` if one comes, or else to the end of the reply.
-    bare: bool,
-    emitted: bool,
-    /// Where the text taken out of `buf` left off.
-    lines: Lines,
-}
-
-/// What the scanner found in its buffer.
-enum Opener {
-    /// A tag at `at`, `len` bytes long; `bare` for an `<invoke>`.
-    Tag {
-        at: usize,
-        len: usize,
-        bare: bool,
-    },
-    /// What may be the start of a tag, from `at` to the end.
-    Partial(usize),
-    None,
-}
-
-impl CallScanner {
-    /// Feeds one piece of text. Returns the text that is safe to show, and the
-    /// inside of the `<function_calls>` block once it closes.
-    fn push(&mut self, piece: &str) -> (String, Option<String>) {
-        self.buf.push_str(piece);
-        if self.plain {
-            let len = self.buf.trim_end().len();
-            return (self.take_text(len), None);
-        }
-        let mut text = String::new();
-        if !self.in_calls {
-            let held = match self.find_opener() {
-                Opener::Tag {
-                    at,
-                    len,
-                    bare: false,
-                } => {
-                    text = self.take_text(at);
-                    self.buf.drain(..len);
-                    self.in_calls = true;
-                    0
-                }
-                // The `<invoke>` stays in the buffer: it is the block's first call.
-                Opener::Tag { at, bare: true, .. } => {
-                    let stray =
-                        stray_word(&self.buf[..at], self.lines.at_line_start()).unwrap_or(at);
-                    text = self.take_text(stray);
-                    self.buf.drain(..at - stray);
-                    self.in_calls = true;
-                    self.bare = true;
-                    0
-                }
-                Opener::Partial(at) => at,
-                Opener::None => self.buf.len(),
-            };
-            if !self.in_calls {
-                let len = shown_len(&self.buf[..held], self.lines.at_line_start());
-                return (self.take_text(len), None);
-            }
-        }
-        strip_namespace(&mut self.buf);
-        let block = self
-            .buf
-            .find(CALLS_CLOSE)
-            .map(|end| self.buf[..end].to_owned());
-        (text, block)
-    }
-
-    /// The first tag in `buf` that opens a block, or what may become one at its end.
-    fn find_opener(&self) -> Opener {
-        let openers = [
-            (CALLS_OPEN.to_owned(), false),
-            (INVOKE_OPEN.to_owned(), true),
-            (format!("<{NAMESPACE}{}", &CALLS_OPEN[1..]), false),
-            (format!("<{NAMESPACE}{}", &INVOKE_OPEN[1..]), true),
-        ];
-        let mut lines = self.lines.clone();
-        let mut pos = 0;
-        loop {
-            let end = self.buf[pos..].find('\n').map(|n| pos + n + 1);
-            let line = &self.buf[pos..end.unwrap_or(self.buf.len())];
-            let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
-            // Four columns of indentation make a Markdown code block, as a tab does.
-            if lines.at_line_start() && indent < 4 && !line[..indent].contains('\t') {
-                let rest = &line[indent..];
-                for (opener, bare) in &openers {
-                    if rest.starts_with(opener.as_str()) {
-                        let (at, len, bare) = (pos + indent, opener.len(), *bare);
-                        return Opener::Tag { at, len, bare };
-                    }
-                    if end.is_none() && !rest.is_empty() && opener.starts_with(rest) {
-                        return Opener::Partial(pos + indent);
-                    }
-                }
-            }
-            lines.advance(line);
-            match end {
-                Some(end) => pos = end,
-                None => return Opener::None,
-            }
-        }
-    }
-
-    /// At the end of the reply, the block of bare `<invoke>`s still open, up to the last
-    /// `</invoke>`; whatever follows it is dropped. `None` if no call was opened that way, or
-    /// none of them closed.
-    fn finish_bare(&mut self) -> Option<String> {
-        if !(self.in_calls && self.bare) {
-            return None;
-        }
-        let end = self.buf.rfind(INVOKE_CLOSE)? + INVOKE_CLOSE.len();
-        let block = self.buf[..end].to_owned();
-        self.buf.clear();
-        self.in_calls = false;
-        Some(block)
-    }
-
-    /// Whatever text is still held back, at the end of the reply.
-    fn flush(&mut self) -> String {
-        let len = self.buf.trim_end().len();
-        self.take_text(len)
-    }
-
-    /// Removes `buf[..len]` and returns it. Trailing whitespace is only ever cut
-    /// at the end of the reply's text, since it is held back until more follows.
-    fn take_text(&mut self, len: usize) -> String {
-        let mut text: String = self.buf.drain(..len).collect();
-        self.lines.advance(&text);
-        if !self.emitted {
-            text = text.trim_start().to_owned();
-        }
-        text.truncate(text.trim_end().len());
-        self.emitted |= !text.is_empty();
-        text
-    }
-}
-
-/// Where a run of text leaves off: in fenced code or not, and on which line.
-#[derive(Clone, Default)]
-struct Lines {
-    /// The fence character and length of the code block the text is in, if any.
-    fence: Option<(char, usize)>,
-    /// The text of the current line so far.
-    line: String,
-}
-
-impl Lines {
-    /// At the start of a line outside fenced code, whitespace aside: where a tag opens a block.
-    fn at_line_start(&self) -> bool {
-        self.fence.is_none() && self.line.trim().is_empty()
-    }
-
-    fn advance(&mut self, text: &str) {
-        let mut segments = text.split('\n');
-        if let Some(first) = segments.next() {
-            self.line.push_str(first);
-        }
-        for segment in segments {
-            self.end_line();
-            self.line.push_str(segment);
-        }
-    }
-
-    /// Opens or closes a fence on a line of three or more backticks or tildes.
-    fn end_line(&mut self) {
-        let line = self.line.trim();
-        if let Some(c @ ('`' | '~')) = line.chars().next() {
-            let run = line.chars().take_while(|&x| x == c).count();
-            match self.fence {
-                None if run >= 3 => self.fence = Some((c, run)),
-                Some((fence, len)) if fence == c && run >= len && line[run..].trim().is_empty() => {
-                    self.fence = None
-                }
-                _ => {}
-            }
-        }
-        self.line.clear();
-    }
-}
-
-/// Drops [`NAMESPACE`] from every whole tool-call tag in a block's `buf`; a tag still being
-/// streamed is left as is until it is whole.
-fn strip_namespace(buf: &mut String) {
-    if !buf.contains(NAMESPACE) {
-        return;
-    }
-    for tag in TAGS {
-        for open in ["<", "</"] {
-            *buf = buf.replace(&format!("{open}{NAMESPACE}{tag}"), &format!("{open}{tag}"));
-        }
-    }
-}
-
-/// Where the line holding only a stray word starts, if `text` ends with one: what the model
-/// sometimes writes in place of `<function_calls>`. `at_line_start` says whether `text`
-/// starts a line, since a line begun before it was already shown.
-fn stray_word(text: &str, at_line_start: bool) -> Option<usize> {
-    let text = text.trim_end();
-    let start = match text.rfind('\n') {
-        Some(newline) => newline + 1,
-        None if at_line_start => 0,
-        None => return None,
+/// The answer to a control request from the CLI: the in-process server's reply to an MCP
+/// message. Any other request is refused.
+fn control_response(event: &serde_json::Value, tools: &[ToolDesc]) -> serde_json::Value {
+    let request = &event["request"];
+    let response = match request["subtype"].as_str() {
+        Some("mcp_message") if request["server_name"] == SERVER => Ok(serde_json::json!({
+            "mcp_response": mcp_response(&request["message"], tools),
+        })),
+        subtype => Err(format!(
+            "ailoy does not answer {} requests",
+            subtype.unwrap_or("unnamed")
+        )),
     };
-    let word = text[start..].trim();
-    (!word.is_empty()
-        && word.len() <= MAX_STRAY_WORD
-        && word.chars().all(|c| c.is_ascii_alphabetic()))
-    .then_some(start)
+    let response = match response {
+        Ok(response) => serde_json::json!({
+            "subtype": "success", "request_id": event["request_id"], "response": response,
+        }),
+        Err(error) => serde_json::json!({
+            "subtype": "error", "request_id": event["request_id"], "error": error,
+        }),
+    };
+    serde_json::json!({"type": "control_response", "response": response})
 }
 
-/// How much of `text` can be shown: all but its trailing whitespace, and before that a
-/// line that may be a stray word ([`stray_word`]).
-fn shown_len(text: &str, at_line_start: bool) -> usize {
-    match stray_word(text, at_line_start) {
-        // From the newline before it, so the next push still sees the word start a line.
-        Some(start) => text[..start].trim_end().len(),
-        None => text.trim_end().len(),
+/// The in-process server's reply to the JSON-RPC `message`. It lists the tools and runs
+/// none: a run that calls them ends before the CLI would ask.
+fn mcp_response(message: &serde_json::Value, tools: &[ToolDesc]) -> serde_json::Value {
+    let id = &message["id"];
+    // A notification takes no reply, but the control request it came in does.
+    if id.is_null() {
+        return serde_json::json!({"jsonrpc": "2.0", "result": {}});
     }
-}
-
-/// Parses the inside of a `<function_calls>` block into tool calls, typing each
-/// argument by its tool's schema.
-fn parse_calls(block: &str, tools: &[ToolDesc]) -> anyhow::Result<Vec<PartDelta>> {
-    let mut calls = Vec::new();
-    let mut rest = block;
-    while let Some(start) = rest.find(INVOKE_OPEN) {
-        let (name, after) = rest[start + INVOKE_OPEN.len()..]
-            .split_once("\">")
-            .context("malformed <invoke> tag")?;
-        let (body, after) = after
-            .split_once(INVOKE_CLOSE)
-            .context("unterminated <invoke>")?;
-        rest = after;
-
-        let schema = tools.iter().find(|t| t.name == name).map(|t| &t.parameters);
-        let keys: Vec<&str> = schema
-            .and_then(|s| s.pointer("/properties"))
-            .and_then(|p| p.as_object())
-            .map(|p| p.keys().map(String::as_str).collect())
-            .unwrap_or_default();
-        let mut arguments = serde_json::Map::new();
-        let mut params = body;
-        let mut last = None;
-        loop {
-            let start = params.find(PARAM_OPEN);
-            // Text after a value is the rest of it, cut at a `</parameter>` the model failed
-            // to escape.
-            if let Some(key) = last
-                && !params[..start.unwrap_or(params.len())].trim().is_empty()
-            {
-                anyhow::bail!(
-                    "malformed call to {name}: text follows the value of `{key}`, which may \
-                     hold an unescaped {PARAM_CLOSE}"
-                );
-            }
-            let Some(start) = start else {
-                break;
-            };
-            let (key, after) = params[start + PARAM_OPEN.len()..]
-                .split_once("\">")
-                .context("malformed <parameter> tag")?;
-            let (value, after) = after
-                .split_once(PARAM_CLOSE)
-                .context("unterminated <parameter>")?;
-            params = after;
-            // A value holding another parameter's opening tag is one the model failed to
-            // close (anthropics/claude-code#49747); taking it as is would hand the tool a
-            // corrupted value and drop that parameter, both silently.
-            if let Some(other) = keys
-                .iter()
-                .find(|k| value.contains(&format!("{PARAM_OPEN}{k}\">")))
-            {
-                anyhow::bail!(
-                    "malformed call to {name}: the value of `{key}` runs into the \
-                     <parameter> tag of `{other}`"
-                );
-            }
-            arguments.insert(
-                key.to_owned(),
-                parse_argument(&unescape(value), key, schema),
-            );
-            last = Some(key);
+    let result = match message["method"].as_str() {
+        Some("initialize") => serde_json::json!({
+            "protocolVersion": message["params"]["protocolVersion"],
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": SERVER, "version": env!("CARGO_PKG_VERSION")},
+        }),
+        Some("tools/list") => serde_json::json!({
+            "tools": tools.iter().map(|tool| serde_json::json!({
+                "name": tool.name,
+                "description": tool.description,
+                "inputSchema": tool.parameters,
+            })).collect::<Vec<_>>(),
+        }),
+        method => {
+            return serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {
+                    "code": -32601,
+                    "message": format!("{} is not served here", method.unwrap_or("this")),
+                },
+            });
         }
-
-        calls.push(PartDelta::Function {
-            id: Some(format!("toolu_{}", uuid::Uuid::new_v4().simple())),
-            function: PartDeltaFunction::WithParsedArgs {
-                name: name.to_owned(),
-                arguments: serde_json::Value::Object(arguments).into(),
-            },
-        });
-    }
-    if calls.is_empty() {
-        anyhow::bail!("no <invoke> in {CALLS_OPEN}");
-    }
-    Ok(calls)
-}
-
-/// Every argument arrives as text, already unescaped: string parameters keep it as
-/// is, the rest are read as JSON and fall back to the text when that fails.
-fn parse_argument(value: &str, key: &str, schema: Option<&Value>) -> serde_json::Value {
-    let ty = schema
-        .and_then(|s| s.pointer(&format!("/properties/{key}/type")))
-        .and_then(|t| t.as_str());
-    if ty != Some("string")
-        && let Ok(parsed) = serde_json::from_str(value.trim())
-    {
-        return parsed;
-    }
-    serde_json::Value::String(value.to_owned())
-}
-
-/// Instructions after the user's system prompt, in the place of the API's tool
-/// configuration. Not part of the published template: they stand in for the
-/// stop sequence and tool-result handling the CLI lacks.
-const TOOL_CONFIG: &str = "After a \"</function_calls>\" block, stop immediately and wait: the results will arrive in the next message inside a \"<function_results>\" block.
-When no function is needed, just answer, without remarking on the functions.";
-
-/// The system-prompt section that describes the tools and how to call them.
-///
-/// Follows the template published under "Tool use system prompt" in Anthropic's
-/// tool-use docs; its `{{ FORMATTING INSTRUCTIONS }}` placeholder is filled
-/// with the `<function_calls>` format.
-fn render_tools(tools: &[ToolDesc]) -> String {
-    let mut prompt = String::from(
-        "In this environment you have access to a set of tools you can use to answer the user's question.
-You can invoke functions by writing a \"<function_calls>\" block like the following as part of your reply to the user:
-<function_calls>
-<invoke name=\"$FUNCTION_NAME\">
-<parameter name=\"$PARAMETER_NAME\">$PARAMETER_VALUE</parameter>
-...
-</invoke>
-<invoke name=\"$FUNCTION_NAME2\">
-...
-</invoke>
-</function_calls>
-String and scalar parameters should be specified as is, while lists and objects should use JSON format. Note that spaces for string values are not stripped. The output is not expected to be valid XML and is parsed with regular expressions.
-In parameter values, always write \"&\" as \"&amp;\" and \"<\" as \"&lt;\", so that a value can hold any text; values are unescaped before use.
-Here are the functions available in JSONSchema format:
-<functions>
-",
-    );
-    for tool in tools {
-        let function = serde_json::json!({
-            "name": tool.name,
-            "description": tool.description,
-            "parameters": tool.parameters,
-        });
-        prompt.push_str(&format!("<function>{function}</function>\n"));
-    }
-    prompt.push_str("</functions>");
-    prompt
+    };
+    serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result})
 }
 
 /// One turn of the transcript.
@@ -852,6 +510,7 @@ enum Turn<'a> {
 /// The start of every prompt, before the transcript.
 const TRANSCRIPT_INTRO: &str = "Below is the conversation so far, as a transcript. Write the assistant's reply to its last turn: only the reply itself, without an <assistant> tag.
 In the transcript, \"&\" and \"<\" in the turns' contents are escaped as \"&amp;\" and \"&lt;\"; read them as those characters, and write your reply's text unescaped.
+The tools the assistant called are recorded in its turns as <tool_call> elements, and what they returned in the <tool_result> elements after them. These only record what happened: to call a tool, call it, rather than writing such an element.
 
 ";
 
@@ -920,24 +579,22 @@ impl Content {
         }
     }
 
-    /// A run of tool-result messages as one `<function_results>` block.
+    /// A run of tool-result messages, a `<tool_result>` each.
     fn results(&mut self, results: &[&Message], names: &HashMap<&str, &str>) -> anyhow::Result<()> {
-        self.text("<function_results>\n");
-        for message in results {
+        for (i, message) in results.iter().enumerate() {
+            if i > 0 {
+                self.text("\n");
+            }
             let name = message
                 .id
                 .as_deref()
                 .and_then(|id| names.get(id))
                 .copied()
                 .unwrap_or("unknown");
-            self.text(&format!(
-                "<result>\n<name>{}</name>\n<output>",
-                escape(name)
-            ));
+            self.text(&format!("<tool_result name=\"{}\">\n", escape(name)));
             self.parts(&message.contents)?;
-            self.text("</output>\n</result>\n");
+            self.text("\n</tool_result>");
         }
-        self.text("</function_results>");
         Ok(())
     }
 }
@@ -968,7 +625,7 @@ fn render_prompt(conversation: &[&Message]) -> anyhow::Result<Vec<serde_json::Va
             Role::User => turns.push(Turn::User(message)),
             Role::Assistant => turns.push(Turn::Assistant(message)),
             Role::Tool => {
-                // Results of the calls in one turn go back in one block.
+                // Results of the calls in one turn go back together.
                 let end = conversation[i..]
                     .iter()
                     .position(|m| m.role != Role::Tool)
@@ -1005,59 +662,27 @@ fn render_prompt(conversation: &[&Message]) -> anyhow::Result<Vec<serde_json::Va
     Ok(prompt.blocks)
 }
 
-/// An assistant turn: its text, then its tool calls as a `<function_calls>` block,
-/// escaped as the transcript and the call format have it.
+/// An assistant turn: its text, then a `<tool_call>` for each call, with its arguments as
+/// JSON; escaped as the transcript has it.
 fn render_assistant(message: &Message) -> anyhow::Result<String> {
-    let mut text = escape(&texts_of(message)?);
-    let calls = message.tool_calls.iter().flatten();
-    let mut block = String::new();
-    for part in calls {
+    let mut lines = vec![escape(&texts_of(message)?)];
+    lines.retain(|text| !text.is_empty());
+    for part in message.tool_calls.iter().flatten() {
         let Part::Function { function, .. } = part else {
             anyhow::bail!("a tool call must be a function part");
         };
-        block.push_str(&format!("{INVOKE_OPEN}{}\">\n", function.name));
-        for (key, value) in function.arguments.as_object().into_iter().flatten() {
-            let value = match value.as_str() {
-                Some(s) => escape(s),
-                None => escape(&serde_json::to_string(value)?),
-            };
-            block.push_str(&format!("{PARAM_OPEN}{key}\">{value}{PARAM_CLOSE}\n"));
-        }
-        block.push_str(INVOKE_CLOSE);
-        block.push('\n');
+        lines.push(format!(
+            "<tool_call name=\"{}\">{}</tool_call>",
+            escape(&function.name),
+            escape(&serde_json::to_string(&function.arguments)?)
+        ));
     }
-    if !block.is_empty() {
-        if !text.is_empty() {
-            text.push_str("\n\n");
-        }
-        text.push_str(&format!("{CALLS_OPEN}\n{block}{CALLS_CLOSE}"));
-    }
-    Ok(text)
+    Ok(lines.join("\n"))
 }
 
-/// Escapes `&` and `<`, so that text in the transcript or in a parameter value cannot
-/// open or close its tags.
+/// Escapes `&` and `<`, so that text in the transcript cannot open or close its tags.
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;")
-}
-
-/// Undoes [`escape`] in a parameter value the model wrote, and `&gt;` too, which it may
-/// write out of habit. Text it left unescaped passes through, these entities aside.
-fn unescape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find('&') {
-        out.push_str(&rest[..at]);
-        rest = &rest[at..];
-        let (entity, c) = [("&amp;", '&'), ("&lt;", '<'), ("&gt;", '>')]
-            .into_iter()
-            .find(|(entity, _)| rest.starts_with(entity))
-            .unwrap_or(("&", '&'));
-        out.push(c);
-        rest = &rest[entity.len()..];
-    }
-    out.push_str(rest);
-    out
 }
 
 /// The text of a message that cannot carry tool calls.
@@ -1141,152 +766,197 @@ fn parse_finish_reason(reason: Option<&str>) -> FinishReason {
 mod tests {
     use super::*;
 
-    /// Feeds `pieces` in order; returns the shown text and the closed block, if any.
-    fn scan(pieces: &[&str]) -> (String, Option<String>) {
-        let mut scanner = CallScanner::default();
-        let mut shown = String::new();
-        for piece in pieces {
-            let (text, block) = scanner.push(piece);
-            shown.push_str(&text);
-            if block.is_some() {
-                return (shown, block);
-            }
-        }
-        shown.push_str(&scanner.flush());
-        (shown, None)
-    }
-
-    #[test]
-    fn plain_text_passes_through() {
-        let (text, block) = scan(&["\nHello ", "<b>world</b>", "  \n"]);
-        assert_eq!(text, "Hello <b>world</b>");
-        assert_eq!(block, None);
-    }
-
-    #[test]
-    fn tag_split_across_pieces_is_caught() {
-        let (text, block) = scan(&[
-            "Checking.\n\n<func",
-            "tion_calls>\n<invoke name=\"a\">\n</inv",
-            "oke>\n</function_",
-            "calls>\nimagined result",
-        ]);
-        assert_eq!(text, "Checking.");
-        assert_eq!(block.as_deref(), Some("\n<invoke name=\"a\">\n</invoke>\n"));
-    }
-
-    #[test]
-    fn a_tag_in_indented_code_is_text() {
-        let quoted = "Use this format:\n\n    <function_calls>\n    <invoke name=\"a\">\n    </invoke>\n    </function_calls>";
-        let (text, block) = scan(&[quoted]);
-        assert_eq!((text.as_str(), block), (quoted, None));
-        let (text, block) = scan(&["Format:\n\t<invoke name=\"a\">\n\t</invoke>"]);
-        assert_eq!(
-            (text.as_str(), block),
-            ("Format:\n\t<invoke name=\"a\">\n\t</invoke>", None)
-        );
-
-        // Up to three spaces still open a block.
-        let (text, block) = scan(&["Checking.\n   <function_calls>\n</function_calls>"]);
-        assert_eq!((text.as_str(), block.as_deref()), ("Checking.", Some("\n")));
-    }
-
-    #[test]
-    fn a_bare_invoke_opens_a_block_that_runs_to_the_end() {
-        let mut scanner = CallScanner::default();
-        let (text, block) = scanner.push("Reading the skill.\n<inv");
-        assert_eq!((text.as_str(), block), ("Reading the skill.", None));
-        let (text, block) =
-            scanner.push("oke name=\"a\">\n</invoke>\n<invoke name=\"b\">\n</invoke>\n");
-        assert_eq!((text.as_str(), block), ("", None));
-        assert_eq!(
-            scanner.finish_bare().as_deref(),
-            Some("<invoke name=\"a\">\n</invoke>\n<invoke name=\"b\">\n</invoke>")
-        );
-        assert_eq!(scanner.flush(), "");
-    }
-
-    #[test]
-    fn a_bare_invoke_closed_by_function_calls_ends_there() {
-        let (text, block) = scan(&["<invoke name=\"a\">\n</invoke>\n</function_calls>\nimagined"]);
-        assert_eq!(text, "");
-        assert_eq!(block.as_deref(), Some("<invoke name=\"a\">\n</invoke>\n"));
-    }
-
-    #[test]
-    fn a_stray_word_before_a_bare_invoke_is_dropped() {
-        let mut scanner = CallScanner::default();
-        let (text, _) = scanner.push("Reading it now.\ncou");
-        assert_eq!(text, "Reading it now.");
-        let (text, _) = scanner.push("rt\n<invoke name=\"a\">\n</invoke>");
-        assert_eq!(text, "");
-        assert_eq!(
-            scanner.finish_bare().as_deref(),
-            Some("<invoke name=\"a\">\n</invoke>")
-        );
-
-        // A word that runs on is text, not a stray.
-        let (text, block) = scan(&["call", " me later"]);
-        assert_eq!((text.as_str(), block), ("call me later", None));
-    }
-
-    #[test]
-    fn namespaced_tags_are_read_as_plain_ones() {
-        let ns = NAMESPACE;
-        let (text, block) = scan(&[
-            "Checking.\n<ant",
-            &format!(
-                "ml:function_calls>\n<{ns}invoke name=\"a\">\n<{ns}parameter name=\"x\">1</{ns}param"
-            ),
-            &format!("eter>\n</{ns}invoke>\n</{ns}function_calls>"),
-        ]);
-        assert_eq!(text, "Checking.");
-        assert_eq!(
-            block.as_deref(),
-            Some("\n<invoke name=\"a\">\n<parameter name=\"x\">1</parameter>\n</invoke>\n")
-        );
-    }
-
-    #[test]
-    fn a_value_running_into_another_parameter_is_an_error() {
-        let tools = [crate::tool::ToolDescBuilder::new("f")
-            .parameters(serde_json::json!({
+    fn weather() -> ToolDesc {
+        crate::tool::ToolDescBuilder::new("get_weather")
+            .description("Get the weather for a city.")
+            .parameters(crate::to_value!({
                 "type": "object",
-                "properties": {"summary": {"type": "string"}, "files": {"type": "array"}}
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
             }))
-            .build()];
-        let block = "<invoke name=\"f\">\n<parameter name=\"summary\">done.</summary>\n\
-                     <parameter name=\"files\">[\"a\"]</parameter>\n</invoke>";
-        let err = parse_calls(block, &tools).unwrap_err().to_string();
-        assert!(
-            err.contains("`summary`") && err.contains("`files`"),
-            "{err}"
-        );
+            .build()
     }
 
     #[test]
-    fn arguments_are_typed_by_schema() {
-        let tools = [crate::tool::ToolDescBuilder::new("f")
-            .parameters(serde_json::json!({
-                "type": "object",
-                "properties": {"s": {"type": "string"}, "n": {"type": "integer"}, "o": {}}
-            }))
-            .build()];
-        let block = "<invoke name=\"f\">\n<parameter name=\"s\">42</parameter>\n\
-                     <parameter name=\"n\">42</parameter>\n<parameter name=\"o\">{\"k\": [1]}</parameter>\n</invoke>";
-        let calls = parse_calls(block, &tools).unwrap();
-        let PartDelta::Function {
-            function: PartDeltaFunction::WithParsedArgs { name, arguments },
-            ..
-        } = &calls[0]
-        else {
-            panic!("not a parsed call: {calls:?}");
+    fn the_server_lists_the_tools_and_runs_none() {
+        let tools = [weather()];
+        let request = |message: serde_json::Value| {
+            serde_json::json!({
+                "type": "control_request",
+                "request_id": "r1",
+                "request": {"subtype": "mcp_message", "server_name": "ailoy", "message": message},
+            })
         };
-        assert_eq!(name, "f");
-        assert_eq!(
-            serde_json::to_value(arguments).unwrap(),
-            serde_json::json!({"s": "42", "n": 42, "o": {"k": [1]}})
+
+        let response = control_response(
+            &request(
+                serde_json::json!({"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                "params": {"protocolVersion": "2025-11-25"}}),
+            ),
+            &tools,
         );
+        assert_eq!(response["response"]["subtype"], "success");
+        assert_eq!(response["response"]["request_id"], "r1");
+        let reply = &response["response"]["response"]["mcp_response"];
+        assert_eq!(reply["id"], 0);
+        assert_eq!(reply["result"]["protocolVersion"], "2025-11-25");
+
+        let response = control_response(
+            &request(serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})),
+            &tools,
+        );
+        let listed = &response["response"]["response"]["mcp_response"]["result"]["tools"][0];
+        assert_eq!(listed["name"], "get_weather");
+        assert_eq!(listed["inputSchema"]["required"][0], "city");
+
+        let response = control_response(
+            &request(serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"})),
+            &tools,
+        );
+        let reply = &response["response"]["response"]["mcp_response"];
+        assert!(
+            reply.get("id").is_none() && reply["result"].is_object(),
+            "{reply}"
+        );
+
+        let response = control_response(
+            &request(serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call"})),
+            &tools,
+        );
+        let reply = &response["response"]["response"]["mcp_response"];
+        assert_eq!(reply["error"]["code"], -32601);
+
+        let response = control_response(
+            &serde_json::json!({"type": "control_request", "request_id": "r2",
+                "request": {"subtype": "can_use_tool"}}),
+            &tools,
+        );
+        assert_eq!(response["response"]["subtype"], "error");
+    }
+
+    /// Runs `events` as the CLI's output, from a script standing in for it, and returns what
+    /// the model makes of them.
+    #[cfg(unix)]
+    async fn replay(events: &[serde_json::Value], tools: &[ToolDesc]) -> MessageOutput {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("claude");
+        let lines: String = events.iter().map(|e| format!("{e}\n")).collect();
+        // Reads its input to the end after writing, as the CLI waits for more of it.
+        std::fs::write(
+            &program,
+            format!("#!/bin/sh\ncat <<'EOF'\n{lines}EOF\nexec cat > /dev/null\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let model = ClaudeCliModel::new().with_program(program.to_string_lossy());
+        let messages = [Message::new(Role::User).with_contents([Part::text("Weather?")])];
+        model
+            .infer(&messages, tools, &LangModelOptions::default())
+            .await
+            .unwrap()
+    }
+
+    fn event(event: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({"type": "stream_event", "event": event})
+    }
+
+    /// Two calls in one reply are both taken, with the arguments as the API streams them,
+    /// and the run ends before the CLI turns to them.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_calls_a_reply_ends_with_are_taken() {
+        let call = |index: u64, id: &str, json: [&str; 2]| {
+            [
+                event(
+                    serde_json::json!({"type": "content_block_start", "index": index,
+                    "content_block": {"type": "tool_use", "id": id,
+                        "name": "mcp__ailoy__get_weather", "input": {}}}),
+                ),
+                event(
+                    serde_json::json!({"type": "content_block_delta", "index": index,
+                    "delta": {"type": "input_json_delta", "partial_json": json[0]}}),
+                ),
+                event(
+                    serde_json::json!({"type": "content_block_delta", "index": index,
+                    "delta": {"type": "input_json_delta", "partial_json": json[1]}}),
+                ),
+                event(serde_json::json!({"type": "content_block_stop", "index": index})),
+            ]
+        };
+        let mut events = vec![
+            event(serde_json::json!({"type": "message_start",
+                "message": {"usage": {"input_tokens": 3, "output_tokens": 1}}})),
+            event(
+                serde_json::json!({"type": "content_block_start", "index": 0,
+                "content_block": {"type": "text", "text": ""}}),
+            ),
+            event(
+                serde_json::json!({"type": "content_block_delta", "index": 0,
+                "delta": {"type": "text_delta", "text": "Checking both."}}),
+            ),
+            event(serde_json::json!({"type": "content_block_stop", "index": 0})),
+        ];
+        events.extend(call(1, "toolu_1", ["{\"city\": ", "\"Seoul\"}"]));
+        events.extend(call(2, "toolu_2", ["{\"city\"", ": \"Busan\"}"]));
+        events.extend([
+            event(serde_json::json!({"type": "message_delta",
+                "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 40}})),
+            // What the CLI goes on to, past the point the run ends at.
+            serde_json::json!({"type": "result", "subtype": "success", "is_error": true,
+                "result": "not reached"}),
+        ]);
+
+        let output = replay(&events, &[weather()]).await;
+        assert_eq!(output.finish_reason, FinishReason::ToolCall {});
+        assert_eq!(output.message.contents[0].as_text(), Some("Checking both."));
+        let calls: Vec<_> = output
+            .message
+            .tool_calls
+            .iter()
+            .flatten()
+            .filter_map(Part::as_function)
+            .map(|(id, name, args)| (id.to_owned(), name.to_owned(), args.clone()))
+            .collect();
+        assert_eq!(
+            calls,
+            [
+                (
+                    "toolu_1".into(),
+                    "get_weather".into(),
+                    crate::to_value!({"city": "Seoul"})
+                ),
+                (
+                    "toolu_2".into(),
+                    "get_weather".into(),
+                    crate::to_value!({"city": "Busan"})
+                ),
+            ]
+        );
+        assert_eq!(output.usage.unwrap().output_tokens, 40);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_reply_without_calls_ends_at_the_result() {
+        let events = [
+            event(serde_json::json!({"type": "message_start",
+                "message": {"usage": {"input_tokens": 3, "output_tokens": 1}}})),
+            event(
+                serde_json::json!({"type": "content_block_delta", "index": 0,
+                "delta": {"type": "text_delta", "text": "Sunny."}}),
+            ),
+            event(serde_json::json!({"type": "message_delta",
+                "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 2}})),
+            serde_json::json!({"type": "result", "subtype": "success", "is_error": false,
+                "stop_reason": "end_turn", "usage": {"input_tokens": 3, "output_tokens": 2}}),
+        ];
+        let output = replay(&events, &[weather()]).await;
+        assert_eq!(output.finish_reason, FinishReason::Stop {});
+        assert_eq!(output.message.contents[0].as_text(), Some("Sunny."));
+        assert!(output.message.tool_calls.is_none_or(|c| c.is_empty()));
     }
 
     #[test]
@@ -1307,13 +977,10 @@ mod tests {
         assert_eq!(blocks.len(), 3);
         let prompt: String = blocks.iter().map(|b| b["text"].as_str().unwrap()).collect();
         assert!(prompt.contains(
-            "<invoke name=\"get_weather\">\n<parameter name=\"city\">Seoul</parameter>\n\
-             <parameter name=\"days\">1</parameter>\n</invoke>"
+            "<assistant>\n<tool_call name=\"get_weather\">{\"city\":\"Seoul\",\"days\":1}\
+             </tool_call>\n</assistant>"
         ));
-        assert!(prompt.ends_with(
-            "<function_results>\n<result>\n<name>get_weather</name>\n<output>sunny</output>\n\
-             </result>\n</function_results>"
-        ));
+        assert!(prompt.ends_with("<tool_result name=\"get_weather\">\nsunny\n</tool_result>"));
     }
 
     #[test]
@@ -1343,7 +1010,17 @@ mod tests {
                 .ends_with("<user>\nlook\n")
         );
         assert_eq!(blocks[1]["source"]["data"], "AQID");
-        assert!(blocks[4]["text"].as_str().unwrap().ends_with("<output>"));
-        assert!(blocks[6]["text"].as_str().unwrap().starts_with("</output>"));
+        assert!(
+            blocks[4]["text"]
+                .as_str()
+                .unwrap()
+                .ends_with("<tool_result name=\"imgread\">\n")
+        );
+        assert!(
+            blocks[6]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("\n</tool_result>")
+        );
     }
 }
