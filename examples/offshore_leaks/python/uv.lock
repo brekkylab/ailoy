@@ -18,7 +18,7 @@ requires-dist = [
     { name = "ailoy-py", editable = "../../../bindings/python" },
     { name = "duckdb", specifier = "==1.5.5" },
     { name = "python-dotenv", specifier = ">=1" },
-    { name = "virtx", editable = "../../../../virtx/bindings/python" },
+    { name = "virtx", specifier = ">=0.1.2,<0.2" },
 ]
 
 [[package]]
@@ -32,7 +32,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "typing-extensions", marker = "python_full_version < '3.11'", specifier = ">=4" },
-    { name = "virtx", editable = "../../../../virtx/bindings/python" },
+    { name = "virtx", specifier = ">=0.1.2,<0.2" },
 ]
 
 [package.metadata.requires-dev]
@@ -104,14 +104,11 @@ wheels = [
 
 [[package]]
 name = "virtx"
-version = "0.1.1"
-source = { editable = "../../../../virtx/bindings/python" }
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "maturin", specifier = ">=1.15,<2" },
-    { name = "pytest", specifier = ">=8" },
-    { name = "pytest-asyncio", specifier = ">=1" },
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/18/b7/327e229abfb53d50cbb2af97d953bd64494471bd686aa4e5a7273c410db6/virtx-0.1.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:b457c46007bbf070c9cfbaf78efe4b33067fc821e984c6e1601990bbc26174e8", size = 3799519, upload-time = "2026-10-14T10:08:48.394Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/a2/3e2869215bce8fd46ef0b8eb220594fcee792c82a996c28f7110a9458db0/virtx-0.1.2-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:97b77deea964d017696f2a4aca00492d24efa304e94f4bb9a6bf083dcd22db0f", size = 4346750, upload-time = "2026-10-14T10:08:49.895Z" },
+    { url = "https://files.pythonhosted.org/packages/61/15/3012a43f1e8a25efaf89de50cdaf1a2e584b35e36a0ca8154cbb0d1d8b43/virtx-0.1.2-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:753fa58feb446c5e53fa25bdbac652d94a398e68c3c258d5ceb658acd64d6fb9", size = 4251067, upload-time = "2026-10-14T10:08:51.264Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/57/6ad20465e3cd61986c10f829160ea3e1017f3b8a942268ac9eb80448d4da/virtx-0.1.2-cp310-abi3-win_amd64.whl", hash = "sha256:6d9256e020a73aa21b1973fe68ebce2a0aaa6ad9c9c5b0c2d4bb34f0c54dc808", size = 3510736, upload-time = "2026-10-14T10:08:52.658Z" },
 ]
