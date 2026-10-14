@@ -22,7 +22,7 @@ Title: one sentence saying what Ailoy does once this is merged, with no issue nu
 
 <!-- Fill in the lines below rather than summarizing them. Tests that need a provider key skip without it, so name the keys that were set: a green run with none set covers less than the suite. AGENTS.md lists the commands. -->
 
-- **Rust** — `cargo fmt --all --check && cargo clippy --workspace -- -D warnings && cargo test`, with keys:
+- **Rust** — `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test`, with keys:
 - **Python** — `uv run pytest` in `bindings/python`:
 - **Node** — `npm test` in `bindings/node`:
 
