@@ -12,6 +12,9 @@
 //! because an agent takes a `ConsoleClient` apart to share its session and two addons cannot
 //! see into each other's.
 
+// napi compiles its export registration out of a test build, which leaves every export unused.
+#![cfg_attr(test, allow(dead_code))]
+
 mod agent;
 mod convert;
 mod error;

@@ -10,8 +10,8 @@ The toolchain is pinned in `rust-toolchain.toml`; `rustup` installs it on the fi
 git clone https://github.com/brekkylab/ailoy
 cd ailoy
 cargo build
-cd bindings/python && uv run maturin develop     # Python
-cd bindings/node && npm install && npm run build  # Node
+(cd bindings/python && uv run maturin develop)             # Python
+(cd bindings/node && npm install && npm run build:debug)   # Node
 ```
 
 An agent's console runs on [virtx](https://github.com/brekkylab/virtx)'s server, which `ensure_virtx()` (and the tests) fetch into `$VIRTX_HOME/bin` on first use. Mounting a host folder into it needs FUSE: FUSE-T on macOS, Dokany on Windows. Tests that drive a provider read its key from the environment or a `.env` file at the repository root (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK`), and skip without it.
@@ -20,10 +20,10 @@ An agent's console runs on [virtx](https://github.com/brekkylab/virtx)'s server,
 
 ```bash
 cargo fmt --all --check
-cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test
-cd bindings/python && uv run pytest   # after `maturin develop`
-cd bindings/node && npm test          # after `npm run build:debug`
+(cd bindings/python && uv run pytest)   # after `maturin develop`
+(cd bindings/node && npm test)          # after `npm run build:debug`
 ```
 
 There is no pull-request CI, so what you run locally is the gate. `git config core.hooksPath .githooks` installs the hooks in `.githooks/`: the format check on every commit, and clippy plus the library's tests on every push. `SKIP_HOOKS=1 git push` skips the hook for that one command. A run without provider keys covers less than the suite: say which keys were set when you report one.
@@ -33,7 +33,7 @@ There is no pull-request CI, so what you run locally is the gate. `git config co
 1. Create a topic branch off `main`.
 2. Keep changes focused; one logical change per PR.
 3. Bring a test that fails without the change. A bug fix comes with the test that caught it; a behaviour change comes with the test that pins the new behaviour, in the surface it lives in.
-4. The shape to aim for is the crate first, with each binding connecting to it, but do not hold a PR back for it: a change that reaches one binding only, or one binding alone, is welcome as it is. A maintainer may suggest moving it into the crate, and that can be a follow-up PR.
+4. The shape to aim for is the crate first, with each binding connecting to it, but do not hold a PR back for it: a crate change that reaches only one binding, or a change made in one binding without the crate, is welcome as it is. A maintainer may suggest moving it into the crate, and that can be a follow-up PR.
 5. Run the checks above before opening the PR.
 6. Title the PR with one sentence saying what Ailoy does once it is merged, with no issue number. The issue goes in the description as `Closes #N` or `Resolves #N`.
 7. Fill in the pull request template, describing the finished state rather than the rounds of work behind it. Problem, cause, fix and result are for a change that fixes something: drop the ones that do not apply, and a change with no problem behind it has a Changes section in place of Fix. The verification lines and the three checkboxes always stay. `gh pr create --body` does not load the template, so start the description from [`.github/pull_request_template.md`](.github/pull_request_template.md).
