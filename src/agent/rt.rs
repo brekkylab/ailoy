@@ -702,8 +702,6 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
-    use futures::StreamExt as _;
-
     use super::*;
     use crate::{
         agent::{AgentCard, AgentProvider, AgentSpec, ContextManager, get_agent_providers_mut},

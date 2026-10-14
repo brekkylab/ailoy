@@ -379,7 +379,7 @@ mod tests {
         ServerHandler,
         model::{
             CallToolResponse, ErrorData as McpError, ListToolsResult, PaginatedRequestParams,
-            ServerInfo, Tool,
+            ServerConfig, Tool,
         },
         service::RequestContext,
     };
@@ -399,8 +399,8 @@ mod tests {
     }
 
     impl ServerHandler for TestServer {
-        fn get_info(&self) -> ServerInfo {
-            ServerInfo::default()
+        fn get_info(&self) -> ServerConfig {
+            ServerConfig::default()
         }
 
         fn list_tools(
