@@ -6,7 +6,8 @@ Ailoy is a library for building AI agents that each own a virtual machine (a [vi
 
 - The library is `src/`. A feature goes into the crate first and the bindings connect to it; `bindings/python/` and `bindings/node/` carry only what one language needs of its own.
 - The console is virtx's: an agent takes a `ConsoleClient` built with virtx's own package (`virtx` on crates.io and PyPI, `@brekkylab/virtx` on npm). Ailoy adds no console API of its own.
-- A change to what the library does moves the bindings in the same pull request, and, when a public API they show changes, the three Quickstart blocks in `README.md` and the examples under `examples/`.
+- A change to what the library does moves the bindings with it, and, when a public API they show changes, the three Quickstart blocks in `README.md` and the examples under `examples/`.
+- That is the standard for a change you make: the crate first, every binding connected, before the work is done. It is not the gate for a person's pull request: `CONTRIBUTING.md` accepts a crate change that reaches only one binding, or a change made in one binding without the crate, and a review holds a PR to that, with the crate-first shape as a suggestion or a follow-up. Code you write for a person who then opens the PR is held to the first; their PR is held to the second.
 - Names follow each language's convention and nothing else: `run_stream` in Rust and Python, `runStream` in Node. The thing they name is the same.
 
 ## Where a change goes
@@ -26,10 +27,10 @@ Run these before pushing. There is no pull-request CI, so what you run locally i
 
 ```bash
 cargo fmt --all --check
-cargo clippy --workspace
+cargo clippy --workspace -- -D warnings
 cargo test
-cd bindings/python && uv run maturin develop && uv run pytest   # Python
-cd bindings/node && npm install && npm run build:debug && npm test   # Node
+(cd bindings/python && uv run maturin develop && uv run pytest)        # Python
+(cd bindings/node && npm install && npm run build:debug && npm test)   # Node
 ```
 
 - `git config core.hooksPath .githooks` installs the hooks in `.githooks/`: the format check on every commit, and clippy plus the library's tests on every push. `SKIP_HOOKS=1 git push` skips the hook for that one command.
