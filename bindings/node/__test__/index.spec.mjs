@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 const require = createRequire(import.meta.url)
 const ailoy = require('../index.js')
 const virtx = require('@brekkylab/virtx')
 const { Agent, AgentBuilder, registerLangModel, registerTool } = ailoy
-const { ConsoleClient, Recipe } = virtx
+const { ConsoleClient, Recipe, ensureVirtx } = virtx
 
 // ---- the console, from @brekkylab/virtx -----------------------------------------------------
 
@@ -18,6 +21,25 @@ test('virtx is a dependency, not re-exported', () => {
 
 test('an agent takes only a virtx console', () => {
   assert.throws(() => new AgentBuilder('any/model').console({}), { code: 'INVALID_ARG' })
+})
+
+test('a console without a server fails with virtx’s code', async () => {
+  // The builder looks for the server under $VIRTX_HOME/bin when it is made, so an empty home
+  // is a host with no server, whatever this one has.
+  const home = process.env.VIRTX_HOME
+  process.env.VIRTX_HOME = mkdtempSync(join(tmpdir(), 'ailoy-no-server-'))
+  try {
+    await assert.rejects(ConsoleClient.builder().build(), { code: 'VIRTX_ERROR' })
+  } finally {
+    if (home === undefined) delete process.env.VIRTX_HOME
+    else process.env.VIRTX_HOME = home
+  }
+})
+
+test('a console the server refuses fails with the refusal’s code', async () => {
+  await ensureVirtx()
+  // A session boots on an image, and this builder names none.
+  await assert.rejects(ConsoleClient.builder().build(), { code: 'INVALID_PARAMS', message: /image/ })
 })
 
 // ---- the builder and the registries --------------------------------------------------------

@@ -12,6 +12,9 @@
 //! through protocol frames (see [`console`]): two addons cannot see into each other's types,
 //! and this one carries none of virtx's classes.
 
+// napi compiles its export registration out of a test build, which leaves every export unused.
+#![cfg_attr(test, allow(dead_code))]
+
 mod agent;
 mod console;
 mod convert;
