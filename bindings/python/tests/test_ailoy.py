@@ -217,6 +217,11 @@ async def test_a_host_browser_waits_only_through_on_ask(tmp_path):
 async def test_no_browser_has_no_url():
     agent = await AgentBuilder(MODEL).agent_provider(PROVIDER).build()
     assert agent.browser_url is None
+    with pytest.raises(AiloyError, match="no browser"):
+        await agent.start_browser()
+    await agent.close()
+    with pytest.raises(AiloyError, match="closed"):
+        await agent.start_browser()
 
 
 # ---- a turn, against the fake model ---------------------------------------------------

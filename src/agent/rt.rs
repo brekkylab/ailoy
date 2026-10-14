@@ -534,6 +534,27 @@ impl Agent {
         self.state.browser.as_ref()?.url()
     }
 
+    /// Starts this agent's browser now rather than on its first use, and returns
+    /// [`browser_url`](Self::browser_url). For a [host](crate::browser::Browser::host) browser
+    /// this is when Chrome asks the person, so call it while they are at their screen. A no-op
+    /// once started.
+    pub async fn start_browser(&mut self) -> anyhow::Result<Option<String>> {
+        let browser = self
+            .state
+            .browser
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("this agent has no browser"))?;
+        let mut guard = self.state.console.lock().await;
+        let console = guard
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("a browser needs a console"))?;
+        // As a batch of tool calls does, so the console is not left booted between turns.
+        console.start().await?;
+        let started = browser.start(console).await;
+        console.stop().await?;
+        started
+    }
+
     /// This agent's browser, to keep for reading its [`url`](BrowserSession::url) while a turn
     /// holds the agent.
     pub fn browser(&self) -> Option<std::sync::Arc<BrowserSession>> {

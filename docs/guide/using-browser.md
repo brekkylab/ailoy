@@ -7,7 +7,7 @@ There are two kinds of browser:
 - **Sandboxed** (the default) is Chromium in a VM of its own. You watch it and use it from your own browser, through a viewer whose address the agent gives you. It has nothing of yours in it: no cookies, no saved sign-ins.
 - **Host** is your own Chrome. The agent works in a window of its own, signed in wherever you are. Chrome asks you before it lets the agent in.
 
-Nothing starts until the agent first runs `agent-browser` or asks you something. A sandboxed browser ends when the agent does. Your own Chrome stays open.
+Nothing starts until the agent first runs `agent-browser` or asks you something. To start it sooner, say to have the viewer open before the first request, call `start_browser()` (`startBrowser()` in Node) between turns. It returns the viewer's address, or nothing for your own Chrome, and does nothing once the browser is up. For your own Chrome, this is when Chrome asks you, so call it while you are at your screen. A decline, or remote debugging being off, comes back as an error. A sandboxed browser ends when the agent does. Your own Chrome stays open.
 
 Both need a virtx server whose `/abin` carries `agent-browser`. A sandboxed browser also needs `viewer`.
 

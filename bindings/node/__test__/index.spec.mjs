@@ -93,6 +93,15 @@ test('a host browser waits only through onAsk', async () => {
   )
 })
 
+test('an agent without a browser cannot start one', async () => {
+  registerLangModel('fake-browser/*', 'chat_completion', 'http://127.0.0.1:9/v1/chat/completions')
+  const agent = await new AgentBuilder('fake-browser/model').build()
+  assert.equal(agent.browserUrl, null)
+  await assert.rejects(agent.startBrowser(), { code: 'AILOY_ERROR', message: /no browser/ })
+  await agent.close()
+  await assert.rejects(agent.startBrowser(), { message: /closed/ })
+})
+
 // ---- a turn, against a model served from this process --------------------------------------
 
 /** The last message's text, or the tool results it carries. */

@@ -387,6 +387,21 @@ impl PyAgent {
         self.browser.as_ref()?.url()
     }
 
+    /// Start the agent's browser now rather than on its first use, and return `browser_url`.
+    /// For a host browser this is when Chrome asks, so call it while the person is at their
+    /// screen; a refusal raises. A no-op once started. Awaitable; raises during a turn.
+    fn start_browser<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let mut guard = self
+            .agent
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| AiloyError::new_err("this agent is in the middle of a turn"))?;
+        future_into_py(py, async move {
+            let agent = guard.0.as_mut().ok_or_else(closed)?;
+            agent.start_browser().await.map_err(error::anyhow)
+        })
+    }
+
     /// Run one turn on `query` — a message dict, or a string as the user's text — and
     /// iterate what it produces: each complete message, the model's and each tool's.
     fn run(&self, query: Query) -> PyAgentRun {

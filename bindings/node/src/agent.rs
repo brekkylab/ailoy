@@ -520,6 +520,25 @@ impl JsAgent {
         self.browser.as_ref()?.url()
     }
 
+    /// Start the agent's browser now rather than on its first use, and resolve to `browserUrl`.
+    /// For a host browser this is when Chrome asks, so call it while the person is at their
+    /// screen; a refusal rejects. A no-op once started. Throws during a turn.
+    #[napi(ts_return_type = "Promise<string | null>")]
+    pub fn start_browser<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<PromiseRaw<'env, Option<String>>> {
+        let mut guard = self
+            .agent
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| thrown(env, error::ailoy("this agent is in the middle of a turn")))?;
+        promise(env, async move {
+            let agent = guard.value.as_mut().ok_or_else(closed)?;
+            agent.start_browser().await.map_err(error::anyhow)
+        })
+    }
+
     /// Run one turn on `query` — a message, or a string as the user's text — and iterate what
     /// it produces: each complete message, the model's and each tool's.
     #[napi(ts_return_type = "AsyncIterableIterator<MessageOutput>")]

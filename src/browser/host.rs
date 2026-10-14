@@ -692,6 +692,82 @@ mod tests {
         chrome.stop();
     }
 
+    /// [`BrowserSession::start`](super::super::BrowserSession::start), the app's: it asks again
+    /// after a decline and fails with why, and a reconnect it makes is told on the agent's next
+    /// turn. Needs what [`lends_a_chrome`] needs.
+    #[tokio::test]
+    #[ignore = "needs a virtx with agent-browser in /abin, and Chrome"]
+    async fn the_apps_start_asks_again_and_passes_a_reconnect_on() {
+        use std::{
+            io::{Read as _, Write as _},
+            sync::atomic::{AtomicUsize, Ordering::SeqCst},
+        };
+
+        use super::super::{Browser, BrowserSession};
+
+        let mut agent = ConsoleClient::builder()
+            .image(Recipe::new("debian:trixie-slim"))
+            .network(true)
+            .build()
+            .await
+            .unwrap();
+
+        // Answers as Chrome does when the person declines.
+        let rejecting = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = rejecting.local_addr().unwrap().port();
+        let tries = Arc::new(AtomicUsize::new(0));
+        let counted = tries.clone();
+        std::thread::spawn(move || {
+            for mut stream in rejecting.incoming().flatten() {
+                counted.fetch_add(1, SeqCst);
+                let _ = stream.read(&mut [0; 4096]);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 403 Forbidden\r\nContent-Length: 19\r\n\r\nConnection rejected",
+                );
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("DevToolsActivePort"),
+            format!("{port}\n/devtools/browser/x\n"),
+        )
+        .unwrap();
+        let session = BrowserSession::new(Browser::host().user_data_dir(dir.path()));
+        let Ready::Refused(why) = session.ensure(&mut agent).await.unwrap() else {
+            panic!("connected through a decline");
+        };
+        assert_eq!(why, DECLINED);
+        // The agent does not ask again; the app does.
+        assert!(matches!(
+            session.ensure(&mut agent).await.unwrap(),
+            Ready::Refused(_)
+        ));
+        assert_eq!(tries.load(SeqCst), 1);
+        let err = session.start(&mut agent).await.unwrap_err();
+        assert_eq!(err.to_string(), DECLINED);
+        assert_eq!(tries.load(SeqCst), 2);
+
+        let chrome = TestChrome::start(None);
+        let session = BrowserSession::new(Browser::host().user_data_dir(chrome.dir.path()));
+        assert_eq!(session.start(&mut agent).await.unwrap(), None);
+        assert_eq!(session.start(&mut agent).await.unwrap(), None);
+        assert_eq!(pages(&chrome).await.len(), 2);
+        assert_eq!(session.catch_up().await.unwrap(), None);
+
+        let dir = chrome.stop();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let chrome = TestChrome::start(Some(dir));
+        assert_eq!(session.start(&mut agent).await.unwrap(), None);
+        let note = session
+            .catch_up()
+            .await
+            .unwrap()
+            .expect("no word of the reconnection");
+        assert!(note.contains("new blank tab"), "{note}");
+        assert_eq!(session.catch_up().await.unwrap(), None);
+        chrome.stop();
+    }
+
     #[test]
     fn devtools_active_port_is_a_port_then_a_path() {
         let dir = tempfile::tempdir().unwrap();

@@ -168,6 +168,8 @@ enum Backend {
 pub struct BrowserSession {
     config: Browser,
     backend: Backend,
+    /// What [`Self::start`] heard for the agent, told on its next turn.
+    unheard: std::sync::Mutex<Option<String>>,
 }
 
 impl BrowserSession {
@@ -176,7 +178,11 @@ impl BrowserSession {
             Mode::Sandboxed => Backend::Sandboxed(sandboxed::Sandboxed::default()),
             Mode::Host { user_data_dir } => Backend::Host(host::Host::new(user_data_dir.clone())),
         };
-        Arc::new(Self { config, backend })
+        Arc::new(Self {
+            config,
+            backend,
+            unheard: Default::default(),
+        })
     }
 
     pub(crate) fn config(&self) -> &Browser {
@@ -198,6 +204,20 @@ impl BrowserSession {
         self.ensure_for(agent, false).await
     }
 
+    /// [`Agent::start_browser`](crate::agent::Agent::start_browser): as [`Self::ensure`], but a
+    /// refusal is the caller's error, and one after a decline asks again.
+    pub(crate) async fn start(&self, agent: &mut ConsoleClient) -> anyhow::Result<Option<String>> {
+        match self.ensure_for(agent, true).await? {
+            Ready::Go(said) => {
+                if said.is_some() {
+                    *self.unheard.lock().unwrap() = said;
+                }
+                Ok(self.url())
+            }
+            Ready::Refused(why) => bail!(why),
+        }
+    }
+
     /// As [`Self::ensure`]; `asking` is `ask_user`'s, which asks again after a refusal.
     async fn ensure_for(&self, agent: &mut ConsoleClient, asking: bool) -> anyhow::Result<Ready> {
         match &self.backend {
@@ -213,7 +233,7 @@ impl BrowserSession {
 
     /// What the person did in the viewer since the agent last heard, as one note for its next
     /// message; and, for [`AskUser::EndTurn`], the request it was answering taken down. A host
-    /// browser has nothing to tell: the agent reads its pages again.
+    /// browser tells only a reconnect [`Self::start`] made: the agent reads its pages again.
     pub(crate) async fn catch_up(&self) -> anyhow::Result<Option<String>> {
         match &self.backend {
             Backend::Sandboxed(sandboxed) => {
@@ -221,7 +241,7 @@ impl BrowserSession {
                     .catch_up(self.config.ask_user == AskUser::EndTurn)
                     .await
             }
-            Backend::Host(_) => Ok(None),
+            Backend::Host(_) => Ok(self.unheard.lock().unwrap().take()),
         }
     }
 
