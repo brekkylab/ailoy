@@ -84,6 +84,7 @@ pub fn get_subagent_tool_func(
                         usage: None,
                         depth: None,
                         source_agent: card_name,
+                        rate_limit: None,
                     };
                     return;
                 }
@@ -102,6 +103,7 @@ pub fn get_subagent_tool_func(
                         usage: None,
                         depth: None,
                         source_agent: card_name,
+                        rate_limit: None,
                     };
                     return;
                 }
@@ -138,6 +140,7 @@ pub fn get_subagent_tool_func(
                                 usage: None,
                                 depth: None,
                                 source_agent: card_name.clone(),
+                                rate_limit: None,
                             };
                             return;
                         }
@@ -153,6 +156,7 @@ pub fn get_subagent_tool_func(
                 usage: None,
                 depth: None,
                 source_agent: card_name,
+                rate_limit: None,
             };
         }
         .boxed()

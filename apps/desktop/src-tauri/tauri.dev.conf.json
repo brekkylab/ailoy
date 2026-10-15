@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        "default",
+        {
+          "identifier": "mcp-bridge",
+          "description": "Dev only: the MCP bridge an agent drives the window through.",
+          "windows": ["main"],
+          "permissions": ["mcp-bridge:default"]
+        }
+      ]
+    }
+  }
+}

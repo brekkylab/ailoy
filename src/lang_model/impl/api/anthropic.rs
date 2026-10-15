@@ -510,6 +510,7 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             usage,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         }))
     }
 
@@ -612,6 +613,7 @@ impl Unmarshal<MessageDeltaOutput> for AnthropicUnmarshal {
             usage,
             depth: None,
             source_agent: None,
+            rate_limit: None,
         })
     }
 }
