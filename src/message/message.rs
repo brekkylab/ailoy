@@ -178,7 +178,9 @@ pub struct MessageOutput {
     /// direct LM response or a final tool result in the top-level history.
     /// `Some(n)` is produced `n` tool-call layers deep, e.g. a sub-agent's
     /// intermediate message. The runtime emits a tool stream's intermediate
-    /// outputs at `depth + 1` and its final result at 0.
+    /// outputs at `depth + 1` and its final result at 0. A tool that sets
+    /// `Some(0)` itself marks an output as intermediate (progress, say), which
+    /// the runtime then forwards at once rather than when the next one arrives.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depth: Option<u8>,
 

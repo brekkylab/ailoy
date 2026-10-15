@@ -19,6 +19,47 @@ use crate::{
     },
 };
 
+/// Send one tool call's outputs on, and say whether its result was among them.
+///
+/// The stream's last output is the result, sent at depth 0 as a `Role::Tool` message, unless
+/// the tool set `depth` on it; every other is nested, one level deeper than its own depth. One
+/// the tool set `depth` on (a sub-agent's, or a command's progress) is nested whatever follows,
+/// so it goes at once instead of waiting for the next to show it is not the last.
+async fn forward_tool_outputs(
+    mut stream: futures::stream::BoxStream<'_, MessageOutput>,
+    tx: &tokio::sync::mpsc::UnboundedSender<anyhow::Result<MessageOutput>>,
+) -> bool {
+    fn nested(mut output: MessageOutput) -> anyhow::Result<MessageOutput> {
+        output.depth = Some(output.depth.unwrap_or(0) + 1);
+        Ok(output)
+    }
+
+    let mut last: Option<MessageOutput> = None;
+    while let Some(item) = stream.next().await {
+        if let Some(prev) = last.take()
+            && tx.send(nested(prev)).is_err()
+        {
+            return false;
+        }
+        if item.depth.is_some() {
+            if tx.send(nested(item)).is_err() {
+                return false;
+            }
+        } else {
+            last = Some(item);
+        }
+    }
+    match last {
+        Some(mut item) => {
+            item.depth = Some(0);
+            item.message.role = Role::Tool;
+            let _ = tx.send(Ok(item));
+            true
+        }
+        None => false,
+    }
+}
+
 /// An agent that drives a language model through multi-turn, tool-augmented conversations.
 ///
 /// `Agent` pairs an [`AgentSpec`] (model + instruction + tools + sub-agents) with an
@@ -354,29 +395,12 @@ impl Agent {
 
                 let outcome: Result<anyhow::Result<bool>, _> =
                     std::panic::AssertUnwindSafe(async move {
-                        if let Some(mut stream) =
+                        if let Some(stream) =
                             tool.call_pure(call_args.clone(), call_id_for_call.clone())
                         {
                             // No console lock, so a sub-agent's nested `run()` cannot
                             // deadlock against the parent's tool batch.
-                            let mut last: Option<MessageOutput> = None;
-                            while let Some(item) = stream.next().await {
-                                if let Some(mut prev) = last.replace(item) {
-                                    prev.depth = Some(prev.depth.unwrap_or(0) + 1);
-                                    if tx_inner.send(Ok(prev)).is_err() {
-                                        return anyhow::Ok(false);
-                                    }
-                                }
-                            }
-                            match last {
-                                Some(mut item) => {
-                                    item.depth = Some(0);
-                                    item.message.role = Role::Tool;
-                                    let _ = tx_inner.send(Ok(item));
-                                    anyhow::Ok(true)
-                                }
-                                None => anyhow::Ok(false),
-                            }
+                            anyhow::Ok(forward_tool_outputs(stream, &tx_inner).await)
                         } else {
                             // Lock held for the whole stream: the console protocol
                             // allows one outstanding request at a time.
@@ -388,25 +412,8 @@ impl Agent {
                                      `AgentBuilder::console`"
                                 )
                             })?;
-                            let mut stream = tool.call(call_args, call_id_for_call, console);
-                            let mut last: Option<MessageOutput> = None;
-                            while let Some(item) = stream.next().await {
-                                if let Some(mut prev) = last.replace(item) {
-                                    prev.depth = Some(prev.depth.unwrap_or(0) + 1);
-                                    if tx_inner.send(Ok(prev)).is_err() {
-                                        return anyhow::Ok(false);
-                                    }
-                                }
-                            }
-                            match last {
-                                Some(mut item) => {
-                                    item.depth = Some(0);
-                                    item.message.role = Role::Tool;
-                                    let _ = tx_inner.send(Ok(item));
-                                    anyhow::Ok(true)
-                                }
-                                None => anyhow::Ok(false),
-                            }
+                            let stream = tool.call(call_args, call_id_for_call, console);
+                            anyhow::Ok(forward_tool_outputs(stream, &tx_inner).await)
                         }
                     })
                     .catch_unwind()
@@ -1606,5 +1613,44 @@ mod tests {
 
         assert!(agent.tool_descs.is_empty(), "{:?}", agent.tool_descs);
         assert!(agent.tools.is_empty());
+    }
+
+    /// A tool's progress reaches the turn while the tool is still working, not once its next
+    /// output shows the progress was not the last.
+    #[tokio::test]
+    async fn a_tools_progress_is_forwarded_at_once() {
+        let output = |text: &str, depth| MessageOutput {
+            message: Message::new(Role::Tool).with_contents([Part::text(text)]),
+            finish_reason: FinishReason::Stop {},
+            usage: None,
+            depth,
+            source_agent: None,
+        };
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+        let (progress, result) = (output("working", Some(0)), output("done", None));
+        let stream = async_stream::stream! {
+            yield progress;
+            let _ = done_rx.await;
+            yield result;
+        }
+        .boxed();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let forwarding = tokio::spawn(async move { forward_tool_outputs(stream, &tx).await });
+
+        let first = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the progress waits for nothing")
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.message.contents[0].as_text(), Some("working"));
+        assert_eq!(first.depth, Some(1));
+
+        done_tx.send(()).unwrap();
+        assert!(forwarding.await.unwrap());
+        let last = rx.recv().await.unwrap().unwrap();
+        assert_eq!(last.message.contents[0].as_text(), Some("done"));
+        assert_eq!(last.depth, Some(0));
+        assert!(rx.recv().await.is_none());
     }
 }
