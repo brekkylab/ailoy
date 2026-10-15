@@ -14,7 +14,7 @@ Ailoy is a library for building AI agents that each own a virtual machine (a [vi
 
 - `src/agent/` — the builder, the run loop (`rt.rs`), subagents, skills, and the spec an agent is described by.
 - `src/lang_model/` — providers (`impl/api/` has one module per vendor API) and the streaming framing under them.
-- `src/tool/impl/` — built-in tools in `builtins/`, plus the MCP, A2A and memory tool providers.
+- `src/tool/impl/` — built-in tools in `builtins/`, plus the MCP and memory tool providers.
 - `src/message/` — the message, part and delta types every surface marshals.
 - `src/console.rs` — the virtx console an agent is given.
 - `bindings/python/src/` and `bindings/node/src/` — the wrappers, in Rust. The Python package itself is `bindings/python/python/ailoy/`; the Node package is `bindings/node/index.js` and its `.d.ts` files.

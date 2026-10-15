@@ -96,7 +96,6 @@ dependencies = [
  "napi-derive",
  "serde",
  "tokio",
- "url",
  "virtx",
 ]
 
@@ -113,7 +112,6 @@ dependencies = [
  "pythonize",
  "serde",
  "tokio",
- "url",
  "virtx",
 ]
 
