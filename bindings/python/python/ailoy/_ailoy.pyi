@@ -198,6 +198,7 @@ class AgentBuilder:
         user_data_dir: _Path | None = None,
         on_ask: Callable[[str], str | None | Awaitable[str | None]] | None = None,
         ask_timeout: float | None = None,
+        careful: bool = True,
     ) -> Self:
         """A browser the agent drives. Needs a console with its network on.
 
@@ -214,6 +215,9 @@ class AgentBuilder:
 
         ``locale`` is the language a sandboxed browser asks pages in, such as ``"ko-KR"``;
         this host's by default.
+
+        ``careful`` tells the agent to use sites as a person would, so sites checking for bots
+        are less likely to turn it away.
         """
         ...
     def memory(self, memfile: str) -> Self: ...

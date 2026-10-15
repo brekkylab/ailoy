@@ -73,6 +73,11 @@ test('a browser takes a locale', () => {
   new AgentBuilder('m').browser({ askUser: 'wait', locale: 'ja' })
 })
 
+test('a browser can be less careful', () => {
+  new AgentBuilder('m').browser({ careful: false })
+  new AgentBuilder('m').browser({ mode: 'host', careful: true })
+})
+
 test('a browser is sandboxed or host', () => {
   new AgentBuilder('m').browser({ mode: 'host', userDataDir: '/nonexistent' })
   assert.throws(() => new AgentBuilder('m').browser({ mode: 'remote' }), { code: 'INVALID_ARG' })

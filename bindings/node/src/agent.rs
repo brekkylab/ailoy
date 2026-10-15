@@ -111,6 +111,9 @@ pub struct BrowserOptions {
     pub ask_timeout_ms: Option<u32>,
     /// The language a sandboxed browser asks pages in, such as `'ko-KR'`; this host's by default.
     pub locale: Option<String>,
+    /// Whether the agent is told to use sites as a person would, so sites checking for bots are
+    /// less likely to turn it away. `true` by default.
+    pub careful: Option<bool>,
 }
 
 #[napi(object)]
@@ -242,6 +245,7 @@ impl JsAgentBuilder {
             on_ask: None,
             ask_timeout_ms: None,
             locale: None,
+            careful: None,
         });
         let mut browser = match options.mode.as_deref() {
             None | Some("sandboxed") => Browser::sandboxed(),
@@ -274,6 +278,7 @@ impl JsAgentBuilder {
         if let Some(locale) = options.locale {
             browser = browser.locale(locale);
         }
+        browser = browser.careful(options.careful.unwrap_or(true));
         self.update(this, |b| Ok(b.browser(browser)))
     }
 

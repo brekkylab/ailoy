@@ -52,7 +52,7 @@ enum Mode {
 }
 
 /// A browser for an agent, set with [`AgentBuilder::browser`](crate::agent::AgentBuilder::browser).
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Browser {
     mode: Mode,
     ask_user: AskUser,
@@ -60,6 +60,20 @@ pub struct Browser {
     locale: Option<String>,
     on_ask: Option<AskHandler>,
     ask_timeout: Option<Duration>,
+    careful: bool,
+}
+
+impl Default for Browser {
+    fn default() -> Self {
+        Self {
+            mode: Mode::default(),
+            ask_user: AskUser::default(),
+            locale: None,
+            on_ask: None,
+            ask_timeout: None,
+            careful: true,
+        }
+    }
 }
 
 impl fmt::Debug for Browser {
@@ -70,6 +84,7 @@ impl fmt::Debug for Browser {
             .field("locale", &self.locale)
             .field("on_ask", &self.on_ask.is_some())
             .field("ask_timeout", &self.ask_timeout)
+            .field("careful", &self.careful)
             .finish()
     }
 }
@@ -130,6 +145,13 @@ impl Browser {
     /// by default.
     pub fn ask_timeout(mut self, timeout: Duration) -> Self {
         self.ask_timeout = Some(timeout);
+        self
+    }
+
+    /// Whether the agent is told to use sites as a person would, so that sites checking for bots
+    /// are less likely to turn it away. On by default.
+    pub fn careful(mut self, careful: bool) -> Self {
+        self.careful = careful;
         self
     }
 
@@ -369,6 +391,33 @@ pub(crate) fn instruction(browser: &Browser) -> String {
         "It is already connected and on a tab of its own; never launch another browser. The \
          user watches this browser live and can use it too."
     };
+    let careful = if !browser.careful {
+        String::new()
+    } else {
+        let host_mode = if browser.is_host() {
+            ""
+        } else {
+            " If a site keeps turning you away, tell the user that host mode, which lends you \
+             their Chrome with its sign-ins and history, may get through."
+        };
+        format!(
+            "\n\n# Sites that check for bots\n\n\
+             Some sites turn away traffic that looks automated, so use them as a person would. \
+             Start from the site's home page or its search and reach deeper pages through its own \
+             links and forms, not by opening a long URL with search parameters typed in. Fill a \
+             form in order, one field at a time, picking from autocomplete suggestions when they \
+             appear and keeping defaults you have no reason to change. Pause a second or two \
+             between actions, and after a search or a page change wait until the results have \
+             loaded before reading them. Before submitting, check what the form has preselected, \
+             such as an added hotel or a newsletter, and clear what the task did not ask for. \
+             Take refs again after the page changes: run `snapshot -i` anew, or use `find role \
+             ... --name`. Do not hammer a site: no rapid reloads, no retry loops, no several tabs \
+             on one site at once.\n\n\
+             If a robot check or CAPTCHA appears, stop and use `ask_user`; never try to get \
+             around it. Once the user has cleared it, go on more slowly. If the site will not sort \
+             or filter as asked, work from what is on screen and say so.{host_mode}"
+        )
+    };
     format!(
         "\n\n# Browser\n\n\
          A web browser is attached to your machine: drive it with the `agent-browser` CLI \
@@ -381,7 +430,8 @@ pub(crate) fn instruction(browser: &Browser) -> String {
          layout itself matters, and then prefer `screenshot --annotate`.\n\n\
          When a site needs something only the user can do (signing in, a CAPTCHA, a second \
          factor, a consent), never ask for credentials and never get around it: {asking}. \
-         Look at the page again afterwards. Never close or navigate a tab you did not open."
+         Look at the page again afterwards. Never close or navigate a tab you did not open.\
+         {careful}"
     )
 }
 
@@ -468,6 +518,8 @@ mod tests {
         assert!(host.contains("the user's own Chrome") && !host.contains("viewer"));
         let sandboxed = instruction(&Browser::sandboxed());
         assert!(sandboxed.contains("viewer") && !sandboxed.contains("own Chrome"));
+        // Only a sandboxed browser points at host mode for a site that keeps refusing it.
+        assert!(sandboxed.contains("host mode") && !host.contains("host mode"));
         let desc = ask_user_tool_desc(&Browser::host());
         assert!(
             desc.description
@@ -475,5 +527,13 @@ mod tests {
                 .unwrap_or_default()
                 .contains("their Chrome")
         );
+    }
+
+    #[test]
+    fn careful_is_on_unless_turned_off() {
+        let bots = "# Sites that check for bots";
+        assert!(instruction(&Browser::sandboxed()).contains(bots));
+        assert!(instruction(&Browser::host()).contains(bots));
+        assert!(!instruction(&Browser::sandboxed().careful(false)).contains(bots));
     }
 }

@@ -191,6 +191,11 @@ def test_a_browser_takes_a_locale():
     AgentBuilder(MODEL).browser(ask_user="wait", locale="ja")
 
 
+def test_a_browser_can_be_less_careful():
+    AgentBuilder(MODEL).browser(careful=False)
+    AgentBuilder(MODEL).browser("host", careful=True)
+
+
 def test_a_browser_is_sandboxed_or_host():
     AgentBuilder(MODEL).browser("host", user_data_dir="/nonexistent")
     with pytest.raises(ValueError):

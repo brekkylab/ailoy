@@ -125,6 +125,12 @@ The agent's console reaches Chrome through ailoy, at a port on your computer's l
 The agent uses your real browser. It is signed in wherever you are, and nothing stops it from reading or using your other tabs. It is told to keep to its own window and to ask you before anything that cannot be undone, such as paying, sending or deleting. That is an instruction, though, not a limit, so use your own Chrome only with an agent and a task you trust.
 :::
 
+## Sites that check for bots
+
+Some sites turn away traffic that looks automated, with a robot check or a block. By default the agent is told to use sites as a person would: it starts from a site's home page and goes through its links and forms instead of opening a search URL directly, fills forms one field at a time, pauses between actions, and does not reload or retry in a loop. When a robot check appears anyway, it stops and asks you through `ask_user` rather than trying to get around it, and goes on more slowly once you have cleared it. To leave this out of what the agent is told, pass `careful=False` (`careful: false` in Node, `Browser::careful(false)` in Rust).
+
+A site that keeps turning a sandboxed browser away may let your own Chrome through: it carries your sign-ins, cookies and history, as a fresh browser in a VM does not. The agent suggests this when a site keeps refusing it.
+
 ## Asking you to do something
 
 When a site needs something only you can do, such as signing in, a CAPTCHA or a second factor, the agent never asks for your password. It calls its `ask_user` tool. `ask_user` sets how it waits for you:

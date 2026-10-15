@@ -152,8 +152,10 @@ impl PyAgentBuilder {
     /// `"wait"` waits for Done in the viewer or for `on_ask`, a callable given the request that
     /// returns `"done"`, `"declined"` or a note, within `ask_timeout` seconds if set. A host
     /// browser waits only through `on_ask`. `locale` is the language a sandboxed browser asks
-    /// pages in, such as `"ko-KR"`; this host's by default. Needs a console with its network on.
-    #[pyo3(signature = (mode = "sandboxed", *, ask_user = "end_turn", locale = None, user_data_dir = None, on_ask = None, ask_timeout = None))]
+    /// pages in, such as `"ko-KR"`; this host's by default. `careful` tells the agent to use sites
+    /// as a person would, so sites checking for bots are less likely to turn it away. Needs a
+    /// console with its network on.
+    #[pyo3(signature = (mode = "sandboxed", *, ask_user = "end_turn", locale = None, user_data_dir = None, on_ask = None, ask_timeout = None, careful = true))]
     #[allow(clippy::too_many_arguments)]
     fn browser<'py>(
         slf: PyRef<'py, Self>,
@@ -163,6 +165,7 @@ impl PyAgentBuilder {
         user_data_dir: Option<PathBuf>,
         on_ask: Option<Py<PyAny>>,
         ask_timeout: Option<f64>,
+        careful: bool,
     ) -> PyResult<PyRef<'py, Self>> {
         let mut browser = match mode {
             "sandboxed" => Browser::sandboxed(),
@@ -198,6 +201,7 @@ impl PyAgentBuilder {
             })?;
             browser = browser.ask_timeout(timeout);
         }
+        browser = browser.careful(careful);
         Self::update(slf, |b| Ok(b.browser(browser)))
     }
 
