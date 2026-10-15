@@ -16,7 +16,8 @@ license = "Apache-2.0"
 repository = "https://github.com/brekkylab/ailoy"
 
 [workspace.dependencies]
-virtx = { version = "0.1.2", default-features = false }
+# brekkylab/virtx#80 (jobs and streamed output), until a virtx release carries it.
+virtx = { git = "https://github.com/brekkylab/virtx", branch = "feat/exec-stream", default-features = false }
 
 [package]
 name = "ailoy"

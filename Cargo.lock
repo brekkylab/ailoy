@@ -4067,8 +4067,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "virtx"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faab2e800f81bea9dd2b08d8f591b5d372adaaac72da90bba436fa17384e68af"
+source = "git+https://github.com/brekkylab/virtx?branch=feat%2Fexec-stream#db02679c1f18194997f1edde2ac3118cc8d9ff98"
 dependencies = [
  "anyhow",
  "bson",
