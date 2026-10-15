@@ -1,8 +1,57 @@
 version: 2
 updates:
-  - package-ecosystem: "npm"
+  - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 0
     exclude-paths:
       - "examples/"
+    groups:
+      cargo-patch:
+        applies-to: "security-updates"
+        update-types:
+          - "patch"
+
+  - package-ecosystem: "npm"
+    directories:
+      - "/bindings/node"
+      - "/docs"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    exclude-paths:
+      - "examples/"
+    groups:
+      npm-minor-patch:
+        applies-to: "security-updates"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "uv"
+    directory: "/bindings/python"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    exclude-paths:
+      - "examples/"
+    groups:
+      uv-minor-patch:
+        applies-to: "security-updates"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    exclude-paths:
+      - "examples/"
+    groups:
+      actions:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
