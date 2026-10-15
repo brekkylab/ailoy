@@ -29,11 +29,10 @@ use napi::{
     bindgen_prelude::{PromiseRaw, Unknown, within_runtime_if_available},
 };
 use napi_derive::napi;
-use virtx_node::console::{promise, thrown};
 
 use crate::{
     convert::{Json, from_js},
-    error::{self, Result, invalid},
+    error::{self, Result, invalid, promise, thrown},
     tool::{Callback, tool_func},
 };
 

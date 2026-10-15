@@ -5,14 +5,13 @@
 //! lock's owned guard in its stream, which also makes a second `run` wait for the first to
 //! finish, as `&mut self` would in Rust.
 //!
-//! `AgentBuilder.console` puts a virtx `ConsoleClient`'s slot (the slot, not its contents) in
-//! the agent's state. The `ConsoleClient` stays usable: its calls and the agent's tools take
-//! turns on the one lock, the agent starts and stops its backend around each batch of tool
-//! calls, and `ConsoleClient.close()` ends the session for both.
+//! `AgentBuilder.console` attaches the agent to a `virtx.ConsoleClient`'s session (see
+//! [`crate::console`]). The `ConsoleClient` stays usable: its calls and the agent's take turns
+//! on its lock, one protocol call at a time, the agent starts and stops its backend around each
+//! batch of tool calls, and `ConsoleClient.close()` ends the session for both.
 
 use std::sync::Arc;
 
-use _virtx::console::PyConsoleClient;
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     datatype::Value,
@@ -30,13 +29,15 @@ use pyo3_async_runtimes::tokio::{future_into_py, get_runtime};
 use tokio::sync::Mutex;
 
 use crate::{
+    console,
     convert::{Query, from_py, to_py},
     error::{self, AiloyError},
 };
 
-/// A value let go of on the binding's runtime. Dropping an agent or a turn's stream may drop
-/// the last hold on its console, which says `quit` only when dropped on a runtime, and a
-/// Python finalizer is not on one.
+/// A value let go of on the binding's runtime. Dropping an agent or a turn's stream drops its
+/// console, whose client is let go of on a task when dropped on a runtime (an attached console
+/// says no `quit`: the session is the `virtx.ConsoleClient`'s), and a Python finalizer is not on
+/// one.
 struct OnRuntime<T>(Option<T>);
 
 impl<T> Drop for OnRuntime<T> {
@@ -135,12 +136,13 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.history(history)))
     }
 
-    /// Run the agent's console tools in `console`'s session, which the agent then shares.
+    /// Run the agent's console tools in the session of `console`, a `virtx.ConsoleClient`,
+    /// which the agent then shares.
     fn console<'py>(
         slf: PyRef<'py, Self>,
-        console: PyRef<'py, PyConsoleClient>,
+        console: Bound<'py, PyAny>,
     ) -> PyResult<PyRef<'py, Self>> {
-        let slot = console.slot();
+        let slot = console::attach(&console)?;
         Self::update(slf, |b| Ok(b.shared_console(slot)))
     }
 
@@ -282,7 +284,7 @@ impl PyAgent {
         spec: Bound<'py, PyAny>,
         agent_provider: String,
         history: Option<Bound<'py, PyAny>>,
-        console: Option<PyRef<'py, PyConsoleClient>>,
+        console: Option<Bound<'py, PyAny>>,
         memory: Option<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let spec: AgentSpec = from_py(&spec, "an agent spec")?;
@@ -291,7 +293,7 @@ impl PyAgent {
             state = state.with_history(from_py::<Vec<Message>>(&history, "a list of messages")?);
         }
         if let Some(console) = console {
-            state = state.with_console_slot(console.slot());
+            state = state.with_console_slot(console::attach(&console)?);
         }
         if let Some(memfile) = memory {
             state = state.with_memory(Memory::new(memfile));
