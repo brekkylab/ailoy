@@ -55,7 +55,7 @@ base64 = "0.23"
 virtx = { workspace = true }
 dedent = "0.1.1"
 derive_builder = "0.20.2"
-fancy-regex = "0.18"
+fancy-regex = "0.19"
 futures = "0.3"
 hex = "0.4"
 html-to-markdown-rs = { version = "3.4", features = ["metadata"] }
@@ -79,7 +79,7 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 strum = { version = "0.28", features = ["derive"] }
 shellexpand = "3"
 tempfile = "3"
-dirs = "6"
+dirs = "7"
 encoding_rs = "0.8"
 flate2 = "1"
 tar = "0.4"
