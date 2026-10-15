@@ -524,7 +524,6 @@ mod tests {
     use std::{collections::VecDeque, sync::Mutex as StdMutex};
 
     use futures::{
-        StreamExt as _,
         future::BoxFuture,
         stream::{self, BoxStream},
     };

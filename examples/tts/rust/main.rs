@@ -131,7 +131,7 @@ async fn main() -> anyhow::Result<()> {
             .gpu_memory_mib(8192)
             .build()
             .await
-            .with_context(|| format!("starting the console"))?,
+            .context("starting the console")?,
     )
     .skill("/skills/tts")
     .build()
