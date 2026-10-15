@@ -218,6 +218,29 @@ test('an agent shares its console, and closing the agent leaves it open', async 
   }
 })
 
+test('a command’s output streams before its result', async (t) => {
+  const server = await fakeModel({ name: 'shell', arguments: { cmd: 'echo one; sleep 1; echo two' } })
+  t.after(() => server.close())
+  registerLangModel('fake-stream/*', 'chat_completion', `http://127.0.0.1:${server.address().port}/v1/chat/completions`)
+
+  const console_ = await ConsoleClient.builder().image(new Recipe('python:3.12-slim-trixie')).build()
+  const agent = await new AgentBuilder('fake-stream/model').shellTool().console(console_).build()
+  try {
+    const outputs = []
+    for await (const output of agent.run('run it')) outputs.push(output)
+    const tool = outputs.filter((o) => o.message.role === 'tool')
+    const progress = tool.slice(0, -1)
+    const result = tool[tool.length - 1]
+    assert.deepEqual(progress.map((o) => o.depth), progress.map(() => 1))
+    assert.equal(progress.map((o) => o.message.contents[0].value.stdout).join(''), 'one\ntwo\n')
+    assert.equal(result.depth, 0)
+    assert.equal(result.message.contents[0].value.stdout, 'one\ntwo\n')
+  } finally {
+    await console_.close()
+    await agent.close()
+  }
+})
+
 test('an agent runs its console tools in the shared session, until the console closes', async (t) => {
   const server = await fakeModel({ name: 'shell', arguments: { cmd: 'echo relayed > /tmp/out.txt' } })
   t.after(() => server.close())

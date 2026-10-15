@@ -140,8 +140,10 @@ If the tool fails, the error still comes back as a `tool` message, so the model 
 | `message` | The complete message. |
 | `finish_reason` | Why the model stopped: `stop`, `length`, `tool_call` or `refusal` (with a `reason`). |
 | `usage` | Input and output token counts, when the provider reports them. |
-| `depth` | `0` for this agent, higher for messages from a sub-agent. |
+| `depth` | `0` for this agent, higher for messages from inside a tool call: a sub-agent's, or a running command's output. |
 | `source_agent` | The name of the agent that wrote the message. |
+
+A tool call's result is always at depth `0`, and only it goes into the history the model reads. While the `shell` tool's command runs, each piece of what it writes arrives first as a `tool` message at depth `1` whose value is `{"stdout": …, "stderr": …}`, so a program can show a build or a test run as it happens. A command killed at its `timeout_secs` still reports what it wrote before the kill.
 
 `agent.run_stream` (`runStream` in Node.js) yields `MessageDeltaOutput`s instead. Each `delta` holds a piece of a message, such as a few tokens of text or thinking. Concatenated, the deltas between two `finish_reason`s make up the same message `run` would yield. In Rust, the `Delta` trait's `accumulate` and `finish` do this for you.
 

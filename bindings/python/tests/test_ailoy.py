@@ -275,6 +275,27 @@ async def test_from_spec_and_closing():
 # ---- against the console server virtx starts by default ----------------------------
 
 
+async def test_a_commands_output_streams_before_its_result():
+    console = await ConsoleClient.builder().image(Recipe("python:3.12-slim-trixie")).build()
+    agent = await (
+        AgentBuilder(MODEL)
+        .agent_provider(PROVIDER)
+        .shell_tool()
+        .console(console)
+        .build()
+    )
+    outputs = await run(agent, 'shell {"cmd": "echo one; sleep 1; echo two"}')
+    await console.close()
+
+    tool_outputs = [o for o in outputs if o["message"]["role"] == "tool"]
+    progress, result = tool_outputs[:-1], tool_outputs[-1]
+    assert [o["depth"] for o in progress] == [1] * len(progress)
+    streamed = "".join(o["message"]["contents"][0]["value"]["stdout"] for o in progress)
+    assert streamed == "one\ntwo\n"
+    assert result["depth"] == 0
+    assert result["message"]["contents"][0]["value"]["stdout"] == "one\ntwo\n"
+
+
 async def test_the_agent_shares_the_console(tmp_path):
     console = await (
         ConsoleClient.builder()
