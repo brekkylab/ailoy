@@ -37,6 +37,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import ailoy from '@brekkylab/ailoy'
+import virtx from '@brekkylab/virtx'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 // Absolute, because a mount is named to the console server as a `file://` URL.
@@ -49,13 +50,15 @@ const SIM = join(SHARED, 'simulator', 'sim')
 
 const {
   AgentBuilder,
-  ConsoleClient,
-  Recipe,
   addAgentProvider,
   addToolProvider,
   registerTool,
-  ensureVirtx,
 } = ailoy
+const {
+  ConsoleClient,
+  Recipe,
+  ensureVirtx,
+} = virtx
 
 const SYSTEM = readFileSync(join(SHARED, 'system.md'), 'utf8')
 // Sent every morning.

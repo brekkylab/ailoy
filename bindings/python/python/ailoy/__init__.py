@@ -11,13 +11,13 @@ process-wide registries (``register_tool``, ``register_mcp_stdio``, ...), each s
 Messages, specs and tool descriptions are dicts in their JSON form; ``ailoy.types`` spells
 out their shapes.
 
-Tools run commands in a virtx console from ``ailoy.virtx``, built into this package so an
-``Agent`` can share its session.
+Tools run commands in a console from the ``virtx`` package, which ailoy depends on: a
+``virtx.ConsoleClient`` handed to ``AgentBuilder.console`` is shared with the agent.
 
 See the Rust crate's documentation for details.
 """
 
-from . import virtx, types
+from . import types
 from ._ailoy import (
     Agent,
     AgentBuilder,
@@ -43,7 +43,6 @@ __all__ = [
     "LangModel",
     "add_agent_provider",
     "add_tool_provider",
-    "virtx",
     "register_a2a",
     "register_mcp_stdio",
     "register_mcp_streamable_http",

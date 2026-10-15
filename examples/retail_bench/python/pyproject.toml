@@ -3,7 +3,7 @@ name = "ailoy-example-retail-bench"
 version = "0.1.0"
 description = "RetailBench run against an agent, one day a turn, on ailoy's Python bindings."
 requires-python = ">=3.10"
-dependencies = ["ailoy-py", "python-dotenv>=1"]
+dependencies = ["ailoy-py", "virtx>=0.1.2,<0.2", "python-dotenv>=1"]
 
 [tool.uv]
 # Scripts, not a package: `uv run` only needs the environment.

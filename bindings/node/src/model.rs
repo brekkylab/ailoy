@@ -41,12 +41,11 @@ use napi::{
 use napi_derive::napi;
 use serde::Deserialize;
 use tokio::runtime::Handle;
-use virtx_node::console::{promise, thrown};
 
 use crate::{
     agent::{Item, JsAgentRun, OnRuntime},
     convert::{Json, from_js},
-    error::{self, Result, invalid},
+    error::{self, Result, invalid, promise, thrown},
     tool::{Returned, reason},
 };
 
