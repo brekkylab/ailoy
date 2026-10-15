@@ -1,6 +1,5 @@
 use std::{collections::HashMap, panic::AssertUnwindSafe, path::Path, sync::Arc};
 
-use anyhow::Context as _;
 use futures::{
     FutureExt as _, StreamExt as _,
     stream::{BoxStream, FuturesUnordered},
@@ -8,16 +7,13 @@ use futures::{
 use tokio::sync::Mutex;
 use virtx::console::ConsoleClient;
 
-use super::{
-    AgentSpec, AgentState, ContextManager, get_agent_providers, skill::render_skills,
-    spec::split_desc,
-};
+use super::{AgentSpec, AgentState, ContextManager, skill::render_skills, spec::split_desc};
 use crate::{
     datatype::Value,
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
     model::{InferLangModel, LangModelOptions, create_lang_model},
     tool::{
-        ToolDesc, ToolFunc, get_tool_providers,
+        ToolDesc, ToolFunc, create_tool,
         r#impl::{
             get_mem_insert_tool_desc, get_mem_insert_tool_func, get_mem_search_tool_desc,
             get_mem_search_tool_func, get_web_search_tool_factory,
@@ -31,8 +27,7 @@ const MAX_TOOL_RESULT_CHARS: usize = 30_000;
 /// An agent that drives an [`InferLangModel`] through multi-turn, tool-augmented
 /// conversations.
 ///
-/// Pairs an [`AgentSpec`] (model + instruction + tools) with an
-/// [`AgentProvider`](super::AgentProvider) (tool sources) and an [`AgentState`]
+/// Pairs an [`AgentSpec`] (model + instruction + tools) with an [`AgentState`]
 /// (history + console). [`run`](Self::run) streams one turn, calling tools until the model
 /// answers, and appends every message to the history.
 pub struct Agent {
@@ -51,66 +46,34 @@ pub struct Agent {
 }
 
 impl Agent {
-    /// Create an agent with the `"default"` [`AgentProvider`](super::AgentProvider) and a
-    /// fresh [`AgentState`].
+    /// Create an agent with a fresh [`AgentState`].
     pub async fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_state(spec, "default", AgentState::new()).await
+        Self::try_with_state(spec, AgentState::new()).await
     }
 
-    /// Create an agent with the [`AgentProvider`](super::AgentProvider) registered under
-    /// `provider` and a fresh [`AgentState`].
-    pub async fn try_with_provider(
-        spec: AgentSpec,
-        provider: impl AsRef<str>,
-    ) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_state(spec, provider, AgentState::new()).await
-    }
-
-    /// Create an agent with the `"default"` [`AgentProvider`](super::AgentProvider) and
-    /// `state`.
-    pub async fn try_with_state(spec: AgentSpec, state: AgentState) -> anyhow::Result<Self> {
-        Self::try_with_provider_and_state(spec, "default", state).await
-    }
-
-    /// Create an agent with the [`AgentProvider`](super::AgentProvider) registered under
-    /// `provider` and `state`.
+    /// Create an agent with `state`.
     ///
-    /// The model is built from `spec.model` through
-    /// [`create_lang_model`]. Unless `state.history` already has a [`Role::System`]
-    /// message, one built from `spec.instruction` and [`AgentSpec::skills`] is put first.
+    /// The model is built from `spec.model` through [`create_lang_model`], and each of
+    /// `spec.tools` through [`create_tool`]. Unless `state.history` already has a
+    /// [`Role::System`] message, one built from `spec.instruction` and
+    /// [`AgentSpec::skills`] is put first.
     ///
     /// Async because skills are read through the console.
-    pub async fn try_with_provider_and_state(
-        spec: AgentSpec,
-        provider: impl AsRef<str>,
-        mut state: AgentState,
-    ) -> anyhow::Result<Self> {
-        let provider = provider.as_ref();
-        let provider = get_agent_providers()
-            .get(provider)
-            .cloned()
-            .with_context(|| format!("agent_provider '{provider}' not registered"))?;
-
+    pub async fn try_with_state(spec: AgentSpec, mut state: AgentState) -> anyhow::Result<Self> {
         let model = create_lang_model(&spec.model).await?;
 
         // Errors if any spec tool is missing.
-        let mut tools = {
-            let registry = get_tool_providers();
-            let tool_provider = registry.get(&provider.tool_provider).with_context(|| {
-                format!("tool_provider '{}' not registered", provider.tool_provider)
-            })?;
-            match &spec.web_search_engines {
-                Some(engines) => {
-                    let mut tool_provider = tool_provider.clone();
-                    tool_provider.insert_func_factory(
-                        "web_search",
-                        get_web_search_tool_factory(engines.clone()),
-                    );
-                    tool_provider.provide(&spec.tools)?
+        let mut tools = HashMap::with_capacity(spec.tools.len());
+        for desc in &spec.tools {
+            let func = match (&spec.web_search_engines, desc.name.as_str()) {
+                // The engines are this spec's, so its `web_search` is built here.
+                (Some(engines), "web_search") => {
+                    get_web_search_tool_factory(engines.clone())(desc)?
                 }
-                None => tool_provider.provide(&spec.tools)?,
-            }
-        };
+                _ => create_tool(desc)?,
+            };
+            tools.insert(desc.name.clone(), func);
+        }
         let mut tool_descs = spec.tools.clone();
 
         // The store is this agent's `Memory`, not a registry name, so these are built here.
@@ -530,11 +493,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        agent::{AgentProvider, get_agent_providers_mut},
         message::{Role, TokenUsage},
         model::{LangModelProvider, set_lang_model_provider},
         suppress_panics, to_value,
-        tool::{ToolDescBuilder, ToolProvider, get_tool_providers_mut},
+        tool::{ToolDescBuilder, ToolProvider, set_tool_provider},
         tool_func,
     };
 
@@ -599,8 +561,7 @@ mod tests {
     }
 
     /// Registers `script` as the model `name` and returns its spec, with the `echo`,
-    /// `boom` (panics) and `console_only` tools available through the agent provider
-    /// `name`.
+    /// `boom` (panics) and `console_only` tools.
     fn scripted(
         name: &str,
         script: impl IntoIterator<Item = anyhow::Result<MessageOutput>>,
@@ -615,12 +576,11 @@ mod tests {
             LangModelProvider::custom(move |_, _| Ok(shared.clone())),
         );
 
-        let mut tp = ToolProvider::new();
-        tp.insert_func(
+        set_tool_provider(
             "echo",
             tool_func!(|_args: Value| -> Value { Value::string("echoed") }),
         );
-        tp.insert_func(
+        set_tool_provider(
             "boom",
             tool_func!(|_args: Value| -> Value {
                 if true {
@@ -629,12 +589,10 @@ mod tests {
                 Value::Null
             }),
         );
-        tp.insert_func(
+        set_tool_provider(
             "console_only",
             tool_func!(async |_args: Value, _console: &mut ConsoleClient| -> Value { Value::Null }),
         );
-        get_tool_providers_mut().insert(name.to_owned(), tp);
-        get_agent_providers_mut().insert(name.to_owned(), AgentProvider::new(name));
 
         let tool = |name: &str| {
             ToolDescBuilder::new(name)
@@ -667,7 +625,7 @@ mod tests {
     async fn test_run_calls_tools_until_the_model_answers() {
         let name = "test-agent-run";
         let (model, spec) = scripted(name, [calls(&[("c1", "echo")]), answer("done")]);
-        let mut agent = Agent::try_with_provider(spec, name).await.unwrap();
+        let mut agent = Agent::try_new(spec).await.unwrap();
 
         let outputs: Vec<_> = agent.run(user("hi")).map(Result::unwrap).collect().await;
         assert_eq!(
@@ -699,7 +657,7 @@ mod tests {
     async fn test_run_stream_matches_run() {
         let name = "test-agent-run-stream";
         let (_, spec) = scripted(name, [calls(&[("c1", "echo")]), answer("done")]);
-        let mut agent = Agent::try_with_provider(spec, name).await.unwrap();
+        let mut agent = Agent::try_new(spec).await.unwrap();
 
         let deltas: Vec<_> = agent
             .run_stream(user("hi"))
@@ -736,7 +694,7 @@ mod tests {
                 answer("done"),
             ],
         );
-        let mut agent = Agent::try_with_provider(spec, name).await.unwrap();
+        let mut agent = Agent::try_new(spec).await.unwrap();
         agent.run(user("hi")).for_each(|_| async {}).await;
 
         let results: HashMap<_, _> = agent
@@ -756,7 +714,7 @@ mod tests {
     async fn test_a_failed_turn_takes_its_query_back() {
         let name = "test-agent-rollback";
         let (_, spec) = scripted(name, [Err(anyhow::anyhow!("down")), answer("up")]);
-        let mut agent = Agent::try_with_provider(spec, name).await.unwrap();
+        let mut agent = Agent::try_new(spec).await.unwrap();
 
         assert!(agent.run(user("first")).next().await.unwrap().is_err());
         assert_eq!(roles(agent.history()), [Role::System]);
@@ -775,9 +733,7 @@ mod tests {
         let (_, spec) = scripted(name, []);
         let state = AgentState::new()
             .with_history([Message::new(Role::System).with_contents([Part::text("Mine.")])]);
-        let agent = Agent::try_with_provider_and_state(spec, name, state)
-            .await
-            .unwrap();
+        let agent = Agent::try_with_state(spec, state).await.unwrap();
         assert_eq!(agent.history().len(), 1);
         assert_eq!(text_of(&agent.history()[0]), "Mine.");
     }
@@ -787,7 +743,20 @@ mod tests {
         let name = "test-agent-missing-tool";
         let (_, spec) = scripted(name, []);
         let spec = spec.tool(ToolDescBuilder::new("nowhere").build());
-        assert!(Agent::try_with_provider(spec, name).await.is_err());
+        assert!(Agent::try_new(spec).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_a_failing_tool_factory_fails_construction() {
+        let name = "test-agent-failing-factory";
+        let (_, spec) = scripted(name, []);
+        set_tool_provider(
+            "refusing",
+            ToolProvider::function(|_| Err(anyhow::anyhow!("not today"))),
+        );
+        let spec = spec.tool(ToolDescBuilder::new("refusing").build());
+        let err = Agent::try_new(spec).await.err().unwrap();
+        assert!(err.to_string().contains("not today"), "{err}");
     }
 
     /// `output` as having read `input_tokens`.
@@ -815,7 +784,7 @@ mod tests {
                 with_input(answer("two"), 10),
             ],
         );
-        let mut agent = Agent::try_with_provider(spec, name).await.unwrap();
+        let mut agent = Agent::try_new(spec).await.unwrap();
         agent.set_context_manager(Some(ContextManager {
             max_input_tokens: 100,
             preserve_recent_turns: 1,

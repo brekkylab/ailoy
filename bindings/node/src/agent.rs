@@ -105,11 +105,6 @@ impl JsAgentBuilder {
     }
 
     #[napi]
-    pub fn agent_provider<'env>(&mut self, this: This<'env>, name: String) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.agent_provider(name)))
-    }
-
-    #[napi]
     pub fn instruction<'env>(
         &mut self,
         this: This<'env>,
@@ -337,10 +332,10 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<It
 
 #[napi]
 impl JsAgent {
-    /// An agent from a spec (the object an `AgentSpec` serializes to). `options.agentProvider`
-    /// defaults to `'default'`; `memory` is the file to remember into.
+    /// An agent from a spec (the object an `AgentSpec` serializes to). `options.memory` is the
+    /// file to remember into.
     #[napi(
-        ts_args_type = "spec: AgentSpec, options?: { agentProvider?: string; history?: Array<Message>; console?: ConsoleClient; memory?: string }",
+        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; console?: ConsoleClient; memory?: string }",
         ts_return_type = "Promise<Agent>"
     )]
     pub fn from_spec<'env>(
@@ -351,12 +346,8 @@ impl JsAgent {
         let prepared = (|| -> Result<_> {
             let spec: AgentSpec = from_js(env, spec, "an agent spec")?;
             let mut state = AgentState::new();
-            let mut agent_provider = "default".to_string();
             if let Some(options) = options {
                 let get = |e: napi::Error| invalid(e.reason);
-                if let Some(name) = options.get::<String>("agentProvider").map_err(get)? {
-                    agent_provider = name;
-                }
                 if let Some(history) = options.get::<Unknown>("history").map_err(get)? {
                     state = state.with_history(from_js::<Vec<Message>>(
                         env,
@@ -371,11 +362,11 @@ impl JsAgent {
                     state = state.with_memory(Memory::new(memfile));
                 }
             }
-            Ok((spec, agent_provider, state))
+            Ok((spec, state))
         })();
-        let (spec, agent_provider, state) = prepared.map_err(|e| thrown(env, e))?;
+        let (spec, state) = prepared.map_err(|e| thrown(env, e))?;
         promise(env, async move {
-            let agent = Agent::try_with_provider_and_state(spec, &agent_provider, state)
+            let agent = Agent::try_with_state(spec, state)
                 .await
                 .map_err(error::anyhow)?;
             Ok(JsAgent::new(agent))

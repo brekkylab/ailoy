@@ -50,8 +50,6 @@ const SIM = join(SHARED, 'simulator', 'sim')
 
 const {
   AgentBuilder,
-  addAgentProvider,
-  addToolProvider,
   registerTool,
 } = ailoy
 const {
@@ -68,9 +66,6 @@ const NUDGE = readFileSync(join(SHARED, 'nudge.md'), 'utf8')
 
 // The tools the agent may call, `end_today` last because that is where it belongs in a day.
 const ACTIONS = ['place_order', 'modify_sku_price', 'end_today']
-
-// The name the tool and agent providers carrying the three actions are registered under.
-const PROVIDER = 'retail_bench'
 
 // How many times a day is asked before the harness closes it itself: a day left open would
 // stop the clock, and the run would never end.
@@ -153,7 +148,6 @@ async function main() {
   // One agent a day, each starting from the system message alone, all sharing the console.
   const newAgent = () =>
     new AgentBuilder(model)
-      .agentProvider(PROVIDER)
       .instruction(SYSTEM)
       .systemTools()
       .tools(tools)
@@ -278,15 +272,11 @@ async function runDay(newAgent, store, record, day, n, maxDays) {
   return typeof metrics.terminated === 'string' ? metrics.terminated : null
 }
 
-// Register the three actions under `PROVIDER` and return their descriptions, whose schemas are
-// the store's own rather than written here.
-//
-// A tool description in a spec is resolved by name against a tool provider, so the actions go
-// into one of their own, which starts with every built-in tool as the default one does.
+// Register the three actions and return their descriptions, whose schemas are the store's own
+// rather than written here.
 async function registerActions(store, record, day) {
   const { actions: declared = [] } = await store.get('/actions')
 
-  addToolProvider(PROVIDER)
   const descs = []
   for (const name of ACTIONS) {
     // A name the store does not declare means this example and the simulator have drifted
@@ -315,9 +305,8 @@ async function registerActions(store, record, day) {
         return `The store could not be reached: ${e.message}`
       }
     }
-    descs.push(registerTool(desc, func, { provider: PROVIDER }))
+    descs.push(registerTool(desc, func))
   }
-  addAgentProvider(PROVIDER, { toolProvider: PROVIDER })
   return descs
 }
 

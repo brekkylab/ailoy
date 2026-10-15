@@ -4,24 +4,19 @@
 //! becomes its own registry entry, sharing the live connection behind an `Arc`:
 //!
 //! ```text
-//! MCPToolProviderElem::connect()       ← async: initialize + tools/list
+//! MCPTransport::connect()              ← async: initialize + tools/list
 //!         │
-//!         │  ToolProvider::insert_mcp("github", conn)   ← sync: N entries
+//!         │  register_mcp_*("github", …)   ← sync: N entries
 //!         ▼
-//! "github__create_issue" → ToolProviderElem::MCP(MCPToolEntry)
-//! "github__list_issues"  → ToolProviderElem::MCP(MCPToolEntry)
+//! "github__create_issue" → ToolProvider::MCP(MCPToolEntry)
+//! "github__list_issues"  → ToolProvider::MCP(MCPToolEntry)
 //! ```
 //!
 //! ```no_run
 //! # use ailoy::{agent::AgentSpec, tool::{register_mcp_stdio, unregister_mcp}};
 //! # async fn example() -> anyhow::Result<()> {
-//! let descs = register_mcp_stdio(
-//!     "default",
-//!     "github",
-//!     "npx",
-//!     ["-y", "@modelcontextprotocol/server-github"],
-//! )
-//! .await?;
+//! let descs = register_mcp_stdio("github", "npx", ["-y", "@modelcontextprotocol/server-github"])
+//!     .await?;
 //!
 //! let spec = AgentSpec::new("anthropic/claude-sonnet-4-6")
 //!     .system_tools()
@@ -30,7 +25,7 @@
 //! // ... build and run agents against `spec` ...
 //!
 //! // Ends the child process; without this it outlives every agent that used it.
-//! unregister_mcp("default", "github")?;
+//! unregister_mcp("github");
 //! # Ok(())
 //! # }
 //! ```
@@ -49,7 +44,7 @@ use crate::{
     datatype::{Bytes, Value},
     message::{Message, Part, Role},
     tool::{
-        MCPToolProviderElem, ToolDesc, ToolDescBuilder, ToolFunc, sanitize_tool_name,
+        MCPTransport, ToolDesc, ToolDescBuilder, ToolFunc, sanitize_tool_name,
         warn_if_tool_name_too_long,
     },
     tool_func,
@@ -141,14 +136,12 @@ impl MCPConnection {
     }
 }
 
-impl MCPToolProviderElem {
+impl MCPTransport {
     /// Open a session against the server this transport describes.
     pub async fn connect(&self) -> anyhow::Result<MCPConnection> {
         match self {
-            MCPToolProviderElem::Stdio { command, args } => {
-                MCPConnection::stdio(command, args).await
-            }
-            MCPToolProviderElem::StreamableHTTP { url } => {
+            MCPTransport::Stdio { command, args } => MCPConnection::stdio(command, args).await,
+            MCPTransport::StreamableHTTP { url } => {
                 MCPConnection::streamable_http(url.as_str()).await
             }
         }
@@ -385,7 +378,9 @@ mod tests {
     };
 
     use super::*;
-    use crate::tool::ToolProvider;
+    use std::collections::HashMap;
+
+    use crate::tool::{ToolProvider, insert_mcp, remove_mcp};
 
     // ── A server to talk to ───────────────────────────────────────────────────
 
@@ -577,6 +572,16 @@ mod tests {
         assert!(parts[0].as_text().unwrap().contains("undecodable"));
     }
 
+    fn provide(
+        providers: &HashMap<String, ToolProvider>,
+        descs: &[ToolDesc],
+    ) -> HashMap<String, ToolFunc> {
+        descs
+            .iter()
+            .map(|d| (d.name.clone(), providers[&d.name].provide(d).unwrap()))
+            .collect()
+    }
+
     // ── End to end ────────────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -589,21 +594,21 @@ mod tests {
     #[tokio::test]
     async fn test_registration_fans_one_server_out_into_entries() {
         let conn = connected().await;
-        let mut provider = ToolProvider::empty();
-        let descs = provider.insert_mcp("test", conn);
+        let mut providers = HashMap::<String, ToolProvider>::new();
+        let descs = insert_mcp(&mut providers, "test", conn);
 
         let names: Vec<_> = descs.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, vec!["test__echo", "test__odd_name_tool"]);
-        assert!(provider.get("test__echo").is_some());
+        assert!(providers.contains_key("test__echo"));
     }
 
     #[tokio::test]
     async fn test_provided_func_calls_through_to_the_server() {
         let conn = connected().await;
-        let mut provider = ToolProvider::empty();
-        let descs = provider.insert_mcp("test", conn);
+        let mut providers = HashMap::<String, ToolProvider>::new();
+        let descs = insert_mcp(&mut providers, "test", conn);
 
-        let funcs = provider.provide(&descs).expect("providing MCP descs");
+        let funcs = provide(&providers, &descs);
         let func = funcs.get("test__echo").expect("echo was registered");
 
         // Pure: an MCP call needs no console, so the stream is `'static`.
@@ -621,10 +626,10 @@ mod tests {
     #[tokio::test]
     async fn test_sanitized_name_still_calls_the_servers_own_name() {
         let conn = connected().await;
-        let mut provider = ToolProvider::empty();
-        let descs = provider.insert_mcp("test", conn);
+        let mut providers = HashMap::<String, ToolProvider>::new();
+        let descs = insert_mcp(&mut providers, "test", conn);
 
-        let funcs = provider.provide(&descs).unwrap();
+        let funcs = provide(&providers, &descs);
         let out = funcs
             .get("test__odd_name_tool")
             .expect("the renamed tool was registered")
@@ -647,10 +652,10 @@ mod tests {
     #[tokio::test]
     async fn test_server_side_error_reaches_the_model_as_text() {
         let conn = connected().await;
-        let mut provider = ToolProvider::empty();
-        let descs = provider.insert_mcp("test", conn);
+        let mut providers = HashMap::<String, ToolProvider>::new();
+        let descs = insert_mcp(&mut providers, "test", conn);
 
-        let funcs = provider.provide(&descs).unwrap();
+        let funcs = provide(&providers, &descs);
         let out = funcs
             .get("test__echo")
             .unwrap()
@@ -669,10 +674,10 @@ mod tests {
     #[tokio::test]
     async fn test_non_object_arguments_are_reported_not_sent() {
         let conn = connected().await;
-        let mut provider = ToolProvider::empty();
-        let descs = provider.insert_mcp("test", conn);
+        let mut providers = HashMap::<String, ToolProvider>::new();
+        let descs = insert_mcp(&mut providers, "test", conn);
 
-        let funcs = provider.provide(&descs).unwrap();
+        let funcs = provide(&providers, &descs);
         let out = funcs
             .get("test__echo")
             .unwrap()
@@ -690,22 +695,22 @@ mod tests {
     #[tokio::test]
     async fn test_remove_mcp_takes_the_whole_server() {
         let conn = connected().await;
-        let mut provider = ToolProvider::empty();
-        provider.insert_mcp("test", conn);
+        let mut providers = HashMap::<String, ToolProvider>::new();
+        insert_mcp(&mut providers, "test", conn);
 
-        assert_eq!(provider.remove_mcp("test"), 2);
-        assert!(provider.get("test__echo").is_none());
-        assert_eq!(provider.remove_mcp("test"), 0);
+        assert_eq!(remove_mcp(&mut providers, "test"), 2);
+        assert!(!providers.contains_key("test__echo"));
+        assert_eq!(remove_mcp(&mut providers, "test"), 0);
     }
 
     #[tokio::test]
     async fn test_remove_mcp_does_not_take_a_neighbouring_prefix() {
-        let mut provider = ToolProvider::empty();
-        provider.insert_mcp("test", connected().await);
-        provider.insert_mcp("test2", connected().await);
+        let mut providers = HashMap::<String, ToolProvider>::new();
+        insert_mcp(&mut providers, "test", connected().await);
+        insert_mcp(&mut providers, "test2", connected().await);
 
         // "test" must not swallow "test2": the match includes the separator.
-        assert_eq!(provider.remove_mcp("test"), 2);
-        assert!(provider.get("test2__echo").is_some());
+        assert_eq!(remove_mcp(&mut providers, "test"), 2);
+        assert!(providers.contains_key("test2__echo"));
     }
 }

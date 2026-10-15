@@ -20,14 +20,12 @@ pub use web_fetch::*;
 pub use web_search::*;
 pub use write::*;
 
-use crate::tool::{ToolDesc, ToolFunc};
+use crate::tool::ToolFactory;
 
-type BuiltinFactory = Arc<dyn Fn(&ToolDesc) -> ToolFunc + Send + Sync + 'static>;
-
-/// Build `(name, factory)` pairs for every built-in tool. The factory takes
-/// the [`ToolDesc`] requested by an agent spec and returns the [`ToolFunc`]
-/// to bind to it.
-pub fn get_builtin_tool_factories() -> Vec<(&'static str, BuiltinFactory)> {
+/// Build `(name, factory)` pairs for every built-in tool. The factory takes the
+/// [`ToolDesc`](crate::tool::ToolDesc) requested by an agent spec and returns the
+/// [`ToolFunc`](crate::tool::ToolFunc) to bind to it.
+pub fn get_builtin_tool_factories() -> Vec<(&'static str, ToolFactory)> {
     let shell = get_shell_tool_func();
     let read = get_read_tool_func();
     let read_file = get_read_file_tool_func();
@@ -37,13 +35,13 @@ pub fn get_builtin_tool_factories() -> Vec<(&'static str, BuiltinFactory)> {
     let apply_patch = get_apply_patch_tool_func();
 
     vec![
-        ("shell", Arc::new(move |_| shell.clone())),
-        ("read", Arc::new(move |_| read.clone())),
-        ("read_file", Arc::new(move |_| read_file.clone())),
-        ("imgread", Arc::new(move |_| imgread.clone())),
-        ("write", Arc::new(move |_| write.clone())),
-        ("edit", Arc::new(move |_| edit.clone())),
-        ("apply_patch", Arc::new(move |_| apply_patch.clone())),
+        ("shell", Arc::new(move |_| Ok(shell.clone()))),
+        ("read", Arc::new(move |_| Ok(read.clone()))),
+        ("read_file", Arc::new(move |_| Ok(read_file.clone()))),
+        ("imgread", Arc::new(move |_| Ok(imgread.clone()))),
+        ("write", Arc::new(move |_| Ok(write.clone()))),
+        ("edit", Arc::new(move |_| Ok(edit.clone()))),
+        ("apply_patch", Arc::new(move |_| Ok(apply_patch.clone()))),
         ("web_search", Arc::new(get_web_search_tool_factory(vec![]))),
         ("web_fetch", Arc::new(get_web_fetch_tool_factory())),
     ]
