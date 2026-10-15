@@ -4,7 +4,7 @@
 //! alone, but these also need *which* store, a [`Memory`] a caller handed to one agent. So
 //! the store is captured in the closure rather than taken as an argument: the model never
 //! names a memory file and cannot name another. Only an agent given a memory gets these
-//! tools — see [`Agent::try_with_provider_and_state`](crate::agent::Agent::try_with_provider_and_state).
+//! tools — see [`Agent::try_with_state`](crate::agent::Agent::try_with_state).
 
 use crate::{
     memory::Memory,

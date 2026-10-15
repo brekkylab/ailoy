@@ -42,10 +42,10 @@ pub fn get_web_search_tool_desc() -> ToolDesc {
 /// Returns a factory for the `web_search` tool that fans out to the given engines.
 pub fn get_web_search_tool_factory(
     engines: Vec<WebSearchEngineKind>,
-) -> impl Fn(&ToolDesc) -> ToolFunc {
+) -> impl Fn(&ToolDesc) -> anyhow::Result<ToolFunc> {
     move |_| {
         let searcher = Arc::new(MetaSearcher::new(engines.clone()));
-        tool_func!(async |args: Value| -> Value
+        Ok(tool_func!(async |args: Value| -> Value
             with [searcher = searcher.clone()]
             {
             let query = args
@@ -83,7 +83,7 @@ pub fn get_web_search_tool_factory(
                 "results": Value::array(result_values),
                 "total": total as u64
             })
-        })
+        }))
     }
 }
 

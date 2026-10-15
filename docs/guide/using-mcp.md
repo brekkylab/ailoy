@@ -64,8 +64,7 @@ use futures::StreamExt as _;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // "default" is the tool provider to register into.
-    let tools = register_mcp_stdio("default", "fetch", "uvx", ["mcp-server-fetch"]).await?;
+    let tools = register_mcp_stdio("fetch", "uvx", ["mcp-server-fetch"]).await?;
 
     let mut agent = AgentBuilder::new("anthropic/claude-haiku-4-5")
         .tools(tools)
@@ -114,7 +113,7 @@ const tools = await registerMcpStreamableHttp('deepwiki', 'https://mcp.deepwiki.
 ```rust [Rust]
 use ailoy::tool::register_mcp_streamable_http;
 
-let tools = register_mcp_streamable_http("default", "deepwiki", "https://mcp.deepwiki.com/mcp").await?;
+let tools = register_mcp_streamable_http("deepwiki", "https://mcp.deepwiki.com/mcp").await?;
 ```
 
 :::
@@ -140,7 +139,7 @@ unregisterMcp('fetch')
 ```
 
 ```rust [Rust]
-ailoy::tool::unregister_mcp("default", "fetch")?;
+ailoy::tool::unregister_mcp("fetch");
 ```
 
 :::

@@ -106,13 +106,10 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, test_console, to_value, tool::ToolProvider};
+    use crate::{datatype::Value, test_console, to_value};
 
     async fn call(args: Value) -> Message {
-        let mut provider = ToolProvider::new();
-        provider.insert_func("imgread", get_imgread_tool_func());
-        let funcs = provider.provide(&[get_imgread_tool_desc()]).unwrap();
-        let f = funcs.get("imgread").unwrap();
+        let f = get_imgread_tool_func();
         let mut console = test_console().await;
         f.call(args, "1", &mut console)
             .next()

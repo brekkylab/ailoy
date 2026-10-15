@@ -144,18 +144,10 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, message::Message, test_console, to_value, tool::ToolProvider};
-
-    fn provider() -> ToolProvider {
-        let mut p = ToolProvider::new();
-        p.insert_func("edit", get_edit_tool_func());
-        p
-    }
+    use crate::{datatype::Value, message::Message, test_console, to_value};
 
     async fn call(args: Value) -> Message {
-        let provider = provider();
-        let funcs = provider.provide(&[get_edit_tool_desc()]).unwrap();
-        let f = funcs.get("edit").unwrap();
+        let f = get_edit_tool_func();
         let mut console = test_console().await;
         f.call(args, "1", &mut console)
             .next()

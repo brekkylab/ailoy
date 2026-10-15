@@ -15,7 +15,9 @@ const {
   LangModel,
   registerTool,
   removeLangModelProvider,
+  removeToolProvider,
   setLangModelProvider,
+  setToolProvider,
 } = ailoy
 const { ConsoleClient, Recipe, ensureVirtx } = virtx
 
@@ -61,12 +63,6 @@ test('an object that does not fit says what was expected', () => {
   assert.throws(() => new AgentBuilder('m').tool({ description: 'no name' }), {
     code: 'INVALID_ARG',
     message: /not a tool description/,
-  })
-})
-
-test('registering into a provider that does not exist throws', () => {
-  assert.throws(() => registerTool({ name: 't', parameters: {} }, () => 1, { provider: 'nope' }), {
-    code: 'AILOY_ERROR',
   })
 })
 
@@ -309,6 +305,18 @@ test('a custom provider may hand back a built-in model', async (t) => {
   const model = await LangModel.create('alias/any')
   const messages = [{ role: 'user', contents: [{ type: 'text', text: '2 + 3?' }] }]
   assert.equal((await model.infer(messages, [ADD])).finish_reason.type, 'tool_call')
+})
+
+test('a removed tool provider no longer builds', async (t) => {
+  setLangModelProvider('tooled', (org, name) => new Echo(name))
+  t.after(() => removeLangModelProvider('tooled'))
+  const desc = { name: 'fleeting', parameters: { type: 'object' } }
+
+  setToolProvider('fleeting', () => null)
+  await new AgentBuilder('tooled/x').tool(desc).build()
+  assert.equal(removeToolProvider('fleeting'), true)
+  assert.equal(removeToolProvider('fleeting'), false)
+  await assert.rejects(new AgentBuilder('tooled/x').tool(desc).build(), { message: /fleeting/ })
 })
 
 test('a factory that throws fails the build', async (t) => {

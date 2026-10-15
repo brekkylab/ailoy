@@ -3,9 +3,9 @@
 // An `Agent` is built with an `AgentBuilder` and awaited; a turn is `agent.run(query)`, iterated
 // with `for await`. A model is named `<org>/<name>` (`'anthropic/claude-sonnet-5-5'`) and runs on
 // the backend set for its org with `setLangModelProvider`: by default its CLI, or its own API
-// when it has none. `LangModel.create(desc)` builds one to run without an agent. Tools resolve
-// by name from process-wide registries (`registerTool`, `registerMcpStdio`, ...), each starting
-// with a `'default'` entry of every built-in tool.
+// when it has none. `LangModel.create(desc)` builds one to run without an agent. A tool is built
+// by name through the provider set for it (`setToolProvider`, `registerTool`, `registerMcpStdio`,
+// ...); every built-in tool has one from the start.
 //
 // Messages, specs and tool descriptions are plain objects in their JSON form; `types.d.ts`
 // spells out their shapes.

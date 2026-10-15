@@ -570,14 +570,10 @@ mod tests {
         let url = test_agent().await;
         let desc = get_a2a_tool_desc("remote", &url).await?;
 
-        let mut provider = ToolProvider::empty();
-        provider.insert_a2a(desc.name.clone(), url);
-        let funcs = provider.provide(&[desc])?;
+        let func = ToolProvider::A2A { url }.provide(&desc)?;
 
         // Pure: no console is borrowed to reach the network.
-        let out = funcs
-            .get("remote")
-            .expect("the agent was registered")
+        let out = func
             .call_pure(crate::to_value!({ "task": "say hi" }), "call-1")
             .expect("A2A tools are pure")
             .next()
@@ -594,13 +590,9 @@ mod tests {
         let url = test_agent().await;
         let desc = get_a2a_tool_desc("remote", &url).await?;
 
-        let mut provider = ToolProvider::empty();
-        provider.insert_a2a(desc.name.clone(), url);
-        let funcs = provider.provide(&[desc])?;
+        let func = ToolProvider::A2A { url }.provide(&desc)?;
 
-        let out = funcs
-            .get("remote")
-            .unwrap()
+        let out = func
             .call_pure(Value::object_empty(), "call-1")
             .unwrap()
             .next()
@@ -618,17 +610,13 @@ mod tests {
         // Nothing is listening here; the call must come back as a tool message
         // the model can read, not as a panic or a dropped stream.
         let url = Url::parse("http://127.0.0.1:1")?;
-        let mut provider = ToolProvider::empty();
-        provider.insert_a2a("dead", url);
 
         let desc = ToolDescBuilder::new("dead")
             .parameters(crate::to_value!({ "type": "object" }))
             .build();
-        let funcs = provider.provide(&[desc])?;
+        let func = ToolProvider::A2A { url }.provide(&desc)?;
 
-        let out = funcs
-            .get("dead")
-            .unwrap()
+        let out = func
             .call_pure(crate::to_value!({ "task": "anything" }), "call-1")
             .unwrap()
             .next()

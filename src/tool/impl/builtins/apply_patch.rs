@@ -412,18 +412,10 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{message::Message, test_console, to_value, tool::ToolProvider};
-
-    fn provider() -> ToolProvider {
-        let mut p = ToolProvider::new();
-        p.insert_func("apply_patch", get_apply_patch_tool_func());
-        p
-    }
+    use crate::{message::Message, test_console, to_value};
 
     async fn call(args: Value) -> Message {
-        let provider = provider();
-        let funcs = provider.provide(&[get_apply_patch_tool_desc()]).unwrap();
-        let f = funcs.get("apply_patch").unwrap();
+        let f = get_apply_patch_tool_func();
         let mut console = test_console().await;
         f.call(args, "1", &mut console)
             .next()
