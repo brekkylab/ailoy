@@ -117,9 +117,6 @@ async function main(prompt) {
 
     agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'openai/gpt-6-astra')
       .instruction(INSTRUCTION)
-      // A whole model script is one `write`, and the model thinks before it, which counts
-      // against the same limit: far more than the 8192 tokens a reply gets by default.
-      .maxTokens(64000)
       .systemTools()
       .console(consoleClient)
       .skill('/skills/cad')

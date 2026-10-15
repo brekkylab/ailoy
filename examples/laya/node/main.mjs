@@ -173,7 +173,6 @@ async function main(prompt) {
 
     agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'anthropic/claude-sonnet-5')
       .instruction(INSTRUCTION)
-      .maxTokens(64000)
       .systemTools()
       .webFetchTool()
       .webSearchTool([])

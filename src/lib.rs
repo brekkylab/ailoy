@@ -4,11 +4,16 @@ extern crate self as ailoy;
 pub mod agent;
 pub mod console;
 pub mod datatype;
-pub mod lang_model;
 mod macros;
 pub mod memory;
 pub mod message;
+pub mod model;
 pub mod tool;
+
+/// For [`to_value!`], whose expansion names `IndexMap` in the caller's crate, which need not
+/// depend on `indexmap` itself.
+#[doc(hidden)]
+pub use indexmap as __indexmap;
 
 /// A started console on virtx's default server, for tests.
 ///

@@ -171,27 +171,6 @@ pub struct MessageOutput {
     /// Only populated for top-level LM calls; tool results leave this as `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
-
-    /// Tool-call nesting level relative to the top-level agent turn.
-    ///
-    /// `None` (tools leave it unset; the runtime assigns it) means `Some(0)`: a
-    /// direct LM response or a final tool result in the top-level history.
-    /// `Some(n)` is produced `n` tool-call layers deep, e.g. a sub-agent's
-    /// intermediate message. The runtime emits a tool stream's intermediate
-    /// outputs at `depth + 1` and its final result at 0.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub depth: Option<u8>,
-
-    /// Name of the agent (from its [`AgentCard`]) that produced this message.
-    ///
-    /// `None` when the emitting agent has no `AgentCard` (e.g. a top-level
-    /// agent without a card) or when the output originates from a non-agent
-    /// tool.  In nested subagent chains the innermost producer's name is
-    /// preserved: once set, outer agents never overwrite it.
-    ///
-    /// [`AgentCard`]: crate::agent::AgentCard
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_agent: Option<String>,
 }
 
 impl fmt::Display for MessageOutput {

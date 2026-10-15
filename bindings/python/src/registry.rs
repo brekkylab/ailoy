@@ -1,11 +1,9 @@
-//! The process-wide registries an agent resolves its model and tools from.
+//! The process-wide registries an agent resolves its tools from: tool providers (every built-in
+//! tool) keyed by name, and agent providers, each naming the tool provider an agent is built
+//! against ([`AgentBuilder.agent_provider`](crate::agent), `"default"` if unset). Models have
+//! their own registry, keyed by org: see [`crate::model`].
 //!
-//! ailoy keeps three, keyed by name, each with a `"default"` entry: language-model providers
-//! (seeded from `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, … on first use), tool providers (every
-//! built-in tool), and agent providers, which pair one of each by name and are what an agent is
-//! built against ([`AgentBuilder.agent_provider`](crate::agent), `"default"` if unset).
-//!
-//! Every function takes the entry it works on as `provider=`, defaulting to `"default"`.
+//! Every tool function takes the entry it works on as `provider=`, defaulting to `"default"`.
 //! Registering into a missing entry raises rather than creating it, so a misspelt name is an
 //! error; `add_*_provider` creates one.
 //!
@@ -14,9 +12,6 @@
 
 use ailoy::{
     agent::{AgentProvider, get_agent_providers_mut},
-    lang_model::{
-        LangModelAPISchema, LangModelProvider, LangModelProviderElem, get_lm_providers_mut,
-    },
     tool::{
         ToolDesc, ToolProvider, get_tool_providers_mut, register_a2a as register_a2a_rs,
         register_mcp_stdio as register_mcp_stdio_rs,
@@ -44,48 +39,6 @@ fn parse_url(url: &str) -> PyResult<url::Url> {
 /// Descs as the list of dicts the builder takes back.
 fn descs_to_py(py: Python<'_>, descs: &[ToolDesc]) -> PyResult<Py<PyAny>> {
     Ok(to_py(py, &descs)?.unbind())
-}
-
-/// Add an empty language-model provider under `name`, or one seeded from the environment as
-/// `"default"` is when `from_env`. Replaces an entry of the same name.
-#[pyfunction]
-#[pyo3(signature = (name, *, from_env = false))]
-fn add_lang_model_provider(name: String, from_env: bool) {
-    let provider = if from_env {
-        LangModelProvider::default()
-    } else {
-        LangModelProvider::new()
-    };
-    get_lm_providers_mut().insert(name, provider);
-}
-
-/// Serve the models `pattern` matches — an exact name, or a glob with `*` and `?` — from the
-/// API at `url`, spoken in `schema`: `"chat_completion"`, `"openai"`, `"anthropic"`,
-/// `"gemini"` or `"bedrock"`.
-#[pyfunction]
-#[pyo3(signature = (pattern, schema, url, api_key = None, *, provider = "default".to_string()))]
-fn register_lang_model(
-    pattern: String,
-    schema: Bound<'_, PyAny>,
-    url: String,
-    api_key: Option<String>,
-    provider: String,
-) -> PyResult<()> {
-    let schema: LangModelAPISchema = from_py(&schema, "an API schema")?;
-    let url = parse_url(&url)?;
-    let mut registry = get_lm_providers_mut();
-    let lmp = registry
-        .get_mut(&provider)
-        .ok_or_else(|| not_registered("lang_model_provider", &provider))?;
-    lmp.insert(
-        pattern,
-        LangModelProviderElem::API {
-            schema,
-            url,
-            api_key,
-        },
-    );
-    Ok(())
 }
 
 /// Add a tool provider under `name`: every built-in tool, or none of them when not
@@ -195,17 +148,15 @@ fn register_a2a(
     })
 }
 
-/// Pair a language-model provider and a tool provider, by name, as the agent provider
-/// `name`. Neither has to exist yet; both have to when an agent is built against it.
+/// Name a tool provider as the agent provider `name`. It need not exist yet; it has to when
+/// an agent is built against it.
 #[pyfunction]
-#[pyo3(signature = (name, *, lang_model_provider = "default".to_string(), tool_provider = "default".to_string()))]
-fn add_agent_provider(name: String, lang_model_provider: String, tool_provider: String) {
-    get_agent_providers_mut().insert(name, AgentProvider::new(lang_model_provider, tool_provider));
+#[pyo3(signature = (name, *, tool_provider = "default".to_string()))]
+fn add_agent_provider(name: String, tool_provider: String) {
+    get_agent_providers_mut().insert(name, AgentProvider::new(tool_provider));
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(add_lang_model_provider, m)?)?;
-    m.add_function(wrap_pyfunction!(register_lang_model, m)?)?;
     m.add_function(wrap_pyfunction!(add_tool_provider, m)?)?;
     m.add_function(wrap_pyfunction!(register_tool, m)?)?;
     m.add_function(wrap_pyfunction!(register_mcp_stdio, m)?)?;

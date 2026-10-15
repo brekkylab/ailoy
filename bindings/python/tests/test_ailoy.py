@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -18,60 +19,37 @@ def content_text(content):
     return "".join(part.get("text", "") for part in content)
 
 
-# A chat-completions endpoint that asks for the tool named in the first user message, and
-# then answers with whatever that tool returned. Enough to drive a whole turn — model, tool,
-# model — without a network or a key.
+# A chat-completions endpoint, streamed as vLLM serves one, that asks for the tool named in the
+# first user message, and then answers with whatever that tool returned. Enough to drive a
+# whole turn — model, tool, model — without a network or a key.
 class FakeModel(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         messages = body["messages"]
         tool_results = [m for m in messages if m["role"] == "tool"]
         if tool_results:
-            reply = {"role": "assistant", "content": f"tool said {content_text(tool_results[-1]['content'])}"}
+            text = f"tool said {content_text(tool_results[-1]['content'])}"
+            chunks = [{"role": "assistant", "content": text}]
             finish = "stop"
         elif body.get("tools"):
             user = next(m for m in messages if m["role"] == "user")
             name, args = content_text(user["content"]).split(" ", 1)
-            reply = {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {"name": name, "arguments": args},
-                    }
-                ],
-            }
+            call = {"index": 0, "id": "call_1", "type": "function"}
+            chunks = [{"role": "assistant", "tool_calls": [{**call, "function": {"name": name, "arguments": args}}]}]
             finish = "tool_calls"
         else:
-            reply = {"role": "assistant", "content": "hello"}
+            chunks = [{"role": "assistant", "content": "hel"}, {"content": "lo"}]
             finish = "stop"
 
-        if body.get("stream"):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.end_headers()
-            for chunk in [
-                {"choices": [{"index": 0, "delta": {"role": "assistant", "content": "hel"}}]},
-                {"choices": [{"index": 0, "delta": {"content": "lo"}}]},
-                {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
-            ]:
-                self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
-            self.wfile.write(b"data: [DONE]\n\n")
-            return
-
-        payload = json.dumps(
-            {
-                "choices": [{"index": 0, "message": reply, "finish_reason": finish}],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-            }
-        ).encode()
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
-        self.wfile.write(payload)
+        events = [{"choices": [{"index": 0, "delta": delta}]} for delta in chunks]
+        events.append({"choices": [{"index": 0, "delta": {}, "finish_reason": finish}]})
+        events.append({"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+        for event in events:
+            self.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
+        self.wfile.write(b"data: [DONE]\n\n")
 
     def log_message(self, *args):
         pass
@@ -86,17 +64,13 @@ def fake_model():
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeModel)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
-    ailoy.add_lang_model_provider(PROVIDER)
-    ailoy.register_lang_model(
-        "fake/*",
-        "chat_completion",
-        f"http://127.0.0.1:{server.server_port}/v1/chat/completions",
-        "dummy",
-        provider=PROVIDER,
-    )
+    # The `fake` org runs on vLLM, which reads the server from the environment.
+    os.environ["VLLM_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
+    ailoy.set_lang_model_provider("fake", "vllm")
     ailoy.add_tool_provider(PROVIDER)
-    ailoy.add_agent_provider(PROVIDER, lang_model_provider=PROVIDER, tool_provider=PROVIDER)
+    ailoy.add_agent_provider(PROVIDER, tool_provider=PROVIDER)
     yield
+    ailoy.remove_lang_model_provider("fake")
     server.shutdown()
 
 
@@ -148,14 +122,14 @@ def test_register_tool_refuses_what_it_cannot_use():
         ailoy.register_tool({"name": "x", "parameters": {}}, lambda: None, provider="missing")
 
 
-def test_register_lang_model_refuses_an_unknown_schema():
+def test_set_lang_model_provider_refuses_an_unknown_backend():
     with pytest.raises(ValueError):
-        ailoy.register_lang_model("x/*", "smoke-signals", "http://localhost", provider=PROVIDER)
+        ailoy.set_lang_model_provider("x", "smoke-signals")
 
 
-def test_response_format_is_checked():
+def test_thinking_effort_is_checked():
     with pytest.raises(ValueError):
-        AgentBuilder(MODEL).response_format({"type": 123})
+        AgentBuilder(MODEL).thinking_effort("extreme")
 
 
 async def test_building_spends_the_builder():
@@ -245,7 +219,7 @@ async def test_run_stream_yields_deltas():
         part["text"] for d in deltas for part in d["delta"]["contents"] if part["type"] == "text"
     )
     assert text == "hello"
-    assert deltas[-1]["finish_reason"] == {"type": "stop"}
+    assert any(d["finish_reason"] == {"type": "stop"} for d in deltas)
     assert agent.history[-1]["contents"] == [{"type": "text", "text": "hello"}]
 
 
@@ -270,6 +244,106 @@ async def test_from_spec_and_closing():
         agent.history
     with pytest.raises(AiloyError):
         await run(agent, "hi")
+
+
+async def test_a_lang_model_runs_without_an_agent():
+    model = await ailoy.LangModel.create(MODEL)
+    messages = [{"role": "user", "contents": [{"type": "text", "text": "hi"}]}]
+
+    output = await model.infer(messages)
+    assert output["message"]["contents"] == [{"type": "text", "text": "hello"}]
+    assert output["finish_reason"] == {"type": "stop"}
+
+    deltas = [d async for d in model.infer_stream(messages)]
+    text = "".join(
+        part["text"] for d in deltas for part in d["delta"]["contents"] if part["type"] == "text"
+    )
+    assert text == "hello"
+
+
+class Echo:
+    """A model of the test's own, answering with the last user text."""
+
+    def __init__(self, name):
+        self.name = name
+
+    def infer(self, messages, tools, options):
+        text = messages[-1]["contents"][0]["text"]
+        return {
+            "message": {"role": "assistant", "contents": [{"type": "text", "text": f"{self.name}: {text}"}]},
+            "finish_reason": {"type": "stop"},
+        }
+
+
+class StreamingEcho(Echo):
+    async def infer_stream(self, messages, tools, options):
+        for piece in [self.name, ": ", messages[-1]["contents"][0]["text"]]:
+            yield {"delta": {"role": "assistant", "contents": [{"type": "text", "text": piece}], "tool_calls": []}}
+        yield {"delta": {"contents": [], "tool_calls": []}, "finish_reason": {"type": "stop"}}
+
+
+async def test_a_custom_provider_serves_an_agent():
+    seen = []
+
+    def factory(org, name):
+        seen.append((org, name))
+        return Echo(name)
+
+    ailoy.set_lang_model_provider("mine", factory)
+    try:
+        agent = await AgentBuilder("mine/echo").agent_provider(PROVIDER).build()
+        assert texts(await run(agent, "hi")) == ["echo: hi"]
+        deltas = [d async for d in agent.run_stream("again")]
+        assert deltas[-1]["finish_reason"] == {"type": "stop"}
+        assert agent.history[-1]["contents"] == [{"type": "text", "text": "echo: again"}]
+        assert seen == [("mine", "echo")]
+    finally:
+        assert ailoy.remove_lang_model_provider("mine")
+
+
+async def test_a_custom_provider_may_stream_and_be_async():
+    async def ainfer(self, messages, tools, options):
+        await asyncio.sleep(0)
+        return Echo.infer(self, messages, tools, options)
+
+    class Async(StreamingEcho):
+        infer = ainfer
+
+    ailoy.set_lang_model_provider("mine-async", lambda org, name: Async(name or org))
+    model = await ailoy.LangModel.create("mine-async")
+    messages = [{"role": "user", "contents": [{"type": "text", "text": "hi"}]}]
+    assert (await model.infer(messages))["message"]["contents"][0]["text"] == "mine-async: hi"
+    deltas = [d async for d in model.infer_stream(messages)]
+    assert len(deltas) == 4
+    ailoy.remove_lang_model_provider("mine-async")
+
+
+async def test_a_custom_provider_may_hand_back_a_built_in_model():
+    built = await ailoy.LangModel.create(MODEL)
+    ailoy.set_lang_model_provider("alias", lambda org, name: built)
+    agent = await AgentBuilder("alias/any").agent_provider(PROVIDER).build()
+    assert texts(await run(agent, "hi")) == ["hello"]
+    ailoy.remove_lang_model_provider("alias")
+
+
+async def test_a_factory_that_raises_fails_the_build():
+    def factory(org, name):
+        raise RuntimeError("no models today")
+
+    ailoy.set_lang_model_provider("broken", factory)
+    with pytest.raises(AiloyError, match="no models today"):
+        await AgentBuilder("broken/x").agent_provider(PROVIDER).build()
+    ailoy.remove_lang_model_provider("broken")
+
+
+def test_a_provider_is_a_backend_or_a_factory():
+    with pytest.raises(ValueError):
+        ailoy.set_lang_model_provider("x", 42)
+
+
+async def test_an_unknown_org_cannot_make_a_lang_model():
+    with pytest.raises(AiloyError):
+        await ailoy.LangModel.create("nobody/serves-this")
 
 
 # ---- against the console server virtx starts by default ----------------------------

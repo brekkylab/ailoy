@@ -42,7 +42,9 @@ check(new virtx.Recipe('alpine:latest').step('echo hi').toString().includes('ech
 
 const model = await fakeModel()
 try {
-  ailoy.registerLangModel('fake/*', 'chat_completion', model.url)
+  // The `fake` org runs on vLLM, which reads its server from the environment.
+  process.env.VLLM_BASE_URL = model.url
+  ailoy.setLangModelProvider('fake', 'vllm')
 
   // A whole turn -- model, tool, model -- through the addon's async bridge both ways.
   const calls = []

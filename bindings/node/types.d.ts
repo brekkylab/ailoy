@@ -75,8 +75,6 @@ export interface MessageOutput {
   message: Message
   finish_reason: FinishReason
   usage?: TokenUsage
-  depth?: number
-  source_agent?: string
 }
 
 /**
@@ -103,8 +101,6 @@ export interface MessageDeltaOutput {
   delta: MessageDelta
   finish_reason: FinishReason | null
   usage: TokenUsage | null
-  depth?: number
-  source_agent?: string
 }
 
 export interface ToolDesc {
@@ -114,30 +110,41 @@ export interface ToolDesc {
   returns?: Value
 }
 
-export interface AgentSkill {
-  id: string
-  name: string
-  description: string
-}
+export type ThinkingEffort = 'low' | 'medium' | 'high'
 
-export interface AgentCard {
-  name: string
-  description: string
-  skills?: Array<AgentSkill>
+export interface LangModelOptions {
+  thinking_effort?: ThinkingEffort
+  output_schema?: Value
 }
 
 export interface AgentSpec {
   model: string
   instruction?: string
   tools?: Array<ToolDesc>
-  subagents?: Array<AgentSpec>
-  model_options?: Record<string, Value>
-  card?: AgentCard
+  model_options?: LangModelOptions
   web_search_engines?: Array<WebSearchEngine>
   skills?: Array<string>
 }
 
-export type LangModelAPISchema = 'chat_completion' | 'openai' | 'anthropic' | 'gemini' | 'bedrock'
+export type Backend = 'cli' | 'api' | 'bedrock' | 'openrouter' | 'vllm'
+
+/**
+ * A model of your own, as a factory given to `setLangModelProvider` returns it. Its methods are
+ * called with `this` as the model. Without `inferStream`, streaming gives `infer`'s output as
+ * one delta.
+ */
+export interface CustomLangModel {
+  infer(
+    messages: Array<Message>,
+    tools: Array<ToolDesc>,
+    options: LangModelOptions,
+  ): MessageOutput | Promise<MessageOutput>
+  inferStream?(
+    messages: Array<Message>,
+    tools: Array<ToolDesc>,
+    options: LangModelOptions,
+  ): AsyncIterable<MessageDeltaOutput>
+}
 
 export type WebSearchEngine =
   | 'Bing'

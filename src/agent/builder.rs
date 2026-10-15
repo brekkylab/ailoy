@@ -5,8 +5,10 @@ use virtx::console::ConsoleClient;
 
 use crate::{
     agent::{Agent, AgentSpec, AgentState, ContextManager},
+    datatype::Value,
     memory::Memory,
     message::Message,
+    model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
 };
 
@@ -18,22 +20,15 @@ use crate::{
 /// # Examples
 ///
 /// ```rust,no_run
-/// # use ailoy::{
-/// #     agent::AgentBuilder,
-/// #     tool::ToolDescBuilder,
-/// #     to_value,
-/// # };
+/// # use ailoy::agent::AgentBuilder;
 /// # #[tokio::main]
 /// # async fn main() -> anyhow::Result<()> {
-/// // Uses the `"default"` agent-provider bundle (env-driven lang models + built-in
-/// // tools). Register others via `get_lm_providers_mut()` / `get_tool_providers_mut()` /
-/// // `get_agent_providers_mut()` and select them with [`AgentBuilder::agent_provider`].
-/// let agent = AgentBuilder::new("openai/gpt-4o")
-///     .tool(ToolDescBuilder::new("web_search")
-///         .description("Search the web.")
-///         .parameters(to_value!({ "type": "object", "properties": {} }))
-///         .build()
-///     )
+/// // The model is built through the provider set for its org (see `ailoy::model`); tools
+/// // come from the `"default"` agent provider unless another is selected with
+/// // [`AgentBuilder::agent_provider`].
+/// let agent = AgentBuilder::new("anthropic/claude-sonnet-5-5")
+///     .instruction("Be brief.")
+///     .web_fetch_tool()
 ///     .build()
 ///     .await?;
 /// #   Ok(())
@@ -55,12 +50,11 @@ pub struct AgentBuilder {
 }
 
 impl AgentBuilder {
-    /// Create a builder for `model` (e.g. `"openai/gpt-4o"`), which the selected
-    /// [`AgentProvider`](crate::agent::AgentProvider) must resolve at [`build`](Self::build) time.
+    /// Create a builder for the model `model` names (e.g. `"anthropic/claude-sonnet-5-5"`), as
+    /// [`create_lang_model`](crate::model::create_lang_model) takes it.
     pub fn new(model: impl Into<String>) -> Self {
-        let spec = AgentSpec::new(model);
         Self {
-            spec,
+            spec: AgentSpec::new(model),
             agent_provider: "default".to_string(),
             history: Vec::new(),
             console: None,
@@ -84,13 +78,12 @@ impl AgentBuilder {
     }
 
     pub fn tool(mut self, desc: ToolDesc) -> Self {
-        self.spec.tools.push(desc);
+        self.spec = self.spec.tool(desc);
         self
     }
 
-    pub fn tools(mut self, desc: impl IntoIterator<Item = ToolDesc>) -> Self {
-        let mut desc = desc.into_iter().collect();
-        self.spec.tools.append(&mut desc);
+    pub fn tools(mut self, descs: impl IntoIterator<Item = ToolDesc>) -> Self {
+        self.spec = self.spec.tools(descs);
         self
     }
 
@@ -116,14 +109,6 @@ impl AgentBuilder {
         self
     }
 
-    /// Append a sub-agent spec, registered as a callable tool at [`build`](Self::build)
-    /// time and sharing the parent's console. It must carry an
-    /// [`AgentCard`](crate::agent::AgentCard).
-    pub fn subagent(mut self, spec: AgentSpec) -> Self {
-        self.spec.subagents.push(spec);
-        self
-    }
-
     /// Seed the agent's [`AgentState::history`] (e.g. for resuming a prior session).
     /// A leading system message here overrides the one the spec's instruction would
     /// produce; otherwise the instruction is still seeded, at the front of this history.
@@ -132,8 +117,8 @@ impl AgentBuilder {
         self
     }
 
-    /// Run this agent's console tools in `console`. It need not be started: the first
-    /// command that needs a booted session boots it.
+    /// Run this agent's console tools in `console`. It need not be started: each tool
+    /// batch that has a console tool starts it.
     ///
     /// Nothing builds a console implicitly, since that means choosing a console server.
     /// Without one, pure tools still run and console tools fail with an error.
@@ -173,41 +158,20 @@ impl AgentBuilder {
         self
     }
 
-    /// The most tokens one reply may have, forwarded to the language model on every call.
-    pub fn max_tokens(mut self, max_tokens: u64) -> Self {
-        self.spec = self.spec.max_tokens(max_tokens);
+    /// How much the model thinks before it answers. See [`AgentSpec::thinking_effort`].
+    pub fn thinking_effort(mut self, effort: ThinkingEffort) -> Self {
+        self.spec = self.spec.thinking_effort(effort);
         self
     }
 
-    /// Sampling temperature forwarded to the language model on every call.
-    pub fn temperature(mut self, temperature: f64) -> Self {
-        self.spec = self.spec.temperature(temperature);
-        self
-    }
-
-    pub fn top_p(mut self, top_p: f64) -> Self {
-        self.spec = self.spec.top_p(top_p);
-        self
-    }
-
-    pub fn top_k(mut self, top_k: u64) -> Self {
-        self.spec = self.spec.top_k(top_k);
-        self
-    }
-
-    pub fn response_format(mut self, fmt: crate::lang_model::ResponseFormat) -> Self {
-        self.spec = self.spec.response_format(fmt);
-        self
-    }
-
-    /// Turn on the model's thinking at `effort`, forwarded to the language model on every call.
-    pub fn reasoning(mut self, effort: crate::lang_model::ReasoningEffort) -> Self {
-        self.spec = self.spec.reasoning(effort);
+    /// JSON schema the model's answers must match. See [`AgentSpec::output_schema`].
+    pub fn output_schema(mut self, schema: Value) -> Self {
+        self.spec = self.spec.output_schema(schema);
         self
     }
 
     /// Materialise the agent via [`Agent::try_with_provider_and_state`], which is async
-    /// because it reads the skills through the console.
+    /// because it builds the model and reads the skills through the console.
     pub async fn build(self) -> anyhow::Result<Agent> {
         let Self {
             spec,
@@ -218,55 +182,69 @@ impl AgentBuilder {
             context_manager,
         } = self;
 
-        let mut state = AgentState::new();
-        if let Some(c) = console {
-            state = state.with_console_slot(c);
+        let mut state = AgentState::new().with_history(history);
+        if let Some(console) = console {
+            state = state.with_console_slot(console);
         }
-        if let Some(m) = memory {
-            state = state.with_memory(m);
-        }
-        if !history.is_empty() {
-            state = state.with_history(history);
+        if let Some(memory) = memory {
+            state = state.with_memory(memory);
         }
 
         let mut agent = Agent::try_with_provider_and_state(spec, &agent_provider, state).await?;
-        if context_manager.is_some() {
-            agent.set_context_manager(context_manager);
-        }
+        agent.set_context_manager(context_manager);
         Ok(agent)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use futures::{future::BoxFuture, stream::BoxStream};
+
     use super::*;
     use crate::{
-        agent::{AgentCard, AgentProvider, get_agent_providers_mut},
-        lang_model::{LangModelProvider, get_lm_providers_mut},
-        message::Role,
+        message::{MessageDeltaOutput, MessageOutput, Part, Role},
+        model::{InferLangModel, LangModelOptions, LangModelProvider, set_lang_model_provider},
         test_console,
     };
 
-    const TEST_MODEL: &str = "openai/gpt-4o-mini";
-    const TEST_PROVIDER_NAME: &str = "agent_builder_tests";
+    /// The org the tests build their model under.
+    const TEST_ORG: &str = "agent-builder-tests";
 
-    /// Register a dummy lang-model provider and an `AgentProvider` pointing at it. Idempotent.
-    fn ensure_dummy_provider() {
-        let mut lmps = get_lm_providers_mut();
-        if !lmps.contains_key(TEST_PROVIDER_NAME) {
-            let mut lmp = LangModelProvider::new();
-            lmp.insert(TEST_MODEL.into(), LangModelProvider::openai("dummy".into()));
-            lmps.insert(TEST_PROVIDER_NAME.to_string(), lmp);
+    /// A model the builder tests build but never run.
+    struct Unused;
+
+    impl InferLangModel for Unused {
+        fn infer(
+            &self,
+            _: &[Message],
+            _: &[ToolDesc],
+            _: &LangModelOptions,
+        ) -> BoxFuture<'static, anyhow::Result<MessageOutput>> {
+            unimplemented!()
         }
-        drop(lmps);
-        let mut aps = get_agent_providers_mut();
-        aps.entry(TEST_PROVIDER_NAME.to_string())
-            .or_insert_with(|| AgentProvider::new(TEST_PROVIDER_NAME, "default"));
+
+        fn infer_stream(
+            &self,
+            _: &[Message],
+            _: &[ToolDesc],
+            _: &LangModelOptions,
+        ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
+            unimplemented!()
+        }
+    }
+
+    fn builder() -> AgentBuilder {
+        set_lang_model_provider(
+            TEST_ORG,
+            LangModelProvider::custom(|_, _| Ok(Arc::new(Unused))),
+        );
+        AgentBuilder::new(format!("{TEST_ORG}/any"))
     }
 
     fn system_text(agent: &Agent) -> Option<String> {
-        let history = agent.get_history();
-        let m = history.first()?;
+        let m = agent.history().first()?;
         if m.role != Role::System {
             return None;
         }
@@ -276,38 +254,33 @@ mod tests {
             .map(str::to_string)
     }
 
+    fn msg(role: Role, text: &str) -> Message {
+        Message::new(role).with_contents([Part::text(text)])
+    }
+
     #[tokio::test]
     async fn test_simple_builder() {
-        ensure_dummy_provider();
-        let agent = AgentBuilder::new(TEST_MODEL)
-            .agent_provider(TEST_PROVIDER_NAME)
+        let agent = builder()
             .instruction("You are a test agent.")
             .build()
             .await
             .unwrap();
 
-        let history = agent.get_history();
+        let history = agent.history();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].role, Role::System);
     }
 
     #[tokio::test]
     async fn test_builder_no_instruction() {
-        ensure_dummy_provider();
-        let agent = AgentBuilder::new(TEST_MODEL)
-            .agent_provider(TEST_PROVIDER_NAME)
-            .build()
-            .await
-            .unwrap();
-        assert!(agent.get_history().is_empty());
+        let agent = builder().build().await.unwrap();
+        assert!(agent.history().is_empty());
     }
 
     /// `console()` puts the supplied console into `state.console`.
     #[tokio::test]
     async fn test_builder_console_is_applied() {
-        ensure_dummy_provider();
-        let agent = AgentBuilder::new(TEST_MODEL)
-            .agent_provider(TEST_PROVIDER_NAME)
+        let agent = builder()
             .console(test_console().await)
             .build()
             .await
@@ -323,56 +296,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_builder_subagent_in_spec() {
-        use crate::agent::AgentSpec;
-
-        ensure_dummy_provider();
-        let sub_spec = AgentSpec::new(TEST_MODEL).card(AgentCard {
-            name: "child".into(),
-            description: "child agent".into(),
-            skills: vec![],
-        });
-
-        AgentBuilder::new(TEST_MODEL)
-            .agent_provider(TEST_PROVIDER_NAME)
-            .subagent(sub_spec)
-            .build()
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
     async fn test_builder_context_manager_is_applied() {
-        ensure_dummy_provider();
         let cm = ContextManager {
             max_input_tokens: 10_000,
             preserve_recent_turns: 2,
         };
-        let agent = AgentBuilder::new(TEST_MODEL)
-            .agent_provider(TEST_PROVIDER_NAME)
-            .context_manager(cm)
-            .build()
-            .await
-            .unwrap();
-        assert!(agent.get_context_manager().is_some());
-    }
-
-    fn msg(role: Role, text: &str) -> Message {
-        Message::new(role).with_contents([crate::message::Part::text(text)])
+        let agent = builder().context_manager(cm).build().await.unwrap();
+        assert!(agent.context_manager().is_some());
     }
 
     #[tokio::test]
     async fn test_instruction_seeded_into_history_without_system_message() {
-        ensure_dummy_provider();
-        let agent = AgentBuilder::new(TEST_MODEL)
-            .agent_provider(TEST_PROVIDER_NAME)
+        let agent = builder()
             .instruction("You are a test agent.")
             .history([msg(Role::User, "hello"), msg(Role::Assistant, "hi")])
             .build()
             .await
             .unwrap();
 
-        let history = agent.get_history();
+        let history = agent.history();
         assert_eq!(history.len(), 3);
         assert_eq!(
             system_text(&agent).as_deref(),
@@ -384,9 +326,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_existing_system_message_is_not_replaced() {
-        ensure_dummy_provider();
-        let agent = AgentBuilder::new(TEST_MODEL)
-            .agent_provider(TEST_PROVIDER_NAME)
+        let agent = builder()
             .instruction("spec instruction")
             .history([
                 msg(Role::System, "stored instruction"),
@@ -396,19 +336,14 @@ mod tests {
             .await
             .unwrap();
 
-        let history = agent.get_history();
-        assert_eq!(history.len(), 2);
+        assert_eq!(agent.history().len(), 2);
         assert_eq!(system_text(&agent).as_deref(), Some("stored instruction"));
     }
 
     /// `memory()` lands on the state, which decides whether the agent gets memory tools.
     #[tokio::test]
     async fn test_builder_memory_is_applied() {
-        use crate::memory::Memory;
-
-        ensure_dummy_provider();
-        let agent = AgentBuilder::new(TEST_MODEL)
-            .agent_provider(TEST_PROVIDER_NAME)
+        let agent = builder()
             .memory(Memory::new("/work/notes.sqlite"))
             .build()
             .await
@@ -424,11 +359,7 @@ mod tests {
     /// A path converts into the equivalent `Memory`.
     #[tokio::test]
     async fn test_builder_memory_takes_a_path() {
-        use crate::memory::Memory;
-
-        ensure_dummy_provider();
-        let agent = AgentBuilder::new(TEST_MODEL)
-            .agent_provider(TEST_PROVIDER_NAME)
+        let agent = builder()
             .memory(std::path::Path::new("/work/notes.sqlite"))
             .build()
             .await

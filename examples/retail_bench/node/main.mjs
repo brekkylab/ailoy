@@ -155,7 +155,6 @@ async function main() {
     new AgentBuilder(model)
       .agentProvider(PROVIDER)
       .instruction(SYSTEM)
-      .maxTokens(64000)
       .systemTools()
       .tools(tools)
       .console(consoleClient)
@@ -318,7 +317,7 @@ async function registerActions(store, record, day) {
     }
     descs.push(registerTool(desc, func, { provider: PROVIDER }))
   }
-  addAgentProvider(PROVIDER, { langModelProvider: 'default', toolProvider: PROVIDER })
+  addAgentProvider(PROVIDER, { toolProvider: PROVIDER })
   return descs
 }
 

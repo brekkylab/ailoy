@@ -1,5 +1,6 @@
-// An OpenAI-compatible chat-completions endpoint on localhost, enough to drive a whole turn
-// -- model, tool, model -- without a network or a key. `python.py` serves the same one.
+// An OpenAI-compatible chat-completions endpoint on localhost, streamed as vLLM serves one,
+// enough to drive a whole turn -- model, tool, model -- without a network or a key. `python.py`
+// serves the same one. `url` is the server's base, as `VLLM_BASE_URL` takes it.
 //
 // Given tools, it calls the one the user's message names, with the arguments after the name
 // (`add {"a": 2, "b": 3}`); given a tool's result, it says what the tool said; otherwise it
@@ -24,24 +25,24 @@ export const fakeModel = () =>
           message = {
             role: 'assistant',
             content: null,
-            tool_calls: [{ id: 'call_1', type: 'function', function: { name, arguments: args.join(' ') } }],
+            tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name, arguments: args.join(' ') } }],
           }
         } else {
           message = { role: 'assistant', content: 'hello' }
         }
         const finish_reason = message.tool_calls ? 'tool_calls' : 'stop'
-        res.setHeader('content-type', 'application/json')
-        res.end(
-          JSON.stringify({
-            choices: [{ index: 0, message, finish_reason }],
-            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-          }),
-        )
+        const usage = { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }
+        res.setHeader('content-type', 'text/event-stream')
+        const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`)
+        send({ choices: [{ index: 0, delta: message, finish_reason: null }] })
+        send({ choices: [{ index: 0, delta: {}, finish_reason }] })
+        send({ choices: [], usage })
+        res.end('data: [DONE]\n\n')
       })
     })
     server.listen(0, '127.0.0.1', () =>
       resolve({
-        url: `http://127.0.0.1:${server.address().port}/v1/chat/completions`,
+        url: `http://127.0.0.1:${server.address().port}/v1`,
         close: () => new Promise((r) => server.close(r)),
       }),
     )

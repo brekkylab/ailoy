@@ -6,13 +6,13 @@
 //!   SMOKE_VM      1 if this machine can boot one (KVM or HVF), else 0
 //!
 //! A turn's model is served from this process, as `fake.mjs` serves it: no network, and no
-//! API key.
+//! API key. It streams, as vLLM does, and the `fake` org runs on the vLLM backend.
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 
 use ailoy::{
     agent::AgentBuilder,
-    lang_model::{LangModelAPISchema, LangModelProviderElem, get_lm_providers_mut},
     message::{Message, MessageOutput, Part, Role},
+    model::{Backend, set_lang_model_provider},
 };
 use futures::StreamExt as _;
 use serde_json::{Value, json};
@@ -22,8 +22,9 @@ fn want(name: &str) -> bool {
     std::env::var(name).as_deref() == Ok("1")
 }
 
-/// The fake model's answer to one chat-completions request (see `fake.mjs`).
-fn answer(body: &Value) -> Value {
+/// The fake model's answer to one chat-completions request (see `fake.mjs`), as the events
+/// of its stream.
+fn answer(body: &Value) -> Vec<Value> {
     let text = |content: &Value| match content {
         Value::String(s) => s.clone(),
         Value::Array(parts) => parts.iter().filter_map(|p| p["text"].as_str()).collect(),
@@ -37,22 +38,24 @@ fn answer(body: &Value) -> Value {
         let user = messages.iter().find(|m| m["role"] == "user").map(|m| text(&m["content"])).unwrap_or_default();
         let (name, args) = user.split_once(' ').unwrap_or((&user, "{}"));
         json!({ "role": "assistant", "content": null, "tool_calls": [
-            { "id": "call_1", "type": "function", "function": { "name": name, "arguments": args } }
+            { "index": 0, "id": "call_1", "type": "function", "function": { "name": name, "arguments": args } }
         ] })
     } else {
         json!({ "role": "assistant", "content": "hello" })
     };
     let finish = if message["tool_calls"].is_null() { "stop" } else { "tool_calls" };
-    json!({
-        "choices": [{ "index": 0, "message": message, "finish_reason": finish }],
-        "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
-    })
+    vec![
+        json!({ "choices": [{ "index": 0, "delta": message, "finish_reason": null }] }),
+        json!({ "choices": [{ "index": 0, "delta": {}, "finish_reason": finish }] }),
+        json!({ "choices": [], "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 } }),
+    ]
 }
 
-/// Serve the fake model on localhost, one request per connection, and return its URL.
+/// Serve the fake model on localhost, one request per connection, and return its base URL, as
+/// `VLLM_BASE_URL` takes it.
 fn fake_model() -> anyhow::Result<String> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-    let url = format!("http://{}/v1/chat/completions", listener.local_addr()?);
+    let url = format!("http://{}/v1", listener.local_addr()?);
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let _ = (|| -> anyhow::Result<()> {
@@ -73,11 +76,13 @@ fn fake_model() -> anyhow::Result<String> {
                 }
                 let mut body = vec![0; length];
                 reader.read_exact(&mut body)?;
-                let payload = answer(&serde_json::from_slice(&body)?).to_string();
+                let events: String = answer(&serde_json::from_slice(&body)?)
+                    .iter()
+                    .map(|event| format!("data: {event}\n\n"))
+                    .collect();
                 write!(
                     &stream,
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
-                    payload.len()
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n{events}data: [DONE]\n\n"
                 )?;
                 Ok(())
             })();
@@ -106,14 +111,9 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    let url = fake_model()?;
-    get_lm_providers_mut()
-        .get_mut("default")
-        .ok_or_else(|| anyhow::anyhow!("no default model provider"))?
-        .insert(
-            "fake/*".into(),
-            LangModelProviderElem::API { schema: LangModelAPISchema::ChatCompletion, url: url.parse()?, api_key: None },
-        );
+    // SAFETY: set before any other thread reads the environment.
+    unsafe { std::env::set_var("VLLM_BASE_URL", fake_model()?) };
+    set_lang_model_provider("fake", Backend::Vllm);
 
     let mut agent = AgentBuilder::new("fake/model").build().await?;
     let outputs = run(&mut agent, "hi").await?;
