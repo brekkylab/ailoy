@@ -7,10 +7,7 @@ use url::Url;
 
 use crate::tool::{
     MCPConnection, MCPToolEntry, ToolDesc, ToolFunc,
-    r#impl::{
-        get_a2a_tool_desc, get_a2a_tool_func, get_builtin_tool_factories, mcp_tool_desc,
-        prefixed_tool_name,
-    },
+    r#impl::{get_builtin_tool_factories, mcp_tool_desc, prefixed_tool_name},
 };
 
 /// Transport configuration for an MCP (Model Context Protocol) tool server.
@@ -37,11 +34,6 @@ pub enum ToolProviderElem {
     /// One tool served by an external MCP server, over a connection opened at
     /// registration time and shared with that server's other tools.
     MCP(MCPToolEntry),
-
-    /// A remote A2A (Agent-to-Agent) agent exposed as one tool taking a plain-text
-    /// task. Its card (`{url}/.well-known/agent-card.json`) is fetched at
-    /// registration to build the desc.
-    A2A { url: Url },
 }
 
 impl ToolProviderElem {
@@ -53,9 +45,6 @@ impl ToolProviderElem {
             // server, and the desc in the spec is a copy of what the server
             // already reported at registration.
             ToolProviderElem::MCP(entry) => Ok(entry.tool_func()),
-            // Calling needs no discovery: the task is in the arguments and the
-            // address in the entry. The agent card was only needed for the desc.
-            ToolProviderElem::A2A { url } => Ok(get_a2a_tool_func(url)),
         }
     }
 }
@@ -113,20 +102,6 @@ impl ToolProvider {
     ) -> Option<ToolProviderElem> {
         self.inner
             .insert(name.into(), ToolProviderElem::Function(Arc::new(f)))
-    }
-
-    /// Register a remote A2A agent under `name`.
-    ///
-    /// Only the entry: the [`ToolDesc`] a spec needs comes from the agent's
-    /// card, which is a network fetch. [`register_a2a`] does both halves and
-    /// hands back the desc.
-    pub fn insert_a2a(
-        &mut self,
-        name: impl Into<String>,
-        url: impl Into<Url>,
-    ) -> Option<ToolProviderElem> {
-        self.inner
-            .insert(name.into(), ToolProviderElem::A2A { url: url.into() })
     }
 
     /// Register every tool an MCP server reported, under `prefix`.
@@ -291,32 +266,4 @@ pub fn unregister_mcp(provider: impl AsRef<str>, prefix: impl AsRef<str>) -> any
         .get_mut(provider)
         .ok_or_else(|| anyhow::anyhow!("tool_provider '{}' not registered", provider))?;
     Ok(tp.remove_mcp(prefix))
-}
-
-/// Fetch a remote A2A agent's card, register it under `name` in the named
-/// provider, and return the [`ToolDesc`] to put in an
-/// [`AgentSpec`](crate::agent::AgentSpec).
-///
-/// The card is fetched before the registry lock is taken, so no guard is held
-/// across an `.await`.
-///
-/// One agent is one tool: `name` is the tool name the model will see, with any
-/// character the model APIs refuse mapped to `_`.
-pub async fn register_a2a(
-    provider: impl AsRef<str>,
-    name: impl AsRef<str>,
-    url: Url,
-) -> anyhow::Result<ToolDesc> {
-    let desc = get_a2a_tool_desc(name.as_ref(), &url).await?;
-
-    let provider = provider.as_ref();
-    let mut registry = get_tool_providers_mut();
-    let tp = registry
-        .get_mut(provider)
-        .ok_or_else(|| anyhow::anyhow!("tool_provider '{}' not registered", provider))?;
-
-    // Keyed by the sanitised name the desc ended up with, not the raw argument:
-    // `provide` looks entries up by `ToolDesc::name`, so the two must agree.
-    tp.insert_a2a(desc.name.clone(), url);
-    Ok(desc)
 }
