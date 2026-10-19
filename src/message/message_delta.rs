@@ -267,16 +267,6 @@ pub struct MessageDeltaOutput {
     pub finish_reason: Option<FinishReason>,
 
     pub usage: Option<TokenUsage>,
-
-    /// Nesting level relative to the top-level agent turn (see [`MessageOutput::depth`]).
-    /// Populated by the agent runtime; `None` from the language-model layer.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub depth: Option<u8>,
-
-    /// Name of the agent that produced this item (see [`MessageOutput::source_agent`]).
-    /// Populated by the agent runtime; `None` from the language-model layer.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_agent: Option<String>,
 }
 
 impl MessageDeltaOutput {
@@ -285,8 +275,6 @@ impl MessageDeltaOutput {
             delta: MessageDelta::new(),
             finish_reason: None,
             usage: None,
-            depth: None,
-            source_agent: None,
         }
     }
 }
@@ -313,14 +301,12 @@ impl From<Message> for MessageDelta {
 
 impl From<MessageOutput> for MessageDeltaOutput {
     /// Wraps a finalized [`MessageOutput`] as a complete delta, carrying its
-    /// `finish_reason`, usage, and agent-loop metadata (depth / source_agent).
+    /// `finish_reason` and usage.
     fn from(out: MessageOutput) -> Self {
         MessageDeltaOutput {
             delta: out.message.into(),
             finish_reason: Some(out.finish_reason),
             usage: out.usage,
-            depth: out.depth,
-            source_agent: out.source_agent,
         }
     }
 }
@@ -361,14 +347,10 @@ impl Delta for MessageDeltaOutput {
         let delta = self.delta.accumulate(other.delta)?;
         let finish_reason = other.finish_reason.or(self.finish_reason);
         let usage = merge_token_usage(self.usage, other.usage);
-        let depth = other.depth.or(self.depth);
-        let source_agent = other.source_agent.or(self.source_agent);
         Ok(Self {
             delta,
             finish_reason,
             usage,
-            depth,
-            source_agent,
         })
     }
 
@@ -389,8 +371,6 @@ impl Delta for MessageDeltaOutput {
             message,
             finish_reason,
             usage: self.usage,
-            depth: self.depth,
-            source_agent: self.source_agent,
         })
     }
 }
@@ -463,8 +443,6 @@ mod tests {
                 .with_id("calc/1"),
             finish_reason: FinishReason::Stop {},
             usage: None,
-            depth: Some(0),
-            source_agent: None,
         }
         .into();
 
@@ -485,7 +463,6 @@ mod tests {
         assert_eq!(messages[0].finish_reason, FinishReason::ToolCall {});
         assert_eq!(messages[1].message.role, Role::Tool);
         assert_eq!(messages[1].message.contents[0].as_text(), Some("42"));
-        assert_eq!(messages[1].depth, Some(0));
     }
 
     /// A role change without an intervening finish_reason violates the producer contract

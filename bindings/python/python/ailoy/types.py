@@ -91,8 +91,6 @@ class MessageOutput(TypedDict):
     message: Message
     finish_reason: FinishReason
     usage: NotRequired[TokenUsage]
-    depth: NotRequired[int]
-    source_agent: NotRequired[str]
 
 
 class PartDelta(TypedDict):
@@ -118,8 +116,6 @@ class MessageDeltaOutput(TypedDict):
     delta: MessageDelta
     finish_reason: FinishReason | None
     usage: TokenUsage | None
-    depth: NotRequired[int]
-    source_agent: NotRequired[str]
 
 
 class ToolDesc(TypedDict):
@@ -129,44 +125,37 @@ class ToolDesc(TypedDict):
     returns: NotRequired[Value]
 
 
-class AgentSkill(TypedDict):
-    id: str
-    name: str
-    description: str
+ThinkingEffort = Literal["low", "medium", "high"]
 
 
-class AgentCard(TypedDict):
-    name: str
-    description: str
-    skills: NotRequired[list[AgentSkill]]
+class LangModelOptions(TypedDict):
+    thinking_effort: NotRequired[ThinkingEffort]
+    output_schema: NotRequired[Value]
 
 
 class AgentSpec(TypedDict):
     model: str
     instruction: NotRequired[str]
     tools: NotRequired[list[ToolDesc]]
-    subagents: NotRequired[list[AgentSpec]]
-    model_options: NotRequired[dict[str, Value]]
-    card: NotRequired[AgentCard]
+    model_options: NotRequired[LangModelOptions]
     web_search_engines: NotRequired[list[str]]
     skills: NotRequired[list[str]]
 
 
-LangModelAPISchema = Literal["chat_completion", "openai", "anthropic", "gemini", "bedrock"]
+Backend = Literal["cli", "api", "bedrock", "openrouter", "vllm"]
 
 WebSearchEngine = Literal[
     "Bing", "Brave", "DuckDuckGo", "Google", "Mojeek", "Naver", "Startpage", "Yahoo", "Yandex"
 ]
 
 __all__ = [
-    "AgentCard",
-    "AgentSkill",
     "AgentSpec",
+    "Backend",
     "EmbeddedImage",
     "FinishReason",
     "FunctionPart",
     "ImagePart",
-    "LangModelAPISchema",
+    "LangModelOptions",
     "Message",
     "MessageDelta",
     "MessageDeltaOutput",
@@ -176,6 +165,7 @@ __all__ = [
     "PartFunction",
     "Role",
     "TextPart",
+    "ThinkingEffort",
     "TokenUsage",
     "ToolDesc",
     "UrlImage",

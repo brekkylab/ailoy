@@ -8,7 +8,7 @@ import asyncio, json, os, tempfile, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import ailoy
-from ailoy import virtx
+import virtx
 
 want = lambda name: os.environ.get(name) == "1"
 failures = []
@@ -33,22 +33,22 @@ class FakeModel(BaseHTTPRequestHandler):
         elif body.get("tools"):
             user = next(m for m in messages if m["role"] == "user")
             name, args = text(user["content"]).split(" ", 1)
-            call = {"id": "call_1", "type": "function", "function": {"name": name, "arguments": args}}
+            call = {"index": 0, "id": "call_1", "type": "function", "function": {"name": name, "arguments": args}}
             message = {"role": "assistant", "content": None, "tool_calls": [call]}
         else:
             message = {"role": "assistant", "content": "hello"}
         finish = "tool_calls" if message.get("tool_calls") else "stop"
-        payload = json.dumps(
-            {
-                "choices": [{"index": 0, "message": message, "finish_reason": finish}],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-            }
-        ).encode()
+        # Streamed, as vLLM serves it.
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
-        self.wfile.write(payload)
+        for event in [
+            {"choices": [{"index": 0, "delta": message, "finish_reason": None}]},
+            {"choices": [{"index": 0, "delta": {}, "finish_reason": finish}]},
+            {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}},
+        ]:
+            self.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
+        self.wfile.write(b"data: [DONE]\n\n")
 
     def log_message(self, *args):
         pass
@@ -60,11 +60,13 @@ async def run(agent, query):
 
 async def main():
     check(hasattr(ailoy, "AgentBuilder"), f"the package loads from {os.path.dirname(ailoy.__file__)}")
-    check("echo hi" in repr(virtx.Recipe("alpine:latest").step("echo hi")), "virtx comes built in")
+    check("echo hi" in repr(virtx.Recipe("alpine:latest").step("echo hi")), "virtx comes along")
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeModel)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    ailoy.register_lang_model("fake/*", "chat_completion", f"http://127.0.0.1:{server.server_port}/v1/chat/completions")
+    # The `fake` org runs on vLLM, which reads its server from the environment.
+    os.environ["VLLM_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
+    ailoy.set_lang_model_provider("fake", "vllm")
 
     # A whole turn -- model, tool, model -- through the extension's bridge to asyncio both ways.
     calls = []

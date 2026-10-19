@@ -93,9 +93,6 @@ async fn main() -> anyhow::Result<()> {
         "Write every result here, such as a report, a figure, or the file the user came for. ",
         "Everything in this folder is collected and handed back to the user, and a result left anywhere else is not delivered.",
     ))
-    // A whole model script is one `write`, and the model thinks before it, which counts
-    // against the same limit: far more than the 8192 tokens a reply gets by default.
-    .max_tokens(64000)
     .system_tools()
     .console(
         ConsoleClient::builder()

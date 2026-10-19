@@ -22,27 +22,40 @@ use napi::{
     threadsafe_function::ThreadsafeFunction,
 };
 
+use serde::de::DeserializeOwned;
+
 use crate::convert::Json;
 
 /// Called with the arguments (not error-first). Threadsafe because a JavaScript function runs
 /// only on the JavaScript thread, which a turn leaves free as promises iterate it; weak so a
 /// registered tool does not keep the process alive.
-pub type Callback = ThreadsafeFunction<Json<Value>, Returned, Json<Value>, Status, false, true>;
+pub type Callback =
+    ThreadsafeFunction<Json<Value>, Returned<Value>, Json<Value>, Status, false, true>;
 
-/// What calling a tool's function returned: the result, or a promise of it.
-pub enum Returned {
-    Ready(Value),
-    Pending(Promise<Json<Value>>),
+/// What calling a JavaScript function returned: the result, or a promise of it.
+pub enum Returned<T: DeserializeOwned + Send + 'static> {
+    Ready(T),
+    Pending(Promise<Json<T>>),
 }
 
-impl FromNapiValue for Returned {
+impl<T: DeserializeOwned + Send + 'static> Returned<T> {
+    /// The result, once a promise of it settles.
+    pub async fn settle(self) -> Result<T, String> {
+        match self {
+            Returned::Ready(value) => Ok(value),
+            Returned::Pending(promise) => promise.await.map(|json| json.0).map_err(reason),
+        }
+    }
+}
+
+impl<T: DeserializeOwned + Send + 'static> FromNapiValue for Returned<T> {
     unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> napi::Result<Self> {
         let mut is_promise = false;
         napi::check_status!(unsafe { sys::napi_is_promise(env, napi_val, &mut is_promise) })?;
         Ok(if is_promise {
             Returned::Pending(unsafe { Promise::from_napi_value(env, napi_val)? })
         } else {
-            Returned::Ready(unsafe { Json::<Value>::from_napi_value(env, napi_val)? }.0)
+            Returned::Ready(unsafe { Json::<T>::from_napi_value(env, napi_val)? }.0)
         })
     }
 }
@@ -63,8 +76,6 @@ pub fn tool_func(func: Callback) -> ToolFunc {
                     .with_id(id),
                 finish_reason: FinishReason::Stop {},
                 usage: None,
-                depth: None,
-                source_agent: None,
             }
         })
         .boxed()
@@ -72,15 +83,16 @@ pub fn tool_func(func: Callback) -> ToolFunc {
 }
 
 async fn call(func: &Callback, args: Value) -> Result<Value, String> {
-    match func.call_async_catch(Json(args)).await.map_err(reason)? {
-        Returned::Ready(value) => Ok(value),
-        Returned::Pending(promise) => promise.await.map(|json| json.0).map_err(reason),
-    }
+    func.call_async_catch(Json(args))
+        .await
+        .map_err(reason)?
+        .settle()
+        .await
 }
 
 /// The error's own message. A rejection comes back wrapped once more, as
 /// `"GenericFailure, <message>"`, which is napi's bookkeeping rather than the tool's.
-fn reason(error: napi::Error) -> String {
+pub fn reason(error: napi::Error) -> String {
     let reason = error.reason.as_str();
     reason
         .strip_prefix("GenericFailure, ")

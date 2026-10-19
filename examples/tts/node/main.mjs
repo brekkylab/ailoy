@@ -33,6 +33,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import ailoy from '@brekkylab/ailoy'
+import virtx from '@brekkylab/virtx'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 // Absolute, because a mount is named to the server as a `file://` URL.
@@ -41,7 +42,8 @@ const SHARED = resolve(HERE, '../shared')
 // What a run reads and writes, beside this file.
 const PROJECT = HERE
 
-const { AgentBuilder, ConsoleClient, Directory, HostMount, Recipe, ensureVirtx } = ailoy
+const { AgentBuilder } = ailoy
+const { ConsoleClient, Directory, HostMount, Recipe, ensureVirtx } = virtx
 
 const INSTRUCTION =
   '# Context\n\n' +
@@ -153,7 +155,6 @@ async function main() {
 
     agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'anthropic/claude-sonnet-5')
       .instruction(INSTRUCTION)
-      .maxTokens(64000)
       .systemTools()
       .console(consoleClient)
       .skill('/skills/tts')

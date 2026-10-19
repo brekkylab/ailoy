@@ -6,13 +6,28 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-const ailoy = createRequire(import.meta.url)('../index.js')
-const { Agent, AgentBuilder, ConsoleClient, Recipe, ensureVirtx, registerLangModel, registerTool } = ailoy
+const require = createRequire(import.meta.url)
+const ailoy = require('../index.js')
+const virtx = require('@brekkylab/virtx')
+const {
+  Agent,
+  AgentBuilder,
+  LangModel,
+  registerTool,
+  removeLangModelProvider,
+  setLangModelProvider,
+} = ailoy
+const { ConsoleClient, Recipe, ensureVirtx } = virtx
 
-// ---- virtx, built in ----------------------------------------------------------------------
+// ---- the console, from @brekkylab/virtx -----------------------------------------------------
 
-test('virtx comes along', () => {
-  assert.match(new Recipe('python:3.12-slim').step('pip install duckdb').toString(), /duckdb/)
+test('virtx is a dependency, not re-exported', () => {
+  assert.equal(ailoy.ConsoleClient, undefined)
+  assert.equal(typeof ConsoleClient, 'function')
+})
+
+test('an agent takes only a virtx console', () => {
+  assert.throws(() => new AgentBuilder('any/model').console({}), { code: 'INVALID_ARG' })
 })
 
 test('a console without a server fails with virtx’s code', async () => {
@@ -37,7 +52,7 @@ test('a console the server refuses fails with the refusal’s code', async () =>
 // ---- the builder and the registries --------------------------------------------------------
 
 test('a builder is spent by build()', async () => {
-  const builder = new AgentBuilder('no-such-provider/model')
+  const builder = new AgentBuilder('no-such-org/model')
   await assert.rejects(builder.build(), { code: 'AILOY_ERROR' })
   assert.throws(() => builder.instruction('again'), { code: 'INVALID_ARG' })
 })
@@ -64,10 +79,11 @@ const lastContent = (messages) => {
 }
 
 /**
- * An OpenAI-compatible chat-completions server that asks for `add(2, 3)` and then says what
- * the tool answered — in one JSON body, or as a stream of events when asked for one.
+ * An OpenAI-compatible chat-completions server that asks for `call` (`add(2, 3)` unless told
+ * otherwise) and then says what the tool answered — in one JSON body, or as a stream of events
+ * when asked for one, as vLLM always does.
  */
-const fakeModel = () =>
+const fakeModel = (call = { name: 'add', arguments: { a: 2, b: 3 } }) =>
   new Promise((resolve) => {
     const server = createServer((req, res) => {
       let body = ''
@@ -84,7 +100,7 @@ const fakeModel = () =>
                 {
                   id: 'call_1',
                   type: 'function',
-                  function: { name: 'add', arguments: JSON.stringify({ a: 2, b: 3 }) },
+                  function: { name: call.name, arguments: JSON.stringify(call.arguments) },
                 },
               ],
             }
@@ -108,6 +124,15 @@ const fakeModel = () =>
     server.listen(0, '127.0.0.1', () => resolve(server))
   })
 
+/**
+ * Run the models of `org` on the vLLM backend, against `server`. vLLM reads its server from
+ * the environment when a model is built, so the agent or model is built right after.
+ */
+const serve = (org, server) => {
+  process.env.VLLM_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
+  setLangModelProvider(org, 'vllm')
+}
+
 const ADD = {
   name: 'add',
   description: 'Add two numbers.',
@@ -121,7 +146,7 @@ const ADD = {
 test('a turn calls a JavaScript tool and answers with what it said', async (t) => {
   const server = await fakeModel()
   t.after(() => server.close())
-  registerLangModel('fake/*', 'chat_completion', `http://127.0.0.1:${server.address().port}/v1/chat/completions`)
+  serve('fake', server)
 
   const calls = []
   const desc = registerTool(ADD, async ({ a, b }) => {
@@ -157,7 +182,7 @@ test('a turn calls a JavaScript tool and answers with what it said', async (t) =
 test('a tool that throws answers with the error, and the turn goes on', async (t) => {
   const server = await fakeModel()
   t.after(() => server.close())
-  registerLangModel('fake-throws/*', 'chat_completion', `http://127.0.0.1:${server.address().port}/v1/chat/completions`)
+  serve('fake-throws', server)
   const desc = registerTool(ADD, () => {
     throw new Error('no adding today')
   })
@@ -174,7 +199,7 @@ test('a tool that throws answers with the error, and the turn goes on', async (t
 test('breaking out of a turn ends it where it stands', async (t) => {
   const server = await fakeModel()
   t.after(() => server.close())
-  registerLangModel('fake-break/*', 'chat_completion', `http://127.0.0.1:${server.address().port}/v1/chat/completions`)
+  serve('fake-break', server)
   const calls = []
   const desc = registerTool(ADD, ({ a, b }) => {
     calls.push([a, b])
@@ -191,6 +216,109 @@ test('breaking out of a turn ends it where it stands', async (t) => {
   assert.ok(Array.isArray(agent.history))
 })
 
+test('a model runs without an agent', async (t) => {
+  const server = await fakeModel()
+  t.after(() => server.close())
+  serve('fake-model', server)
+  const model = await LangModel.create('fake-model/model')
+
+  const messages = [{ role: 'user', contents: [{ type: 'text', text: '2 + 3?' }] }]
+  const output = await model.infer(messages, [ADD])
+  assert.equal(output.finish_reason.type, 'tool_call')
+  assert.equal(output.message.tool_calls[0].function.name, 'add')
+
+  const deltas = []
+  for await (const delta of model.inferStream(messages, [ADD])) deltas.push(delta)
+  assert.ok(deltas.some((d) => d.finish_reason?.type === 'tool_call'))
+})
+
+test('a backend that does not exist is refused', () => {
+  assert.throws(() => setLangModelProvider('x', 'smoke-signals'), { code: 'INVALID_ARG' })
+  assert.throws(() => setLangModelProvider('x', 42), { code: 'INVALID_ARG' })
+})
+
+/** A model of the test's own, answering with the last user text. */
+class Echo {
+  constructor(name) {
+    this.name = name
+  }
+  infer(messages) {
+    const text = messages[messages.length - 1].contents[0].text
+    return {
+      message: { role: 'assistant', contents: [{ type: 'text', text: `${this.name}: ${text}` }] },
+      finish_reason: { type: 'stop' },
+    }
+  }
+}
+
+class StreamingEcho extends Echo {
+  async infer(messages) {
+    await null
+    return super.infer(messages)
+  }
+  async *inferStream(messages) {
+    for (const text of [this.name, ': ', messages[messages.length - 1].contents[0].text]) {
+      yield { delta: { role: 'assistant', contents: [{ type: 'text', text }], tool_calls: [] } }
+    }
+    yield { delta: { contents: [], tool_calls: [] }, finish_reason: { type: 'stop' } }
+  }
+}
+
+const textOf = (outputs) => outputs.map((o) => o.message.contents[0].text)
+
+test('a custom provider serves an agent', async (t) => {
+  const seen = []
+  setLangModelProvider('mine', (org, name) => {
+    seen.push([org, name])
+    return new Echo(name)
+  })
+  t.after(() => removeLangModelProvider('mine'))
+
+  const agent = await new AgentBuilder('mine/echo').build()
+  const outputs = []
+  for await (const output of agent.run('hi')) outputs.push(output)
+  assert.deepEqual(textOf(outputs), ['echo: hi'])
+
+  const deltas = []
+  for await (const delta of agent.runStream('again')) deltas.push(delta)
+  assert.equal(deltas[deltas.length - 1].finish_reason.type, 'stop')
+  assert.equal(agent.history[agent.history.length - 1].contents[0].text, 'echo: again')
+  assert.deepEqual(seen, [['mine', 'echo']])
+})
+
+test('a custom provider may stream and be async', async (t) => {
+  setLangModelProvider('mine-async', (org, name) => new StreamingEcho(name ?? org))
+  t.after(() => removeLangModelProvider('mine-async'))
+
+  const model = await LangModel.create('mine-async')
+  const messages = [{ role: 'user', contents: [{ type: 'text', text: 'hi' }] }]
+  assert.equal((await model.infer(messages)).message.contents[0].text, 'mine-async: hi')
+  const deltas = []
+  for await (const delta of model.inferStream(messages)) deltas.push(delta)
+  assert.equal(deltas.length, 4)
+})
+
+test('a custom provider may hand back a built-in model', async (t) => {
+  const server = await fakeModel()
+  t.after(() => server.close())
+  serve('fake-alias', server)
+  const built = await LangModel.create('fake-alias/model')
+  setLangModelProvider('alias', () => built)
+  t.after(() => removeLangModelProvider('alias'))
+
+  const model = await LangModel.create('alias/any')
+  const messages = [{ role: 'user', contents: [{ type: 'text', text: '2 + 3?' }] }]
+  assert.equal((await model.infer(messages, [ADD])).finish_reason.type, 'tool_call')
+})
+
+test('a factory that throws fails the build', async (t) => {
+  setLangModelProvider('broken', () => {
+    throw new Error('no models today')
+  })
+  t.after(() => removeLangModelProvider('broken'))
+  await assert.rejects(new AgentBuilder('broken/x').build(), { message: /no models today/ })
+})
+
 // ---- a shared console, against the console server virtx starts by default ---------------
 
 test('an agent shares its console, and closing the agent leaves it open', async () => {
@@ -199,8 +327,9 @@ test('an agent shares its console, and closing the agent leaves it open', async 
     .network(false)
     .build()
   try {
-    // Never asked anything, so the model only has to be registered.
-    registerLangModel('fake-console/*', 'chat_completion', 'http://127.0.0.1:9/v1/chat/completions')
+    // Never asked anything, so the model only has to be built.
+    process.env.VLLM_BASE_URL = 'http://127.0.0.1:9/v1'
+    setLangModelProvider('fake-console', 'vllm')
     const agent = await new AgentBuilder('fake-console/model').shellTool().console(console_).build()
     await agent.close()
     const result = await console_.exec(['echo', 'still here'])
@@ -208,4 +337,34 @@ test('an agent shares its console, and closing the agent leaves it open', async 
   } finally {
     await console_.close()
   }
+})
+
+test('an agent runs its console tools in the shared session, until the console closes', async (t) => {
+  const server = await fakeModel({ name: 'shell', arguments: { cmd: 'echo relayed > /tmp/out.txt' } })
+  t.after(() => server.close())
+
+  const console_ = await ConsoleClient.builder()
+    .image(new Recipe('python:3.12-slim-trixie'))
+    .network(false)
+    .build()
+  serve('fake-shell', server)
+  const agent = await new AgentBuilder('fake-shell/model').shellTool().console(console_).build()
+  const later = await Agent.fromSpec({ model: 'fake-shell/model', tools: [] }, { console: console_ })
+  try {
+    const outputs = []
+    for await (const output of agent.run('write it')) outputs.push(output)
+    assert.equal(outputs[1].message.role, 'tool')
+    const result = await console_.exec(['cat', '/tmp/out.txt'])
+    assert.equal(result.stdout.toString(), 'relayed\n')
+  } finally {
+    await console_.close()
+  }
+
+  // The session was the console's: an agent attached to it fails once it is closed.
+  const shell = await new AgentBuilder('fake-shell/model').shellTool().console(console_).build()
+  await assert.rejects(async () => {
+    for await (const _ of shell.run('write it again'));
+  }, { code: 'CONSOLE_BROKEN', message: /closed/ })
+  await agent.close()
+  await later.close()
 })

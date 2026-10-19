@@ -5,20 +5,19 @@
 //! lock's owned guard in its stream, which also makes a second `run` wait for the first to
 //! finish, as `&mut self` would in Rust.
 //!
-//! `AgentBuilder.console` puts a virtx `ConsoleClient`'s slot (the slot, not its contents) in
-//! the agent's state. The `ConsoleClient` stays usable: its calls and the agent's tools take
-//! turns on the one lock, the agent starts and stops its backend around each batch of tool
-//! calls, and `ConsoleClient.close()` ends the session for both.
+//! `AgentBuilder.console` attaches the agent to a `virtx.ConsoleClient`'s session (see
+//! [`crate::console`]). The `ConsoleClient` stays usable: its calls and the agent's take turns
+//! on its lock, one protocol call at a time, the agent starts and stops its backend around each
+//! batch of tool calls, and `ConsoleClient.close()` ends the session for both.
 
 use std::sync::Arc;
 
-use _virtx::console::PyConsoleClient;
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     datatype::Value,
-    lang_model::{ReasoningEffort, ResponseFormat},
     memory::Memory,
     message::Message,
+    model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
 };
 use futures::{StreamExt as _, stream::BoxStream};
@@ -30,14 +29,16 @@ use pyo3_async_runtimes::tokio::{future_into_py, get_runtime};
 use tokio::sync::Mutex;
 
 use crate::{
+    console,
     convert::{Query, from_py, to_py},
     error::{self, AiloyError},
 };
 
 /// A value let go of on the binding's runtime. Dropping an agent or a turn's stream may drop
-/// the last hold on its console, which says `quit` only when dropped on a runtime, and a
+/// the last hold on its console, whose client is let go of on a task when dropped on a runtime
+/// (an attached console says no `quit`: the session is the `virtx.ConsoleClient`'s), and a
 /// Python finalizer is not on one.
-struct OnRuntime<T>(Option<T>);
+pub struct OnRuntime<T>(pub Option<T>);
 
 impl<T> Drop for OnRuntime<T> {
     fn drop(&mut self) {
@@ -71,8 +72,8 @@ fn built() -> PyErr {
 
 #[pymethods]
 impl PyAgentBuilder {
-    /// A builder for `model`, such as `"anthropic/claude-sonnet-5"`: a name some registered
-    /// language-model provider serves.
+    /// A builder for `model`, such as `"anthropic/claude-sonnet-5-5"`: `<org>/<name>`, built
+    /// through the provider set for `<org>`.
     #[new]
     fn new(model: String) -> Self {
         PyAgentBuilder(std::sync::Mutex::new(Some(AgentBuilder::new(model))))
@@ -121,12 +122,6 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.web_fetch_tool()))
     }
 
-    /// A sub-agent, as the dict an `AgentSpec` serializes to. It has to carry a `card`.
-    fn subagent<'py>(slf: PyRef<'py, Self>, spec: Bound<'py, PyAny>) -> PyResult<PyRef<'py, Self>> {
-        let spec: AgentSpec = from_py(&spec, "an agent spec")?;
-        Self::update(slf, |b| Ok(b.subagent(spec)))
-    }
-
     fn history<'py>(
         slf: PyRef<'py, Self>,
         history: Bound<'py, PyAny>,
@@ -135,12 +130,13 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.history(history)))
     }
 
-    /// Run the agent's console tools in `console`'s session, which the agent then shares.
+    /// Run the agent's console tools in the session of `console`, a `virtx.ConsoleClient`,
+    /// which the agent then shares.
     fn console<'py>(
         slf: PyRef<'py, Self>,
-        console: PyRef<'py, PyConsoleClient>,
+        console: Bound<'py, PyAny>,
     ) -> PyResult<PyRef<'py, Self>> {
-        let slot = console.slot();
+        let slot = console::attach(&console)?;
         Self::update(slf, |b| Ok(b.shared_console(slot)))
     }
 
@@ -167,43 +163,26 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.context_manager(cm)))
     }
 
-    fn max_tokens(slf: PyRef<'_, Self>, max_tokens: u64) -> PyResult<PyRef<'_, Self>> {
-        Self::update(slf, |b| Ok(b.max_tokens(max_tokens)))
+    /// How much the model thinks before it answers: `"low"`, `"medium"` or `"high"`.
+    fn thinking_effort<'py>(
+        slf: PyRef<'py, Self>,
+        effort: Bound<'py, PyAny>,
+    ) -> PyResult<PyRef<'py, Self>> {
+        let effort: ThinkingEffort = from_py(&effort, "a thinking effort")?;
+        Self::update(slf, |b| Ok(b.thinking_effort(effort)))
     }
 
-    fn temperature(slf: PyRef<'_, Self>, temperature: f64) -> PyResult<PyRef<'_, Self>> {
-        Self::update(slf, |b| Ok(b.temperature(temperature)))
-    }
-
-    fn top_p(slf: PyRef<'_, Self>, top_p: f64) -> PyResult<PyRef<'_, Self>> {
-        Self::update(slf, |b| Ok(b.top_p(top_p)))
-    }
-
-    fn top_k(slf: PyRef<'_, Self>, top_k: u64) -> PyResult<PyRef<'_, Self>> {
-        Self::update(slf, |b| Ok(b.top_k(top_k)))
-    }
-
-    /// Turn on the model's thinking at `effort`: `"low"`, `"medium"` or `"high"`.
-    fn reasoning(slf: PyRef<'_, Self>, effort: String) -> PyResult<PyRef<'_, Self>> {
-        let effort: ReasoningEffort = effort
-            .parse()
-            .map_err(|e| PyValueError::new_err(format!("{e:#}")))?;
-        Self::update(slf, |b| Ok(b.reasoning(effort)))
-    }
-
-    /// Constrain replies to the JSON schema `schema`, which is checked here.
-    fn response_format<'py>(
+    /// Constrain replies to the JSON schema `schema`.
+    fn output_schema<'py>(
         slf: PyRef<'py, Self>,
         schema: Bound<'py, PyAny>,
     ) -> PyResult<PyRef<'py, Self>> {
         let schema: Value = from_py(&schema, "a JSON schema")?;
-        let fmt = ResponseFormat::json_schema(schema)
-            .map_err(|e| PyValueError::new_err(format!("{e:#}")))?;
-        Self::update(slf, |b| Ok(b.response_format(fmt)))
+        Self::update(slf, |b| Ok(b.output_schema(schema)))
     }
 
-    /// Make the agent — an awaitable, as `AgentBuilder::build` is a future: it reads the
-    /// skills through the console.
+    /// Make the agent — an awaitable, as `AgentBuilder::build` is a future: it builds the
+    /// model and reads the skills through the console.
     fn build<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let builder = self.0.lock().unwrap().take().ok_or_else(built)?;
         future_into_py(py, async move {
@@ -240,7 +219,7 @@ enum Mode {
 }
 
 /// A turn's item as the dict it serializes to, or the error it ended on.
-fn item<T: serde::Serialize>(item: anyhow::Result<T>) -> PyResult<Py<PyAny>> {
+pub fn item<T: serde::Serialize>(item: anyhow::Result<T>) -> PyResult<Py<PyAny>> {
     let item = item.map_err(error::anyhow)?;
     Python::attach(|py| Ok(to_py(py, &item)?.unbind()))
 }
@@ -282,7 +261,7 @@ impl PyAgent {
         spec: Bound<'py, PyAny>,
         agent_provider: String,
         history: Option<Bound<'py, PyAny>>,
-        console: Option<PyRef<'py, PyConsoleClient>>,
+        console: Option<Bound<'py, PyAny>>,
         memory: Option<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let spec: AgentSpec = from_py(&spec, "an agent spec")?;
@@ -291,7 +270,7 @@ impl PyAgent {
             state = state.with_history(from_py::<Vec<Message>>(&history, "a list of messages")?);
         }
         if let Some(console) = console {
-            state = state.with_console_slot(console.slot());
+            state = state.with_console_slot(console::attach(&console)?);
         }
         if let Some(memfile) = memory {
             state = state.with_memory(Memory::new(memfile));
@@ -315,7 +294,7 @@ impl PyAgent {
             .try_lock()
             .map_err(|_| AiloyError::new_err("this agent is in the middle of a turn"))?;
         let agent = guard.0.as_ref().ok_or_else(closed)?;
-        to_py(py, &agent.get_history())
+        to_py(py, &agent.history())
     }
 
     /// Run one turn on `query` — a message dict, or a string as the user's text — and
@@ -370,7 +349,7 @@ pub struct PyAgentRun {
 }
 
 impl PyAgentRun {
-    fn new(stream: BoxStream<'static, PyResult<Py<PyAny>>>) -> Self {
+    pub fn new(stream: BoxStream<'static, PyResult<Py<PyAny>>>) -> Self {
         PyAgentRun {
             stream: Arc::new(Mutex::new(OnRuntime(Some(stream)))),
         }

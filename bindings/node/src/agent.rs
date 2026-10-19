@@ -5,10 +5,10 @@
 //! lock's owned guard in its stream, which also makes a second `run` wait for the first to
 //! finish, as `&mut self` would in Rust.
 //!
-//! `AgentBuilder.console` puts a virtx `ConsoleClient`'s slot (the slot, not its contents) in
-//! the agent's state. The `ConsoleClient` stays usable: its calls and the agent's tools take
-//! turns on the one lock, the agent starts and stops its backend around each batch of tool
-//! calls, and `ConsoleClient.close()` ends the session for both.
+//! `AgentBuilder.console` attaches the agent to a `@brekkylab/virtx` `ConsoleClient`'s session
+//! (see [`crate::console`]). The `ConsoleClient` stays usable: its calls and the agent's take
+//! turns on its lock, one protocol call at a time, the agent starts and stops its backend
+//! around each batch of tool calls, and `ConsoleClient.close()` ends the session for both.
 //!
 //! `AgentRun`'s `next()` and `return()` are an async iterator's, and the package's `index.js`
 //! gives the class `Symbol.asyncIterator` so `for await` takes it. napi's own async-iterator
@@ -20,36 +20,37 @@ use std::sync::Arc;
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     datatype::Value,
-    lang_model::{ReasoningEffort, ResponseFormat},
     memory::Memory,
     message::{Message, MessageDeltaOutput, MessageOutput},
+    model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
 };
 use futures::{StreamExt as _, stream::BoxStream};
 use napi::{
     Env,
-    bindgen_prelude::{ClassInstance, Object, PromiseRaw, This, Unknown},
+    bindgen_prelude::{Object, PromiseRaw, This, Unknown},
 };
 use napi_derive::napi;
 use serde::Serialize;
 use tokio::{runtime::Handle, sync::Mutex};
-use virtx_node::console::{JsConsoleClient, promise, thrown};
 
 use crate::{
+    console,
     convert::{Json, from_js, query},
-    error::{self, Result, invalid, unsigned},
+    error::{self, Result, invalid, promise, thrown, unsigned},
 };
 
 /// A value let go of on the runtime it was made on. Dropping an agent or a turn's stream may
-/// drop the last hold on its console, which says `quit` only when dropped on a runtime, and a
-/// garbage-collection finalizer is not on one.
-struct OnRuntime<T> {
-    value: Option<T>,
-    runtime: Handle,
+/// drop the last hold on its console, whose client is let go of on a task when dropped on a
+/// runtime (an attached console says no `quit`: the session is the virtx `ConsoleClient`'s), and
+/// a garbage-collection finalizer is not on one.
+pub struct OnRuntime<T> {
+    pub value: Option<T>,
+    pub runtime: Handle,
 }
 
 impl<T> OnRuntime<T> {
-    fn new(value: T, runtime: Handle) -> Self {
+    pub fn new(value: T, runtime: Handle) -> Self {
         OnRuntime {
             value: Some(value),
             runtime,
@@ -96,8 +97,8 @@ pub struct ContextManagerOptions {
 
 #[napi]
 impl JsAgentBuilder {
-    /// A builder for `model`, such as `'anthropic/claude-sonnet-5'`: a name some registered
-    /// language-model provider serves.
+    /// A builder for `model`, such as `'anthropic/claude-sonnet-5-5'`: `<org>/<name>`, built
+    /// through the provider set for `<org>`.
     #[napi(constructor)]
     pub fn new(model: String) -> Self {
         JsAgentBuilder(Some(AgentBuilder::new(model)))
@@ -169,18 +170,6 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.web_fetch_tool()))
     }
 
-    /// A sub-agent, as the object an `AgentSpec` serializes to. It has to carry a `card`.
-    #[napi]
-    pub fn subagent<'env>(
-        &mut self,
-        env: &Env,
-        this: This<'env>,
-        #[napi(ts_arg_type = "AgentSpec")] spec: Unknown<'_>,
-    ) -> Result<This<'env>> {
-        let spec: AgentSpec = from_js(env, spec, "an agent spec")?;
-        self.update(this, |b| Ok(b.subagent(spec)))
-    }
-
     #[napi]
     pub fn history<'env>(
         &mut self,
@@ -192,14 +181,15 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.history(history)))
     }
 
-    /// Run the agent's console tools in `console`'s session, which the agent then shares.
+    /// Run the agent's console tools in the session of `console`, a `@brekkylab/virtx`
+    /// `ConsoleClient`, which the agent then shares.
     #[napi]
     pub fn console<'env>(
         &mut self,
         this: This<'env>,
-        #[napi(ts_arg_type = "ConsoleClient")] console: &JsConsoleClient,
+        #[napi(ts_arg_type = "ConsoleClient")] console: Object<'_>,
     ) -> Result<This<'env>> {
-        let slot = console.slot();
+        let slot = console::attach(&console)?;
         self.update(this, |b| Ok(b.shared_console(slot)))
     }
 
@@ -235,54 +225,32 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.context_manager(cm)))
     }
 
+    /// How much the model thinks before it answers.
     #[napi]
-    pub fn max_tokens<'env>(&mut self, this: This<'env>, max_tokens: i64) -> Result<This<'env>> {
-        let max_tokens = unsigned(Some(max_tokens), "maxTokens")?.unwrap_or_default();
-        self.update(this, |b| Ok(b.max_tokens(max_tokens)))
-    }
-
-    #[napi]
-    pub fn temperature<'env>(&mut self, this: This<'env>, temperature: f64) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.temperature(temperature)))
-    }
-
-    #[napi]
-    pub fn top_p<'env>(&mut self, this: This<'env>, top_p: f64) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.top_p(top_p)))
-    }
-
-    #[napi]
-    pub fn top_k<'env>(&mut self, this: This<'env>, top_k: i64) -> Result<This<'env>> {
-        let top_k = unsigned(Some(top_k), "topK")?.unwrap_or_default();
-        self.update(this, |b| Ok(b.top_k(top_k)))
-    }
-
-    /// Turn on the model's thinking at `effort`.
-    #[napi]
-    pub fn reasoning<'env>(
+    pub fn thinking_effort<'env>(
         &mut self,
+        env: &Env,
         this: This<'env>,
-        #[napi(ts_arg_type = "'low' | 'medium' | 'high'")] effort: String,
+        #[napi(ts_arg_type = "'low' | 'medium' | 'high'")] effort: Unknown<'_>,
     ) -> Result<This<'env>> {
-        let effort: ReasoningEffort = effort.parse().map_err(|e| invalid(format!("{e:#}")))?;
-        self.update(this, |b| Ok(b.reasoning(effort)))
+        let effort: ThinkingEffort = from_js(env, effort, "a thinking effort")?;
+        self.update(this, |b| Ok(b.thinking_effort(effort)))
     }
 
-    /// Constrain replies to the JSON schema `schema`, which is checked here.
+    /// Constrain replies to the JSON schema `schema`.
     #[napi]
-    pub fn response_format<'env>(
+    pub fn output_schema<'env>(
         &mut self,
         env: &Env,
         this: This<'env>,
         #[napi(ts_arg_type = "Record<string, unknown>")] schema: Unknown<'_>,
     ) -> Result<This<'env>> {
         let schema: Value = from_js(env, schema, "a JSON schema")?;
-        let fmt = ResponseFormat::json_schema(schema).map_err(|e| invalid(format!("{e:#}")))?;
-        self.update(this, |b| Ok(b.response_format(fmt)))
+        self.update(this, |b| Ok(b.output_schema(schema)))
     }
 
     /// Make the agent, settling with it — a promise, as `AgentBuilder::build` is a future: it
-    /// reads the skills through the console.
+    /// builds the model and reads the skills through the console.
     #[napi(ts_return_type = "Promise<Agent>")]
     pub fn build<'env>(&mut self, env: &'env Env) -> napi::Result<PromiseRaw<'env, JsAgent>> {
         let builder = self
@@ -318,10 +286,7 @@ impl JsAgent {
     }
 
     fn start(&self, query: Message, mode: Mode) -> JsAgentRun {
-        let stream = turn(self.agent.clone(), query, mode);
-        JsAgentRun {
-            stream: Arc::new(Mutex::new(OnRuntime::new(stream, self.runtime.clone()))),
-        }
+        JsAgentRun::new(turn(self.agent.clone(), query, mode), self.runtime.clone())
     }
 }
 
@@ -339,7 +304,7 @@ enum Mode {
 /// What a turn yields: a message whole, or a delta of one.
 #[derive(Serialize)]
 #[serde(untagged)]
-enum Item {
+pub enum Item {
     Message(MessageOutput),
     Delta(MessageDeltaOutput),
 }
@@ -399,11 +364,8 @@ impl JsAgent {
                         "a list of messages",
                     )?);
                 }
-                if let Some(console) = options
-                    .get::<ClassInstance<JsConsoleClient>>("console")
-                    .map_err(get)?
-                {
-                    state = state.with_console_slot(console.slot());
+                if let Some(console) = options.get::<Object>("console").map_err(get)? {
+                    state = state.with_console_slot(console::attach(&console)?);
                 }
                 if let Some(memfile) = options.get::<String>("memory").map_err(get)? {
                     state = state.with_memory(Memory::new(memfile));
@@ -431,7 +393,7 @@ impl JsAgent {
             .try_lock()
             .map_err(|_| error::ailoy("this agent is in the middle of a turn"))?;
         let agent = guard.value.as_ref().ok_or_else(closed)?;
-        Ok(Json(agent.get_history().to_vec()))
+        Ok(Json(agent.history().to_vec()))
     }
 
     /// Run one turn on `query` — a message, or a string as the user's text — and iterate what
@@ -478,6 +440,15 @@ type Stream = Arc<Mutex<OnRuntime<BoxStream<'static, Result<Item>>>>>;
 #[napi(js_name = "AgentRun")]
 pub struct JsAgentRun {
     stream: Stream,
+}
+
+impl JsAgentRun {
+    /// Iterate `stream`, let go of on `runtime`.
+    pub fn new(stream: BoxStream<'static, Result<Item>>, runtime: Handle) -> Self {
+        JsAgentRun {
+            stream: Arc::new(Mutex::new(OnRuntime::new(stream, runtime))),
+        }
+    }
 }
 
 /// An iterator's result, `{ value, done }`.

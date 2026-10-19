@@ -54,7 +54,7 @@ if (
     )
 
 import ailoy  # noqa: E402
-from ailoy.virtx import ConsoleClient, Directory, HostMount, Recipe, ensure_virtx  # noqa: E402
+from virtx import ConsoleClient, Directory, HostMount, Recipe, ensure_virtx  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
 # The request when none is given.
@@ -126,9 +126,6 @@ async def main(prompt: str) -> None:
             os.environ.get("AILOY_MODEL", "bedrock/global.openai.gpt-6-astra")
         )
         .instruction(INSTRUCTION)
-        # A whole model script is one `write`, and the model thinks before it, which counts
-        # against the same limit: far more than the 8192 tokens a reply gets by default.
-        .max_tokens(64000)
         .system_tools()
         .console(console)
         .skill("/skills/cad")

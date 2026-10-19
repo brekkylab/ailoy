@@ -42,7 +42,7 @@ It supports <img src="https://cdn.simpleicons.org/python" width="16"/> Python, <
 
 ## Requirements
 
-No system dependencies are required, but you need an API key for the LLM provider your agent will use.
+No system dependencies are required, but your agent's model needs a way to run: by default its provider's CLI (Claude Code, Codex or Gemini CLI), or its API with a key.
 
 Mounting host folders into the console (`virtx`'s virtual filesystem) needs FUSE: install FUSE-T on macOS or Dokany on Windows. See the [`virtx` documentation](https://github.com/brekkylab/virtx) for details.
 
@@ -55,13 +55,15 @@ Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform
 
 ## Quickstart
 
-Set the API key for your model's provider, either in the environment or in a `.env` file:
+By default, Claude, GPT and Gemini run through their CLIs, so install and log in to the one for your model: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`), [Codex](https://github.com/openai/codex) (`codex`) or [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`).
+
+To call the provider's API instead, set its key and switch the org to the `api` backend before building the agent, e.g. `ailoy.set_lang_model_provider("anthropic", "api")` in Python (`setLangModelProvider` in Node.js, `ailoy::model::set_lang_model_provider` in Rust):
 
 ```sh
-export OPENAI_API_KEY=...
-export ANTHROPIC_API_KEY=...
-export GEMINI_API_KEY=...
+export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY
 ```
+
+Amazon Bedrock, OpenRouter and vLLM are backends too; see the [model providers guide](./docs/guide/model-providers.md).
 
 Then build your agent with this simple API in your preferred language:
 
@@ -76,7 +78,7 @@ pip install ailoy-py
 import asyncio
 
 from ailoy import AgentBuilder
-from ailoy.virtx import ConsoleClient, Recipe
+from virtx import ConsoleClient, Recipe
 
 
 async def main() -> None:
@@ -113,11 +115,12 @@ asyncio.run(main())
 <summary><b>Node.js</b></summary>
 
 ```sh
-npm install @brekkylab/ailoy
+npm install @brekkylab/ailoy @brekkylab/virtx
 ```
 
 ```js
-const { AgentBuilder, ConsoleClient, Recipe } = require('@brekkylab/ailoy')
+const { AgentBuilder } = require('@brekkylab/ailoy')
+const { ConsoleClient, Recipe } = require('@brekkylab/virtx')
 
 const console_ = await ConsoleClient.builder()
   .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))

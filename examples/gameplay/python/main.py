@@ -63,7 +63,7 @@ if (
     )
 
 import ailoy  # noqa: E402
-from ailoy.virtx import ConsoleClient, Directory, HostMount, Recipe, ensure_virtx  # noqa: E402
+from virtx import ConsoleClient, Directory, HostMount, Recipe, ensure_virtx  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
 # The port a VNC viewer connects to here, and the VNC server's in the game's console.
@@ -192,7 +192,6 @@ async def main(goal: str) -> None:
                 os.environ.get("AILOY_MODEL", "anthropic/claude-sonnet-5")
             )
             .instruction(INSTRUCTION)
-            .max_tokens(32000)
             .system_tools()
             .console(console)
             .skill("/skills/openttd")

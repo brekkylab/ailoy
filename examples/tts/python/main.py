@@ -48,7 +48,7 @@ if Path(sys.prefix).resolve() != HERE / ".venv" and "AILOY_EXAMPLE_REEXEC" not i
     os.execvpe("uv", ["uv", "run", "--directory", str(HERE), "main.py", *sys.argv[1:]], env)
 
 import ailoy  # noqa: E402
-from ailoy.virtx import ConsoleClient, Directory, HostMount, Recipe, ensure_virtx  # noqa: E402
+from virtx import ConsoleClient, Directory, HostMount, Recipe, ensure_virtx  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
 QUERY = (
@@ -145,7 +145,6 @@ async def main() -> None:
     agent = await (
         ailoy.AgentBuilder(os.environ.get("AILOY_MODEL", "anthropic/claude-sonnet-5"))
         .instruction(INSTRUCTION)
-        .max_tokens(64000)
         .system_tools()
         .console(console)
         .skill("/skills/tts")

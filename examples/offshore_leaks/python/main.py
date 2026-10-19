@@ -50,7 +50,7 @@ if Path(sys.prefix).resolve() != HERE / ".venv" and "AILOY_EXAMPLE_REEXEC" not i
     os.execvpe("uv", ["uv", "run", "--directory", str(HERE), "main.py", *sys.argv[1:]], env)
 
 import ailoy  # noqa: E402
-from ailoy.virtx import ConsoleClient, Directory, HostMount, Recipe, ensure_virtx  # noqa: E402
+from virtx import ConsoleClient, Directory, HostMount, Recipe, ensure_virtx  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
 # The request when none is given.
@@ -132,7 +132,6 @@ async def main(prompt: str) -> None:
     agent = await (
         ailoy.AgentBuilder(os.environ.get("AILOY_MODEL", "openai/gpt-6-astra"))
         .instruction(INSTRUCTION)
-        .max_tokens(64000)
         .system_tools()
         .console(console)
         .skill("/skills/offshore-leaks")
