@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use ailoy::{
+    browser::AskResult,
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role},
     tool::ToolFunc,
@@ -80,6 +81,20 @@ pub fn tool_func(func: Callback) -> ToolFunc {
         })
         .boxed()
     })
+}
+
+/// A JavaScript function as an `onAsk` handler: called with the request, it returns (or resolves
+/// to) `'declined'`, `'done'` or nothing, or any other string, which is done with a note for the
+/// agent. A throw is a decline, so the agent does not go on as if the person had answered.
+pub async fn ask(func: Arc<Callback>, message: String) -> AskResult {
+    match call(&func, Value::string(message)).await {
+        Ok(answer) => match answer.as_str() {
+            Some("declined") => AskResult::Declined,
+            Some("done") | None => AskResult::Done,
+            Some(note) => AskResult::Note(note.to_string()),
+        },
+        Err(_) => AskResult::Declined,
+    }
 }
 
 async fn call(func: &Callback, args: Value) -> Result<Value, String> {

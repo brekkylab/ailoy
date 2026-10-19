@@ -10,10 +10,11 @@
 //! on its lock, one protocol call at a time, the agent starts and stops its backend around each
 //! batch of tool calls, and `ConsoleClient.close()` ends the session for both.
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
+    browser::{AskUser, Browser},
     datatype::Value,
     memory::Memory,
     message::Message,
@@ -138,6 +139,53 @@ impl PyAgentBuilder {
     ) -> PyResult<PyRef<'py, Self>> {
         let slot = console::attach(&console)?;
         Self::update(slf, |b| Ok(b.shared_console(slot)))
+    }
+
+    /// The person's own Chrome (144 or later, remote debugging on), which the agent drives with
+    /// its `browser_*` tools from this process rather than the console, once the person allows
+    /// it; `user_data_dir` picks another Chrome's. `ask_user` is how the agent waits on the
+    /// person: `"end_turn"` tells them in its reply and ends the turn, `"wait"` waits for
+    /// `on_ask`, a callable given the request that returns `"done"`, `"declined"` or a note,
+    /// within `ask_timeout` seconds if set. `careful` tells the agent to use sites as a person
+    /// would, so sites checking for bots are less likely to turn it away. `start_url` is the page
+    /// the agent's tab opens on.
+    #[pyo3(signature = (*, ask_user = "end_turn", user_data_dir = None, on_ask = None, ask_timeout = None, careful = true, start_url = None))]
+    fn browser<'py>(
+        slf: PyRef<'py, Self>,
+        ask_user: &str,
+        user_data_dir: Option<PathBuf>,
+        on_ask: Option<Py<PyAny>>,
+        ask_timeout: Option<f64>,
+        careful: bool,
+        start_url: Option<String>,
+    ) -> PyResult<PyRef<'py, Self>> {
+        let mut browser = Browser::host().ask_user(match ask_user {
+            "end_turn" => AskUser::EndTurn,
+            "wait" => AskUser::Wait,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "ask_user is \"end_turn\" or \"wait\", not {other:?}"
+                )));
+            }
+        });
+        if let Some(dir) = user_data_dir {
+            browser = browser.user_data_dir(dir);
+        }
+        if let Some(func) = on_ask {
+            let func = Arc::new(func);
+            browser = browser.on_ask(move |message| crate::tool::ask(func.clone(), message));
+        }
+        if let Some(seconds) = ask_timeout {
+            let timeout = Duration::try_from_secs_f64(seconds).map_err(|_| {
+                PyValueError::new_err("ask_timeout is a number of seconds, at least 0")
+            })?;
+            browser = browser.ask_timeout(timeout);
+        }
+        browser = browser.careful(careful);
+        if let Some(url) = start_url {
+            browser = browser.start_url(url);
+        }
+        Self::update(slf, |b| Ok(b.browser(browser)))
     }
 
     /// Remember into the memory store at `memfile`, a path in the console.
@@ -295,6 +343,21 @@ impl PyAgent {
             .map_err(|_| AiloyError::new_err("this agent is in the middle of a turn"))?;
         let agent = guard.0.as_ref().ok_or_else(closed)?;
         to_py(py, &agent.history())
+    }
+
+    /// Connect the agent's browser now rather than on its first use. This is when Chrome asks,
+    /// so call it while the person is at their screen; a refusal raises. A no-op once
+    /// connected. Awaitable; raises during a turn.
+    fn start_browser<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let mut guard = self
+            .agent
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| AiloyError::new_err("this agent is in the middle of a turn"))?;
+        future_into_py(py, async move {
+            let agent = guard.0.as_mut().ok_or_else(closed)?;
+            agent.start_browser().await.map_err(error::anyhow)
+        })
     }
 
     /// Run one turn on `query` — a message dict, or a string as the user's text — and

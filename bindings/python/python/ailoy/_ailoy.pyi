@@ -35,6 +35,34 @@ class AgentBuilder:
     def web_fetch_tool(self) -> Self: ...
     def history(self, history: list[Message]) -> Self: ...
     def console(self, console: ConsoleClient) -> Self: ...
+    def browser(
+        self,
+        *,
+        ask_user: Literal["end_turn", "wait"] = "end_turn",
+        user_data_dir: _Path | None = None,
+        on_ask: Callable[[str], str | None | Awaitable[str | None]] | None = None,
+        ask_timeout: float | None = None,
+        careful: bool = True,
+        start_url: str | None = None,
+    ) -> Self:
+        """The person's own Chrome, which the agent drives with its ``browser_*`` tools from
+        this process rather than the console.
+
+        It needs Chrome 144 or later with remote debugging on at
+        ``chrome://inspect/#remote-debugging``, and asks the person before it lets the agent
+        in; ``user_data_dir`` picks another Chrome's.
+
+        ``ask_user`` is how the agent waits on the person: ``"end_turn"`` tells them in its
+        reply and ends the turn, ``"wait"`` waits for ``on_ask``. ``on_ask`` is given the
+        request and returns ``"done"``, ``"declined"``, or any other string, a note for the
+        agent; a raise is a decline. ``ask_timeout`` bounds it, in seconds.
+
+        ``careful`` tells the agent to use sites as a person would, so sites checking for bots
+        are less likely to turn it away.
+
+        ``start_url`` is the page the agent's tab opens on.
+        """
+        ...
     def memory(self, memfile: str) -> Self: ...
     def skill(self, dir: str) -> Self: ...
     def context_manager(
@@ -65,6 +93,13 @@ class Agent:
     ) -> Agent: ...
     @property
     def history(self) -> list[Message]: ...
+    async def start_browser(self) -> None:
+        """Connect the browser now rather than on the agent's first use.
+
+        This is when Chrome asks the person, so call it while they are at their screen; a
+        refusal raises. A no-op once connected. Raises during a turn.
+        """
+        ...
     def run(self, query: str | Message) -> AgentRun[MessageOutput]: ...
     def run_stream(self, query: str | Message) -> AgentRun[MessageDeltaOutput]: ...
     async def close(self) -> None: ...

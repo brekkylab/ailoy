@@ -150,6 +150,47 @@ async def test_an_unregistered_tool_is_an_error():
         await AgentBuilder(MODEL).agent_provider(PROVIDER).tool(missing).build()
 
 
+async def test_a_browser_connects_only_when_used_and_needs_no_console():
+    agent = await AgentBuilder(MODEL).agent_provider(PROVIDER).browser(start_url="https://example.com").build()
+    await agent.close()
+
+
+def test_ask_user_is_end_turn_or_wait():
+    AgentBuilder(MODEL).browser(ask_user="wait")
+    with pytest.raises(ValueError):
+        AgentBuilder(MODEL).browser(ask_user="later")
+
+
+def test_a_browser_can_be_less_careful():
+    AgentBuilder(MODEL).browser(careful=False)
+    AgentBuilder(MODEL).browser(careful=True, user_data_dir="/nonexistent")
+
+
+async def test_wait_needs_on_ask(tmp_path):
+    with pytest.raises(AiloyError, match="on_ask"):
+        await AgentBuilder(MODEL).agent_provider(PROVIDER).browser(ask_user="wait").build()
+
+    async def on_ask(message: str) -> str:
+        return "done"
+
+    agent = await (
+        AgentBuilder(MODEL)
+        .agent_provider(PROVIDER)
+        .browser(ask_user="wait", on_ask=on_ask, ask_timeout=5, user_data_dir=tmp_path)
+        .build()
+    )
+    await agent.close()
+
+
+async def test_an_agent_without_a_browser_cannot_start_one():
+    agent = await AgentBuilder(MODEL).agent_provider(PROVIDER).build()
+    with pytest.raises(AiloyError, match="no browser"):
+        await agent.start_browser()
+    await agent.close()
+    with pytest.raises(AiloyError, match="closed"):
+        await agent.start_browser()
+
+
 # ---- a turn, against the fake model ---------------------------------------------------
 
 

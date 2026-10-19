@@ -70,6 +70,42 @@ test('registering into a provider that does not exist throws', () => {
   })
 })
 
+test('a browser connects only when used, and needs no console', async () => {
+  setLangModelProvider('fake-browser', 'vllm')
+  const agent = await new AgentBuilder('fake-browser/model').browser({ startUrl: 'https://example.com' }).build()
+  await agent.close()
+})
+
+test('askUser is endTurn or wait', () => {
+  new AgentBuilder('m').browser({ askUser: 'wait' })
+  assert.throws(() => new AgentBuilder('m').browser({ askUser: 'later' }), { code: 'INVALID_ARG' })
+})
+
+test('a browser can be less careful', () => {
+  new AgentBuilder('m').browser({ careful: false })
+  new AgentBuilder('m').browser({ careful: true, userDataDir: '/nonexistent' })
+})
+
+test('wait needs onAsk', async () => {
+  setLangModelProvider('fake-browser', 'vllm')
+  await assert.rejects(new AgentBuilder('fake-browser/model').browser({ askUser: 'wait' }).build(), {
+    message: /onAsk|on_ask/,
+  })
+  const onAsk = async () => 'done'
+  const agent = await new AgentBuilder('fake-browser/model')
+    .browser({ askUser: 'wait', onAsk, askTimeoutMs: 5000, userDataDir: '/nonexistent' })
+    .build()
+  await agent.close()
+})
+
+test('an agent without a browser cannot start one', async () => {
+  setLangModelProvider('fake-browser', 'vllm')
+  const agent = await new AgentBuilder('fake-browser/model').build()
+  await assert.rejects(agent.startBrowser(), { code: 'AILOY_ERROR', message: /no browser/ })
+  await agent.close()
+  await assert.rejects(agent.startBrowser(), { message: /closed/ })
+})
+
 // ---- a turn, against a model served from this process --------------------------------------
 
 /** The last message's text, or the tool results it carries. */

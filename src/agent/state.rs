@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use virtx::console::ConsoleClient;
 
-use crate::{memory::Memory, message::Message};
+use crate::{browser::BrowserSession, memory::Memory, message::Message};
 
 /// What an [`Agent`](super::Agent) carries from one turn to the next.
 #[derive(Default)]
@@ -28,6 +28,9 @@ pub struct AgentState {
     /// Input tokens of the last model call, which a
     /// [`ContextManager`](super::ContextManager) checks against its limit.
     pub last_input_tokens: Option<u64>,
+
+    /// The browser this agent drives; `None` means no browser tools and no `ask_user`.
+    pub(crate) browser: Option<Arc<BrowserSession>>,
 }
 
 impl AgentState {
@@ -58,6 +61,11 @@ impl AgentState {
     /// memory tool call.
     pub fn with_memory(mut self, memory: Memory) -> Self {
         self.memory = Some(memory);
+        self
+    }
+
+    pub(crate) fn with_browser(mut self, browser: Arc<BrowserSession>) -> Self {
+        self.browser = Some(browser);
         self
     }
 }

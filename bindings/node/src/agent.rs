@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
+    browser::{AskUser, Browser},
     datatype::Value,
     memory::Memory,
     message::{Message, MessageDeltaOutput, MessageOutput},
@@ -38,6 +39,7 @@ use crate::{
     console,
     convert::{Json, from_js, query},
     error::{self, Result, invalid, promise, thrown, unsigned},
+    tool::Callback,
 };
 
 /// A value let go of on the runtime it was made on. Dropping an agent or a turn's stream may
@@ -87,6 +89,27 @@ impl JsAgentBuilder {
 
 fn built() -> napi::Error<String> {
     invalid("this AgentBuilder has already been built")
+}
+
+#[napi(object, object_to_js = false)]
+pub struct BrowserOptions {
+    /// Another Chrome's user data directory, for Beta, Canary or Chromium.
+    pub user_data_dir: Option<String>,
+    /// How the agent waits on the person: `'endTurn'` (the default) tells them in its reply and
+    /// ends the turn, `'wait'` waits for `onAsk`.
+    #[napi(ts_type = "'endTurn' | 'wait'")]
+    pub ask_user: Option<String>,
+    /// Given the request, returns (or resolves to) `'done'`, `'declined'`, or any other
+    /// string, a note for the agent; a throw is a decline.
+    #[napi(ts_type = "(message: string) => unknown")]
+    pub on_ask: Option<Callback>,
+    /// How long `onAsk` may take, in milliseconds; no limit by default.
+    pub ask_timeout_ms: Option<u32>,
+    /// Whether the agent is told to use sites as a person would, so sites checking for bots are
+    /// less likely to turn it away. `true` by default.
+    pub careful: Option<bool>,
+    /// The page the agent's tab opens on.
+    pub start_url: Option<String>,
 }
 
 #[napi(object)]
@@ -191,6 +214,50 @@ impl JsAgentBuilder {
     ) -> Result<This<'env>> {
         let slot = console::attach(&console)?;
         self.update(this, |b| Ok(b.shared_console(slot)))
+    }
+
+    /// The person's own Chrome (144 or later, with remote debugging on at
+    /// `chrome://inspect/#remote-debugging`), which the agent drives with its `browser_*` tools
+    /// from this process rather than the console, once the person allows it: see
+    /// `BrowserOptions`.
+    #[napi]
+    pub fn browser<'env>(
+        &mut self,
+        this: This<'env>,
+        options: Option<BrowserOptions>,
+    ) -> Result<This<'env>> {
+        let options = options.unwrap_or(BrowserOptions {
+            user_data_dir: None,
+            ask_user: None,
+            on_ask: None,
+            ask_timeout_ms: None,
+            careful: None,
+            start_url: None,
+        });
+        let mut browser = Browser::host().ask_user(match options.ask_user.as_deref() {
+            None | Some("endTurn") => AskUser::EndTurn,
+            Some("wait") => AskUser::Wait,
+            Some(other) => {
+                return Err(invalid(format!(
+                    "askUser is 'endTurn' or 'wait', not {other:?}"
+                )));
+            }
+        });
+        if let Some(dir) = options.user_data_dir {
+            browser = browser.user_data_dir(dir);
+        }
+        if let Some(func) = options.on_ask {
+            let func = Arc::new(func);
+            browser = browser.on_ask(move |message| crate::tool::ask(func.clone(), message));
+        }
+        if let Some(ms) = options.ask_timeout_ms {
+            browser = browser.ask_timeout(std::time::Duration::from_millis(ms.into()));
+        }
+        browser = browser.careful(options.careful.unwrap_or(true));
+        if let Some(url) = options.start_url {
+            browser = browser.start_url(url);
+        }
+        self.update(this, |b| Ok(b.browser(browser)))
     }
 
     /// Remember into the memory store at `memfile`, a path in the console.
@@ -394,6 +461,22 @@ impl JsAgent {
             .map_err(|_| error::ailoy("this agent is in the middle of a turn"))?;
         let agent = guard.value.as_ref().ok_or_else(closed)?;
         Ok(Json(agent.history().to_vec()))
+    }
+
+    /// Connect the agent's browser now rather than on its first use. This is when Chrome asks,
+    /// so call it while the person is at their screen; a refusal rejects. A no-op once
+    /// connected. Throws during a turn.
+    #[napi(ts_return_type = "Promise<void>")]
+    pub fn start_browser<'env>(&self, env: &'env Env) -> napi::Result<PromiseRaw<'env, ()>> {
+        let mut guard = self
+            .agent
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| thrown(env, error::ailoy("this agent is in the middle of a turn")))?;
+        promise(env, async move {
+            let agent = guard.value.as_mut().ok_or_else(closed)?;
+            agent.start_browser().await.map_err(error::anyhow)
+        })
     }
 
     /// Run one turn on `query` — a message, or a string as the user's text — and iterate what
