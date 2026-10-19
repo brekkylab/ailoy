@@ -14,6 +14,7 @@ const {
   AgentBuilder,
   LangModel,
   registerTool,
+  getLangModelProvider,
   removeLangModelProvider,
   setLangModelProvider,
 } = ailoy
@@ -265,6 +266,17 @@ class StreamingEcho extends Echo {
 }
 
 const textOf = (outputs) => outputs.map((o) => o.message.contents[0].text)
+
+test('a provider reads back as it was set', () => {
+  assert.equal(getLangModelProvider('anthropic'), 'cli')
+  assert.equal(getLangModelProvider('anthropic/claude-sonnet-5-5'), 'cli')
+  setLangModelProvider('read-back', 'bedrock')
+  assert.equal(getLangModelProvider('read-back/some-model'), 'bedrock')
+  setLangModelProvider('read-back', (org, name) => new Echo(name))
+  assert.equal(getLangModelProvider('read-back'), 'custom')
+  removeLangModelProvider('read-back')
+  assert.equal(getLangModelProvider('read-back'), null)
+})
 
 test('a custom provider serves an agent', async (t) => {
   const seen = []
