@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://discord.gg/27rx3EJy3P
+    about: Ask on the Ailoy Discord.
+  - name: Guide
+    url: https://brekkylab.github.io/ailoy/
+    about: Quick start, model providers, the message format, MCP and building a VM.
+  - name: PoC or integration
+    url: https://brekkylab.com/#contact
+    about: Talk to Brekkylab about a proof of concept, or about building Ailoy into your product.
