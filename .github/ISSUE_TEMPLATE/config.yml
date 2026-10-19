@@ -6,3 +6,6 @@ contact_links:
   - name: Guide
     url: https://brekkylab.github.io/ailoy/
     about: Quick start, model providers, the message format, MCP and building a VM.
+  - name: PoC or integration
+    url: https://brekkylab.com/#contact
+    about: Talk to Brekkylab about a proof of concept, or about building Ailoy into your product.
