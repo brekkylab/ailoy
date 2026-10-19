@@ -1,0 +1,23 @@
+name: Provider request
+description: An API or a CLI Ailoy should run models through
+type: Feature
+labels: [provider request, "area:models"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        [Model providers](https://brekkylab.github.io/ailoy/guide/model-providers) lists what Ailoy runs models through now. Search the [provider requests](https://github.com/brekkylab/ailoy/issues?q=is%3Aissue%20label%3A%22provider%20request%22) first.
+
+  - type: input
+    id: provider
+    attributes:
+      label: Provider
+      placeholder: e.g. Azure OpenAI, Groq
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Anything else
+      description: Whatever would help, such as a link to its documentation, the environment variable its key should be read from (e.g. `GROQ_API_KEY`), the models you would run through it and what you would use it for.

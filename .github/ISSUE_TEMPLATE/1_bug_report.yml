@@ -27,7 +27,7 @@ body:
     id: reproduction
     attributes:
       label: Reproduction
-      description: The smallest script that shows it. One that needs no provider key, such as one against a registered fake model as the tests use, is the quickest to act on.
+      description: The smallest script that shows it. One that needs no key or login, such as one against a model of your own, is the quickest to act on.
     validations:
       required: true
 
@@ -73,11 +73,11 @@ body:
     id: model
     attributes:
       label: Model
-      description: The model the agent was built with, if the bug involves one.
-      placeholder: e.g. anthropic/claude-haiku-4-5
+      description: The model the agent was built with, if the bug involves one, and the backend if you set one with `set_lang_model_provider`.
+      placeholder: e.g. anthropic/claude-haiku-4-5 on the api backend
 
   - type: textarea
     id: context
     attributes:
       label: Anything else
-      description: Whether host folders were mounted into the console (FUSE-T on macOS, Dokany on Windows), whether the Windows Hypervisor Platform is on, and any logs.
+      description: The CLI's version if the model ran through one (`claude --version`, `codex --version` or `gemini --version`), whether host folders were mounted into the console (FUSE-T on macOS, Dokany on Windows), whether the Windows Hypervisor Platform is on, and any logs.
