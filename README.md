@@ -224,6 +224,7 @@ codex plugin marketplace add brekkylab/ailoy && codex plugin add ailoy@brekkylab
 | [sam3](./examples/sam3) | Segments images and videos with SAM3 on the guest GPU (ncnn + Vulkan) |
 | [tts](./examples/tts) | Speaks text in a voice described in words, using Qwen3-TTS |
 | [laya](./examples/laya) | Answers typed decision questions with a local model on the GPU |
+| [browser-use](./examples/browser-use) | Waits for what you ask of it, in a window of your own Chrome |
 
 Each example lives in `examples/<name>`, with one folder per language (`rust`, `python`, `node`) and, where the three share files (skills, prompts, model preparation scripts), a `shared` folder.
 

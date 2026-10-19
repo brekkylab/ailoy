@@ -141,3 +141,7 @@ path = "examples/sam3/rust/main.rs"
 [[example]]
 name = "tts"
 path = "examples/tts/rust/main.rs"
+
+[[example]]
+name = "browser-use"
+path = "examples/browser-use/rust/main.rs"
