@@ -13,7 +13,7 @@ use crate::{
     browser,
     datatype::Value,
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
-    model::{InferLangModel, LangModelOptions, create_lang_model},
+    model::{InferLangModel, LangModelOptions, RequestRefused, create_lang_model},
     tool::{
         ToolDesc, ToolFunc, create_tool,
         r#impl::{
@@ -165,11 +165,15 @@ impl Agent {
     /// Run one turn, yielding each model message and tool result as it completes.
     ///
     /// If the model fails before its first message of the turn, `query` is taken back out
-    /// of the history, so the agent can be run again.
+    /// of the history, so the agent can be run again. Tool results the model's API refuses
+    /// to take go back to the model as errors saying so, once per batch.
     pub fn run(&mut self, query: Message) -> BoxStream<'_, anyhow::Result<MessageOutput>> {
         Box::pin(async_stream::try_stream! {
             self.begin_turn(query).await;
             let mut committed = false;
+            // Set while the latest tool results stand replaced by the API's refusal of
+            // them, so a second refusal is not answered the same way.
+            let mut refused = false;
             loop {
                 self.manage_context();
                 let output = match self
@@ -178,6 +182,10 @@ impl Agent {
                     .await
                 {
                     Ok(output) => output,
+                    Err(e) if !refused && refuse_last_results(&mut self.state.history, &e) => {
+                        refused = true;
+                        continue;
+                    }
                     Err(e) => {
                         if !committed {
                             self.state.history.pop();
@@ -185,6 +193,7 @@ impl Agent {
                         Err(e)?
                     }
                 };
+                refused = false;
                 self.commit(&output);
                 committed = true;
 
@@ -214,6 +223,7 @@ impl Agent {
         Box::pin(async_stream::try_stream! {
             self.begin_turn(query).await;
             let mut committed = false;
+            let mut refused = false;
             loop {
                 self.manage_context();
                 let mut deltas =
@@ -237,6 +247,10 @@ impl Agent {
                 }
                 let output = match failure.map_or_else(|| acc.finish(), Err) {
                     Ok(output) => output,
+                    Err(e) if !refused && refuse_last_results(&mut self.state.history, &e) => {
+                        refused = true;
+                        continue;
+                    }
                     Err(e) => {
                         if !committed {
                             self.state.history.pop();
@@ -244,6 +258,7 @@ impl Agent {
                         Err(e)?
                     }
                 };
+                refused = false;
                 self.commit(&output);
                 committed = true;
 
@@ -421,6 +436,35 @@ fn close_dangling_calls(history: &mut Vec<Message>) {
     history.splice(end..end, results);
 }
 
+/// When `error` is the API refusing the request and the history ends in tool results, those
+/// results are what it refused: each is replaced by one saying so in the API's own words, so
+/// the model learns of it and the history can be sent again. `false` when `error` is
+/// anything else, or nothing of the kind is there to replace.
+fn refuse_last_results(history: &mut [Message], error: &anyhow::Error) -> bool {
+    let Some(refused) = error.downcast_ref::<RequestRefused>() else {
+        return false;
+    };
+    let from = history
+        .iter()
+        .rposition(|m| m.role != Role::Tool)
+        .map_or(0, |i| i + 1);
+    let results = &mut history[from..];
+    if results.is_empty() {
+        return false;
+    }
+    let text = middle_truncate(
+        &format!(
+            "The model's API refused this result, so it was dropped; return it another way, \
+             or go on without it. The API said: {refused}"
+        ),
+        MAX_TOOL_RESULT_CHARS,
+    );
+    for result in results {
+        result.contents = vec![Part::text(text.clone())];
+    }
+    true
+}
+
 fn tool_error(id: String, text: impl Into<String>) -> Message {
     Message::new(Role::Tool)
         .with_contents([Part::text(text)])
@@ -572,6 +616,14 @@ mod tests {
             finish_reason: FinishReason::Stop {},
             usage: None,
         })
+    }
+
+    fn refused() -> anyhow::Result<MessageOutput> {
+        Err(RequestRefused {
+            status: 400,
+            message: "X API request failed with status 400: image too large".into(),
+        }
+        .into())
     }
 
     fn calls(calls: &[(&str, &str)]) -> anyhow::Result<MessageOutput> {
@@ -734,6 +786,70 @@ mod tests {
         assert!(text_of(&results["c3"]).contains("no tool named"));
         assert!(text_of(&results["c4"]).contains("needs a console"));
         assert_eq!(text_of(agent.history().last().unwrap()), "done");
+    }
+
+    #[tokio::test]
+    async fn test_a_refused_result_goes_back_to_the_model_as_an_error() {
+        let name = "test-agent-refused-result";
+        let (model, spec) = scripted(name, [calls(&[("c1", "echo")]), refused(), answer("done")]);
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let outputs: Vec<_> = agent.run(user("hi")).collect().await;
+        assert!(outputs.iter().all(Result::is_ok));
+        assert_eq!(text_of(agent.history().last().unwrap()), "done");
+        let result = &agent.history()[3];
+        assert_eq!(result.role, Role::Tool);
+        assert_eq!(result.id.as_deref(), Some("c1"));
+        assert!(text_of(result).contains("refused"));
+        assert!(text_of(result).contains("image too large"));
+        // The request after the refusal carried the replaced result.
+        let seen = model.seen.lock().unwrap();
+        assert_eq!(seen.len(), 3);
+        assert!(text_of(&seen[2][3]).contains("image too large"));
+    }
+
+    #[tokio::test]
+    async fn test_a_second_refusal_ends_the_turn_with_a_history_that_can_be_sent() {
+        let name = "test-agent-refused-twice";
+        let (_, spec) = scripted(name, [calls(&[("c1", "echo")]), refused(), refused()]);
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let outputs: Vec<_> = agent.run(user("hi")).collect().await;
+        assert!(outputs.last().unwrap().is_err());
+        assert_eq!(
+            roles(agent.history()),
+            [Role::System, Role::User, Role::Assistant, Role::Tool]
+        );
+        assert!(text_of(&agent.history()[3]).contains("refused"));
+    }
+
+    #[tokio::test]
+    async fn test_any_other_failure_after_tools_keeps_their_results() {
+        let name = "test-agent-failed-after-tools";
+        let (_, spec) = scripted(
+            name,
+            [calls(&[("c1", "echo")]), Err(anyhow::anyhow!("down"))],
+        );
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let outputs: Vec<_> = agent.run(user("hi")).collect().await;
+        assert!(outputs.last().unwrap().is_err());
+        assert!(matches!(
+            &agent.history()[3].contents[..],
+            [Part::Value { .. }]
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_run_stream_hands_a_refused_result_back_too() {
+        let name = "test-agent-refused-result-stream";
+        let (_, spec) = scripted(name, [calls(&[("c1", "echo")]), refused(), answer("done")]);
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let deltas: Vec<_> = agent.run_stream(user("hi")).collect().await;
+        assert!(deltas.iter().all(Result::is_ok));
+        assert_eq!(text_of(agent.history().last().unwrap()), "done");
+        assert!(text_of(&agent.history()[3]).contains("refused"));
     }
 
     #[tokio::test]

@@ -245,7 +245,10 @@ async fn send(
             let text = response.text().await.unwrap_or_default();
             // A quota that is used up comes without a RetryInfo, and does not pass with time.
             if !text.contains("google.rpc.RetryInfo") {
-                bail!("Gemini API request failed with status {status}: {text}");
+                return Err(super::api_error(
+                    status,
+                    format!("Gemini API request failed with status {status}: {text}"),
+                ));
             }
             let wait_secs = (1u64 << attempt).min(MAX_WAIT_SECS);
             log::warn!(
@@ -265,7 +268,10 @@ async fn send(
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        bail!("Gemini API request failed with status {status}: {text}");
+        return Err(super::api_error(
+            status,
+            format!("Gemini API request failed with status {status}: {text}"),
+        ));
     }
     unreachable!("retry loop returns or bails on every path")
 }

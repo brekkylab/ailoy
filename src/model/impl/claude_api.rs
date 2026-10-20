@@ -283,7 +283,10 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        bail!("Anthropic API request failed with status {status}: {text}");
+        return Err(super::api_error(
+            status,
+            format!("Anthropic API request failed with status {status}: {text}"),
+        ));
     }
     unreachable!("retry loop returns or bails on every path")
 }
