@@ -1,5 +1,6 @@
-//! The person's own Chrome, which the agent drives with its `browser_*` tools over CDP from this
-//! process; the agent's console takes no part. Nothing connects until the agent first uses the
+//! The person's own browser, a Chromium-based one that speaks CDP (Chrome by default), which the
+//! agent drives with its `browser_*` tools over CDP from this process; the agent's console takes
+//! no part. Nothing connects until the agent first uses the
 //! browser or asks the person something.
 
 mod cdp;
@@ -79,16 +80,16 @@ impl fmt::Debug for Browser {
 }
 
 impl Browser {
-    /// The person's own Chrome (144 or later, with remote debugging on at
-    /// `chrome://inspect/#remote-debugging`), which asks them before it lets the agent in. The
-    /// agent works in a window of its own, signed in wherever they are; its tools reach only the
-    /// tabs it opened.
+    /// The person's own browser: a Chromium-based one with remote debugging on (Chrome by default:
+    /// 144 or later, at `chrome://inspect/#remote-debugging`), which asks them before it lets the
+    /// agent in. The agent works in a window of its own, signed in wherever they are; its tools
+    /// reach only the tabs it opened.
     pub fn host() -> Self {
         Self::default()
     }
 
-    /// The Chrome whose user data directory this is, for Beta, Canary or Chromium. The default
-    /// is this OS's Chrome.
+    /// The browser whose user data directory this is: another Chromium-based one, such as Chrome
+    /// Beta, Canary or Chromium. The default is this OS's Chrome.
     pub fn user_data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.user_data_dir = Some(dir.into());
         self
@@ -230,7 +231,7 @@ impl BrowserSession {
             } else {
                 ""
             };
-            format!("[browser] The connection to the user's Chrome dropped and is back.{window}")
+            format!("[browser] The connection to the user's browser dropped and is back.{window}")
         })))
     }
 
@@ -314,7 +315,7 @@ impl BrowserSession {
             }
             // EndTurn (`check` refuses Wait without a handler).
             _ => crate::to_value!({
-                "next": "Nothing is shown to the user: tell them in your reply exactly what to do in their Chrome, then end your turn. Their next message is when it is done."
+                "next": "Nothing is shown to the user: tell them in your reply exactly what to do in their browser, then end your turn. Their next message is when it is done."
             }),
         }
     }
@@ -368,7 +369,7 @@ macro_rules! browser_tool {
 pub(crate) fn tools(session: &Arc<BrowserSession>) -> Vec<(ToolDesc, ToolFunc)> {
     let config = session.config();
     let navigate = format!(
-        "Open a URL in your current tab. The browser is the user's own Chrome, signed in as \
+        "Open a URL in your current tab. The browser is the user's own, signed in as \
          them; you work in a window of your own and reach only the tabs you opened.{}",
         if config.careful { CAREFUL } else { "" }
     );
@@ -623,7 +624,7 @@ pub(crate) fn ask_user_tool_desc(browser: &Browser) -> ToolDesc {
     desc(
         "ask_user",
         &format!(
-            "Ask the user to do something in their Chrome that only they can do (signing in, a \
+            "Ask the user to do something in their browser that only they can do (signing in, a \
              CAPTCHA, a second factor), or to confirm before anything that cannot be undone \
              (paying, sending, deleting, posting). Never ask for credentials or get around a check \
              yourself. Say exactly what to do, in the user's language. {returns}"
@@ -689,7 +690,7 @@ mod tests {
     fn careful_is_on_unless_turned_off() {
         assert!(description(Browser::host(), "browser_navigate").contains(CAREFUL));
         let careless = description(Browser::host().careful(false), "browser_navigate");
-        assert!(careless.contains("user's own Chrome") && !careless.contains(CAREFUL));
+        assert!(careless.contains("user's own") && !careless.contains(CAREFUL));
     }
 
     #[test]

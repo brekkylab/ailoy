@@ -93,7 +93,8 @@ fn built() -> napi::Error<String> {
 
 #[napi(object, object_to_js = false)]
 pub struct BrowserOptions {
-    /// Another Chrome's user data directory, for Beta, Canary or Chromium.
+    /// Another Chromium-based browser's user data directory, such as Chrome Beta, Canary or
+    /// Chromium; this OS's Chrome by default.
     pub user_data_dir: Option<String>,
     /// How the agent waits on the person: `'endTurn'` (the default) tells them in its reply and
     /// ends the turn, `'wait'` waits for `onAsk`.
@@ -216,10 +217,10 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.shared_console(slot)))
     }
 
-    /// The person's own Chrome (144 or later, with remote debugging on at
-    /// `chrome://inspect/#remote-debugging`), which the agent drives with its `browser_*` tools
-    /// from this process rather than the console, once the person allows it: see
-    /// `BrowserOptions`.
+    /// The person's own Chromium-based browser with remote debugging on (Chrome by default: 144 or
+    /// later, at `chrome://inspect/#remote-debugging`), which the agent drives with its
+    /// `browser_*` tools over CDP from this process rather than the console, once the person
+    /// allows it: see `BrowserOptions`.
     #[napi]
     pub fn browser<'env>(
         &mut self,
@@ -463,7 +464,7 @@ impl JsAgent {
         Ok(Json(agent.history().to_vec()))
     }
 
-    /// Connect the agent's browser now rather than on its first use. This is when Chrome asks,
+    /// Connect the agent's browser now rather than on its first use. This is when the browser asks,
     /// so call it while the person is at their screen; a refusal rejects. A no-op once
     /// connected. Throws during a turn.
     #[napi(ts_return_type = "Promise<void>")]

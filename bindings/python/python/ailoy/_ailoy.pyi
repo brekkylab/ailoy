@@ -45,12 +45,13 @@ class AgentBuilder:
         careful: bool = True,
         start_url: str | None = None,
     ) -> Self:
-        """The person's own Chrome, which the agent drives with its ``browser_*`` tools from
-        this process rather than the console.
+        """The person's own Chromium-based browser, which the agent drives with its
+        ``browser_*`` tools over CDP from this process rather than the console.
 
-        It needs Chrome 144 or later with remote debugging on at
-        ``chrome://inspect/#remote-debugging``, and asks the person before it lets the agent
-        in; ``user_data_dir`` picks another Chrome's.
+        It needs remote debugging on (in Chrome 144 or later, the default, at
+        ``chrome://inspect/#remote-debugging``), and asks the person before it lets the agent
+        in; ``user_data_dir`` picks another Chromium-based browser, such as Chrome Beta,
+        Canary or Chromium.
 
         ``ask_user`` is how the agent waits on the person: ``"end_turn"`` tells them in its
         reply and ends the turn, ``"wait"`` waits for ``on_ask``. ``on_ask`` is given the
@@ -96,7 +97,7 @@ class Agent:
     async def start_browser(self) -> None:
         """Connect the browser now rather than on the agent's first use.
 
-        This is when Chrome asks the person, so call it while they are at their screen; a
+        This is when the browser asks the person, so call it while they are at their screen; a
         refusal raises. A no-op once connected. Raises during a turn.
         """
         ...

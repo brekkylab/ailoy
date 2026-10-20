@@ -141,9 +141,9 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.shared_console(slot)))
     }
 
-    /// The person's own Chrome (144 or later, remote debugging on), which the agent drives with
-    /// its `browser_*` tools from this process rather than the console, once the person allows
-    /// it; `user_data_dir` picks another Chrome's. `ask_user` is how the agent waits on the
+    /// The person's own Chromium-based browser with remote debugging on (Chrome 144 or later by
+    /// default), which the agent drives with its `browser_*` tools over CDP from this process
+    /// rather than the console, once the person allows it; `user_data_dir` picks another one's. `ask_user` is how the agent waits on the
     /// person: `"end_turn"` tells them in its reply and ends the turn, `"wait"` waits for
     /// `on_ask`, a callable given the request that returns `"done"`, `"declined"` or a note,
     /// within `ask_timeout` seconds if set. `careful` tells the agent to use sites as a person
@@ -345,7 +345,7 @@ impl PyAgent {
         to_py(py, &agent.history())
     }
 
-    /// Connect the agent's browser now rather than on its first use. This is when Chrome asks,
+    /// Connect the agent's browser now rather than on its first use. This is when the browser asks,
     /// so call it while the person is at their screen; a refusal raises. A no-op once
     /// connected. Awaitable; raises during a turn.
     fn start_browser<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {

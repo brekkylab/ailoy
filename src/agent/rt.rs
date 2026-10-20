@@ -309,8 +309,8 @@ impl Agent {
         self.seed_mounts().await;
     }
 
-    /// Connects this agent's browser now rather than on its first use. This is when Chrome asks
-    /// the person, so call it while they are at their screen. A no-op once connected.
+    /// Connects this agent's browser now rather than on its first use. This is when the browser
+    /// asks the person, so call it while they are at their screen. A no-op once connected.
     pub async fn start_browser(&mut self) -> anyhow::Result<()> {
         self.state
             .browser

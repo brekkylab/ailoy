@@ -4,14 +4,14 @@
 //! cargo run --example browser-use [-- --noshell]
 //! ```
 //!
-//! The agent uses your own Chrome, in a window of its own opened on the ailoy docs, and drives it
-//! with its `browser_*` tools. It also has a console with python and curl, for what is easier
-//! done there, such as fetching a page's data or computing over it; `--noshell` leaves it out, so
-//! the agent has the browser alone and needs no console server. Turn on remote debugging at
-//! chrome://inspect/#remote-debugging (Chrome 144 or later) and allow Chrome's prompt, which
-//! appears as it starts. Each line you type is the next turn; `/exit` ends. When a site needs
-//! you, to sign in say, the agent says so and ends its turn: do it in its window, then tell it to
-//! go on.
+//! The agent uses your own browser (Chrome by default), in a window of its own opened on the ailoy
+//! docs, and drives it with its `browser_*` tools. It also has a console with python and curl, for
+//! what is easier done there, such as fetching a page's data or computing over it; `--noshell`
+//! leaves it out, so the agent has the browser alone and needs no console server. Turn on remote
+//! debugging at chrome://inspect/#remote-debugging (Chrome 144 or later) and allow the browser's
+//! prompt, which appears as it starts. Each line you type is the next turn; `/exit` ends. When a
+//! site needs you, to sign in say, the agent says so and ends its turn: do it in its window, then
+//! tell it to go on.
 //!
 //! `AILOY_MODEL` is the agent's model, `anthropic/claude-sonnet-5` by default; its provider's
 //! API key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …), in the environment or in
@@ -29,9 +29,9 @@ use virtx::{console::ConsoleClient, image::Recipe};
 const START: &str = "https://brekkylab.github.io/ailoy/";
 
 /// What the agent has, with a console and without.
-const WITH_CONSOLE: &str = "a web browser and a console: the browser is the user's own Chrome, \
+const WITH_CONSOLE: &str = "a web browser and a console: the browser is the user's own, \
      which you drive with the browser tools";
-const BROWSER_ONLY: &str = "a web browser: the user's own Chrome, which you drive with the \
+const BROWSER_ONLY: &str = "a web browser: the user's own, which you drive with the \
      browser tools";
 
 /// What the agent is for.
@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
 
     let shell = !std::env::args().skip(1).any(|a| a == "--noshell");
 
-    // The browser tools reach Chrome from this process; the console is for the other tools.
+    // The browser tools reach the browser from this process; the console is for the other tools.
     let mut builder = AgentBuilder::new(&model)
         .instruction(format!(
             "You are a helpful assistant with {}. {INSTRUCTION}",
@@ -91,9 +91,11 @@ async fn main() -> anyhow::Result<()> {
         if shell { "browser, console" } else { "browser" }
     );
 
-    println!("Allow Chrome's prompt to let the agent in. It opens the ailoy docs as an example.");
+    println!(
+        "Allow the browser's prompt to let the agent in. It opens the ailoy docs as an example."
+    );
     agent.start_browser().await?;
-    println!("The agent has a window of its own in your Chrome.\n");
+    println!("The agent has a window of its own in your browser.\n");
 
     println!("Ask anything, or try:");
     for suggestion in SUGGESTIONS {

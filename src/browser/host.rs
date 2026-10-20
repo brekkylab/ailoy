@@ -1,8 +1,10 @@
-//! The person's own Chrome, lent with their consent: [`Browser::host`](super::Browser::host).
+//! The person's own Chromium-based browser, lent with their consent:
+//! [`Browser::host`](super::Browser::host).
 //!
-//! Chrome 144 and later lets a client in only once the person allows it in a prompt, and only
-//! while remote debugging is on at `chrome://inspect/#remote-debugging`. This process holds that
-//! one connection for the agent's life, so the prompt comes once.
+//! It is found by the `DevToolsActivePort` file it writes in its user data directory while
+//! remote debugging is on. Chrome 144 and later, with remote debugging turned on at
+//! `chrome://inspect/#remote-debugging`, lets a client in only once the person allows it in a
+//! prompt; this process holds that one connection for the agent's life, so the prompt comes once.
 
 use std::{
     path::{Path, PathBuf},
@@ -15,17 +17,17 @@ use serde_json::json;
 
 use super::cdp::{Cdp, Refusal};
 
-/// How long the person has to answer Chrome's prompt.
+/// How long the person has to answer the browser's prompt.
 const CONSENT_WAIT: Duration = Duration::from_secs(120);
 
-pub(super) const DECLINED: &str = "The user declined to let you use their Chrome. Do not try the \
+pub(super) const DECLINED: &str = "The user declined to let you use their browser. Do not try the \
      browser again unless they ask; `ask_user` asks them again.";
 
 pub(super) fn not_enabled(dir: &Path) -> String {
     format!(
-        "The user's Chrome is not open to you: remote debugging is off, Chrome is closed, or it is \
-         older than 144 (looked for {}). Ask the user to open Chrome and turn on remote debugging \
-         at chrome://inspect/#remote-debugging.",
+        "The user's browser is not open to you: remote debugging is off, the browser is closed, \
+         or it is too old (looked for {}). Ask the user to open it and turn on remote debugging; in \
+         Chrome 144 or later that is at chrome://inspect/#remote-debugging.",
         dir.join("DevToolsActivePort").display()
     )
 }
@@ -41,13 +43,13 @@ pub(super) fn default_user_data_dir() -> Option<PathBuf> {
     }
 }
 
-/// Why the agent cannot have Chrome now, as what it is told.
+/// Why the agent cannot have the browser now, as what it is told.
 pub(super) enum Closed {
     Declined,
     NotEnabled(String),
 }
 
-/// Connects to the person's Chrome, which is when it asks them.
+/// Connects to the person's browser, which is when it asks them.
 pub(super) async fn connect(
     user_data_dir: Option<&Path>,
 ) -> anyhow::Result<Result<Arc<Cdp>, Closed>> {
@@ -55,7 +57,7 @@ pub(super) async fn connect(
         .map(Path::to_path_buf)
         .or_else(default_user_data_dir)
         .context(
-            "no Chrome user data directory on this OS: pass one to `Browser::user_data_dir`",
+            "no default browser user data directory on this OS: pass one to `Browser::user_data_dir`",
         )?;
     let Some(url) = devtools_url(&dir) else {
         return Ok(Err(Closed::NotEnabled(not_enabled(&dir))));
@@ -95,12 +97,12 @@ pub(super) async fn agent_tabs(cdp: &Cdp, before: &[String]) -> anyhow::Result<V
     Ok(vec![
         created["targetId"]
             .as_str()
-            .context("Chrome opened no tab")?
+            .context("the browser opened no tab")?
             .to_string(),
     ])
 }
 
-/// Chrome's browser endpoint from `DevToolsActivePort`: its port, then its path.
+/// The browser endpoint from `DevToolsActivePort`: its port, then its path.
 fn devtools_url(dir: &Path) -> Option<String> {
     let text = std::fs::read_to_string(dir.join("DevToolsActivePort")).ok()?;
     let mut lines = text.lines();

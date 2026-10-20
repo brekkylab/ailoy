@@ -1,8 +1,8 @@
 # Using a browser
 
-An agent can drive your own Chrome with its `browser_*` tools. Give it one with `browser(...)` on the `AgentBuilder`. The tools reach Chrome from your program over the Chrome DevTools Protocol, not from the agent's console, so an agent needs no console to browse.
+An agent can drive your own browser with its `browser_*` tools. Give it one with `browser(...)` on the `AgentBuilder`. The tools reach the browser from your program over the Chrome DevTools Protocol (CDP), not from the agent's console, so an agent needs no console to browse.
 
-This needs Chrome 144 or later. In Chrome, open `chrome://inspect/#remote-debugging` and turn remote debugging on. Then:
+The browser is a Chromium-based one that speaks CDP: Chrome by default. It needs remote debugging on; in Chrome 144 or later, open `chrome://inspect/#remote-debugging` and turn it on. Then:
 
 ::: code-group
 
@@ -53,18 +53,18 @@ let mut agent = AgentBuilder::new("anthropic/claude-sonnet-5")
 
 :::
 
-Nothing connects until the agent first uses a browser tool or asks you something. Then Chrome asks you whether to allow it. While it is allowed, Chrome shows that it is being controlled by automated software. The agent opens a window of its own and works there. Chrome asks only once for the agent's whole life, because ailoy keeps one connection to Chrome open.
+Nothing connects until the agent first uses a browser tool or asks you something. Then the browser asks you whether to allow it. While it is allowed, Chrome shows that it is being controlled by automated software. The agent opens a window of its own and works there. The browser asks only once for the agent's whole life, because ailoy keeps one connection to it open.
 
 To connect sooner, say while you are at your screen, call `start_browser()` (`startBrowser()` in Node) between turns. It does nothing once connected. A decline, or remote debugging being off, comes back as an error. `start_url` (`startUrl` in Node, `Browser::start_url` in Rust) is the page the agent's window opens on.
 
 - If you decline, the agent hears so and does not try again. It asks again only through `ask_user` (below).
-- If Chrome closes, or you turn remote debugging off, the agent connects again on its next browser tool. Chrome asks again, and if the agent's window is gone it gets a new one. The agent is told when this happens.
+- If the browser closes, or you turn remote debugging off, the agent connects again on its next browser tool. The browser asks again, and if the agent's window is gone it gets a new one. The agent is told when this happens.
 - If remote debugging is off, the agent is told how to turn it on, and you can pass that on.
 
-By default ailoy looks for this OS's Chrome. For Chrome Beta, Canary or Chromium, pass that Chrome's user data directory as `user_data_dir` (`userDataDir` in Node, `Browser::user_data_dir` in Rust).
+By default ailoy looks for this OS's Chrome. For another Chromium-based browser, such as Chrome Beta, Canary or Chromium, pass its user data directory as `user_data_dir` (`userDataDir` in Node, `Browser::user_data_dir` in Rust): ailoy finds the browser by the `DevToolsActivePort` file it writes there while remote debugging is on.
 
 ::: warning
-The agent uses your real browser, signed in wherever you are. Its tools cannot reach your other tabs, but in its own window it can do anything you could. `ask_user`'s description tells it to ask you before anything that cannot be undone, such as paying, sending or deleting. That is an instruction, though, not a limit, so use your own Chrome only with an agent and a task you trust.
+The agent uses your real browser, signed in wherever you are. Its tools cannot reach your other tabs, but in its own window it can do anything you could. `ask_user`'s description tells it to ask you before anything that cannot be undone, such as paying, sending or deleting. That is an instruction, though, not a limit, so use your own browser only with an agent and a task you trust.
 :::
 
 ## The tools
