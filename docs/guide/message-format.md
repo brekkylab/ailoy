@@ -141,7 +141,80 @@ If the tool fails, the error still comes back as a `tool` message, so the model 
 | `finish_reason` | Why the model stopped: `stop`, `length`, `tool_call` or `refusal` (with a `reason`). |
 | `usage` | Input and output token counts, when the provider reports them. |
 
-`agent.run_stream` (`runStream` in Node.js) yields `MessageDeltaOutput`s instead. Each `delta` holds a piece of a message, such as a few tokens of text or thinking. Concatenated, the deltas between two `finish_reason`s make up the same message `run` would yield. In Rust, the `Delta` trait's `accumulate` and `finish` do this for you.
+`agent.run_stream` (`runStream` in Node.js) yields `MessageDeltaOutput`s instead. Each `delta` holds a piece of a message, such as a few tokens of text or thinking. Concatenated, the deltas between two `finish_reason`s make up the same message `run` would yield. In Rust, the `Delta` trait's `accumulate` and `finish` do this for you, and `into_messages` turns a whole `run_stream` into what `run` yields.
+
+### A tool message that streams
+
+A tool's result streams the way an assistant message does. While the tool runs, `run_stream` yields each piece it produces as a delta with role `tool` and the call's `id`, and a delta whose `finish_reason` is `stop` ends the result:
+
+```json
+{ "delta": { "role": "tool", "id": "call_01HZX2", "contents": [{ "type": "text", "text": "looking up Seoul, " }] }, "finish_reason": null }
+{ "delta": { "role": "tool", "id": "call_01HZX2", "contents": [{ "type": "text", "text": "done" }] }, "finish_reason": null }
+{ "delta": { "role": "tool", "id": "call_01HZX2", "contents": [{ "type": "value", "value": { "celsius": 12.3 } }] }, "finish_reason": { "type": "stop" } }
+```
+
+Adjacent text joins into one part and a value or an image is a part of its own, so these three make a result of two parts: the text `looking up Seoul, done` and the value. A tool that returns once arrives as one delta that carries its `finish_reason`.
+
+The calls the model asks for together run at the same time, so their deltas interleave. Put a tool result together by its `id`, not by the order the deltas arrive in; `into_messages` does.
+
+What streams is the result itself: the message its deltas make up is the one `run` yields, the one the history keeps, and the one the model reads next. Each part of a tool result is cut to 30,000 characters, keeping its start and end. Each delta is cut the same way as it passes, so a program reading the deltas may see more of a long result than the history keeps.
+
+A tool written as an async generator streams its result: each value it yields is a piece, a string as text and anything else as a value. Breaking out of the turn closes the generator, so its `finally` runs.
+
+::: code-group
+
+```python [Python]
+import asyncio
+
+import ailoy
+
+WEATHER = {
+    "name": "weather",
+    "description": "The weather in a city.",
+    "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
+}
+
+
+async def weather(city: str):
+    yield f"looking up {city}, "
+    await asyncio.sleep(1)  # the lookup
+    yield "done"
+    yield {"celsius": 12.3}
+
+
+desc = ailoy.register_tool(WEATHER, weather)
+```
+
+```js [Node.js]
+const WEATHER = {
+  name: 'weather',
+  description: 'The weather in a city.',
+  parameters: { type: 'object', properties: { city: { type: 'string' } } },
+}
+
+const desc = registerTool(WEATHER, async function* ({ city }) {
+  yield `looking up ${city}, `
+  await new Promise((resolve) => setTimeout(resolve, 1000)) // the lookup
+  yield 'done'
+  yield { celsius: 12.3 }
+})
+```
+
+```rust [Rust]
+use ailoy::{datatype::Value, message::{Message, Part, Role}, tool_func};
+
+// Each message the stream yields is a piece of the result.
+let weather = tool_func!(stream |args: Value, id: String| -> Message {
+    let piece = move |part: Part| Message::new(Role::Tool).with_contents([part]).with_id(id.clone());
+    futures::stream::iter([
+        piece(Part::text("looking up Seoul, ")),
+        piece(Part::text("done")),
+        piece(Part::value(ailoy::to_value!({"celsius": 12.3}))),
+    ])
+});
+```
+
+:::
 
 ## History
 
