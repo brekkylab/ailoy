@@ -829,6 +829,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_a_tool_that_panics_mid_stream_keeps_what_it_streamed() {
+        suppress_panics!();
+        let name = "test-agent-tool-stream-panic";
+        let (_, spec) = scripted(
+            name,
+            [calls(&[("c1", "shaky"), ("c2", "silent")]), answer("done")],
+        );
+        let spec = with_tool(
+            name,
+            spec,
+            "shaky",
+            ToolFunc::new(|_, id| {
+                Box::pin(async_stream::stream! {
+                    yield piece(&id, "partial");
+                    tokio::task::yield_now().await;
+                    if true {
+                        panic!("mid-stream");
+                    }
+                    yield piece(&id, "never");
+                })
+            }),
+        );
+        let spec = with_tool(
+            name,
+            spec,
+            "silent",
+            ToolFunc::new(|_, _| Box::pin(stream::empty())),
+        );
+        let mut agent = Agent::try_with_provider(spec, name).await.unwrap();
+        agent.run(user("hi")).for_each(|_| async {}).await;
+
+        let results: HashMap<_, _> = agent
+            .history()
+            .iter()
+            .filter(|m| m.role == Role::Tool)
+            .map(|m| (m.id.clone().unwrap(), text_of(m)))
+            .collect();
+        assert_eq!(results["c1"], "partial\n\ntool 'shaky' panicked");
+        assert_eq!(results["c2"], "tool 'silent' produced no output");
+        assert_eq!(text_of(agent.history().last().unwrap()), "done");
+    }
+
+    #[tokio::test]
     async fn test_concurrent_calls_stream_into_their_own_results() {
         let name = "test-agent-tool-stream-concurrent";
         let (_, spec) = scripted(
