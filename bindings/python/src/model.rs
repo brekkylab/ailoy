@@ -20,6 +20,7 @@ use ailoy::{
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::{
         Backend, InferLangModel, LangModelOptions, LangModelProvider, create_lang_model,
+        get_lang_model_provider as get_lang_model_provider_rs,
         remove_lang_model_provider as remove_lang_model_provider_rs,
         set_lang_model_provider as set_lang_model_provider_rs,
     },
@@ -238,6 +239,21 @@ fn set_lang_model_provider(org: String, provider: Bound<'_, PyAny>) -> PyResult<
     Ok(())
 }
 
+/// How the model `desc` names (`"<org>/<name>"`, or `"<org>"`) is built: a backend's name,
+/// `"custom"` for a factory, or `None` when its org has no provider.
+#[pyfunction]
+fn get_lang_model_provider(desc: String) -> Option<String> {
+    get_lang_model_provider_rs(&desc).map(|provider| provider_name(&provider))
+}
+
+/// A provider as it is set: its backend's serde name, or `custom`.
+fn provider_name(provider: &LangModelProvider) -> String {
+    match provider {
+        LangModelProvider::Backend(backend) => backend.to_string(),
+        LangModelProvider::Custom(_) => "custom".to_string(),
+    }
+}
+
 /// Stop building the models of `org`. Answers whether it had a provider.
 #[pyfunction]
 fn remove_lang_model_provider(org: String) -> bool {
@@ -247,6 +263,7 @@ fn remove_lang_model_provider(org: String) -> bool {
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLangModel>()?;
     m.add_function(wrap_pyfunction!(set_lang_model_provider, m)?)?;
+    m.add_function(wrap_pyfunction!(get_lang_model_provider, m)?)?;
     m.add_function(wrap_pyfunction!(remove_lang_model_provider, m)?)?;
     Ok(())
 }

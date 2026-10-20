@@ -75,8 +75,11 @@ use super::{
 
 /// How a model is run, spelled `"cli"`, `"api"`, `"bedrock"`, `"openrouter"` or `"vllm"`
 /// in its serde form.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, strum::Display,
+)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum Backend {
     /// The org's CLI: Claude Code, Codex or Gemini CLI.
     Cli,
@@ -277,6 +280,13 @@ pub fn set_lang_model_provider(org: impl Into<String>, provider: impl Into<LangM
         .insert(org.into(), provider.into());
 }
 
+/// The provider a desc's model is built through, the one set for its org, if there is one.
+/// The desc is as [`create_lang_model`] takes it: `<org>` or `<org>/<name>`.
+pub fn get_lang_model_provider(desc: &str) -> Option<LangModelProvider> {
+    let org = desc.split_once('/').map_or(desc, |(org, _)| org);
+    LANG_MODEL_PROVIDERS.read().unwrap().get(org).cloned()
+}
+
 /// Removes the provider for `org`, returning it if there was one.
 pub fn remove_lang_model_provider(org: &str) -> Option<LangModelProvider> {
     LANG_MODEL_PROVIDERS.write().unwrap().remove(org)
@@ -330,6 +340,29 @@ mod tests {
             "openai/gpt-6.1-sol"
         );
         assert_eq!(openrouter_rule("zai-org", "GLM-4.6"), "z-ai/glm-4.6");
+    }
+
+    #[test]
+    fn test_a_provider_reads_back_as_it_was_set() {
+        let is = |org| match get_lang_model_provider(org) {
+            Some(LangModelProvider::Backend(backend)) => Some(backend),
+            _ => None,
+        };
+        assert_eq!(is("anthropic"), Some(Backend::Cli));
+        assert_eq!(is("anthropic/claude-sonnet-5-5"), Some(Backend::Cli));
+        for backend in [
+            Backend::Cli,
+            Backend::Api,
+            Backend::Bedrock,
+            Backend::OpenRouter,
+            Backend::Vllm,
+        ] {
+            assert_eq!(serde_json::to_value(backend).unwrap(), backend.to_string());
+        }
+        set_lang_model_provider("provider-read-back", Backend::Bedrock);
+        assert_eq!(is("provider-read-back/some-model"), Some(Backend::Bedrock));
+        remove_lang_model_provider("provider-read-back");
+        assert!(get_lang_model_provider("provider-read-back").is_none());
     }
 
     #[tokio::test]

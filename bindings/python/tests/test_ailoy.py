@@ -301,6 +301,17 @@ async def test_a_custom_provider_serves_an_agent():
         assert ailoy.remove_lang_model_provider("mine")
 
 
+def test_a_provider_reads_back_as_it_was_set():
+    assert ailoy.get_lang_model_provider("anthropic") == "cli"
+    assert ailoy.get_lang_model_provider("anthropic/claude-sonnet-5-5") == "cli"
+    ailoy.set_lang_model_provider("read-back", "bedrock")
+    assert ailoy.get_lang_model_provider("read-back/some-model") == "bedrock"
+    ailoy.set_lang_model_provider("read-back", lambda org, name: Echo(name))
+    assert ailoy.get_lang_model_provider("read-back") == "custom"
+    ailoy.remove_lang_model_provider("read-back")
+    assert ailoy.get_lang_model_provider("read-back") is None
+
+
 async def test_a_custom_provider_may_stream_and_be_async():
     async def ainfer(self, messages, tools, options):
         await asyncio.sleep(0)
