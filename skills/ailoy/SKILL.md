@@ -19,19 +19,27 @@ Work the steps below in order. Step 3 is the one that gets skipped: an agent giv
 
 The console is [virtx](https://github.com/brekkylab/virtx)'s: Ailoy takes a `ConsoleClient` built with virtx's own package and adds no console API of its own. The first console on a host fetches virtx's server into its cache; `ensure_virtx()` (`ensureVirtx()` in Node) does that ahead of time, so a script can say so before the model is waiting.
 
-## 2. Name the model, and set its key
+## 2. Name the model, and decide how it runs
 
-A model is `<provider>/<model id>`. The prefix picks the provider; the rest goes to that provider's API as is. The key is read from the environment or a `.env` file the first time an agent is built, so set it before that.
+A model is `<org>/<name>`: the maker's own name for it, the official API id for Claude, GPT and Gemini (`anthropic/claude-haiku-4-5`, `openai/gpt-5.6-luna`, `google/gemini-3.1-pro`) and the Hugging Face repo id for open-weight models (`deepseek-ai/DeepSeek-V3.2`). The name stays the same whichever **backend** runs it; the org's backend decides that.
 
-| Prefix | Key | Example |
+| Backend | Runs the model through | Needs |
 |---|---|---|
-| `anthropic/` | `ANTHROPIC_API_KEY` | `anthropic/claude-haiku-4-5` |
-| `openai/` | `OPENAI_API_KEY` | `openai/gpt-5.6-luna` |
-| `google/` | `GEMINI_API_KEY` | `google/gemini-2.5-flash` |
-| `openrouter/` | `OPENROUTER_API_KEY` | `openrouter/openai/gpt-5` |
-| `bedrock/` | `AWS_BEARER_TOKEN_BEDROCK` | `bedrock/global.anthropic.claude-sonnet-5` |
+| `cli` (default for `anthropic`, `openai`, `google`) | The org's CLI on its own login (OAuth): Claude Code `claude`, Codex `codex`, Gemini CLI `gemini` | The CLI on `PATH`, already logged in |
+| `api` (default for the other orgs) | The org's own API | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, ... |
+| `bedrock` | Amazon Bedrock | `AWS_BEARER_TOKEN_BEDROCK`, and `AWS_REGION` (else `us-east-1`) |
+| `openrouter` | OpenRouter | `OPENROUTER_API_KEY` |
+| `vllm` | A vLLM server | `VLLM_BASE_URL` (default `http://localhost:8000/v1`) |
 
-xAI, DeepSeek and Moonshot are in [`docs/guide/model-providers.md`](../../docs/guide/model-providers.md). A missing key fails at `build()` with `no entry for model '...'`, not at the first turn.
+So with Claude Code, Codex or Gemini CLI logged in on the host, no key is needed: `AgentBuilder("anthropic/claude-haiku-4-5")` runs on that login, and `AgentBuilder("anthropic")` alone runs the CLI's default model. To use a key instead, switch the org's backend before building the agent:
+
+```python
+import ailoy
+
+ailoy.set_lang_model_provider("anthropic", "api")   # every anthropic/ model built after this uses ANTHROPIC_API_KEY
+```
+
+Node is `setLangModelProvider('anthropic', 'api')`; Rust is `ailoy::model::set_lang_model_provider("anthropic", Backend::Api)`. Keys are read from the environment when the model is built, so set them before that; a missing one fails at `build()` with `ANTHROPIC_API_KEY is not set`. A CLI that is not installed fails only at the first turn, with `failed to start the claude CLI`. Pick the CLI when the user is running it on their own machine with a subscription, and a key when it runs unattended (CI, servers) where nobody can log in. [`docs/guide/model-providers.md`](../../docs/guide/model-providers.md) has which org runs on which backend.
 
 ## 3. Give it a computer
 
