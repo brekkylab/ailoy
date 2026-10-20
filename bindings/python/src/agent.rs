@@ -303,8 +303,8 @@ impl PyAgent {
         PyAgentRun::new(turn(self.agent.clone(), query.0, Mode::Messages))
     }
 
-    /// Run one turn as `run` does, but iterate the model's output as it is generated: deltas
-    /// for each message the model writes, and each tool's result whole.
+    /// Run one turn as `run` does, but iterate each message as deltas while it is produced:
+    /// the model's as it is generated, and each tool's result as the tool yields it.
     fn run_stream(&self, query: Query) -> PyAgentRun {
         PyAgentRun::new(turn(self.agent.clone(), query.0, Mode::Deltas))
     }

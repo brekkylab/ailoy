@@ -151,10 +151,10 @@ type InferArgs = FnArgs<(
 
 /// A JavaScript function callable from the runtime's threads; weak, so a model does not keep
 /// the process alive.
-type Tsfn<Args, Return> = ThreadsafeFunction<Args, Return, Args, Status, false, true>;
+pub(crate) type Tsfn<Args, Return> = ThreadsafeFunction<Args, Return, Args, Status, false, true>;
 
 /// A JavaScript function, bound to `this`, as a [`Tsfn`]. On the JavaScript thread.
-fn bound<Args, Return>(
+pub(crate) fn bound<Args, Return>(
     function: Function<'_, Args, Return>,
     this: Object<'_>,
 ) -> napi::Result<Tsfn<Args, Return>>
@@ -278,7 +278,7 @@ impl FromNapiValue for Iterator {
 }
 
 /// `Symbol.asyncIterator`.
-unsafe fn async_iterator_symbol(env: sys::napi_env) -> napi::Result<sys::napi_value> {
+pub(crate) unsafe fn async_iterator_symbol(env: sys::napi_env) -> napi::Result<sys::napi_value> {
     let mut global = ptr::null_mut();
     napi::check_status!(unsafe { sys::napi_get_global(env, &mut global) })?;
     let global = unsafe { Object::from_napi_value(env, global)? };

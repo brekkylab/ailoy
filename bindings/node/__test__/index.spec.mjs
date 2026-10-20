@@ -216,6 +216,72 @@ test('breaking out of a turn ends it where it stands', async (t) => {
   assert.ok(Array.isArray(agent.history))
 })
 
+const PROGRESS = {
+  name: 'progress',
+  description: 'Report progress on a city.',
+  parameters: { type: 'object', properties: { city: { type: 'string' } } },
+}
+
+const toolDeltas = (deltas) => deltas.filter((d) => d.delta.role === 'tool')
+
+test('an async generator tool streams its result', async (t) => {
+  const server = await fakeModel({ name: 'progress', arguments: { city: 'Seoul' } })
+  t.after(() => server.close())
+  serve('fake-progress', server)
+  let goOn
+  const gate = new Promise((resolve) => (goOn = resolve))
+  const desc = registerTool(PROGRESS, async function* ({ city }) {
+    yield `looking up ${city}, `
+    await gate
+    yield 'done'
+    yield { city }
+  })
+
+  const agent = await new AgentBuilder('fake-progress/model').tool(desc).build()
+  const deltas = []
+  for await (const delta of agent.runStream('progress?')) {
+    deltas.push(delta)
+    // The first piece arrives while the generator still waits to yield the next.
+    if (delta.delta.role === 'tool') goOn()
+  }
+
+  const pieces = toolDeltas(deltas)
+  assert.deepEqual(pieces[0].delta.contents, [{ type: 'text', text: 'looking up Seoul, ' }])
+  assert.equal(pieces[0].finish_reason, null)
+  assert.ok(pieces.every((p) => p.delta.id === 'call_1'))
+  assert.equal(pieces[pieces.length - 1].finish_reason.type, 'stop')
+
+  const result = agent.history.find((m) => m.role === 'tool')
+  assert.deepEqual(result.contents, [
+    { type: 'text', text: 'looking up Seoul, done' },
+    { type: 'value', value: { city: 'Seoul' } },
+  ])
+})
+
+test('letting go of a turn returns a generator tool', async (t) => {
+  const server = await fakeModel({ name: 'ticker', arguments: {} })
+  t.after(() => server.close())
+  serve('fake-ticker', server)
+  let returned
+  const closed = new Promise((resolve) => (returned = resolve))
+  const desc = registerTool({ ...PROGRESS, name: 'ticker' }, async function* () {
+    try {
+      for (let i = 0; ; i++) {
+        yield `tick ${i} `
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+    } finally {
+      returned()
+    }
+  })
+
+  const agent = await new AgentBuilder('fake-ticker/model').tool(desc).build()
+  for await (const delta of agent.runStream('tick')) {
+    if (delta.delta.role === 'tool') break
+  }
+  await closed
+})
+
 test('a model runs without an agent', async (t) => {
   const server = await fakeModel()
   t.after(() => server.close())

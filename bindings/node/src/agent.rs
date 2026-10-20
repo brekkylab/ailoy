@@ -407,8 +407,8 @@ impl JsAgent {
         Ok(self.start(self::query(env, query)?, Mode::Messages))
     }
 
-    /// Run one turn as `run` does, but iterate the model's output as it is generated: deltas
-    /// for each message the model writes, and each tool's result whole.
+    /// Run one turn as `run` does, but iterate each message as deltas while it is produced:
+    /// the model's as it is generated, and each tool's result as the tool yields it.
     #[napi(ts_return_type = "AsyncIterableIterator<MessageDeltaOutput>")]
     pub fn run_stream(
         &self,

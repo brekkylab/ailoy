@@ -212,6 +212,61 @@ async def test_a_tool_that_raises_answers_with_the_error():
     assert value.startswith("error: RuntimeError: no data for Jeju")
 
 
+def tool_deltas(deltas):
+    return [d for d in deltas if d["delta"].get("role") == "tool"]
+
+
+async def test_an_async_generator_tool_streams_its_result():
+    go_on = asyncio.Event()
+
+    async def progress(city):
+        yield f"looking up {city}, "
+        await go_on.wait()
+        yield "done"
+        yield {"city": city}
+
+    desc = tool("progress", progress)
+    agent = await AgentBuilder(MODEL).agent_provider(PROVIDER).tool(desc).build()
+    deltas = []
+    async for delta in agent.run_stream('progress {"city": "Seoul"}'):
+        deltas.append(delta)
+        # The first piece arrives while the generator still waits to yield the next.
+        if delta["delta"].get("role") == "tool":
+            go_on.set()
+
+    pieces = tool_deltas(deltas)
+    assert pieces[0]["delta"]["contents"] == [{"type": "text", "text": "looking up Seoul, "}]
+    assert pieces[0]["finish_reason"] is None
+    assert all(p["delta"]["id"] == "call_1" for p in pieces)
+    assert pieces[-1]["finish_reason"] == {"type": "stop"}
+
+    result = next(m for m in agent.history if m["role"] == "tool")
+    assert result["contents"] == [
+        {"type": "text", "text": "looking up Seoul, done"},
+        {"type": "value", "value": {"city": "Seoul"}},
+    ]
+
+
+async def test_letting_go_of_a_turn_closes_a_generator_tool():
+    closed = asyncio.Event()
+
+    async def endless(city):
+        try:
+            yield "started"
+            await asyncio.Event().wait()
+        finally:
+            closed.set()
+
+    desc = tool("endless", endless)
+    agent = await AgentBuilder(MODEL).agent_provider(PROVIDER).tool(desc).build()
+    turn = agent.run_stream('endless {"city": "Seoul"}')
+    async for delta in turn:
+        if delta["delta"].get("role") == "tool":
+            break
+    await turn.aclose()
+    await asyncio.wait_for(closed.wait(), 5)
+
+
 async def test_run_stream_yields_deltas():
     agent = await AgentBuilder(MODEL).agent_provider(PROVIDER).build()
     deltas = [d async for d in agent.run_stream("hi")]

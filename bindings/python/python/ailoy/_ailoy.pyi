@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterable, Awaitable, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from types import TracebackType
 from typing import Any, Generic, Literal, Protocol, Self, TypeVar
 
@@ -116,7 +116,7 @@ def remove_lang_model_provider(org: str) -> bool: ...
 def add_tool_provider(name: str, *, builtins: bool = True) -> None: ...
 def register_tool(
     desc: ToolDesc,
-    func: Callable[..., Any | Awaitable[Any]],
+    func: Callable[..., Any | Awaitable[Any] | AsyncIterator[Any]],
     *,
     provider: str = "default",
 ) -> ToolDesc: ...
