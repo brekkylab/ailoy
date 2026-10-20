@@ -258,7 +258,7 @@ test('an async generator tool streams its result', async (t) => {
   ])
 })
 
-test('letting go of a turn returns a generator tool', async (t) => {
+test('letting go of a turn returns a generator tool', { timeout: 5000 }, async (t) => {
   const server = await fakeModel({ name: 'ticker', arguments: {} })
   t.after(() => server.close())
   serve('fake-ticker', server)
@@ -280,6 +280,59 @@ test('letting go of a turn returns a generator tool', async (t) => {
     if (delta.delta.role === 'tool') break
   }
   await closed
+})
+
+test('a generator tool that fails to clean up does not take the process down', { timeout: 5000 }, async (t) => {
+  const server = await fakeModel({ name: 'sloppy', arguments: {} })
+  t.after(() => server.close())
+  serve('fake-sloppy', server)
+  let returned
+  const closed = new Promise((resolve) => (returned = resolve))
+  const desc = registerTool({ ...PROGRESS, name: 'sloppy' }, async function* () {
+    try {
+      for (;;) {
+        yield 'tick '
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+    } finally {
+      returned()
+      // eslint-disable-next-line no-unsafe-finally
+      throw new Error('cleanup failed')
+    }
+  })
+
+  const agent = await new AgentBuilder('fake-sloppy/model').tool(desc).build()
+  for await (const delta of agent.runStream('tick')) {
+    if (delta.delta.role === 'tool') break
+  }
+  await closed
+  // An unhandled rejection would end the process before this.
+  await new Promise((resolve) => setTimeout(resolve, 50))
+})
+
+test('a generator tool that yields what a message cannot hold is still returned', { timeout: 5000 }, async (t) => {
+  const server = await fakeModel({ name: 'symbol', arguments: {} })
+  t.after(() => server.close())
+  serve('fake-symbol', server)
+  let returned
+  const closed = new Promise((resolve) => (returned = resolve))
+  const desc = registerTool({ ...PROGRESS, name: 'symbol' }, async function* () {
+    try {
+      yield 'counting '
+      yield Symbol('not a value')
+      yield 'never'
+    } finally {
+      returned()
+    }
+  })
+
+  const agent = await new AgentBuilder('fake-symbol/model').tool(desc).build()
+  for await (const _ of agent.runStream('count')) {
+  }
+  await closed
+  const result = agent.history.find((m) => m.role === 'tool')
+  assert.equal(result.contents[0].text, 'counting ')
+  assert.match(result.contents[1].value, /^error: /)
 })
 
 test('a model runs without an agent', async (t) => {

@@ -267,6 +267,45 @@ async def test_letting_go_of_a_turn_closes_a_generator_tool():
     await asyncio.wait_for(closed.wait(), 5)
 
 
+async def test_a_generator_tool_that_yields_what_a_message_cannot_hold_is_still_closed():
+    closed = asyncio.Event()
+
+    async def odd(city):
+        try:
+            yield "counting "
+            yield object()
+            yield "never"
+        finally:
+            closed.set()
+
+    desc = tool("odd", odd)
+    agent = await AgentBuilder(MODEL).agent_provider(PROVIDER).tool(desc).build()
+    [d async for d in agent.run_stream('odd {"city": "Seoul"}')]
+    await asyncio.wait_for(closed.wait(), 5)
+    result = next(m for m in agent.history if m["role"] == "tool")
+    assert result["contents"][0] == {"type": "text", "text": "counting "}
+    assert result["contents"][1]["value"].startswith("error: ")
+
+
+async def test_any_async_iterable_streams_a_tool_result():
+    class Countdown:
+        def __aiter__(self):
+            self.left = 3
+            return self
+
+        async def __anext__(self):
+            if self.left == 0:
+                raise StopAsyncIteration
+            self.left -= 1
+            return str(self.left)
+
+    desc = tool("countdown", lambda city: Countdown())
+    agent = await AgentBuilder(MODEL).agent_provider(PROVIDER).tool(desc).build()
+    [d async for d in agent.run_stream('countdown {"city": "Seoul"}')]
+    result = next(m for m in agent.history if m["role"] == "tool")
+    assert result["contents"] == [{"type": "text", "text": "210"}]
+
+
 async def test_run_stream_yields_deltas():
     agent = await AgentBuilder(MODEL).agent_provider(PROVIDER).build()
     deltas = [d async for d in agent.run_stream("hi")]

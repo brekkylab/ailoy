@@ -5,9 +5,9 @@
 //! the result or an awaitable of it, and the result must be what a message can hold: `None`, a
 //! bool, a number, a string, or a list or dict of those.
 //!
-//! An async generator streams its result instead: each value it yields is a piece of it, a
-//! string as text and anything else as a value, and its end finishes the result. A turn let go
-//! of mid-call closes the generator, so its `finally` runs.
+//! An async generator, or any other async iterable, streams its result instead: each value it
+//! yields is a piece of it, a string as text and anything else as a value, and its end
+//! finishes the result. A turn let go of mid-call closes the generator, so its `finally` runs.
 //!
 //! A Python tool is not handed the console; one that runs commands holds its own
 //! `ConsoleClient`.
@@ -87,7 +87,7 @@ async fn call(func: Arc<Py<PyAny>>, args: Value) -> PyResult<Returned> {
     .await?;
     Python::attach(|py| {
         let returned = returned.bind(py);
-        if returned.hasattr("__anext__")? && returned.hasattr("aclose")? {
+        if returned.hasattr("__aiter__")? {
             let steps = steps_class(py)?
                 .call1((returned, event_loop(locals.as_ref())?.event_loop(py)))?
                 .unbind();
@@ -97,9 +97,9 @@ async fn call(func: Arc<Py<PyAny>>, args: Value) -> PyResult<Returned> {
     })
 }
 
-/// Steps an async generator on its event loop for a caller on another thread. `Steps.next`
-/// runs one `__anext__` as a task, and `Steps.close` cancels a step under way and closes the
-/// generator, so its `finally` runs.
+/// Steps an async iterable on its event loop for a caller on another thread. `Steps.next`
+/// runs one `__anext__` as a task, and `Steps.close` cancels a step under way and closes an
+/// async generator, so its `finally` runs.
 const STEPS: &CStr = cr#"
 import asyncio
 
@@ -107,8 +107,8 @@ _closing = set()
 
 
 class Steps:
-    def __init__(self, agen, loop):
-        self.agen = agen
+    def __init__(self, iterable, loop):
+        self.agen = iterable.__aiter__()
         self.loop = loop
         self.task = None
 
@@ -140,7 +140,9 @@ class Steps:
                 await self.task
             except BaseException:
                 pass
-        await self.agen.aclose()
+        aclose = getattr(self.agen, "aclose", None)
+        if aclose is not None:
+            await aclose()
 "#;
 
 fn steps_class(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
@@ -163,9 +165,10 @@ fn pieces(steps: Py<PyAny>) -> impl futures::Stream<Item = PyResult<Value>> + Se
                 Ok(None) => {
                     open.0.take();
                 }
+                // Still open: dropping `open` closes the generator.
                 Err(e) => {
-                    open.0.take();
                     yield Err(e);
+                    break;
                 }
             }
         }
@@ -204,8 +207,9 @@ struct Open(Option<Py<PyAny>>);
 impl Drop for Open {
     fn drop(&mut self) {
         if let Some(steps) = self.0.take() {
-            // A closed event loop has nothing left to run the generator on.
-            Python::attach(|py| {
+            // A closed event loop or a finalizing interpreter has nothing left to run the
+            // generator on.
+            Python::try_attach(|py| {
                 let _ = steps.call_method0(py, "close");
             });
         }

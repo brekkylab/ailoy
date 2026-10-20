@@ -99,9 +99,10 @@ pub fn tool_func(func: Callback) -> ToolFunc {
                                 Value::String(text) => yield output(&id, Part::text(text)),
                                 value => yield output(&id, Part::value(value)),
                             },
+                            // Still open: dropping `open` returns the iterator.
                             Err(e) => {
-                                open.0.take();
                                 yield output(&id, error(e));
+                                break;
                             }
                         }
                     }
@@ -168,7 +169,7 @@ struct PieceStep {
 /// The async iterator a tool returned, as its `next` and `return` methods.
 pub struct Pieces {
     next: Tsfn<(), Returned<PieceStep>>,
-    end: Option<Tsfn<(), Unknown<'static>>>,
+    end: Option<Tsfn<(), Returned<Value>>>,
 }
 
 impl Pieces {
@@ -177,7 +178,7 @@ impl Pieces {
         let next: Function<(), Returned<PieceStep>> = iterator
             .get("next")?
             .ok_or_else(|| napi::Error::new(Status::InvalidArg, "not an async iterator"))?;
-        let end = match iterator.get::<Function<(), Unknown<'static>>>("return")? {
+        let end = match iterator.get::<Function<(), Returned<Value>>>("return")? {
             Some(end) => Some(bound(end, iterator)?),
             None => None,
         };
@@ -194,7 +195,9 @@ struct Open(Option<Pieces>);
 impl Drop for Open {
     fn drop(&mut self) {
         if let Some(end) = self.0.take().and_then(|pieces| pieces.end) {
-            end.call((), ThreadsafeFunctionCallMode::NonBlocking);
+            // Taking the returned promise as a `Returned` handles its rejection, which would
+            // otherwise end the process; what it settles to is of no use here.
+            end.call_with_return_value((), ThreadsafeFunctionCallMode::NonBlocking, |_, _| Ok(()));
         }
     }
 }
