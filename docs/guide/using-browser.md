@@ -61,7 +61,7 @@ To connect sooner, say while you are at your screen, call `start_browser()` (`st
 - If the browser closes, or you turn remote debugging off, the agent connects again on its next browser tool. The browser asks again, and if the agent's window is gone it gets a new one. The agent is told when this happens.
 - If remote debugging is off, the agent is told how to turn it on, and you can pass that on.
 
-By default ailoy looks for this OS's Chrome. For another Chromium-based browser, such as Chrome Beta, Canary or Chromium, pass its user data directory as `user_data_dir` (`userDataDir` in Node, `Browser::user_data_dir` in Rust): ailoy finds the browser by the `DevToolsActivePort` file it writes there while remote debugging is on.
+ailoy finds the browser by the `DevToolsActivePort` file a Chromium-based browser writes in its user data directory while remote debugging is on. By default it looks at Chrome, Chrome Beta, Dev and Canary, Chromium, Edge and Brave, and takes whichever turned remote debugging on last. To name one, pass `host_browser` (`hostBrowser` in Node, `Browser::host_browser` in Rust): `"chrome"`, `"chrome-beta"`, `"chrome-dev"`, `"chrome-canary"`, `"chromium"`, `"edge"` or `"brave"`, or any other by its user data directory (a path in Python, `{ userDataDir }` in Node, `HostBrowser::Custom` in Rust).
 
 ::: warning
 The agent uses your real browser, signed in wherever you are. Its tools cannot reach your other tabs, but in its own window it can do anything you could. `ask_user`'s description tells it to ask you before anything that cannot be undone, such as paying, sending or deleting. That is an instruction, though, not a limit, so use your own browser only with an agent and a task you trust.

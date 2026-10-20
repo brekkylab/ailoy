@@ -39,7 +39,11 @@ class AgentBuilder:
         self,
         *,
         ask_user: Literal["end_turn", "wait"] = "end_turn",
-        user_data_dir: _Path | None = None,
+        host_browser: Literal[
+            "chrome", "chrome-beta", "chrome-dev", "chrome-canary", "chromium", "edge", "brave"
+        ]
+        | _Path
+        | None = None,
         on_ask: Callable[[str], str | None | Awaitable[str | None]] | None = None,
         ask_timeout: float | None = None,
         careful: bool = True,
@@ -50,8 +54,8 @@ class AgentBuilder:
 
         It needs remote debugging on (in Chrome 144 or later, the default, at
         ``chrome://inspect/#remote-debugging``), and asks the person before it lets the agent
-        in; ``user_data_dir`` picks another Chromium-based browser, such as Chrome Beta,
-        Canary or Chromium.
+        in. ``host_browser`` names which, or gives any other's user data directory as a path;
+        with none, it is whichever turned remote debugging on last.
 
         ``ask_user`` is how the agent waits on the person: ``"end_turn"`` tells them in its
         reply and ends the turn, ``"wait"`` waits for ``on_ask``. ``on_ask`` is given the

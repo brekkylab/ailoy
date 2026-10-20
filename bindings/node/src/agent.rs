@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
-    browser::{AskUser, Browser},
+    browser::{AskUser, Browser, HostBrowser},
     datatype::Value,
     memory::Memory,
     message::{Message, MessageDeltaOutput, MessageOutput},
@@ -29,7 +29,7 @@ use ailoy::{
 use futures::{StreamExt as _, stream::BoxStream};
 use napi::{
     Env,
-    bindgen_prelude::{Object, PromiseRaw, This, Unknown},
+    bindgen_prelude::{Either, Object, PromiseRaw, This, Unknown},
 };
 use napi_derive::napi;
 use serde::Serialize;
@@ -91,11 +91,22 @@ fn built() -> napi::Error<String> {
     invalid("this AgentBuilder has already been built")
 }
 
+/// Any other Chromium-based browser, by the user data directory it writes `DevToolsActivePort`
+/// in.
+#[napi(object, object_to_js = false)]
+pub struct UserDataDir {
+    pub user_data_dir: String,
+}
+
 #[napi(object, object_to_js = false)]
 pub struct BrowserOptions {
-    /// Another Chromium-based browser's user data directory, such as Chrome Beta, Canary or
-    /// Chromium; this OS's Chrome by default.
-    pub user_data_dir: Option<String>,
+    /// Which browser: `'chrome'`, `'chrome-beta'`, `'chrome-dev'`, `'chrome-canary'`,
+    /// `'chromium'`, `'edge'`, `'brave'`, or any other by `{ userDataDir }`; with none, whichever
+    /// turned remote debugging on last.
+    #[napi(
+        ts_type = "'chrome' | 'chrome-beta' | 'chrome-dev' | 'chrome-canary' | 'chromium' | 'edge' | 'brave' | { userDataDir: string }"
+    )]
+    pub host_browser: Option<Either<String, UserDataDir>>,
     /// How the agent waits on the person: `'endTurn'` (the default) tells them in its reply and
     /// ends the turn, `'wait'` waits for `onAsk`.
     #[napi(ts_type = "'endTurn' | 'wait'")]
@@ -228,7 +239,7 @@ impl JsAgentBuilder {
         options: Option<BrowserOptions>,
     ) -> Result<This<'env>> {
         let options = options.unwrap_or(BrowserOptions {
-            user_data_dir: None,
+            host_browser: None,
             ask_user: None,
             on_ask: None,
             ask_timeout_ms: None,
@@ -244,8 +255,18 @@ impl JsAgentBuilder {
                 )));
             }
         });
-        if let Some(dir) = options.user_data_dir {
-            browser = browser.user_data_dir(dir);
+        if let Some(host) = options.host_browser {
+            browser = browser.host_browser(match host {
+                Either::A(name) => HostBrowser::named(&name).ok_or_else(|| {
+                    let names: Vec<&str> =
+                        HostBrowser::NAMED.iter().map(HostBrowser::name).collect();
+                    invalid(format!(
+                        "hostBrowser is one of {} or {{ userDataDir }}, not {name:?}",
+                        names.join(", ")
+                    ))
+                })?,
+                Either::B(dir) => HostBrowser::Custom(dir.user_data_dir.into()),
+            });
         }
         if let Some(func) = options.on_ask {
             let func = Arc::new(func);

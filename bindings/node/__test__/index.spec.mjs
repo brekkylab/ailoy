@@ -81,9 +81,15 @@ test('askUser is endTurn or wait', () => {
   assert.throws(() => new AgentBuilder('m').browser({ askUser: 'later' }), { code: 'INVALID_ARG' })
 })
 
+test('a host browser is a name or a directory', () => {
+  new AgentBuilder('m').browser({ hostBrowser: 'edge' })
+  new AgentBuilder('m').browser({ hostBrowser: { userDataDir: '/nonexistent' } })
+  assert.throws(() => new AgentBuilder('m').browser({ hostBrowser: 'edgee' }), { code: 'INVALID_ARG', message: /chrome-beta/ })
+})
+
 test('a browser can be less careful', () => {
   new AgentBuilder('m').browser({ careful: false })
-  new AgentBuilder('m').browser({ careful: true, userDataDir: '/nonexistent' })
+  new AgentBuilder('m').browser({ careful: true, hostBrowser: { userDataDir: '/nonexistent' } })
 })
 
 test('wait needs onAsk', async () => {
@@ -93,7 +99,7 @@ test('wait needs onAsk', async () => {
   })
   const onAsk = async () => 'done'
   const agent = await new AgentBuilder('fake-browser/model')
-    .browser({ askUser: 'wait', onAsk, askTimeoutMs: 5000, userDataDir: '/nonexistent' })
+    .browser({ askUser: 'wait', onAsk, askTimeoutMs: 5000, hostBrowser: { userDataDir: '/nonexistent' } })
     .build()
   await agent.close()
 })

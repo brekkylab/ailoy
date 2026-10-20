@@ -8,7 +8,9 @@ mod host;
 mod page;
 mod snapshot;
 
-use std::{fmt, future::Future, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
+pub use host::HostBrowser;
+
+use std::{fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use anyhow::bail;
 use futures::future::BoxFuture;
@@ -45,7 +47,7 @@ pub type AskHandler =
 /// A browser for an agent, set with [`AgentBuilder::browser`](crate::agent::AgentBuilder::browser).
 #[derive(Clone)]
 pub struct Browser {
-    user_data_dir: Option<PathBuf>,
+    host_browser: Option<HostBrowser>,
     ask_user: AskUser,
     on_ask: Option<AskHandler>,
     ask_timeout: Option<Duration>,
@@ -56,7 +58,7 @@ pub struct Browser {
 impl Default for Browser {
     fn default() -> Self {
         Self {
-            user_data_dir: None,
+            host_browser: None,
             ask_user: AskUser::default(),
             on_ask: None,
             ask_timeout: None,
@@ -69,7 +71,7 @@ impl Default for Browser {
 impl fmt::Debug for Browser {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Browser")
-            .field("user_data_dir", &self.user_data_dir)
+            .field("host_browser", &self.host_browser)
             .field("ask_user", &self.ask_user)
             .field("on_ask", &self.on_ask.is_some())
             .field("ask_timeout", &self.ask_timeout)
@@ -80,18 +82,19 @@ impl fmt::Debug for Browser {
 }
 
 impl Browser {
-    /// The person's own browser: a Chromium-based one with remote debugging on (Chrome by default:
-    /// 144 or later, at `chrome://inspect/#remote-debugging`), which asks them before it lets the
-    /// agent in. The agent works in a window of its own, signed in wherever they are; its tools
-    /// reach only the tabs it opened.
+    /// The person's own browser: a Chromium-based one with remote debugging on (in Chrome 144 or
+    /// later, at `chrome://inspect/#remote-debugging`), which asks them before it lets the agent
+    /// in. With none named by [`host_browser`](Self::host_browser), it is whichever of
+    /// [`HostBrowser::NAMED`] turned remote debugging on last. The agent works in a window of its
+    /// own, signed in wherever they are; its tools reach only the tabs it opened.
     pub fn host() -> Self {
         Self::default()
     }
 
-    /// The browser whose user data directory this is: another Chromium-based one, such as Chrome
-    /// Beta, Canary or Chromium. The default is this OS's Chrome.
-    pub fn user_data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
-        self.user_data_dir = Some(dir.into());
+    /// The browser to use, rather than the one found: a named one, or any other by its user
+    /// data directory ([`HostBrowser::Custom`]).
+    pub fn host_browser(mut self, browser: HostBrowser) -> Self {
+        self.host_browser = Some(browser);
         self
     }
 
@@ -207,7 +210,7 @@ impl BrowserSession {
         if live.declined && !asking {
             return Ok(Ready::Refused(host::DECLINED.into()));
         }
-        let cdp = match host::connect(self.config.user_data_dir.as_deref()).await? {
+        let cdp = match host::connect(self.config.host_browser.as_ref()).await? {
             Ok(cdp) => cdp,
             Err(host::Closed::NotEnabled(why)) => return Ok(Ready::Refused(why)),
             Err(host::Closed::Declined) => {
@@ -804,7 +807,7 @@ mod tests {
         let page = format!("data:text/html,{}", urlencoding::encode(html));
         let session = BrowserSession::new(
             Browser::host()
-                .user_data_dir(chrome.dir.path())
+                .host_browser(HostBrowser::Custom(chrome.dir.path().into()))
                 .start_url(&page),
         );
         session.start().await.unwrap();
@@ -937,7 +940,7 @@ mod tests {
         let mut agent = crate::agent::AgentBuilder::new("anthropic/claude-haiku-4-5")
             .browser(
                 Browser::host()
-                    .user_data_dir(chrome.dir.path())
+                    .host_browser(HostBrowser::Custom(chrome.dir.path().into()))
                     .start_url(&page),
             )
             .build()
