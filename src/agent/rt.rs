@@ -550,6 +550,7 @@ mod tests {
     use super::*;
     use crate::{
         agent::{AgentProvider, get_agent_providers_mut},
+        message::middle_truncate,
         message::{Role, TokenUsage},
         model::{LangModelProvider, set_lang_model_provider},
         suppress_panics, to_value,
@@ -942,10 +943,9 @@ mod tests {
             .filter(|d| d.delta.role == Some(Role::Tool) && !d.delta.contents.is_empty())
             .collect();
         assert_eq!(pieces.len(), 2);
-        for piece in pieces {
-            let text = delta_text(piece);
-            assert!(text.contains("characters omitted"), "{}", text.len());
-            assert!(text.len() < 31_000, "{}", text.len());
+        let cut = middle_truncate(&"x".repeat(40_000), 30_000);
+        for piece in &pieces {
+            assert_eq!(delta_text(piece), cut);
         }
         let assembled: Vec<_> =
             crate::message::into_messages(stream::iter(deltas.into_iter().map(anyhow::Ok)))
@@ -954,7 +954,11 @@ mod tests {
                 .await;
         let history = tool_results(agent.history());
         assert_eq!(tool_results(&assembled), history);
-        assert!(text_of(&agent.history()[3]).len() < 31_000);
+        // The pieces as they streamed, cut once more as a whole.
+        assert_eq!(
+            text_of(&agent.history()[3]),
+            middle_truncate(&cut.repeat(2), 30_000)
+        );
         // The model read the clamped result.
         assert_eq!(
             tool_results(&model.seen.lock().unwrap()[1]),
@@ -966,6 +970,29 @@ mod tests {
         let outputs: Vec<_> = agent.run(user("hi")).map(Result::unwrap).collect().await;
         let yielded: Vec<_> = outputs.iter().map(|o| &o.message).collect();
         assert_eq!(tool_results(yielded), history);
+    }
+
+    /// A result clamped as it streamed is not cut again when it finishes in one piece.
+    #[tokio::test]
+    async fn test_a_large_result_returned_once_is_cut_once() {
+        let name = "test-agent-tool-large";
+        let (_, spec) = scripted(name, [calls(&[("c1", "large")]), answer("done")]);
+        let spec = with_tool(
+            name,
+            spec,
+            "large",
+            tool_func!(|_args: Value, id: String| -> Message {
+                Message::new(Role::Tool)
+                    .with_contents([Part::text("x".repeat(40_000))])
+                    .with_id(id)
+            }),
+        );
+        let mut agent = Agent::try_with_provider(spec, name).await.unwrap();
+        agent.run(user("hi")).for_each(|_| async {}).await;
+        assert_eq!(
+            text_of(&agent.history()[3]),
+            middle_truncate(&"x".repeat(40_000), 30_000)
+        );
     }
 
     #[tokio::test]

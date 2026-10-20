@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::message::{
     Delta, FinishReason, Message, MessageOutput, PartDelta, Role, TokenUsage,
-    tool_result::cap_tool_result,
+    tool_result::{ToolResult, cap_tool_result},
 };
 
 /// A streaming, incremental update to a [`Message`].
@@ -347,7 +347,7 @@ where
 #[derive(Default)]
 pub(crate) struct Assembler {
     message: MessageDeltaOutput,
-    tools: Vec<(String, MessageDeltaOutput)>,
+    tools: Vec<(String, ToolResult)>,
 }
 
 impl Assembler {
@@ -357,42 +357,38 @@ impl Assembler {
         &mut self,
         delta: MessageDeltaOutput,
     ) -> anyhow::Result<Option<MessageOutput>> {
-        let tool = match (&delta.delta.role, &delta.delta.id) {
-            (Some(Role::Tool), Some(id)) => {
-                Some(match self.tools.iter().position(|(other, _)| other == id) {
-                    Some(at) => at,
-                    None => {
-                        self.tools.push((id.clone(), MessageDeltaOutput::new()));
-                        self.tools.len() - 1
-                    }
-                })
+        let (Some(Role::Tool), Some(id)) = (&delta.delta.role, &delta.delta.id) else {
+            self.message = std::mem::take(&mut self.message).accumulate(delta)?;
+            if self.message.finish_reason.is_none() {
+                return Ok(None);
             }
-            _ => None,
+            return finish(std::mem::take(&mut self.message)).map(Some);
         };
-        let slot = match tool {
-            Some(at) => &mut self.tools[at].1,
-            None => &mut self.message,
+        let at = match self.tools.iter().position(|(other, _)| other == id) {
+            Some(at) => at,
+            None => {
+                self.tools.push((id.clone(), ToolResult::default()));
+                self.tools.len() - 1
+            }
         };
-        *slot = std::mem::take(slot).accumulate(delta)?;
-        if slot.finish_reason.is_none() {
+        self.tools[at].1.push(delta)?;
+        if !self.tools[at].1.is_done() {
             return Ok(None);
         }
-        let done = match tool {
-            Some(at) => self.tools.remove(at).1,
-            None => std::mem::take(&mut self.message),
-        };
-        finish(done).map(Some)
+        self.tools.remove(at).1.finish().map(Some)
     }
 
     /// The messages left unfinished, finished as `Stop`.
     pub(crate) fn rest(self) -> impl Iterator<Item = anyhow::Result<MessageOutput>> {
-        std::iter::once(self.message)
-            .chain(self.tools.into_iter().map(|(_, acc)| acc))
+        let message = Some(self.message)
             .filter(|acc| acc.delta.role.is_some())
             .map(|mut acc| {
                 acc.finish_reason = Some(FinishReason::Stop {});
                 finish(acc)
-            })
+            });
+        message
+            .into_iter()
+            .chain(self.tools.into_iter().map(|(_, result)| result.finish()))
     }
 }
 
@@ -483,7 +479,7 @@ mod tests {
     use futures::StreamExt as _;
 
     use super::*;
-    use crate::message::Part;
+    use crate::message::{Part, middle_truncate};
 
     fn text_delta(text: &str) -> MessageDeltaOutput {
         MessageDeltaOutput {
@@ -598,7 +594,7 @@ mod tests {
         let messages: Vec<_> = into_messages(deltas).map(|m| m.unwrap()).collect().await;
 
         let text = messages[0].message.contents[0].as_text().unwrap();
-        assert!(text.contains("characters omitted"), "{}", text.len());
+        assert_eq!(text, middle_truncate(&half.repeat(2), 30_000));
     }
 
     /// A stream that ends mid-message (no terminal finish_reason) still yields

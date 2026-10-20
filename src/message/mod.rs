@@ -15,3 +15,5 @@ pub use message_delta::{MessageDelta, MessageDeltaOutput, into_messages};
 pub use part::{Part, PartFunction, PartImage};
 pub use part_delta::{PartDelta, PartDeltaFunction};
 pub(crate) use tool_result::cap_tool_delta;
+#[cfg(test)]
+pub(crate) use tool_result::middle_truncate;
