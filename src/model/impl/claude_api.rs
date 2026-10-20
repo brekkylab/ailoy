@@ -24,9 +24,9 @@ use crate::{
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
 
-/// The API requires `max_tokens`; this is the one sent. It covers thinking too, and
-/// stays above the largest thinking budget.
-const MAX_TOKENS: u64 = 32000;
+/// The API requires `max_tokens`; this is the one sent: the output cap of every current
+/// Claude model, so it cuts nothing the model would not. Thinking counts against it.
+const MAX_TOKENS: u64 = 128000;
 
 /// The API's name for `effort`.
 fn effort_str(effort: ThinkingEffort) -> &'static str {
@@ -576,6 +576,14 @@ fn closed_schema(schema: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_request_carries_the_models_output_cap() {
+        let model = ClaudeApiModel::new("claude-sonnet-5-5", "k");
+        let messages = [Message::new(Role::User).with_contents([Part::text("hi")])];
+        let body = model.body(&messages, &[], &LangModelOptions::default());
+        assert_eq!(body["max_tokens"], 128000);
+    }
 
     #[test]
     fn closed_schema_drops_refused_constraints() {

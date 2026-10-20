@@ -26,6 +26,10 @@ use crate::{
 /// Per-part size limit for tool results, past which the middle is cut out.
 const MAX_TOOL_RESULT_CHARS: usize = 30_000;
 
+/// The error a turn ends with when the model's output limit cut its reply. The cut reply
+/// stays in the history, so the next query can ask for the rest.
+const CUT_OFF: &str = "the model's reply was cut off at its output limit";
+
 /// An agent that drives an [`InferLangModel`] through multi-turn, tool-augmented
 /// conversations.
 ///
@@ -165,7 +169,8 @@ impl Agent {
     /// Run one turn, yielding each model message and tool result as it completes.
     ///
     /// If the model fails before its first message of the turn, `query` is taken back out
-    /// of the history, so the agent can be run again.
+    /// of the history, so the agent can be run again. A reply the model's output limit cut
+    /// short is yielded and then ends the turn with an error.
     pub fn run(&mut self, query: Message) -> BoxStream<'_, anyhow::Result<MessageOutput>> {
         Box::pin(async_stream::try_stream! {
             self.begin_turn(query).await;
@@ -189,7 +194,11 @@ impl Agent {
                 committed = true;
 
                 let calls = tool_calls(&output);
+                let cut_off = matches!(output.finish_reason, FinishReason::Length {});
                 yield output;
+                if cut_off {
+                    Err(anyhow::anyhow!(CUT_OFF))?;
+                }
                 if calls.is_empty() {
                     break;
                 }
@@ -246,6 +255,9 @@ impl Agent {
                 };
                 self.commit(&output);
                 committed = true;
+                if matches!(output.finish_reason, FinishReason::Length {}) {
+                    Err(anyhow::anyhow!(CUT_OFF))?;
+                }
 
                 // Already streamed as deltas.
                 let calls = tool_calls(&output);
@@ -574,6 +586,14 @@ mod tests {
         })
     }
 
+    fn cut(text: &str) -> anyhow::Result<MessageOutput> {
+        Ok(MessageOutput {
+            message: Message::new(Role::Assistant).with_contents([Part::text(text)]),
+            finish_reason: FinishReason::Length {},
+            usage: None,
+        })
+    }
+
     fn calls(calls: &[(&str, &str)]) -> anyhow::Result<MessageOutput> {
         Ok(MessageOutput {
             message: Message::new(Role::Assistant).with_tool_calls(
@@ -734,6 +754,47 @@ mod tests {
         assert!(text_of(&results["c3"]).contains("no tool named"));
         assert!(text_of(&results["c4"]).contains("needs a console"));
         assert_eq!(text_of(agent.history().last().unwrap()), "done");
+    }
+
+    #[tokio::test]
+    async fn test_a_cut_off_reply_ends_the_turn_with_an_error() {
+        let name = "test-agent-cut-off";
+        let (_, spec) = scripted(name, [cut("half"), answer("rest")]);
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let outputs: Vec<_> = agent.run(user("hi")).collect().await;
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(text_of(&outputs[0].as_ref().unwrap().message), "half");
+        assert!(
+            outputs[1]
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains("cut off")
+        );
+        // The cut reply stays, so the next query can ask for the rest.
+        assert_eq!(
+            roles(agent.history()),
+            [Role::System, Role::User, Role::Assistant]
+        );
+
+        let deltas: Vec<_> = agent.run_stream(user("go on")).collect().await;
+        assert!(deltas.iter().all(Result::is_ok));
+        assert_eq!(text_of(agent.history().last().unwrap()), "rest");
+    }
+
+    #[tokio::test]
+    async fn test_run_stream_ends_a_cut_off_reply_with_an_error() {
+        let name = "test-agent-cut-off-stream";
+        let (_, spec) = scripted(name, [cut("half")]);
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let deltas: Vec<_> = agent.run_stream(user("hi")).collect().await;
+        assert!(deltas.last().unwrap().is_err());
+        assert_eq!(
+            roles(agent.history()),
+            [Role::System, Role::User, Role::Assistant]
+        );
     }
 
     #[tokio::test]
