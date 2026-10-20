@@ -3,7 +3,7 @@ use std::{collections::HashMap, panic::AssertUnwindSafe, path::Path, sync::Arc};
 use anyhow::Context as _;
 use futures::{
     FutureExt as _, StreamExt as _,
-    stream::{BoxStream, FuturesUnordered},
+    stream::{self, BoxStream},
 };
 use tokio::sync::Mutex;
 use virtx::console::ConsoleClient;
@@ -14,7 +14,10 @@ use super::{
 };
 use crate::{
     datatype::Value,
-    message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
+    message::{
+        Assembler, Delta as _, FinishReason, Message, MessageDelta, MessageDeltaOutput,
+        MessageOutput, Part, Role, cap_tool_delta,
+    },
     model::{InferLangModel, LangModelOptions, create_lang_model},
     tool::{
         ToolDesc, ToolFunc, get_tool_providers,
@@ -24,9 +27,6 @@ use crate::{
         },
     },
 };
-
-/// Per-part size limit for tool results, past which the middle is cut out.
-const MAX_TOOL_RESULT_CHARS: usize = 30_000;
 
 /// An agent that drives an [`InferLangModel`] through multi-turn, tool-augmented
 /// conversations.
@@ -221,18 +221,24 @@ impl Agent {
                 }
 
                 let mut results = self.call_tools(calls);
-                while let Some(message) = results.next().await {
-                    let message = message?;
-                    self.state.history.push(message.clone());
-                    yield tool_output(message);
+                let mut assembler = Assembler::default();
+                while let Some(delta) = results.next().await {
+                    if let Some(output) = assembler.push(delta?)? {
+                        self.state.history.push(output.message.clone());
+                        yield output;
+                    }
                 }
             }
         })
     }
 
-    /// Like [`run`](Self::run), but yields the model's output as deltas while it is
-    /// generated, and each tool result as one complete delta. A `finish_reason` marks the
-    /// end of a message.
+    /// Like [`run`](Self::run), but yields each message as deltas while it is produced:
+    /// the model's as it is generated, and each tool result as its tool yields it. A
+    /// `finish_reason` marks the end of a message.
+    ///
+    /// The calls of one batch run concurrently, so their results' deltas interleave; each
+    /// carries its call's id. A tool result's deltas are clamped one by one, and the result
+    /// they make up is clamped again before it goes into the history.
     pub fn run_stream(
         &mut self,
         query: Message,
@@ -280,10 +286,13 @@ impl Agent {
                 }
 
                 let mut results = self.call_tools(calls);
-                while let Some(message) = results.next().await {
-                    let message = message?;
-                    self.state.history.push(message.clone());
-                    yield tool_output(message).into();
+                let mut assembler = Assembler::default();
+                while let Some(delta) = results.next().await {
+                    let delta = delta?;
+                    if let Some(output) = assembler.push(delta.clone())? {
+                        self.state.history.push(output.message);
+                    }
+                    yield delta;
                 }
             }
         })
@@ -344,13 +353,16 @@ impl Agent {
         }
     }
 
-    /// Run `calls` concurrently, yielding each result as a [`Role::Tool`] message as it
-    /// finishes, one per call.
+    /// Run `calls` concurrently, yielding each one's [`Role::Tool`] result as deltas while
+    /// its tool produces them.
     ///
     /// The console is started for the batch only if a console tool is in it, and stopped
     /// after, so its backend (possibly a whole micro-VM) is not kept up while the model
     /// thinks. Stopping keeps the session, so the next batch resumes the same console.
-    fn call_tools(&self, calls: Vec<Part>) -> BoxStream<'static, anyhow::Result<Message>> {
+    fn call_tools(
+        &self,
+        calls: Vec<Part>,
+    ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
         let calls: Vec<_> = calls
             .iter()
             .filter_map(Part::as_function)
@@ -373,12 +385,13 @@ impl Agent {
                 console.start().await?;
             }
 
-            let mut pending: FuturesUnordered<_> = calls
-                .into_iter()
-                .map(|(id, name, args, tool)| call_tool(id, name, args, tool, console.clone()))
-                .collect();
-            while let Some(message) = pending.next().await {
-                yield message;
+            let mut pending = stream::select_all(
+                calls
+                    .into_iter()
+                    .map(|(id, name, args, tool)| call_tool(id, name, args, tool, console.clone())),
+            );
+            while let Some(delta) = pending.next().await {
+                yield delta;
             }
 
             if needs_console && let Some(console) = console.lock().await.as_mut() {
@@ -393,14 +406,6 @@ fn tool_calls(output: &MessageOutput) -> Vec<Part> {
     match output.finish_reason {
         FinishReason::ToolCall {} => output.message.tool_calls.clone().unwrap_or_default(),
         _ => Vec::new(),
-    }
-}
-
-fn tool_output(message: Message) -> MessageOutput {
-    MessageOutput {
-        message,
-        finish_reason: FinishReason::Stop {},
-        usage: None,
     }
 }
 
@@ -438,85 +443,99 @@ fn tool_error(id: String, text: impl Into<String>) -> Message {
         .with_id(id)
 }
 
-/// Run one tool call to its result, the last message its stream yields.
+/// Run one tool call, yielding its result as deltas as the tool produces them; the last
+/// carries `finish_reason`.
 ///
-/// Whatever goes wrong (an unknown tool, a missing console, a panic) becomes the result,
-/// so the model gets exactly one per call and can recover.
-async fn call_tool(
+/// Each item the tool's stream yields is a piece of the result, sent on as soon as it is
+/// yielded. Whatever goes wrong (an unknown tool, a missing console, a panic) becomes part
+/// of the result, so the model gets exactly one per call and can recover.
+fn call_tool(
     id: String,
     name: String,
     args: Value,
     tool: Option<ToolFunc>,
     console: Arc<Mutex<Option<ConsoleClient>>>,
-) -> Message {
-    let Some(tool) = tool else {
-        return tool_error(id, format!("there is no tool named '{name}'"));
-    };
+) -> BoxStream<'static, MessageDeltaOutput> {
+    Box::pin(async_stream::stream! {
+        let Some(tool) = tool else {
+            yield tool_delta(&id, [Part::text(format!("there is no tool named '{name}'"))], true);
+            return;
+        };
 
-    async fn last<T>(_: Option<T>, item: T) -> Option<T> {
-        Some(item)
-    }
-    let call_id = id.clone();
-    let run = async move {
-        match tool.call_pure(args.clone(), call_id.clone()) {
-            Some(stream) => Ok(stream.fold(None, last).await),
-            None => {
-                let mut guard = console.lock().await;
-                let Some(console) = guard.as_mut() else {
-                    return Err("it needs a console, and the agent has none; \
-                                give it one with `AgentState::with_console`");
-                };
-                Ok(tool.call(args, call_id, console).fold(None, last).await)
-            }
-        }
-    };
+        let mut guard = None;
+        let pieces = if tool.needs_console() {
+            let Some(console) = guard.insert(console.lock().await).as_mut() else {
+                let text = format!(
+                    "tool '{name}' failed: it needs a console, and the agent has none; \
+                     give it one with `AgentState::with_console`"
+                );
+                yield tool_delta(&id, [Part::text(text)], true);
+                return;
+            };
+            std::panic::catch_unwind(AssertUnwindSafe(|| tool.call(args, id.clone(), console)))
+        } else {
+            std::panic::catch_unwind(AssertUnwindSafe(|| tool.call_pure(args, id.clone())))
+                .map(|pieces| pieces.expect("a tool that needs no console is called pure"))
+        };
+        let Ok(pieces) = pieces else {
+            yield tool_delta(&id, [Part::text(format!("tool '{name}' panicked"))], true);
+            return;
+        };
 
-    let mut message = match AssertUnwindSafe(run).catch_unwind().await {
-        Ok(Ok(Some(output))) => output.message,
-        Ok(Ok(None)) => return tool_error(id, format!("tool '{name}' produced no output")),
-        Ok(Err(e)) => return tool_error(id, format!("tool '{name}' failed: {e}")),
-        Err(_) => return tool_error(id, format!("tool '{name}' panicked")),
-    };
-    message.role = Role::Tool;
-    message.id.get_or_insert(id);
-    cap_tool_result(message)
-}
-
-/// Clamp every part of a tool result, so large payloads (e.g. web pages) don't pile up in
-/// the history. An oversized [`Part::Value`] is measured as JSON and replaced by the cut
-/// JSON as a string.
-fn cap_tool_result(mut message: Message) -> Message {
-    for part in &mut message.contents {
-        match part {
-            Part::Value { value } => {
-                let json = serde_json::to_string(value).unwrap_or_default();
-                if json.len() > MAX_TOOL_RESULT_CHARS {
-                    *value = Value::string(middle_truncate(&json, MAX_TOOL_RESULT_CHARS));
+        let mut pieces = AssertUnwindSafe(pieces).catch_unwind();
+        let mut next = pieces.next().await;
+        let mut produced = false;
+        loop {
+            let parts = match next {
+                Some(Ok(output)) => output.message.contents,
+                Some(Err(_)) => {
+                    let text = format!("{}tool '{name}' panicked", if produced { "\n\n" } else { "" });
+                    yield tool_delta(&id, [Part::text(text)], true);
+                    return;
                 }
-            }
-            Part::Text { text } if text.len() > MAX_TOOL_RESULT_CHARS => {
-                *text = middle_truncate(text, MAX_TOOL_RESULT_CHARS);
-            }
-            _ => {}
+                None if produced => {
+                    yield tool_delta(&id, [], true);
+                    return;
+                }
+                None => {
+                    let text = format!("tool '{name}' produced no output");
+                    yield tool_delta(&id, [Part::text(text)], true);
+                    return;
+                }
+            };
+            produced = true;
+            // A piece the tool has already ended after goes out as the finished result,
+            // so a tool that returns once streams one complete delta.
+            next = match pieces.next().now_or_never() {
+                Some(None) => {
+                    yield tool_delta(&id, parts, true);
+                    return;
+                }
+                Some(after) => {
+                    yield tool_delta(&id, parts, false);
+                    after
+                }
+                None => {
+                    yield tool_delta(&id, parts, false);
+                    pieces.next().await
+                }
+            };
         }
-    }
-    message
+    })
 }
 
-/// Keep `max_chars` characters of `s`, half from each end, around a note of what was cut.
-fn middle_truncate(s: &str, max_chars: usize) -> String {
-    let len = s.chars().count();
-    if len <= max_chars {
-        return s.to_owned();
+/// A piece of call `id`'s result, clamped; `done` when it ends the result.
+fn tool_delta(id: &str, parts: impl IntoIterator<Item = Part>, done: bool) -> MessageDeltaOutput {
+    MessageDeltaOutput {
+        delta: cap_tool_delta(
+            MessageDelta::new()
+                .with_role(Role::Tool)
+                .with_id(id)
+                .with_contents(parts),
+        ),
+        finish_reason: done.then_some(FinishReason::Stop {}),
+        usage: None,
     }
-    let head = max_chars / 2;
-    let tail = max_chars - head;
-    let head_str: String = s.chars().take(head).collect();
-    let tail_str: String = s.chars().skip(len - tail).collect();
-    format!(
-        "{head_str}\n\n... [{} characters omitted] ...\n\n{tail_str}",
-        len - head - tail
-    )
 }
 
 #[cfg(test)]
@@ -720,6 +739,192 @@ mod tests {
         assert_eq!(text_of(agent.history().last().unwrap()), "done");
     }
 
+    /// Registers `func` as the tool `tool` in the provider [`scripted`] made for `name`, and
+    /// adds it to `spec`.
+    fn with_tool(name: &str, spec: AgentSpec, tool: &str, func: ToolFunc) -> AgentSpec {
+        get_tool_providers_mut()
+            .get_mut(name)
+            .unwrap()
+            .insert_func(tool, func);
+        spec.tool(
+            ToolDescBuilder::new(tool)
+                .parameters(to_value!({"type": "object", "properties": {}}))
+                .build(),
+        )
+    }
+
+    fn piece(id: &str, text: &str) -> MessageOutput {
+        MessageOutput {
+            message: Message::new(Role::Tool)
+                .with_contents([Part::text(text)])
+                .with_id(id),
+            finish_reason: FinishReason::Stop {},
+            usage: None,
+        }
+    }
+
+    fn delta_text(delta: &MessageDeltaOutput) -> String {
+        delta
+            .delta
+            .contents
+            .iter()
+            .map(|p| match p {
+                crate::message::PartDelta::Text { text } => text.as_str(),
+                _ => "",
+            })
+            .collect()
+    }
+
+    /// Tool messages, as JSON so they compare.
+    fn tool_results<'a>(messages: impl IntoIterator<Item = &'a Message>) -> Vec<Value> {
+        messages
+            .into_iter()
+            .filter(|m| m.role == Role::Tool)
+            .map(|m| to_value!(serde_json::to_value(m).unwrap()))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn test_a_tool_piece_arrives_before_the_next_exists() {
+        let name = "test-agent-tool-stream";
+        let (_, spec) = scripted(name, [calls(&[("c1", "gated")]), answer("done")]);
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let opener = gate.clone();
+        let spec = with_tool(
+            name,
+            spec,
+            "gated",
+            ToolFunc::new(move |_, id| {
+                let gate = gate.clone();
+                Box::pin(async_stream::stream! {
+                    yield piece(&id, "first ");
+                    gate.notified().await;
+                    yield piece(&id, "second");
+                })
+            }),
+        );
+        let mut agent = Agent::try_with_provider(spec, name).await.unwrap();
+
+        let mut deltas = agent.run_stream(user("hi"));
+        deltas.next().await.unwrap().unwrap(); // the model's call
+        let first = tokio::time::timeout(std::time::Duration::from_secs(5), deltas.next())
+            .await
+            .expect("the first piece is held back until the second exists")
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.delta.role, Some(Role::Tool));
+        assert_eq!(first.delta.id.as_deref(), Some("c1"));
+        assert_eq!(first.finish_reason, None);
+        assert_eq!(delta_text(&first), "first ");
+
+        opener.notify_one();
+        let rest: Vec<_> = deltas.map(Result::unwrap).collect().await;
+        assert_eq!(delta_text(&rest[0]), "second");
+        let result = agent
+            .history()
+            .iter()
+            .find(|m| m.role == Role::Tool)
+            .unwrap();
+        assert_eq!(text_of(result), "first second");
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_calls_stream_into_their_own_results() {
+        let name = "test-agent-tool-stream-concurrent";
+        let (_, spec) = scripted(
+            name,
+            [calls(&[("c1", "count"), ("c2", "count")]), answer("done")],
+        );
+        let spec = with_tool(
+            name,
+            spec,
+            "count",
+            ToolFunc::new(|_, id| {
+                Box::pin(async_stream::stream! {
+                    for n in ["1", "2", "3"] {
+                        yield piece(&id, n);
+                        tokio::task::yield_now().await;
+                    }
+                })
+            }),
+        );
+        let mut agent = Agent::try_with_provider(spec, name).await.unwrap();
+
+        let deltas: Vec<_> = agent
+            .run_stream(user("hi"))
+            .map(Result::unwrap)
+            .collect()
+            .await;
+        let assembled: Vec<_> =
+            crate::message::into_messages(stream::iter(deltas.into_iter().map(anyhow::Ok)))
+                .map(|o| o.unwrap().message)
+                .collect()
+                .await;
+
+        let results = tool_results(&assembled);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results, tool_results(agent.history()));
+        for result in agent.history().iter().filter(|m| m.role == Role::Tool) {
+            assert_eq!(text_of(result), "123");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_a_streamed_result_is_clamped_piece_by_piece_and_whole() {
+        let name = "test-agent-tool-stream-clamp";
+        let script = || [calls(&[("c1", "flood")]), answer("done")];
+        let (model, spec) = scripted(name, script().into_iter().chain(script()));
+        let spec = with_tool(
+            name,
+            spec,
+            "flood",
+            ToolFunc::new(|_, id| {
+                Box::pin(async_stream::stream! {
+                    for _ in 0..2 {
+                        yield piece(&id, &"x".repeat(40_000));
+                        tokio::task::yield_now().await;
+                    }
+                })
+            }),
+        );
+
+        let mut agent = Agent::try_with_provider(spec.clone(), name).await.unwrap();
+        let deltas: Vec<_> = agent
+            .run_stream(user("hi"))
+            .map(Result::unwrap)
+            .collect()
+            .await;
+        let pieces: Vec<_> = deltas
+            .iter()
+            .filter(|d| d.delta.role == Some(Role::Tool) && !d.delta.contents.is_empty())
+            .collect();
+        assert_eq!(pieces.len(), 2);
+        for piece in pieces {
+            let text = delta_text(piece);
+            assert!(text.contains("characters omitted"), "{}", text.len());
+            assert!(text.len() < 31_000, "{}", text.len());
+        }
+        let assembled: Vec<_> =
+            crate::message::into_messages(stream::iter(deltas.into_iter().map(anyhow::Ok)))
+                .map(|o| o.unwrap().message)
+                .collect()
+                .await;
+        let history = tool_results(agent.history());
+        assert_eq!(tool_results(&assembled), history);
+        assert!(text_of(&agent.history()[3]).len() < 31_000);
+        // The model read the clamped result.
+        assert_eq!(
+            tool_results(&model.seen.lock().unwrap()[1]),
+            history,
+            "the model reads what the history keeps"
+        );
+
+        let mut agent = Agent::try_with_provider(spec, name).await.unwrap();
+        let outputs: Vec<_> = agent.run(user("hi")).map(Result::unwrap).collect().await;
+        let yielded: Vec<_> = outputs.iter().map(|o| &o.message).collect();
+        assert_eq!(tool_results(yielded), history);
+    }
+
     #[tokio::test]
     async fn test_every_call_gets_one_result_whatever_goes_wrong() {
         suppress_panics!();
@@ -832,12 +1037,5 @@ mod tests {
         // Under the limit before that, so the second call saw the result whole.
         let result = seen[1].iter().find(|m| m.role == Role::Tool).unwrap();
         assert_ne!(text_of(result), "[context truncated]");
-    }
-
-    #[test]
-    fn test_middle_truncate_keeps_both_ends() {
-        let cut = middle_truncate(&"a".repeat(10), 4);
-        assert!(cut.starts_with("aa\n\n... [6 characters omitted]"), "{cut}");
-        assert_eq!(middle_truncate("short", 10), "short");
     }
 }

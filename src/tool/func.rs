@@ -23,6 +23,13 @@ enum ToolFuncInner {
     WithConsole(Arc<ConsoleFn>),
 }
 
+/// A tool's body: called with the model's arguments and the call's id, it streams the
+/// call's result.
+///
+/// Each item the stream yields is a piece of the result, passed on to whoever iterates the
+/// turn as soon as it is yielded, and the stream's end finishes the result. The pieces'
+/// contents make up the result's: adjacent text is joined, and a value or an image is a part
+/// of its own.
 #[derive(Clone)]
 pub struct ToolFunc {
     inner: ToolFuncInner,
@@ -198,7 +205,7 @@ pub mod __private {
 /// tool_func!(async |args: Value, id: String, console: &mut ConsoleClient| -> Message { … })
 /// ```
 ///
-/// Stream — closure body produces a `Stream`/`BoxStream`:
+/// Stream — closure body produces a `Stream`/`BoxStream`, each item a piece of the result:
 ///
 /// ```ignore
 /// tool_func!(stream |args: Value| -> Value { … })

@@ -3,7 +3,10 @@ use std::fmt;
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
-use crate::message::{Delta, FinishReason, Message, MessageOutput, PartDelta, Role, TokenUsage};
+use crate::message::{
+    Delta, FinishReason, Message, MessageOutput, PartDelta, Role, TokenUsage,
+    tool_result::cap_tool_result,
+};
 
 /// A streaming, incremental update to a [`Message`].
 ///
@@ -314,6 +317,9 @@ impl From<MessageOutput> for MessageDeltaOutput {
 /// Adapts a [`MessageDeltaOutput`] stream (e.g. from `Agent::run_stream`) into completed
 /// [`MessageOutput`]s, the view `Agent::run` gives. A delta carrying a `finish_reason`
 /// ends each message; ailoy's producers guarantee every message has one.
+///
+/// The results of one batch of tool calls stream concurrently, so their deltas interleave;
+/// each is assembled by its call id, and clamped as the history keeps it.
 pub fn into_messages<S>(
     deltas: S,
 ) -> impl futures::Stream<Item = anyhow::Result<MessageOutput>> + Send
@@ -323,20 +329,79 @@ where
     use futures::StreamExt as _;
     async_stream::try_stream! {
         let mut deltas = std::pin::pin!(deltas);
-        let mut acc = MessageDeltaOutput::new();
+        let mut assembler = Assembler::default();
         while let Some(item) = deltas.next().await {
-            acc = acc.accumulate(item?)?;
-            if acc.finish_reason.is_some() {
-                let done = std::mem::replace(&mut acc, MessageDeltaOutput::new());
-                yield done.finish()?;
+            if let Some(output) = assembler.push(item?)? {
+                yield output;
             }
         }
-        // Only for a non-conforming stream ending mid-message: keep the partial as Stop.
-        if acc.delta.role.is_some() {
-            acc.finish_reason = Some(FinishReason::Stop {});
-            yield acc.finish()?;
+        // Only for a non-conforming stream ending mid-message: keep the partials as Stop.
+        for output in assembler.rest() {
+            yield output?;
         }
     }
+}
+
+/// Assembles [`MessageOutput`]s from deltas: the model's one message at a time, and tool
+/// results one per call id, since a batch's calls run concurrently.
+#[derive(Default)]
+pub(crate) struct Assembler {
+    message: MessageDeltaOutput,
+    tools: Vec<(String, MessageDeltaOutput)>,
+}
+
+impl Assembler {
+    /// Take in `delta`, and give back the message it finishes, if any. A tool result comes
+    /// out clamped, as the history keeps it.
+    pub(crate) fn push(
+        &mut self,
+        delta: MessageDeltaOutput,
+    ) -> anyhow::Result<Option<MessageOutput>> {
+        let tool = match (&delta.delta.role, &delta.delta.id) {
+            (Some(Role::Tool), Some(id)) => {
+                Some(match self.tools.iter().position(|(other, _)| other == id) {
+                    Some(at) => at,
+                    None => {
+                        self.tools.push((id.clone(), MessageDeltaOutput::new()));
+                        self.tools.len() - 1
+                    }
+                })
+            }
+            _ => None,
+        };
+        let slot = match tool {
+            Some(at) => &mut self.tools[at].1,
+            None => &mut self.message,
+        };
+        *slot = std::mem::take(slot).accumulate(delta)?;
+        if slot.finish_reason.is_none() {
+            return Ok(None);
+        }
+        let done = match tool {
+            Some(at) => self.tools.remove(at).1,
+            None => std::mem::take(&mut self.message),
+        };
+        finish(done).map(Some)
+    }
+
+    /// The messages left unfinished, finished as `Stop`.
+    pub(crate) fn rest(self) -> impl Iterator<Item = anyhow::Result<MessageOutput>> {
+        std::iter::once(self.message)
+            .chain(self.tools.into_iter().map(|(_, acc)| acc))
+            .filter(|acc| acc.delta.role.is_some())
+            .map(|mut acc| {
+                acc.finish_reason = Some(FinishReason::Stop {});
+                finish(acc)
+            })
+    }
+}
+
+fn finish(acc: MessageDeltaOutput) -> anyhow::Result<MessageOutput> {
+    let mut output = acc.finish()?;
+    if output.message.role == Role::Tool {
+        output.message = cap_tool_result(output.message);
+    }
+    Ok(output)
 }
 
 impl Delta for MessageDeltaOutput {
@@ -483,6 +548,57 @@ mod tests {
             results.iter().any(|r| r.is_err()),
             "role change without a finish_reason must error, not silently split"
         );
+    }
+
+    fn tool_delta(id: &str, text: &str, done: bool) -> MessageDeltaOutput {
+        MessageDeltaOutput {
+            delta: MessageDelta::new()
+                .with_role(Role::Tool)
+                .with_id(id)
+                .with_contents([PartDelta::Text { text: text.into() }]),
+            finish_reason: done.then_some(FinishReason::Stop {}),
+            usage: None,
+        }
+    }
+
+    /// Two calls' results interleave; each is assembled by its id.
+    #[tokio::test]
+    async fn test_into_messages_assembles_tool_results_by_call_id() {
+        let deltas = futures::stream::iter(
+            [
+                tool_delta("a", "1", false),
+                tool_delta("b", "x", false),
+                tool_delta("a", "2", false),
+                tool_delta("b", "y", true),
+                tool_delta("a", "3", true),
+            ]
+            .map(anyhow::Ok),
+        );
+        let messages: Vec<_> = into_messages(deltas).map(|m| m.unwrap()).collect().await;
+
+        let results: Vec<_> = messages
+            .iter()
+            .map(|m| {
+                (
+                    m.message.id.as_deref().unwrap(),
+                    m.message.contents[0].as_text().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(results, [("b", "xy"), ("a", "123")]);
+    }
+
+    /// A tool result comes out clamped as the history keeps it, though its pieces were not.
+    #[tokio::test]
+    async fn test_into_messages_clamps_a_tool_result() {
+        let half = "x".repeat(20_000);
+        let deltas = futures::stream::iter(
+            [tool_delta("a", &half, false), tool_delta("a", &half, true)].map(anyhow::Ok),
+        );
+        let messages: Vec<_> = into_messages(deltas).map(|m| m.unwrap()).collect().await;
+
+        let text = messages[0].message.contents[0].as_text().unwrap();
+        assert!(text.contains("characters omitted"), "{}", text.len());
     }
 
     /// A stream that ends mid-message (no terminal finish_reason) still yields
