@@ -12,8 +12,9 @@ pub use host::HostBrowser;
 
 use std::{fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
 
-use anyhow::bail;
+use anyhow::{Context as _, bail};
 use futures::future::BoxFuture;
+use virtx::console::ConsoleClient;
 
 use crate::{
     datatype::{Bytes, Value},
@@ -168,6 +169,8 @@ pub(crate) struct BrowserSession {
     live: tokio::sync::Mutex<Live>,
     /// What [`Self::start`] heard for the agent, told on its next turn.
     unheard: std::sync::Mutex<Option<String>>,
+    /// Files taken from the console for an upload, on this host where the browser reads them.
+    uploads: std::sync::OnceLock<tempfile::TempDir>,
 }
 
 impl BrowserSession {
@@ -176,6 +179,7 @@ impl BrowserSession {
             config,
             live: Default::default(),
             unheard: Default::default(),
+            uploads: Default::default(),
         })
     }
 
@@ -238,6 +242,42 @@ impl BrowserSession {
         })))
     }
 
+    /// Runs `work` on the agent's tabs, connecting first; a refusal is its error.
+    async fn run<T>(
+        &self,
+        work: impl for<'a> FnOnce(&'a mut page::Tabs) -> BoxFuture<'a, anyhow::Result<T>>,
+    ) -> anyhow::Result<T> {
+        let mut live = self.live.lock().await;
+        match self.ensure(&mut live, false).await? {
+            Ready::Go(_) => work(live.tabs.as_mut().expect("connected")).await,
+            Ready::Refused(why) => bail!(why),
+        }
+    }
+
+    /// `bytes`, the console's file at `path`, kept on this host under the same name for the
+    /// browser to upload, for as long as the session lasts.
+    fn hold_upload(&self, path: &str, bytes: &[u8]) -> anyhow::Result<std::path::PathBuf> {
+        let dir = match self.uploads.get() {
+            Some(dir) => dir,
+            None => {
+                let made = tempfile::Builder::new()
+                    .prefix("ailoy-uploads-")
+                    .tempdir()?;
+                self.uploads.get_or_init(|| made)
+            }
+        };
+        let name = path
+            .rsplit('/')
+            .next()
+            .filter(|n| !n.is_empty())
+            .unwrap_or("upload");
+        // A directory each, so two files of one name do not overwrite each other.
+        let place = tempfile::Builder::new().tempdir_in(dir.path())?.keep();
+        let file = place.join(name);
+        std::fs::write(&file, bytes)?;
+        Ok(file)
+    }
+
     /// Runs one tool's work on the agent's tabs, connecting first, as the tool's result.
     async fn act<F>(&self, id: String, work: F) -> Message
     where
@@ -265,8 +305,8 @@ impl BrowserSession {
         match result {
             Ok(said) => {
                 message = message.with_contents([Part::text(said.text)]);
-                if let Some(image) = said.image
-                    && let Ok(part) = Part::image_embedded("image/jpeg", Bytes::from(image))
+                if let Some((kind, image)) = said.image
+                    && let Ok(part) = Part::image_embedded(kind, Bytes::from(image))
                 {
                     message.contents.push(part);
                 }
@@ -369,27 +409,44 @@ macro_rules! browser_tool {
 }
 
 /// The browser tools, bound to `session`, with `ask_user`.
-pub(crate) fn tools(session: &Arc<BrowserSession>) -> Vec<(ToolDesc, ToolFunc)> {
+fn obj(properties: Value, required: &[&str]) -> Value {
+    let required = Value::array(required.iter().map(|r| Value::string(*r)));
+    crate::to_value!({ "type": "object", "properties": properties, "required": required })
+}
+
+fn int_arg(args: &Value, key: &str) -> Option<usize> {
+    num_arg(args, key).map(|n| n.max(0.0) as usize)
+}
+
+/// The browser tools, bound to `session`, with `ask_user`; with `console`, also those that keep
+/// or take a file there.
+pub(crate) fn tools(session: &Arc<BrowserSession>, console: bool) -> Vec<(ToolDesc, ToolFunc)> {
     let config = session.config();
     let navigate = format!(
-        "Open a URL in your current tab. The browser is the user's own, signed in as \
-         them; you work in a window of your own and reach only the tabs you opened.{}",
+        "Open a URL in your current tab, or in a new tab with `new_tab`. The browser is the user's \
+         own, signed in as them; you work in a window of your own and reach only the tabs you \
+         opened.{}",
         if config.careful { CAREFUL } else { "" }
     );
-    vec![
+    let mut tools = vec![
         (
             desc(
                 "browser_navigate",
                 &navigate,
-                crate::to_value!({
-                    "type": "object",
-                    "properties": { "url": { "type": "string", "description": "The address to open." } },
-                    "required": ["url"]
-                }),
+                obj(
+                    crate::to_value!({
+                        "url": { "type": "string" },
+                        "new_tab": { "type": "boolean", "description": "Open it in a new tab. Default false." }
+                    }),
+                    &["url"],
+                ),
             ),
             browser_tool!(session, |args, tabs| {
                 match str_arg(&args, "url") {
-                    Some(url) => tabs.navigate(url).await,
+                    Some(url) => {
+                        let new_tab = bool_arg(&args, "new_tab").unwrap_or(false);
+                        tabs.navigate(url, new_tab).await
+                    }
                     None => bail!("missing required parameter: url"),
                 }
             }),
@@ -405,62 +462,73 @@ pub(crate) fn tools(session: &Arc<BrowserSession>) -> Vec<(ToolDesc, ToolFunc)> 
         (
             desc(
                 "browser_snapshot",
-                "The current page as text, with refs (`[ref=e3]`) on what the other tools act on. \
-                 Refs hold until the page navigates; then take a new snapshot. Read pages this way \
-                 rather than by screenshot; for a long page, narrow with `interactive` or read a \
-                 part with `browser_eval`.",
-                crate::to_value!({
-                    "type": "object",
-                    "properties": {
+                "The current page as text: its accessibility tree in document order, frames \
+                 included, with refs (`[ref=e3]`) on what the other tools act on, after a line on \
+                 the page as a whole. What is hidden or covered is left out; a box that scrolls \
+                 says how far. A ref names the same element until the page navigates, and one \
+                 that appeared since the last snapshot is marked `[new]`. Read pages this way \
+                 rather than by screenshot, and narrow a long page with the options.",
+                obj(
+                    crate::to_value!({
                         "interactive": { "type": "boolean", "description": "Only what can be acted on, with the headings it sits under. Default false." },
+                        "depth": { "type": "integer", "description": "How deep the tree goes." },
+                        "selector": { "type": "string", "description": "A CSS selector: only that element and what is inside it." },
+                        "urls": { "type": "boolean", "description": "Show where each link goes. Default false." },
                         "max_chars": { "type": "integer", "description": "Where to cut a long page. Default 20000." }
-                    }
-                }),
+                    }),
+                    &[],
+                ),
             ),
             browser_tool!(session, |args, tabs| {
-                let interactive = bool_arg(&args, "interactive").unwrap_or(false);
-                let max = num_arg(&args, "max_chars").map_or(20_000, |n| n.max(500.0) as usize);
-                tabs.snapshot(interactive, max).await
+                let look = page::Look {
+                    interactive: bool_arg(&args, "interactive").unwrap_or(false),
+                    depth: int_arg(&args, "depth"),
+                    selector: str_arg(&args, "selector"),
+                    urls: bool_arg(&args, "urls").unwrap_or(false),
+                    max_chars: int_arg(&args, "max_chars").map_or(20_000, |n| n.max(500)),
+                };
+                tabs.snapshot(&look).await
             }),
         ),
         (
             desc(
                 "browser_click",
-                "Click an element, as a person would with the mouse.",
-                crate::to_value!({
-                    "type": "object",
-                    "properties": { "ref": ref_param() },
-                    "required": ["ref"]
-                }),
+                "Click an element by ref, as a person would with the mouse. Only when what you \
+                 want has no ref (a canvas, a map, a custom widget), click at x and y instead: \
+                 pixels in your last `browser_screenshot`. The result says what was there.",
+                obj(
+                    crate::to_value!({
+                        "ref": ref_param(),
+                        "x": { "type": "number" },
+                        "y": { "type": "number" }
+                    }),
+                    &[],
+                ),
             ),
             browser_tool!(session, |args, tabs| {
-                match str_arg(&args, "ref") {
-                    Some(r) => tabs.click(r).await,
-                    None => bail!("missing required parameter: ref"),
-                }
+                let at = num_arg(&args, "x").zip(num_arg(&args, "y"));
+                tabs.click(str_arg(&args, "ref"), at).await
             }),
         ),
         (
             desc(
-                "browser_type",
-                "Type text into a field, replacing what it holds unless `clear` is false.",
-                crate::to_value!({
-                    "type": "object",
-                    "properties": {
+                "browser_input",
+                "Input text into a field by ref, typed a key at a time. Clears existing text by \
+                 default; pass text=\"\" to clear only, or clear=false to append.",
+                obj(
+                    crate::to_value!({
                         "ref": ref_param(),
                         "text": { "type": "string" },
-                        "clear": { "type": "boolean", "description": "Replace what the field holds. Default true." },
-                        "submit": { "type": "boolean", "description": "Press Enter after. Default false." }
-                    },
-                    "required": ["ref", "text"]
-                }),
+                        "clear": { "type": "boolean", "description": "Clear the field first. Default true." }
+                    }),
+                    &["ref", "text"],
+                ),
             ),
             browser_tool!(session, |args, tabs| {
                 match (str_arg(&args, "ref"), str_arg(&args, "text")) {
                     (Some(r), Some(text)) => {
                         let clear = bool_arg(&args, "clear").unwrap_or(true);
-                        let submit = bool_arg(&args, "submit").unwrap_or(false);
-                        tabs.type_text(r, text, clear, submit).await
+                        tabs.input(r, text, clear).await
                     }
                     _ => bail!("missing required parameters: ref and text"),
                 }
@@ -468,100 +536,201 @@ pub(crate) fn tools(session: &Arc<BrowserSession>) -> Vec<(ToolDesc, ToolFunc)> 
         ),
         (
             desc(
-                "browser_select",
-                "Pick an option of a <select> (a combobox in the snapshot) by its text or value.",
-                crate::to_value!({
-                    "type": "object",
-                    "properties": { "ref": ref_param(), "option": { "type": "string" } },
-                    "required": ["ref", "option"]
-                }),
+                "browser_send_keys",
+                "Send keys to what has focus: a key (`Escape`, `Enter`, `PageDown`, `F5`), a \
+                 shortcut (`Control+o`), or text, typed a key at a time.",
+                obj(
+                    crate::to_value!({ "keys": { "type": "string" } }),
+                    &["keys"],
+                ),
             ),
             browser_tool!(session, |args, tabs| {
-                match (str_arg(&args, "ref"), str_arg(&args, "option")) {
-                    (Some(r), Some(option)) => tabs.select(r, option).await,
-                    _ => bail!("missing required parameters: ref and option"),
-                }
-            }),
-        ),
-        (
-            desc(
-                "browser_press",
-                "Press a key in the focused element: `Enter`, `Escape`, `Tab`, `ArrowDown`, a \
-                 character, or a combination such as `Control+a`.",
-                crate::to_value!({
-                    "type": "object",
-                    "properties": { "key": { "type": "string" } },
-                    "required": ["key"]
-                }),
-            ),
-            browser_tool!(session, |args, tabs| {
-                match str_arg(&args, "key") {
-                    Some(key) => tabs.press(key).await,
-                    None => bail!("missing required parameter: key"),
+                match str_arg(&args, "keys") {
+                    Some(keys) => tabs.send_keys(keys).await,
+                    None => bail!("missing required parameter: keys"),
                 }
             }),
         ),
         (
             desc(
                 "browser_scroll",
-                "Scroll the page a screen up or down, or bring an element into view.",
-                crate::to_value!({
-                    "type": "object",
-                    "properties": {
-                        "direction": { "type": "string", "enum": ["down", "up"], "description": "Default down." },
+                "Scroll by pages: the page, or with `ref` inside that element (a dropdown, a \
+                 panel), each page by the viewport's height. 10 pages reaches the end.",
+                obj(
+                    crate::to_value!({
+                        "down": { "type": "boolean", "description": "Down, or up when false. Default true." },
+                        "pages": { "type": "number", "description": "0.5 to 10. Default 1." },
                         "ref": ref_param()
-                    }
-                }),
+                    }),
+                    &[],
+                ),
             ),
             browser_tool!(session, |args, tabs| {
-                let down = str_arg(&args, "direction") != Some("up");
-                tabs.scroll(down, str_arg(&args, "ref")).await
+                let down = bool_arg(&args, "down").unwrap_or(true);
+                let pages = num_arg(&args, "pages").unwrap_or(1.0);
+                tabs.scroll(down, pages, str_arg(&args, "ref")).await
+            }),
+        ),
+        (
+            desc(
+                "browser_find_text",
+                "Scroll to the first element whose text (or an attribute) holds the given text, \
+                 case and all.",
+                obj(
+                    crate::to_value!({ "text": { "type": "string" } }),
+                    &["text"],
+                ),
+            ),
+            browser_tool!(session, |args, tabs| {
+                match str_arg(&args, "text") {
+                    Some(text) => tabs.find_text(text).await,
+                    None => bail!("missing required parameter: text"),
+                }
+            }),
+        ),
+        (
+            desc(
+                "browser_dropdown_options",
+                "The options of a dropdown by ref: a <select>, an ARIA combobox, menu or listbox, or a \
+                 Semantic UI dropdown, or the first one inside the element. Use an option's exact \
+                 text or value in browser_select_dropdown.",
+                obj(crate::to_value!({ "ref": ref_param() }), &["ref"]),
+            ),
+            browser_tool!(session, |args, tabs| {
+                match str_arg(&args, "ref") {
+                    Some(r) => tabs.dropdown_options(r).await,
+                    None => bail!("missing required parameter: ref"),
+                }
+            }),
+        ),
+        (
+            desc(
+                "browser_select_dropdown",
+                "Pick an option of a dropdown by ref, by its text or value (case ignored): a <select> \
+                 is set, a menu or listbox has the option clicked.",
+                obj(
+                    crate::to_value!({ "ref": ref_param(), "text": { "type": "string" } }),
+                    &["ref", "text"],
+                ),
+            ),
+            browser_tool!(session, |args, tabs| {
+                match (str_arg(&args, "ref"), str_arg(&args, "text")) {
+                    (Some(r), Some(text)) => tabs.select_dropdown(r, text).await,
+                    _ => bail!("missing required parameters: ref and text"),
+                }
+            }),
+        ),
+        (
+            desc(
+                "browser_search_page",
+                "Search the page's text, like grep: the number of matches and each with the text \
+                 around it. Instant and cheap: use it to find or check something on a long page.",
+                obj(
+                    crate::to_value!({
+                        "pattern": { "type": "string" },
+                        "regex": { "type": "boolean", "description": "A regular expression. Default false." },
+                        "case_sensitive": { "type": "boolean", "description": "Default false." },
+                        "context_chars": { "type": "integer", "description": "Characters of text shown around each match. Default 150." },
+                        "css_scope": { "type": "string", "description": "A CSS selector to search within." },
+                        "max_results": { "type": "integer", "description": "Default 25." }
+                    }),
+                    &["pattern"],
+                ),
+            ),
+            browser_tool!(session, |args, tabs| {
+                match str_arg(&args, "pattern") {
+                    Some(pattern) => {
+                        let search = page::Search {
+                            regex: bool_arg(&args, "regex").unwrap_or(false),
+                            case_sensitive: bool_arg(&args, "case_sensitive").unwrap_or(false),
+                            context_chars: int_arg(&args, "context_chars").unwrap_or(150),
+                            css_scope: str_arg(&args, "css_scope"),
+                            max_results: int_arg(&args, "max_results").unwrap_or(25),
+                        };
+                        tabs.search_page(pattern, &search).await
+                    }
+                    None => bail!("missing required parameter: pattern"),
+                }
+            }),
+        ),
+        (
+            desc(
+                "browser_find_elements",
+                "Query elements by CSS selector: how many match, and each one's tag, text and the \
+                 attributes asked for (`href`, `src`, …). Instant and cheap.",
+                obj(
+                    crate::to_value!({
+                        "selector": { "type": "string" },
+                        "attributes": { "type": "array", "items": { "type": "string" }, "description": "Attributes to show, such as href and src. None by default." },
+                        "max_results": { "type": "integer", "description": "Default 50." },
+                        "include_text": { "type": "boolean", "description": "Show each one's text. Default true." }
+                    }),
+                    &["selector"],
+                ),
+            ),
+            browser_tool!(session, |args, tabs| {
+                match str_arg(&args, "selector") {
+                    Some(selector) => {
+                        let attributes: Option<Vec<String>> = args
+                            .pointer("/attributes")
+                            .and_then(|v| v.as_array())
+                            .map(|list| {
+                                list.iter()
+                                    .filter_map(|v| v.as_str().map(str::to_string))
+                                    .collect()
+                            });
+                        let max = int_arg(&args, "max_results").unwrap_or(50);
+                        let text = bool_arg(&args, "include_text").unwrap_or(true);
+                        tabs.find_elements(selector, attributes.as_deref(), max, text)
+                            .await
+                    }
+                    None => bail!("missing required parameter: selector"),
+                }
+            }),
+        ),
+        (
+            desc(
+                "browser_evaluate",
+                "Run JavaScript in the page and return its value as JSON, such as \
+                 `[...document.querySelectorAll('h3')].map(e => e.innerText)`. Statements run as \
+                 a function body: `return` what you need. Browser APIs only.",
+                obj(
+                    crate::to_value!({ "code": { "type": "string" } }),
+                    &["code"],
+                ),
+            ),
+            browser_tool!(session, |args, tabs| {
+                match str_arg(&args, "code") {
+                    Some(code) => tabs.evaluate(code).await,
+                    None => bail!("missing required parameter: code"),
+                }
             }),
         ),
         (
             desc(
                 "browser_screenshot",
-                "A picture of what the current tab shows. Costly: use it only when the layout \
-                 itself matters.",
+                "A picture of what the current tab shows. Costly: use it when the layout itself \
+                 matters, or to click by coordinates.",
                 no_params(),
             ),
             browser_tool!(session, |_args, tabs| tabs.screenshot().await),
         ),
         (
             desc(
-                "browser_eval",
-                "Run JavaScript in the current page and return its value as JSON, such as \
-                 `[...document.querySelectorAll('h3')].map(e => e.innerText)`. Statements run as \
-                 a function body: `return` what you need.",
-                crate::to_value!({
-                    "type": "object",
-                    "properties": { "expression": { "type": "string" } },
-                    "required": ["expression"]
-                }),
-            ),
-            browser_tool!(session, |args, tabs| {
-                match str_arg(&args, "expression") {
-                    Some(expression) => tabs.evaluate(expression).await,
-                    None => bail!("missing required parameter: expression"),
-                }
-            }),
-        ),
-        (
-            desc(
                 "browser_wait",
                 "Wait for some text to appear on the page, or for a number of seconds.",
-                crate::to_value!({
-                    "type": "object",
-                    "properties": {
+                obj(
+                    crate::to_value!({
                         "text": { "type": "string", "description": "Text to wait for." },
-                        "seconds": { "type": "number", "description": "How long, at most 30. Default 10 with text, else 2." }
-                    }
-                }),
+                        "seconds": { "type": "number", "description": "How long, at most 30. Default 10 with text, else 3." }
+                    }),
+                    &[],
+                ),
             ),
             browser_tool!(session, |args, tabs| {
                 let text = str_arg(&args, "text");
                 let seconds =
-                    num_arg(&args, "seconds").unwrap_or(if text.is_some() { 10.0 } else { 2.0 });
+                    num_arg(&args, "seconds").unwrap_or(if text.is_some() { 10.0 } else { 3.0 });
                 tabs.wait(seconds, text).await
             }),
         ),
@@ -569,15 +738,14 @@ pub(crate) fn tools(session: &Arc<BrowserSession>) -> Vec<(ToolDesc, ToolFunc)> 
             desc(
                 "browser_dialog",
                 "Answer the dialog a page is waiting on: accept or dismiss a confirm, or answer a \
-                 prompt.",
-                crate::to_value!({
-                    "type": "object",
-                    "properties": {
+                 prompt. Alerts are accepted on their own, and you are told.",
+                obj(
+                    crate::to_value!({
                         "accept": { "type": "boolean" },
                         "text": { "type": "string", "description": "For a prompt: what to answer." }
-                    },
-                    "required": ["accept"]
-                }),
+                    }),
+                    &["accept"],
+                ),
             ),
             browser_tool!(session, |args, tabs| {
                 let accept = bool_arg(&args, "accept").unwrap_or(false);
@@ -587,26 +755,195 @@ pub(crate) fn tools(session: &Arc<BrowserSession>) -> Vec<(ToolDesc, ToolFunc)> 
         (
             desc(
                 "browser_tabs",
-                "List your tabs, open a new one, switch to one, or close one.",
-                crate::to_value!({
-                    "type": "object",
-                    "properties": {
-                        "action": { "type": "string", "enum": ["list", "new", "switch", "close"], "description": "Default list." },
-                        "index": { "type": "integer", "description": "For switch and close: the tab's number in the list." }
-                    }
-                }),
+                "List your tabs: each one's id, title and address, and which is current.",
+                no_params(),
+            ),
+            browser_tool!(session, |_args, tabs| tabs.list_tabs().await),
+        ),
+        (
+            desc(
+                "browser_switch_tab",
+                "Switch to another of your tabs, by its id from `browser_tabs`.",
+                obj(
+                    crate::to_value!({ "tab_id": { "type": "string" } }),
+                    &["tab_id"],
+                ),
             ),
             browser_tool!(session, |args, tabs| {
-                let action = str_arg(&args, "action").unwrap_or("list").to_string();
-                let index = num_arg(&args, "index").map(|n| n as usize);
-                tabs.tabs(&action, index).await
+                match str_arg(&args, "tab_id") {
+                    Some(id) => tabs.switch_tab(id).await,
+                    None => bail!("missing required parameter: tab_id"),
+                }
+            }),
+        ),
+        (
+            desc(
+                "browser_close_tab",
+                "Close one of your tabs, by its id from `browser_tabs`.",
+                obj(
+                    crate::to_value!({ "tab_id": { "type": "string" } }),
+                    &["tab_id"],
+                ),
+            ),
+            browser_tool!(session, |args, tabs| {
+                match str_arg(&args, "tab_id") {
+                    Some(id) => tabs.close_tab(id).await,
+                    None => bail!("missing required parameter: tab_id"),
+                }
             }),
         ),
         (
             ask_user_tool_desc(config),
             ask_user_tool_func(session.clone()),
         ),
+    ];
+    if console {
+        tools.extend(console_tools(session));
+    }
+    tools
+}
+
+/// The tools that keep a file in the console, or take one from it.
+fn console_tools(session: &Arc<BrowserSession>) -> Vec<(ToolDesc, ToolFunc)> {
+    let file_param = crate::to_value!({ "file_name": { "type": "string", "description": "A path in your console; a bare name goes in its current directory." } });
+    vec![
+        (
+            desc(
+                "browser_save_screenshot",
+                "Save a screenshot of the current tab as a PNG in your console, and say where.",
+                obj(file_param.clone(), &["file_name"]),
+            ),
+            save_tool(session, "screenshot", |tabs| {
+                Box::pin(tabs.screenshot_png())
+            }),
+        ),
+        (
+            desc(
+                "browser_save_as_pdf",
+                "Save the current page, all of it, as a PDF in your console, and say where.",
+                obj(file_param, &["file_name"]),
+            ),
+            save_tool(session, "PDF", |tabs| Box::pin(tabs.pdf())),
+        ),
+        (
+            desc(
+                "browser_upload_file",
+                "Put a file from your console into a file input by ref.",
+                obj(
+                    crate::to_value!({
+                        "ref": ref_param(),
+                        "path": { "type": "string", "description": "The file's path in your console." }
+                    }),
+                    &["ref", "path"],
+                ),
+            ),
+            upload_tool(session),
+        ),
     ]
+}
+
+/// The bytes a page gives to keep as a file.
+type Take = for<'a> fn(&'a mut page::Tabs) -> BoxFuture<'a, anyhow::Result<Vec<u8>>>;
+
+fn save_tool(session: &Arc<BrowserSession>, what: &'static str, take: Take) -> ToolFunc {
+    let session = session.clone();
+    crate::tool_func!(async |args: Value, id: String, console: &mut ConsoleClient| -> Message
+        with [session = session.clone()]
+    {
+        let said = async {
+            let name = str_arg(&args, "file_name").context("missing required parameter: file_name")?;
+            let path = console_path(console, name).await?;
+            let bytes = session.run(take).await?;
+            write_console_file(console, &path, bytes).await?;
+            anyhow::Ok(format!("Saved the {what} to {path}."))
+        }
+        .await;
+        tool_text(id, said)
+    })
+}
+
+fn upload_tool(session: &Arc<BrowserSession>) -> ToolFunc {
+    let session = session.clone();
+    crate::tool_func!(async |args: Value, id: String, console: &mut ConsoleClient| -> Message
+        with [session = session.clone()]
+    {
+        let (Some(r), Some(path)) = (str_arg(&args, "ref").map(str::to_string), str_arg(&args, "path")) else {
+            return tool_text(id, Err(anyhow::anyhow!("missing required parameters: ref and path")));
+        };
+        let held = match read_console_file(console, path).await.and_then(|bytes| session.hold_upload(path, &bytes)) {
+            Ok(held) => held,
+            Err(e) => return tool_text(id, Err(e)),
+        };
+        session
+            .act(id, move |tabs: &mut page::Tabs| Box::pin(async move { tabs.upload(&r, &held).await }))
+            .await
+    })
+}
+
+fn tool_text(id: String, said: anyhow::Result<String>) -> Message {
+    let text = match said {
+        Ok(text) => text,
+        Err(e) => format!("Error: {e:#}"),
+    };
+    Message::new(Role::Tool)
+        .with_contents([Part::text(text)])
+        .with_id(id)
+}
+
+/// `name` as a path in the console: as given when absolute, else in its current directory.
+async fn console_path(console: &mut ConsoleClient, name: &str) -> anyhow::Result<String> {
+    if name.starts_with('/') {
+        return Ok(name.to_string());
+    }
+    let out = console.exec(["pwd"], Some(10_000)).await?;
+    let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok(format!("{}/{name}", dir.trim_end_matches('/')))
+}
+
+/// Writes `bytes` to `path` in the console, making its directory if it is not there.
+async fn write_console_file(
+    console: &mut ConsoleClient,
+    path: &str,
+    bytes: Vec<u8>,
+) -> anyhow::Result<()> {
+    if console.write(path, bytes.clone(), None).await.is_ok() {
+        return Ok(());
+    }
+    if let Some((parent, _)) = path.rsplit_once('/').filter(|(p, _)| !p.is_empty()) {
+        console.exec(["mkdir", "-p", parent], Some(10_000)).await?;
+    }
+    console.write(path, bytes, None).await?;
+    Ok(())
+}
+
+/// The whole of the console's file at `path`, read as far as its size says.
+async fn read_console_file(console: &mut ConsoleClient, path: &str) -> anyhow::Result<Vec<u8>> {
+    let mut data = Vec::new();
+    loop {
+        let read = console.read(path, Some(data.len() as u64), None).await?;
+        let size = read.size;
+        if read.data.is_empty() {
+            break;
+        }
+        data.extend(read.data);
+        if data.len() as u64 >= size {
+            break;
+        }
+    }
+    Ok(data)
+}
+
+/// `n` with commas between thousands.
+fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Appended to `browser_navigate` unless [`Browser::careful`] is off.
@@ -669,7 +1006,7 @@ mod tests {
 
     fn description(browser: Browser, name: &str) -> String {
         let session = BrowserSession::new(browser);
-        tools(&session)
+        tools(&session, false)
             .into_iter()
             .find(|(d, _)| d.name == name)
             .and_then(|(d, _)| d.description)
@@ -699,7 +1036,10 @@ mod tests {
     #[test]
     fn every_tool_is_named_once() {
         let session = BrowserSession::new(Browser::host());
-        let names: Vec<String> = tools(&session).into_iter().map(|(d, _)| d.name).collect();
+        let names: Vec<String> = tools(&session, false)
+            .into_iter()
+            .map(|(d, _)| d.name)
+            .collect();
         let mut unique = names.clone();
         unique.sort();
         unique.dedup();
@@ -724,6 +1064,15 @@ mod tests {
                 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".into()
             });
             let dir = tempfile::tempdir().unwrap();
+            // Downloads land in the profile, not the downloads folder of whoever runs this.
+            let downloads = dir.path().join("downloads");
+            std::fs::create_dir_all(dir.path().join("Default")).unwrap();
+            std::fs::write(
+                dir.path().join("Default/Preferences"),
+                serde_json::json!({ "download": { "default_directory": downloads, "prompt_for_download": false } })
+                    .to_string(),
+            )
+            .unwrap();
             let child = std::process::Command::new(binary)
                 .args([
                     "--headless=new",
@@ -789,7 +1138,8 @@ mod tests {
             .find(|l| l.contains(needle))
             .unwrap_or_else(|| panic!("no {needle:?} in\n{snapshot}"));
         let at = line.find("[ref=").unwrap() + 5;
-        line[at..].trim_end_matches(']').to_string()
+        let end = line[at..].find(']').unwrap();
+        line[at..at + end].to_string()
     }
 
     /// Every tool, on a real Chrome lent as a host browser.
@@ -800,9 +1150,20 @@ mod tests {
         let html = "<title>Form</title>\
             <form onsubmit=\"document.title='sent:'+q.value;return false\">\
             <input id=q aria-label=Query><button>Search</button></form>\
+            <input type=date aria-label=When oninput=\"this.dataset.heard=this.value\">\
+            <textarea aria-label=Note>old</textarea>\
+            <div style=position:relative><button onclick=\"this.textContent='under hit'\">Under</button>\
+            <div style=position:absolute;inset:0></div></div>\
+            <div id=box style=height:40px;overflow:auto><p style=height:400px>Inside</p></div>\
             <select aria-label=Size><option value=s>Small</option><option value=l>Large</option></select>\
+            <ul role=listbox aria-label=Color><li role=option aria-selected=true>Red</li>\
+            <li role=option data-value=b onclick=\"this.textContent='Blue picked'\">Blue</li></ul>\
             <button onclick=\"this.textContent=confirm('Sure?')?'yes':'no'\">Ask</button>\
             <button onclick=\"window.open('about:blank#popup')\">Pop</button>\
+            <a download=notes.txt href=\"data:text/plain,hello\">Get notes</a>\
+            <button onclick=\"window.print()\">Print</button>\
+            <a href=\"https://example.com/far\">Far link</a>\
+            <p>Price $29.99 today</p>\
             <div style=height:3000px></div><button onclick=\"this.textContent='pressed'\">Far</button>";
         let page = format!("data:text/html,{}", urlencoding::encode(html));
         let session = BrowserSession::new(
@@ -811,40 +1172,202 @@ mod tests {
                 .start_url(&page),
         );
         session.start().await.unwrap();
-        let tools = tools(&session);
+        let tools = tools(&session, false);
+        let call = |name: &'static str, args: serde_json::Value| {
+            let tools = &tools;
+            async move { call(tools, name, args).await }
+        };
 
-        let (snapshot, _) = call(&tools, "browser_snapshot", serde_json::json!({})).await;
-        assert!(snapshot.contains("\"Form\""), "{snapshot}");
+        let (snapshot, _) = call("browser_snapshot", serde_json::json!({ "urls": true })).await;
+        assert!(
+            snapshot.contains("\"Form\"") && snapshot.contains("refs"),
+            "{snapshot}"
+        );
+        assert!(
+            snapshot.contains("-> https://example.com/far"),
+            "{snapshot}"
+        );
+        assert!(
+            snapshot.contains("pages above") && snapshot.contains("scroll down for more"),
+            "{snapshot}"
+        );
         let query = ref_of(&snapshot, "textbox \"Query\"");
         let (typed, _) = call(
-            &tools,
-            "browser_type",
-            serde_json::json!({ "ref": query, "text": "hello 한글", "submit": true }),
+            "browser_input",
+            serde_json::json!({ "ref": query, "text": "hello 한글" }),
         )
         .await;
-        assert!(typed.contains("sent:hello 한글"), "{typed}");
+        assert!(typed.starts_with("Typed 'hello 한글'."), "{typed}");
+        let (sent, _) = call("browser_send_keys", serde_json::json!({ "keys": "Enter" })).await;
+        assert!(sent.contains("sent:hello 한글"), "{sent}");
 
-        let (picked, _) = call(
-            &tools,
-            "browser_select",
-            serde_json::json!({ "ref": ref_of(&snapshot, "combobox \"Size\""), "option": "Large" }),
+        let when = ref_of(&snapshot, "\"When\"");
+        let (typed, _) = call(
+            "browser_input",
+            serde_json::json!({ "ref": when, "text": "2026-10-20" }),
         )
         .await;
-        assert!(picked.contains("Selected \"Large\""), "{picked}");
+        assert!(typed.starts_with("Typed '2026-10-20'."), "{typed}");
+        let note = ref_of(&snapshot, "textbox \"Note\"");
+        call(
+            "browser_input",
+            serde_json::json!({ "ref": note, "text": "A+b" }),
+        )
+        .await;
+        call("browser_send_keys", serde_json::json!({ "keys": "End" })).await;
+        let (sent, _) = call(
+            "browser_send_keys",
+            serde_json::json!({ "keys": " typed!" }),
+        )
+        .await;
+        assert!(sent.starts_with("Sent keys:  typed!."), "{sent}");
+        let (read, _) = call(
+            "browser_evaluate",
+            serde_json::json!({ "code": "[document.querySelector('textarea').value, document.querySelector('[type=date]').dataset.heard]" }),
+        )
+        .await;
+        assert!(
+            read.contains("A+b typed!") && read.contains("2026-10-20"),
+            "{read}"
+        );
+
+        let size = ref_of(&snapshot, "combobox \"Size\"");
+        let (options, _) = call(
+            "browser_dropdown_options",
+            serde_json::json!({ "ref": size }),
+        )
+        .await;
+        assert!(
+            options.contains("1: text=\"Large\", value=\"l\"")
+                && options.contains("text=\"Small\", value=\"s\" (selected)"),
+            "{options}"
+        );
+        let (picked, _) = call(
+            "browser_select_dropdown",
+            serde_json::json!({ "ref": size, "text": "large" }),
+        )
+        .await;
+        assert!(picked.contains("Selected Large (value l)"), "{picked}");
+
+        let color = ref_of(&snapshot, "listbox \"Color\"");
+        let (options, _) = call(
+            "browser_dropdown_options",
+            serde_json::json!({ "ref": color }),
+        )
+        .await;
+        assert!(
+            options.contains("0: text=\"Red\", value=\"Red\" (selected)")
+                && options.contains("1: text=\"Blue\", value=\"b\""),
+            "{options}"
+        );
+        let (picked, _) = call(
+            "browser_select_dropdown",
+            serde_json::json!({ "ref": color, "text": "b" }),
+        )
+        .await;
+        assert!(picked.starts_with("Selected Blue"), "{picked}");
+        let (got, _) = call(
+            "browser_click",
+            serde_json::json!({ "ref": ref_of(&snapshot, "link \"Get notes\"") }),
+        )
+        .await;
+        assert!(
+            got.contains("Downloaded file: notes.txt (5 bytes) saved to"),
+            "{got}"
+        );
+        let (printed, _) = call(
+            "browser_click",
+            serde_json::json!({ "ref": ref_of(&snapshot, "button \"Print\"") }),
+        )
+        .await;
+        assert!(printed.contains("browser_save_as_pdf"), "{printed}");
+        let (shortcut, _) = call("browser_click", serde_json::json!({ "ref": size })).await;
+        assert!(
+            shortcut.starts_with("Found a <select> dropdown"),
+            "{shortcut}"
+        );
+        let (under, _) = call(
+            "browser_click",
+            serde_json::json!({ "ref": ref_of(&snapshot, "button \"Under\"") }),
+        )
+        .await;
+        assert!(under.starts_with("Clicked button \"Under\""), "{under}");
+
+        let boxed = snapshot
+            .lines()
+            .find(|l| l.contains("[scroll:"))
+            .unwrap_or_else(|| panic!("no box that scrolls in\n{snapshot}"));
+        let boxed = boxed[boxed.find("[ref=").unwrap() + 5..]
+            .trim_end_matches(']')
+            .to_string();
+        let (scrolled, _) = call(
+            "browser_scroll",
+            serde_json::json!({ "ref": boxed, "pages": 0.5 }),
+        )
+        .await;
+        assert!(scrolled.starts_with("Scrolled down element"), "{scrolled}");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let (top, _) = call(
+            "browser_evaluate",
+            serde_json::json!({ "code": "document.getElementById('box').scrollTop" }),
+        )
+        .await;
+        let top: f64 = top.split_whitespace().next().unwrap().parse().unwrap();
+        assert!(top > 0.0, "the box scrolled");
+
+        let (found, _) = call(
+            "browser_search_page",
+            serde_json::json!({ "pattern": "Blue picked|under hit", "regex": true }),
+        )
+        .await;
+        assert!(
+            found.starts_with("Found 2 matches for \"Blue picked|under hit\"")
+                && found.contains("(in div > button)"),
+            "{found}"
+        );
+
+        let (found, _) = call(
+            "browser_search_page",
+            serde_json::json!({ "pattern": "$29.99" }),
+        )
+        .await;
+        assert!(
+            found.starts_with("Found 1 match for") && found.contains("Price $29.99 today"),
+            "{found}"
+        );
+        let (elements, _) = call(
+            "browser_find_elements",
+            serde_json::json!({ "selector": "a", "attributes": ["href"] }),
+        )
+        .await;
+        assert!(
+            elements.starts_with("Found 2 elements matching \"a\"")
+                && elements.contains(
+                    "[1] <a> \"Far link\" {href=\"https://example.com/far\"} (0 children)"
+                ),
+            "{elements}"
+        );
 
         let (far, _) = call(
-            &tools,
             "browser_click",
             serde_json::json!({ "ref": ref_of(&snapshot, "button \"Far\"") }),
         )
         .await;
-        assert!(far.starts_with("Clicked."), "{far}");
-        let (text, _) = call(&tools, "browser_eval", serde_json::json!({ "expression": "return [...document.querySelectorAll('button')].pop().textContent" })).await;
+        assert!(far.starts_with("Clicked button \"Far\"."), "{far}");
+        let (text, _) = call("browser_evaluate", serde_json::json!({ "code": "return [...document.querySelectorAll('button')].pop().textContent" })).await;
         assert!(text.starts_with("pressed"), "{text}");
+        let (to_text, _) = call(
+            "browser_find_text",
+            serde_json::json!({ "text": "Price $29" }),
+        )
+        .await;
+        assert!(
+            to_text.starts_with("Scrolled to text: Price $29."),
+            "{to_text}"
+        );
 
         // A confirm holds the page until the agent answers it.
         let (asked, _) = call(
-            &tools,
             "browser_click",
             serde_json::json!({ "ref": ref_of(&snapshot, "button \"Ask\"") }),
         )
@@ -853,74 +1376,269 @@ mod tests {
             asked.contains("confirm dialog") && asked.contains("Sure?"),
             "{asked}"
         );
-        let (refused, _) = call(&tools, "browser_snapshot", serde_json::json!({})).await;
+        let (refused, _) = call("browser_snapshot", serde_json::json!({})).await;
         assert!(refused.contains("browser_dialog"), "{refused}");
-        let (answered, _) = call(
-            &tools,
-            "browser_dialog",
-            serde_json::json!({ "accept": true }),
-        )
-        .await;
+        let (answered, _) = call("browser_dialog", serde_json::json!({ "accept": true })).await;
         assert!(answered.starts_with("Accepted the confirm"), "{answered}");
         let (after, _) = call(
-            &tools,
             "browser_snapshot",
             serde_json::json!({ "interactive": true }),
         )
         .await;
         assert!(after.contains("button \"yes\""), "{after}");
 
+        // Clicked by coordinates in the screenshot, the result says what was there.
+        let (shot, image) = call("browser_screenshot", serde_json::json!({})).await;
+        assert!(
+            image && shot.contains("Screenshot of the viewport"),
+            "{shot}"
+        );
+        let yes = call("browser_evaluate", serde_json::json!({ "code": "const r = [...document.querySelectorAll('button')].find(b => b.textContent === 'yes').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2, innerWidth]" })).await.0;
+        let yes: Vec<f64> = serde_json::from_str(&yes[..yes.find(']').unwrap() + 1]).unwrap();
+        let scale = shot
+            .split("viewport, ")
+            .nth(1)
+            .and_then(|s| s.split('x').next())
+            .and_then(|w| w.parse::<f64>().ok())
+            .unwrap()
+            / yes[2];
+        let (clicked, _) = call(
+            "browser_click",
+            serde_json::json!({ "x": yes[0] * scale, "y": yes[1] * scale }),
+        )
+        .await;
+        assert!(
+            clicked.starts_with("Clicked on coordinate") && clicked.contains("confirm dialog"),
+            "{clicked}"
+        );
+        // That button asks again.
+        let (dismissed, _) = call("browser_dialog", serde_json::json!({ "accept": false })).await;
+        assert!(
+            dismissed.starts_with("Dismissed the confirm"),
+            "{dismissed}"
+        );
+
         // A tab the agent's page opens becomes its own, and current.
         let (popped, _) = call(
-            &tools,
             "browser_click",
             serde_json::json!({ "ref": ref_of(&after, "button \"Pop\"") }),
         )
         .await;
         assert!(popped.contains("new tab"), "{popped}");
-        let (listed, _) = call(&tools, "browser_tabs", serde_json::json!({})).await;
-        assert!(
-            listed.contains("1 (current)") && listed.contains("#popup"),
-            "{listed}"
-        );
+        let (listed, _) = call("browser_tabs", serde_json::json!({})).await;
+        assert_eq!(listed.lines().count(), 2, "{listed}");
+        let popup = listed.lines().find(|l| l.contains("#popup")).unwrap();
+        assert!(popup.contains("(current)"), "{listed}");
+        let popup_id = popup.split_whitespace().next().unwrap();
         let (closed, _) = call(
-            &tools,
-            "browser_tabs",
-            serde_json::json!({ "action": "close", "index": 1 }),
+            "browser_close_tab",
+            serde_json::json!({ "tab_id": popup_id }),
+        )
+        .await;
+        assert!(closed.starts_with("Closed."), "{closed}");
+        let (opened, _) = call(
+            "browser_navigate",
+            serde_json::json!({ "url": "about:blank#second", "new_tab": true }),
+        )
+        .await;
+        assert!(opened.starts_with("Opened new tab with URL"), "{opened}");
+        let (listed, _) = call("browser_tabs", serde_json::json!({})).await;
+        let first = listed.lines().find(|l| !l.contains("(current)")).unwrap();
+        let (switched, _) = call(
+            "browser_switch_tab",
+            serde_json::json!({ "tab_id": first.split_whitespace().next().unwrap() }),
         )
         .await;
         assert!(
-            closed.contains("0 (current)") && !closed.contains("#popup"),
-            "{closed}"
+            switched.contains("\"Form\"") || switched.contains("sent:"),
+            "{switched}"
         );
 
-        let (stale, _) = call(
-            &tools,
-            "browser_click",
-            serde_json::json!({ "ref": "e999" }),
-        )
-        .await;
+        let (stale, _) = call("browser_click", serde_json::json!({ "ref": "e999" })).await;
         assert!(stale.contains("take a new `browser_snapshot`"), "{stale}");
-        let (_, image) = call(&tools, "browser_screenshot", serde_json::json!({})).await;
-        assert!(image);
         let (scrolled, _) = call(
-            &tools,
             "browser_scroll",
-            serde_json::json!({ "direction": "down" }),
+            serde_json::json!({ "down": false, "pages": 0.5 }),
         )
         .await;
-        assert!(scrolled.starts_with("Scrolled down"), "{scrolled}");
+        assert!(scrolled.starts_with("Scrolled up"), "{scrolled}");
         let (waited, _) = call(
-            &tools,
             "browser_wait",
             serde_json::json!({ "text": "pressed", "seconds": 2 }),
         )
         .await;
         assert!(waited.contains("is on the page"), "{waited}");
 
-        // Only the agent's tabs: the page Chrome started with is not among them.
-        let (listed, _) = call(&tools, "browser_tabs", serde_json::json!({})).await;
-        assert_eq!(listed.lines().count(), 1, "{listed}");
+        let (drawn, image) = call(
+            "browser_evaluate",
+            serde_json::json!({ "code": "(() => { const c = document.createElement('canvas'); c.width = c.height = 2; return c.toDataURL(); })()" }),
+        )
+        .await;
+        assert!(drawn.starts_with("[Image]") && image, "{drawn}");
+        call(
+            "browser_navigate",
+            serde_json::json!({ "url": "about:blank#next" }),
+        )
+        .await;
+        let (back, _) = call("browser_back", serde_json::json!({})).await;
+        assert!(
+            back.starts_with("Navigated back.") && back.contains("Form"),
+            "{back}"
+        );
+        drop(chrome);
+    }
+
+    /// A page with a frame of its own origin and one of another site, served here.
+    async fn serve_frames() -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+                    let mut buf = vec![0; 4096];
+                    let n = stream.read(&mut buf).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buf[..n]);
+                    let body = if request.starts_with("GET /frame") {
+                        "<button onclick=\"this.textContent='hit'\">Inner</button>".to_string()
+                    } else {
+                        // `localhost` is another site than `127.0.0.1`, so its frame is a process of its own.
+                        format!(
+                            "<title>Frames</title><h1>Outer</h1>\
+                             <iframe srcdoc=\"<button>Same</button>\"></iframe>\
+                             <iframe src=\"http://localhost:{port}/frame\" style=\"width:300px;height:100px\"></iframe>"
+                        )
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        port
+    }
+
+    /// Frames appear in a snapshot, and a ref inside another site's frame is clicked where it is.
+    #[tokio::test]
+    #[ignore = "needs Chrome"]
+    async fn a_snapshot_reads_into_frames() {
+        let chrome = TestChrome::start();
+        let port = serve_frames().await;
+        let session = BrowserSession::new(
+            Browser::host()
+                .host_browser(HostBrowser::Custom(chrome.dir.path().into()))
+                .start_url(format!("http://127.0.0.1:{port}/")),
+        );
+        session.start().await.unwrap();
+        let tools = tools(&session, false);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let (snapshot, _) = call(&tools, "browser_snapshot", serde_json::json!({})).await;
+        assert!(snapshot.contains("button \"Same\""), "{snapshot}");
+        assert!(snapshot.contains("button \"Inner\""), "{snapshot}");
+        let (clicked, _) = call(
+            &tools,
+            "browser_click",
+            serde_json::json!({ "ref": ref_of(&snapshot, "button \"Inner\"") }),
+        )
+        .await;
+        assert!(clicked.starts_with("Clicked button \"Inner\""), "{clicked}");
+        let (after, _) = call(&tools, "browser_snapshot", serde_json::json!({})).await;
+        assert!(after.contains("button \"hit\""), "{after}");
+
+        let (scoped, _) = call(
+            &tools,
+            "browser_snapshot",
+            serde_json::json!({ "selector": "h1" }),
+        )
+        .await;
+        assert!(
+            scoped.contains("heading \"Outer\"") && !scoped.contains("Same"),
+            "{scoped}"
+        );
+        let (shallow, _) = call(
+            &tools,
+            "browser_snapshot",
+            serde_json::json!({ "depth": 1 }),
+        )
+        .await;
+        assert!(!shallow.contains("Inner"), "{shallow}");
+        drop(chrome);
+    }
+
+    /// The file tools keep what they take in the console, and upload from it.
+    #[tokio::test]
+    #[ignore = "needs Chrome and a console server"]
+    async fn the_file_tools_go_through_the_console() {
+        let chrome = TestChrome::start();
+        let html = "<title>Files</title><input type=file id=f aria-label=Attach onchange=\"document.title='got:'+this.files[0].name+':'+this.files[0].size\">";
+        let session = BrowserSession::new(
+            Browser::host()
+                .host_browser(HostBrowser::Custom(chrome.dir.path().into()))
+                .start_url(format!("data:text/html,{}", urlencoding::encode(html))),
+        );
+        session.start().await.unwrap();
+        let tools = tools(&session, true);
+        let mut console = crate::test_console().await;
+        let by_console = |name: &str, args: serde_json::Value| {
+            let (_, func) = tools.iter().find(|(d, _)| d.name == name).unwrap();
+            let args: Value = serde_json::from_value(args).unwrap();
+            (func.clone(), args)
+        };
+        async fn run(func: ToolFunc, args: Value, console: &mut ConsoleClient) -> String {
+            use futures::StreamExt as _;
+            let mut stream = func.call(args, "1", console);
+            let mut last = None;
+            while let Some(output) = stream.next().await {
+                last = Some(output.message);
+            }
+            last.unwrap()
+                .contents
+                .iter()
+                .filter_map(|p| p.as_text())
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+
+        let (f, a) = by_console(
+            "browser_save_screenshot",
+            serde_json::json!({ "file_name": "/tmp/shots/page.png" }),
+        );
+        let saved = run(f, a, &mut console).await;
+        assert!(saved.contains("/tmp/shots/page.png"), "{saved}");
+        let png = console
+            .read("/tmp/shots/page.png", None, Some(8))
+            .await
+            .unwrap();
+        assert_eq!(&png.data[..4], b"\x89PNG");
+        let (f, a) = by_console(
+            "browser_save_as_pdf",
+            serde_json::json!({ "file_name": "page.pdf" }),
+        );
+        let saved = run(f, a, &mut console).await;
+        assert!(saved.contains("page.pdf"), "{saved}");
+
+        console
+            .write("/tmp/note.txt", b"hello".to_vec(), None)
+            .await
+            .unwrap();
+        let (snapshot, _) = call(&tools, "browser_snapshot", serde_json::json!({})).await;
+        let input = snapshot
+            .lines()
+            .find(|l| l.contains("[ref="))
+            .and_then(|l| l.split("[ref=").nth(1))
+            .map(|r| r.trim_end_matches(']').to_string())
+            .unwrap_or_else(|| panic!("no ref in\n{snapshot}"));
+        let (f, a) = by_console(
+            "browser_upload_file",
+            serde_json::json!({ "ref": input, "path": "/tmp/note.txt" }),
+        );
+        let uploaded = run(f, a, &mut console).await;
+        assert!(uploaded.contains("got:note.txt:5"), "{uploaded}");
         drop(chrome);
     }
 
@@ -969,7 +1687,7 @@ mod tests {
         drop(turn);
         eprintln!("tools: {called:?}\nanswer: {answer}");
         assert!(called.iter().any(|n| n == "browser_snapshot"), "{called:?}");
-        assert!(called.iter().any(|n| n == "browser_type"), "{called:?}");
+        assert!(called.iter().any(|n| n == "browser_input"), "{called:?}");
         assert!(
             answer.contains("Glide") && answer.contains("Lite") && !answer.contains("Pro"),
             "{answer}"
@@ -977,9 +1695,9 @@ mod tests {
         // Applied: the button wrote the coupon into the title.
         let session = agent.state.browser.clone().unwrap();
         let (title, _) = call(
-            &tools(&session),
-            "browser_eval",
-            serde_json::json!({ "expression": "document.title" }),
+            &tools(&session, false),
+            "browser_evaluate",
+            serde_json::json!({ "code": "document.title" }),
         )
         .await;
         assert!(title.starts_with("code:SAVE10"), "{title}");

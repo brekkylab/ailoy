@@ -54,6 +54,20 @@ pub(super) struct Dialog {
     pub message: String,
 }
 
+/// A download the browser reported, and how far it has got.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Download {
+    /// The frame that began it.
+    pub frame: String,
+    pub name: String,
+    pub received: u64,
+    pub total: u64,
+    /// `inProgress`, `completed` or `canceled`.
+    pub state: String,
+    /// Where it was saved, when the browser says.
+    pub path: Option<String>,
+}
+
 #[derive(Default)]
 struct Shared {
     pending: HashMap<u64, oneshot::Sender<Result<Value, CallError>>>,
@@ -61,6 +75,11 @@ struct Shared {
     dialogs: HashMap<String, Dialog>,
     /// Alerts accepted on the agent's behalf, by session, until it hears of them.
     accepted: HashMap<String, Vec<Dialog>>,
+    /// Frames in a process of their own, attached under the session of the page holding them:
+    /// their frame id and their own session.
+    frames: HashMap<String, Vec<(String, String)>>,
+    /// Downloads in the order they began, by guid.
+    downloads: Vec<(String, Download)>,
 }
 
 pub(super) struct Cdp {
@@ -175,6 +194,56 @@ impl Cdp {
             Some("Page.javascriptDialogClosed") => {
                 self.shared.lock().unwrap().dialogs.remove(&session);
             }
+            Some("Target.attachedToTarget")
+                if value["params"]["targetInfo"]["type"] == "iframe" =>
+            {
+                let params = &value["params"];
+                let (Some(frame), Some(child)) = (
+                    params["targetInfo"]["targetId"].as_str(),
+                    params["sessionId"].as_str(),
+                ) else {
+                    return;
+                };
+                let mut shared = self.shared.lock().unwrap();
+                shared
+                    .frames
+                    .entry(session)
+                    .or_default()
+                    .push((frame.to_string(), child.to_string()));
+            }
+            Some("Browser.downloadWillBegin") => {
+                let params = &value["params"];
+                let download = Download {
+                    frame: params["frameId"].as_str().unwrap_or_default().into(),
+                    name: params["suggestedFilename"]
+                        .as_str()
+                        .unwrap_or("download")
+                        .into(),
+                    state: "inProgress".into(),
+                    ..Download::default()
+                };
+                let guid = params["guid"].as_str().unwrap_or_default().to_string();
+                self.shared.lock().unwrap().downloads.push((guid, download));
+            }
+            Some("Browser.downloadProgress") => {
+                let params = &value["params"];
+                let guid = params["guid"].as_str().unwrap_or_default();
+                let mut shared = self.shared.lock().unwrap();
+                if let Some((_, d)) = shared.downloads.iter_mut().find(|(g, _)| g == guid) {
+                    d.received = params["receivedBytes"].as_f64().unwrap_or_default() as u64;
+                    d.total = params["totalBytes"].as_f64().unwrap_or_default() as u64;
+                    d.state = params["state"].as_str().unwrap_or_default().into();
+                    if let Some(path) = params["filePath"].as_str() {
+                        d.path = Some(path.into());
+                    }
+                }
+            }
+            Some("Target.detachedFromTarget") => {
+                let child = value["params"]["sessionId"].as_str().unwrap_or_default();
+                for frames in self.shared.lock().unwrap().frames.values_mut() {
+                    frames.retain(|(_, s)| s != child);
+                }
+            }
             _ => {}
         }
     }
@@ -244,6 +313,22 @@ impl Cdp {
     /// The dialog open on `session`'s page, if any.
     pub(super) fn dialog(&self, session: &str) -> Option<Dialog> {
         self.shared.lock().unwrap().dialogs.get(session).cloned()
+    }
+
+    /// The out-of-process frames of `session`'s page: frame id and session.
+    pub(super) fn frames(&self, session: &str) -> Vec<(String, String)> {
+        self.shared
+            .lock()
+            .unwrap()
+            .frames
+            .get(session)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The downloads the browser has reported, in the order they began.
+    pub(super) fn downloads(&self) -> Vec<(String, Download)> {
+        self.shared.lock().unwrap().downloads.clone()
     }
 
     /// Alerts accepted on `session`'s page since this was last asked.

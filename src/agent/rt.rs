@@ -130,7 +130,8 @@ impl Agent {
 
         // Like memory, bound to this agent's own browser rather than resolved by name.
         if let Some(session) = &state.browser {
-            for (desc, func) in browser::tools(session) {
+            let console = state.console.lock().await.is_some();
+            for (desc, func) in browser::tools(session, console) {
                 tools.insert(desc.name.clone(), func);
                 tool_descs.push(desc);
             }

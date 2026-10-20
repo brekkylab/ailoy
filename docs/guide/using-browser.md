@@ -69,26 +69,35 @@ The agent uses your real browser, signed in wherever you are. Its tools cannot r
 
 ## The tools
 
+Rather than being handed the page at every step, the agent reads it with `browser_snapshot` when it needs to.
+
 | Tool | What it does |
 |---|---|
-| `browser_navigate` | Opens a URL in the current tab. |
+| `browser_navigate` | Opens a URL in the current tab, or in a new one with `new_tab`. |
 | `browser_back` | Goes back one page. |
-| `browser_snapshot` | The page as text: its accessibility tree in document order, with refs such as `[ref=e3]` on what can be acted on. `interactive` keeps only those, with their headings. |
-| `browser_click` | Clicks an element by ref, with the mouse. |
-| `browser_type` | Types into a field by ref, replacing what it holds unless `clear` is false; `submit` presses Enter after. |
-| `browser_select` | Picks an option of a `<select>` by its text or value. |
-| `browser_press` | Presses a key or a combination, such as `Enter` or `Control+a`. |
-| `browser_scroll` | Scrolls a screen up or down, or brings a ref into view. |
-| `browser_screenshot` | A picture of the current tab. |
-| `browser_eval` | Runs JavaScript in the page and returns its value. |
+| `browser_snapshot` | The page as text: its accessibility tree in document order, frames included (those of other sites too), with refs such as `[ref=e3]` on what can be acted on (what is hidden or covered is left out, a box that scrolls says how far, a select lists its options), after a line on the page as a whole (links, refs, iframes, how much lies above and below, whether it still loads). `interactive` keeps only what can be acted on, `depth` limits the tree, `selector` keeps one element and what is inside it, `urls` shows where links go. |
+| `browser_click` | Clicks an element by ref, at its middle, by script when something covers it; or at `x` and `y` in the last screenshot. A `<select>` gives its options instead, and a download the click starts is waited for and reported. |
+| `browser_input` | Types into a field by ref a key at a time, clearing it first unless `clear` is false; a date, time or color field is set outright. Says when the field ends up holding something else. |
+| `browser_send_keys` | Presses a key or a shortcut, such as `Enter` or `Control+a`, or types text into what has focus. |
+| `browser_scroll` | Scrolls by pages, the page or inside an element by ref (an iframe's document, or the box under it). |
+| `browser_find_text` | Scrolls to the first element whose text or an attribute holds some text. |
+| `browser_dropdown_options` | Lists a dropdown's options: a `<select>`, an ARIA combobox, menu or listbox, or a Semantic UI dropdown. |
+| `browser_select_dropdown` | Picks a dropdown's option by its text or value, case ignored. |
+| `browser_search_page` | Searches the page's text, like grep, with the text around each match and the element it is in. |
+| `browser_find_elements` | Queries elements by CSS selector, with their text, the attributes asked for and how many children they have. |
+| `browser_evaluate` | Runs JavaScript in the page and returns its value; an image it returns as a data URL is shown as one. |
+| `browser_screenshot` | A picture of the current tab, at most 1280 pixels wide; `browser_click`'s coordinates are its pixels. |
 | `browser_wait` | Waits for text to appear, or for some seconds. |
 | `browser_dialog` | Accepts or dismisses a confirm, or answers a prompt. An alert is accepted on its own, and the agent is told. |
-| `browser_tabs` | Lists the agent's tabs, opens one, switches, or closes one. |
+| `browser_tabs` | Lists the agent's tabs, by id. |
+| `browser_switch_tab`, `browser_close_tab` | Switches to or closes one of them. |
 | `ask_user` | Asks you to do something only you can do (below). |
 
-Refs hold while the page shows the same document; after a navigation the agent takes a new snapshot. Each action reports the page's title and address afterwards, and a tab the page opens becomes the agent's current one.
+With a console, three more keep or take a file there: `browser_save_screenshot` and `browser_save_as_pdf` save the current tab as a PNG or a PDF in the console, and `browser_upload_file` puts a console file into a file input.
 
-The tools reach only the agent's own tabs: the ones it opened, and those its pages opened. Pages inside cross-origin frames, such as many CAPTCHAs, do not appear in a snapshot.
+A ref names the same element while the page shows the same document, and one that appeared since the last snapshot is marked `[new]`; after a navigation the agent takes a new snapshot. Each action reports the page's title and address afterwards, and a tab the page opens becomes the agent's current one.
+
+The tools reach only the agent's own tabs: the ones it opened, and those its pages opened.
 
 ## Sites that check for bots
 
