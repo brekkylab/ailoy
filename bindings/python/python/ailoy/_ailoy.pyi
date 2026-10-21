@@ -38,14 +38,11 @@ class AgentBuilder:
     def browser(
         self,
         *,
-        ask_user: Literal["end_turn", "wait"] = "end_turn",
         user_browser: Literal[
             "chrome", "chrome-beta", "chrome-dev", "chrome-canary", "chromium", "edge", "brave"
         ]
         | _Path
         | None = None,
-        on_ask: Callable[[str], str | None | Awaitable[str | None]] | None = None,
-        ask_timeout: float | None = None,
         careful: bool = True,
         start_url: str | None = None,
         isolated: bool = False,
@@ -65,11 +62,6 @@ class AgentBuilder:
         ``chrome://inspect/#remote-debugging``), and asks the person before it lets the agent
         in. ``user_browser`` names which, or gives any other's user data directory as a path;
         with none, it is whichever turned remote debugging on last.
-
-        ``ask_user`` is how the agent waits on the person: ``"end_turn"`` tells them in its
-        reply and ends the turn, ``"wait"`` waits for ``on_ask``. ``on_ask`` is given the
-        request and returns ``"done"``, ``"declined"``, or any other string, a note for the
-        agent; a raise is a decline. ``ask_timeout`` bounds it, in seconds.
 
         ``careful`` tells the agent to use sites as a person would, so sites checking for bots
         are less likely to turn it away.

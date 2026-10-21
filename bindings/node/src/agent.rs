@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
-    browser::{AskUser, Browser, UserBrowser},
+    browser::{Browser, UserBrowser},
     datatype::Value,
     memory::Memory,
     message::{Message, MessageDeltaOutput, MessageOutput},
@@ -39,7 +39,6 @@ use crate::{
     console,
     convert::{Json, from_js, query},
     error::{self, Result, invalid, promise, thrown, unsigned},
-    tool::Callback,
 };
 
 /// A value let go of on the runtime it was made on. Dropping an agent or a turn's stream may
@@ -118,16 +117,6 @@ pub struct BrowserOptions {
         ts_type = "'chrome' | 'chrome-beta' | 'chrome-dev' | 'chrome-canary' | 'chromium' | 'edge' | 'brave' | { userDataDir: string }"
     )]
     pub user_browser: Option<Either<String, UserDataDir>>,
-    /// How the agent waits on the person: `'endTurn'` (the default) tells them in its reply and
-    /// ends the turn, `'wait'` waits for `onAsk`.
-    #[napi(ts_type = "'endTurn' | 'wait'")]
-    pub ask_user: Option<String>,
-    /// Given the request, returns (or resolves to) `'done'`, `'declined'`, or any other
-    /// string, a note for the agent; a throw is a decline.
-    #[napi(ts_type = "(message: string) => unknown")]
-    pub on_ask: Option<Callback>,
-    /// How long `onAsk` may take, in milliseconds; no limit by default.
-    pub ask_timeout_ms: Option<u32>,
     /// Whether the agent is told to use sites as a person would, so sites checking for bots are
     /// less likely to turn it away. `true` by default.
     pub careful: Option<bool>,
@@ -255,26 +244,14 @@ impl JsAgentBuilder {
             executable: None,
             profile: None,
             user_browser: None,
-            ask_user: None,
-            on_ask: None,
-            ask_timeout_ms: None,
             careful: None,
             start_url: None,
         });
-        let browser = if options.isolated.unwrap_or(false) {
+        let mut browser = if options.isolated.unwrap_or(false) {
             Browser::isolated()
         } else {
             Browser::user()
         };
-        let mut browser = browser.ask_user(match options.ask_user.as_deref() {
-            None | Some("endTurn") => AskUser::EndTurn,
-            Some("wait") => AskUser::Wait,
-            Some(other) => {
-                return Err(invalid(format!(
-                    "askUser is 'endTurn' or 'wait', not {other:?}"
-                )));
-            }
-        });
         if let Some(host) = options.user_browser {
             browser = browser.user_browser(match host {
                 Either::A(name) => UserBrowser::named(&name).ok_or_else(|| {
@@ -296,13 +273,6 @@ impl JsAgentBuilder {
         }
         if let Some(dir) = options.profile {
             browser = browser.profile(dir);
-        }
-        if let Some(func) = options.on_ask {
-            let func = Arc::new(func);
-            browser = browser.on_ask(move |message| crate::tool::ask(func.clone(), message));
-        }
-        if let Some(ms) = options.ask_timeout_ms {
-            browser = browser.ask_timeout(std::time::Duration::from_millis(ms.into()));
         }
         browser = browser.careful(options.careful.unwrap_or(true));
         if let Some(url) = options.start_url {

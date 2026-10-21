@@ -21,7 +21,7 @@ use super::cdp::{Cdp, Refusal};
 const CONSENT_WAIT: Duration = Duration::from_secs(120);
 
 pub(super) const DECLINED: &str = "The user declined to let you use their browser. Do not try the \
-     browser again unless they ask; `ask_user` asks them again.";
+     browser again unless they ask you to in a new message; then it asks them again.";
 
 /// A Chromium-based browser on this host, by name or by its user data directory, for
 /// [`Browser::user_browser`](super::Browser::user_browser).

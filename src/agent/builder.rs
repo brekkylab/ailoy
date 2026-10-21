@@ -137,7 +137,7 @@ impl AgentBuilder {
         self
     }
 
-    /// Give the agent a browser and the `browser_*` and `ask_user` tools. The tools reach the
+    /// Give the agent a browser and the `browser_*` tools. The tools reach the
     /// browser from this process, not from the [`console`](Self::console). Nothing starts until
     /// the agent first uses it, or [`Agent::start_browser`].
     pub fn browser(mut self, browser: Browser) -> Self {

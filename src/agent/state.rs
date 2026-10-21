@@ -29,7 +29,7 @@ pub struct AgentState {
     /// [`ContextManager`](super::ContextManager) checks against its limit.
     pub last_input_tokens: Option<u64>,
 
-    /// The browser this agent drives; `None` means no browser tools and no `ask_user`.
+    /// The browser this agent drives; `None` means no browser tools.
     pub(crate) browser: Option<Arc<BrowserSession>>,
 }
 

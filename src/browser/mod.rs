@@ -11,7 +11,11 @@ mod user;
 
 pub use user::UserBrowser;
 
-use std::{fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    fmt,
+    sync::{Arc, atomic::Ordering},
+    time::Duration,
+};
 
 use anyhow::{Context as _, bail};
 use futures::future::BoxFuture;
@@ -23,29 +27,6 @@ use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
 };
 
-/// How `ask_user` waits for the person.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum AskUser {
-    /// The agent tells the person in its reply and ends the turn; their next message goes on.
-    #[default]
-    EndTurn,
-    /// Wait in the tool call for what [`Browser::on_ask`] returns.
-    Wait,
-}
-
-/// How the person answered a request, from an [`on_ask`](Browser::on_ask) handler.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AskResult {
-    Done,
-    Declined,
-    /// Done, with something to tell the agent.
-    Note(String),
-}
-
-/// Asks the person `message`, however the app does that, and returns their answer.
-pub type AskHandler =
-    Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = AskResult> + Send>> + Send + Sync>;
-
 /// A browser for an agent, set with [`AgentBuilder::browser`](crate::agent::AgentBuilder::browser).
 #[derive(Clone)]
 pub struct Browser {
@@ -55,9 +36,6 @@ pub struct Browser {
     headless: bool,
     executable: Option<std::path::PathBuf>,
     profile: Option<std::path::PathBuf>,
-    ask_user: AskUser,
-    on_ask: Option<AskHandler>,
-    ask_timeout: Option<Duration>,
     careful: bool,
     start_url: Option<String>,
 }
@@ -70,9 +48,6 @@ impl Default for Browser {
             headless: false,
             executable: None,
             profile: None,
-            ask_user: AskUser::default(),
-            on_ask: None,
-            ask_timeout: None,
             careful: true,
             start_url: None,
         }
@@ -87,9 +62,6 @@ impl fmt::Debug for Browser {
             .field("headless", &self.headless)
             .field("executable", &self.executable)
             .field("profile", &self.profile)
-            .field("ask_user", &self.ask_user)
-            .field("on_ask", &self.on_ask.is_some())
-            .field("ask_timeout", &self.ask_timeout)
             .field("careful", &self.careful)
             .field("start_url", &self.start_url)
             .finish()
@@ -144,28 +116,6 @@ impl Browser {
         self
     }
 
-    pub fn ask_user(mut self, mode: AskUser) -> Self {
-        self.ask_user = mode;
-        self
-    }
-
-    /// How [`AskUser::Wait`] asks: `handler` gets the request and returns the answer.
-    pub fn on_ask<F, Fut>(mut self, handler: F) -> Self
-    where
-        F: Fn(String) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = AskResult> + Send + 'static,
-    {
-        self.on_ask = Some(Arc::new(move |message| Box::pin(handler(message))));
-        self
-    }
-
-    /// How long [`on_ask`](Self::on_ask) may take before the agent hears it timed out; no limit
-    /// by default.
-    pub fn ask_timeout(mut self, timeout: Duration) -> Self {
-        self.ask_timeout = Some(timeout);
-        self
-    }
-
     /// Whether the agent is told to use sites as a person would, so that sites checking for bots
     /// are less likely to turn it away. On by default.
     pub fn careful(mut self, careful: bool) -> Self {
@@ -181,9 +131,6 @@ impl Browser {
 
     /// Refuses what cannot work, before anything starts.
     pub(crate) fn check(&self) -> anyhow::Result<()> {
-        if self.ask_user == AskUser::Wait && self.on_ask.is_none() {
-            bail!("`AskUser::Wait` needs `Browser::on_ask`, which is how it waits");
-        }
         if self.isolated && self.user_browser.is_some() {
             bail!("`Browser::user_browser` is for `Browser::user`, not `Browser::isolated`");
         }
@@ -209,8 +156,6 @@ struct Live {
     tabs: Option<page::Tabs>,
     /// The agent's tabs as last known, to take up again after a reconnection.
     targets: Vec<String>,
-    /// Whether the person declined, so the agent is not asked again until it asks.
-    declined: bool,
     /// Whether a connection was ever up, so the next one is a reconnection.
     was_up: bool,
     /// The isolated browser started for the agent; dropped before its profile.
@@ -225,6 +170,9 @@ pub(crate) struct BrowserSession {
     live: tokio::sync::Mutex<Live>,
     /// What [`Self::start`] heard for the agent, told on its next turn.
     unheard: std::sync::Mutex<Option<String>>,
+    /// Whether the person declined the browser, so it does not ask them again before their next
+    /// message.
+    declined: std::sync::atomic::AtomicBool,
     /// Files taken from the console for an upload, on this host where the browser reads them.
     uploads: std::sync::OnceLock<tempfile::TempDir>,
     /// Whether the agent has the console tools, to tell it a download can go there.
@@ -237,6 +185,7 @@ impl BrowserSession {
             config,
             live: Default::default(),
             unheard: Default::default(),
+            declined: Default::default(),
             uploads: Default::default(),
             console: Default::default(),
         })
@@ -261,8 +210,8 @@ impl BrowserSession {
         }
     }
 
-    /// Connects if not connected. `asking` is `ask_user`'s and the app's, which ask again after
-    /// the person declined.
+    /// Connects if not connected. `asking` is the app's, which asks again after the person
+    /// declined.
     async fn ensure(&self, live: &mut Live, asking: bool) -> anyhow::Result<Ready> {
         if live.tabs.as_ref().is_some_and(page::Tabs::is_alive) {
             return Ok(Ready::Go(None));
@@ -275,19 +224,19 @@ impl BrowserSession {
             restarted = self.launch(live).await?;
             self.connect_launched(live).await?
         } else {
-            if live.declined && !asking {
+            if self.declined.load(Ordering::Relaxed) && !asking {
                 return Ok(Ready::Refused(user::DECLINED.into()));
             }
             match user::connect(self.config.user_browser.as_ref()).await? {
                 Ok(cdp) => cdp,
                 Err(user::Closed::NotEnabled(why)) => return Ok(Ready::Refused(why)),
                 Err(user::Closed::Declined) => {
-                    live.declined = true;
+                    self.declined.store(true, Ordering::Relaxed);
                     return Ok(Ready::Refused(user::DECLINED.into()));
                 }
             }
         };
-        live.declined = false;
+        self.declined.store(false, Ordering::Relaxed);
         let targets = if restarted {
             isolated::first_tab(&cdp).await?
         } else {
@@ -464,43 +413,11 @@ impl BrowserSession {
         message
     }
 
-    /// A reconnection [`Self::start`] made, as a note for the agent's next message.
+    /// A reconnection [`Self::start`] made, as a note for the agent's next message. A new message
+    /// from the person may ask for the browser after they declined it, so it may ask them again.
     pub(crate) fn catch_up(&self) -> Option<String> {
+        self.declined.store(false, Ordering::Relaxed);
         self.unheard.lock().unwrap().take()
-    }
-
-    async fn ask(&self, message: &str) -> Value {
-        {
-            let mut live = self.live.lock().await;
-            match self.ensure(&mut live, true).await {
-                Ok(Ready::Go(_)) => {}
-                Ok(Ready::Refused(why)) => {
-                    return crate::to_value!({ "error": why, "phase": "browser" });
-                }
-                Err(e) => {
-                    return crate::to_value!({ "error": format!("{e:#}"), "phase": "browser" });
-                }
-            }
-        }
-        match (self.config.ask_user, &self.config.on_ask) {
-            (AskUser::Wait, Some(handler)) => {
-                let asked = handler(message.to_string());
-                let answer = match self.config.ask_timeout {
-                    Some(limit) => tokio::time::timeout(limit, asked).await.ok(),
-                    None => Some(asked.await),
-                };
-                match answer {
-                    Some(AskResult::Done) => crate::to_value!({ "done": true }),
-                    Some(AskResult::Declined) => crate::to_value!({ "declined": true }),
-                    Some(AskResult::Note(note)) => crate::to_value!({ "done": true, "note": note }),
-                    None => crate::to_value!({ "timeout": true }),
-                }
-            }
-            // EndTurn (`check` refuses Wait without a handler).
-            _ => crate::to_value!({
-                "next": "Nothing is shown to the user: tell them in your reply exactly what to do in their browser, then end your turn. Their next message is when it is done."
-            }),
-        }
     }
 }
 
@@ -548,7 +465,6 @@ macro_rules! browser_tool {
     }};
 }
 
-/// The browser tools, bound to `session`, with `ask_user`.
 fn obj(properties: Value, required: &[&str]) -> Value {
     let required = Value::array(required.iter().map(|r| Value::string(*r)));
     crate::to_value!({ "type": "object", "properties": properties, "required": required })
@@ -558,8 +474,8 @@ fn int_arg(args: &Value, key: &str) -> Option<usize> {
     num_arg(args, key).map(|n| n.max(0.0) as usize)
 }
 
-/// The browser tools, bound to `session`, with `ask_user`; with `console`, also those that keep
-/// or take a file there.
+/// The browser tools, bound to `session`; with `console`, also those that keep or take a file
+/// there.
 pub(crate) fn tools(session: &Arc<BrowserSession>, console: bool) -> Vec<(ToolDesc, ToolFunc)> {
     let config = session.config();
     let whose = if config.isolated {
@@ -569,8 +485,17 @@ pub(crate) fn tools(session: &Arc<BrowserSession>, console: bool) -> Vec<(ToolDe
         "The browser is the user's own, signed in as them; you work in a window of your own and \
          reach only the tabs you opened."
     };
+    let act_in = if config.isolated && config.headless {
+        "tell the user what it needs; the browser has no window for them to act in"
+    } else {
+        "tell the user exactly what to do in the browser"
+    };
     let navigate = format!(
-        "Open a URL in your current tab, or in a new tab with `new_tab`. {whose}{}",
+        "Open a URL in your current tab, or in a new tab with `new_tab`. {whose} When a site needs \
+         what only the user can do (signing in, a CAPTCHA, a second factor), {act_in}, and end \
+         your turn; never ask for credentials or get around a check yourself. Before anything \
+         that cannot be undone (paying, sending, deleting, posting), ask the user and end your \
+         turn.{}",
         if config.careful { CAREFUL } else { "" }
     );
     let mut tools = vec![
@@ -937,10 +862,6 @@ pub(crate) fn tools(session: &Arc<BrowserSession>, console: bool) -> Vec<(ToolDe
                 }
             }),
         ),
-        (
-            ask_user_tool_desc(config),
-            ask_user_tool_func(session.clone()),
-        ),
     ];
     session
         .console
@@ -1252,62 +1173,14 @@ fn thousands(n: usize) -> String {
 /// Appended to `browser_navigate` unless [`Browser::careful`] is off.
 const CAREFUL: &str = " Sites may turn away traffic that looks automated: start from a site's \
      home page or search and go through its links and forms rather than typed-in query URLs, act \
-     at a person's pace, and never retry in a loop. On a robot check, stop and use `ask_user`.";
-
-pub(crate) fn ask_user_tool_desc(browser: &Browser) -> ToolDesc {
-    let returns = match browser.ask_user {
-        AskUser::EndTurn => {
-            "It returns at once: then tell them what to do and end your turn; their next message \
-             is when it is done."
-        }
-        AskUser::Wait => {
-            "It returns with their answer: done, declined (with a note, perhaps), or timed out."
-        }
-    };
-    let what = if browser.isolated && browser.headless {
-        "Ask the user for what only they can give (a decision, a code they received), or to \
-         confirm before anything that cannot be undone (paying, sending, deleting, posting). The \
-         browser has no window, so they cannot act in it: when a site needs them to sign in or \
-         pass a check, say so and stop."
-    } else {
-        "Ask the user to do something in the browser that only they can do (signing in, a \
-         CAPTCHA, a second factor), or to confirm before anything that cannot be undone (paying, \
-         sending, deleting, posting)."
-    };
-    desc(
-        "ask_user",
-        &format!(
-            "{what} Never ask for credentials or get around a check yourself. Say exactly what to \
-             do, in the user's language. {returns}"
-        ),
-        crate::to_value!({
-            "type": "object",
-            "properties": {
-                "message": { "type": "string", "description": "What the user should do." }
-            },
-            "required": ["message"]
-        }),
-    )
-}
-
-fn ask_user_tool_func(session: Arc<BrowserSession>) -> ToolFunc {
-    crate::tool_func!(async |args: Value| -> Value
-        with [session = session.clone()]
-    {
-        let Some(message) = args.pointer("/message").and_then(|v| v.as_str()).filter(|m| !m.trim().is_empty()) else {
-            return crate::to_value!({ "error": "missing required parameter: message", "phase": "validation" });
-        };
-        session.ask(message).await
-    })
-}
+     at a person's pace, and never retry in a loop. On a robot check, stop and tell the user.";
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn wait_needs_a_handler() {
-        assert!(Browser::user().ask_user(AskUser::Wait).check().is_err());
+    fn options_are_for_their_kind_of_browser() {
         assert!(Browser::user().check().is_ok());
         assert!(Browser::user().headless(true).check().is_err());
         assert!(
@@ -1317,10 +1190,6 @@ mod tests {
                 .is_err()
         );
         assert!(Browser::isolated().profile("/tmp/p").check().is_ok());
-        let answered = Browser::user()
-            .ask_user(AskUser::Wait)
-            .on_ask(async |_| AskResult::Done);
-        assert!(answered.check().is_ok());
     }
 
     fn description(browser: Browser, name: &str) -> String {
@@ -1333,16 +1202,12 @@ mod tests {
     }
 
     #[test]
-    fn ask_user_says_how_it_returns() {
-        let ends = description(Browser::user(), "ask_user");
-        assert!(ends.contains("Never ask for credentials") && ends.contains("end your turn"));
-        let waits = description(
-            Browser::user()
-                .ask_user(AskUser::Wait)
-                .on_ask(async |_| AskResult::Done),
-            "ask_user",
-        );
-        assert!(waits.contains("returns with their answer"));
+    fn a_decline_holds_until_the_next_message() {
+        let session = BrowserSession::new(Browser::user());
+        session.declined.store(true, Ordering::Relaxed);
+        assert!(session.declined.load(Ordering::Relaxed));
+        session.catch_up();
+        assert!(!session.declined.load(Ordering::Relaxed));
     }
 
     #[test]

@@ -76,11 +76,6 @@ test('a browser connects only when used, and needs no console', async () => {
   await agent.close()
 })
 
-test('askUser is endTurn or wait', () => {
-  new AgentBuilder('m').browser({ askUser: 'wait' })
-  assert.throws(() => new AgentBuilder('m').browser({ askUser: 'later' }), { code: 'INVALID_ARG' })
-})
-
 test('a user browser is a name or a directory', () => {
   new AgentBuilder('m').browser({ userBrowser: 'edge' })
   new AgentBuilder('m').browser({ userBrowser: { userDataDir: '/nonexistent' } })
@@ -90,18 +85,6 @@ test('a user browser is a name or a directory', () => {
 test('a browser can be less careful', () => {
   new AgentBuilder('m').browser({ careful: false })
   new AgentBuilder('m').browser({ careful: true, userBrowser: { userDataDir: '/nonexistent' } })
-})
-
-test('wait needs onAsk', async () => {
-  setLangModelProvider('fake-browser', 'vllm')
-  await assert.rejects(new AgentBuilder('fake-browser/model').browser({ askUser: 'wait' }).build(), {
-    message: /onAsk|on_ask/,
-  })
-  const onAsk = async () => 'done'
-  const agent = await new AgentBuilder('fake-browser/model')
-    .browser({ askUser: 'wait', onAsk, askTimeoutMs: 5000, userBrowser: { userDataDir: '/nonexistent' } })
-    .build()
-  await agent.close()
 })
 
 test('an isolated browser has options of its own', async () => {

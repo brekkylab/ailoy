@@ -53,18 +53,18 @@ let mut agent = AgentBuilder::new("anthropic/claude-sonnet-5")
 
 :::
 
-Nothing connects until the agent first uses a browser tool or asks you something. Then the browser asks you whether to allow it. While it is allowed, Chrome shows that it is being controlled by automated software. The agent opens a window of its own and works there. The browser asks only once for the agent's whole life, because ailoy keeps one connection to it open.
+Nothing connects until the agent first uses a browser tool. Then the browser asks you whether to allow it. While it is allowed, Chrome shows that it is being controlled by automated software. The agent opens a window of its own and works there. The browser asks only once for the agent's whole life, because ailoy keeps one connection to it open.
 
 To connect sooner, say while you are at your screen, call `start_browser()` (`startBrowser()` in Node) between turns. It does nothing once connected. A decline, or remote debugging being off, comes back as an error. `start_url` (`startUrl` in Node, `Browser::start_url` in Rust) is the page the agent's window opens on.
 
-- If you decline, the agent hears so and does not try again. It asks again only through `ask_user` (below).
+- If you decline, the agent hears so and does not try again in that turn. When your next message asks it to, its next browser tool asks you again.
 - If the browser closes, or you turn remote debugging off, the agent connects again on its next browser tool. The browser asks again, and if the agent's window is gone it gets a new one. The agent is told when this happens.
 - If remote debugging is off, the agent is told how to turn it on, and you can pass that on.
 
 ailoy finds the browser by the `DevToolsActivePort` file a Chromium-based browser writes in its user data directory while remote debugging is on. By default it looks at Chrome, Chrome Beta, Dev and Canary, Chromium, Edge and Brave, and takes whichever turned remote debugging on last. To name one, pass `user_browser` (`userBrowser` in Node, `Browser::user_browser` in Rust): `"chrome"`, `"chrome-beta"`, `"chrome-dev"`, `"chrome-canary"`, `"chromium"`, `"edge"` or `"brave"`, or any other by its user data directory (a path in Python, `{ userDataDir }` in Node, `UserBrowser::Custom` in Rust).
 
 ::: warning
-The agent uses your real browser, signed in wherever you are. Its tools cannot reach your other tabs, but in its own window it can do anything you could. `ask_user`'s description tells it to ask you before anything that cannot be undone, such as paying, sending or deleting. That is an instruction, though, not a limit, so use your own browser only with an agent and a task you trust.
+The agent uses your real browser, signed in wherever you are. Its tools cannot reach your other tabs, but in its own window it can do anything you could. The browser tools' descriptions tell it to ask you before anything that cannot be undone, such as paying, sending or deleting. That is an instruction, though, not a limit, so use your own browser only with an agent and a task you trust.
 :::
 
 ## A browser of the agent's own
@@ -77,7 +77,7 @@ agent = await AgentBuilder("anthropic/claude-sonnet-5").browser(isolated=True).b
 
 - It is `executable` if you name one, else a Chromium-based browser installed here: Chrome, Chromium, Edge or Brave, the first found. With none, starting it fails.
 - It runs on a fresh profile that is deleted at the end, so it is signed in nowhere. `profile` keeps a user data directory instead, so sign-ins last from one run to the next.
-- It opens a window, where you can sign in when the agent asks. `headless` runs it without one, as on a server; then `ask_user` asks you only for decisions and information, since there is nothing for you to act in.
+- It opens a window, where you can sign in when the agent tells you to. `headless` runs it without one, as on a server; then the agent can only tell you what a site needs.
 - If it closes, the next browser tool starts it again on the same profile, and the agent is told its tabs are gone.
 
 `user_browser` is for your own browser only, and `headless`, `executable` and `profile` for the agent's own; mixing them fails when the agent is built.
@@ -106,7 +106,6 @@ Rather than being handed the page at every step, the agent reads it with `browse
 | `browser_dialog` | Accepts or dismisses a confirm, or answers a prompt. An alert is accepted on its own, and the agent is told. |
 | `browser_tabs` | Lists the agent's tabs, by id. |
 | `browser_switch_tab`, `browser_close_tab` | Switches to or closes one of them. |
-| `ask_user` | Asks you to do something only you can do (below). |
 
 With a console, four more keep or take a file there: `browser_save_screenshot` and `browser_save_as_pdf` save the current tab as a PNG or a PDF in the console (the PDF named after the page unless named, with paper, orientation, scale and margins as asked), `browser_upload_file` puts a console file into a file input, the one by ref or the nearest one, and `browser_save_download` copies a file the agent's tabs downloaded (up to 512 MiB) into the console. Downloads themselves go where your browser puts them.
 
@@ -116,23 +115,10 @@ The tools reach only the agent's own tabs: the ones it opened, and those its pag
 
 ## Sites that check for bots
 
-Some sites turn away traffic that looks automated, with a robot check or a block. By default the description of `browser_navigate` tells the agent to use sites as a person would: start from a site's home page or search and go through its links and forms rather than typed-in query URLs, act at a person's pace, and never retry in a loop. When a robot check appears anyway, it stops and asks you through `ask_user` rather than trying to get around it. To leave this out, pass `careful=False` (`careful: false` in Node, `Browser::careful(false)` in Rust).
+Some sites turn away traffic that looks automated, with a robot check or a block. By default the description of `browser_navigate` tells the agent to use sites as a person would: start from a site's home page or search and go through its links and forms rather than typed-in query URLs, act at a person's pace, and never retry in a loop. When a robot check appears anyway, it stops and tells you rather than trying to get around it. To leave this out, pass `careful=False` (`careful: false` in Node, `Browser::careful(false)` in Rust).
 
 ailoy adds nothing to the agent's system prompt for the browser: what the agent knows of it is in the tools' descriptions.
 
-## Asking you to do something
+## When a site needs you
 
-When a site needs something only you can do, such as signing in, a CAPTCHA or a second factor, the agent never asks for your password. It calls its `ask_user` tool. `ask_user` sets how it waits for you:
-
-- `"end_turn"` (the default): the agent tells you in its reply what to do and the turn ends. Your next message continues.
-- `"wait"`: the turn waits for `on_ask` (`onAsk` in Node), which your app provides.
-
-`on_ask` is called with the request and returns `"done"`, `"declined"`, or any other string, which counts as done and is passed to the agent as a note. If it raises, that counts as declined. `ask_timeout` (in seconds; `askTimeoutMs` in Node) bounds how long it may take. This asks on the terminal:
-
-```python
-async def ask_here(message: str) -> str:
-    answer = await asyncio.to_thread(input, f"{message}\nPress Enter when done, or type no: ")
-    return "declined" if answer.strip() == "no" else "done"
-
-agent = await AgentBuilder(model).browser(ask_user="wait", on_ask=ask_here).build()
-```
+When a site needs something only you can do, such as signing in, a CAPTCHA or a second factor, the agent never asks for your password: it tells you in its reply what to do and ends its turn. Do it in its window, then tell it to go on. It does the same before anything that cannot be undone, such as paying, sending or deleting.

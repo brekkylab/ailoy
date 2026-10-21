@@ -155,12 +155,6 @@ async def test_a_browser_connects_only_when_used_and_needs_no_console():
     await agent.close()
 
 
-def test_ask_user_is_end_turn_or_wait():
-    AgentBuilder(MODEL).browser(ask_user="wait")
-    with pytest.raises(ValueError):
-        AgentBuilder(MODEL).browser(ask_user="later")
-
-
 def test_a_user_browser_is_a_name_or_a_directory(tmp_path):
     AgentBuilder(MODEL).browser(user_browser="edge")
     AgentBuilder(MODEL).browser(user_browser=tmp_path)
@@ -183,22 +177,6 @@ async def test_an_isolated_browser_has_options_of_its_own(tmp_path):
     await agent.close()
     with pytest.raises(AiloyError, match="Browser::isolated"):
         await AgentBuilder(MODEL).agent_provider(PROVIDER).browser(headless=True).build()
-
-
-async def test_wait_needs_on_ask(tmp_path):
-    with pytest.raises(AiloyError, match="on_ask"):
-        await AgentBuilder(MODEL).agent_provider(PROVIDER).browser(ask_user="wait").build()
-
-    async def on_ask(message: str) -> str:
-        return "done"
-
-    agent = await (
-        AgentBuilder(MODEL)
-        .agent_provider(PROVIDER)
-        .browser(ask_user="wait", on_ask=on_ask, ask_timeout=5, user_browser=tmp_path)
-        .build()
-    )
-    await agent.close()
 
 
 async def test_an_agent_without_a_browser_cannot_start_one():

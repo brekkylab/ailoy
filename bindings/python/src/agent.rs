@@ -10,11 +10,11 @@
 //! on its lock, one protocol call at a time, the agent starts and stops its backend around each
 //! batch of tool calls, and `ConsoleClient.close()` ends the session for both.
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc};
 
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
-    browser::{AskUser, Browser, UserBrowser},
+    browser::{Browser, UserBrowser},
     datatype::Value,
     memory::Memory,
     message::Message,
@@ -172,19 +172,14 @@ impl PyAgentBuilder {
     /// `user_browser` names which of the person's:
     /// `"chrome"`, `"chrome-beta"`, `"chrome-dev"`, `"chrome-canary"`, `"chromium"`, `"edge"`,
     /// `"brave"`, or any other by its user data directory (a path); with none, whichever turned
-    /// remote debugging on last. `ask_user` is how the agent waits on the person: `"end_turn"` tells them in its reply and ends the turn, `"wait"` waits for
-    /// `on_ask`, a callable given the request that returns `"done"`, `"declined"` or a note,
-    /// within `ask_timeout` seconds if set. `careful` tells the agent to use sites as a person
+    /// remote debugging on last. `careful` tells the agent to use sites as a person
     /// would, so sites checking for bots are less likely to turn it away. `start_url` is the page
     /// the agent's tab opens on.
-    #[pyo3(signature = (*, ask_user = "end_turn", user_browser = None, on_ask = None, ask_timeout = None, careful = true, start_url = None, isolated = false, headless = false, executable = None, profile = None))]
+    #[pyo3(signature = (*, user_browser = None, careful = true, start_url = None, isolated = false, headless = false, executable = None, profile = None))]
     #[allow(clippy::too_many_arguments)]
     fn browser<'py>(
         slf: PyRef<'py, Self>,
-        ask_user: &str,
         user_browser: Option<Bound<'py, PyAny>>,
-        on_ask: Option<Py<PyAny>>,
-        ask_timeout: Option<f64>,
         careful: bool,
         start_url: Option<String>,
         isolated: bool,
@@ -192,20 +187,11 @@ impl PyAgentBuilder {
         executable: Option<PathBuf>,
         profile: Option<PathBuf>,
     ) -> PyResult<PyRef<'py, Self>> {
-        let browser = if isolated {
+        let mut browser = if isolated {
             Browser::isolated()
         } else {
             Browser::user()
         };
-        let mut browser = browser.ask_user(match ask_user {
-            "end_turn" => AskUser::EndTurn,
-            "wait" => AskUser::Wait,
-            other => {
-                return Err(PyValueError::new_err(format!(
-                    "ask_user is \"end_turn\" or \"wait\", not {other:?}"
-                )));
-            }
-        });
         if let Some(host) = user_browser {
             browser = browser.user_browser(user_browser_of(&host)?);
         }
@@ -217,16 +203,6 @@ impl PyAgentBuilder {
         }
         if let Some(dir) = profile {
             browser = browser.profile(dir);
-        }
-        if let Some(func) = on_ask {
-            let func = Arc::new(func);
-            browser = browser.on_ask(move |message| crate::tool::ask(func.clone(), message));
-        }
-        if let Some(seconds) = ask_timeout {
-            let timeout = Duration::try_from_secs_f64(seconds).map_err(|_| {
-                PyValueError::new_err("ask_timeout is a number of seconds, at least 0")
-            })?;
-            browser = browser.ask_timeout(timeout);
         }
         browser = browser.careful(careful);
         if let Some(url) = start_url {
