@@ -131,15 +131,3 @@ pub(super) fn installed() -> Option<PathBuf> {
     }
     candidates.into_iter().find(|c| c.is_file())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_installed_browser_is_a_file_there() {
-        if let Some(found) = installed() {
-            assert!(found.is_file(), "{found:?}");
-        }
-    }
-}

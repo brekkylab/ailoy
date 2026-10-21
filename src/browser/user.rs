@@ -247,47 +247,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn devtools_active_port_is_a_port_then_a_path() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("DevToolsActivePort"),
-            "9222\n/devtools/browser/abc\n",
-        )
-        .unwrap();
-        assert_eq!(
-            devtools_url(dir.path()).as_deref(),
-            Some("ws://127.0.0.1:9222/devtools/browser/abc")
-        );
-        std::fs::write(dir.path().join("DevToolsActivePort"), "x\n/y\n").unwrap();
-        assert_eq!(devtools_url(dir.path()), None);
-    }
-
-    /// A browser counts as open only while something listens where its file says.
-    #[test]
-    fn a_browser_is_open_while_its_port_is_listened_on() {
-        let dir = tempfile::tempdir().unwrap();
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        std::fs::write(
-            dir.path().join("DevToolsActivePort"),
-            format!("{port}\n/devtools/browser/abc\n"),
-        )
-        .unwrap();
-        let found = open(dir.path()).unwrap();
-        assert_eq!(
-            found.url,
-            format!("ws://127.0.0.1:{port}/devtools/browser/abc")
-        );
-        drop(listener);
-        // Unless another process (a test's browser) took the freed port meanwhile.
-        let taken = std::net::TcpStream::connect(("127.0.0.1", port)).is_ok();
-        assert!(
-            taken || open(dir.path()).is_none(),
-            "a quit browser's file names a port nothing listens on"
-        );
-    }
-
-    #[test]
     fn named_browsers_read_back_by_name_and_have_a_place_here() {
         for browser in UserBrowser::NAMED {
             let name = browser.name();

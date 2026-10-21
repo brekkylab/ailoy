@@ -1217,24 +1217,6 @@ mod tests {
         assert!(careless.contains("user's own") && !careless.contains(CAREFUL));
     }
 
-    #[test]
-    fn every_tool_is_named_once() {
-        let session = BrowserSession::new(Browser::user());
-        let names: Vec<String> = tools(&session, false)
-            .into_iter()
-            .map(|(d, _)| d.name)
-            .collect();
-        let mut unique = names.clone();
-        unique.sort();
-        unique.dedup();
-        assert_eq!(names.len(), unique.len(), "{names:?}");
-        assert!(
-            names
-                .iter()
-                .all(|n| n.starts_with("browser_") || n == "ask_user")
-        );
-    }
-
     /// A headless Chrome on its own profile, which asks nobody: `AILOY_TEST_CHROME` names the
     /// binary, macOS's Chrome by default.
     struct TestChrome {

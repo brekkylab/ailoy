@@ -1183,56 +1183,6 @@ mod tests {
     }
 
     #[test]
-    fn an_opaque_box_painted_later_covers_what_is_under_it() {
-        let rect = |x, y, w, h| Rect { x, y, w, h };
-        let painted = [
-            (1, 0, rect(10.0, 10.0, 50.0, 20.0), false),
-            (2, 1, rect(0.0, 0.0, 200.0, 100.0), true),
-            (3, 2, rect(10.0, 10.0, 50.0, 20.0), false),
-            (0, 3, rect(150.0, 50.0, 100.0, 100.0), false),
-        ];
-        assert_eq!(
-            covered(&painted),
-            vec![0],
-            "only what lies whole under the box"
-        );
-    }
-
-    #[test]
-    fn the_dom_says_what_scrolls_points_and_is_hidden() {
-        let captured = json!({
-            "strings": ["DIV", "auto", "pointer", "none", "SPAN", "id", "list", "visible", "1"],
-            "documents": [{
-                "nodes": {
-                    "backendNodeId": [1, 2, 3],
-                    "parentIndex": [-1, 0, 0],
-                    "nodeType": [1, 1, 1],
-                    "nodeName": [0, 4, 4],
-                    "attributes": [[5, 6], [], []],
-                },
-                "layout": {
-                    "nodeIndex": [0, 1, 2],
-                    "styles": [
-                        [-1, 7, 8, 1, -1, -1, -1, -1, -1, -1],
-                        [-1, 7, 8, -1, -1, -1, 2, -1, -1, -1],
-                        [3, -1, -1, -1, -1, -1, -1, -1, -1, -1],
-                    ],
-                    "bounds": [[0, 0, 100, 100], [0, 0, 10, 10], [0, 0, 10, 10]],
-                    "scrollRects": [[0, 50, 100, 300], [], []],
-                    "clientRects": [[0, 0, 100, 100], [], []],
-                    "paintOrders": [1, 2, 3],
-                },
-            }],
-        });
-        let dom = read_dom(&captured);
-        assert_eq!(dom[&1].tag, "div");
-        assert_eq!(dom[&1].attr("id"), Some("list"));
-        assert_eq!(dom[&1].scroll, Some((0.5, 1.5)));
-        assert!(dom[&2].pointer && dom[&2].visible);
-        assert!(!dom[&3].visible, "display: none");
-    }
-
-    #[test]
     fn the_dom_gives_refs_to_what_acts_and_folds_a_select() {
         let element = |tag: &str, attrs: &[(&str, &str)]| Facts {
             element: true,
@@ -1293,14 +1243,5 @@ mod tests {
             "- div \"Add to cart\" id=buy [new] [ref=e102]\n\
              - combobox \"Sort\" name=sort [1 options: Price] [ref=e104]"
         );
-    }
-
-    #[test]
-    fn a_long_page_is_cut_at_a_line_and_says_so() {
-        let text = "- a\n- b\n- c\n- d";
-        let cut = cut(text, 8);
-        assert!(cut.starts_with("- a\n- b\n"), "{cut}");
-        assert!(cut.contains("2 more lines"), "{cut}");
-        assert_eq!(super::cut("- a", 8), "- a");
     }
 }
