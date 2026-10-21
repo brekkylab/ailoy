@@ -6,7 +6,7 @@
 use std::{
     collections::{HashMap, HashSet},
     io::Cursor,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -64,6 +64,8 @@ pub(super) struct Tabs {
     /// That document, as its loader.
     refs_loader: Option<String>,
     shot: Option<Shot>,
+    /// Every tab the agent has had, closed ones too: whose downloads are its own.
+    owned: HashSet<String>,
 }
 
 /// What a tool says back: text, and a screenshot when one was taken.
@@ -98,6 +100,7 @@ impl Tabs {
             refs: HashMap::new(),
             refs_loader: None,
             shot: None,
+            owned: HashSet::new(),
         };
         for target in targets {
             tabs.adopt(target).await?;
@@ -164,6 +167,7 @@ impl Tabs {
             target: target.to_string(),
             session,
         });
+        self.owned.insert(target.to_string());
         self.current = self.tabs.len() - 1;
         self.refs.clear();
         Ok(())
@@ -1384,6 +1388,21 @@ impl Tabs {
         }
     }
 
+    /// The downloads the agent's tabs finished, in the order they began: each file's name and
+    /// where it is on this host.
+    pub(super) fn downloaded(&self) -> Vec<(String, PathBuf)> {
+        self.cdp
+            .downloads()
+            .into_iter()
+            .filter(|(_, d)| d.state == "completed" && self.owned.contains(&d.frame))
+            .filter_map(|(_, d)| {
+                let path = PathBuf::from(d.path?);
+                let name = path.file_name()?.to_string_lossy().into_owned();
+                Some((name, path))
+            })
+            .collect()
+    }
+
     async fn click_node(&self, node: &Node) -> Result<(), CallError> {
         let js_click = |pause: u64| async move {
             self.call_on(node, "function() { this.click(); }", json!([]))
@@ -2071,40 +2090,94 @@ impl Tabs {
     }
 
     /// The page as a PDF.
-    pub(super) async fn pdf(&mut self) -> anyhow::Result<Vec<u8>> {
+    /// The page as a PDF, and its title.
+    pub(super) async fn pdf(&mut self, pdf: Pdf) -> anyhow::Result<(Vec<u8>, String)> {
         self.no_dialog()?;
-        let printed = self
-            .page("Page.printToPDF", json!({ "printBackground": true }))
-            .await?;
-        BASE64
+        let (width, height) = match pdf.paper_format.to_lowercase().as_str() {
+            "legal" => (8.5, 14.0),
+            "a4" => (8.27, 11.69),
+            "a3" => (11.69, 16.54),
+            "tabloid" => (11.0, 17.0),
+            _ => (8.5, 11.0),
+        };
+        let mut params = json!({
+            "printBackground": pdf.print_background,
+            "landscape": pdf.landscape,
+            "scale": pdf.scale,
+            "paperWidth": width,
+            "paperHeight": height,
+            "preferCSSPageSize": true,
+        });
+        if pdf.display_header_footer {
+            params["displayHeaderFooter"] = json!(true);
+            params["headerTemplate"] = json!(pdf.header_template.as_deref().unwrap_or(PDF_HEADER));
+            params["footerTemplate"] = json!(pdf.footer_template.as_deref().unwrap_or(PDF_FOOTER));
+            for (side, inches) in [
+                ("marginTop", 0.5),
+                ("marginBottom", 0.5),
+                ("marginLeft", 0.4),
+                ("marginRight", 0.4),
+            ] {
+                params[side] = json!(inches);
+            }
+        }
+        let printed = tokio::time::timeout(
+            Duration::from_secs(30),
+            self.page("Page.printToPDF", params),
+        )
+        .await
+        .context("printing the PDF took over 30 s")??;
+        let bytes = BASE64
             .decode(printed["data"].as_str().unwrap_or_default())
-            .context("the PDF was not base64")
+            .context("the PDF was not base64")?;
+        let title = self.eval("document.title").await.unwrap_or_default();
+        Ok((bytes, title.as_str().unwrap_or_default().to_string()))
     }
 
-    /// Puts `file`, on this host, in the file input at `ref`.
+    /// Puts `file` in the file input at `ref`, or the one nearest it:
+    /// up to three levels up, in each one's descendants and siblings three deep, else the file
+    /// input on the page closest to where it is scrolled.
     pub(super) async fn upload(&mut self, r#ref: &str, file: &Path) -> anyhow::Result<Said> {
         self.no_dialog()?;
         let node = self.node(r#ref)?;
-        let is_file = self
-            .call_on(
-                &node,
-                "function() { return this.tagName === 'INPUT' && this.type === 'file'; }",
-                json!([]),
+        let resolved = self
+            .cdp
+            .call(
+                "DOM.resolveNode",
+                json!({ "backendNodeId": node.backend }),
+                Some(&node.session),
             )
             .await?;
-        if is_file != Value::Bool(true) {
-            bail!("{ref} is not a file input: take a snapshot and find the one to upload into");
-        }
+        let found = self
+            .cdp
+            .call(
+                "Runtime.callFunctionOn",
+                json!({ "objectId": resolved["object"]["objectId"], "functionDeclaration": FILE_INPUT_NEAR }),
+                Some(&node.session),
+            )
+            .await?;
+        let Some(input) = found["result"]["objectId"].as_str() else {
+            bail!("No file upload element found on the page");
+        };
+        let described = self
+            .cdp
+            .call(
+                "DOM.describeNode",
+                json!({ "objectId": input }),
+                Some(&node.session),
+            )
+            .await?;
         let result = self
             .cdp
             .call(
                 "DOM.setFileInputFiles",
-                json!({ "files": [file.display().to_string()], "backendNodeId": node.backend }),
+                json!({ "files": [file.display().to_string()], "backendNodeId": described["node"]["backendNodeId"] }),
                 Some(&node.session),
             )
             .await
             .map(|_| ());
-        self.after("Uploaded.", result).await
+        self.after(&format!("Successfully uploaded file to {ref}."), result)
+            .await
     }
 
     pub(super) async fn evaluate(&mut self, code: &str) -> anyhow::Result<Said> {
@@ -2391,6 +2464,28 @@ pub(super) struct Search<'a> {
     pub css_scope: Option<&'a str>,
     pub max_results: usize,
 }
+
+/// How `browser_save_as_pdf` prints.
+pub(super) struct Pdf {
+    pub print_background: bool,
+    pub landscape: bool,
+    pub scale: f64,
+    pub paper_format: String,
+    pub display_header_footer: bool,
+    pub header_template: Option<String>,
+    pub footer_template: Option<String>,
+}
+
+/// The print dialog's header: the date.
+const PDF_HEADER: &str = "<div style=\"font-size:9px; color:#666; width:100%; padding:0 0.4in; \
+     box-sizing:border-box; text-align:right;\"><span class=\"date\"></span></div>";
+
+/// The print dialog's footer: the address, then the page numbers. The address shrinks so a long
+/// one cannot push the numbers off the page.
+const PDF_FOOTER: &str = "<div style=\"font-size:9px; color:#666; width:100%; padding:0 0.4in; \
+     box-sizing:border-box; display:flex; justify-content:space-between;\">\
+     <span class=\"url\" style=\"min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;\"></span>\
+     <span style=\"flex-shrink:0; padding-left:8px;\"><span class=\"pageNumber\"></span> / <span class=\"totalPages\"></span></span></div>";
 
 /// Fixes what models get wrong in JavaScript: escaped quotes, doubled
 /// backslashes in regular expressions, and double quotes inside a selector's double quotes.
@@ -2841,6 +2936,42 @@ fn char_code(key: &str) -> String {
     };
     code.to_string()
 }
+
+/// The file input nearest `this`; null when the page has none.
+const FILE_INPUT_NEAR: &str = r#"function() {
+    const isFile = n => n && n.tagName === 'INPUT' && (n.getAttribute('type') || '').toLowerCase() === 'file';
+    const down = (n, depth) => {
+        if (depth < 0 || !n) return null;
+        if (isFile(n)) return n;
+        for (const c of n.children) {
+            const found = down(c, depth - 1);
+            if (found) return found;
+        }
+        return null;
+    };
+    let current = this;
+    for (let i = 0; i <= 3 && current; i++) {
+        const found = down(current, 3);
+        if (found) return found;
+        const parent = current.parentElement;
+        if (parent) {
+            for (const sibling of parent.children) {
+                if (sibling === current) continue;
+                const near = down(sibling, 3);
+                if (near) return near;
+            }
+        }
+        current = parent;
+    }
+    const y = window.scrollY || 0;
+    let best = null, distance = Infinity;
+    for (const input of document.querySelectorAll('input')) {
+        if (!isFile(input)) continue;
+        const d = Math.abs(input.getBoundingClientRect().top + window.scrollY - y);
+        if (d < distance) { distance = d; best = input; }
+    }
+    return best;
+}"#;
 
 /// The elements a click, mouse or pointer listener is on; `getEventListeners` is there only
 /// with the command line API. Null on a heavy page, or one with too many to look up.

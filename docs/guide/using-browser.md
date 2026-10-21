@@ -93,7 +93,7 @@ Rather than being handed the page at every step, the agent reads it with `browse
 | `browser_switch_tab`, `browser_close_tab` | Switches to or closes one of them. |
 | `ask_user` | Asks you to do something only you can do (below). |
 
-With a console, three more keep or take a file there: `browser_save_screenshot` and `browser_save_as_pdf` save the current tab as a PNG or a PDF in the console, and `browser_upload_file` puts a console file into a file input.
+With a console, four more keep or take a file there: `browser_save_screenshot` and `browser_save_as_pdf` save the current tab as a PNG or a PDF in the console (the PDF named after the page unless named, with paper, orientation, scale and margins as asked), `browser_upload_file` puts a console file into a file input, the one by ref or the nearest one, and `browser_save_download` copies a file the agent's tabs downloaded (up to 512 MiB) into the console. Downloads themselves go where your browser puts them.
 
 A ref names the same element while the page shows the same document, and one that appeared since the last snapshot is marked `[new]`; after a navigation the agent takes a new snapshot. Each action reports the page's title and address afterwards, and a tab the page opens becomes the agent's current one.
 

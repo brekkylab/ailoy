@@ -171,6 +171,8 @@ pub(crate) struct BrowserSession {
     unheard: std::sync::Mutex<Option<String>>,
     /// Files taken from the console for an upload, on this host where the browser reads them.
     uploads: std::sync::OnceLock<tempfile::TempDir>,
+    /// Whether the agent has the console tools, to tell it a download can go there.
+    console: std::sync::atomic::AtomicBool,
 }
 
 impl BrowserSession {
@@ -180,6 +182,7 @@ impl BrowserSession {
             live: Default::default(),
             unheard: Default::default(),
             uploads: Default::default(),
+            console: Default::default(),
         })
     }
 
@@ -294,6 +297,12 @@ impl BrowserSession {
                 said.map(|mut said| {
                     if let Some(note) = note {
                         said.text = format!("{note}\n{}", said.text);
+                    }
+                    if self.console.load(std::sync::atomic::Ordering::Relaxed)
+                        && said.text.contains("Downloaded file:")
+                    {
+                        said.text
+                            .push_str(" `browser_save_download` copies it into your console.");
                     }
                     said
                 })
@@ -797,6 +806,9 @@ pub(crate) fn tools(session: &Arc<BrowserSession>, console: bool) -> Vec<(ToolDe
             ask_user_tool_func(session.clone()),
         ),
     ];
+    session
+        .console
+        .store(console, std::sync::atomic::Ordering::Relaxed);
     if console {
         tools.extend(console_tools(session));
     }
@@ -821,9 +833,21 @@ fn console_tools(session: &Arc<BrowserSession>) -> Vec<(ToolDesc, ToolFunc)> {
             desc(
                 "browser_save_as_pdf",
                 "Save the current page, all of it, as a PDF in your console, and say where.",
-                obj(file_param, &["file_name"]),
+                obj(
+                    crate::to_value!({
+                        "file_name": { "type": "string", "description": "A path in your console; a bare name goes in its current directory. Defaults to the page's title; .pdf is added when missing." },
+                        "print_background": { "type": "boolean", "description": "Include background graphics and colors. Default true." },
+                        "landscape": { "type": "boolean", "description": "Default false." },
+                        "scale": { "type": "number", "description": "0.1 to 2. Default 1." },
+                        "paper_format": { "type": "string", "description": "Letter, Legal, A4, A3 or Tabloid. Default Letter." },
+                        "display_header_footer": { "type": "boolean", "description": "The date in the header, the address and page numbers in the footer, as the print dialog has them. Default true." },
+                        "header_template": { "type": "string", "description": "HTML for the header; spans of class date, title, url, pageNumber or totalPages are filled in. Give it a font-size." },
+                        "footer_template": { "type": "string", "description": "HTML for the footer, as for the header." }
+                    }),
+                    &[],
+                ),
             ),
-            save_tool(session, "PDF", |tabs| Box::pin(tabs.pdf())),
+            pdf_tool(session),
         ),
         (
             desc(
@@ -839,7 +863,89 @@ fn console_tools(session: &Arc<BrowserSession>) -> Vec<(ToolDesc, ToolFunc)> {
             ),
             upload_tool(session),
         ),
+        (
+            desc(
+                "browser_save_download",
+                "Copy a file the browser downloaded for you (it says so after the click) into your \
+                 console, and say where. Up to 512 MiB.",
+                obj(
+                    crate::to_value!({
+                        "name": { "type": "string", "description": "The downloaded file's name." },
+                        "file_name": { "type": "string", "description": "A path in your console; a bare name goes in its current directory. Defaults to the file's name." }
+                    }),
+                    &["name"],
+                ),
+            ),
+            save_download_tool(session),
+        ),
     ]
+}
+
+/// The most a download copied into the console may be.
+const MAX_DOWNLOAD: u64 = 512 * 1024 * 1024;
+
+/// How much of a file goes to the console in one write, well under virtx's 64 MiB message.
+const CHUNK: usize = 16 * 1024 * 1024;
+
+fn save_download_tool(session: &Arc<BrowserSession>) -> ToolFunc {
+    let session = session.clone();
+    crate::tool_func!(async |args: Value, id: String, console: &mut ConsoleClient| -> Message
+        with [session = session.clone()]
+    {
+        let said = async {
+            let name = str_arg(&args, "name").context("missing required parameter: name")?;
+            let downloaded = session.run(|tabs| Box::pin(async move { Ok(tabs.downloaded()) })).await?;
+            // Only what the agent's own tabs downloaded: never any other file on this host.
+            let Some((_, host)) = downloaded.iter().rev().find(|(n, _)| n == name) else {
+                let names: Vec<&str> = downloaded.iter().map(|(n, _)| n.as_str()).collect();
+                if names.is_empty() {
+                    bail!("nothing has been downloaded for you yet");
+                }
+                bail!("no download named {name:?}; the downloads are {}", names.join(", "));
+            };
+            let size = tokio::fs::metadata(host).await?.len();
+            if size > MAX_DOWNLOAD {
+                bail!(
+                    "{name} is {} bytes, over the 512 MiB a download may be to copy",
+                    thousands(size as usize)
+                );
+            }
+            let path = console_path(console, str_arg(&args, "file_name").unwrap_or(name)).await?;
+            copy_to_console(console, host, &path, CHUNK).await?;
+            anyhow::Ok(format!(
+                "Saved the download {name} ({} bytes) to {path}.",
+                thousands(size as usize)
+            ))
+        }
+        .await;
+        tool_text(id, said)
+    })
+}
+
+/// Copies the host's file `from` to `to` in the console, `chunk` bytes per write.
+async fn copy_to_console(
+    console: &mut ConsoleClient,
+    from: &std::path::Path,
+    to: &str,
+    chunk: usize,
+) -> anyhow::Result<()> {
+    use tokio::io::AsyncReadExt as _;
+    let mut file = tokio::fs::File::open(from).await?;
+    let mut offset = 0u64;
+    loop {
+        let mut buf = Vec::with_capacity(chunk);
+        (&mut file).take(chunk as u64).read_to_end(&mut buf).await?;
+        let read = buf.len() as u64;
+        if offset == 0 {
+            write_console_file(console, to, buf).await?;
+        } else if read > 0 {
+            console.write(to, buf, Some(offset)).await?;
+        }
+        offset += read;
+        if read < chunk as u64 {
+            return Ok(());
+        }
+    }
 }
 
 /// The bytes a page gives to keep as a file.
@@ -862,6 +968,61 @@ fn save_tool(session: &Arc<BrowserSession>, what: &'static str, take: Take) -> T
     })
 }
 
+fn pdf_tool(session: &Arc<BrowserSession>) -> ToolFunc {
+    let session = session.clone();
+    crate::tool_func!(async |args: Value, id: String, console: &mut ConsoleClient| -> Message
+        with [session = session.clone()]
+    {
+        let said = async {
+            let pdf = page::Pdf {
+                print_background: bool_arg(&args, "print_background").unwrap_or(true),
+                landscape: bool_arg(&args, "landscape").unwrap_or(false),
+                scale: num_arg(&args, "scale").unwrap_or(1.0).clamp(0.1, 2.0),
+                paper_format: str_arg(&args, "paper_format").unwrap_or("Letter").to_string(),
+                display_header_footer: bool_arg(&args, "display_header_footer").unwrap_or(true),
+                header_template: str_arg(&args, "header_template").map(str::to_string),
+                footer_template: str_arg(&args, "footer_template").map(str::to_string),
+            };
+            let (bytes, title) = session.run(move |tabs| Box::pin(tabs.pdf(pdf))).await?;
+            let name = match str_arg(&args, "file_name") {
+                Some(name) => name.to_string(),
+                None => {
+                    let safe: String = title
+                        .chars()
+                        .filter(|c| c.is_alphanumeric() || c.is_whitespace() || matches!(c, '_' | '-'))
+                        .collect();
+                    let safe: String = safe.trim().chars().take(50).collect();
+                    if safe.is_empty() { "page".to_string() } else { safe }
+                }
+            };
+            let name = if name.to_lowercase().ends_with(".pdf") { name } else { format!("{name}.pdf") };
+            let mut path = console_path(console, &name).await?;
+            // A file already there is kept, and this one numbered after it.
+            if console_has(console, &path).await {
+                let base = path[..path.len() - 4].to_string();
+                let mut n = 1;
+                while console_has(console, &format!("{base} ({n}).pdf")).await {
+                    n += 1;
+                }
+                path = format!("{base} ({n}).pdf");
+            }
+            let size = bytes.len();
+            write_console_file(console, &path, bytes).await?;
+            anyhow::Ok(format!("Saved page as PDF: {path} ({} bytes)", thousands(size)))
+        }
+        .await;
+        tool_text(id, said)
+    })
+}
+
+/// Whether the console has a file at `path`.
+async fn console_has(console: &mut ConsoleClient, path: &str) -> bool {
+    console
+        .exec(["test", "-e", path], Some(10_000))
+        .await
+        .is_ok_and(|out| out.code == 0)
+}
+
 fn upload_tool(session: &Arc<BrowserSession>) -> ToolFunc {
     let session = session.clone();
     crate::tool_func!(async |args: Value, id: String, console: &mut ConsoleClient| -> Message
@@ -870,7 +1031,13 @@ fn upload_tool(session: &Arc<BrowserSession>) -> ToolFunc {
         let (Some(r), Some(path)) = (str_arg(&args, "ref").map(str::to_string), str_arg(&args, "path")) else {
             return tool_text(id, Err(anyhow::anyhow!("missing required parameters: ref and path")));
         };
-        let held = match read_console_file(console, path).await.and_then(|bytes| session.hold_upload(path, &bytes)) {
+        let bytes = match read_console_file(console, path).await {
+            Ok(bytes) if bytes.is_empty() => {
+                return tool_text(id, Err(anyhow::anyhow!("File {path} is empty (0 bytes). The file may not have been saved correctly.")));
+            }
+            other => other,
+        };
+        let held = match bytes.and_then(|bytes| session.hold_upload(path, &bytes)) {
             Ok(held) => held,
             Err(e) => return tool_text(id, Err(e)),
         };
@@ -1575,7 +1742,9 @@ mod tests {
     #[ignore = "needs Chrome and a console server"]
     async fn the_file_tools_go_through_the_console() {
         let chrome = TestChrome::start();
-        let html = "<title>Files</title><input type=file id=f aria-label=Attach onchange=\"document.title='got:'+this.files[0].name+':'+this.files[0].size\">";
+        let html = "<title>Files</title><div><button>Choose a file</button>\
+            <input type=file hidden onchange=\"document.title='got:'+this.files[0].name+':'+this.files[0].size\"></div>\
+            <a download=notes.txt href=\"data:text/plain,hello%20world\">Get notes</a>";
         let session = BrowserSession::new(
             Browser::host()
                 .host_browser(HostBrowser::Custom(chrome.dir.path().into()))
@@ -1620,7 +1789,55 @@ mod tests {
             serde_json::json!({ "file_name": "page.pdf" }),
         );
         let saved = run(f, a, &mut console).await;
-        assert!(saved.contains("page.pdf"), "{saved}");
+        assert!(
+            saved.starts_with("Saved page as PDF:") && saved.contains("page.pdf"),
+            "{saved}"
+        );
+        for named in ["Files.pdf", "Files (1).pdf"] {
+            let (f, a) = by_console("browser_save_as_pdf", serde_json::json!({}));
+            let saved = run(f, a, &mut console).await;
+            assert!(
+                saved.contains(named),
+                "named after the title, numbered when taken: {saved}"
+            );
+        }
+
+        let (snapshot, _) = call(&tools, "browser_snapshot", serde_json::json!({})).await;
+        let (got, _) = call(
+            &tools,
+            "browser_click",
+            serde_json::json!({ "ref": ref_of(&snapshot, "link \"Get notes\"") }),
+        )
+        .await;
+        assert!(got.contains("`browser_save_download`"), "{got}");
+        let (f, a) = by_console(
+            "browser_save_download",
+            serde_json::json!({ "name": "notes.txt", "file_name": "/tmp/dl/notes.txt" }),
+        );
+        let copied = run(f, a, &mut console).await;
+        assert!(
+            copied.contains("(11 bytes) to /tmp/dl/notes.txt"),
+            "{copied}"
+        );
+        let read = console.read("/tmp/dl/notes.txt", None, None).await.unwrap();
+        assert_eq!(read.data, b"hello world");
+        let (f, a) = by_console(
+            "browser_save_download",
+            serde_json::json!({ "name": "/etc/hosts" }),
+        );
+        let refused = run(f, a, &mut console).await;
+        assert!(refused.contains("no download named"), "{refused}");
+        // In pieces, as a large file goes.
+        let host = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(host.path(), b"0123456789").unwrap();
+        copy_to_console(&mut console, host.path(), "/tmp/dl/pieces.txt", 3)
+            .await
+            .unwrap();
+        let read = console
+            .read("/tmp/dl/pieces.txt", None, None)
+            .await
+            .unwrap();
+        assert_eq!(read.data, b"0123456789");
 
         console
             .write("/tmp/note.txt", b"hello".to_vec(), None)
