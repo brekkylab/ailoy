@@ -13,7 +13,7 @@
 use ailoy::{
     agent::{AgentProvider, get_agent_providers_mut},
     tool::{
-        ToolDesc, ToolProvider, get_tool_providers_mut, register_a2a as register_a2a_rs,
+        ToolDesc, ToolProvider, get_tool_providers_mut,
         register_mcp_stdio as register_mcp_stdio_rs,
         register_mcp_streamable_http as register_mcp_streamable_http_rs,
         unregister_mcp as unregister_mcp_rs,
@@ -27,16 +27,12 @@ use napi_derive::napi;
 
 use crate::{
     convert::{Json, from_js},
-    error::{self, Result, invalid, promise, thrown},
+    error::{self, Result, promise},
     tool::{Callback, tool_func},
 };
 
 fn not_registered(kind: &str, name: &str) -> napi::Error<String> {
     error::ailoy(format!("{kind} '{name}' not registered"))
-}
-
-fn parse_url(url: &str) -> Result<url::Url> {
-    url::Url::parse(url).map_err(|e| invalid(format!("{url:?}: {e}")))
 }
 
 fn provider(options: Option<ProviderOptions>) -> String {
@@ -138,25 +134,6 @@ pub fn unregister_mcp(prefix: String, options: Option<ProviderOptions>) -> Resul
     within_runtime_if_available(|| unregister_mcp_rs(&provider, &prefix))
         .map(|n| n as u32)
         .map_err(error::anyhow)
-}
-
-/// Fetch the A2A agent card at `url` and register the agent as the tool `name`, settling with
-/// its description.
-#[napi(ts_return_type = "Promise<ToolDesc>")]
-pub fn register_a2a<'env>(
-    env: &'env Env,
-    name: String,
-    url: String,
-    options: Option<ProviderOptions>,
-) -> napi::Result<PromiseRaw<'env, Json<ToolDesc>>> {
-    let url = parse_url(&url).map_err(|e| thrown(env, e))?;
-    let provider = provider(options);
-    promise(env, async move {
-        register_a2a_rs(&provider, &name, url)
-            .await
-            .map(Json)
-            .map_err(error::anyhow)
-    })
 }
 
 #[napi(object)]

@@ -85,11 +85,15 @@ What else the builder takes, by what the task needs:
 | read the web | `.web_fetch_tool()`, `.web_search_tool([...])` |
 | use an MCP server's tools | `tools = await register_mcp_stdio("fetch", "uvx", ["mcp-server-fetch"])`, then `.tools(tools)`; `register_mcp_streamable_http(prefix, url)` for a remote one |
 | call your own function | `desc = register_tool({"name": ..., "description": ..., "parameters": <JSON schema>}, func)`, then `.tool(desc)` |
+| drive a web browser | `.browser()` for the user's own Chrome (remote debugging on), `.browser(isolated=True)` for one of its own; it runs on the host, not in the console |
 | follow a procedure you wrote | `.skill("/skills/<name>")`, a directory holding a `SKILL.md`, mounted into the console |
-| delegate to another agent | `.subagent(spec)`, which shares the parent's console |
-| answer in a fixed shape | `.response_format({...})` |
+| remember across sessions | `.memory("/work/notes.sqlite")`, a store made by `mem init` inside the console |
+| pick up an earlier conversation | `.history(messages)`, e.g. a previous agent's `agent.history` |
+| keep long runs within the context window | `.context_manager(max_input_tokens=..., preserve_recent_turns=...)`, which blanks old tool results |
+| think harder, or less | `.thinking_effort("low" \| "medium" \| "high")` |
+| answer in a fixed shape | `.output_schema({...})`, a JSON schema |
 
-A stdio MCP server runs on the host, with your program's access, not in the console. Register only servers you trust. [`docs/guide/using-mcp.md`](../../docs/guide/using-mcp.md) has both transports in all three languages.
+A stdio MCP server runs on the host, with your program's access, not in the console. Register only servers you trust. [`docs/guide/using-mcp.md`](../../docs/guide/using-mcp.md) has both transports in all three languages. [`docs/guide/using-browser.md`](../../docs/guide/using-browser.md) has the browser's options and what it asks the user before letting the agent in.
 
 ## 5. Run it, and read what comes back
 
@@ -115,6 +119,7 @@ Each lives in `examples/<name>/` with a folder per language and a `shared/` fold
 | Example | Shows |
 |---|---|
 | [`hello`](../../examples/hello) | one turn, no tools, no console |
+| [`browser-use`](../../examples/browser-use) | the user's own browser, or an isolated one, alongside a console |
 | [`cad`](../../examples/cad) | a skill directory, a mount for artifacts, a model that looks at its own renders |
 | [`offshore_leaks`](../../examples/offshore_leaks) | a large dataset mounted read-only, analysed with SQL and Python the agent writes |
 | [`retail_bench`](../../examples/retail_bench) | a simulator the agent drives one turn at a time |

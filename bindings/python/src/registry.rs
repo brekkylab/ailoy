@@ -13,7 +13,7 @@
 use ailoy::{
     agent::{AgentProvider, get_agent_providers_mut},
     tool::{
-        ToolDesc, ToolProvider, get_tool_providers_mut, register_a2a as register_a2a_rs,
+        ToolDesc, ToolProvider, get_tool_providers_mut,
         register_mcp_stdio as register_mcp_stdio_rs,
         register_mcp_streamable_http as register_mcp_streamable_http_rs,
         unregister_mcp as unregister_mcp_rs,
@@ -30,10 +30,6 @@ use crate::{
 
 fn not_registered(kind: &str, name: &str) -> PyErr {
     AiloyError::new_err(format!("{kind} '{name}' not registered"))
-}
-
-fn parse_url(url: &str) -> PyResult<url::Url> {
-    url::Url::parse(url).map_err(|e| PyValueError::new_err(format!("{url:?}: {e}")))
 }
 
 /// Descs as the list of dicts the builder takes back.
@@ -129,25 +125,6 @@ fn unregister_mcp(prefix: String, provider: String) -> PyResult<usize> {
     unregister_mcp_rs(&provider, &prefix).map_err(error::anyhow)
 }
 
-/// Fetch the A2A agent card at `url` and register the agent as the tool `name`. Awaitable;
-/// answers with its description.
-#[pyfunction]
-#[pyo3(signature = (name, url, *, provider = "default".to_string()))]
-fn register_a2a(
-    py: Python<'_>,
-    name: String,
-    url: String,
-    provider: String,
-) -> PyResult<Bound<'_, PyAny>> {
-    let url = parse_url(&url)?;
-    future_into_py(py, async move {
-        let desc = register_a2a_rs(&provider, &name, url)
-            .await
-            .map_err(error::anyhow)?;
-        Python::attach(|py| Ok(to_py(py, &desc)?.unbind()))
-    })
-}
-
 /// Name a tool provider as the agent provider `name`. It need not exist yet; it has to when
 /// an agent is built against it.
 #[pyfunction]
@@ -162,7 +139,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(register_mcp_stdio, m)?)?;
     m.add_function(wrap_pyfunction!(register_mcp_streamable_http, m)?)?;
     m.add_function(wrap_pyfunction!(unregister_mcp, m)?)?;
-    m.add_function(wrap_pyfunction!(register_a2a, m)?)?;
     m.add_function(wrap_pyfunction!(add_agent_provider, m)?)?;
     Ok(())
 }
