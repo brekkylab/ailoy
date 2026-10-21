@@ -14,7 +14,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
-    browser::{AskUser, Browser, HostBrowser},
+    browser::{AskUser, Browser, UserBrowser},
     datatype::Value,
     memory::Memory,
     message::Message,
@@ -71,26 +71,26 @@ fn built() -> PyErr {
     PyValueError::new_err("this AgentBuilder has already been built")
 }
 
-/// A host browser as Python names it: a name, or a path to any other's user data directory. A
+/// A user browser as Python names it: a name, or a path to any other's user data directory. A
 /// string is a name unless it looks like a path, so a misspelt name is refused, not looked for.
-fn host_browser_of(value: &Bound<'_, PyAny>) -> PyResult<HostBrowser> {
+fn user_browser_of(value: &Bound<'_, PyAny>) -> PyResult<UserBrowser> {
     if let Ok(name) = value.extract::<String>() {
-        if let Some(named) = HostBrowser::named(&name) {
+        if let Some(named) = UserBrowser::named(&name) {
             return Ok(named);
         }
         if !name.contains(['/', '\\']) {
-            let names: Vec<&str> = HostBrowser::NAMED.iter().map(HostBrowser::name).collect();
+            let names: Vec<&str> = UserBrowser::NAMED.iter().map(UserBrowser::name).collect();
             return Err(PyValueError::new_err(format!(
-                "host_browser is one of {} or a user data directory, not {name:?}",
+                "user_browser is one of {} or a user data directory, not {name:?}",
                 names.join(", ")
             )));
         }
-        return Ok(HostBrowser::Custom(name.into()));
+        return Ok(UserBrowser::Custom(name.into()));
     }
     let dir: PathBuf = value.extract().map_err(|_| {
-        PyValueError::new_err("host_browser is a browser's name or its user data directory")
+        PyValueError::new_err("user_browser is a browser's name or its user data directory")
     })?;
-    Ok(HostBrowser::Custom(dir))
+    Ok(UserBrowser::Custom(dir))
 }
 
 #[pymethods]
@@ -163,9 +163,13 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.shared_console(slot)))
     }
 
-    /// The person's own Chromium-based browser with remote debugging on (Chrome 144 or later by
-    /// default), which the agent drives with its `browser_*` tools over CDP from this process
-    /// rather than the console, once the person allows it. `host_browser` names which:
+    /// A browser the agent drives with its `browser_*` tools over CDP from this process rather
+    /// than the console. By default the person's own Chromium-based browser with remote
+    /// debugging on (Chrome 144 or later by default), once the person allows it; with
+    /// `isolated`, one of the agent's own, started on first use and closed with the agent: in a
+    /// window unless `headless`, `executable` if given or else a Chromium-based browser installed
+    /// here, on the user data directory `profile` if given or else a fresh one.
+    /// `user_browser` names which of the person's:
     /// `"chrome"`, `"chrome-beta"`, `"chrome-dev"`, `"chrome-canary"`, `"chromium"`, `"edge"`,
     /// `"brave"`, or any other by its user data directory (a path); with none, whichever turned
     /// remote debugging on last. `ask_user` is how the agent waits on the person: `"end_turn"` tells them in its reply and ends the turn, `"wait"` waits for
@@ -173,17 +177,27 @@ impl PyAgentBuilder {
     /// within `ask_timeout` seconds if set. `careful` tells the agent to use sites as a person
     /// would, so sites checking for bots are less likely to turn it away. `start_url` is the page
     /// the agent's tab opens on.
-    #[pyo3(signature = (*, ask_user = "end_turn", host_browser = None, on_ask = None, ask_timeout = None, careful = true, start_url = None))]
+    #[pyo3(signature = (*, ask_user = "end_turn", user_browser = None, on_ask = None, ask_timeout = None, careful = true, start_url = None, isolated = false, headless = false, executable = None, profile = None))]
+    #[allow(clippy::too_many_arguments)]
     fn browser<'py>(
         slf: PyRef<'py, Self>,
         ask_user: &str,
-        host_browser: Option<Bound<'py, PyAny>>,
+        user_browser: Option<Bound<'py, PyAny>>,
         on_ask: Option<Py<PyAny>>,
         ask_timeout: Option<f64>,
         careful: bool,
         start_url: Option<String>,
+        isolated: bool,
+        headless: bool,
+        executable: Option<PathBuf>,
+        profile: Option<PathBuf>,
     ) -> PyResult<PyRef<'py, Self>> {
-        let mut browser = Browser::host().ask_user(match ask_user {
+        let browser = if isolated {
+            Browser::isolated()
+        } else {
+            Browser::user()
+        };
+        let mut browser = browser.ask_user(match ask_user {
             "end_turn" => AskUser::EndTurn,
             "wait" => AskUser::Wait,
             other => {
@@ -192,8 +206,17 @@ impl PyAgentBuilder {
                 )));
             }
         });
-        if let Some(host) = host_browser {
-            browser = browser.host_browser(host_browser_of(&host)?);
+        if let Some(host) = user_browser {
+            browser = browser.user_browser(user_browser_of(&host)?);
+        }
+        if headless {
+            browser = browser.headless(true);
+        }
+        if let Some(path) = executable {
+            browser = browser.executable(path);
+        }
+        if let Some(dir) = profile {
+            browser = browser.profile(dir);
         }
         if let Some(func) = on_ask {
             let func = Arc::new(func);

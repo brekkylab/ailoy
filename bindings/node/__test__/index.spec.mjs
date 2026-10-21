@@ -81,15 +81,15 @@ test('askUser is endTurn or wait', () => {
   assert.throws(() => new AgentBuilder('m').browser({ askUser: 'later' }), { code: 'INVALID_ARG' })
 })
 
-test('a host browser is a name or a directory', () => {
-  new AgentBuilder('m').browser({ hostBrowser: 'edge' })
-  new AgentBuilder('m').browser({ hostBrowser: { userDataDir: '/nonexistent' } })
-  assert.throws(() => new AgentBuilder('m').browser({ hostBrowser: 'edgee' }), { code: 'INVALID_ARG', message: /chrome-beta/ })
+test('a user browser is a name or a directory', () => {
+  new AgentBuilder('m').browser({ userBrowser: 'edge' })
+  new AgentBuilder('m').browser({ userBrowser: { userDataDir: '/nonexistent' } })
+  assert.throws(() => new AgentBuilder('m').browser({ userBrowser: 'edgee' }), { code: 'INVALID_ARG', message: /chrome-beta/ })
 })
 
 test('a browser can be less careful', () => {
   new AgentBuilder('m').browser({ careful: false })
-  new AgentBuilder('m').browser({ careful: true, hostBrowser: { userDataDir: '/nonexistent' } })
+  new AgentBuilder('m').browser({ careful: true, userBrowser: { userDataDir: '/nonexistent' } })
 })
 
 test('wait needs onAsk', async () => {
@@ -99,9 +99,20 @@ test('wait needs onAsk', async () => {
   })
   const onAsk = async () => 'done'
   const agent = await new AgentBuilder('fake-browser/model')
-    .browser({ askUser: 'wait', onAsk, askTimeoutMs: 5000, hostBrowser: { userDataDir: '/nonexistent' } })
+    .browser({ askUser: 'wait', onAsk, askTimeoutMs: 5000, userBrowser: { userDataDir: '/nonexistent' } })
     .build()
   await agent.close()
+})
+
+test('an isolated browser has options of its own', async () => {
+  setLangModelProvider('fake-browser', 'vllm')
+  const agent = await new AgentBuilder('fake-browser/model')
+    .browser({ isolated: true, headless: true, executable: '/nonexistent/chrome', profile: '/nonexistent/profile' })
+    .build()
+  await agent.close()
+  await assert.rejects(new AgentBuilder('fake-browser/model').browser({ headless: true }).build(), {
+    message: /Browser::isolated/,
+  })
 })
 
 test('an agent without a browser cannot start one', async () => {

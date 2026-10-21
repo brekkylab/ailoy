@@ -1,13 +1,15 @@
 // An agent with a browser, waiting for what you ask of it.
 //
-//     node main.mjs [--noshell]
+//     node main.mjs [--noshell] [--isolated]
 //
 // The agent uses your own browser (Chrome by default), in a window of its own opened on the ailoy
 // docs, and drives it with its `browser_*` tools. It also has a console with python and curl, for
 // what is easier done there, such as fetching a page's data or computing over it; `--noshell`
 // leaves it out, so the agent has the browser alone and needs no console server. Turn on remote
 // debugging at chrome://inspect/#remote-debugging (Chrome 144 or later) and allow the browser's
-// prompt, which appears as it starts. Each line you type is the next turn; `/exit` ends. When a
+// prompt, which appears as it starts. `--isolated` gives the agent a browser of its own instead: a
+// Chromium-based one installed here, started with a fresh profile and closed at the end, with no
+// remote debugging to turn on. Each line you type is the next turn; `/exit` ends. When a
 // site needs you, to sign in say, the agent says so and ends its turn: do it in its window, then
 // tell it to go on.
 //
@@ -33,9 +35,8 @@ const { ConsoleClient, Recipe, ensureVirtx } = virtx
 const START = 'https://brekkylab.github.io/ailoy/'
 
 // What the agent has, with a console and without.
-const WITH_CONSOLE =
-  "a web browser and a console: the browser is the user's own, which you drive with the browser tools"
-const BROWSER_ONLY = "a web browser: the user's own, which you drive with the browser tools"
+const WITH_CONSOLE = 'a web browser and a console: the browser is {whose}, which you drive with the browser tools'
+const BROWSER_ONLY = 'a web browser: {whose}, which you drive with the browser tools'
 
 // What the agent is for.
 const INSTRUCTION = [
@@ -71,12 +72,13 @@ function show(message) {
   }
 }
 
-async function main(model, shell) {
+async function main(model, shell, isolated) {
   // The browser tools reach the browser from this process; the console is for the other tools.
-  const has = shell ? WITH_CONSOLE : BROWSER_ONLY
+  const whose = isolated ? "your own, apart from the user's" : "the user's own"
+  const has = (shell ? WITH_CONSOLE : BROWSER_ONLY).replace('{whose}', whose)
   let builder = new AgentBuilder(model)
     .instruction(`You are a helpful assistant with ${has}. ${INSTRUCTION}`)
-    .browser({ startUrl: START })
+    .browser({ startUrl: START, isolated })
   let console_ = null
   if (shell) {
     // The console server, fetched into virtx's cache the first time: a host that installed only
@@ -96,9 +98,13 @@ async function main(model, shell) {
   console.log(`model     ${model}`)
   console.log(`has       ${shell ? 'browser, console' : 'browser'}\n`)
   try {
-    console.log("Allow the browser's prompt to let the agent in. It opens the ailoy docs as an example.")
+    console.log(
+      isolated
+        ? "Starting the agent's own browser. It opens the ailoy docs as an example."
+        : "Allow the browser's prompt to let the agent in. It opens the ailoy docs as an example.",
+    )
     await agent.startBrowser()
-    console.log('The agent has a window of its own in your browser.\n')
+    console.log(isolated ? "The agent's browser is open.\n" : 'The agent has a window of its own in your browser.\n')
 
     console.log('Ask anything, or try:')
     for (const suggestion of SUGGESTIONS) console.log(`  - ${suggestion}`)
@@ -123,4 +129,5 @@ async function main(model, shell) {
 }
 
 loadDotenv()
-await main(process.env.AILOY_MODEL ?? 'anthropic/claude-sonnet-5', !process.argv.slice(2).includes('--noshell'))
+const args = process.argv.slice(2)
+await main(process.env.AILOY_MODEL ?? 'anthropic/claude-sonnet-5', !args.includes('--noshell'), args.includes('--isolated'))

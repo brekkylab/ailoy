@@ -39,7 +39,7 @@ class AgentBuilder:
         self,
         *,
         ask_user: Literal["end_turn", "wait"] = "end_turn",
-        host_browser: Literal[
+        user_browser: Literal[
             "chrome", "chrome-beta", "chrome-dev", "chrome-canary", "chromium", "edge", "brave"
         ]
         | _Path
@@ -48,13 +48,22 @@ class AgentBuilder:
         ask_timeout: float | None = None,
         careful: bool = True,
         start_url: str | None = None,
+        isolated: bool = False,
+        headless: bool = False,
+        executable: _Path | None = None,
+        profile: _Path | None = None,
     ) -> Self:
-        """The person's own Chromium-based browser, which the agent drives with its
-        ``browser_*`` tools over CDP from this process rather than the console.
+        """A browser the agent drives with its ``browser_*`` tools over CDP from this process
+        rather than the console: the person's own, or with ``isolated`` one of the agent's own.
 
-        It needs remote debugging on (in Chrome 144 or later, the default, at
+        ``isolated`` starts a browser on first use and closes it with the agent: in a window
+        unless ``headless``; ``executable`` if given, else a Chromium-based browser installed
+        here (Chrome, Chromium, Edge or Brave); on the user data directory ``profile`` if given,
+        so sign-ins last, else a fresh one.
+
+        The person's own needs remote debugging on (in Chrome 144 or later, the default, at
         ``chrome://inspect/#remote-debugging``), and asks the person before it lets the agent
-        in. ``host_browser`` names which, or gives any other's user data directory as a path;
+        in. ``user_browser`` names which, or gives any other's user data directory as a path;
         with none, it is whichever turned remote debugging on last.
 
         ``ask_user`` is how the agent waits on the person: ``"end_turn"`` tells them in its

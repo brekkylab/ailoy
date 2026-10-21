@@ -4,11 +4,12 @@
 //! browser or asks the person something.
 
 mod cdp;
-mod host;
+mod isolated;
 mod page;
 mod snapshot;
+mod user;
 
-pub use host::HostBrowser;
+pub use user::UserBrowser;
 
 use std::{fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
 
@@ -48,7 +49,12 @@ pub type AskHandler =
 /// A browser for an agent, set with [`AgentBuilder::browser`](crate::agent::AgentBuilder::browser).
 #[derive(Clone)]
 pub struct Browser {
-    host_browser: Option<HostBrowser>,
+    /// The agent's own browser rather than the person's.
+    isolated: bool,
+    user_browser: Option<UserBrowser>,
+    headless: bool,
+    executable: Option<std::path::PathBuf>,
+    profile: Option<std::path::PathBuf>,
     ask_user: AskUser,
     on_ask: Option<AskHandler>,
     ask_timeout: Option<Duration>,
@@ -59,7 +65,11 @@ pub struct Browser {
 impl Default for Browser {
     fn default() -> Self {
         Self {
-            host_browser: None,
+            isolated: false,
+            user_browser: None,
+            headless: false,
+            executable: None,
+            profile: None,
             ask_user: AskUser::default(),
             on_ask: None,
             ask_timeout: None,
@@ -72,7 +82,11 @@ impl Default for Browser {
 impl fmt::Debug for Browser {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Browser")
-            .field("host_browser", &self.host_browser)
+            .field("isolated", &self.isolated)
+            .field("user_browser", &self.user_browser)
+            .field("headless", &self.headless)
+            .field("executable", &self.executable)
+            .field("profile", &self.profile)
             .field("ask_user", &self.ask_user)
             .field("on_ask", &self.on_ask.is_some())
             .field("ask_timeout", &self.ask_timeout)
@@ -85,17 +99,48 @@ impl fmt::Debug for Browser {
 impl Browser {
     /// The person's own browser: a Chromium-based one with remote debugging on (in Chrome 144 or
     /// later, at `chrome://inspect/#remote-debugging`), which asks them before it lets the agent
-    /// in. With none named by [`host_browser`](Self::host_browser), it is whichever of
-    /// [`HostBrowser::NAMED`] turned remote debugging on last. The agent works in a window of its
+    /// in. With none named by [`user_browser`](Self::user_browser), it is whichever of
+    /// [`UserBrowser::NAMED`] turned remote debugging on last. The agent works in a window of its
     /// own, signed in wherever they are; its tools reach only the tabs it opened.
-    pub fn host() -> Self {
+    pub fn user() -> Self {
         Self::default()
     }
 
+    /// A browser of the agent's own, apart from the person's: started on first use and closed
+    /// with the agent, in a window the person can see and act in unless
+    /// [`headless`](Self::headless). The browser is [`executable`](Self::executable) if named,
+    /// else a Chromium-based one installed here (Chrome, Chromium, Edge or Brave); its profile is
+    /// a fresh one each time unless [`profile`](Self::profile) keeps one.
+    pub fn isolated() -> Self {
+        Self {
+            isolated: true,
+            ..Self::default()
+        }
+    }
+
+    /// For [`isolated`](Self::isolated): no window, as on a server. Off by default.
+    pub fn headless(mut self, headless: bool) -> Self {
+        self.headless = headless;
+        self
+    }
+
+    /// For [`isolated`](Self::isolated): the Chromium-based browser to start, by its executable.
+    pub fn executable(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.executable = Some(path.into());
+        self
+    }
+
+    /// For [`isolated`](Self::isolated): the user data directory it keeps, so sign-ins last
+    /// from one run to the next.
+    pub fn profile(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
+        self.profile = Some(dir.into());
+        self
+    }
+
     /// The browser to use, rather than the one found: a named one, or any other by its user
-    /// data directory ([`HostBrowser::Custom`]).
-    pub fn host_browser(mut self, browser: HostBrowser) -> Self {
-        self.host_browser = Some(browser);
+    /// data directory ([`UserBrowser::Custom`]).
+    pub fn user_browser(mut self, browser: UserBrowser) -> Self {
+        self.user_browser = Some(browser);
         self
     }
 
@@ -139,6 +184,13 @@ impl Browser {
         if self.ask_user == AskUser::Wait && self.on_ask.is_none() {
             bail!("`AskUser::Wait` needs `Browser::on_ask`, which is how it waits");
         }
+        if self.isolated && self.user_browser.is_some() {
+            bail!("`Browser::user_browser` is for `Browser::user`, not `Browser::isolated`");
+        }
+        if !self.isolated && (self.headless || self.executable.is_some() || self.profile.is_some())
+        {
+            bail!("`headless`, `executable` and `profile` are for `Browser::isolated`");
+        }
         Ok(())
     }
 }
@@ -161,6 +213,10 @@ struct Live {
     declined: bool,
     /// Whether a connection was ever up, so the next one is a reconnection.
     was_up: bool,
+    /// The isolated browser started for the agent; dropped before its profile.
+    launched: Option<isolated::Launched>,
+    /// Its profile when none is kept, for as long as the session lasts.
+    profile: Option<tempfile::TempDir>,
 }
 
 /// An agent's browser: connected on first use, and let go of when the agent drops.
@@ -214,19 +270,29 @@ impl BrowserSession {
         if let Some(tabs) = live.tabs.take() {
             live.targets = tabs.targets();
         }
-        if live.declined && !asking {
-            return Ok(Ready::Refused(host::DECLINED.into()));
-        }
-        let cdp = match host::connect(self.config.host_browser.as_ref()).await? {
-            Ok(cdp) => cdp,
-            Err(host::Closed::NotEnabled(why)) => return Ok(Ready::Refused(why)),
-            Err(host::Closed::Declined) => {
-                live.declined = true;
-                return Ok(Ready::Refused(host::DECLINED.into()));
+        let mut restarted = false;
+        let cdp = if self.config.isolated {
+            restarted = self.launch(live).await?;
+            self.connect_launched(live).await?
+        } else {
+            if live.declined && !asking {
+                return Ok(Ready::Refused(user::DECLINED.into()));
+            }
+            match user::connect(self.config.user_browser.as_ref()).await? {
+                Ok(cdp) => cdp,
+                Err(user::Closed::NotEnabled(why)) => return Ok(Ready::Refused(why)),
+                Err(user::Closed::Declined) => {
+                    live.declined = true;
+                    return Ok(Ready::Refused(user::DECLINED.into()));
+                }
             }
         };
         live.declined = false;
-        let targets = host::agent_tabs(&cdp, &live.targets).await?;
+        let targets = if restarted {
+            isolated::first_tab(&cdp).await?
+        } else {
+            user::agent_tabs(&cdp, &live.targets).await?
+        };
         let moved = !live.targets.is_empty() && live.targets != targets;
         let mut tabs = page::Tabs::new(cdp, &targets).await?;
         let reconnected = std::mem::replace(&mut live.was_up, true);
@@ -241,8 +307,73 @@ impl BrowserSession {
             } else {
                 ""
             };
-            format!("[browser] The connection to the user's browser dropped and is back.{window}")
+            if self.config.isolated && restarted {
+                "[browser] Your browser had closed and is started again: its tabs are gone, so you \
+                 are on a new blank one."
+                    .to_string()
+            } else {
+                let whose = if self.config.isolated {
+                    "your"
+                } else {
+                    "the user's"
+                };
+                format!("[browser] The connection to {whose} browser dropped and is back.{window}")
+            }
         })))
+    }
+
+    /// Starts the isolated browser unless it is running; says whether it started it.
+    async fn launch(&self, live: &mut Live) -> anyhow::Result<bool> {
+        if live
+            .launched
+            .as_mut()
+            .is_some_and(isolated::Launched::alive)
+        {
+            return Ok(false);
+        }
+        live.launched = None;
+        let Some(executable) = self.config.executable.clone().or_else(isolated::installed) else {
+            bail!(
+                "no Chromium-based browser is installed here (Chrome, Chromium, Edge or Brave): \
+                 install one, or name one with `Browser::executable`"
+            );
+        };
+        let dir = match &self.config.profile {
+            Some(dir) => dir.clone(),
+            None => match &live.profile {
+                Some(dir) => dir.path().to_path_buf(),
+                None => live
+                    .profile
+                    .insert(
+                        tempfile::Builder::new()
+                            .prefix("ailoy-browser-")
+                            .tempdir()?,
+                    )
+                    .path()
+                    .to_path_buf(),
+            },
+        };
+        live.launched = Some(isolated::launch(&executable, &dir, self.config.headless)?);
+        Ok(true)
+    }
+
+    /// Connects to the isolated browser, waiting while it opens its port.
+    async fn connect_launched(&self, live: &mut Live) -> anyhow::Result<Arc<cdp::Cdp>> {
+        let launched = live.launched.as_mut().expect("launched");
+        let browser = UserBrowser::Custom(launched.dir.clone());
+        let started = tokio::time::Instant::now();
+        loop {
+            if let Ok(cdp) = user::connect(Some(&browser)).await? {
+                return Ok(cdp);
+            }
+            if !launched.alive() {
+                bail!("the agent's browser quit as it started");
+            }
+            if started.elapsed() > Duration::from_secs(30) {
+                bail!("the agent's browser did not open its debugging port within 30 s");
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 
     /// Runs `work` on the agent's tabs, connecting first; a refusal is its error.
@@ -431,10 +562,15 @@ fn int_arg(args: &Value, key: &str) -> Option<usize> {
 /// or take a file there.
 pub(crate) fn tools(session: &Arc<BrowserSession>, console: bool) -> Vec<(ToolDesc, ToolFunc)> {
     let config = session.config();
+    let whose = if config.isolated {
+        "The browser is your own, apart from the user's, and signed in nowhere they have not \
+         signed in within it."
+    } else {
+        "The browser is the user's own, signed in as them; you work in a window of your own and \
+         reach only the tabs you opened."
+    };
     let navigate = format!(
-        "Open a URL in your current tab, or in a new tab with `new_tab`. The browser is the user's \
-         own, signed in as them; you work in a window of your own and reach only the tabs you \
-         opened.{}",
+        "Open a URL in your current tab, or in a new tab with `new_tab`. {whose}{}",
         if config.careful { CAREFUL } else { "" }
     );
     let mut tools = vec![
@@ -1128,13 +1264,21 @@ pub(crate) fn ask_user_tool_desc(browser: &Browser) -> ToolDesc {
             "It returns with their answer: done, declined (with a note, perhaps), or timed out."
         }
     };
+    let what = if browser.isolated && browser.headless {
+        "Ask the user for what only they can give (a decision, a code they received), or to \
+         confirm before anything that cannot be undone (paying, sending, deleting, posting). The \
+         browser has no window, so they cannot act in it: when a site needs them to sign in or \
+         pass a check, say so and stop."
+    } else {
+        "Ask the user to do something in the browser that only they can do (signing in, a \
+         CAPTCHA, a second factor), or to confirm before anything that cannot be undone (paying, \
+         sending, deleting, posting)."
+    };
     desc(
         "ask_user",
         &format!(
-            "Ask the user to do something in their browser that only they can do (signing in, a \
-             CAPTCHA, a second factor), or to confirm before anything that cannot be undone \
-             (paying, sending, deleting, posting). Never ask for credentials or get around a check \
-             yourself. Say exactly what to do, in the user's language. {returns}"
+            "{what} Never ask for credentials or get around a check yourself. Say exactly what to \
+             do, in the user's language. {returns}"
         ),
         crate::to_value!({
             "type": "object",
@@ -1163,9 +1307,17 @@ mod tests {
 
     #[test]
     fn wait_needs_a_handler() {
-        assert!(Browser::host().ask_user(AskUser::Wait).check().is_err());
-        assert!(Browser::host().check().is_ok());
-        let answered = Browser::host()
+        assert!(Browser::user().ask_user(AskUser::Wait).check().is_err());
+        assert!(Browser::user().check().is_ok());
+        assert!(Browser::user().headless(true).check().is_err());
+        assert!(
+            Browser::isolated()
+                .user_browser(UserBrowser::Chrome)
+                .check()
+                .is_err()
+        );
+        assert!(Browser::isolated().profile("/tmp/p").check().is_ok());
+        let answered = Browser::user()
             .ask_user(AskUser::Wait)
             .on_ask(async |_| AskResult::Done);
         assert!(answered.check().is_ok());
@@ -1182,10 +1334,10 @@ mod tests {
 
     #[test]
     fn ask_user_says_how_it_returns() {
-        let ends = description(Browser::host(), "ask_user");
+        let ends = description(Browser::user(), "ask_user");
         assert!(ends.contains("Never ask for credentials") && ends.contains("end your turn"));
         let waits = description(
-            Browser::host()
+            Browser::user()
                 .ask_user(AskUser::Wait)
                 .on_ask(async |_| AskResult::Done),
             "ask_user",
@@ -1195,14 +1347,14 @@ mod tests {
 
     #[test]
     fn careful_is_on_unless_turned_off() {
-        assert!(description(Browser::host(), "browser_navigate").contains(CAREFUL));
-        let careless = description(Browser::host().careful(false), "browser_navigate");
+        assert!(description(Browser::user(), "browser_navigate").contains(CAREFUL));
+        let careless = description(Browser::user().careful(false), "browser_navigate");
         assert!(careless.contains("user's own") && !careless.contains(CAREFUL));
     }
 
     #[test]
     fn every_tool_is_named_once() {
-        let session = BrowserSession::new(Browser::host());
+        let session = BrowserSession::new(Browser::user());
         let names: Vec<String> = tools(&session, false)
             .into_iter()
             .map(|(d, _)| d.name)
@@ -1309,7 +1461,7 @@ mod tests {
         line[at..at + end].to_string()
     }
 
-    /// Every tool, on a real Chrome lent as a host browser.
+    /// Every tool, on a real Chrome lent as the user's browser.
     #[tokio::test]
     #[ignore = "needs Chrome"]
     async fn the_tools_drive_a_chrome() {
@@ -1334,8 +1486,8 @@ mod tests {
             <div style=height:3000px></div><button onclick=\"this.textContent='pressed'\">Far</button>";
         let page = format!("data:text/html,{}", urlencoding::encode(html));
         let session = BrowserSession::new(
-            Browser::host()
-                .host_browser(HostBrowser::Custom(chrome.dir.path().into()))
+            Browser::user()
+                .user_browser(UserBrowser::Custom(chrome.dir.path().into()))
                 .start_url(&page),
         );
         session.start().await.unwrap();
@@ -1655,6 +1807,39 @@ mod tests {
         drop(chrome);
     }
 
+    /// An isolated browser (one installed here) starts on first use, on its own profile, and
+    /// stops with the agent.
+    #[tokio::test]
+    #[ignore = "needs Chrome"]
+    async fn an_isolated_browser_starts_and_stops_with_the_agent() {
+        let profile = tempfile::tempdir().unwrap();
+        let session =
+            BrowserSession::new(Browser::isolated().headless(true).profile(profile.path()));
+        let tools = tools(&session, false);
+        let (opened, _) = call(
+            &tools,
+            "browser_navigate",
+            serde_json::json!({ "url": "data:text/html,<title>Own</title><button>Go</button>" }),
+        )
+        .await;
+        assert!(opened.contains("\"Own\""), "{opened}");
+        let (tabs, _) = call(&tools, "browser_tabs", serde_json::json!({})).await;
+        assert_eq!(
+            tabs.lines().filter(|l| l.contains("(current)")).count(),
+            1,
+            "{tabs}"
+        );
+        let port = std::fs::read_to_string(profile.path().join("DevToolsActivePort")).unwrap();
+        let port: u16 = port.lines().next().unwrap().parse().unwrap();
+        drop(tools);
+        drop(session);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(
+            std::net::TcpStream::connect(("127.0.0.1", port)).is_err(),
+            "the browser closed with the agent"
+        );
+    }
+
     /// A page with a frame of its own origin and one of another site, served here.
     async fn serve_frames() -> u16 {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1697,8 +1882,8 @@ mod tests {
         let chrome = TestChrome::start();
         let port = serve_frames().await;
         let session = BrowserSession::new(
-            Browser::host()
-                .host_browser(HostBrowser::Custom(chrome.dir.path().into()))
+            Browser::user()
+                .user_browser(UserBrowser::Custom(chrome.dir.path().into()))
                 .start_url(format!("http://127.0.0.1:{port}/")),
         );
         session.start().await.unwrap();
@@ -1746,8 +1931,8 @@ mod tests {
             <input type=file hidden onchange=\"document.title='got:'+this.files[0].name+':'+this.files[0].size\"></div>\
             <a download=notes.txt href=\"data:text/plain,hello%20world\">Get notes</a>";
         let session = BrowserSession::new(
-            Browser::host()
-                .host_browser(HostBrowser::Custom(chrome.dir.path().into()))
+            Browser::user()
+                .user_browser(UserBrowser::Custom(chrome.dir.path().into()))
                 .start_url(format!("data:text/html,{}", urlencoding::encode(html))),
         );
         session.start().await.unwrap();
@@ -1874,8 +2059,8 @@ mod tests {
         let page = format!("data:text/html,{}", urlencoding::encode(html));
         let mut agent = crate::agent::AgentBuilder::new("anthropic/claude-haiku-4-5")
             .browser(
-                Browser::host()
-                    .host_browser(HostBrowser::Custom(chrome.dir.path().into()))
+                Browser::user()
+                    .user_browser(UserBrowser::Custom(chrome.dir.path().into()))
                     .start_url(&page),
             )
             .build()

@@ -1,13 +1,15 @@
 """An agent with a browser, waiting for what you ask of it.
 
-    uv run main.py [--noshell]
+    uv run main.py [--noshell] [--isolated]
 
 The agent uses your own browser (Chrome by default), in a window of its own opened on the ailoy
 docs, and drives it with its `browser_*` tools. It also has a console with python and curl, for
 what is easier done there, such as fetching a page's data or computing over it; `--noshell` leaves
 it out, so the agent has the browser alone and needs no console server. Turn on remote debugging at
 chrome://inspect/#remote-debugging (Chrome 144 or later) and allow the browser's prompt, which
-appears as it starts. Each line you type is the next turn; `/exit` ends. When a site needs you, to
+appears as it starts. `--isolated` gives the agent a browser of its own instead: a Chromium-based
+one installed here, started with a fresh profile and closed at the end, with no remote debugging
+to turn on. Each line you type is the next turn; `/exit` ends. When a site needs you, to
 sign in say, the agent says so and ends its turn: do it in its window, then tell it to go on.
 
 Environment:
@@ -42,10 +44,8 @@ from virtx import ConsoleClient, Recipe, ensure_virtx  # noqa: E402
 START = "https://brekkylab.github.io/ailoy/"
 
 # What the agent has, with a console and without.
-WITH_CONSOLE = (
-    "a web browser and a console: the browser is the user's own, which you drive with the browser tools"
-)
-BROWSER_ONLY = "a web browser: the user's own, which you drive with the browser tools"
+WITH_CONSOLE = "a web browser and a console: the browser is {whose}, which you drive with the browser tools"
+BROWSER_ONLY = "a web browser: {whose}, which you drive with the browser tools"
 
 # What the agent is for.
 INSTRUCTION = (
@@ -81,11 +81,12 @@ async def read(prompt: str) -> str | None:
         return None
 
 
-async def main(model: str, shell: bool) -> None:
+async def main(model: str, shell: bool, isolated: bool) -> None:
     # The browser tools reach the browser from this process; the console is for the other tools.
-    has = WITH_CONSOLE if shell else BROWSER_ONLY
+    whose = "your own, apart from the user's" if isolated else "the user's own"
+    has = (WITH_CONSOLE if shell else BROWSER_ONLY).format(whose=whose)
     builder = ailoy.AgentBuilder(model).instruction(f"You are a helpful assistant with {has}. {INSTRUCTION}")
-    builder = builder.browser(start_url=START)
+    builder = builder.browser(start_url=START, isolated=isolated)
     console = None
     if shell:
         # The console server, fetched into virtx's cache the first time: a host that installed
@@ -106,9 +107,12 @@ async def main(model: str, shell: bool) -> None:
     print(f"model     {model}")
     print(f"has       {'browser, console' if shell else 'browser'}\n")
     try:
-        print("Allow the browser's prompt to let the agent in. It opens the ailoy docs as an example.", flush=True)
+        if isolated:
+            print("Starting the agent's own browser. It opens the ailoy docs as an example.", flush=True)
+        else:
+            print("Allow the browser's prompt to let the agent in. It opens the ailoy docs as an example.", flush=True)
         await agent.start_browser()
-        print("The agent has a window of its own in your browser.\n")
+        print("The agent's browser is open.\n" if isolated else "The agent has a window of its own in your browser.\n")
 
         print("Ask anything, or try:")
         for suggestion in SUGGESTIONS:
@@ -132,4 +136,5 @@ if __name__ == "__main__":
     load_dotenv()
     # Bytes that are not UTF-8, as a broken IME composition can leave, become U+FFFD.
     sys.stdin.reconfigure(errors="replace")
-    asyncio.run(main(os.environ.get("AILOY_MODEL", "anthropic/claude-sonnet-5"), "--noshell" not in sys.argv[1:]))
+    args = sys.argv[1:]
+    asyncio.run(main(os.environ.get("AILOY_MODEL", "anthropic/claude-sonnet-5"), "--noshell" not in args, "--isolated" in args))

@@ -1,8 +1,8 @@
 # Using a browser
 
-An agent can drive your own browser with its `browser_*` tools. Give it one with `browser(...)` on the `AgentBuilder`. The tools reach the browser from your program over the Chrome DevTools Protocol (CDP), not from the agent's console, so an agent needs no console to browse.
+An agent can drive a browser with its `browser_*` tools: your own, or one of its own. Give it one with `browser(...)` on the `AgentBuilder`. The tools reach the browser from your program over the Chrome DevTools Protocol (CDP), not from the agent's console, so an agent needs no console to browse.
 
-The browser is a Chromium-based one that speaks CDP: Chrome by default. It needs remote debugging on; in Chrome 144 or later, open `chrome://inspect/#remote-debugging` and turn it on. Then:
+By default the browser is your own (`Browser::user()` in Rust), a Chromium-based one that speaks CDP: Chrome by default. For a browser of the agent's own, see [A browser of the agent's own](#a-browser-of-the-agent-s-own). It needs remote debugging on; in Chrome 144 or later, open `chrome://inspect/#remote-debugging` and turn it on. Then:
 
 ::: code-group
 
@@ -46,7 +46,7 @@ try {
 use ailoy::{agent::AgentBuilder, browser::Browser};
 
 let mut agent = AgentBuilder::new("anthropic/claude-sonnet-5")
-    .browser(Browser::host())
+    .browser(Browser::user())
     .build()
     .await?;
 ```
@@ -61,11 +61,26 @@ To connect sooner, say while you are at your screen, call `start_browser()` (`st
 - If the browser closes, or you turn remote debugging off, the agent connects again on its next browser tool. The browser asks again, and if the agent's window is gone it gets a new one. The agent is told when this happens.
 - If remote debugging is off, the agent is told how to turn it on, and you can pass that on.
 
-ailoy finds the browser by the `DevToolsActivePort` file a Chromium-based browser writes in its user data directory while remote debugging is on. By default it looks at Chrome, Chrome Beta, Dev and Canary, Chromium, Edge and Brave, and takes whichever turned remote debugging on last. To name one, pass `host_browser` (`hostBrowser` in Node, `Browser::host_browser` in Rust): `"chrome"`, `"chrome-beta"`, `"chrome-dev"`, `"chrome-canary"`, `"chromium"`, `"edge"` or `"brave"`, or any other by its user data directory (a path in Python, `{ userDataDir }` in Node, `HostBrowser::Custom` in Rust).
+ailoy finds the browser by the `DevToolsActivePort` file a Chromium-based browser writes in its user data directory while remote debugging is on. By default it looks at Chrome, Chrome Beta, Dev and Canary, Chromium, Edge and Brave, and takes whichever turned remote debugging on last. To name one, pass `user_browser` (`userBrowser` in Node, `Browser::user_browser` in Rust): `"chrome"`, `"chrome-beta"`, `"chrome-dev"`, `"chrome-canary"`, `"chromium"`, `"edge"` or `"brave"`, or any other by its user data directory (a path in Python, `{ userDataDir }` in Node, `UserBrowser::Custom` in Rust).
 
 ::: warning
 The agent uses your real browser, signed in wherever you are. Its tools cannot reach your other tabs, but in its own window it can do anything you could. `ask_user`'s description tells it to ask you before anything that cannot be undone, such as paying, sending or deleting. That is an instruction, though, not a limit, so use your own browser only with an agent and a task you trust.
 :::
+
+## A browser of the agent's own
+
+With `isolated` (`isolated: true` in Node, `Browser::isolated()` in Rust), the agent gets a browser apart from yours: ailoy starts it on first use and closes it when the agent closes. It needs no remote debugging turned on and asks you nothing.
+
+```python
+agent = await AgentBuilder("anthropic/claude-sonnet-5").browser(isolated=True).build()
+```
+
+- It is `executable` if you name one, else a Chromium-based browser installed here: Chrome, Chromium, Edge or Brave, the first found. With none, starting it fails.
+- It runs on a fresh profile that is deleted at the end, so it is signed in nowhere. `profile` keeps a user data directory instead, so sign-ins last from one run to the next.
+- It opens a window, where you can sign in when the agent asks. `headless` runs it without one, as on a server; then `ask_user` asks you only for decisions and information, since there is nothing for you to act in.
+- If it closes, the next browser tool starts it again on the same profile, and the agent is told its tabs are gone.
+
+`user_browser` is for your own browser only, and `headless`, `executable` and `profile` for the agent's own; mixing them fails when the agent is built.
 
 ## The tools
 

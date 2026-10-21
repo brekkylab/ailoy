@@ -161,16 +161,28 @@ def test_ask_user_is_end_turn_or_wait():
         AgentBuilder(MODEL).browser(ask_user="later")
 
 
-def test_a_host_browser_is_a_name_or_a_directory(tmp_path):
-    AgentBuilder(MODEL).browser(host_browser="edge")
-    AgentBuilder(MODEL).browser(host_browser=tmp_path)
+def test_a_user_browser_is_a_name_or_a_directory(tmp_path):
+    AgentBuilder(MODEL).browser(user_browser="edge")
+    AgentBuilder(MODEL).browser(user_browser=tmp_path)
     with pytest.raises(ValueError, match="chrome-beta"):
-        AgentBuilder(MODEL).browser(host_browser="edgee")
+        AgentBuilder(MODEL).browser(user_browser="edgee")
 
 
 def test_a_browser_can_be_less_careful():
     AgentBuilder(MODEL).browser(careful=False)
-    AgentBuilder(MODEL).browser(careful=True, host_browser="/nonexistent")
+    AgentBuilder(MODEL).browser(careful=True, user_browser="/nonexistent")
+
+
+async def test_an_isolated_browser_has_options_of_its_own(tmp_path):
+    agent = await (
+        AgentBuilder(MODEL)
+        .agent_provider(PROVIDER)
+        .browser(isolated=True, headless=True, executable="/nonexistent/chrome", profile=tmp_path)
+        .build()
+    )
+    await agent.close()
+    with pytest.raises(AiloyError, match="Browser::isolated"):
+        await AgentBuilder(MODEL).agent_provider(PROVIDER).browser(headless=True).build()
 
 
 async def test_wait_needs_on_ask(tmp_path):
@@ -183,7 +195,7 @@ async def test_wait_needs_on_ask(tmp_path):
     agent = await (
         AgentBuilder(MODEL)
         .agent_provider(PROVIDER)
-        .browser(ask_user="wait", on_ask=on_ask, ask_timeout=5, host_browser=tmp_path)
+        .browser(ask_user="wait", on_ask=on_ask, ask_timeout=5, user_browser=tmp_path)
         .build()
     )
     await agent.close()

@@ -1,7 +1,7 @@
 //! An agent with a browser, waiting for what you ask of it.
 //!
 //! ```sh
-//! cargo run --example browser-use [-- --noshell]
+//! cargo run --example browser-use [-- --noshell] [--isolated]
 //! ```
 //!
 //! The agent uses your own browser (Chrome by default), in a window of its own opened on the ailoy
@@ -9,7 +9,9 @@
 //! what is easier done there, such as fetching a page's data or computing over it; `--noshell`
 //! leaves it out, so the agent has the browser alone and needs no console server. Turn on remote
 //! debugging at chrome://inspect/#remote-debugging (Chrome 144 or later) and allow the browser's
-//! prompt, which appears as it starts. Each line you type is the next turn; `/exit` ends. When a
+//! prompt, which appears as it starts. `--isolated` gives the agent a browser of its own instead:
+//! a Chromium-based one installed here, started with a fresh profile and closed at the end, with
+//! no remote debugging to turn on. Each line you type is the next turn; `/exit` ends. When a
 //! site needs you, to sign in say, the agent says so and ends its turn: do it in its window, then
 //! tell it to go on.
 //!
@@ -29,10 +31,9 @@ use virtx::{console::ConsoleClient, image::Recipe};
 const START: &str = "https://brekkylab.github.io/ailoy/";
 
 /// What the agent has, with a console and without.
-const WITH_CONSOLE: &str = "a web browser and a console: the browser is the user's own, \
-     which you drive with the browser tools";
-const BROWSER_ONLY: &str = "a web browser: the user's own, which you drive with the \
-     browser tools";
+const WITH_CONSOLE: &str = "a web browser and a console: the browser is {whose}, which you \
+     drive with the browser tools";
+const BROWSER_ONLY: &str = "a web browser: {whose}, which you drive with the browser tools";
 
 /// What the agent is for.
 const INSTRUCTION: &str = "Do what the user asks, and say briefly what you are doing as you go. \
@@ -62,14 +63,20 @@ async fn main() -> anyhow::Result<()> {
     let model = std::env::var("AILOY_MODEL").unwrap_or_else(|_| "anthropic/claude-sonnet-5".into());
 
     let shell = !std::env::args().skip(1).any(|a| a == "--noshell");
+    let isolated = std::env::args().skip(1).any(|a| a == "--isolated");
+    let (browser, whose) = if isolated {
+        (Browser::isolated(), "your own, apart from the user's")
+    } else {
+        (Browser::user(), "the user's own")
+    };
+    let has = if shell { WITH_CONSOLE } else { BROWSER_ONLY }.replace("{whose}", whose);
 
     // The browser tools reach the browser from this process; the console is for the other tools.
     let mut builder = AgentBuilder::new(&model)
         .instruction(format!(
-            "You are a helpful assistant with {}. {INSTRUCTION}",
-            if shell { WITH_CONSOLE } else { BROWSER_ONLY }
+            "You are a helpful assistant with {has}. {INSTRUCTION}"
         ))
-        .browser(Browser::host().start_url(START));
+        .browser(browser.start_url(START));
     if shell {
         // The console server, fetched into virtx's cache the first time: a host that installed
         // only ailoy has none.
@@ -91,11 +98,19 @@ async fn main() -> anyhow::Result<()> {
         if shell { "browser, console" } else { "browser" }
     );
 
-    println!(
-        "Allow the browser's prompt to let the agent in. It opens the ailoy docs as an example."
-    );
+    if isolated {
+        println!("Starting the agent's own browser. It opens the ailoy docs as an example.");
+    } else {
+        println!(
+            "Allow the browser's prompt to let the agent in. It opens the ailoy docs as an example."
+        );
+    }
     agent.start_browser().await?;
-    println!("The agent has a window of its own in your browser.\n");
+    if isolated {
+        println!("The agent's browser is open.\n");
+    } else {
+        println!("The agent has a window of its own in your browser.\n");
+    }
 
     println!("Ask anything, or try:");
     for suggestion in SUGGESTIONS {

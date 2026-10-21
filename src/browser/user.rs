@@ -1,5 +1,5 @@
 //! The person's own Chromium-based browser, lent with their consent:
-//! [`Browser::host`](super::Browser::host).
+//! [`Browser::user`](super::Browser::user).
 //!
 //! It is found by the `DevToolsActivePort` file it writes in its user data directory while
 //! remote debugging is on. Chrome 144 and later, with remote debugging turned on at
@@ -24,9 +24,9 @@ pub(super) const DECLINED: &str = "The user declined to let you use their browse
      browser again unless they ask; `ask_user` asks them again.";
 
 /// A Chromium-based browser on this host, by name or by its user data directory, for
-/// [`Browser::host_browser`](super::Browser::host_browser).
+/// [`Browser::user_browser`](super::Browser::user_browser).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HostBrowser {
+pub enum UserBrowser {
     Chrome,
     ChromeBeta,
     ChromeDev,
@@ -39,35 +39,35 @@ pub enum HostBrowser {
     Custom(PathBuf),
 }
 
-impl HostBrowser {
+impl UserBrowser {
     /// The named ones, in the order a search prefers them.
-    pub const NAMED: [HostBrowser; 7] = [
-        HostBrowser::Chrome,
-        HostBrowser::ChromeBeta,
-        HostBrowser::ChromeDev,
-        HostBrowser::ChromeCanary,
-        HostBrowser::Chromium,
-        HostBrowser::Edge,
-        HostBrowser::Brave,
+    pub const NAMED: [UserBrowser; 7] = [
+        UserBrowser::Chrome,
+        UserBrowser::ChromeBeta,
+        UserBrowser::ChromeDev,
+        UserBrowser::ChromeCanary,
+        UserBrowser::Chromium,
+        UserBrowser::Edge,
+        UserBrowser::Brave,
     ];
 
     /// Its name as the bindings spell it: `chrome`, `chrome-beta`, …, `brave`, and `custom`
     /// for one named by its directory.
     pub fn name(&self) -> &'static str {
         match self {
-            HostBrowser::Chrome => "chrome",
-            HostBrowser::ChromeBeta => "chrome-beta",
-            HostBrowser::ChromeDev => "chrome-dev",
-            HostBrowser::ChromeCanary => "chrome-canary",
-            HostBrowser::Chromium => "chromium",
-            HostBrowser::Edge => "edge",
-            HostBrowser::Brave => "brave",
-            HostBrowser::Custom(_) => "custom",
+            UserBrowser::Chrome => "chrome",
+            UserBrowser::ChromeBeta => "chrome-beta",
+            UserBrowser::ChromeDev => "chrome-dev",
+            UserBrowser::ChromeCanary => "chrome-canary",
+            UserBrowser::Chromium => "chromium",
+            UserBrowser::Edge => "edge",
+            UserBrowser::Brave => "brave",
+            UserBrowser::Custom(_) => "custom",
         }
     }
 
     /// The named one called `name`.
-    pub fn named(name: &str) -> Option<HostBrowser> {
+    pub fn named(name: &str) -> Option<UserBrowser> {
         Self::NAMED.into_iter().find(|b| b.name() == name)
     }
 
@@ -76,30 +76,30 @@ impl HostBrowser {
     pub fn user_data_dir(&self) -> Option<PathBuf> {
         // (macOS under Application Support, Windows under %LOCALAPPDATA%, Linux under ~/.config)
         let (mac, windows, linux) = match self {
-            HostBrowser::Custom(dir) => return Some(dir.clone()),
-            HostBrowser::Chrome => ("Google/Chrome", "Google/Chrome/User Data", "google-chrome"),
-            HostBrowser::ChromeBeta => (
+            UserBrowser::Custom(dir) => return Some(dir.clone()),
+            UserBrowser::Chrome => ("Google/Chrome", "Google/Chrome/User Data", "google-chrome"),
+            UserBrowser::ChromeBeta => (
                 "Google/Chrome Beta",
                 "Google/Chrome Beta/User Data",
                 "google-chrome-beta",
             ),
-            HostBrowser::ChromeDev => (
+            UserBrowser::ChromeDev => (
                 "Google/Chrome Dev",
                 "Google/Chrome Dev/User Data",
                 "google-chrome-unstable",
             ),
-            HostBrowser::ChromeCanary => (
+            UserBrowser::ChromeCanary => (
                 "Google/Chrome Canary",
                 "Google/Chrome SxS/User Data",
                 "google-chrome-canary",
             ),
-            HostBrowser::Chromium => ("Chromium", "Chromium/User Data", "chromium"),
-            HostBrowser::Edge => (
+            UserBrowser::Chromium => ("Chromium", "Chromium/User Data", "chromium"),
+            UserBrowser::Edge => (
                 "Microsoft Edge",
                 "Microsoft/Edge/User Data",
                 "microsoft-edge",
             ),
-            HostBrowser::Brave => (
+            UserBrowser::Brave => (
                 "BraveSoftware/Brave-Browser",
                 "BraveSoftware/Brave-Browser/User Data",
                 "BraveSoftware/Brave-Browser",
@@ -116,10 +116,10 @@ impl HostBrowser {
     }
 }
 
-impl std::fmt::Display for HostBrowser {
+impl std::fmt::Display for UserBrowser {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HostBrowser::Custom(dir) => write!(f, "the browser at {}", dir.display()),
+            UserBrowser::Custom(dir) => write!(f, "the browser at {}", dir.display()),
             named => f.write_str(named.name()),
         }
     }
@@ -172,15 +172,15 @@ fn open(dir: &Path) -> Option<Open> {
 /// Connects to `browser`, or, with none named, to the browser on this host that turned remote
 /// debugging on last; connecting is when it asks the person.
 pub(super) async fn connect(
-    browser: Option<&HostBrowser>,
+    browser: Option<&UserBrowser>,
 ) -> anyhow::Result<Result<Arc<Cdp>, Closed>> {
-    let candidates: Vec<HostBrowser> = match browser {
+    let candidates: Vec<UserBrowser> = match browser {
         Some(browser) => vec![browser.clone()],
-        None => HostBrowser::NAMED.to_vec(),
+        None => UserBrowser::NAMED.to_vec(),
     };
     let dirs: Vec<PathBuf> = candidates
         .iter()
-        .filter_map(HostBrowser::user_data_dir)
+        .filter_map(UserBrowser::user_data_dir)
         .collect();
     if dirs.is_empty() {
         anyhow::bail!("this OS names no place for a browser's user data");
@@ -279,23 +279,25 @@ mod tests {
             format!("ws://127.0.0.1:{port}/devtools/browser/abc")
         );
         drop(listener);
+        // Unless another process (a test's browser) took the freed port meanwhile.
+        let taken = std::net::TcpStream::connect(("127.0.0.1", port)).is_ok();
         assert!(
-            open(dir.path()).is_none(),
+            taken || open(dir.path()).is_none(),
             "a quit browser's file names a port nothing listens on"
         );
     }
 
     #[test]
     fn named_browsers_read_back_by_name_and_have_a_place_here() {
-        for browser in HostBrowser::NAMED {
+        for browser in UserBrowser::NAMED {
             let name = browser.name();
-            assert_eq!(HostBrowser::named(name), Some(browser.clone()), "{name}");
+            assert_eq!(UserBrowser::named(name), Some(browser.clone()), "{name}");
         }
-        assert_eq!(HostBrowser::named("netscape"), None);
-        assert!(HostBrowser::Chrome.user_data_dir().is_some());
+        assert_eq!(UserBrowser::named("netscape"), None);
+        assert!(UserBrowser::Chrome.user_data_dir().is_some());
         let dir = PathBuf::from("/somewhere");
-        assert_eq!(HostBrowser::Custom(dir.clone()).name(), "custom");
-        assert_eq!(HostBrowser::named("custom"), None);
-        assert_eq!(HostBrowser::Custom(dir.clone()).user_data_dir(), Some(dir));
+        assert_eq!(UserBrowser::Custom(dir.clone()).name(), "custom");
+        assert_eq!(UserBrowser::named("custom"), None);
+        assert_eq!(UserBrowser::Custom(dir.clone()).user_data_dir(), Some(dir));
     }
 }

@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
-    browser::{AskUser, Browser, HostBrowser},
+    browser::{AskUser, Browser, UserBrowser},
     datatype::Value,
     memory::Memory,
     message::{Message, MessageDeltaOutput, MessageOutput},
@@ -100,13 +100,24 @@ pub struct UserDataDir {
 
 #[napi(object, object_to_js = false)]
 pub struct BrowserOptions {
-    /// Which browser: `'chrome'`, `'chrome-beta'`, `'chrome-dev'`, `'chrome-canary'`,
+    /// A browser of the agent's own, apart from the user's: started on first use and closed with
+    /// the agent. `false` by default: the user's own browser.
+    pub isolated: Option<bool>,
+    /// For `isolated`: no window, as on a server. `false` by default.
+    pub headless: Option<bool>,
+    /// For `isolated`: the Chromium-based browser to start, by its executable; else one
+    /// installed here (Chrome, Chromium, Edge or Brave).
+    pub executable: Option<String>,
+    /// For `isolated`: the user data directory it keeps, so sign-ins last; a fresh one by
+    /// default.
+    pub profile: Option<String>,
+    /// For the user's browser, which one: `'chrome'`, `'chrome-beta'`, `'chrome-dev'`, `'chrome-canary'`,
     /// `'chromium'`, `'edge'`, `'brave'`, or any other by `{ userDataDir }`; with none, whichever
     /// turned remote debugging on last.
     #[napi(
         ts_type = "'chrome' | 'chrome-beta' | 'chrome-dev' | 'chrome-canary' | 'chromium' | 'edge' | 'brave' | { userDataDir: string }"
     )]
-    pub host_browser: Option<Either<String, UserDataDir>>,
+    pub user_browser: Option<Either<String, UserDataDir>>,
     /// How the agent waits on the person: `'endTurn'` (the default) tells them in its reply and
     /// ends the turn, `'wait'` waits for `onAsk`.
     #[napi(ts_type = "'endTurn' | 'wait'")]
@@ -239,14 +250,23 @@ impl JsAgentBuilder {
         options: Option<BrowserOptions>,
     ) -> Result<This<'env>> {
         let options = options.unwrap_or(BrowserOptions {
-            host_browser: None,
+            isolated: None,
+            headless: None,
+            executable: None,
+            profile: None,
+            user_browser: None,
             ask_user: None,
             on_ask: None,
             ask_timeout_ms: None,
             careful: None,
             start_url: None,
         });
-        let mut browser = Browser::host().ask_user(match options.ask_user.as_deref() {
+        let browser = if options.isolated.unwrap_or(false) {
+            Browser::isolated()
+        } else {
+            Browser::user()
+        };
+        let mut browser = browser.ask_user(match options.ask_user.as_deref() {
             None | Some("endTurn") => AskUser::EndTurn,
             Some("wait") => AskUser::Wait,
             Some(other) => {
@@ -255,18 +275,27 @@ impl JsAgentBuilder {
                 )));
             }
         });
-        if let Some(host) = options.host_browser {
-            browser = browser.host_browser(match host {
-                Either::A(name) => HostBrowser::named(&name).ok_or_else(|| {
+        if let Some(host) = options.user_browser {
+            browser = browser.user_browser(match host {
+                Either::A(name) => UserBrowser::named(&name).ok_or_else(|| {
                     let names: Vec<&str> =
-                        HostBrowser::NAMED.iter().map(HostBrowser::name).collect();
+                        UserBrowser::NAMED.iter().map(UserBrowser::name).collect();
                     invalid(format!(
-                        "hostBrowser is one of {} or {{ userDataDir }}, not {name:?}",
+                        "userBrowser is one of {} or {{ userDataDir }}, not {name:?}",
                         names.join(", ")
                     ))
                 })?,
-                Either::B(dir) => HostBrowser::Custom(dir.user_data_dir.into()),
+                Either::B(dir) => UserBrowser::Custom(dir.user_data_dir.into()),
             });
+        }
+        if let Some(headless) = options.headless {
+            browser = browser.headless(headless);
+        }
+        if let Some(path) = options.executable {
+            browser = browser.executable(path);
+        }
+        if let Some(dir) = options.profile {
+            browser = browser.profile(dir);
         }
         if let Some(func) = options.on_ask {
             let func = Arc::new(func);
