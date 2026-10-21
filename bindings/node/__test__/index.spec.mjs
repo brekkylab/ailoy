@@ -71,6 +71,42 @@ test('registering into a provider that does not exist throws', () => {
   })
 })
 
+test('a browser connects only when used, and needs no console', async () => {
+  setLangModelProvider('fake-browser', 'vllm')
+  const agent = await new AgentBuilder('fake-browser/model').browser({ startUrl: 'https://example.com' }).build()
+  await agent.close()
+})
+
+test('a user browser is a name or a directory', () => {
+  new AgentBuilder('m').browser({ userBrowser: 'edge' })
+  new AgentBuilder('m').browser({ userBrowser: { userDataDir: '/nonexistent' } })
+  assert.throws(() => new AgentBuilder('m').browser({ userBrowser: 'edgee' }), { code: 'INVALID_ARG', message: /chrome-beta/ })
+})
+
+test('a browser can be less careful', () => {
+  new AgentBuilder('m').browser({ careful: false })
+  new AgentBuilder('m').browser({ careful: true, userBrowser: { userDataDir: '/nonexistent' } })
+})
+
+test('an isolated browser has options of its own', async () => {
+  setLangModelProvider('fake-browser', 'vllm')
+  const agent = await new AgentBuilder('fake-browser/model')
+    .browser({ isolated: true, headless: true, executable: '/nonexistent/chrome', profile: '/nonexistent/profile' })
+    .build()
+  await agent.close()
+  await assert.rejects(new AgentBuilder('fake-browser/model').browser({ headless: true }).build(), {
+    message: /Browser::isolated/,
+  })
+})
+
+test('an agent without a browser cannot start one', async () => {
+  setLangModelProvider('fake-browser', 'vllm')
+  const agent = await new AgentBuilder('fake-browser/model').build()
+  await assert.rejects(agent.startBrowser(), { code: 'AILOY_ERROR', message: /no browser/ })
+  await agent.close()
+  await assert.rejects(agent.startBrowser(), { message: /closed/ })
+})
+
 // ---- a turn, against a model served from this process --------------------------------------
 
 /** The last message's text, or the tool results it carries. */

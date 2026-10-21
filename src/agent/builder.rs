@@ -5,6 +5,7 @@ use virtx::console::ConsoleClient;
 
 use crate::{
     agent::{Agent, AgentSpec, AgentState, ContextManager},
+    browser::{Browser, BrowserSession},
     datatype::Value,
     memory::Memory,
     message::Message,
@@ -47,6 +48,8 @@ pub struct AgentBuilder {
     memory: Option<Memory>,
 
     context_manager: Option<ContextManager>,
+
+    browser: Option<Browser>,
 }
 
 impl AgentBuilder {
@@ -60,6 +63,7 @@ impl AgentBuilder {
             console: None,
             memory: None,
             context_manager: None,
+            browser: None,
         }
     }
 
@@ -133,6 +137,14 @@ impl AgentBuilder {
         self
     }
 
+    /// Give the agent a browser and the `browser_*` tools. The tools reach the
+    /// browser from this process, not from the [`console`](Self::console). Nothing starts until
+    /// the agent first uses it, or [`Agent::start_browser`].
+    pub fn browser(mut self, browser: Browser) -> Self {
+        self.browser = Some(browser);
+        self
+    }
+
     /// Let this agent remember into `memory`.
     ///
     /// Adds the `mem_search` and `mem_insert` tools; they are not spec tools because the
@@ -180,6 +192,7 @@ impl AgentBuilder {
             console,
             memory,
             context_manager,
+            browser,
         } = self;
 
         let mut state = AgentState::new().with_history(history);
@@ -188,6 +201,10 @@ impl AgentBuilder {
         }
         if let Some(memory) = memory {
             state = state.with_memory(memory);
+        }
+        if let Some(browser) = browser {
+            browser.check()?;
+            state = state.with_browser(BrowserSession::new(browser));
         }
 
         let mut agent = Agent::try_with_provider_and_state(spec, &agent_provider, state).await?;

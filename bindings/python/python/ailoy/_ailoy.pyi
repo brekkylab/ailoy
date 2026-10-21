@@ -35,6 +35,40 @@ class AgentBuilder:
     def web_fetch_tool(self) -> Self: ...
     def history(self, history: list[Message]) -> Self: ...
     def console(self, console: ConsoleClient) -> Self: ...
+    def browser(
+        self,
+        *,
+        user_browser: Literal[
+            "chrome", "chrome-beta", "chrome-dev", "chrome-canary", "chromium", "edge", "brave"
+        ]
+        | _Path
+        | None = None,
+        careful: bool = True,
+        start_url: str | None = None,
+        isolated: bool = False,
+        headless: bool = False,
+        executable: _Path | None = None,
+        profile: _Path | None = None,
+    ) -> Self:
+        """A browser the agent drives with its ``browser_*`` tools over CDP from this process
+        rather than the console: the person's own, or with ``isolated`` one of the agent's own.
+
+        ``isolated`` starts a browser on first use and closes it with the agent: in a window
+        unless ``headless``; ``executable`` if given, else a Chromium-based browser installed
+        here (Chrome, Chromium, Edge or Brave); on the user data directory ``profile`` if given,
+        so sign-ins last, else a fresh one.
+
+        The person's own needs remote debugging on (in Chrome 144 or later, the default, at
+        ``chrome://inspect/#remote-debugging``), and asks the person before it lets the agent
+        in. ``user_browser`` names which, or gives any other's user data directory as a path;
+        with none, it is whichever turned remote debugging on last.
+
+        ``careful`` tells the agent to use sites as a person would, so sites checking for bots
+        are less likely to turn it away.
+
+        ``start_url`` is the page the agent's tab opens on.
+        """
+        ...
     def memory(self, memfile: str) -> Self: ...
     def skill(self, dir: str) -> Self: ...
     def context_manager(
@@ -65,6 +99,13 @@ class Agent:
     ) -> Agent: ...
     @property
     def history(self) -> list[Message]: ...
+    async def start_browser(self) -> None:
+        """Connect the browser now rather than on the agent's first use.
+
+        This is when the browser asks the person, so call it while they are at their screen; a
+        refusal raises. A no-op once connected. Raises during a turn.
+        """
+        ...
     def run(self, query: str | Message) -> AgentRun[MessageOutput]: ...
     def run_stream(self, query: str | Message) -> AgentRun[MessageDeltaOutput]: ...
     async def close(self) -> None: ...
