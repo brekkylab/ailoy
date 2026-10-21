@@ -25,6 +25,7 @@ export default defineConfig({
             { text: 'Model providers', link: '/guide/model-providers' },
             { text: 'Building VM', link: '/guide/building-vm' },
             { text: 'Using MCP', link: '/guide/using-mcp' },
+            { text: 'Using a browser', link: '/guide/using-browser' },
           ],
         },
       ],

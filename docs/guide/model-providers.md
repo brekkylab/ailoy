@@ -39,7 +39,7 @@ Each org's models run on one **backend**:
 | Backend | Runs the model through | Needs |
 | --- | --- | --- |
 | `cli` | The org's CLI: Claude Code (`claude`), Codex (`codex`) or Gemini CLI (`gemini`) | The CLI on `PATH`, logged in |
-| `api` | The org's own API | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`, `ZAI_API_KEY` or `DASHSCOPE_API_KEY` (Qwen) |
+| `api` | The org's own API | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY` (or `MOONSHOT_API_KEY`), `ZAI_API_KEY` or `DASHSCOPE_API_KEY` (Qwen) |
 | `bedrock` | Amazon Bedrock | `AWS_BEARER_TOKEN_BEDROCK`; the region from `AWS_REGION`, then `AWS_DEFAULT_REGION`, else `us-east-1` |
 | `openrouter` | OpenRouter | `OPENROUTER_API_KEY` |
 | `vllm` | A vLLM server | `VLLM_BASE_URL` (default `http://localhost:8000/v1`), and `VLLM_API_KEY` if the server wants one |

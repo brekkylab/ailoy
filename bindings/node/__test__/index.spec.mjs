@@ -14,6 +14,7 @@ const {
   AgentBuilder,
   LangModel,
   registerTool,
+  getLangModelProvider,
   removeLangModelProvider,
   setLangModelProvider,
 } = ailoy
@@ -68,6 +69,42 @@ test('registering into a provider that does not exist throws', () => {
   assert.throws(() => registerTool({ name: 't', parameters: {} }, () => 1, { provider: 'nope' }), {
     code: 'AILOY_ERROR',
   })
+})
+
+test('a browser connects only when used, and needs no console', async () => {
+  setLangModelProvider('fake-browser', 'vllm')
+  const agent = await new AgentBuilder('fake-browser/model').browser({ startUrl: 'https://example.com' }).build()
+  await agent.close()
+})
+
+test('a user browser is a name or a directory', () => {
+  new AgentBuilder('m').browser({ userBrowser: 'edge' })
+  new AgentBuilder('m').browser({ userBrowser: { userDataDir: '/nonexistent' } })
+  assert.throws(() => new AgentBuilder('m').browser({ userBrowser: 'edgee' }), { code: 'INVALID_ARG', message: /chrome-beta/ })
+})
+
+test('a browser can be less careful', () => {
+  new AgentBuilder('m').browser({ careful: false })
+  new AgentBuilder('m').browser({ careful: true, userBrowser: { userDataDir: '/nonexistent' } })
+})
+
+test('an isolated browser has options of its own', async () => {
+  setLangModelProvider('fake-browser', 'vllm')
+  const agent = await new AgentBuilder('fake-browser/model')
+    .browser({ isolated: true, headless: true, executable: '/nonexistent/chrome', profile: '/nonexistent/profile' })
+    .build()
+  await agent.close()
+  await assert.rejects(new AgentBuilder('fake-browser/model').browser({ headless: true }).build(), {
+    message: /Browser::isolated/,
+  })
+})
+
+test('an agent without a browser cannot start one', async () => {
+  setLangModelProvider('fake-browser', 'vllm')
+  const agent = await new AgentBuilder('fake-browser/model').build()
+  await assert.rejects(agent.startBrowser(), { code: 'AILOY_ERROR', message: /no browser/ })
+  await agent.close()
+  await assert.rejects(agent.startBrowser(), { message: /closed/ })
 })
 
 // ---- a turn, against a model served from this process --------------------------------------
@@ -265,6 +302,17 @@ class StreamingEcho extends Echo {
 }
 
 const textOf = (outputs) => outputs.map((o) => o.message.contents[0].text)
+
+test('a provider reads back as it was set', () => {
+  assert.equal(getLangModelProvider('anthropic'), 'cli')
+  assert.equal(getLangModelProvider('anthropic/claude-sonnet-5-5'), 'cli')
+  setLangModelProvider('read-back', 'bedrock')
+  assert.equal(getLangModelProvider('read-back/some-model'), 'bedrock')
+  setLangModelProvider('read-back', (org, name) => new Echo(name))
+  assert.equal(getLangModelProvider('read-back'), 'custom')
+  removeLangModelProvider('read-back')
+  assert.equal(getLangModelProvider('read-back'), null)
+})
 
 test('a custom provider serves an agent', async (t) => {
   const seen = []
