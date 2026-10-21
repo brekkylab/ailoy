@@ -4,12 +4,16 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 0
+    open-pull-requests-limit: 3
     exclude-paths:
       - "examples/"
     groups:
       cargo-patch:
         applies-to: "security-updates"
+        update-types:
+          - "patch"
+      cargo-version-patch:
+        applies-to: "version-updates"
         update-types:
           - "patch"
 
@@ -19,7 +23,7 @@ updates:
       - "/docs"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 0
+    open-pull-requests-limit: 3
     exclude-paths:
       - "examples/"
     groups:
@@ -28,12 +32,17 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      npm-version-minor-patch:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "uv"
     directory: "/bindings/python"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 0
+    open-pull-requests-limit: 3
     exclude-paths:
       - "examples/"
     groups:
@@ -42,16 +51,25 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      uv-version-minor-patch:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 0
+    open-pull-requests-limit: 3
     exclude-paths:
       - "examples/"
     groups:
       actions:
         applies-to: "security-updates"
+        patterns:
+          - "*"
+      actions-version:
+        applies-to: "version-updates"
         patterns:
           - "*"
