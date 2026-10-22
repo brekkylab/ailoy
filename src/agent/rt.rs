@@ -827,10 +827,10 @@ mod tests {
         }
     }
 
-    /// The context manager checks the input the model says it read. Each call reports 10
-    /// tokens of input with 50 read from the cache and 50 written to it, against a limit of
-    /// 100: a model that counts the cache inside `input_tokens` read 10, and one that reports
-    /// it apart read 110.
+    /// The context manager checks the input the model says it read. The first turn's two calls
+    /// each report 10 tokens of input with 50 read from the cache and 50 written to it, against
+    /// a limit of 100: a model that counts the cache inside `input_tokens` read 10, and one that
+    /// reports it apart read 110.
     #[tokio::test]
     async fn test_context_manager_counts_the_input_the_model_read() {
         for (name, apart, truncated) in [

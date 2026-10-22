@@ -619,3 +619,21 @@ fn nullable(schema: &Value) -> Value {
     }
     Value::Object(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The counts of a call whose instructions came from the prompt cache, measured on
+    /// 2026-10-23 with `gpt-5-mini`: the cached tokens are part of `input_tokens`.
+    #[test]
+    fn total_input_tokens_is_input_tokens() {
+        let usage = parse_usage(&crate::to_value!({
+            "input_tokens": 10_777,
+            "input_tokens_details": {"cached_tokens": 10_624}
+        }))
+        .unwrap();
+        let model = GptApiModel::new("gpt-5-mini", "unused");
+        assert_eq!(model.total_input_tokens(&usage), 10_777);
+    }
+}
