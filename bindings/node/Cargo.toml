@@ -24,5 +24,4 @@ async-stream = "0.3"
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["sync", "rt"] }
-url = "2.5"
 

@@ -16,7 +16,9 @@ const {
   registerTool,
   getLangModelProvider,
   removeLangModelProvider,
+  removeToolProvider,
   setLangModelProvider,
+  setToolProvider,
 } = ailoy
 const { ConsoleClient, Recipe, ensureVirtx } = virtx
 
@@ -65,10 +67,40 @@ test('an object that does not fit says what was expected', () => {
   })
 })
 
-test('registering into a provider that does not exist throws', () => {
-  assert.throws(() => registerTool({ name: 't', parameters: {} }, () => 1, { provider: 'nope' }), {
-    code: 'AILOY_ERROR',
+test('a browser connects only when used, and needs no console', async () => {
+  setLangModelProvider('fake-browser', 'vllm')
+  const agent = await new AgentBuilder('fake-browser/model').browser({ startUrl: 'https://example.com' }).build()
+  await agent.close()
+})
+
+test('a user browser is a name or a directory', () => {
+  new AgentBuilder('m').browser({ userBrowser: 'edge' })
+  new AgentBuilder('m').browser({ userBrowser: { userDataDir: '/nonexistent' } })
+  assert.throws(() => new AgentBuilder('m').browser({ userBrowser: 'edgee' }), { code: 'INVALID_ARG', message: /chrome-beta/ })
+})
+
+test('a browser can be less careful', () => {
+  new AgentBuilder('m').browser({ careful: false })
+  new AgentBuilder('m').browser({ careful: true, userBrowser: { userDataDir: '/nonexistent' } })
+})
+
+test('an isolated browser has options of its own', async () => {
+  setLangModelProvider('fake-browser', 'vllm')
+  const agent = await new AgentBuilder('fake-browser/model')
+    .browser({ isolated: true, headless: true, executable: '/nonexistent/chrome', profile: '/nonexistent/profile' })
+    .build()
+  await agent.close()
+  await assert.rejects(new AgentBuilder('fake-browser/model').browser({ headless: true }).build(), {
+    message: /Browser::isolated/,
   })
+})
+
+test('an agent without a browser cannot start one', async () => {
+  setLangModelProvider('fake-browser', 'vllm')
+  const agent = await new AgentBuilder('fake-browser/model').build()
+  await assert.rejects(agent.startBrowser(), { code: 'AILOY_ERROR', message: /no browser/ })
+  await agent.close()
+  await assert.rejects(agent.startBrowser(), { message: /closed/ })
 })
 
 // ---- a turn, against a model served from this process --------------------------------------
@@ -351,6 +383,18 @@ test('a custom provider may hand back a built-in model', async (t) => {
   const model = await LangModel.create('alias/any')
   const messages = [{ role: 'user', contents: [{ type: 'text', text: '2 + 3?' }] }]
   assert.equal((await model.infer(messages, [ADD])).finish_reason.type, 'tool_call')
+})
+
+test('a removed tool provider no longer builds', async (t) => {
+  setLangModelProvider('tooled', (org, name) => new Echo(name))
+  t.after(() => removeLangModelProvider('tooled'))
+  const desc = { name: 'fleeting', parameters: { type: 'object' } }
+
+  setToolProvider('fleeting', () => null)
+  await new AgentBuilder('tooled/x').tool(desc).build()
+  assert.equal(removeToolProvider('fleeting'), true)
+  assert.equal(removeToolProvider('fleeting'), false)
+  await assert.rejects(new AgentBuilder('tooled/x').tool(desc).build(), { message: /fleeting/ })
 })
 
 test('a factory that throws fails the build', async (t) => {

@@ -380,39 +380,41 @@ async fn fetch_one(
 
 /// Factory closes over one [`WebFetchState`] so the rate limiter is shared by
 /// every tool it builds.
-pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> ToolFunc {
+pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> anyhow::Result<ToolFunc> {
     let state = WebFetchState::new();
     move |_| {
         let state = state.clone();
-        tool_func!(async |args: Value| -> Value with [state = state.clone()] {
-            let offset = args
-                .pointer("/offset")
-                .and_then(|v| v.as_integer())
-                .unwrap_or(0)
-                .max(0) as usize;
-            let length = args
-                .pointer("/length")
-                .and_then(|v| v.as_integer())
-                .map(|n| n.max(256).min(MAX_BODY_CHARS as i64) as usize)
-                .unwrap_or(DEFAULT_BODY_CHARS);
-            // Unknown `format` values silently fall back to "text" so a
-            // mistyped value still returns something useful.
-            let format = args
-                .pointer("/format")
-                .and_then(|v| v.as_str())
-                .and_then(BodyFormat::parse)
-                .unwrap_or(BodyFormat::Text);
+        Ok(
+            tool_func!(async |args: Value| -> Value with [state = state.clone()] {
+                let offset = args
+                    .pointer("/offset")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0)
+                    .max(0) as usize;
+                let length = args
+                    .pointer("/length")
+                    .and_then(|v| v.as_integer())
+                    .map(|n| n.max(256).min(MAX_BODY_CHARS as i64) as usize)
+                    .unwrap_or(DEFAULT_BODY_CHARS);
+                // Unknown `format` values silently fall back to "text" so a
+                // mistyped value still returns something useful.
+                let format = args
+                    .pointer("/format")
+                    .and_then(|v| v.as_str())
+                    .and_then(BodyFormat::parse)
+                    .unwrap_or(BodyFormat::Text);
 
-            let url_str = match args.pointer("/url").and_then(|v| v.as_str()) {
-                Some(u) => u.to_string(),
-                None => {
-                    return crate::to_value!({
-                        "error": "missing required parameter: `url`"
-                    });
-                }
-            };
-            fetch_one(state, url_str, offset, length, format).await
-        })
+                let url_str = match args.pointer("/url").and_then(|v| v.as_str()) {
+                    Some(u) => u.to_string(),
+                    None => {
+                        return crate::to_value!({
+                            "error": "missing required parameter: `url`"
+                        });
+                    }
+                };
+                fetch_one(state, url_str, offset, length, format).await
+            }),
+        )
     }
 }
 

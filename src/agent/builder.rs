@@ -5,6 +5,7 @@ use virtx::console::ConsoleClient;
 
 use crate::{
     agent::{Agent, AgentSpec, AgentState, ContextManager},
+    browser::{Browser, BrowserSession},
     datatype::Value,
     memory::Memory,
     message::Message,
@@ -15,7 +16,7 @@ use crate::{
 /// Fluent builder over [`AgentSpec`] for [`Agent`].
 ///
 /// For assembling an agent inline; with a fully-formed [`AgentSpec`], call
-/// [`Agent::try_new`] / [`Agent::try_with_provider`] directly.
+/// [`Agent::try_new`] / [`Agent::try_with_state`] directly.
 ///
 /// # Examples
 ///
@@ -23,9 +24,8 @@ use crate::{
 /// # use ailoy::agent::AgentBuilder;
 /// # #[tokio::main]
 /// # async fn main() -> anyhow::Result<()> {
-/// // The model is built through the provider set for its org (see `ailoy::model`); tools
-/// // come from the `"default"` agent provider unless another is selected with
-/// // [`AgentBuilder::agent_provider`].
+/// // The model is built through the provider set for its org (see `ailoy::model`), each
+/// // tool through the provider set for its name (see `ailoy::tool`).
 /// let agent = AgentBuilder::new("anthropic/claude-sonnet-5-5")
 ///     .instruction("Be brief.")
 ///     .web_fetch_tool()
@@ -37,9 +37,6 @@ use crate::{
 pub struct AgentBuilder {
     spec: AgentSpec,
 
-    /// [`AgentProvider`](crate::agent::AgentProvider) name resolved at [`build`](Self::build).
-    agent_provider: String,
-
     history: Vec<Message>,
 
     console: Option<Arc<Mutex<Option<ConsoleClient>>>>,
@@ -49,6 +46,8 @@ pub struct AgentBuilder {
     conversation_id: Option<String>,
 
     context_manager: Option<ContextManager>,
+
+    browser: Option<Browser>,
 }
 
 impl AgentBuilder {
@@ -57,21 +56,13 @@ impl AgentBuilder {
     pub fn new(model: impl Into<String>) -> Self {
         Self {
             spec: AgentSpec::new(model),
-            agent_provider: "default".to_string(),
             history: Vec::new(),
             console: None,
             memory: None,
             conversation_id: None,
             context_manager: None,
+            browser: None,
         }
-    }
-
-    /// Select the [`AgentProvider`](crate::agent::AgentProvider) bundle (default
-    /// `"default"`). `name` must be registered in
-    /// [`get_agent_providers`](crate::agent::get_agent_providers) by [`build`](Self::build) time.
-    pub fn agent_provider(mut self, name: impl Into<String>) -> Self {
-        self.agent_provider = name.into();
-        self
     }
 
     /// Set the system instruction stored on the spec.
@@ -136,6 +127,14 @@ impl AgentBuilder {
         self
     }
 
+    /// Give the agent a browser and the `browser_*` tools. The tools reach the
+    /// browser from this process, not from the [`console`](Self::console). Nothing starts until
+    /// the agent first uses it, or [`Agent::start_browser`].
+    pub fn browser(mut self, browser: Browser) -> Self {
+        self.browser = Some(browser);
+        self
+    }
+
     /// Let this agent remember the user across sessions in the folder `memory` names.
     ///
     /// Each finished turn is added to the folder's history, which the `search_history` tool
@@ -182,17 +181,17 @@ impl AgentBuilder {
         self
     }
 
-    /// Materialise the agent via [`Agent::try_with_provider_and_state`], which is async
+    /// Materialise the agent via [`Agent::try_with_state`], which is async
     /// because it builds the model and reads the skills through the console.
     pub async fn build(self) -> anyhow::Result<Agent> {
         let Self {
             spec,
-            agent_provider,
             history,
             console,
             memory,
             conversation_id,
             context_manager,
+            browser,
         } = self;
 
         let mut state = AgentState::new().with_history(history);
@@ -205,8 +204,12 @@ impl AgentBuilder {
         if let Some(id) = conversation_id {
             state = state.with_conversation_id(id);
         }
+        if let Some(browser) = browser {
+            browser.check()?;
+            state = state.with_browser(BrowserSession::new(browser));
+        }
 
-        let mut agent = Agent::try_with_provider_and_state(spec, &agent_provider, state).await?;
+        let mut agent = Agent::try_with_state(spec, state).await?;
         agent.set_context_manager(context_manager);
         Ok(agent)
     }
