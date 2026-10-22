@@ -161,6 +161,16 @@ pub struct TokenUsage {
     pub cache_read_input_tokens: Option<u64>,
 }
 
+impl TokenUsage {
+    /// `input_tokens` with the tokens read from and written to a prompt cache added: the whole
+    /// input, for a provider that reports those apart from `input_tokens`.
+    pub(crate) fn input_with_cache(&self) -> u64 {
+        self.input_tokens
+            + self.cache_read_input_tokens.unwrap_or(0)
+            + self.cache_creation_input_tokens.unwrap_or(0)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MessageOutput {
     pub message: Message,

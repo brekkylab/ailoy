@@ -232,6 +232,10 @@ impl InferLangModel for ClaudeApiModel {
             }
         })
     }
+
+    fn total_input_tokens(&self, usage: &TokenUsage) -> u64 {
+        usage.input_with_cache()
+    }
 }
 
 /// One client for every call, so connections are reused. The read timeout bounds each
@@ -576,6 +580,20 @@ fn closed_schema(schema: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The counts of a call that read its history from the prompt cache, measured on
+    /// 2026-10-22 with `claude-haiku-4-5`.
+    #[test]
+    fn total_input_tokens_adds_the_prompt_cache() {
+        let usage = parse_usage(&crate::to_value!({
+            "input_tokens": 6,
+            "cache_read_input_tokens": 10_434,
+            "cache_creation_input_tokens": 3_276
+        }))
+        .unwrap();
+        let model = ClaudeApiModel::new("claude-haiku-4-5", "unused");
+        assert_eq!(model.total_input_tokens(&usage), 13_716);
+    }
 
     #[test]
     fn closed_schema_drops_refused_constraints() {

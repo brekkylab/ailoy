@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     datatype::Value,
-    message::{Message, MessageDeltaOutput, MessageOutput},
+    message::{Message, MessageDeltaOutput, MessageOutput, TokenUsage},
     tool::ToolDesc,
 };
 
@@ -46,4 +46,14 @@ pub trait InferLangModel: Send + Sync {
         tools: &[ToolDesc],
         options: &LangModelOptions,
     ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>>;
+
+    /// How many tokens of input the model read for an output that reported `usage`, cached or
+    /// not, which a [`ContextManager`](crate::agent::ContextManager) checks against its limit.
+    ///
+    /// The default is `usage.input_tokens`, the whole input for a provider that counts what it
+    /// read from or wrote to a prompt cache inside it. A backend whose provider reports those
+    /// apart adds them.
+    fn total_input_tokens(&self, usage: &TokenUsage) -> u64 {
+        usage.input_tokens
+    }
 }

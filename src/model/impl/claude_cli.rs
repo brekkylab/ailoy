@@ -389,6 +389,10 @@ impl InferLangModel for ClaudeCliModel {
             drop(invocation);
         })
     }
+
+    fn total_input_tokens(&self, usage: &TokenUsage) -> u64 {
+        usage.input_with_cache()
+    }
 }
 
 /// A `tool_use` block as it streams in: the call's id, the tool's name as the CLI has it,
@@ -765,6 +769,20 @@ fn parse_finish_reason(reason: Option<&str>) -> FinishReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The counts the CLI reported for a run whose system prompt came from the cache, measured
+    /// on 2026-10-23 with Claude Code 2.1.308.
+    #[test]
+    fn total_input_tokens_adds_the_prompt_cache() {
+        let usage = parse_usage(&serde_json::json!({
+            "input_tokens": 10,
+            "cache_read_input_tokens": 21_373,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": 40
+        }))
+        .unwrap();
+        assert_eq!(ClaudeCliModel::new().total_input_tokens(&usage), 21_383);
+    }
 
     fn weather() -> ToolDesc {
         crate::tool::ToolDescBuilder::new("get_weather")

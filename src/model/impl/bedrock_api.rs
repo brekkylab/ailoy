@@ -263,6 +263,10 @@ impl InferLangModel for BedrockApiModel {
             }
         })
     }
+
+    fn total_input_tokens(&self, usage: &TokenUsage) -> u64 {
+        usage.input_with_cache()
+    }
 }
 
 fn effort_name(effort: ThinkingEffort) -> &'static str {
@@ -781,6 +785,25 @@ mod tests {
         let crc = crc32(&out);
         out.extend_from_slice(&crc.to_be_bytes());
         out
+    }
+
+    /// The counts Bedrock reported for a call that read its system prompt from the cache,
+    /// measured on 2026-10-23 with `us.anthropic.claude-haiku-4-5-20251001-v1:0`. Its
+    /// `totalTokens` is the input read plus the output.
+    #[test]
+    fn total_input_tokens_adds_the_prompt_cache() {
+        let mut buf = frame(
+            "metadata",
+            r#"{"usage":{"inputTokens":13,"outputTokens":4,"totalTokens":14377,"cacheReadInputTokens":14360,"cacheWriteInputTokens":0}}"#,
+        );
+        let f = next_frame(&mut buf).unwrap().unwrap();
+        let usage = parse_frame(&f).unwrap().unwrap().usage.unwrap();
+        let model = BedrockApiModel::new(
+            "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "unused",
+            "us-east-1",
+        );
+        assert_eq!(model.total_input_tokens(&usage), 14_377 - 4);
     }
 
     #[test]
