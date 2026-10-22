@@ -38,7 +38,7 @@ virtx = "0.1"
 
 ## Run an agent
 
-This gives an agent a Python machine with `./artifacts` mounted at `/artifacts`, and asks it to draw a chart there.
+This gives an agent a Python machine with `./artifacts` mounted at `/artifacts`, and asks it to draw a chart there. `system_tools()` gives the agent a shell and file tools in that machine; [Tools](./tools) lists them.
 
 ::: code-group
 

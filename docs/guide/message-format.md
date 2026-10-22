@@ -24,7 +24,7 @@ In Python and Node.js a message is a plain dict or object of this shape. In Rust
 | `assistant` | The model. |
 | `tool` | A tool, with the result of a call the model asked for. |
 
-You don't usually write the system message yourself. The agent builds it from `.instruction(...)` (and any skills) and puts it at the front of the history, unless the history you give it already has one.
+You don't usually write the system message yourself. The agent builds it from `.instruction(...)` (and any [skills](./skills)) and puts it at the front of the history, unless the history you give it already has one.
 
 ## Fields
 
