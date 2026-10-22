@@ -25,6 +25,11 @@ pub struct AgentState {
     /// What this agent remembers of the user; `None` gives it no memory tools.
     pub memory: Option<Memory>,
 
+    /// Which conversation this is, so what it adds to a [`Memory`] is told apart from other
+    /// conversations kept in the same one. Set when the agent is made if left `None`; to carry a
+    /// conversation on, pass the id it had along with its history.
+    pub conversation_id: Option<String>,
+
     /// Input tokens of the last model call, which a
     /// [`ContextManager`](super::ContextManager) checks against its limit.
     pub last_input_tokens: Option<u64>,
@@ -49,6 +54,12 @@ impl AgentState {
     /// Share `console`'s slot with whoever else holds it, such as another agent.
     pub fn with_console_slot(mut self, console: Arc<Mutex<Option<ConsoleClient>>>) -> Self {
         self.console = console;
+        self
+    }
+
+    /// Name this conversation; see [`AgentState::conversation_id`].
+    pub fn with_conversation_id(mut self, id: impl Into<String>) -> Self {
+        self.conversation_id = Some(id.into());
         self
     }
 

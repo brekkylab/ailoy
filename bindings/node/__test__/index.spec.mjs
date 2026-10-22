@@ -316,6 +316,18 @@ test('memory options shape the system message', async (t) => {
   assert.throws(() => new AgentBuilder('m').memory('/m', { userLimit: -1 }), { code: 'INVALID_ARG' })
 })
 
+test('a conversation id is made, or kept when given', async (t) => {
+  setLangModelProvider('conv-echo', (_, name) => new Echo(name))
+  t.after(() => removeLangModelProvider('conv-echo'))
+
+  const made = await new AgentBuilder('conv-echo/echo').build()
+  assert.ok(made.conversationId)
+  const kept = await new AgentBuilder('conv-echo/echo').conversationId('c-42').build()
+  assert.equal(kept.conversationId, 'c-42')
+  const again = await Agent.fromSpec({ model: 'conv-echo/echo' }, { conversationId: 'c-42' })
+  assert.equal(again.conversationId, 'c-42')
+})
+
 test('a custom provider may stream and be async', async (t) => {
   setLangModelProvider('mine-async', (org, name) => new StreamingEcho(name ?? org))
   t.after(() => removeLangModelProvider('mine-async'))

@@ -158,6 +158,12 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.memory(memory)))
     }
 
+    /// Name this conversation, to carry one on along with its history; a new one is made
+    /// otherwise.
+    fn conversation_id(slf: PyRef<'_, Self>, id: String) -> PyResult<PyRef<'_, Self>> {
+        Self::update(slf, |b| Ok(b.conversation_id(id)))
+    }
+
     fn skill(slf: PyRef<'_, Self>, dir: String) -> PyResult<PyRef<'_, Self>> {
         Self::update(slf, |b| Ok(b.skill(dir)))
     }
@@ -268,7 +274,7 @@ impl PyAgent {
     /// An agent from a spec — the dict an `AgentSpec` serializes to — for a caller who holds
     /// one rather than building it up. Awaitable.
     #[staticmethod]
-    #[pyo3(signature = (spec, *, agent_provider = "default".to_string(), history = None, console = None, memory = None))]
+    #[pyo3(signature = (spec, *, agent_provider = "default".to_string(), history = None, console = None, memory = None, conversation_id = None))]
     fn from_spec<'py>(
         py: Python<'py>,
         spec: Bound<'py, PyAny>,
@@ -276,6 +282,7 @@ impl PyAgent {
         history: Option<Bound<'py, PyAny>>,
         console: Option<Bound<'py, PyAny>>,
         memory: Option<String>,
+        conversation_id: Option<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let spec: AgentSpec = from_py(&spec, "an agent spec")?;
         let mut state = AgentState::new();
@@ -287,6 +294,9 @@ impl PyAgent {
         }
         if let Some(dir) = memory {
             state = state.with_memory(Memory::new(dir));
+        }
+        if let Some(id) = conversation_id {
+            state = state.with_conversation_id(id);
         }
         future_into_py(py, async move {
             let agent = Agent::try_with_provider_and_state(spec, &agent_provider, state)
@@ -308,6 +318,17 @@ impl PyAgent {
             .map_err(|_| AiloyError::new_err("this agent is in the middle of a turn"))?;
         let agent = guard.0.as_ref().ok_or_else(closed)?;
         to_py(py, &agent.history())
+    }
+
+    /// Which conversation this is: keep it with the history to carry the conversation on.
+    #[getter]
+    fn conversation_id(&self) -> PyResult<String> {
+        let guard = self
+            .agent
+            .try_lock()
+            .map_err(|_| AiloyError::new_err("this agent is in the middle of a turn"))?;
+        let agent = guard.0.as_ref().ok_or_else(closed)?;
+        Ok(agent.conversation_id().to_owned())
     }
 
     /// Run one turn on `query` — a message dict, or a string as the user's text — and

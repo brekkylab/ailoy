@@ -64,6 +64,9 @@ pub struct Record {
     /// `None` for a line stored without one, as every line is by a `mem` without `--role`.
     #[serde(default)]
     pub role: Option<Speaker>,
+    /// The conversation the line was said in; `None` for a line stored without one.
+    #[serde(default)]
+    pub conversation: Option<String>,
 }
 
 /// One of the two profile files.
@@ -255,8 +258,8 @@ pub enum MemoryError {
 /// # use ailoy::memory::{Memory, Speaker};
 /// # async fn f(console: &mut ailoy::console::ConsoleClient) -> anyhow::Result<()> {
 /// let memory = Memory::new("/work/memory");
-/// memory.append(console, [(Speaker::User, "I switched to oat milk")]).await?;
-/// let found = memory.search(console, "oat milk", 10, None).await?;
+/// memory.append(console, "conversation-1", [(Speaker::User, "I switched to oat milk")]).await?;
+/// let found = memory.search(console, "oat milk", 10, None, None).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -307,25 +310,34 @@ impl Memory {
         self.profile
     }
 
-    /// The history lines with any of `query`'s words, best first; only `role`'s when given.
-    /// A folder without a store yet has none.
+    /// The history lines with any of `query`'s words, best first; only `role`'s when given, and
+    /// none of `exclude_conversation`'s. A folder without a store yet has none.
     pub async fn search(
         &self,
         console: &mut ConsoleClient,
         query: &str,
         limit: usize,
         role: Option<Speaker>,
+        exclude_conversation: Option<&str>,
     ) -> Result<Vec<Record>, MemoryError> {
         let mut args = vec!["-n".to_string(), limit.to_string(), "--json".to_string()];
         if let Some(role) = role {
             args.extend(["--role".to_string(), role.as_str().to_string()]);
+        }
+        if let Some(conversation) = exclude_conversation {
+            args.extend([
+                "--exclude-conversation".to_string(),
+                conversation.to_string(),
+            ]);
         }
         // `--` so a query starting with `-` is not read as an option.
         args.extend(["--".to_string(), query.to_string()]);
         let script = r#"[ -e "$d/mem.sqlite" ] || exit 0
 exec mem search "$d/mem.sqlite" "$@""#;
         let out = self.sh(console, script, &args).await?;
-        records(&succeeded(out, role.map(|_| "searching by role"))?)
+        let newer = (role.is_some() || exclude_conversation.is_some())
+            .then_some("searching by role or conversation");
+        records(&succeeded(out, newer)?)
     }
 
     /// The line `id` with up to `n` lines on each side, in the order written.
@@ -341,33 +353,39 @@ exec mem search "$d/mem.sqlite" "$@""#;
         records(&succeeded(out, Some("reading around a line"))?)
     }
 
-    /// Add what was said to the end of the history, each line with who said it, making the
-    /// store on first use. Returns how many lines were written.
+    /// Add what was said in `conversation` to the end of the history, each line with who said
+    /// it, making the store on first use. Returns how many lines were written.
     ///
     /// On a `mem` without `--role` nothing is written, rather than lines without a speaker.
     pub async fn append(
         &self,
         console: &mut ConsoleClient,
+        conversation: &str,
         said: impl IntoIterator<Item = (Speaker, impl AsRef<str>)>,
     ) -> Result<usize, MemoryError> {
-        let mut args = Vec::new();
+        let mut args = vec![conversation.to_string()];
         for (speaker, text) in said {
             for line in split_line(text.as_ref(), MAX_LINE_CHARS) {
                 args.extend([speaker.as_str().to_string(), line]);
             }
         }
-        if args.is_empty() {
+        if args.len() == 1 {
             return Ok(0);
         }
-        // One `mem insert` per line, since each has its own role; the first failure stops it.
-        let script = r#"s="$d/mem.sqlite"
+        // `$1` is the conversation, then role and text pairs. One `mem insert` per line, since
+        // each has its own role; the first failure stops it.
+        let script = r#"s="$d/mem.sqlite" c=$1
+shift
 [ -e "$s" ] || mem init "$s" >/dev/null || exit
 while [ $# -gt 0 ]; do
-  mem insert "$s" --role "$1" -- "$2" >/dev/null || exit
+  mem insert "$s" --role "$1" --conversation "$c" -- "$2" >/dev/null || exit
   shift 2
 done"#;
         let out = self.sh(console, script, &args).await?;
-        succeeded(out, Some("keeping who said a line"))?;
+        succeeded(
+            out,
+            Some("keeping who said a line and in which conversation"),
+        )?;
         Ok(args.len() / 2)
     }
 
@@ -911,11 +929,11 @@ mod tests {
         for e in [
             memory.read_profile(&mut console).await.unwrap_err(),
             memory
-                .search(&mut console, "tea", 10, None)
+                .search(&mut console, "tea", 10, None, None)
                 .await
                 .unwrap_err(),
             memory
-                .append(&mut console, [(Speaker::User, "tea")])
+                .append(&mut console, "c1", [(Speaker::User, "tea")])
                 .await
                 .unwrap_err(),
         ] {
@@ -929,7 +947,7 @@ mod tests {
     async fn test_a_folder_without_a_store_has_no_history() {
         let mut console = test_console().await;
         let found = folder()
-            .search(&mut console, "tea", 10, None)
+            .search(&mut console, "tea", 10, None, None)
             .await
             .unwrap();
         assert!(found.is_empty());
@@ -946,21 +964,37 @@ mod tests {
         ];
 
         if !has_role(&mut console).await {
-            let e = memory.append(&mut console, said).await.unwrap_err();
+            let e = memory.append(&mut console, "c1", said).await.unwrap_err();
             assert!(matches!(e, MemoryError::Unsupported(_)), "{e}");
-            let found = memory.search(&mut console, "oat", 10, None).await.unwrap();
+            let found = memory
+                .search(&mut console, "oat", 10, None, None)
+                .await
+                .unwrap();
             assert!(found.is_empty(), "nothing written: {found:?}");
             return;
         }
 
-        assert_eq!(memory.append(&mut console, said).await.unwrap(), 2);
+        assert_eq!(memory.append(&mut console, "c1", said).await.unwrap(), 2);
         let user = memory
-            .search(&mut console, "oat", 10, Some(Speaker::User))
+            .search(&mut console, "oat", 10, Some(Speaker::User), None)
             .await
             .unwrap();
         assert_eq!(user.len(), 1);
         assert_eq!(user[0].text, "- I switched to oat milk");
         assert_eq!(user[0].role, Some(Speaker::User));
+        assert_eq!(user[0].conversation.as_deref(), Some("c1"));
+
+        // Another conversation's lines are not this one's neighbours, and can be left out.
+        memory
+            .append(&mut console, "c2", [(Speaker::User, "oat milk again")])
+            .await
+            .unwrap();
+        let others = memory
+            .search(&mut console, "oat", 10, None, Some("c1"))
+            .await
+            .unwrap();
+        assert_eq!(others.len(), 1);
+        assert_eq!(others[0].conversation.as_deref(), Some("c2"));
 
         let around = memory.around(&mut console, &user[0].id, 2).await.unwrap();
         assert_eq!(around.len(), 2);
@@ -980,7 +1014,10 @@ mod tests {
             assert_eq!(out.code, 0, "{}", String::from_utf8_lossy(&out.stderr));
         }
 
-        let found = memory.search(&mut console, "tea", 10, None).await.unwrap();
+        let found = memory
+            .search(&mut console, "tea", 10, None, None)
+            .await
+            .unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].text, "User drinks tea");
         assert_eq!(found[0].role, None);

@@ -247,6 +247,16 @@ async def test_memory_options_shape_the_system_message():
     assert "## Your notes [0/3000 chars]" in system(agent)
 
 
+async def test_a_conversation_id_is_made_or_kept():
+    made = await AgentBuilder(MODEL).agent_provider(PROVIDER).build()
+    assert made.conversation_id
+    kept = await AgentBuilder(MODEL).agent_provider(PROVIDER).conversation_id("c-42").build()
+    assert kept.conversation_id == "c-42"
+    spec = {"model": MODEL}
+    again = await ailoy.Agent.from_spec(spec, agent_provider=PROVIDER, conversation_id="c-42")
+    assert again.conversation_id == "c-42"
+
+
 async def test_from_spec_and_closing():
     spec = {"model": MODEL, "instruction": "From a spec."}
     history = [{"role": "user", "contents": [{"type": "text", "text": "earlier"}]}]

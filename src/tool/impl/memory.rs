@@ -28,8 +28,9 @@ pub fn get_search_history_tool_desc() -> ToolDesc {
             "words, and lines with more of them, and rarer ones, come first. So use a few ",
             "specific words (names, things, numbers) rather than a whole question, and try ",
             "other words before concluding something never came up. ",
-            "The best match comes with the lines said just before and after it; to read ",
-            "around another result, call again with `around` set to its id. ",
+            "Lines of this conversation are left out, since you already have them. ",
+            "The best match comes with the lines said just before and after it in its ",
+            "conversation; to read around another result, call again with `around` set to its id. ",
             "No match is an empty list. Which memory is searched is fixed; there is no path to give.",
         ))
         .parameters(crate::to_value!({
@@ -65,9 +66,10 @@ pub fn get_search_history_tool_desc() -> ToolDesc {
         .build()
 }
 
-pub fn get_search_history_tool_func(memory: Memory) -> ToolFunc {
+/// The `search_history` tool for an agent in `conversation`, whose own lines it leaves out.
+pub fn get_search_history_tool_func(memory: Memory, conversation: String) -> ToolFunc {
     crate::tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value
-        with [memory = memory.clone()]
+        with [memory = memory.clone(), conversation = conversation.clone()]
     {
         if let Some(id) = args.pointer("/around").and_then(|v| v.as_str()) {
             return match memory.around(console, id, NEIGHBOURS).await {
@@ -99,10 +101,13 @@ pub fn get_search_history_tool_func(memory: Memory) -> ToolFunc {
         };
 
         let mut note = None;
-        let found = match memory.search(console, query, limit, role).await {
-            Err(MemoryError::Unsupported(_)) if role.is_some() => {
-                note = Some("This memory does not record who said a line, so role was ignored.");
-                memory.search(console, query, limit, None).await
+        let found = match memory.search(console, query, limit, role, Some(&conversation)).await {
+            // An older `mem` keeps neither who said a line nor where.
+            Err(MemoryError::Unsupported(_)) => {
+                if role.is_some() {
+                    note = Some("This memory does not record who said a line, so role was ignored.");
+                }
+                memory.search(console, query, limit, None, None).await
             }
             found => found,
         };
@@ -440,7 +445,7 @@ mod tests {
             ],
         )
         .await;
-        let func = get_search_history_tool_func(memory);
+        let func = get_search_history_tool_func(memory, "this".into());
 
         let out = value(&call(&func, to_value!({ "query": "switched" }), &mut console).await);
         assert_eq!(texts(&out), ["I switched to oat milk"]);
@@ -475,7 +480,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(later.code, 0, "{}", String::from_utf8_lossy(&later.stderr));
-        let func = get_search_history_tool_func(memory);
+        let func = get_search_history_tool_func(memory, "this".into());
 
         let out = value(
             &call(
@@ -503,7 +508,7 @@ mod tests {
     async fn test_search_history_refuses_what_it_cannot_run() {
         let mut console = test_console().await;
         let memory = filled(&mut console, &[]).await;
-        let func = get_search_history_tool_func(memory);
+        let func = get_search_history_tool_func(memory, "this".into());
 
         let out = value(&call(&func, to_value!({}), &mut console).await);
         assert_eq!(phase(&out), "validation");
@@ -518,7 +523,7 @@ mod tests {
         assert_eq!(phase(&out), "validation");
 
         let missing = Memory::new("/nowhere/at/all");
-        let func = get_search_history_tool_func(missing);
+        let func = get_search_history_tool_func(missing, "this".into());
         let out = value(&call(&func, to_value!({ "query": "x" }), &mut console).await);
         assert_eq!(phase(&out), "io");
         assert!(
@@ -529,6 +534,27 @@ mod tests {
                 .contains("/nowhere/at/all"),
             "{out:?}"
         );
+    }
+
+    /// This conversation's own lines are left out; they are already in the model's context.
+    #[test_with::executable(mem)]
+    #[tokio::test]
+    async fn test_search_history_leaves_this_conversation_out() {
+        let mut console = test_console().await;
+        let memory = filled(&mut console, &[]).await;
+        if !knows(&mut console, &["insert", "--conversation"]).await {
+            return;
+        }
+        for (conversation, text) in [("earlier", "I drink tea"), ("this", "tea, as I just said")] {
+            memory
+                .append(&mut console, conversation, [(Speaker::User, text)])
+                .await
+                .unwrap();
+        }
+        let func = get_search_history_tool_func(memory, "this".into());
+
+        let out = value(&call(&func, to_value!({ "query": "tea" }), &mut console).await);
+        assert_eq!(texts(&out), ["I drink tea"], "{out:?}");
     }
 
     /// A role filter on a `mem` without one still answers, and says so.
@@ -542,6 +568,7 @@ mod tests {
             memory
                 .append(
                     &mut console,
+                    "earlier",
                     [
                         (Speaker::User, "I drink tea"),
                         (Speaker::Assistant, "Tea it is"),
@@ -561,7 +588,7 @@ mod tests {
                 String::from_utf8_lossy(&insert.stderr)
             );
         }
-        let func = get_search_history_tool_func(memory);
+        let func = get_search_history_tool_func(memory, "this".into());
 
         let out = value(
             &call(

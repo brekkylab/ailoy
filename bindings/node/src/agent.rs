@@ -229,6 +229,13 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.memory(memory)))
     }
 
+    /// Name this conversation, to carry one on along with its history; a new one is made
+    /// otherwise.
+    #[napi]
+    pub fn conversation_id<'env>(&mut self, this: This<'env>, id: String) -> Result<This<'env>> {
+        self.update(this, |b| Ok(b.conversation_id(id)))
+    }
+
     #[napi]
     pub fn skill<'env>(&mut self, this: This<'env>, dir: String) -> Result<This<'env>> {
         self.update(this, |b| Ok(b.skill(dir)))
@@ -370,7 +377,7 @@ impl JsAgent {
     /// An agent from a spec (the object an `AgentSpec` serializes to). `options.agentProvider`
     /// defaults to `'default'`; `memory` is the folder to remember into.
     #[napi(
-        ts_args_type = "spec: AgentSpec, options?: { agentProvider?: string; history?: Array<Message>; console?: ConsoleClient; memory?: string }",
+        ts_args_type = "spec: AgentSpec, options?: { agentProvider?: string; history?: Array<Message>; console?: ConsoleClient; memory?: string; conversationId?: string }",
         ts_return_type = "Promise<Agent>"
     )]
     pub fn from_spec<'env>(
@@ -400,6 +407,9 @@ impl JsAgent {
                 if let Some(dir) = options.get::<String>("memory").map_err(get)? {
                     state = state.with_memory(Memory::new(dir));
                 }
+                if let Some(id) = options.get::<String>("conversationId").map_err(get)? {
+                    state = state.with_conversation_id(id);
+                }
             }
             Ok((spec, agent_provider, state))
         })();
@@ -424,6 +434,17 @@ impl JsAgent {
             .map_err(|_| error::ailoy("this agent is in the middle of a turn"))?;
         let agent = guard.value.as_ref().ok_or_else(closed)?;
         Ok(Json(agent.history().to_vec()))
+    }
+
+    /// Which conversation this is: keep it with the history to carry the conversation on.
+    #[napi(getter)]
+    pub fn conversation_id(&self) -> Result<String> {
+        let guard = self
+            .agent
+            .try_lock()
+            .map_err(|_| error::ailoy("this agent is in the middle of a turn"))?;
+        let agent = guard.value.as_ref().ok_or_else(closed)?;
+        Ok(agent.conversation_id().to_owned())
     }
 
     /// Run one turn on `query` — a message, or a string as the user's text — and iterate what

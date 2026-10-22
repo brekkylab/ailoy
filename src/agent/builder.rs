@@ -46,6 +46,8 @@ pub struct AgentBuilder {
 
     memory: Option<Memory>,
 
+    conversation_id: Option<String>,
+
     context_manager: Option<ContextManager>,
 }
 
@@ -59,6 +61,7 @@ impl AgentBuilder {
             history: Vec::new(),
             console: None,
             memory: None,
+            conversation_id: None,
             context_manager: None,
         }
     }
@@ -148,6 +151,13 @@ impl AgentBuilder {
         self
     }
 
+    /// Name this conversation, to carry one on along with its [`history`](Self::history); a
+    /// new one is made otherwise. See [`AgentState::conversation_id`].
+    pub fn conversation_id(mut self, id: impl Into<String>) -> Self {
+        self.conversation_id = Some(id.into());
+        self
+    }
+
     /// Give this agent the skill in `dir`. See [`AgentSpec::skill`].
     pub fn skill(mut self, dir: impl Into<String>) -> Self {
         self.spec = self.spec.skill(dir);
@@ -181,6 +191,7 @@ impl AgentBuilder {
             history,
             console,
             memory,
+            conversation_id,
             context_manager,
         } = self;
 
@@ -190,6 +201,9 @@ impl AgentBuilder {
         }
         if let Some(memory) = memory {
             state = state.with_memory(memory);
+        }
+        if let Some(id) = conversation_id {
+            state = state.with_conversation_id(id);
         }
 
         let mut agent = Agent::try_with_provider_and_state(spec, &agent_provider, state).await?;

@@ -114,12 +114,16 @@ impl Agent {
             }
         };
         let mut tool_descs = spec.tools.clone();
+        let conversation = state
+            .conversation_id
+            .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
+            .clone();
 
         // Bound to this agent's `Memory`, so built here rather than taken from the registry.
         if let Some(memory) = &state.memory {
             let mut memory_tools = vec![(
                 get_search_history_tool_desc(),
-                get_search_history_tool_func(memory.clone()),
+                get_search_history_tool_func(memory.clone(), conversation),
             )];
             if memory.has_profile() {
                 memory_tools.push((
@@ -166,6 +170,11 @@ impl Agent {
             state,
             context_manager: None,
         })
+    }
+
+    /// Which conversation this is; see [`AgentState::conversation_id`].
+    pub fn conversation_id(&self) -> &str {
+        self.state.conversation_id.as_deref().unwrap_or_default()
     }
 
     /// The whole conversation so far.
@@ -352,7 +361,8 @@ impl Agent {
             );
             return;
         };
-        if let Err(e) = memory.append(console, said).await {
+        let conversation = self.state.conversation_id.as_deref().unwrap_or_default();
+        if let Err(e) = memory.append(console, conversation, said).await {
             log::warn!(
                 "this turn was not added to the memory in {}: {e}",
                 memory.dir()
@@ -952,9 +962,10 @@ mod tests {
         let outputs: Vec<_> = agent.run(user("I switched to oat milk")).collect().await;
         assert!(outputs.iter().all(Result::is_ok));
 
+        let conversation = agent.conversation_id().to_string();
         let mut guard = agent.state.console.lock().await;
         let console = guard.as_mut().unwrap();
-        let found = memory.search(console, "oat", 10, None).await.unwrap();
+        let found = memory.search(console, "oat", 10, None, None).await.unwrap();
         if !roles {
             assert!(found.is_empty(), "{found:?}");
             return;
@@ -966,6 +977,29 @@ mod tests {
             Some(Speaker::Assistant),
             "Got it, oat milk from now on.\n\nSaved."
         )));
+        assert!(
+            found
+                .iter()
+                .all(|r| r.conversation.as_deref() == Some(conversation.as_str()))
+        );
+    }
+
+    /// An agent gets a conversation id of its own, or keeps the one it is given to carry a
+    /// conversation on.
+    #[tokio::test]
+    async fn test_a_conversation_id_is_made_or_kept() {
+        let name = "test-agent-conversation-id";
+        let (_, spec) = scripted(name, []);
+        let made = Agent::try_with_provider(spec.clone(), name).await.unwrap();
+        let other = Agent::try_with_provider(spec.clone(), name).await.unwrap();
+        assert!(!made.conversation_id().is_empty());
+        assert_ne!(made.conversation_id(), other.conversation_id());
+
+        let state = AgentState::new().with_conversation_id("c-42");
+        let kept = Agent::try_with_provider_and_state(spec, name, state)
+            .await
+            .unwrap();
+        assert_eq!(kept.conversation_id(), "c-42");
     }
 
     #[tokio::test]
