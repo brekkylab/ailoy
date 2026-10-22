@@ -19,6 +19,9 @@ use crate::{
 
 /// A piece holds no more characters of a body than the agent keeps of a tool result.
 const MAX_BODY_CHARS: usize = MAX_TOOL_RESULT_CHARS;
+/// The fewest characters `length` asks for, and what a piece holds when not one character of
+/// the body fits beside its fields.
+const MIN_BODY_CHARS: usize = 256;
 const MAX_DOWNLOAD_BYTES: usize = 2 * 1024 * 1024;
 const MAX_URL_CHARS: usize = 2048;
 const REQUEST_TIMEOUT_SECS: u64 = 10;
@@ -328,7 +331,7 @@ pub fn get_web_fetch_tool_desc() -> ToolDesc {
                     "type": "integer",
                     "description": "Maximum number of characters returned in this call. A piece can hold fewer, so that it reaches you whole.",
                     "default": MAX_BODY_CHARS as i64,
-                    "minimum": 256,
+                    "minimum": MIN_BODY_CHARS as i64,
                     "maximum": MAX_BODY_CHARS as i64
                 }
             },
@@ -406,12 +409,14 @@ async fn fetch_one(
 
     // The agent cuts the middle out of a result too long for it, so a piece holds only
     // what fits whole. If not one character of the body fits (a title nearly as long as a
-    // tool result), the piece is the slice asked for, so paging still moves on.
+    // tool result), the piece holds `MIN_BODY_CHARS` of it: the cut falls in the fields
+    // before the body, the body reaches the model in the end the agent keeps, and paging
+    // moves on.
     let slice_chars = slice.chars().count();
     piece(
         largest_fitting(slice_chars, |chars| fits_tool_result(&piece(chars)))
             .filter(|&chars| chars > 0)
-            .unwrap_or(slice_chars),
+            .unwrap_or(slice_chars.min(MIN_BODY_CHARS)),
     )
 }
 
@@ -434,7 +439,7 @@ fn tool_factory(state: WebFetchState) -> impl Fn(&ToolDesc) -> anyhow::Result<To
                 let length = args
                     .pointer("/length")
                     .and_then(|v| v.as_integer())
-                    .map(|n| n.max(256).min(MAX_BODY_CHARS as i64) as usize)
+                    .map(|n| n.max(MIN_BODY_CHARS as i64).min(MAX_BODY_CHARS as i64) as usize)
                     .unwrap_or(MAX_BODY_CHARS);
                 // Unknown `format` values silently fall back to "text" so a
                 // mistyped value still returns something useful.
@@ -1280,14 +1285,16 @@ mod tests {
     /// tool result. In each body a character can take more than one byte of JSON: an
     /// escaped quote or newline, an escaped control character, text outside ASCII. Every
     /// piece but the last holds as many characters as fit when `length` is left out, and
-    /// `length` characters when it is small.
+    /// `size` characters when `length` is small: `length` itself, or `MIN_BODY_CHARS` when it
+    /// asks for fewer.
     #[tokio::test]
     async fn web_fetch_pages_through_a_long_body_in_pieces_that_fit() {
-        for (body, length) in [
-            ("He said \"stop\".\n".repeat(5_000), None),
-            ("He said \"stop\".\n".repeat(500), Some(1_000)),
-            ("\u{1}a".repeat(10_000), None),
-            ("가나다라마바사아자차카타파하 ".repeat(2_000), None),
+        for (body, length, size) in [
+            ("He said \"stop\".\n".repeat(5_000), None, None),
+            ("He said \"stop\".\n".repeat(500), Some(1_000), Some(1_000)),
+            ("He said \"stop\".\n".repeat(100), Some(10), Some(256)),
+            ("\u{1}a".repeat(10_000), None, None),
+            ("가나다라마바사아자차카타파하 ".repeat(2_000), None, None),
         ] {
             let (url, state) = serve_page("text/plain; charset=utf-8", body.clone()).await;
             let chars: Vec<char> = body.chars().collect();
@@ -1314,7 +1321,7 @@ mod tests {
                 };
                 let next = next as usize;
                 assert_eq!(next, offset + text.chars().count(), "offset {offset}");
-                match length {
+                match size {
                     None => {
                         let mut longer = piece.clone();
                         longer
@@ -1325,7 +1332,7 @@ mod tests {
                         *longer.pointer_mut("/next_offset").unwrap() = Value::from(next as i64 + 1);
                         assert!(!fits_tool_result(&longer), "offset {offset}");
                     }
-                    Some(length) => assert_eq!(next - offset, length, "offset {offset}"),
+                    Some(size) => assert_eq!(next - offset, size, "offset {offset}"),
                 }
                 offset = next;
             }
@@ -1334,10 +1341,11 @@ mod tests {
     }
 
     /// With a title as long as a tool result, or one short enough that an empty body fits
-    /// beside it and one character does not, the piece is the slice asked for, so
-    /// `next_offset` still moves on. With room for exactly one character, the piece is that one.
+    /// beside it and one character does not, the piece holds `MIN_BODY_CHARS` of the body,
+    /// whatever `length` asks for, so `next_offset` still moves on. With room for exactly one
+    /// character, the piece is that one.
     #[tokio::test]
-    async fn web_fetch_returns_the_slice_asked_for_when_no_body_fits() {
+    async fn web_fetch_returns_a_short_piece_when_no_body_character_fits() {
         use axum::{Router, extract::Path, http::header::CONTENT_TYPE, routing::get};
 
         let app = Router::new().route(
@@ -1354,25 +1362,35 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.ok() });
-        let fetch = |title: usize| {
+        let fetch = |title: usize, length: Option<usize>| {
             let state = WebFetchState::from_builder(
                 WebFetchState::client_builder()
                     .no_proxy()
                     .resolve_to_addrs("page.test", [addr]),
             );
             let url = format!("http://page.test:{}/page/{title}", addr.port());
-            call(state, crate::to_value!({"url": url, "length": 256}))
+            let mut args = crate::to_value!({ "url": url });
+            if let Some(length) = length {
+                let args = args.as_object_mut().unwrap();
+                args.insert("length".into(), Value::from(length as i64));
+            }
+            call(state, args)
         };
 
         // The fields of a piece with a 10,000-character title and an empty body; a title longer
         // by what a tool result has left over brings them to its limit, less `chars`.
-        let mut piece = fetch(10_000).await;
+        let mut piece = fetch(10_000, Some(256)).await;
         *piece.pointer_mut("/body").unwrap() = Value::string("");
         *piece.pointer_mut("/next_offset").unwrap() = Value::from(0);
         let fields = serde_json::to_string(&piece).unwrap().len();
         let room = |chars: usize| 10_000 + MAX_TOOL_RESULT_CHARS - fields - chars;
-        for (title, body) in [(MAX_TOOL_RESULT_CHARS, 256), (room(0), 256), (room(1), 1)] {
-            let piece = fetch(title).await;
+        for (title, length, body) in [
+            (MAX_TOOL_RESULT_CHARS, Some(256), MIN_BODY_CHARS),
+            (MAX_TOOL_RESULT_CHARS, None, MIN_BODY_CHARS),
+            (room(0), Some(256), MIN_BODY_CHARS),
+            (room(1), Some(256), 1),
+        ] {
+            let piece = fetch(title, length).await;
             assert_eq!(
                 piece.pointer("/body").and_then(|v| v.as_str()),
                 Some("x".repeat(body).as_str()),
