@@ -50,7 +50,8 @@ impl<'a> Output<'a> {
         }
     }
 
-    /// The result with each stream cut to at most `keep` characters.
+    /// The result with each stream cut to `keep` characters around a note of how many were cut,
+    /// or whole when it has no more than `keep`.
     fn cut_to(&self, keep: usize) -> Value {
         crate::to_value!({
             "stdout": middle_truncate(self.stdout.0, self.stdout.1, keep).as_str(),
@@ -63,14 +64,25 @@ impl<'a> Output<'a> {
         })
     }
 
-    /// The result with each stream cut to at most `keep` characters, where keeping one more
-    /// would make the result too long for one tool result, whose middle the agent would cut
-    /// out. A stream no longer than `keep` stays whole.
+    /// The result with each stream cut to the same number of characters at most, the most that
+    /// lets it fit in one tool result, whose middle the agent would cut out. A stream no longer
+    /// than that stays whole.
     fn fitted(&self) -> Value {
+        let fits = |keep| fits_tool_result(&self.cut_to(keep));
         // A stream longer than a tool result does not fit, so the search stops there.
         let longest = self.stdout.1.max(self.stderr.1).min(MAX_TOOL_RESULT_CHARS);
-        let keep = largest_fitting(longest, |keep| fits_tool_result(&self.cut_to(keep)));
-        self.cut_to(keep.unwrap_or(0))
+        let shorter = self.stdout.1.min(self.stderr.1).min(longest);
+        // The result does not shrink as `keep` grows, except at a stream's own length, where the
+        // stream comes whole and drops its note. So `[0, shorter)` and `[shorter, longest]` are
+        // searched one at a time, the higher first.
+        let keep = if fits(longest) {
+            longest
+        } else if fits(shorter) {
+            shorter + largest_fitting(longest - shorter, |more| fits(shorter + more)).unwrap_or(0)
+        } else {
+            largest_fitting(shorter, fits).unwrap_or(0)
+        };
+        self.cut_to(keep)
     }
 }
 
@@ -174,23 +186,29 @@ mod tests {
         Some(keep)
     }
 
-    /// Every output fits in one tool result. A stream is cut only when the result would not
-    /// fit whole, one more character kept would not fit, a note counts what the cut leaves
-    /// out, and two cut streams keep the same number. `seq 1 6000` is shorter than a tool
-    /// result and still cut: JSON escapes its newlines.
+    /// Every output fits in one tool result, its exit code and `truncated` as given. A stream is
+    /// cut only when the result would not fit whole, and then to as many characters as fit: no
+    /// larger `keep` fits, neither one character more nor the length at which a stream comes
+    /// whole and drops its note. A note counts what each cut leaves out, and two cut streams
+    /// keep the same number. `seq 1 6000` is shorter than a tool result and still cut: JSON
+    /// escapes its newlines. A stream of 14,942 characters stays whole beside 50,000 of the
+    /// other.
     #[test]
     fn output_fits_one_tool_result_and_notes_each_cut() {
         let seq = |n: usize| (1..=n).map(|i| format!("{i}\n")).collect::<String>();
-        for (stdout, stderr, stdout_cut, stderr_cut) in [
-            (seq(5_000), String::new(), false, false),
-            (seq(6_000), String::new(), true, false),
-            ("a".repeat(40_000), String::new(), true, false),
-            ("a".repeat(20_000), "b".repeat(20_000), true, true),
-            ("x".repeat(100), "e".repeat(50_000), false, true),
-            ("가".repeat(40_000), String::new(), true, false),
-            ("\u{1}".repeat(10_000), String::new(), true, false),
+        for (stdout, stderr, truncated, stdout_cut, stderr_cut) in [
+            (seq(5_000), String::new(), false, false, false),
+            (seq(6_000), String::new(), true, true, false),
+            ("a".repeat(40_000), String::new(), false, true, false),
+            ("a".repeat(20_000), "b".repeat(20_000), true, true, true),
+            ("x".repeat(100), "e".repeat(50_000), false, false, true),
+            ("가".repeat(40_000), String::new(), true, true, false),
+            ("\u{1}".repeat(10_000), String::new(), false, true, false),
+            ("x".repeat(14_942), "e".repeat(50_000), true, false, true),
+            ("e".repeat(50_000), "x".repeat(14_942), true, true, false),
+            ("a".repeat(14_950), "b".repeat(14_960), false, false, false),
         ] {
-            let output = Output::new(&stdout, &stderr, 3, true);
+            let output = Output::new(&stdout, &stderr, 3, truncated);
             let value = output.fitted();
             let row = format!("stdout {}, stderr {}", stdout.len(), stderr.len());
             assert!(fits_tool_result(&value), "{row}");
@@ -200,7 +218,7 @@ mod tests {
             );
             assert_eq!(
                 value.pointer("/truncated").and_then(|v| v.as_bool()),
-                Some(true)
+                Some(truncated)
             );
             assert_eq!(
                 value.pointer("/timed_out").and_then(|v| v.as_bool()),
@@ -216,9 +234,18 @@ mod tests {
                 [stdout_cut, stderr_cut],
                 "{row}"
             );
-            if let Some(keep) = kept.iter().flatten().max() {
-                assert!(kept.iter().flatten().all(|k| k == keep), "{row}: {kept:?}");
-                assert!(!fits_tool_result(&output.cut_to(keep + 1)), "{row}");
+            if let Some(&keep) = kept.iter().flatten().max() {
+                assert!(kept.iter().flatten().all(|&k| k == keep), "{row}: {kept:?}");
+                let whole = [stdout.chars().count(), stderr.chars().count()];
+                for more in [keep + 1]
+                    .into_iter()
+                    .chain(whole.into_iter().filter(|&n| n > keep))
+                {
+                    assert!(
+                        !fits_tool_result(&output.cut_to(more)),
+                        "{row}: keep {more}"
+                    );
+                }
             }
         }
     }
