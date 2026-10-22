@@ -97,6 +97,33 @@ async fn main() -> anyhow::Result<()> {
 
 You don't have to build ahead of time: passing a `Recipe` straight to a console builds it on first use.
 
+### From a shell
+
+The same images from a shell, with `docker`'s spelling. The `virtx` command comes with every virtx package, so a project that installed Ailoy has it already: `pip install ailoy-py` puts `virtx` on the environment's `PATH`, and `@brekkylab/virtx` beside `@brekkylab/ailoy` puts it in `node_modules/.bin`.
+
+```bash
+uvx virtx --help               # the Python package; or pip install virtx && virtx --help
+npx @brekkylab/virtx --help    # the Node package; or npm install @brekkylab/virtx && npx virtx --help
+cargo install virtx && virtx --help    # the crate
+```
+
+`virtx <COMMAND> --help` says what each command takes.
+
+```bash
+virtx build -t plot:latest .                         # ./Dockerfile
+virtx build -t plot:latest -f vm/Dockerfile .        # a Dockerfile elsewhere
+virtx build -t plot:latest - <<'EOF'                 # a Dockerfile from stdin
+FROM python:3.12-slim-trixie
+RUN pip install matplotlib
+EOF
+virtx images                                         # every build, one line per ref, with its image ID
+virtx inspect plot:latest                            # the build's digest and refs, as JSON
+virtx pull alpine:3.20                               # a base as it is, stored under the same name
+virtx rmi plot:latest                                # by ref, image ID or digest
+```
+
+An image ID is the first 12 hex digits of the digest, as `images` shows it; `inspect` and `rmi` take one in place of a ref. As in `docker`, each is also an `image` command: `virtx image build`, `virtx image ls`, `virtx image inspect`, `virtx image pull` and `virtx image rm`.
+
 ## Consoles
 
 `ConsoleClient.builder()` sets up the VM: the image to boot, host directories to mount, network access, CPUs, memory and GPU. `build()` boots it, and `exec` runs a command in it.
