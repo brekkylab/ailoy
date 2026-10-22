@@ -24,7 +24,7 @@ use crate::{
 };
 
 /// Per-part size limit for tool results, past which the middle is cut out.
-const MAX_TOOL_RESULT_CHARS: usize = 30_000;
+pub(crate) const MAX_TOOL_RESULT_CHARS: usize = 30_000;
 
 /// An agent that drives an [`InferLangModel`] through multi-turn, tool-augmented
 /// conversations.
@@ -477,11 +477,9 @@ async fn call_tool(
 fn cap_tool_result(mut message: Message) -> Message {
     for part in &mut message.contents {
         match part {
-            Part::Value { value } => {
+            Part::Value { value } if !fits_tool_result(value) => {
                 let json = serde_json::to_string(value).unwrap_or_default();
-                if json.len() > MAX_TOOL_RESULT_CHARS {
-                    *value = Value::string(middle_truncate(&json, MAX_TOOL_RESULT_CHARS));
-                }
+                *value = Value::string(middle_truncate(&json, MAX_TOOL_RESULT_CHARS));
             }
             Part::Text { text } if text.len() > MAX_TOOL_RESULT_CHARS => {
                 *text = middle_truncate(text, MAX_TOOL_RESULT_CHARS);
@@ -490,6 +488,11 @@ fn cap_tool_result(mut message: Message) -> Message {
         }
     }
     message
+}
+
+/// Whether [`cap_tool_result`] leaves `value`, as a part of a tool result, as it is.
+pub(crate) fn fits_tool_result(value: &Value) -> bool {
+    serde_json::to_string(value).unwrap_or_default().len() <= MAX_TOOL_RESULT_CHARS
 }
 
 /// Keep `max_chars` characters of `s`, half from each end, around a note of what was cut.
@@ -827,6 +830,23 @@ mod tests {
         // Under the limit before that, so the second call saw the result whole.
         let result = seen[1].iter().find(|m| m.role == Role::Tool).unwrap();
         assert_ne!(text_of(result), "[context truncated]");
+    }
+
+    #[test]
+    fn test_cap_tool_result_changes_only_a_value_that_does_not_fit() {
+        // A string's JSON is the string between two quotes.
+        for (chars, fits) in [
+            (MAX_TOOL_RESULT_CHARS - 2, true),
+            (MAX_TOOL_RESULT_CHARS - 1, false),
+        ] {
+            let part = Part::value(Value::string("a".repeat(chars)));
+            let Part::Value { value } = &part else {
+                unreachable!()
+            };
+            assert_eq!(fits_tool_result(value), fits, "{chars} characters");
+            let capped = cap_tool_result(Message::new(Role::Tool).with_contents([part.clone()]));
+            assert_eq!(capped.contents[0] == part, fits, "{chars} characters");
+        }
     }
 
     #[test]

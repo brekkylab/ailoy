@@ -11,13 +11,14 @@ use wreq::{Client, ClientBuilder};
 use wreq_util::Emulation;
 
 use crate::{
+    agent::{MAX_TOOL_RESULT_CHARS, fits_tool_result},
     datatype::Value,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
 };
 
-const DEFAULT_BODY_CHARS: usize = 30 * 1024;
-const MAX_BODY_CHARS: usize = 60 * 1024;
+/// A piece holds no more characters of a body than the agent keeps of a tool result.
+const MAX_BODY_CHARS: usize = MAX_TOOL_RESULT_CHARS;
 const MAX_DOWNLOAD_BYTES: usize = 2 * 1024 * 1024;
 const MAX_URL_CHARS: usize = 2048;
 const REQUEST_TIMEOUT_SECS: u64 = 10;
@@ -243,6 +244,28 @@ fn slice_body(text: &str, offset: usize, len: usize) -> (String, usize, Option<u
     (slice, total_chars, next_offset)
 }
 
+/// The largest `n` in `0..=max` for which `fits(n)` holds, or `None` when not even `fits(0)`
+/// does. `fits` must hold for every `n` below one it holds for.
+fn largest_fitting(max: usize, fits: impl Fn(usize) -> bool) -> Option<usize> {
+    if fits(max) {
+        return Some(max);
+    }
+    if !fits(0) {
+        return None;
+    }
+    // `fits(lo)` holds and `fits(hi)` does not.
+    let (mut lo, mut hi) = (0, max);
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        if fits(mid) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Some(lo)
+}
+
 fn now_iso_utc() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -277,9 +300,9 @@ pub fn get_web_fetch_tool_desc() -> ToolDesc {
         .description(concat!(
             "Fetch a URL and return its body. HTML responses are converted to ",
             "the requested format; non-HTML responses (JSON, plain text, etc.) ",
-            "pass through unchanged. Bodies are clamped to 30 KiB by default; ",
-            "for more, call again with `offset` set to the previous ",
-            "`next_offset`. Rate-limited to 1 request/second per host."
+            "pass through unchanged. A long body comes in pieces; for the next, ",
+            "call again with `offset` set to the previous `next_offset`. ",
+            "Rate-limited to 1 request/second per host."
         ))
         .parameters(crate::to_value!({
             "type": "object",
@@ -302,10 +325,10 @@ pub fn get_web_fetch_tool_desc() -> ToolDesc {
                 },
                 "length": {
                     "type": "integer",
-                    "description": "Maximum number of characters returned in this call. Default 30720 (30 KiB). Hard cap 61440.",
-                    "default": 30720,
+                    "description": "Maximum number of characters returned in this call. A piece can hold fewer, so that it reaches you whole.",
+                    "default": MAX_BODY_CHARS as i64,
                     "minimum": 256,
-                    "maximum": 61440
+                    "maximum": MAX_BODY_CHARS as i64
                 }
             },
             "required": ["url"]
@@ -358,30 +381,45 @@ async fn fetch_one(
         body: readable,
         title,
     } = convert(&body, &content_type, format);
-    let (slice, total_chars, next_offset) = slice_body(&readable, offset, length);
-    let complete = next_offset.is_none();
-    let next_offset = match next_offset {
-        Some(n) => Value::from(n as i64),
-        None => Value::Null,
+    let (slice, total_chars, slice_next_offset) = slice_body(&readable, offset, length);
+    let retrieved_at = now_iso_utc();
+    // The result holding the first `chars` characters of `slice`.
+    let piece = |chars: usize| {
+        let (body, _, rest) = slice_body(&slice, 0, chars);
+        let next_offset = match rest {
+            Some(n) => Some(offset + n),
+            None => slice_next_offset,
+        };
+        crate::to_value!({
+            "url": final_url.as_str(),
+            "status": status as i64,
+            "title": title.as_str(),
+            "content_type": content_type.as_str(),
+            "body": body,
+            "body_length_total": total_chars as i64,
+            "next_offset": next_offset.map_or(Value::Null, |n| Value::from(n as i64)),
+            "complete": next_offset.is_none(),
+            "retrieved_at": retrieved_at.as_str()
+        })
     };
 
-    crate::to_value!({
-        "url": final_url,
-        "status": status as i64,
-        "title": title,
-        "content_type": content_type,
-        "body": slice,
-        "body_length_total": total_chars as i64,
-        "next_offset": next_offset,
-        "complete": complete,
-        "retrieved_at": now_iso_utc()
-    })
+    // The agent cuts the middle out of a result too long for it, so a piece holds only
+    // what fits whole. If not even an empty body fits (a title longer than a tool
+    // result), the piece is the slice asked for, so paging still moves on.
+    let slice_chars = slice.chars().count();
+    piece(
+        largest_fitting(slice_chars, |chars| fits_tool_result(&piece(chars)))
+            .unwrap_or(slice_chars),
+    )
 }
 
 /// Factory closes over one [`WebFetchState`] so the rate limiter is shared by
 /// every tool it builds.
 pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> anyhow::Result<ToolFunc> {
-    let state = WebFetchState::new();
+    tool_factory(WebFetchState::new())
+}
+
+fn tool_factory(state: WebFetchState) -> impl Fn(&ToolDesc) -> anyhow::Result<ToolFunc> {
     move |_| {
         let state = state.clone();
         Ok(
@@ -395,7 +433,7 @@ pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> anyhow::Result<Tool
                     .pointer("/length")
                     .and_then(|v| v.as_integer())
                     .map(|n| n.max(256).min(MAX_BODY_CHARS as i64) as usize)
-                    .unwrap_or(DEFAULT_BODY_CHARS);
+                    .unwrap_or(MAX_BODY_CHARS);
                 // Unknown `format` values silently fall back to "text" so a
                 // mistyped value still returns something useful.
                 let format = args
@@ -892,6 +930,20 @@ mod tests {
     }
 
     #[test]
+    fn largest_fitting_finds_the_last_n_that_fits() {
+        for max in 0..=12 {
+            // `fits(n)` holds for `n < fitting`.
+            for fitting in 0..=14 {
+                assert_eq!(
+                    largest_fitting(max, |n| n < fitting),
+                    fitting.checked_sub(1).map(|last| last.min(max)),
+                    "max {max}, {fitting} fitting"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn body_format_parse_accepts_known_values() {
         assert_eq!(BodyFormat::parse("text"), Some(BodyFormat::Text));
         assert_eq!(BodyFormat::parse("plain"), Some(BodyFormat::Text));
@@ -1015,7 +1067,7 @@ mod tests {
             WebFetchState::new(),
             format!("http://{addr}/admin"),
             0,
-            DEFAULT_BODY_CHARS,
+            MAX_BODY_CHARS,
             BodyFormat::Text,
         )
         .await;
@@ -1069,7 +1121,7 @@ mod tests {
             WebFetchState::new(),
             format!("http://localhost:{port}/admin"),
             0,
-            DEFAULT_BODY_CHARS,
+            MAX_BODY_CHARS,
             BodyFormat::Text,
         )
         .await;
@@ -1141,7 +1193,7 @@ mod tests {
             state,
             format!("http://first-hop.test:{}/go", addr.port()),
             0,
-            DEFAULT_BODY_CHARS,
+            MAX_BODY_CHARS,
             BodyFormat::Text,
         )
         .await;
@@ -1168,6 +1220,127 @@ mod tests {
         );
     }
 
+    /// Serves `body` as `content_type` at a URL whose host is a name aimed at a local
+    /// server, and returns the URL with a function making a client state that reaches it.
+    /// A state per fetch keeps the per-host rate limit from slowing a test that pages.
+    async fn serve_page(
+        content_type: &'static str,
+        body: String,
+    ) -> (String, impl Fn() -> WebFetchState) {
+        use axum::{Router, http::header::CONTENT_TYPE, routing::get};
+
+        let app = Router::new().route(
+            "/page",
+            get(move || {
+                let body = body.clone();
+                async move { ([(CONTENT_TYPE, content_type)], body) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+        let state = move || {
+            WebFetchState::from_builder(
+                WebFetchState::client_builder()
+                    .no_proxy()
+                    .resolve_to_addrs("page.test", [addr]),
+            )
+        };
+        (format!("http://page.test:{}/page", addr.port()), state)
+    }
+
+    /// Calls `web_fetch` with `args` as the agent does, through a tool built over `state`.
+    async fn call(state: WebFetchState, args: Value) -> Value {
+        use futures::StreamExt;
+
+        let func = tool_factory(state)(&get_web_fetch_tool_desc()).unwrap();
+        let output = func.call_pure(args, "f").unwrap().next().await.unwrap();
+        output.message.contents[0].as_value().unwrap().clone()
+    }
+
+    /// Paging with `next_offset` reads a long body through in pieces that each fit in one
+    /// tool result. In each body a character can take more than one byte of JSON: an
+    /// escaped quote or newline, an escaped control character, text outside ASCII. Every
+    /// piece but the last holds as many characters as fit when `length` is left out, and
+    /// `length` characters when it is small.
+    #[tokio::test]
+    async fn web_fetch_pages_through_a_long_body_in_pieces_that_fit() {
+        for (body, length) in [
+            ("He said \"stop\".\n".repeat(5_000), None),
+            ("He said \"stop\".\n".repeat(500), Some(1_000)),
+            ("\u{1}a".repeat(10_000), None),
+            ("가나다라마바사아자차카타파하 ".repeat(2_000), None),
+        ] {
+            let (url, state) = serve_page("text/plain; charset=utf-8", body.clone()).await;
+            let chars: Vec<char> = body.chars().collect();
+            let mut read = String::new();
+            let mut offset = 0;
+            loop {
+                let mut args = crate::to_value!({"url": url.as_str(), "offset": offset as i64});
+                if let Some(length) = length {
+                    let args = args.as_object_mut().unwrap();
+                    args.insert("length".into(), Value::from(length as i64));
+                }
+                let piece = call(state(), args).await;
+                assert!(fits_tool_result(&piece), "offset {offset}: {piece:?}");
+                let text = piece.pointer("/body").and_then(|v| v.as_str()).unwrap();
+                read.push_str(text);
+                let next = piece.pointer("/next_offset").and_then(|v| v.as_integer());
+                assert_eq!(
+                    piece.pointer("/complete").and_then(|v| v.as_bool()),
+                    Some(next.is_none()),
+                    "offset {offset}"
+                );
+                let Some(next) = next else {
+                    break;
+                };
+                let next = next as usize;
+                assert_eq!(next, offset + text.chars().count(), "offset {offset}");
+                match length {
+                    None => {
+                        let mut longer = piece.clone();
+                        longer
+                            .pointer_mut("/body")
+                            .and_then(Value::as_string_mut)
+                            .unwrap()
+                            .push(chars[next]);
+                        *longer.pointer_mut("/next_offset").unwrap() = Value::from(next as i64 + 1);
+                        assert!(!fits_tool_result(&longer), "offset {offset}");
+                    }
+                    Some(length) => assert_eq!(next - offset, length, "offset {offset}"),
+                }
+                offset = next;
+            }
+            assert_eq!(read, body);
+        }
+    }
+
+    /// With a title longer than a tool result, no body fits beside it; the piece is then
+    /// the one asked for, so `next_offset` still moves on.
+    #[tokio::test]
+    async fn web_fetch_returns_the_slice_asked_for_when_no_body_fits() {
+        let html = format!(
+            "<html><head><title>{}</title></head><body><p>{}</p></body></html>",
+            "t".repeat(MAX_TOOL_RESULT_CHARS),
+            "x".repeat(1_000)
+        );
+        let (url, state) = serve_page("text/html", html).await;
+        let piece = call(
+            state(),
+            crate::to_value!({"url": url.as_str(), "length": 256}),
+        )
+        .await;
+        assert_eq!(
+            piece.pointer("/body").and_then(|v| v.as_str()),
+            Some("x".repeat(256).as_str()),
+            "{piece:?}"
+        );
+        assert_eq!(
+            piece.pointer("/next_offset").and_then(|v| v.as_integer()),
+            Some(256)
+        );
+    }
+
     /// Single-URL fetch against a stable public endpoint.
     #[tokio::test]
     #[ignore = "requires network"]
@@ -1178,7 +1351,7 @@ mod tests {
             "https://www.accuweather.com/ko/kr/bundang-gu/2330398/current-weather/2330398"
                 .to_string(),
             0,
-            DEFAULT_BODY_CHARS,
+            MAX_BODY_CHARS,
             BodyFormat::Text,
         )
         .await;
@@ -1213,7 +1386,7 @@ mod tests {
             state,
             "https://example.com/".to_string(),
             0,
-            DEFAULT_BODY_CHARS,
+            MAX_BODY_CHARS,
             BodyFormat::Html,
         )
         .await;
