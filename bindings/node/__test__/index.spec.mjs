@@ -303,14 +303,17 @@ test('memory options shape the system message', async (t) => {
   t.after(() => removeLangModelProvider('mem-echo'))
   const system = (agent) => agent.history[0].contents[0].text
 
-  const withProfile = await new AgentBuilder('mem-echo/echo').memory('/m').build()
-  assert.match(system(withProfile), /# Memory[\s\S]*About the user/)
-
-  const without = await new AgentBuilder('mem-echo/echo')
-    .memory('/m', { profile: false })
-    .build()
+  const without = await new AgentBuilder('mem-echo/echo').memory('/m').build()
   assert.match(system(without), /# Memory/)
   assert.doesNotMatch(system(without), /About the user/)
+
+  const withProfile = await new AgentBuilder('mem-echo/echo')
+    .memory('/m', { profile: true, memoryLimit: 800 })
+    .build()
+  assert.match(system(withProfile), /## About the user \[0\/2000 chars\]/)
+  assert.match(system(withProfile), /## Your notes \[0\/800 chars\]/)
+
+  assert.throws(() => new AgentBuilder('m').memory('/m', { userLimit: -1 }), { code: 'INVALID_ARG' })
 })
 
 test('a custom provider may stream and be async', async (t) => {

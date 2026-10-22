@@ -136,7 +136,7 @@ impl AgentBuilder {
     /// Let this agent remember the user across sessions in the folder `memory` names.
     ///
     /// Each finished turn is added to the folder's history, which the `mem_search` tool
-    /// searches; with a profile (the default), the `memory` tool keeps short notes that the
+    /// searches; with a profile ([`Memory::with_profile`]), the `memory` tool keeps short notes that the
     /// system message shows from the next session on. Everything runs on the
     /// [`console`](Self::console), so one is required. A missing folder is reported by the
     /// tools and logged at the end of a turn, not by [`build`](Self::build).
@@ -346,14 +346,14 @@ mod tests {
     #[tokio::test]
     async fn test_builder_memory_is_applied() {
         let agent = builder()
-            .memory(Memory::new("/work/memory").with_profile(false))
+            .memory(Memory::new("/work/memory").with_profile(true))
             .build()
             .await
             .unwrap();
 
         assert_eq!(
             agent.state.memory,
-            Some(Memory::new("/work/memory").with_profile(false)),
+            Some(Memory::new("/work/memory").with_profile(true)),
             "the memory the builder was given is the one on the state"
         );
     }

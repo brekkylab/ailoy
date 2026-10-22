@@ -878,7 +878,7 @@ mod tests {
     async fn test_memory_adds_its_section_and_tools() {
         let name = "test-agent-memory";
         let (_, spec) = scripted(name, []);
-        let state = AgentState::new().with_memory(Memory::new("/m"));
+        let state = AgentState::new().with_memory(Memory::new("/m").with_profile(true));
         let agent = Agent::try_with_provider_and_state(spec.clone(), name, state)
             .await
             .unwrap();
@@ -887,7 +887,7 @@ mod tests {
         assert!(system.contains("## About the user"), "{system}");
         assert!(tool_names(&agent).ends_with(&["mem_search", "memory"]));
 
-        let state = AgentState::new().with_memory(Memory::new("/m").with_profile(false));
+        let state = AgentState::new().with_memory(Memory::new("/m"));
         let agent = Agent::try_with_provider_and_state(spec, name, state)
             .await
             .unwrap();

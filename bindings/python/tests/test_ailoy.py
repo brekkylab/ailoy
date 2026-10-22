@@ -238,12 +238,13 @@ async def test_memory_options_shape_the_system_message():
         return agent.history[0]["contents"][0]["text"]
 
     agent = await AgentBuilder(MODEL).agent_provider(PROVIDER).memory("/m").build()
-    assert "# Memory" in system(agent) and "About the user" in system(agent)
+    assert "# Memory" in system(agent) and "About the user" not in system(agent)
 
     agent = await (
-        AgentBuilder(MODEL).agent_provider(PROVIDER).memory("/m", profile=False).build()
+        AgentBuilder(MODEL).agent_provider(PROVIDER).memory("/m", profile=True, user_limit=500).build()
     )
-    assert "# Memory" in system(agent) and "About the user" not in system(agent)
+    assert "## About the user [0/500 chars]" in system(agent)
+    assert "## Your notes [0/3000 chars]" in system(agent)
 
 
 async def test_from_spec_and_closing():

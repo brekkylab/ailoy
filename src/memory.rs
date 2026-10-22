@@ -97,8 +97,8 @@ impl ProfileTarget {
         Self::ALL.into_iter().find(|target| target.as_str() == s)
     }
 
-    /// The most characters the file may hold.
-    pub fn limit(self) -> usize {
+    /// The most characters the file may hold unless [`Memory::with_limits`] says otherwise.
+    pub fn default_limit(self) -> usize {
         match self {
             ProfileTarget::User => 2_000,
             ProfileTarget::Memory => 3_000,
@@ -137,7 +137,11 @@ impl Profile {
     ///
     /// Limits are checked on the result, so one batch can make room and fill it, and only for
     /// a file that grew: one already over its limit (edited by hand) can still shrink.
-    pub fn edited(&self, edits: &[ProfileEdit]) -> Result<Profile, EditRefusal> {
+    pub fn edited(
+        &self,
+        edits: &[ProfileEdit],
+        limit: impl Fn(ProfileTarget) -> usize,
+    ) -> Result<Profile, EditRefusal> {
         let mut profile = self.clone();
         for edit in edits {
             let target = edit.target();
@@ -171,7 +175,7 @@ impl Profile {
             }
         }
         for target in ProfileTarget::ALL {
-            let (used, limit) = (profile.used(target), target.limit());
+            let (used, limit) = (profile.used(target), limit(target));
             if used > limit && used > self.used(target) {
                 return Err(EditRefusal {
                     target,
@@ -260,22 +264,34 @@ pub enum MemoryError {
 pub struct Memory {
     dir: String,
     profile: bool,
+    limits: [usize; 2],
 }
 
 impl Memory {
-    /// The memory in the folder `dir`, with a profile.
+    /// The memory in the folder `dir`: the history only, without a profile.
     pub fn new(dir: impl Into<String>) -> Self {
         Self {
             dir: dir.into(),
-            profile: true,
+            profile: false,
+            limits: ProfileTarget::ALL.map(ProfileTarget::default_limit),
         }
     }
 
     /// Whether to keep `USER.md` and `MEMORY.md` (and give the `memory` tool) besides the
-    /// history.
+    /// history. Off by default.
     pub fn with_profile(mut self, profile: bool) -> Self {
         self.profile = profile;
         self
+    }
+
+    /// How many characters `USER.md` and `MEMORY.md` may each hold.
+    pub fn with_limits(mut self, user: usize, memory: usize) -> Self {
+        self.limits = [user, memory];
+        self
+    }
+
+    pub fn limit(&self, target: ProfileTarget) -> usize {
+        self.limits[target as usize]
     }
 
     pub fn dir(&self) -> &str {
@@ -418,10 +434,14 @@ done"#;
         }
         text.push_str(
             "\nSearch the history before answering anything that depends on this user, \
-             including recommendations, and check exact numbers, dates and changed facts there \
-             even if the profile mentions them. Searches match words: use a few specific words, \
-             and try other words before concluding something never came up. When results \
-             disagree, use the most recent one.",
+             including recommendations, and check exact numbers, dates and changed facts there",
+        );
+        if self.profile {
+            text.push_str(" even if the profile mentions them");
+        }
+        text.push_str(
+            ". Searches match words: use a few specific words, and try other words before \
+             concluding something never came up. When results disagree, use the most recent one.",
         );
         if self.profile {
             for (target, heading) in [
@@ -432,7 +452,7 @@ done"#;
                 text.push_str(&format!(
                     "\n\n## {heading} [{}/{} chars]\n",
                     profile.used(target),
-                    target.limit(),
+                    self.limit(target),
                 ));
                 text.push_str(&if entries.is_empty() {
                     "(empty)".to_string()
@@ -689,6 +709,11 @@ mod tests {
         }
     }
 
+    /// `profile` with `edits` made under the default limits.
+    fn edit(profile: &Profile, edits: &[ProfileEdit]) -> Result<Profile, EditRefusal> {
+        profile.edited(edits, ProfileTarget::default_limit)
+    }
+
     fn profile(user: &[&str]) -> Profile {
         Profile {
             user: user.iter().map(|s| s.to_string()).collect(),
@@ -708,9 +733,11 @@ mod tests {
     /// A blank line inside an entry would split it in the file, so it is dropped.
     #[test]
     fn test_an_entry_keeps_no_blank_line() {
-        let edited = profile(&[])
-            .edited(&[add(User, "Name is Minsu\n\n  \nLives in Seoul")])
-            .unwrap();
+        let edited = edit(
+            &profile(&[]),
+            &[add(User, "Name is Minsu\n\n  \nLives in Seoul")],
+        )
+        .unwrap();
         assert_eq!(edited.user, ["Name is Minsu\nLives in Seoul"]);
         let file = edited.user.join(SEPARATOR);
         assert_eq!(parse_entries(&file), edited.user);
@@ -720,18 +747,18 @@ mod tests {
     fn test_edits_add_replace_and_remove_by_old_text() {
         let start = profile(&["Name is Minsu", "Drinks tea"]);
         // Whitespace-lenient, not case-blind.
-        let e = start
-            .edited(&[replace(User, "drinks   TEA", "unused")])
-            .unwrap_err();
+        let e = edit(&start, &[replace(User, "drinks   TEA", "unused")]).unwrap_err();
         assert_eq!(e.target, User);
 
-        let edited = start
-            .edited(&[
+        let edited = edit(
+            &start,
+            &[
                 replace(User, "Drinks\n tea", "Drinks only oat-milk lattes"),
                 remove(User, "Minsu"),
                 add(Notes, "Prefers short answers"),
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         assert_eq!(edited.user, ["Drinks only oat-milk lattes"]);
         assert_eq!(edited.memory, ["Prefers short answers"]);
     }
@@ -739,13 +766,11 @@ mod tests {
     #[test]
     fn test_an_edit_that_cannot_be_made_changes_nothing() {
         let start = profile(&["Lives in Seoul", "Works in Seoul"]);
-        let e = start
-            .edited(&[add(User, "new"), remove(User, "Seoul")])
-            .unwrap_err();
+        let e = edit(&start, &[add(User, "new"), remove(User, "Seoul")]).unwrap_err();
         assert!(e.reason.contains("2 entries"), "{e}");
 
         for bad in [add(User, "  "), add(User, "\n \n"), remove(User, " ")] {
-            assert!(start.edited(std::slice::from_ref(&bad)).is_err(), "{bad:?}");
+            assert!(edit(&start, std::slice::from_ref(&bad)).is_err(), "{bad:?}");
         }
     }
 
@@ -755,40 +780,39 @@ mod tests {
     fn test_repeated_entries_count_as_one() {
         let twice = profile(&["Drinks tea", "Drinks  tea", "Lives in Seoul"]);
         assert_eq!(
-            twice.edited(&[remove(User, "tea")]).unwrap().user,
+            edit(&twice, &[remove(User, "tea")]).unwrap().user,
             ["Lives in Seoul"]
         );
         assert_eq!(
-            twice
-                .edited(&[replace(User, "tea", "Lives in Seoul")])
+            edit(&twice, &[replace(User, "tea", "Lives in Seoul")])
                 .unwrap()
                 .user,
             ["Lives in Seoul"]
         );
         let once = profile(&["Drinks tea"]);
-        assert_eq!(once.edited(&[add(User, "Drinks  tea ")]).unwrap(), once);
+        assert_eq!(edit(&once, &[add(User, "Drinks  tea ")]).unwrap(), once);
     }
 
     #[test]
     fn test_limits_apply_to_the_result_and_only_to_growth() {
         let start = profile(&[&"a".repeat(1_995)]);
-        let e = start.edited(&[add(User, "bbbbb")]).unwrap_err();
+        let e = edit(&start, &[add(User, "bbbbb")]).unwrap_err();
         assert!(e.reason.contains("over its limit of 2000"), "{e}");
-        let edited = start
-            .edited(&[remove(User, "aaa"), add(User, "bbbbb")])
-            .unwrap();
+        let edited = edit(&start, &[remove(User, "aaa"), add(User, "bbbbb")]).unwrap();
         assert_eq!(edited.user, ["bbbbb"]);
 
         // Over its limit already: may shrink, may not grow, and does not block the other file.
         let over = profile(&[&"a".repeat(1_100), &"b".repeat(1_100)]);
-        assert!(over.edited(&[add(Notes, "note")]).is_ok());
-        assert!(over.edited(&[replace(User, "aaa", "a")]).is_ok());
-        assert!(over.edited(&[add(User, "c")]).is_err());
+        assert!(edit(&over, &[add(Notes, "note")]).is_ok());
+        assert!(edit(&over, &[replace(User, "aaa", "a")]).is_ok());
+        assert!(edit(&over, &[add(User, "c")]).is_err());
     }
 
     #[test]
     fn test_render_shows_the_profile_as_the_tool_spells_it() {
-        let text = Memory::new("/m").render(&profile(&["Name is Minsu", "Drinks tea"]));
+        let text = Memory::new("/m")
+            .with_profile(true)
+            .render(&profile(&["Name is Minsu", "Drinks tea"]));
         assert!(text.starts_with("# Memory\n"), "{text}");
         assert!(text.contains("`mem_search`") && text.contains("`memory` tool"));
         assert!(
@@ -797,12 +821,23 @@ mod tests {
         );
         assert!(text.ends_with("## Your notes [0/3000 chars]\n(empty)"));
 
-        let off = Memory::new("/m")
-            .with_profile(false)
-            .render(&Profile::default());
+        let small = Memory::new("/m").with_profile(true).with_limits(500, 800);
+        let text = small.render(&Profile::default());
+        assert!(
+            text.contains("[0/500 chars]") && text.contains("[0/800 chars]"),
+            "{text}"
+        );
+        let e = profile(&[])
+            .edited(&[add(User, &"a".repeat(501))], |t| small.limit(t))
+            .unwrap_err();
+        assert!(e.reason.contains("limit of 500"), "{e}");
+
+        let off = Memory::new("/m").render(&Profile::default());
         assert!(off.contains("`mem_search`"));
         assert!(
-            !off.contains("About the user") && !off.contains("`memory` tool"),
+            !off.contains("About the user")
+                && !off.contains("`memory` tool")
+                && !off.contains("profile mentions"),
             "{off}"
         );
     }
@@ -848,12 +883,14 @@ mod tests {
 
         let current = memory.read_profile(&mut console).await.unwrap();
         assert_eq!(current, Profile::default(), "no files yet");
-        let edited = current
-            .edited(&[
+        let edited = edit(
+            &current,
+            &[
                 add(User, "- Name is Minsu"),
                 add(Notes, "it's \"quoted\" $HOME"),
-            ])
-            .unwrap();
+            ],
+        )
+        .unwrap();
         memory
             .write_profile(&mut console, &current, &edited)
             .await

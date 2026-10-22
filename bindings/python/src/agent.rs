@@ -15,7 +15,7 @@ use std::sync::Arc;
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     datatype::Value,
-    memory::Memory,
+    memory::{Memory, ProfileTarget},
     message::Message,
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -141,13 +141,21 @@ impl PyAgentBuilder {
     }
 
     /// Remember the user across sessions in the folder `dir`, a path in the console;
-    /// `profile` keeps `USER.md` and `MEMORY.md` and gives the `memory` tool.
-    #[pyo3(signature = (dir, *, profile = true))]
-    fn memory(slf: PyRef<'_, Self>, dir: String, profile: bool) -> PyResult<PyRef<'_, Self>> {
-        Self::update(
-            slf,
-            |b| Ok(b.memory(Memory::new(dir).with_profile(profile))),
-        )
+    /// `profile` (off by default) keeps `USER.md` and `MEMORY.md` and gives the `memory` tool,
+    /// and `user_limit` and `memory_limit` bound those files in characters.
+    #[pyo3(signature = (dir, *, profile = false, user_limit = None, memory_limit = None))]
+    fn memory(
+        slf: PyRef<'_, Self>,
+        dir: String,
+        profile: bool,
+        user_limit: Option<usize>,
+        memory_limit: Option<usize>,
+    ) -> PyResult<PyRef<'_, Self>> {
+        let memory = Memory::new(dir).with_profile(profile).with_limits(
+            user_limit.unwrap_or(ProfileTarget::User.default_limit()),
+            memory_limit.unwrap_or(ProfileTarget::Memory.default_limit()),
+        );
+        Self::update(slf, |b| Ok(b.memory(memory)))
     }
 
     fn skill(slf: PyRef<'_, Self>, dir: String) -> PyResult<PyRef<'_, Self>> {

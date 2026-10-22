@@ -216,13 +216,13 @@ pub fn get_memory_tool_func(memory: Memory) -> ToolFunc {
             Ok(current) => current,
             Err(e) => return failure(e),
         };
-        let edited = match current.edited(&edits) {
+        let edited = match current.edited(&edits, |target| memory.limit(target)) {
             Ok(edited) => edited,
             Err(refusal) => {
                 return crate::to_value!({
                     "error": format!("{refusal}. Nothing was changed."),
                     "phase": "validation",
-                    "profile": shown(&current, &[refusal.target]),
+                    "profile": shown(&memory, &current, &[refusal.target]),
                 });
             }
         };
@@ -235,7 +235,7 @@ pub fn get_memory_tool_func(memory: Memory) -> ToolFunc {
             .collect();
         crate::to_value!({
             "result": "saved",
-            "profile": shown(&edited, &changed),
+            "profile": shown(&memory, &edited, &changed),
             "note": "Your system prompt still shows the profile from the start of this conversation; this shows up from the next one.",
         })
     })
@@ -275,12 +275,12 @@ fn edit(op: &Value) -> Result<ProfileEdit, String> {
 }
 
 /// `targets` of `profile`: their entries and how full each file is.
-fn shown(profile: &Profile, targets: &[ProfileTarget]) -> Value {
+fn shown(memory: &Memory, profile: &Profile, targets: &[ProfileTarget]) -> Value {
     Value::object(targets.iter().map(|&target| {
         (
             target.as_str(),
             crate::to_value!({
-                "usage": format!("{}/{} chars", profile.used(target), target.limit()),
+                "usage": format!("{}/{} chars", profile.used(target), memory.limit(target)),
                 "entries": Value::array(profile.entries(target).to_vec()),
             }),
         )

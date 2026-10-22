@@ -20,7 +20,7 @@ use std::sync::Arc;
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     datatype::Value,
-    memory::Memory,
+    memory::{Memory, ProfileTarget},
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -92,6 +92,8 @@ fn built() -> napi::Error<String> {
 #[napi(object)]
 pub struct MemoryOptions {
     pub profile: Option<bool>,
+    pub user_limit: Option<i64>,
+    pub memory_limit: Option<i64>,
 }
 
 #[napi(object)]
@@ -199,19 +201,32 @@ impl JsAgentBuilder {
     }
 
     /// Remember the user across sessions in the folder `dir`, a path in the console;
-    /// `options.profile` (default `true`) keeps `USER.md` and `MEMORY.md` and gives the
-    /// `memory` tool.
-    #[napi(ts_args_type = "dir: string, options?: { profile?: boolean }")]
+    /// `options.profile` (default `false`) keeps `USER.md` and `MEMORY.md` and gives the
+    /// `memory` tool, and `userLimit` and `memoryLimit` bound those files in characters.
+    #[napi(
+        ts_args_type = "dir: string, options?: { profile?: boolean; userLimit?: number; memoryLimit?: number }"
+    )]
     pub fn memory<'env>(
         &mut self,
         this: This<'env>,
         dir: String,
         options: Option<MemoryOptions>,
     ) -> Result<This<'env>> {
-        let profile = options.and_then(|o| o.profile).unwrap_or(true);
-        self.update(this, |b| {
-            Ok(b.memory(Memory::new(dir).with_profile(profile)))
-        })
+        let options = options.unwrap_or(MemoryOptions {
+            profile: None,
+            user_limit: None,
+            memory_limit: None,
+        });
+        let limit = |value, what, target: ProfileTarget| -> Result<usize> {
+            Ok(unsigned(value, what)?.map_or(target.default_limit(), |n| n as usize))
+        };
+        let memory = Memory::new(dir)
+            .with_profile(options.profile.unwrap_or(false))
+            .with_limits(
+                limit(options.user_limit, "userLimit", ProfileTarget::User)?,
+                limit(options.memory_limit, "memoryLimit", ProfileTarget::Memory)?,
+            );
+        self.update(this, |b| Ok(b.memory(memory)))
     }
 
     #[napi]
