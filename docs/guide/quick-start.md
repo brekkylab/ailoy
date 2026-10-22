@@ -46,10 +46,13 @@ This gives an agent a Python machine with `./artifacts` mounted at `/artifacts`,
 import asyncio
 
 from ailoy import AgentBuilder
-from virtx import ConsoleClient, Recipe
+from virtx import ConsoleClient, Recipe, ensure_virtx
 
 
 async def main() -> None:
+    # Fetches virtx's server into its cache the first time; a no-op after.
+    await ensure_virtx()
+
     console = await (
         ConsoleClient.builder()
         .image(Recipe("python:3.12-slim-trixie").step("pip install matplotlib"))
@@ -77,7 +80,10 @@ asyncio.run(main())
 
 ```js [Node.js]
 const { AgentBuilder } = require('@brekkylab/ailoy')
-const { ConsoleClient, Recipe } = require('@brekkylab/virtx')
+const { ConsoleClient, Recipe, ensureVirtx } = require('@brekkylab/virtx')
+
+// Fetches virtx's server into its cache the first time; a no-op after.
+await ensureVirtx()
 
 const console_ = await ConsoleClient.builder()
   .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))
@@ -113,6 +119,9 @@ use virtx::image::Recipe;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Fetches virtx's server into its cache the first time; a no-op after.
+    virtx::ensure_virtx().await?;
+
     let console = ConsoleClient::builder()
         .image(Recipe::new("python:3.12-slim-trixie").step("pip install matplotlib"))
         .mount(std::path::absolute("./artifacts")?, "/artifacts")

@@ -13,11 +13,11 @@ Work the steps below in order. Step 3 is the one that gets skipped: an agent giv
 
 | Language | Install | The console comes from |
 |---|---|---|
-| Python | `pip install ailoy-py` | `from virtx import ConsoleClient, Recipe` |
+| Python | `pip install ailoy-py` | `from virtx import ConsoleClient, Recipe, ensure_virtx` |
 | Node.js | `npm install @brekkylab/ailoy @brekkylab/virtx` | `require('@brekkylab/virtx')` |
 | Rust | `ailoy = "0.3"`, `virtx = "0.1"` in `Cargo.toml` | `virtx::console::ConsoleClient` |
 
-The console is [virtx](https://github.com/brekkylab/virtx)'s: Ailoy takes a `ConsoleClient` built with virtx's own package and adds no console API of its own. The first console on a host fetches virtx's server into its cache; `ensure_virtx()` (`ensureVirtx()` in Node) does that ahead of time, so a script can say so before the model is waiting.
+The console is [virtx](https://github.com/brekkylab/virtx)'s: Ailoy takes a `ConsoleClient` built with virtx's own package and adds no console API of its own. A console runs on virtx's server, which `ensure_virtx()` (`ensureVirtx()` in Node) fetches into virtx's cache the first time and leaves as it is after. Call it before building a console: on a host without the server, building one fails with `starting the console server: No such file or directory`.
 
 ## 2. Name the model, and decide how it runs
 
@@ -46,8 +46,9 @@ Node is `setLangModelProvider('anthropic', 'api')`; Rust is `ailoy::model::set_l
 Decide what the agent's machine holds before writing the agent: the image is where its software comes from, and mounts are the only way its work reaches the host.
 
 ```python
-from virtx import ConsoleClient, Recipe
+from virtx import ConsoleClient, Recipe, ensure_virtx
 
+await ensure_virtx()   # fetches the server the first time; a no-op after
 console = await (
     ConsoleClient.builder()
     .image(Recipe("python:3.12-slim-trixie").step("pip install matplotlib"))
