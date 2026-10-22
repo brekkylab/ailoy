@@ -244,8 +244,9 @@ fn slice_body(text: &str, offset: usize, len: usize) -> (String, usize, Option<u
     (slice, total_chars, next_offset)
 }
 
-/// The largest `n` in `0..=max` for which `fits(n)` holds, or `None` when not even `fits(0)`
-/// does. `fits` must hold for every `n` below one it holds for.
+/// An `n` in `0..=max` for which `fits(n)` holds and, short of `max`, `fits(n + 1)` does not;
+/// the largest such `n` when `fits` holds for every `n` below one it holds for. `None` when
+/// neither `fits(max)` nor `fits(0)` holds.
 fn largest_fitting(max: usize, fits: impl Fn(usize) -> bool) -> Option<usize> {
     if fits(max) {
         return Some(max);
@@ -404,11 +405,12 @@ async fn fetch_one(
     };
 
     // The agent cuts the middle out of a result too long for it, so a piece holds only
-    // what fits whole. If not even an empty body fits (a title longer than a tool
-    // result), the piece is the slice asked for, so paging still moves on.
+    // what fits whole. If not one character of the body fits (a title nearly as long as a
+    // tool result), the piece is the slice asked for, so paging still moves on.
     let slice_chars = slice.chars().count();
     piece(
         largest_fitting(slice_chars, |chars| fits_tool_result(&piece(chars)))
+            .filter(|&chars| chars > 0)
             .unwrap_or(slice_chars),
     )
 }
@@ -943,6 +945,22 @@ mod tests {
         }
     }
 
+    /// When `fits` fails below `max` and holds again above the gap, the `n` found still fits and
+    /// `n + 1` does not; with neither end fitting, nothing is found.
+    #[test]
+    fn largest_fitting_stops_where_the_next_does_not_fit() {
+        for max in 0..=12 {
+            for gap in 0..=12 {
+                let fits = |n: usize| n < 3 || (gap < n && n < max);
+                let n = largest_fitting(max, fits).unwrap();
+                assert!(fits(n), "max {max}, gap {gap}: {n}");
+                assert!(n == max || !fits(n + 1), "max {max}, gap {gap}: {n}");
+            }
+        }
+        assert_eq!(largest_fitting(5, |n| n == 3), None);
+        assert_eq!(largest_fitting(5, |n| n != 0), Some(5));
+    }
+
     #[test]
     fn body_format_parse_accepts_known_values() {
         assert_eq!(BodyFormat::parse("text"), Some(BodyFormat::Text));
@@ -1315,30 +1333,57 @@ mod tests {
         }
     }
 
-    /// With a title longer than a tool result, no body fits beside it; the piece is then
-    /// the one asked for, so `next_offset` still moves on.
+    /// With a title as long as a tool result, or one short enough that an empty body fits
+    /// beside it and one character does not, the piece is the slice asked for, so
+    /// `next_offset` still moves on. With room for exactly one character, the piece is that one.
     #[tokio::test]
     async fn web_fetch_returns_the_slice_asked_for_when_no_body_fits() {
-        let html = format!(
-            "<html><head><title>{}</title></head><body><p>{}</p></body></html>",
-            "t".repeat(MAX_TOOL_RESULT_CHARS),
-            "x".repeat(1_000)
+        use axum::{Router, extract::Path, http::header::CONTENT_TYPE, routing::get};
+
+        let app = Router::new().route(
+            "/page/{title}",
+            get(|Path(title): Path<usize>| async move {
+                let html = format!(
+                    "<html><head><title>{}</title></head><body><p>{}</p></body></html>",
+                    "t".repeat(title),
+                    "x".repeat(1_000)
+                );
+                ([(CONTENT_TYPE, "text/html")], html)
+            }),
         );
-        let (url, state) = serve_page("text/html", html).await;
-        let piece = call(
-            state(),
-            crate::to_value!({"url": url.as_str(), "length": 256}),
-        )
-        .await;
-        assert_eq!(
-            piece.pointer("/body").and_then(|v| v.as_str()),
-            Some("x".repeat(256).as_str()),
-            "{piece:?}"
-        );
-        assert_eq!(
-            piece.pointer("/next_offset").and_then(|v| v.as_integer()),
-            Some(256)
-        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+        let fetch = |title: usize| {
+            let state = WebFetchState::from_builder(
+                WebFetchState::client_builder()
+                    .no_proxy()
+                    .resolve_to_addrs("page.test", [addr]),
+            );
+            let url = format!("http://page.test:{}/page/{title}", addr.port());
+            call(state, crate::to_value!({"url": url, "length": 256}))
+        };
+
+        // The fields of a piece with a 10,000-character title and an empty body; a title longer
+        // by what a tool result has left over brings them to its limit, less `chars`.
+        let mut piece = fetch(10_000).await;
+        *piece.pointer_mut("/body").unwrap() = Value::string("");
+        *piece.pointer_mut("/next_offset").unwrap() = Value::from(0);
+        let fields = serde_json::to_string(&piece).unwrap().len();
+        let room = |chars: usize| 10_000 + MAX_TOOL_RESULT_CHARS - fields - chars;
+        for (title, body) in [(MAX_TOOL_RESULT_CHARS, 256), (room(0), 256), (room(1), 1)] {
+            let piece = fetch(title).await;
+            assert_eq!(
+                piece.pointer("/body").and_then(|v| v.as_str()),
+                Some("x".repeat(body).as_str()),
+                "title {title}: {piece:?}"
+            );
+            assert_eq!(
+                piece.pointer("/next_offset").and_then(|v| v.as_integer()),
+                Some(body as i64),
+                "title {title}"
+            );
+        }
     }
 
     /// Single-URL fetch against a stable public endpoint.
