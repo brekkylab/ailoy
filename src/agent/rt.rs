@@ -472,8 +472,8 @@ async fn call_tool(
 }
 
 /// Clamp every part of a tool result, so large payloads (e.g. web pages) don't pile up in
-/// the history. An oversized [`Part::Value`] is measured as JSON and replaced by the cut
-/// JSON as a string.
+/// the history. A part is measured in characters, a [`Part::Value`] in those of its JSON, and
+/// past the limit its middle is cut out: an oversized value becomes its cut JSON, as a string.
 fn cap_tool_result(mut message: Message) -> Message {
     for part in &mut message.contents {
         match part {
@@ -481,6 +481,8 @@ fn cap_tool_result(mut message: Message) -> Message {
                 let json = serde_json::to_string(value).unwrap_or_default();
                 *value = Value::string(middle_truncate(&json, MAX_TOOL_RESULT_CHARS));
             }
+            // A text has no more characters than bytes, so one no longer in bytes is left alone
+            // uncounted; `middle_truncate` counts the rest.
             Part::Text { text } if text.len() > MAX_TOOL_RESULT_CHARS => {
                 *text = middle_truncate(text, MAX_TOOL_RESULT_CHARS);
             }
@@ -492,7 +494,11 @@ fn cap_tool_result(mut message: Message) -> Message {
 
 /// Whether [`cap_tool_result`] leaves `value`, as a part of a tool result, as it is.
 pub(crate) fn fits_tool_result(value: &Value) -> bool {
-    serde_json::to_string(value).unwrap_or_default().len() <= MAX_TOOL_RESULT_CHARS
+    serde_json::to_string(value)
+        .unwrap_or_default()
+        .chars()
+        .count()
+        <= MAX_TOOL_RESULT_CHARS
 }
 
 /// Keep `max_chars` characters of `s`, half from each end, around a note of what was cut.
@@ -832,20 +838,34 @@ mod tests {
         assert_ne!(text_of(result), "[context truncated]");
     }
 
+    /// A part is cut only when it has more characters than the limit, a value counted in those
+    /// of its JSON. Hangul takes three bytes a character and counts as one.
     #[test]
-    fn test_cap_tool_result_changes_only_a_value_that_does_not_fit() {
+    fn test_cap_tool_result_changes_only_a_part_over_the_limit() {
+        let max = MAX_TOOL_RESULT_CHARS;
         // A string's JSON is the string between two quotes.
-        for (chars, fits) in [
-            (MAX_TOOL_RESULT_CHARS - 2, true),
-            (MAX_TOOL_RESULT_CHARS - 1, false),
+        for (row, part, kept) in [
+            ("a", Part::value(Value::string("a".repeat(max - 2))), true),
+            ("a", Part::value(Value::string("a".repeat(max - 1))), false),
+            ("가", Part::value(Value::string("가".repeat(max - 2))), true),
+            (
+                "가",
+                Part::value(Value::string("가".repeat(max - 1))),
+                false,
+            ),
+            (
+                "object",
+                Part::value(to_value!({"text": "가".repeat(12_000)})),
+                true,
+            ),
+            ("text", Part::text("가".repeat(max)), true),
+            ("text", Part::text("가".repeat(max + 1)), false),
         ] {
-            let part = Part::value(Value::string("a".repeat(chars)));
-            let Part::Value { value } = &part else {
-                unreachable!()
-            };
-            assert_eq!(fits_tool_result(value), fits, "{chars} characters");
+            if let Part::Value { value } = &part {
+                assert_eq!(fits_tool_result(value), kept, "{row}");
+            }
             let capped = cap_tool_result(Message::new(Role::Tool).with_contents([part.clone()]));
-            assert_eq!(capped.contents[0] == part, fits, "{chars} characters");
+            assert_eq!(capped.contents[0] == part, kept, "{row}");
         }
     }
 

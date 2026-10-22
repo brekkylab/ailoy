@@ -1230,8 +1230,8 @@ mod tests {
     }
 
     /// Paging with `next_offset` reads a long body through in pieces that each fit in one
-    /// tool result. In each body a character can take more than one byte of JSON: an
-    /// escaped quote or newline, an escaped control character, text outside ASCII. Every
+    /// tool result. A quote or a newline takes two characters of JSON and a control character
+    /// six; Hangul takes one, in three bytes. Every
     /// piece but the last holds as many characters as fit when `length` is left out, and
     /// `size` characters when `length` is small: `length` itself, or `MIN_BODY_CHARS` when it
     /// asks for fewer.
@@ -1330,7 +1330,7 @@ mod tests {
         let mut piece = fetch(10_000, Some(256)).await;
         *piece.pointer_mut("/body").unwrap() = Value::string("");
         *piece.pointer_mut("/next_offset").unwrap() = Value::from(0);
-        let fields = serde_json::to_string(&piece).unwrap().len();
+        let fields = serde_json::to_string(&piece).unwrap().chars().count();
         let room = |chars: usize| 10_000 + MAX_TOOL_RESULT_CHARS - fields - chars;
         for (title, length, body) in [
             (MAX_TOOL_RESULT_CHARS, Some(256), MIN_BODY_CHARS),
