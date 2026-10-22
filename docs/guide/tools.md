@@ -1,6 +1,6 @@
 # Tools
 
-An agent calls the tools you give it on the `AgentBuilder`: the built-in ones on this page, functions of your own, the tools of an [MCP server](./using-mcp), and the [browser](./using-browser).
+An agent calls the tools you give it on the `AgentBuilder`: the built-in ones on this page, functions of your own, the tools of an [MCP server](./using-mcp) or of the [browser](./using-browser), and those `memory(...)` adds.
 
 ## Built-in tools
 
@@ -18,10 +18,10 @@ An agent calls the tools you give it on the `AgentBuilder`: the built-in ones on
 | Tool | What it does |
 | --- | --- |
 | `shell` | Runs a command, with an optional timeout in seconds. |
-| `read` | Reads a text file with numbered lines, or `limit` lines from line `offset`. |
-| `read_file` | Reads a text file, or the lines from `start_line` to `end_line`. |
+| `read` | Reads up to 2,000 numbered lines of a text file, or `limit` lines from line `offset`. |
+| `read_file` | Reads up to 2,000 lines of a text file, or the lines from `start_line` to `end_line`. |
 | `write` | Writes a text file, replacing one already at that path. |
-| `edit` | Replaces an exact string in a text file, once or, with `replace_all`, everywhere. |
+| `edit` | Replaces an exact string that occurs once in a text file, or, with `replace_all`, every occurrence of it. |
 | `apply_patch` | Adds, deletes, updates and moves files, from a patch in the format Codex uses. |
 | `imgread` | Reads a PNG, JPEG, GIF or WebP image of up to 5 MB and gives it to the model as an image. |
 
@@ -36,7 +36,7 @@ The seven tools in the table run in the agent's VM, so the agent needs one: pass
 `web_search_tool` and `web_fetch_tool` (`webSearchTool`, `webFetchTool`) are not part of `system_tools()`. The two tools run in your program's process, not in the VM, so they work without a console.
 
 - `web_search` sends the query to several search engines at once and merges what they find, one result per URL, best first. It answers with up to 10 results, or up to 30 when the model asks for more. `web_search_tool` takes the engines to use: `Bing`, `Brave`, `DuckDuckGo`, `Google`, `Mojeek`, `Naver`, `Startpage`, `Yahoo` and `Yandex`. None, or an empty list, uses them all.
-- `web_fetch` fetches one URL. An HTML page comes back as its visible text (the default), as Markdown, or as the HTML itself; any other body, such as JSON, comes back as it is. A long body comes in pieces of 30,720 characters, or up to 61,440 when the model asks, and the model asks for the next piece with `offset`. It makes at most one request a second to a host, and only to addresses on the public internet: loopback, the local network and cloud metadata addresses are refused.
+- `web_fetch` fetches one URL. An HTML page comes back as its visible text (the default), as Markdown, or as the HTML itself; any other body, such as JSON, comes back as it is. A long body comes in pieces, the model asking for the next one with `offset`, and only its first 2 MiB are read. It makes at most one request a second to a host, and only to addresses on the public internet: loopback, the local network and cloud metadata addresses are refused.
 
 ::: code-group
 
@@ -70,7 +70,7 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-4-5")
 
 ## Your own functions
 
-A function of your program becomes a tool once it is registered with a **tool description**: the name the model calls it by, what it does, and a JSON schema for its arguments. Registering returns the description, which you pass to `tool(...)`, or a list of them to `tools(...)`.
+A function of your program becomes a tool once it is registered with a **tool description**: the name the model calls it by, what it does, and a JSON schema for its arguments. The agent gets the description from `tool(...)`, or a list of them from `tools(...)`. In Python and Node.js, registering returns it; in Rust you build it with `ToolDescBuilder` and register the function under its name.
 
 This gives the agent `order_status`, which looks an order up by its id:
 
@@ -118,35 +118,39 @@ asyncio.run(main())
 ```js [Node.js]
 const { AgentBuilder, registerTool } = require('@brekkylab/ailoy')
 
-const orders = { 'A-1001': { status: 'shipped', eta: '2026-10-24' } }
+async function main() {
+  const orders = { 'A-1001': { status: 'shipped', eta: '2026-10-24' } }
 
-const desc = registerTool(
-  {
-    name: 'order_status',
-    description: "Look up an order's status and expected delivery date by its id.",
-    parameters: {
-      type: 'object',
-      properties: { order_id: { type: 'string', description: 'The order id, such as A-1001' } },
-      required: ['order_id'],
+  const desc = registerTool(
+    {
+      name: 'order_status',
+      description: "Look up an order's status and expected delivery date by its id.",
+      parameters: {
+        type: 'object',
+        properties: { order_id: { type: 'string', description: 'The order id, such as A-1001' } },
+        required: ['order_id'],
+      },
     },
-  },
-  ({ order_id }) => {
-    if (!(order_id in orders)) throw new Error(`no order ${order_id}`)
-    return orders[order_id]
-  },
-)
+    ({ order_id }) => {
+      if (!(order_id in orders)) throw new Error(`no order ${order_id}`)
+      return orders[order_id]
+    },
+  )
 
-const agent = await new AgentBuilder('anthropic/claude-haiku-4-5').tool(desc).build()
+  const agent = await new AgentBuilder('anthropic/claude-haiku-4-5').tool(desc).build()
 
-try {
-  for await (const { message } of agent.run('When does order A-1001 arrive?')) {
-    for (const part of message.contents) {
-      if (part.type === 'text') console.log(part.text)
+  try {
+    for await (const { message } of agent.run('When does order A-1001 arrive?')) {
+      for (const part of message.contents) {
+        if (part.type === 'text') console.log(part.text)
+      }
     }
+  } finally {
+    await agent.close()
   }
-} finally {
-  await agent.close()
 }
+
+main()
 ```
 
 ```rust [Rust]
@@ -209,8 +213,12 @@ How the function is called:
 
 The function returns what a message can hold: null, a boolean, a number, a string, or a list or object of those. In Python and Node.js an exception, or a rejected promise, does not end the run: the model gets it as the result, such as `error: KeyError: 'no order B-9'` from the Python function above, and can try something else.
 
-Tool calls the model makes in one step run at the same time, so a function may be called again before its last call has returned.
+Tool calls the model makes in one step run at the same time, except those that use the console, the seven built-in tools above among them, which take turns on it. A function of yours may be called again before its last call has returned.
 
 A Python or Node.js function runs in your program, not in the VM. To run a command in the VM, it holds a `ConsoleClient` of its own. In Rust, a closure that also takes `console: &mut ConsoleClient` runs on the agent's console, as the built-in tools do.
 
-Tools are registered by name for the whole process, the built-in ones included, so registering a name again, `shell` among them, replaces the function every agent built after that gets. `remove_tool_provider` (`removeToolProvider`) takes a name out.
+Tools are registered by name for the whole process, the built-in ones included, so registering a name again, `shell` among them, replaces the function every agent built after that gets. The exception is `web_search` in an agent given a non-empty list of engines, which builds its own. `remove_tool_provider` (`removeToolProvider`) takes a name out.
+
+## How much of a result the model reads
+
+The agent keeps at most 30,000 characters of each part of a tool result, for built-in tools and your own alike. A longer part keeps its first and last 15,000 characters around a note of how many were cut, so a page fetched or a file read whole may reach the model with its middle missing. A value part, which is what a Python or Node.js function's result becomes, a string included, is measured as its JSON: once that passes 30,000 bytes, the model gets the JSON text as a string, cut or not. Text outside ASCII takes more than one byte a character, so it gets there sooner.

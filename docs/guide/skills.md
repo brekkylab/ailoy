@@ -33,7 +33,7 @@ Ailoy reads `name` and `description` and nothing else from the frontmatter, each
 
 ## Giving the agent a skill
 
-`skill(dir)` takes the folder's path in the agent's VM, not on your machine, so mount the folder into the VM. Call `skill` once for each skill.
+`skill(dir)` takes the folder's path in the agent's VM, not on your machine, so mount the folder into the VM, with whatever its instructions expect to find there: Laya's reads its model from `/models`, which `examples/laya` mounts too. Call `skill` once for each skill.
 
 ::: code-group
 
@@ -84,7 +84,7 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-4-5")
 
 :::
 
-`build()` reads the frontmatter of each `SKILL.md` through the console, and fails if a `SKILL.md` is missing or has no `name` or `description`. The system message gets a list of the skills after the instruction: each one's name, description and location, and a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` stays out of the system message, and the agent reads it with its own tools, so an agent with skills needs a console and a tool that reads files, such as those of `system_tools()`.
+When the agent writes the system message itself, `build()` reads the frontmatter of each `SKILL.md` through the console, and fails if a `SKILL.md` is missing or has no `name` or `description`. The system message gets a list of the skills after the instruction: each one's name, description and location, and a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` stays out of the system message, and the agent reads it with its own tools, so an agent with skills needs a console and a tool that reads files, such as those of `system_tools()`.
 
 For `anthropic` models the list is an XML block:
 
@@ -108,4 +108,4 @@ For any other org, the same preamble is followed by a Markdown list, one line pe
 - `laya` at /skills/laya/SKILL.md. Answer typed questions about a text with Laya, a machine learning model for decisions. Use it to classify, score or answer yes or no about a message, an email or a ticket, with calibrated probabilities.
 ```
 
-Skills are added only to the system message the agent writes itself. A `history(...)` that brings a system message keeps it as it is, and the skills are not added to it.
+Skills are added only to the system message the agent writes itself. A `history(...)` that brings a system message keeps it: the skills are not read or added, though the `# Mounts` section is, as [Message format](./message-format) describes.

@@ -17,7 +17,7 @@ Work the steps below in order. Step 3 is the one that gets skipped: an agent giv
 | Node.js | `npm install @brekkylab/ailoy @brekkylab/virtx` | `require('@brekkylab/virtx')` |
 | Rust | `ailoy = "0.3"`, `virtx = "0.1"` in `Cargo.toml` | `virtx::console::ConsoleClient` |
 
-The console is [virtx](https://github.com/brekkylab/virtx)'s: Ailoy takes a `ConsoleClient` built with virtx's own package and adds no console API of its own. A console runs on virtx's server, which `ensure_virtx()` (`ensureVirtx()` in Node) fetches into virtx's cache the first time and leaves as it is after. Call it before building a console: on a host without the server, building one fails with `starting the console server: No such file or directory`.
+The console is [virtx](https://github.com/brekkylab/virtx)'s: Ailoy takes a `ConsoleClient` built with virtx's own package and adds no console API of its own. A console runs on virtx's server, which `ensure_virtx()` (`ensureVirtx()` in Node) fetches into virtx's cache the first time and leaves as it is after. Call it before building a console: on a host without the server, building one fails with an error that starts `starting the console server:`.
 
 ## 2. Name the model, and decide how it runs
 

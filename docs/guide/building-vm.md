@@ -50,24 +50,28 @@ asyncio.run(main())
 ```js [Node.js]
 const { ImageClient, ImageSource, Recipe, ensureVirtx } = require('@brekkylab/virtx')
 
-// Fetches virtx's server into its cache the first time; a no-op after.
-await ensureVirtx()
+async function main() {
+  // Fetches virtx's server into its cache the first time; a no-op after.
+  await ensureVirtx()
 
-const images = await ImageClient.tryNew()
-try {
-  const recipe = new Recipe('python:3.12-slim-trixie').step('pip install matplotlib')
-  const built = await images.build(recipe, 'plot:latest')
-  console.log(built.reference, built.digest)
+  const images = await ImageClient.tryNew()
+  try {
+    const recipe = new Recipe('python:3.12-slim-trixie').step('pip install matplotlib')
+    const built = await images.build(recipe, 'plot:latest')
+    console.log(built.reference, built.digest)
 
-  for (const image of await images.list()) {
-    console.log(image.digest, image.refs)
+    for (const image of await images.list()) {
+      console.log(image.digest, image.refs)
+    }
+
+    // Remove it by its reference (or ImageSource.digest(...) for its digest).
+    await images.remove(ImageSource.reference('plot:latest'))
+  } finally {
+    await images.close()
   }
-
-  // Remove it by its reference (or ImageSource.digest(...) for its digest).
-  await images.remove(ImageSource.reference('plot:latest'))
-} finally {
-  await images.close()
 }
+
+main()
 ```
 
 ```rust [Rust]
@@ -130,18 +134,22 @@ asyncio.run(main())
 ```js [Node.js]
 const { ConsoleClient, ImageSource } = require('@brekkylab/virtx')
 
-const console_ = await ConsoleClient.builder()
-  .image(ImageSource.reference('plot:latest'))
-  .mount('./artifacts', '/artifacts')
-  .network(true)
-  .build()
+async function main() {
+  const console_ = await ConsoleClient.builder()
+    .image(ImageSource.reference('plot:latest'))
+    .mount('./artifacts', '/artifacts')
+    .network(true)
+    .build()
 
-try {
-  const result = await console_.exec(['python', '-c', 'import matplotlib; print(matplotlib.__version__)'])
-  process.stdout.write(result.stdout)
-} finally {
-  await console_.close()
+  try {
+    const result = await console_.exec(['python', '-c', 'import matplotlib; print(matplotlib.__version__)'])
+    process.stdout.write(result.stdout)
+  } finally {
+    await console_.close()
+  }
 }
+
+main()
 ```
 
 ```rust [Rust]

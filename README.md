@@ -125,30 +125,34 @@ npm install @brekkylab/ailoy @brekkylab/virtx
 const { AgentBuilder } = require('@brekkylab/ailoy')
 const { ConsoleClient, Recipe, ensureVirtx } = require('@brekkylab/virtx')
 
-// Fetches virtx's server into its cache the first time; a no-op after.
-await ensureVirtx()
+async function main() {
+  // Fetches virtx's server into its cache the first time; a no-op after.
+  await ensureVirtx()
 
-const console_ = await ConsoleClient.builder()
-  .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))
-  .mount('./artifacts', '/artifacts')
-  .network(true)
-  .build()
-// For openai, use "openai/gpt-5.6-luna"
-const agent = await new AgentBuilder('anthropic/claude-haiku-4-5')
-  .instruction('Write what you are asked for into /artifacts.')
-  .systemTools()
-  .console(console_)
-  .build()
+  const console_ = await ConsoleClient.builder()
+    .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))
+    .mount('./artifacts', '/artifacts')
+    .network(true)
+    .build()
+  // For openai, use "openai/gpt-5.6-luna"
+  const agent = await new AgentBuilder('anthropic/claude-haiku-4-5')
+    .instruction('Write what you are asked for into /artifacts.')
+    .systemTools()
+    .console(console_)
+    .build()
 
-try {
-  for await (const { message } of agent.run('Create a bar chart comparing the populations of European countries and save it to /artifacts/population.png.')) {
-    for (const part of message.contents) {
-      if (part.type === 'text') console.log(part.text)
+  try {
+    for await (const { message } of agent.run('Create a bar chart comparing the populations of European countries and save it to /artifacts/population.png.')) {
+      for (const part of message.contents) {
+        if (part.type === 'text') console.log(part.text)
+      }
     }
+  } finally {
+    await agent.close()
   }
-} finally {
-  await agent.close()
 }
+
+main()
 ```
 
 `agent.run` yields one complete message for each step of the tool loop, and `agent.runStream` streams each message token by token as the model writes it.

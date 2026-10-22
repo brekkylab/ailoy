@@ -8,7 +8,7 @@ It is off until you set it, and both of its settings have defaults:
 
 | Setting | Default | What it is |
 | --- | --- | --- |
-| `max_input_tokens` (`maxInputTokens`) | 30,000 | The input, in tokens, past which old tool results are replaced. |
+| `max_input_tokens` (`maxInputTokens`) | 30,000 | The input the model reports, in tokens, past which old tool results are replaced. |
 | `preserve_recent_turns` (`preserveRecentTurns`) | 3 | How many of the latest user turns are left as they are. |
 
 ::: code-group
@@ -48,7 +48,7 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-4-5")
 
 ## What it does
 
-Before each call to the model, the agent looks at how many input tokens the model reported for the call before. When that is more than `max_input_tokens`, it truncates the history:
+Before each call to the model, the agent looks at the last input token count the model reported. When that is more than `max_input_tokens`, it truncates the history:
 
 - A turn is a user message and everything after it up to the next user message. The last `preserve_recent_turns` turns are left as they are, and with fewer turns than that in the history nothing changes.
 - In the turns before those, each tool result's contents become the text `[context truncated]`. The result keeps the id of the call it answers, since APIs such as Anthropic's refuse a tool call that has no result.
@@ -56,7 +56,11 @@ Before each call to the model, the agent looks at how many input tokens the mode
 
 The placeholders replace the results in the agent's history, so `agent.history` shows them too, and they stay in it.
 
-Because the count is the model's report on the call before, the first call that goes past the limit is sent whole, and the history is truncated before the next one. A model that reports no usage, such as a model of your own whose replies leave `usage` out, never triggers it. And since only tool results are replaced, a history whose messages alone are past the limit keeps growing.
+Because the count comes from a call already made, the first call that goes past the limit is sent whole, and the history is truncated before the next one. A reply without `usage` leaves the last count in place, so a model that never reports usage, such as a model of your own whose replies leave it out, never triggers it. And since only tool results are replaced, a history whose messages alone are past the limit keeps growing.
+
+::: warning
+For `anthropic` models on the `api` backend, the count leaves out the input read from or written to the prompt cache, which Ailoy turns on for Claude. Once the cache holds the history, the count covers only what comes after it, often a handful of tokens, so it stays far below a limit the real input passes, and the context manager does not truncate.
+:::
 
 ::: warning
 With `preserve_recent_turns` at `0`, every tool result is replaced, those of the turn in progress too, so past the limit the model no longer sees the results of the tools it has just called.
