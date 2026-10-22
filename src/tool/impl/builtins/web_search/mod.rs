@@ -156,7 +156,6 @@ mod tests {
             "github.com/brekkylab/ailoy",
             "brekkylab.github.io/ailoy",
             "medium.com/ailoy",
-            "webui.ailoy.co",
             "pypi.org/project/ailoy",
         ];
         let has_project_result = results.iter().any(|r| {
