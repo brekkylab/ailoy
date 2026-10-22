@@ -108,19 +108,11 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{test_console, to_value, tool::ToolProvider};
-
-    async fn provider() -> ToolProvider {
-        let mut provider = ToolProvider::new();
-        provider.insert_func("shell", get_shell_tool_func());
-        provider
-    }
+    use crate::{test_console, to_value};
 
     #[tokio::test]
     async fn test_missing_cmd_returns_validation_error() {
-        let provider = provider().await;
-        let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
-        let f = funcs.get("shell").unwrap();
+        let f = get_shell_tool_func();
         let mut console = test_console().await;
         let msg = f
             .call(to_value!({}), "", &mut console)
@@ -139,9 +131,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_echo_returns_stdout() {
-        let provider = provider().await;
-        let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
-        let f = funcs.get("shell").unwrap();
+        let f = get_shell_tool_func();
         let mut console = test_console().await;
         let msg = f
             .call(to_value!({ "cmd": "echo ailoy" }), "", &mut console)
@@ -160,9 +150,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_timeout_secs_bounds_the_command() {
-        let provider = provider().await;
-        let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
-        let f = funcs.get("shell").unwrap();
+        let f = get_shell_tool_func();
         let mut console = test_console().await;
         let msg = f
             .call(
@@ -185,9 +173,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exit_code_is_captured() {
-        let provider = provider().await;
-        let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
-        let f = funcs.get("shell").unwrap();
+        let f = get_shell_tool_func();
         let mut console = test_console().await;
         let msg = f
             .call(to_value!({ "cmd": "exit 42" }), "", &mut console)
@@ -208,9 +194,7 @@ mod tests {
     async fn test_state_persists_across_calls() {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_string_lossy().to_string();
-        let provider = provider().await;
-        let funcs = provider.provide(&[get_shell_tool_desc()]).unwrap();
-        let f = funcs.get("shell").unwrap();
+        let f = get_shell_tool_func();
         let mut console = test_console().await;
 
         let r1 = f

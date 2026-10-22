@@ -16,7 +16,7 @@ use crate::{
 /// Fluent builder over [`AgentSpec`] for [`Agent`].
 ///
 /// For assembling an agent inline; with a fully-formed [`AgentSpec`], call
-/// [`Agent::try_new`] / [`Agent::try_with_provider`] directly.
+/// [`Agent::try_new`] / [`Agent::try_with_state`] directly.
 ///
 /// # Examples
 ///
@@ -24,9 +24,8 @@ use crate::{
 /// # use ailoy::agent::AgentBuilder;
 /// # #[tokio::main]
 /// # async fn main() -> anyhow::Result<()> {
-/// // The model is built through the provider set for its org (see `ailoy::model`); tools
-/// // come from the `"default"` agent provider unless another is selected with
-/// // [`AgentBuilder::agent_provider`].
+/// // The model is built through the provider set for its org (see `ailoy::model`), each
+/// // tool through the provider set for its name (see `ailoy::tool`).
 /// let agent = AgentBuilder::new("anthropic/claude-sonnet-5-5")
 ///     .instruction("Be brief.")
 ///     .web_fetch_tool()
@@ -37,9 +36,6 @@ use crate::{
 /// ```
 pub struct AgentBuilder {
     spec: AgentSpec,
-
-    /// [`AgentProvider`](crate::agent::AgentProvider) name resolved at [`build`](Self::build).
-    agent_provider: String,
 
     history: Vec<Message>,
 
@@ -58,21 +54,12 @@ impl AgentBuilder {
     pub fn new(model: impl Into<String>) -> Self {
         Self {
             spec: AgentSpec::new(model),
-            agent_provider: "default".to_string(),
             history: Vec::new(),
             console: None,
             memory: None,
             context_manager: None,
             browser: None,
         }
-    }
-
-    /// Select the [`AgentProvider`](crate::agent::AgentProvider) bundle (default
-    /// `"default"`). `name` must be registered in
-    /// [`get_agent_providers`](crate::agent::get_agent_providers) by [`build`](Self::build) time.
-    pub fn agent_provider(mut self, name: impl Into<String>) -> Self {
-        self.agent_provider = name.into();
-        self
     }
 
     /// Set the system instruction stored on the spec.
@@ -148,7 +135,7 @@ impl AgentBuilder {
     /// Let this agent remember into `memory`.
     ///
     /// Adds the `mem_search` and `mem_insert` tools; they are not spec tools because the
-    /// store is a per-agent value, not a name in the [`ToolProvider`](crate::tool::ToolProvider).
+    /// store is a per-agent value, not a name with a [`ToolProvider`](crate::tool::ToolProvider).
     ///
     /// The store must already exist (`mem init`); a missing file is reported by the first
     /// memory tool call, not by [`build`](Self::build). Memory tools run on the
@@ -182,12 +169,11 @@ impl AgentBuilder {
         self
     }
 
-    /// Materialise the agent via [`Agent::try_with_provider_and_state`], which is async
+    /// Materialise the agent via [`Agent::try_with_state`], which is async
     /// because it builds the model and reads the skills through the console.
     pub async fn build(self) -> anyhow::Result<Agent> {
         let Self {
             spec,
-            agent_provider,
             history,
             console,
             memory,
@@ -207,7 +193,7 @@ impl AgentBuilder {
             state = state.with_browser(BrowserSession::new(browser));
         }
 
-        let mut agent = Agent::try_with_provider_and_state(spec, &agent_provider, state).await?;
+        let mut agent = Agent::try_with_state(spec, state).await?;
         agent.set_context_manager(context_manager);
         Ok(agent)
     }

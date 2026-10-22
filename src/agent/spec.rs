@@ -16,7 +16,8 @@ use crate::{
 
 /// What makes an agent distinct: its model, instruction and tools.
 ///
-/// Tool sources live on [`AgentProvider`](super::AgentProvider), the console on
+/// Tools are built through the providers set with
+/// [`set_tool_provider`](crate::tool::set_tool_provider); the console lives on
 /// [`AgentState`](super::AgentState).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSpec {
@@ -28,9 +29,8 @@ pub struct AgentSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instruction: Option<String>,
 
-    /// Tool descriptions exposed to the model. Each [`ToolDesc::name`] must match
-    /// an entry registered in the [`AgentProvider`](super::AgentProvider)'s
-    /// [`ToolProvider`](crate::tool::ToolProvider).
+    /// Tool descriptions exposed to the model. Each [`ToolDesc::name`] must have a
+    /// [`ToolProvider`](crate::tool::ToolProvider) set for it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDesc>,
 

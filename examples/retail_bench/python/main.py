@@ -81,9 +81,6 @@ NUDGE = (SHARED / "nudge.md").read_text(encoding="utf-8")
 # The tools the agent may call, `end_today` last because that is where it belongs in a day.
 ACTIONS = ["place_order", "modify_sku_price", "end_today"]
 
-# The name the tool and agent providers carrying the three actions are registered under.
-PROVIDER = "retail_bench"
-
 # How many times a day is asked before the harness closes it itself: a day left open would
 # stop the clock, and the run would never end.
 NUDGES = 3
@@ -220,7 +217,6 @@ async def run_day(
     # on the same console.
     agent = await (
         ailoy.AgentBuilder(model)
-        .agent_provider(PROVIDER)
         .instruction(SYSTEM)
         .system_tools()
         .tools(tools)
@@ -291,14 +287,10 @@ async def run_day(
 
 
 def register_actions(store: "Store", record: "Record", day_over: threading.Event) -> list:
-    """Register the three actions under `PROVIDER` and return their descriptions, whose
-    schemas are the store's own rather than written here.
-
-    A tool description in a spec is resolved by name against a tool provider, so a new one
-    is added, with the built-in tools, and the three are registered into it."""
+    """Register the three actions and return their descriptions, whose schemas are the
+    store's own rather than written here."""
     declared = store.get("/actions").get("actions") or []
 
-    ailoy.add_tool_provider(PROVIDER)
     descs = []
     for name in ACTIONS:
         # A name the store does not declare means this example and the simulator have drifted
@@ -314,9 +306,7 @@ def register_actions(store: "Store", record: "Record", day_over: threading.Event
                 "no further instructions afterwards."
             )
         desc = {"name": name, "description": description, "parameters": spec["input_schema"]}
-        descs.append(ailoy.register_tool(desc, action(name, store, record, day_over), provider=PROVIDER))
-
-    ailoy.add_agent_provider(PROVIDER, tool_provider=PROVIDER)
+        descs.append(ailoy.register_tool(desc, action(name, store, record, day_over)))
     return descs
 
 

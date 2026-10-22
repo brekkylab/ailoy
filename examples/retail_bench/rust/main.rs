@@ -55,10 +55,10 @@ use std::{
 };
 
 use ailoy::{
-    agent::{AgentBuilder, AgentProvider, get_agent_providers_mut},
+    agent::AgentBuilder,
     console::ConsoleClient,
     message::{Message, Part, Role},
-    tool::{ToolDesc, ToolDescBuilder, get_tool_providers, get_tool_providers_mut},
+    tool::{ToolDesc, ToolDescBuilder, set_tool_provider},
     tool_func,
 };
 use anyhow::{Context as _, bail};
@@ -74,9 +74,6 @@ const NUDGE: &str = include_str!("../shared/nudge.md");
 
 /// The tools the agent may call, `end_today` last because that is where it belongs in a day.
 const ACTIONS: [&str; 3] = ["place_order", "modify_sku_price", "end_today"];
-
-/// The name the tool and agent providers carrying the three actions are registered under.
-const PROVIDER: &str = "retail_bench";
 
 /// How many times a day is asked before the harness closes it itself: a day left open would
 /// stop the clock, and the run would never end.
@@ -158,7 +155,6 @@ async fn main() -> anyhow::Result<()> {
     // ailoy has none.
     virtx::ensure_virtx().await?;
     let mut agent = AgentBuilder::new(&model)
-        .agent_provider(PROVIDER)
         .instruction(SYSTEM)
         .system_tools()
         .tools(tools)
@@ -320,11 +316,8 @@ async fn run_day(
         .or_else(|| metrics["terminated"].as_str().map(str::to_string)))
 }
 
-/// Register the three actions under [`PROVIDER`] and return their descriptions, whose
+/// Set a tool provider for each of the three actions and return their descriptions, whose
 /// schemas are the store's own rather than written here.
-///
-/// A `ToolDesc` in a spec is resolved by name against a tool provider, so the default one is
-/// cloned, keeping the built-in tools, and the three are inserted into the copy.
 async fn register_actions(
     store: &Store,
     record: &Record,
@@ -333,10 +326,6 @@ async fn register_actions(
     let declared = store.get("/actions").await?;
     let declared = declared["actions"].as_array().cloned().unwrap_or_default();
 
-    let mut provider = get_tool_providers()
-        .get("default")
-        .cloned()
-        .context("ailoy's default tool provider is not registered")?;
     let mut descs = Vec::new();
     for name in ACTIONS {
         // A name the store does not declare means this example and the simulator have drifted
@@ -360,7 +349,7 @@ async fn register_actions(
         );
 
         let (store, record, day_over) = (store.clone(), record.clone(), day_over.clone());
-        provider.insert_func(
+        set_tool_provider(
             name,
             tool_func!(async |args: Value| -> Value
                 with [store = store.clone(), record = record.clone(), day_over = day_over.clone()]
@@ -385,8 +374,6 @@ async fn register_actions(
             ),
         );
     }
-    get_tool_providers_mut().insert(PROVIDER.to_string(), provider);
-    get_agent_providers_mut().insert(PROVIDER.to_string(), AgentProvider::new(PROVIDER));
     Ok(descs)
 }
 

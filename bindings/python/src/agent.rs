@@ -102,10 +102,6 @@ impl PyAgentBuilder {
         PyAgentBuilder(std::sync::Mutex::new(Some(AgentBuilder::new(model))))
     }
 
-    fn agent_provider(slf: PyRef<'_, Self>, name: String) -> PyResult<PyRef<'_, Self>> {
-        Self::update(slf, |b| Ok(b.agent_provider(name)))
-    }
-
     fn instruction(slf: PyRef<'_, Self>, instruction: String) -> PyResult<PyRef<'_, Self>> {
         Self::update(slf, |b| Ok(b.instruction(instruction)))
     }
@@ -326,11 +322,10 @@ impl PyAgent {
     /// An agent from a spec — the dict an `AgentSpec` serializes to — for a caller who holds
     /// one rather than building it up. Awaitable.
     #[staticmethod]
-    #[pyo3(signature = (spec, *, agent_provider = "default".to_string(), history = None, console = None, memory = None))]
+    #[pyo3(signature = (spec, *, history = None, console = None, memory = None))]
     fn from_spec<'py>(
         py: Python<'py>,
         spec: Bound<'py, PyAny>,
-        agent_provider: String,
         history: Option<Bound<'py, PyAny>>,
         console: Option<Bound<'py, PyAny>>,
         memory: Option<String>,
@@ -347,7 +342,7 @@ impl PyAgent {
             state = state.with_memory(Memory::new(memfile));
         }
         future_into_py(py, async move {
-            let agent = Agent::try_with_provider_and_state(spec, &agent_provider, state)
+            let agent = Agent::try_with_state(spec, state)
                 .await
                 .map_err(error::anyhow)?;
             Ok(PyAgent::new(agent))
