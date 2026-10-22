@@ -7,10 +7,7 @@ use url::Url;
 
 use crate::tool::{
     MCPConnection, MCPToolEntry, ToolDesc, ToolFunc,
-    r#impl::{
-        get_a2a_tool_desc, get_a2a_tool_func, get_builtin_tool_factories, mcp_tool_desc,
-        prefixed_tool_name,
-    },
+    r#impl::{get_builtin_tool_factories, mcp_tool_desc, prefixed_tool_name},
 };
 
 /// Transport configuration for an MCP (Model Context Protocol) tool server.
@@ -39,11 +36,6 @@ pub enum ToolProvider {
     /// One tool served by an external MCP server, over a connection opened at
     /// registration time and shared with that server's other tools.
     MCP(MCPToolEntry),
-
-    /// A remote A2A (Agent-to-Agent) agent exposed as one tool taking a plain-text
-    /// task. Its card (`{url}/.well-known/agent-card.json`) is fetched at
-    /// registration to build the desc.
-    A2A { url: Url },
 }
 
 impl ToolProvider {
@@ -62,9 +54,6 @@ impl ToolProvider {
             // server, and the desc in the spec is a copy of what the server
             // already reported at registration.
             Self::MCP(entry) => Ok(entry.tool_func()),
-            // Calling needs no discovery: the task is in the arguments and the
-            // address in the entry. The agent card was only needed for the desc.
-            Self::A2A { url } => Ok(get_a2a_tool_func(url)),
         }
     }
 }
@@ -209,17 +198,4 @@ pub async fn register_mcp_streamable_http(
 /// there outlives every agent that used it unless something says otherwise.
 pub fn unregister_mcp(prefix: impl AsRef<str>) -> usize {
     remove_mcp(&mut TOOL_PROVIDERS.write().unwrap(), prefix.as_ref())
-}
-
-/// Fetch a remote A2A agent's card, set a provider for it under `name`, and return the
-/// [`ToolDesc`] to put in an [`AgentSpec`](crate::agent::AgentSpec).
-///
-/// One agent is one tool: `name` is the tool name the model will see, with any
-/// character the model APIs refuse mapped to `_`.
-pub async fn register_a2a(name: impl AsRef<str>, url: Url) -> anyhow::Result<ToolDesc> {
-    let desc = get_a2a_tool_desc(name.as_ref(), &url).await?;
-    // Keyed by the sanitised name the desc ended up with, not the raw argument:
-    // `create_tool` looks providers up by `ToolDesc::name`, so the two must agree.
-    set_tool_provider(desc.name.clone(), ToolProvider::A2A { url });
-    Ok(desc)
 }

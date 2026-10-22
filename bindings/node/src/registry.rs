@@ -5,7 +5,7 @@
 //! `AgentBuilder.tool`/`tools`.
 
 use ailoy::tool::{
-    ToolDesc, register_a2a as register_a2a_rs, register_mcp_stdio as register_mcp_stdio_rs,
+    ToolDesc, register_mcp_stdio as register_mcp_stdio_rs,
     register_mcp_streamable_http as register_mcp_streamable_http_rs,
     remove_tool_provider as remove_tool_provider_rs, set_tool_provider as set_tool_provider_rs,
     unregister_mcp as unregister_mcp_rs,
@@ -18,13 +18,9 @@ use napi_derive::napi;
 
 use crate::{
     convert::{Json, from_js},
-    error::{self, Result, invalid, promise, thrown},
+    error::{self, Result, promise},
     tool::{Callback, tool_func},
 };
-
-fn parse_url(url: &str) -> Result<url::Url> {
-    url::Url::parse(url).map_err(|e| invalid(format!("{url:?}: {e}")))
-}
 
 /// Build the tool `name` by calling `func`, replacing the provider it had. See [`crate::tool`]
 /// for how `func` is called.
@@ -99,21 +95,4 @@ pub fn register_mcp_streamable_http<'env>(
 pub fn unregister_mcp(prefix: String) -> u32 {
     // Off the runtime is fine for the registry, but ending the session cancels a task on it.
     within_runtime_if_available(|| unregister_mcp_rs(&prefix)) as u32
-}
-
-/// Fetch the A2A agent card at `url` and register the agent as the tool `name`, settling with
-/// its description.
-#[napi(ts_return_type = "Promise<ToolDesc>")]
-pub fn register_a2a<'env>(
-    env: &'env Env,
-    name: String,
-    url: String,
-) -> napi::Result<PromiseRaw<'env, Json<ToolDesc>>> {
-    let url = parse_url(&url).map_err(|e| thrown(env, e))?;
-    promise(env, async move {
-        register_a2a_rs(&name, url)
-            .await
-            .map(Json)
-            .map_err(error::anyhow)
-    })
 }

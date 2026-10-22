@@ -1,0 +1,17 @@
+{
+  "name": "ailoy-example-browser-use",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An agent with a browser, waiting for what you ask of it, on ailoy's Node bindings.",
+  "type": "module",
+  "scripts": {
+    "start": "node main.mjs"
+  },
+  "dependencies": {
+    "@brekkylab/ailoy": "file:../../../bindings/node",
+    "@brekkylab/virtx": "^0.1.2"
+  },
+  "engines": {
+    "node": ">= 20.12"
+  }
+}

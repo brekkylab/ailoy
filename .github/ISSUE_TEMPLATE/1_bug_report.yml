@@ -1,0 +1,83 @@
+name: Bug report
+description: Ailoy does something other than what its docs or its API say
+type: Bug
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search the [open issues](https://github.com/brekkylab/ailoy/issues) first. A suspected vulnerability goes through [SECURITY.md](https://github.com/brekkylab/ailoy/blob/main/SECURITY.md) instead, never a public issue.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The output or the traceback, verbatim.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: The smallest script that shows it. One that needs no key or login, such as one against a model of your own, is the quickest to act on.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: language
+    attributes:
+      label: Language
+      description: The one you used Ailoy from.
+      options:
+        - Python (ailoy-py)
+        - Node.js (@brekkylab/ailoy)
+        - Rust (the ailoy crate)
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Ailoy version
+      description: "`pip show ailoy-py`, `npm ls @brekkylab/ailoy` or `cargo tree -i ailoy` prints it."
+      placeholder: e.g. 0.3.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version and architecture
+      placeholder: e.g. macOS 15.5 arm64, Ubuntu 24.04 x86_64, Windows 11 x86_64
+
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: The model the agent was built with, if the bug involves one, and the backend if you set one with `set_lang_model_provider`.
+      placeholder: e.g. anthropic/claude-haiku-4-5 on the api backend
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: The CLI's version if the model ran through one (`claude --version`, `codex --version` or `gemini --version`), whether host folders were mounted into the console (FUSE-T on macOS, Dokany on Windows), whether the Windows Hypervisor Platform is on, and any logs.

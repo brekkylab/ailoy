@@ -5,7 +5,7 @@
 //! `AgentBuilder.tool`/`tools`.
 
 use ailoy::tool::{
-    ToolDesc, register_a2a as register_a2a_rs, register_mcp_stdio as register_mcp_stdio_rs,
+    ToolDesc, register_mcp_stdio as register_mcp_stdio_rs,
     register_mcp_streamable_http as register_mcp_streamable_http_rs,
     remove_tool_provider as remove_tool_provider_rs, set_tool_provider as set_tool_provider_rs,
     unregister_mcp as unregister_mcp_rs,
@@ -18,10 +18,6 @@ use crate::{
     error,
     tool::tool_func,
 };
-
-fn parse_url(url: &str) -> PyResult<url::Url> {
-    url::Url::parse(url).map_err(|e| PyValueError::new_err(format!("{url:?}: {e}")))
-}
 
 /// Descs as the list of dicts the builder takes back.
 fn descs_to_py(py: Python<'_>, descs: &[ToolDesc]) -> PyResult<Py<PyAny>> {
@@ -110,17 +106,6 @@ fn unregister_mcp(prefix: String) -> usize {
     unregister_mcp_rs(&prefix)
 }
 
-/// Fetch the A2A agent card at `url` and register the agent as the tool `name`. Awaitable;
-/// answers with its description.
-#[pyfunction]
-fn register_a2a(py: Python<'_>, name: String, url: String) -> PyResult<Bound<'_, PyAny>> {
-    let url = parse_url(&url)?;
-    future_into_py(py, async move {
-        let desc = register_a2a_rs(&name, url).await.map_err(error::anyhow)?;
-        Python::attach(|py| Ok(to_py(py, &desc)?.unbind()))
-    })
-}
-
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(set_tool_provider, m)?)?;
     m.add_function(wrap_pyfunction!(remove_tool_provider, m)?)?;
@@ -128,6 +113,5 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(register_mcp_stdio, m)?)?;
     m.add_function(wrap_pyfunction!(register_mcp_streamable_http, m)?)?;
     m.add_function(wrap_pyfunction!(unregister_mcp, m)?)?;
-    m.add_function(wrap_pyfunction!(register_a2a, m)?)?;
     Ok(())
 }

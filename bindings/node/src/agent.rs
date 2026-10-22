@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
+    browser::{Browser, UserBrowser},
     datatype::Value,
     memory::Memory,
     message::{Message, MessageDeltaOutput, MessageOutput},
@@ -28,7 +29,7 @@ use ailoy::{
 use futures::{StreamExt as _, stream::BoxStream};
 use napi::{
     Env,
-    bindgen_prelude::{Object, PromiseRaw, This, Unknown},
+    bindgen_prelude::{Either, Object, PromiseRaw, This, Unknown},
 };
 use napi_derive::napi;
 use serde::Serialize;
@@ -87,6 +88,40 @@ impl JsAgentBuilder {
 
 fn built() -> napi::Error<String> {
     invalid("this AgentBuilder has already been built")
+}
+
+/// Any other Chromium-based browser, by the user data directory it writes `DevToolsActivePort`
+/// in.
+#[napi(object, object_to_js = false)]
+pub struct UserDataDir {
+    pub user_data_dir: String,
+}
+
+#[napi(object, object_to_js = false)]
+pub struct BrowserOptions {
+    /// A browser of the agent's own, apart from the user's: started on first use and closed with
+    /// the agent. `false` by default: the user's own browser.
+    pub isolated: Option<bool>,
+    /// For `isolated`: no window, as on a server. `false` by default.
+    pub headless: Option<bool>,
+    /// For `isolated`: the Chromium-based browser to start, by its executable; else one
+    /// installed here (Chrome, Chromium, Edge or Brave).
+    pub executable: Option<String>,
+    /// For `isolated`: the user data directory it keeps, so sign-ins last; a fresh one by
+    /// default.
+    pub profile: Option<String>,
+    /// For the user's browser, which one: `'chrome'`, `'chrome-beta'`, `'chrome-dev'`, `'chrome-canary'`,
+    /// `'chromium'`, `'edge'`, `'brave'`, or any other by `{ userDataDir }`; with none, whichever
+    /// turned remote debugging on last.
+    #[napi(
+        ts_type = "'chrome' | 'chrome-beta' | 'chrome-dev' | 'chrome-canary' | 'chromium' | 'edge' | 'brave' | { userDataDir: string }"
+    )]
+    pub user_browser: Option<Either<String, UserDataDir>>,
+    /// Whether the agent is told to use sites as a person would, so sites checking for bots are
+    /// less likely to turn it away. `true` by default.
+    pub careful: Option<bool>,
+    /// The page the agent's tab opens on.
+    pub start_url: Option<String>,
 }
 
 #[napi(object)]
@@ -186,6 +221,59 @@ impl JsAgentBuilder {
     ) -> Result<This<'env>> {
         let slot = console::attach(&console)?;
         self.update(this, |b| Ok(b.shared_console(slot)))
+    }
+
+    /// The person's own Chromium-based browser with remote debugging on (Chrome by default: 144 or
+    /// later, at `chrome://inspect/#remote-debugging`), which the agent drives with its
+    /// `browser_*` tools over CDP from this process rather than the console, once the person
+    /// allows it: see `BrowserOptions`.
+    #[napi]
+    pub fn browser<'env>(
+        &mut self,
+        this: This<'env>,
+        options: Option<BrowserOptions>,
+    ) -> Result<This<'env>> {
+        let options = options.unwrap_or(BrowserOptions {
+            isolated: None,
+            headless: None,
+            executable: None,
+            profile: None,
+            user_browser: None,
+            careful: None,
+            start_url: None,
+        });
+        let mut browser = if options.isolated.unwrap_or(false) {
+            Browser::isolated()
+        } else {
+            Browser::user()
+        };
+        if let Some(host) = options.user_browser {
+            browser = browser.user_browser(match host {
+                Either::A(name) => UserBrowser::named(&name).ok_or_else(|| {
+                    let names: Vec<&str> =
+                        UserBrowser::NAMED.iter().map(UserBrowser::name).collect();
+                    invalid(format!(
+                        "userBrowser is one of {} or {{ userDataDir }}, not {name:?}",
+                        names.join(", ")
+                    ))
+                })?,
+                Either::B(dir) => UserBrowser::Custom(dir.user_data_dir.into()),
+            });
+        }
+        if let Some(headless) = options.headless {
+            browser = browser.headless(headless);
+        }
+        if let Some(path) = options.executable {
+            browser = browser.executable(path);
+        }
+        if let Some(dir) = options.profile {
+            browser = browser.profile(dir);
+        }
+        browser = browser.careful(options.careful.unwrap_or(true));
+        if let Some(url) = options.start_url {
+            browser = browser.start_url(url);
+        }
+        self.update(this, |b| Ok(b.browser(browser)))
     }
 
     /// Remember into the memory store at `memfile`, a path in the console.
@@ -385,6 +473,22 @@ impl JsAgent {
             .map_err(|_| error::ailoy("this agent is in the middle of a turn"))?;
         let agent = guard.value.as_ref().ok_or_else(closed)?;
         Ok(Json(agent.history().to_vec()))
+    }
+
+    /// Connect the agent's browser now rather than on its first use. This is when the browser asks,
+    /// so call it while the person is at their screen; a refusal rejects. A no-op once
+    /// connected. Throws during a turn.
+    #[napi(ts_return_type = "Promise<void>")]
+    pub fn start_browser<'env>(&self, env: &'env Env) -> napi::Result<PromiseRaw<'env, ()>> {
+        let mut guard = self
+            .agent
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| thrown(env, error::ailoy("this agent is in the middle of a turn")))?;
+        promise(env, async move {
+            let agent = guard.value.as_mut().ok_or_else(closed)?;
+            agent.start_browser().await.map_err(error::anyhow)
+        })
     }
 
     /// Run one turn on `query` — a message, or a string as the user's text — and iterate what

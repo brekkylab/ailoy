@@ -55,7 +55,7 @@ base64 = "0.23"
 virtx = { workspace = true }
 dedent = "0.1.1"
 derive_builder = "0.20.2"
-fancy-regex = "0.18"
+fancy-regex = "0.19"
 futures = "0.3"
 hex = "0.4"
 html-to-markdown-rs = { version = "3.4", features = ["metadata"] }
@@ -71,21 +71,22 @@ reqwest = { version = "0.13", features = ["form", "json", "stream"] }
 # `MCPToolProviderElem` names (stdio child process, streamable HTTP).
 rmcp = { version = "3", default-features = false, features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 scraper = "0.27"
-jsonschema = { version = "0.49", default-features = false }
-schemars = { version = "0.9", features = ["preserve_order", "url2"] }
+jsonschema = { version = "0.58", default-features = false }
+schemars = { version = "1", features = ["preserve_order", "url2"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 strum = { version = "0.28", features = ["derive"] }
 shellexpand = "3"
 tempfile = "3"
-dirs = "6"
+dirs = "7"
 encoding_rs = "0.8"
 flate2 = "1"
 tar = "0.4"
 strum_macros = "0.28"
 thiserror = "2.0.15"
 tokio = { version = "1.0", default-features = false, features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }
 unicode-segmentation = "1.12.0"
 url = { version = "2.5", features = ["serde"] }
 urlencoding = "2.1"
@@ -140,3 +141,7 @@ path = "examples/sam3/rust/main.rs"
 [[example]]
 name = "tts"
 path = "examples/tts/rust/main.rs"
+
+[[example]]
+name = "browser-use"
+path = "examples/browser-use/rust/main.rs"

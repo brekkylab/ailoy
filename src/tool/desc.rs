@@ -159,8 +159,8 @@ impl ToolDescBuilder {
 pub const MAX_TOOL_NAME_LEN: usize = 64;
 
 /// Replace every char outside `[A-Za-z0-9_-]` (the function-name set OpenAI,
-/// Anthropic and Gemini accept) with `_`, so a name from an MCP server, an A2A
-/// card, or a caller's label can't get the request rejected.
+/// Anthropic and Gemini accept) with `_`, so a name from an MCP server or a
+/// caller's label can't get the request rejected.
 ///
 /// Sanitizes rather than refuses: callers keep the wire name separately.
 pub fn sanitize_tool_name(name: &str) -> String {

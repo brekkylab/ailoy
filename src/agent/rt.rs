@@ -1,5 +1,6 @@
 use std::{collections::HashMap, panic::AssertUnwindSafe, path::Path, sync::Arc};
 
+use anyhow::Context as _;
 use futures::{
     FutureExt as _, StreamExt as _,
     stream::{BoxStream, FuturesUnordered},
@@ -9,6 +10,7 @@ use virtx::console::ConsoleClient;
 
 use super::{AgentSpec, AgentState, ContextManager, skill::render_skills, spec::split_desc};
 use crate::{
+    browser,
     datatype::Value,
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
     model::{InferLangModel, LangModelOptions, create_lang_model},
@@ -85,6 +87,15 @@ impl Agent {
                 ),
                 (get_mem_insert_tool_desc(), get_mem_insert_tool_func(memory)),
             ] {
+                tools.insert(desc.name.clone(), func);
+                tool_descs.push(desc);
+            }
+        }
+
+        // Like memory, bound to this agent's own browser rather than resolved by name.
+        if let Some(session) = &state.browser {
+            let console = state.console.lock().await.is_some();
+            for (desc, func) in browser::tools(session, console) {
                 tools.insert(desc.name.clone(), func);
                 tool_descs.push(desc);
             }
@@ -252,11 +263,26 @@ impl Agent {
         })
     }
 
-    /// Add `query` to the history and tell the model where its console mounts are.
-    async fn begin_turn(&mut self, query: Message) {
+    /// Add `query` to the history, led by a browser reconnection the agent has not heard of,
+    /// and tell the model where its console mounts are.
+    async fn begin_turn(&mut self, mut query: Message) {
         close_dangling_calls(&mut self.state.history);
+        if let Some(note) = self.state.browser.as_ref().and_then(|b| b.catch_up()) {
+            query.contents.insert(0, Part::text(note));
+        }
         self.state.history.push(query);
         self.seed_mounts().await;
+    }
+
+    /// Connects this agent's browser now rather than on its first use. This is when the browser
+    /// asks the person, so call it while they are at their screen. A no-op once connected.
+    pub async fn start_browser(&mut self) -> anyhow::Result<()> {
+        self.state
+            .browser
+            .clone()
+            .context("this agent has no browser")?
+            .start()
+            .await
     }
 
     /// List the console's mounts in the system message, read afresh each turn.
