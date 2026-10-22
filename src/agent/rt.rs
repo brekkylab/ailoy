@@ -118,9 +118,12 @@ impl Agent {
                 Some(render_skills(&spec.skills, &state.console, org).await?)
             };
             // Last, so what comes before it stays a cacheable prefix across sessions.
+            // Without a profile, memory adds nothing here: its tool says how to search.
             let memory = match &state.memory {
-                Some(memory) => Some(memory.render(&read_profile(memory, &state.console).await)),
-                None => None,
+                Some(memory) if memory.has_profile() => {
+                    Some(memory.render(&read_profile(memory, &state.console).await))
+                }
+                _ => None,
             };
             let text = [spec.instruction, skills, memory]
                 .into_iter()
@@ -866,8 +869,8 @@ mod tests {
         agent.tool_descs.iter().map(|d| d.name.as_str()).collect()
     }
 
-    /// The memory section follows the instruction, and the `profile` tool comes with a profile
-    /// only.
+    /// A profile adds its section after the instruction and the `profile` tool; without one,
+    /// only `search_history` is added.
     #[tokio::test]
     async fn test_memory_adds_its_section_and_tools() {
         let name = "test-agent-memory";
@@ -881,11 +884,7 @@ mod tests {
 
         let state = AgentState::new().with_memory(Memory::new("/m"));
         let agent = Agent::try_with_state(spec, state).await.unwrap();
-        let system = text_of(&agent.history()[0]);
-        assert!(
-            system.contains("# Memory") && !system.contains("About the user"),
-            "{system}"
-        );
+        assert_eq!(text_of(&agent.history()[0]), "Be brief.");
         assert_eq!(tool_names(&agent).last(), Some(&"search_history"));
         assert!(!tool_names(&agent).contains(&"profile"));
     }

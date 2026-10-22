@@ -143,8 +143,8 @@ impl AgentBuilder {
     /// [`console`](Self::console), so one is required. A missing folder is reported by the
     /// tools and logged at the end of a turn, not by [`build`](Self::build).
     ///
-    /// The memory section goes into the system message the agent writes, not into one a
-    /// [`history`](Self::history) brings.
+    /// The profile's section goes into the system message the agent writes, not into one a
+    /// [`history`](Self::history) brings; without a profile the system message is left as is.
     pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
         self.memory = Some(memory.into());
         self

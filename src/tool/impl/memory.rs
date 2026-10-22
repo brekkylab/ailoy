@@ -24,6 +24,9 @@ pub fn get_search_history_tool_desc() -> ToolDesc {
         .description(concat!(
             "Search everything said in past conversations with this user: their messages and ",
             "your replies, word for word, each with the date it was said. ",
+            "Search before answering anything that depends on this user, including ",
+            "recommendations, and check exact numbers, dates and changed facts here. When ",
+            "results disagree, use the most recent one. ",
             "Matching is by words, not meaning: a line matches if it has any of the query's ",
             "words, and lines with more of them, and rarer ones, come first. So use a few ",
             "specific words (names, things, numbers) rather than a whole question, and try ",

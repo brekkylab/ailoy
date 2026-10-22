@@ -436,48 +436,31 @@ done"#;
         succeeded(out, None).map(|_| ())
     }
 
-    /// The memory section of the system message, with `profile` when this memory keeps one.
+    /// The profile's section of the system message. How to search the history is in the
+    /// `search_history` tool's description, so a memory without a profile adds no section.
     pub fn render(&self, profile: &Profile) -> String {
         let mut text = String::from(
             "# Memory\n\n\
-             You remember this user across conversations.\n\
-             - History: what the user said and what you answered in every past conversation is \
-             saved word for word, with the date it was said. Search it with `search_history`.\n",
+             Your profile of this user, kept with the `profile` tool across conversations. It is \
+             a lossy summary loaded when this conversation started; your changes show up next \
+             time. Check exact numbers, dates and changed facts with `search_history` even if \
+             the profile mentions them.",
         );
-        if self.profile {
-            text.push_str(
-                "- Profile (below): short notes you keep with the `profile` tool. It is a lossy \
-                 summary loaded when this conversation started; your changes show up next time.\n",
-            );
-        }
-        text.push_str(
-            "\nSearch the history before answering anything that depends on this user, \
-             including recommendations, and check exact numbers, dates and changed facts there",
-        );
-        if self.profile {
-            text.push_str(" even if the profile mentions them");
-        }
-        text.push_str(
-            ". Searches match words: use a few specific words, and try other words before \
-             concluding something never came up. When results disagree, use the most recent one.",
-        );
-        if self.profile {
-            for (target, heading) in [
-                (ProfileTarget::User, "About the user"),
-                (ProfileTarget::Notes, "Your notes"),
-            ] {
-                let entries = profile.entries(target);
-                text.push_str(&format!(
-                    "\n\n## {heading} [{}/{} chars]\n",
-                    profile.used(target),
-                    self.limit(target),
-                ));
-                text.push_str(&if entries.is_empty() {
-                    "(empty)".to_string()
-                } else {
-                    entries.join(SEPARATOR)
-                });
-            }
+        for (target, heading) in [
+            (ProfileTarget::User, "About the user"),
+            (ProfileTarget::Notes, "Your notes"),
+        ] {
+            let entries = profile.entries(target);
+            text.push_str(&format!(
+                "\n\n## {heading} [{}/{} chars]\n",
+                profile.used(target),
+                self.limit(target),
+            ));
+            text.push_str(&if entries.is_empty() {
+                "(empty)".to_string()
+            } else {
+                entries.join(SEPARATOR)
+            });
         }
         text
     }
@@ -849,15 +832,6 @@ mod tests {
             .edited(&[add(User, &"a".repeat(501))], |t| small.limit(t))
             .unwrap_err();
         assert!(e.reason.contains("limit of 500"), "{e}");
-
-        let off = Memory::new("/m").render(&Profile::default());
-        assert!(off.contains("`search_history`"));
-        assert!(
-            !off.contains("About the user")
-                && !off.contains("`profile` tool")
-                && !off.contains("profile mentions"),
-            "{off}"
-        );
     }
 
     #[test]

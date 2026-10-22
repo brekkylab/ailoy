@@ -336,8 +336,7 @@ test('memory options shape the system message', async (t) => {
   const system = (agent) => agent.history[0].contents[0].text
 
   const without = await new AgentBuilder('mem-echo/echo').memory('/m').build()
-  assert.match(system(without), /# Memory/)
-  assert.doesNotMatch(system(without), /About the user/)
+  assert.deepEqual(without.history, [])
 
   const withProfile = await new AgentBuilder('mem-echo/echo')
     .memory('/m', { profile: true, notesLimit: 800 })
