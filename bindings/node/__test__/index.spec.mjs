@@ -308,7 +308,7 @@ test('memory options shape the system message', async (t) => {
   assert.doesNotMatch(system(without), /About the user/)
 
   const withProfile = await new AgentBuilder('mem-echo/echo')
-    .memory('/m', { profile: true, memoryLimit: 800 })
+    .memory('/m', { profile: true, notesLimit: 800 })
     .build()
   assert.match(system(withProfile), /## About the user \[0\/2000 chars\]/)
   assert.match(system(withProfile), /## Your notes \[0\/800 chars\]/)

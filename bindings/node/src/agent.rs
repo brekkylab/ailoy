@@ -93,7 +93,7 @@ fn built() -> napi::Error<String> {
 pub struct MemoryOptions {
     pub profile: Option<bool>,
     pub user_limit: Option<i64>,
-    pub memory_limit: Option<i64>,
+    pub notes_limit: Option<i64>,
 }
 
 #[napi(object)]
@@ -201,10 +201,10 @@ impl JsAgentBuilder {
     }
 
     /// Remember the user across sessions in the folder `dir`, a path in the console;
-    /// `options.profile` (default `false`) keeps `USER.md` and `MEMORY.md` and gives the
-    /// `memory` tool, and `userLimit` and `memoryLimit` bound those files in characters.
+    /// `options.profile` (default `false`) keeps `USER.md` and `NOTES.md` and gives the
+    /// `profile` tool, and `userLimit` and `notesLimit` bound those files in characters.
     #[napi(
-        ts_args_type = "dir: string, options?: { profile?: boolean; userLimit?: number; memoryLimit?: number }"
+        ts_args_type = "dir: string, options?: { profile?: boolean; userLimit?: number; notesLimit?: number }"
     )]
     pub fn memory<'env>(
         &mut self,
@@ -215,7 +215,7 @@ impl JsAgentBuilder {
         let options = options.unwrap_or(MemoryOptions {
             profile: None,
             user_limit: None,
-            memory_limit: None,
+            notes_limit: None,
         });
         let limit = |value, what, target: ProfileTarget| -> Result<usize> {
             Ok(unsigned(value, what)?.map_or(target.default_limit(), |n| n as usize))
@@ -224,7 +224,7 @@ impl JsAgentBuilder {
             .with_profile(options.profile.unwrap_or(false))
             .with_limits(
                 limit(options.user_limit, "userLimit", ProfileTarget::User)?,
-                limit(options.memory_limit, "memoryLimit", ProfileTarget::Memory)?,
+                limit(options.notes_limit, "notesLimit", ProfileTarget::Notes)?,
             );
         self.update(this, |b| Ok(b.memory(memory)))
     }

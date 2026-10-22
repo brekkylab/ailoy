@@ -1,4 +1,4 @@
-//! `mem_search` and `memory`: an agent's own memory, as tools.
+//! `search_history` and `profile`: an agent's own memory, as tools.
 //!
 //! Built per agent rather than registered, since each is bound to the [`Memory`] that agent was
 //! given: the model never names a folder and cannot name another.
@@ -19,8 +19,8 @@ const MAX_LIMIT: i64 = 15;
 /// Lines shown on each side of the best match, and of an `around` id.
 const NEIGHBOURS: usize = 2;
 
-pub fn get_mem_search_tool_desc() -> ToolDesc {
-    ToolDescBuilder::new("mem_search")
+pub fn get_search_history_tool_desc() -> ToolDesc {
+    ToolDescBuilder::new("search_history")
         .description(concat!(
             "Search everything said in past conversations with this user: their messages and ",
             "your replies, word for word, each with the date it was said. ",
@@ -65,7 +65,7 @@ pub fn get_mem_search_tool_desc() -> ToolDesc {
         .build()
 }
 
-pub fn get_mem_search_tool_func(memory: Memory) -> ToolFunc {
+pub fn get_search_history_tool_func(memory: Memory) -> ToolFunc {
     crate::tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value
         with [memory = memory.clone()]
     {
@@ -136,7 +136,7 @@ pub fn get_mem_search_tool_func(memory: Memory) -> ToolFunc {
     })
 }
 
-pub fn get_memory_tool_desc() -> ToolDesc {
+pub fn get_profile_tool_desc() -> ToolDesc {
     let action = crate::to_value!({
         "type": "string",
         "enum": ["add", "replace", "remove"],
@@ -144,8 +144,8 @@ pub fn get_memory_tool_desc() -> ToolDesc {
     });
     let target = crate::to_value!({
         "type": "string",
-        "enum": ["user", "memory"],
-        "description": "'user': who the user is. 'memory': your own notes."
+        "enum": ["user", "notes"],
+        "description": "'user': who the user is. 'notes': your own notes."
     });
     let content = crate::to_value!({
         "type": "string",
@@ -155,14 +155,14 @@ pub fn get_memory_tool_desc() -> ToolDesc {
         "type": "string",
         "description": "A short piece of the entry to replace or remove, long enough that only that entry contains it."
     });
-    ToolDescBuilder::new("memory")
+    ToolDescBuilder::new("profile")
         .description(concat!(
             "Keep short notes about this user that are put in your system prompt at the start ",
             "of every future conversation. Two targets: 'user' for who the user is (name, ",
-            "work, lasting preferences, how they like to be helped) and 'memory' for your own ",
+            "work, lasting preferences, how they like to be helped) and 'notes' for your own ",
             "notes (agreements, what to avoid, lessons learned). ",
             "Only what will matter in every conversation: everything said is already saved ",
-            "word for word and found with mem_search, so leave out details, one-off tasks and ",
+            "word for word and found with search_history, so leave out details, one-off tasks and ",
             "progress. When a fact changes, replace its entry instead of adding another. End a ",
             "fact whose date matters with the date, as (YYYY-MM-DD). ",
             "Each target has a size limit; when full, remove or shorten entries in the same ",
@@ -196,7 +196,7 @@ pub fn get_memory_tool_desc() -> ToolDesc {
         .build()
 }
 
-pub fn get_memory_tool_func(memory: Memory) -> ToolFunc {
+pub fn get_profile_tool_func(memory: Memory) -> ToolFunc {
     crate::tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value
         with [memory = memory.clone()]
     {
@@ -251,7 +251,7 @@ fn edit(op: &Value) -> Result<ProfileEdit, String> {
     };
     let target = required("target")?;
     let target = ProfileTarget::parse(&target)
-        .ok_or_else(|| format!("target must be 'user' or 'memory', not {target:?}"))?;
+        .ok_or_else(|| format!("target must be 'user' or 'notes', not {target:?}"))?;
     Ok(match field("action") {
         Some("add") => ProfileEdit::Add {
             target,
@@ -410,7 +410,7 @@ mod tests {
                 .contains("content")
         );
         assert!(
-            edit(&to_value!({"action": "remove", "target": "memory"}))
+            edit(&to_value!({"action": "remove", "target": "notes"}))
                 .unwrap_err()
                 .contains("old_text")
         );
@@ -428,7 +428,7 @@ mod tests {
 
     #[test_with::executable(mem)]
     #[tokio::test]
-    async fn test_mem_search_answers_with_dated_lines_and_context() {
+    async fn test_search_history_answers_with_dated_lines_and_context() {
         let mut console = test_console().await;
         let memory = filled(
             &mut console,
@@ -440,7 +440,7 @@ mod tests {
             ],
         )
         .await;
-        let func = get_mem_search_tool_func(memory);
+        let func = get_search_history_tool_func(memory);
 
         let out = value(&call(&func, to_value!({ "query": "switched" }), &mut console).await);
         assert_eq!(texts(&out), ["I switched to oat milk"]);
@@ -465,7 +465,7 @@ mod tests {
 
     #[test_with::executable(mem)]
     #[tokio::test]
-    async fn test_mem_search_honors_limit_and_sort() {
+    async fn test_search_history_honors_limit_and_sort() {
         let mut console = test_console().await;
         let memory = filled(&mut console, &["tea, tea and more tea"]).await;
         // A second apart, since `mem` stamps lines to the second.
@@ -475,7 +475,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(later.code, 0, "{}", String::from_utf8_lossy(&later.stderr));
-        let func = get_mem_search_tool_func(memory);
+        let func = get_search_history_tool_func(memory);
 
         let out = value(
             &call(
@@ -500,10 +500,10 @@ mod tests {
 
     #[test_with::executable(mem)]
     #[tokio::test]
-    async fn test_mem_search_refuses_what_it_cannot_run() {
+    async fn test_search_history_refuses_what_it_cannot_run() {
         let mut console = test_console().await;
         let memory = filled(&mut console, &[]).await;
-        let func = get_mem_search_tool_func(memory);
+        let func = get_search_history_tool_func(memory);
 
         let out = value(&call(&func, to_value!({}), &mut console).await);
         assert_eq!(phase(&out), "validation");
@@ -518,7 +518,7 @@ mod tests {
         assert_eq!(phase(&out), "validation");
 
         let missing = Memory::new("/nowhere/at/all");
-        let func = get_mem_search_tool_func(missing);
+        let func = get_search_history_tool_func(missing);
         let out = value(&call(&func, to_value!({ "query": "x" }), &mut console).await);
         assert_eq!(phase(&out), "io");
         assert!(
@@ -534,7 +534,7 @@ mod tests {
     /// A role filter on a `mem` without one still answers, and says so.
     #[test_with::executable(mem)]
     #[tokio::test]
-    async fn test_mem_search_by_role_answers_on_any_mem() {
+    async fn test_search_history_by_role_answers_on_any_mem() {
         let mut console = test_console().await;
         let memory = filled(&mut console, &[]).await;
         let roles = knows(&mut console, &["insert", "--role"]).await;
@@ -561,7 +561,7 @@ mod tests {
                 String::from_utf8_lossy(&insert.stderr)
             );
         }
-        let func = get_mem_search_tool_func(memory);
+        let func = get_search_history_tool_func(memory);
 
         let out = value(
             &call(
@@ -577,10 +577,10 @@ mod tests {
 
     #[test_with::executable(mem)]
     #[tokio::test]
-    async fn test_memory_tool_edits_the_profile() {
+    async fn test_profile_tool_edits_the_profile() {
         let mut console = test_console().await;
         let memory = filled(&mut console, &[]).await;
-        let func = get_memory_tool_func(memory.clone());
+        let func = get_profile_tool_func(memory.clone());
 
         let out = value(
             &call(
@@ -608,7 +608,7 @@ mod tests {
                 &func,
                 to_value!({ "operations": [
                     { "action": "replace", "target": "user", "old_text": "Minsu", "content": "Name is Minsu Kim" },
-                    { "action": "add", "target": "memory", "content": "Answer briefly" }
+                    { "action": "add", "target": "notes", "content": "Answer briefly" }
                 ] }),
                 &mut console,
             )
@@ -621,16 +621,16 @@ mod tests {
         );
         let profile = memory.read_profile(&mut console).await.unwrap();
         assert_eq!(profile.user, ["Name is Minsu Kim"]);
-        assert_eq!(profile.memory, ["Answer briefly"]);
+        assert_eq!(profile.notes, ["Answer briefly"]);
     }
 
     /// A refusal shows the entries as they stand, so the model can retry from them.
     #[test_with::executable(mem)]
     #[tokio::test]
-    async fn test_memory_tool_refusal_shows_the_entries() {
+    async fn test_profile_tool_refusal_shows_the_entries() {
         let mut console = test_console().await;
         let memory = filled(&mut console, &[]).await;
-        let func = get_memory_tool_func(memory);
+        let func = get_profile_tool_func(memory);
 
         call(
             &func,

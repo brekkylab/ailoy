@@ -41,7 +41,7 @@ class AgentBuilder:
         *,
         profile: bool = False,
         user_limit: int | None = None,
-        memory_limit: int | None = None,
+        notes_limit: int | None = None,
     ) -> Self: ...
     def skill(self, dir: str) -> Self: ...
     def context_manager(

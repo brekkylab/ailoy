@@ -3,7 +3,7 @@
 //! ```text
 //! <dir>/mem.sqlite   the history: what was said in past conversations, line by line (`mem`)
 //! <dir>/USER.md      profile: who the user is
-//! <dir>/MEMORY.md    profile: the agent's own notes
+//! <dir>/NOTES.md    profile: the agent's own notes
 //! ```
 //!
 //! Everything runs as a command on the console (`mem` must be on its `PATH`), so the folder
@@ -71,25 +71,25 @@ pub struct Record {
 pub enum ProfileTarget {
     /// `USER.md`: who the user is.
     User,
-    /// `MEMORY.md`: the agent's own notes.
-    Memory,
+    /// `NOTES.md`: the agent's own notes.
+    Notes,
 }
 
 impl ProfileTarget {
-    pub const ALL: [ProfileTarget; 2] = [ProfileTarget::User, ProfileTarget::Memory];
+    pub const ALL: [ProfileTarget; 2] = [ProfileTarget::User, ProfileTarget::Notes];
 
     pub fn file(self) -> &'static str {
         match self {
             ProfileTarget::User => "USER.md",
-            ProfileTarget::Memory => "MEMORY.md",
+            ProfileTarget::Notes => "NOTES.md",
         }
     }
 
-    /// The name the `memory` tool takes.
+    /// The name the `profile` tool takes.
     pub fn as_str(self) -> &'static str {
         match self {
             ProfileTarget::User => "user",
-            ProfileTarget::Memory => "memory",
+            ProfileTarget::Notes => "notes",
         }
     }
 
@@ -101,7 +101,7 @@ impl ProfileTarget {
     pub fn default_limit(self) -> usize {
         match self {
             ProfileTarget::User => 2_000,
-            ProfileTarget::Memory => 3_000,
+            ProfileTarget::Notes => 3_000,
         }
     }
 }
@@ -110,21 +110,21 @@ impl ProfileTarget {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Profile {
     pub user: Vec<String>,
-    pub memory: Vec<String>,
+    pub notes: Vec<String>,
 }
 
 impl Profile {
     pub fn entries(&self, target: ProfileTarget) -> &[String] {
         match target {
             ProfileTarget::User => &self.user,
-            ProfileTarget::Memory => &self.memory,
+            ProfileTarget::Notes => &self.notes,
         }
     }
 
     fn entries_mut(&mut self, target: ProfileTarget) -> &mut Vec<String> {
         match target {
             ProfileTarget::User => &mut self.user,
-            ProfileTarget::Memory => &mut self.memory,
+            ProfileTarget::Notes => &mut self.notes,
         }
     }
 
@@ -191,7 +191,7 @@ impl Profile {
     }
 }
 
-/// One change to the profile, as the `memory` tool asks for it.
+/// One change to the profile, as the `profile` tool asks for it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProfileEdit {
     Add {
@@ -277,16 +277,16 @@ impl Memory {
         }
     }
 
-    /// Whether to keep `USER.md` and `MEMORY.md` (and give the `memory` tool) besides the
+    /// Whether to keep `USER.md` and `NOTES.md` (and give the `profile` tool) besides the
     /// history. Off by default.
     pub fn with_profile(mut self, profile: bool) -> Self {
         self.profile = profile;
         self
     }
 
-    /// How many characters `USER.md` and `MEMORY.md` may each hold.
-    pub fn with_limits(mut self, user: usize, memory: usize) -> Self {
-        self.limits = [user, memory];
+    /// How many characters `USER.md` and `NOTES.md` may each hold.
+    pub fn with_limits(mut self, user: usize, notes: usize) -> Self {
+        self.limits = [user, notes];
         self
     }
 
@@ -405,13 +405,13 @@ done"#;
         if args.is_empty() {
             return Ok(());
         }
-        let script = r#"clean() { rm -f "$d/.USER.md.tmp" "$d/.MEMORY.md.tmp"; }
+        let script = r#"clean() { rm -f "$d/.USER.md.tmp" "$d/.NOTES.md.tmp"; }
 clean
 while [ $# -gt 0 ]; do
   printf '%s' "$2" > "$d/.$1.tmp" || { clean; exit 1; }
   shift 2
 done
-for f in USER.md MEMORY.md; do
+for f in USER.md NOTES.md; do
   [ ! -f "$d/.$f.tmp" ] || mv "$d/.$f.tmp" "$d/$f" || exit
 done"#;
         let out = self.sh(console, script, &args).await?;
@@ -424,11 +424,11 @@ done"#;
             "# Memory\n\n\
              You remember this user across conversations.\n\
              - History: what the user said and what you answered in every past conversation is \
-             saved word for word, with the date it was said. Search it with `mem_search`.\n",
+             saved word for word, with the date it was said. Search it with `search_history`.\n",
         );
         if self.profile {
             text.push_str(
-                "- Profile (below): short notes you keep with the `memory` tool. It is a lossy \
+                "- Profile (below): short notes you keep with the `profile` tool. It is a lossy \
                  summary loaded when this conversation started; your changes show up next time.\n",
             );
         }
@@ -446,7 +446,7 @@ done"#;
         if self.profile {
             for (target, heading) in [
                 (ProfileTarget::User, "About the user"),
-                (ProfileTarget::Memory, "Your notes"),
+                (ProfileTarget::Notes, "Your notes"),
             ] {
                 let entries = profile.entries(target);
                 text.push_str(&format!(
@@ -685,7 +685,7 @@ mod tests {
     use super::*;
     use crate::test_console;
 
-    use ProfileTarget::{Memory as Notes, User};
+    use ProfileTarget::{Notes, User};
 
     fn add(target: ProfileTarget, content: &str) -> ProfileEdit {
         ProfileEdit::Add {
@@ -717,7 +717,7 @@ mod tests {
     fn profile(user: &[&str]) -> Profile {
         Profile {
             user: user.iter().map(|s| s.to_string()).collect(),
-            memory: Vec::new(),
+            notes: Vec::new(),
         }
     }
 
@@ -760,7 +760,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(edited.user, ["Drinks only oat-milk lattes"]);
-        assert_eq!(edited.memory, ["Prefers short answers"]);
+        assert_eq!(edited.notes, ["Prefers short answers"]);
     }
 
     #[test]
@@ -814,7 +814,7 @@ mod tests {
             .with_profile(true)
             .render(&profile(&["Name is Minsu", "Drinks tea"]));
         assert!(text.starts_with("# Memory\n"), "{text}");
-        assert!(text.contains("`mem_search`") && text.contains("`memory` tool"));
+        assert!(text.contains("`search_history`") && text.contains("`profile` tool"));
         assert!(
             text.contains("## About the user [25/2000 chars]\nName is Minsu\n\nDrinks tea"),
             "{text}"
@@ -833,10 +833,10 @@ mod tests {
         assert!(e.reason.contains("limit of 500"), "{e}");
 
         let off = Memory::new("/m").render(&Profile::default());
-        assert!(off.contains("`mem_search`"));
+        assert!(off.contains("`search_history`"));
         assert!(
             !off.contains("About the user")
-                && !off.contains("`memory` tool")
+                && !off.contains("`profile` tool")
                 && !off.contains("profile mentions"),
             "{off}"
         );

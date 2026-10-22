@@ -141,19 +141,19 @@ impl PyAgentBuilder {
     }
 
     /// Remember the user across sessions in the folder `dir`, a path in the console;
-    /// `profile` (off by default) keeps `USER.md` and `MEMORY.md` and gives the `memory` tool,
-    /// and `user_limit` and `memory_limit` bound those files in characters.
-    #[pyo3(signature = (dir, *, profile = false, user_limit = None, memory_limit = None))]
+    /// `profile` (off by default) keeps `USER.md` and `NOTES.md` and gives the `profile` tool,
+    /// and `user_limit` and `notes_limit` bound those files in characters.
+    #[pyo3(signature = (dir, *, profile = false, user_limit = None, notes_limit = None))]
     fn memory(
         slf: PyRef<'_, Self>,
         dir: String,
         profile: bool,
         user_limit: Option<usize>,
-        memory_limit: Option<usize>,
+        notes_limit: Option<usize>,
     ) -> PyResult<PyRef<'_, Self>> {
         let memory = Memory::new(dir).with_profile(profile).with_limits(
             user_limit.unwrap_or(ProfileTarget::User.default_limit()),
-            memory_limit.unwrap_or(ProfileTarget::Memory.default_limit()),
+            notes_limit.unwrap_or(ProfileTarget::Notes.default_limit()),
         );
         Self::update(slf, |b| Ok(b.memory(memory)))
     }

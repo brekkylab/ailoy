@@ -20,8 +20,8 @@ use crate::{
     tool::{
         ToolDesc, ToolFunc, get_tool_providers,
         r#impl::{
-            get_mem_search_tool_desc, get_mem_search_tool_func, get_memory_tool_desc,
-            get_memory_tool_func, get_web_search_tool_factory,
+            get_profile_tool_desc, get_profile_tool_func, get_search_history_tool_desc,
+            get_search_history_tool_func, get_web_search_tool_factory,
         },
     },
 };
@@ -118,11 +118,14 @@ impl Agent {
         // Bound to this agent's `Memory`, so built here rather than taken from the registry.
         if let Some(memory) = &state.memory {
             let mut memory_tools = vec![(
-                get_mem_search_tool_desc(),
-                get_mem_search_tool_func(memory.clone()),
+                get_search_history_tool_desc(),
+                get_search_history_tool_func(memory.clone()),
             )];
             if memory.has_profile() {
-                memory_tools.push((get_memory_tool_desc(), get_memory_tool_func(memory.clone())));
+                memory_tools.push((
+                    get_profile_tool_desc(),
+                    get_profile_tool_func(memory.clone()),
+                ));
             }
             for (desc, func) in memory_tools {
                 tools.insert(desc.name.clone(), func);
@@ -872,7 +875,7 @@ mod tests {
         agent.tool_descs.iter().map(|d| d.name.as_str()).collect()
     }
 
-    /// The memory section follows the instruction, and the `memory` tool comes with a profile
+    /// The memory section follows the instruction, and the `profile` tool comes with a profile
     /// only.
     #[tokio::test]
     async fn test_memory_adds_its_section_and_tools() {
@@ -885,7 +888,7 @@ mod tests {
         let system = text_of(&agent.history()[0]);
         assert!(system.starts_with("Be brief.\n\n# Memory\n"), "{system}");
         assert!(system.contains("## About the user"), "{system}");
-        assert!(tool_names(&agent).ends_with(&["mem_search", "memory"]));
+        assert!(tool_names(&agent).ends_with(&["search_history", "profile"]));
 
         let state = AgentState::new().with_memory(Memory::new("/m"));
         let agent = Agent::try_with_provider_and_state(spec, name, state)
@@ -896,8 +899,8 @@ mod tests {
             system.contains("# Memory") && !system.contains("About the user"),
             "{system}"
         );
-        assert_eq!(tool_names(&agent).last(), Some(&"mem_search"));
-        assert!(!tool_names(&agent).contains(&"memory"));
+        assert_eq!(tool_names(&agent).last(), Some(&"search_history"));
+        assert!(!tool_names(&agent).contains(&"profile"));
     }
 
     /// Without a console the turn's history cannot be saved, and the turn is answered anyway.
