@@ -2,7 +2,7 @@
 name = "ailoy-example-tts"
 version = "0.1.0"
 description = "Qwen3-TTS on ncnn as an agent's skill, on ailoy's Python bindings, and the script that downloads and converts its checkpoint."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "ailoy-py",
     "virtx>=0.1.2,<0.2",
@@ -19,6 +19,8 @@ dependencies = [
 [tool.uv]
 # Scripts, not a package: `uv run` only needs the environment.
 package = false
+# The same override as ../shared/pyproject.toml, which says why.
+override-dependencies = ["pillow>=13.0.0"]
 
 [tool.uv.sources]
 # The bindings in this checkout, built by maturin on the first `uv run`.

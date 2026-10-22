@@ -2,7 +2,7 @@
 name = "tts-ncnn"
 version = "0.1.0"
 description = "Downloads Qwen3-TTS and converts it to ncnn for the tts example, on the host."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "huggingface_hub",
     "ncnn",
@@ -16,3 +16,6 @@ dependencies = [
 [tool.uv]
 # Scripts, not a package: `uv run` only needs the environment.
 package = false
+# qwen-tts depends on gradio for its demo UI, and gradio caps pillow below 13.0, the first
+# release with the fixes for 12.3.0's advisories. No script here imports gradio.
+override-dependencies = ["pillow>=13.0.0"]
