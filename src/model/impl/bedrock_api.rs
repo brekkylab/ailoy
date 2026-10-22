@@ -810,7 +810,7 @@ mod tests {
 
     #[test]
     fn claude_thinking_leaves_the_output_cap_to_converse() {
-        let claude = BedrockApiModel::new("us.anthropic.claude-sonnet-4-5", "k", "us-east-1");
+        let claude = BedrockApiModel::new("us.anthropic.claude-sonnet-5-5", "k", "us-east-1");
         let messages = [Message::new(Role::User).with_contents([Part::text("hi")])];
         let options = LangModelOptions {
             thinking_effort: Some(ThinkingEffort::High),
