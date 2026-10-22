@@ -210,7 +210,11 @@ mod tests {
         ] {
             let output = Output::new(&stdout, &stderr, 3, truncated);
             let value = output.fitted();
-            let row = format!("stdout {}, stderr {}", stdout.len(), stderr.len());
+            let row = format!(
+                "stdout {}, stderr {}",
+                stdout.chars().count(),
+                stderr.chars().count()
+            );
             assert!(fits_tool_result(&value), "{row}");
             assert_eq!(
                 value.pointer("/exit_code").and_then(|v| v.as_integer()),

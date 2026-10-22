@@ -1229,12 +1229,11 @@ mod tests {
         output.message.contents[0].as_value().unwrap().clone()
     }
 
-    /// Paging with `next_offset` reads a long body through in pieces that each fit in one
-    /// tool result. A quote or a newline takes two characters of JSON and a control character
-    /// six; Hangul takes one, in three bytes. Every
-    /// piece but the last holds as many characters as fit when `length` is left out, and
-    /// `size` characters when `length` is small: `length` itself, or `MIN_BODY_CHARS` when it
-    /// asks for fewer.
+    /// Paging with `next_offset` reads a long body through in pieces that each fit in one tool
+    /// result. A quote or a newline takes two characters of JSON and a control character six;
+    /// Hangul takes one, in three bytes. Every piece but the last holds as many characters as fit
+    /// when `length` is left out, and `size` characters when `length` is small: `length` itself, or
+    /// `MIN_BODY_CHARS` when it asks for fewer.
     #[tokio::test]
     async fn web_fetch_pages_through_a_long_body_in_pieces_that_fit() {
         for (body, length, size) in [
