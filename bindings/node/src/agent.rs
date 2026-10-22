@@ -90,6 +90,11 @@ fn built() -> napi::Error<String> {
 }
 
 #[napi(object)]
+pub struct MemoryOptions {
+    pub profile: Option<bool>,
+}
+
+#[napi(object)]
 pub struct ContextManagerOptions {
     pub max_input_tokens: Option<i64>,
     pub preserve_recent_turns: Option<u32>,
@@ -193,10 +198,20 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.shared_console(slot)))
     }
 
-    /// Remember into the memory store at `memfile`, a path in the console.
-    #[napi]
-    pub fn memory<'env>(&mut self, this: This<'env>, memfile: String) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.memory(Memory::new(memfile))))
+    /// Remember the user across sessions in the folder `dir`, a path in the console;
+    /// `options.profile` (default `true`) keeps `USER.md` and `MEMORY.md` and gives the
+    /// `memory` tool.
+    #[napi(ts_args_type = "dir: string, options?: { profile?: boolean }")]
+    pub fn memory<'env>(
+        &mut self,
+        this: This<'env>,
+        dir: String,
+        options: Option<MemoryOptions>,
+    ) -> Result<This<'env>> {
+        let profile = options.and_then(|o| o.profile).unwrap_or(true);
+        self.update(this, |b| {
+            Ok(b.memory(Memory::new(dir).with_profile(profile)))
+        })
     }
 
     #[napi]
@@ -338,7 +353,7 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<It
 #[napi]
 impl JsAgent {
     /// An agent from a spec (the object an `AgentSpec` serializes to). `options.agentProvider`
-    /// defaults to `'default'`; `memory` is the file to remember into.
+    /// defaults to `'default'`; `memory` is the folder to remember into.
     #[napi(
         ts_args_type = "spec: AgentSpec, options?: { agentProvider?: string; history?: Array<Message>; console?: ConsoleClient; memory?: string }",
         ts_return_type = "Promise<Agent>"
@@ -367,8 +382,8 @@ impl JsAgent {
                 if let Some(console) = options.get::<Object>("console").map_err(get)? {
                     state = state.with_console_slot(console::attach(&console)?);
                 }
-                if let Some(memfile) = options.get::<String>("memory").map_err(get)? {
-                    state = state.with_memory(Memory::new(memfile));
+                if let Some(dir) = options.get::<String>("memory").map_err(get)? {
+                    state = state.with_memory(Memory::new(dir));
                 }
             }
             Ok((spec, agent_provider, state))

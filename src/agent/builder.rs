@@ -133,14 +133,16 @@ impl AgentBuilder {
         self
     }
 
-    /// Let this agent remember into `memory`.
+    /// Let this agent remember the user across sessions in the folder `memory` names.
     ///
-    /// Adds the `mem_search` and `mem_insert` tools; they are not spec tools because the
-    /// store is a per-agent value, not a name in the [`ToolProvider`](crate::tool::ToolProvider).
+    /// Each finished turn is added to the folder's history, which the `mem_search` tool
+    /// searches; with a profile (the default), the `memory` tool keeps short notes that the
+    /// system message shows from the next session on. Everything runs on the
+    /// [`console`](Self::console), so one is required. A missing folder is reported by the
+    /// tools and logged at the end of a turn, not by [`build`](Self::build).
     ///
-    /// The store must already exist (`mem init`); a missing file is reported by the first
-    /// memory tool call, not by [`build`](Self::build). Memory tools run on the
-    /// [`console`](Self::console), so one is required too.
+    /// The memory section goes into the system message the agent writes, not into one a
+    /// [`history`](Self::history) brings.
     pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
         self.memory = Some(memory.into());
         self
@@ -344,14 +346,14 @@ mod tests {
     #[tokio::test]
     async fn test_builder_memory_is_applied() {
         let agent = builder()
-            .memory(Memory::new("/work/notes.sqlite"))
+            .memory(Memory::new("/work/memory").with_profile(false))
             .build()
             .await
             .unwrap();
 
         assert_eq!(
             agent.state.memory,
-            Some(Memory::new("/work/notes.sqlite")),
+            Some(Memory::new("/work/memory").with_profile(false)),
             "the memory the builder was given is the one on the state"
         );
     }
@@ -360,11 +362,11 @@ mod tests {
     #[tokio::test]
     async fn test_builder_memory_takes_a_path() {
         let agent = builder()
-            .memory(std::path::Path::new("/work/notes.sqlite"))
+            .memory(std::path::Path::new("/work/memory"))
             .build()
             .await
             .unwrap();
 
-        assert_eq!(agent.state.memory, Some(Memory::new("/work/notes.sqlite")));
+        assert_eq!(agent.state.memory, Some(Memory::new("/work/memory")));
     }
 }

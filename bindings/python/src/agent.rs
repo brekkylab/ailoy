@@ -140,9 +140,14 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.shared_console(slot)))
     }
 
-    /// Remember into the memory store at `memfile`, a path in the console.
-    fn memory(slf: PyRef<'_, Self>, memfile: String) -> PyResult<PyRef<'_, Self>> {
-        Self::update(slf, |b| Ok(b.memory(Memory::new(memfile))))
+    /// Remember the user across sessions in the folder `dir`, a path in the console;
+    /// `profile` keeps `USER.md` and `MEMORY.md` and gives the `memory` tool.
+    #[pyo3(signature = (dir, *, profile = true))]
+    fn memory(slf: PyRef<'_, Self>, dir: String, profile: bool) -> PyResult<PyRef<'_, Self>> {
+        Self::update(
+            slf,
+            |b| Ok(b.memory(Memory::new(dir).with_profile(profile))),
+        )
     }
 
     fn skill(slf: PyRef<'_, Self>, dir: String) -> PyResult<PyRef<'_, Self>> {
@@ -272,8 +277,8 @@ impl PyAgent {
         if let Some(console) = console {
             state = state.with_console_slot(console::attach(&console)?);
         }
-        if let Some(memfile) = memory {
-            state = state.with_memory(Memory::new(memfile));
+        if let Some(dir) = memory {
+            state = state.with_memory(Memory::new(dir));
         }
         future_into_py(py, async move {
             let agent = Agent::try_with_provider_and_state(spec, &agent_provider, state)

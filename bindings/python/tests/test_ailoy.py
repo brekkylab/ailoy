@@ -233,6 +233,19 @@ async def test_history_is_refused_mid_turn_and_turns_take_turns():
     assert texts(await run(agent, "hi")) == ["hello"]
 
 
+async def test_memory_options_shape_the_system_message():
+    def system(agent):
+        return agent.history[0]["contents"][0]["text"]
+
+    agent = await AgentBuilder(MODEL).agent_provider(PROVIDER).memory("/m").build()
+    assert "# Memory" in system(agent) and "About the user" in system(agent)
+
+    agent = await (
+        AgentBuilder(MODEL).agent_provider(PROVIDER).memory("/m", profile=False).build()
+    )
+    assert "# Memory" in system(agent) and "About the user" not in system(agent)
+
+
 async def test_from_spec_and_closing():
     spec = {"model": MODEL, "instruction": "From a spec."}
     history = [{"role": "user", "contents": [{"type": "text", "text": "earlier"}]}]

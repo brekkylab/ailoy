@@ -298,6 +298,21 @@ test('a custom provider serves an agent', async (t) => {
   assert.deepEqual(seen, [['mine', 'echo']])
 })
 
+test('memory options shape the system message', async (t) => {
+  setLangModelProvider('mem-echo', (_, name) => new Echo(name))
+  t.after(() => removeLangModelProvider('mem-echo'))
+  const system = (agent) => agent.history[0].contents[0].text
+
+  const withProfile = await new AgentBuilder('mem-echo/echo').memory('/m').build()
+  assert.match(system(withProfile), /# Memory[\s\S]*About the user/)
+
+  const without = await new AgentBuilder('mem-echo/echo')
+    .memory('/m', { profile: false })
+    .build()
+  assert.match(system(without), /# Memory/)
+  assert.doesNotMatch(system(without), /About the user/)
+})
+
 test('a custom provider may stream and be async', async (t) => {
   setLangModelProvider('mine-async', (org, name) => new StreamingEcho(name ?? org))
   t.after(() => removeLangModelProvider('mine-async'))

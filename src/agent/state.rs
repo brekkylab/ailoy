@@ -22,7 +22,7 @@ pub struct AgentState {
     /// `ConsoleClient` method takes `&mut self`).
     pub console: Arc<Mutex<Option<ConsoleClient>>>,
 
-    /// The memory store this agent remembers into; `None` means no memory tools.
+    /// What this agent remembers of the user; `None` gives it no memory tools.
     pub memory: Option<Memory>,
 
     /// Input tokens of the last model call, which a
@@ -52,10 +52,7 @@ impl AgentState {
         self
     }
 
-    /// Remember into `memory`, which adds the `mem_search` and `mem_insert` tools.
-    ///
-    /// The store must already exist (`mem init`); a missing file surfaces on the first
-    /// memory tool call.
+    /// Remember into `memory`. See [`AgentBuilder::memory`](super::AgentBuilder::memory).
     pub fn with_memory(mut self, memory: Memory) -> Self {
         self.memory = Some(memory);
         self
