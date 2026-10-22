@@ -25,7 +25,7 @@ A `Recipe` is a base image plus steps, much like a Dockerfile. `ImageClient` bui
 ```python [Python]
 import asyncio
 
-from virtx import ImageClient, ImageSource, Recipe, ensure_virtx
+from virtx import ImageClient, Recipe, ensure_virtx
 
 
 async def main() -> None:
@@ -40,15 +40,12 @@ async def main() -> None:
         for image in await images.list():
             print(image.digest, image.refs)
 
-        # Remove it by its reference (or ImageSource.digest(...) for its digest).
-        await images.remove(ImageSource.reference("plot:latest"))
-
 
 asyncio.run(main())
 ```
 
 ```js [Node.js]
-const { ImageClient, ImageSource, Recipe, ensureVirtx } = require('@brekkylab/virtx')
+const { ImageClient, Recipe, ensureVirtx } = require('@brekkylab/virtx')
 
 async function main() {
   // Fetches virtx's server into its cache the first time; a no-op after.
@@ -63,9 +60,6 @@ async function main() {
     for (const image of await images.list()) {
       console.log(image.digest, image.refs)
     }
-
-    // Remove it by its reference (or ImageSource.digest(...) for its digest).
-    await images.remove(ImageSource.reference('plot:latest'))
   } finally {
     await images.close()
   }
@@ -75,7 +69,7 @@ main()
 ```
 
 ```rust [Rust]
-use virtx::image::{ImageClient, ImageSource, Recipe};
+use virtx::image::{ImageClient, Recipe};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -90,9 +84,6 @@ async fn main() -> anyhow::Result<()> {
     for image in images.list().await? {
         println!("{} {:?}", image.digest, image.refs);
     }
-
-    // Remove it by its reference (or ImageSource::digest(..) for its digest).
-    images.remove(ImageSource::reference("plot:latest")).await?;
     Ok(())
 }
 ```
@@ -170,6 +161,37 @@ async fn main() -> anyhow::Result<()> {
     print!("{}", String::from_utf8_lossy(&result.stdout));
     Ok(())
 }
+```
+
+:::
+
+Once nothing boots from a stored image, remove it by its reference, or by `ImageSource.digest(...)` (`ImageSource::digest(..)` in Rust) for its digest:
+
+::: code-group
+
+```python [Python]
+from virtx import ImageClient, ImageSource
+
+async with await ImageClient.try_new() as images:
+    await images.remove(ImageSource.reference("plot:latest"))
+```
+
+```js [Node.js]
+const { ImageClient, ImageSource } = require('@brekkylab/virtx')
+
+const images = await ImageClient.tryNew()
+try {
+  await images.remove(ImageSource.reference('plot:latest'))
+} finally {
+  await images.close()
+}
+```
+
+```rust [Rust]
+use virtx::image::{ImageClient, ImageSource};
+
+let mut images = ImageClient::try_new().await?;
+images.remove(ImageSource::reference("plot:latest")).await?;
 ```
 
 :::
