@@ -26,10 +26,6 @@ use crate::{
 /// Region used when none is set in the environment.
 const DEFAULT_REGION: &str = "us-east-1";
 
-/// `maxTokens` sent while Claude thinks: thinking counts against it, and the Converse
-/// default is too small to hold it. It stays above the largest thinking budget.
-const CLAUDE_THINKING_MAX_TOKENS: i64 = 32000;
-
 /// Runs a model on Amazon Bedrock through the Converse API.
 ///
 /// Converse takes the same request for every model family; what it has no common field
@@ -151,11 +147,8 @@ impl BedrockApiModel {
                         "output_config": {"effort": effort_name(effort)},
                     })
                 };
+                // No `maxTokens`: Converse's default is the model's own cap.
                 obj.insert("additionalModelRequestFields".into(), thinking);
-                obj.insert(
-                    "inferenceConfig".into(),
-                    to_value!({"maxTokens": CLAUDE_THINKING_MAX_TOKENS}),
-                );
             } else if self.is_vendor("openai") {
                 obj.insert(
                     "additionalModelRequestFields".into(),
@@ -813,6 +806,19 @@ mod tests {
         let calls = out.message.tool_calls.unwrap();
         assert_eq!(calls.len(), 1);
         assert!(matches!(out.finish_reason, FinishReason::ToolCall {}));
+    }
+
+    #[test]
+    fn claude_thinking_leaves_the_output_cap_to_converse() {
+        let claude = BedrockApiModel::new("us.anthropic.claude-sonnet-5-5", "k", "us-east-1");
+        let messages = [Message::new(Role::User).with_contents([Part::text("hi")])];
+        let options = LangModelOptions {
+            thinking_effort: Some(ThinkingEffort::High),
+            ..Default::default()
+        };
+        let body = claude.body(&messages, &[], &options).unwrap();
+        assert!(body["additionalModelRequestFields"]["thinking"].is_object());
+        assert!(body.get("inferenceConfig").is_none());
     }
 
     #[test]
