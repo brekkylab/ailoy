@@ -2,10 +2,10 @@
 //! from the language models'.
 //!
 //! An org's provider is a backend (`'api'`, the org's own API, is the one image models run
-//! through) or a factory of JavaScript's own, as [`ImageModelProvider::custom`] is in Rust:
-//! called with the org and the name after it (`null` for a desc naming only the org), it
-//! returns a model. That is an `ImageModel`, used as is, or any object with
-//! `generate(prompt, options)`, returning an `ImageOutput` or a promise of one.
+//! through) or a factory of JavaScript's own: called with the org and the name after it
+//! (`null` for a desc naming only the org), it returns a model. That is an `ImageModel`, used
+//! as is, or any object with `generate(prompt, options)`, returning an `ImageOutput` or a
+//! promise of one.
 //!
 //! `generate` is called with `this` as the model. The factory is called whenever
 //! `ImageModel.create` builds a model of the org, from the runtime's thread, which waits for

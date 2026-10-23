@@ -9,10 +9,10 @@ use crate::{
 
 /// Options for one image generation call, in one section per API.
 ///
-/// Each section holds one API's parameters under that API's own names, and only models
-/// that call that API read it; the others ignore it. An unset section, like an unset field,
-/// leaves that API's defaults in place. Fill several sections to switch between models of
-/// different APIs with the same options.
+/// Each section holds one API's parameters under that API's own names and is read only by
+/// models that call that API. An unset section, like an unset field, leaves that API's
+/// defaults in place. Fill several sections to switch between models of different APIs with
+/// the same options.
 ///
 /// Values are sent as written: the API decides which it takes, and a refusal comes back as
 /// its error. A combination an API never accepts fails before anything is sent. Unknown
@@ -23,8 +23,7 @@ pub struct ImageModelOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openai: Option<OpenAiImageOptions>,
 
-    /// The Gemini API's parameters, read by models with a `google/…` desc: the org is
-    /// Google, the API is Gemini.
+    /// The Gemini API's parameters, read by models with a `google/…` desc.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini: Option<GeminiImageOptions>,
 
@@ -64,8 +63,8 @@ pub struct OpenAiImageOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<String>,
 
-    /// Extra request fields, merged into this API's request body after the fields above;
-    /// for parameters these options do not cover. Written as the API's own JSON.
+    /// Request fields these options do not cover, in the API's own JSON, deep-merged into the
+    /// request body after the fields above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
 }
@@ -86,8 +85,8 @@ pub struct GeminiImageOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<String>,
 
-    /// Extra request fields, merged into this API's request body after the fields above;
-    /// for parameters these options do not cover. Written as the API's own JSON.
+    /// Request fields these options do not cover, in the API's own JSON, deep-merged into the
+    /// request body after the fields above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
 }
@@ -126,8 +125,8 @@ pub struct OpenRouterImageOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<String>,
 
-    /// Extra request fields, merged into this API's request body after the fields above;
-    /// for parameters these options do not cover. Written as the API's own JSON.
+    /// Request fields these options do not cover, in the API's own JSON, deep-merged into the
+    /// request body after the fields above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
 }

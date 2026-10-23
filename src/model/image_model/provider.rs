@@ -116,8 +116,7 @@ pub fn set_image_model_provider(org: impl Into<String>, provider: impl Into<Imag
         .insert(org.into(), provider.into());
 }
 
-/// The provider a desc's image model is built through, the one set for its org, if there
-/// is one. The desc is as [`create_image_model`] takes it.
+/// The provider set for the org of `desc` (`<org>/<name>` or `<org>`), if any.
 pub fn get_image_model_provider(desc: &str) -> Option<ImageModelProvider> {
     let org = desc.split_once('/').map_or(desc, |(org, _)| org);
     IMAGE_MODEL_PROVIDERS.read().unwrap().get(org).cloned()

@@ -2,13 +2,13 @@
 //! from the language models'.
 //!
 //! An org's provider is a backend (`"api"`, the org's own API, is the one image models run
-//! through) or a factory of Python's own, as [`ImageModelProvider::custom`] is in Rust: called
-//! with the org and the name after it (`None` for a desc naming only the org), it returns a
-//! model. That is an `ImageModel`, used as is, or any object with `generate(prompt, options)`,
-//! returning an `ImageOutput` dict or an awaitable of one, with the options in their dict form.
+//! through) or a factory of Python's own: called with the org and the name after it (`None`
+//! for a desc naming only the org), it returns a model. That is an `ImageModel`, used as is, or
+//! any object with `generate(prompt, options)`, returning an `ImageOutput` dict or an awaitable
+//! of one, with the options in their dict form.
 //!
 //! The factory is called synchronously, whenever `ImageModel.create` builds a model of the org;
-//! `generate` off the event loop when synchronous and on the caller's when async, as tools are.
+//! `generate` off the event loop when synchronous and on the caller's when async.
 
 use std::sync::Arc;
 

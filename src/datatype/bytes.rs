@@ -26,7 +26,7 @@ impl Bytes {
         STANDARD.encode(&self.0)
     }
 
-    /// Decodes standard (padded) base64; the inverse of [`base64`](Self::base64).
+    /// Decodes standard (padded) base64.
     pub fn from_base64(encoded: impl AsRef<[u8]>) -> anyhow::Result<Self> {
         use base64::{Engine, engine::general_purpose::STANDARD};
         let decoded = STANDARD
@@ -35,12 +35,10 @@ impl Bytes {
         Ok(Self::from(decoded))
     }
 
-    /// The number of bytes.
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
-    /// Whether there are no bytes.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }

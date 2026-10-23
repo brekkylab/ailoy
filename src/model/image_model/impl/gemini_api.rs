@@ -81,7 +81,7 @@ impl GeminiImageApiModel {
             "generationConfig": config,
         })
         .into();
-        // The prompt and the asked-for image output are this model's own.
+        // `extra` may not replace the prompt or the response modalities, which include `IMAGE`.
         super::merge_extra(
             &mut body,
             options.extra.as_ref(),
