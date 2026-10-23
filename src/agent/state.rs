@@ -22,8 +22,13 @@ pub struct AgentState {
     /// `ConsoleClient` method takes `&mut self`).
     pub console: Arc<Mutex<Option<ConsoleClient>>>,
 
-    /// The memory store this agent remembers into; `None` means no memory tools.
+    /// What this agent remembers of the user; `None` gives it no memory tools.
     pub memory: Option<Memory>,
+
+    /// Which conversation this is, so what it adds to a [`Memory`] is told apart from other
+    /// conversations kept in the same one. Set when the agent is made if left `None`; to carry a
+    /// conversation on, pass the id it had along with its history.
+    pub conversation_id: Option<String>,
 
     /// Input tokens of the last model call, which a
     /// [`ContextManager`](super::ContextManager) checks against its limit.
@@ -55,10 +60,13 @@ impl AgentState {
         self
     }
 
-    /// Remember into `memory`, which adds the `mem_search` and `mem_insert` tools.
-    ///
-    /// The store must already exist (`mem init`); a missing file surfaces on the first
-    /// memory tool call.
+    /// Name this conversation; see [`AgentState::conversation_id`].
+    pub fn with_conversation_id(mut self, id: impl Into<String>) -> Self {
+        self.conversation_id = Some(id.into());
+        self
+    }
+
+    /// Remember into `memory`. See [`AgentBuilder::memory`](super::AgentBuilder::memory).
     pub fn with_memory(mut self, memory: Memory) -> Self {
         self.memory = Some(memory);
         self

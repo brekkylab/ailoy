@@ -330,6 +330,35 @@ test('a custom provider serves an agent', async (t) => {
   assert.deepEqual(seen, [['mine', 'echo']])
 })
 
+test('memory options shape the system message', async (t) => {
+  setLangModelProvider('mem-echo', (_, name) => new Echo(name))
+  t.after(() => removeLangModelProvider('mem-echo'))
+  const system = (agent) => agent.history[0].contents[0].text
+
+  const without = await new AgentBuilder('mem-echo/echo').memory('/m').build()
+  assert.deepEqual(without.history, [])
+
+  const withProfile = await new AgentBuilder('mem-echo/echo')
+    .memory('/m', { profile: true, notesLimit: 800 })
+    .build()
+  assert.match(system(withProfile), /## About the user \[0\/2000 chars\]/)
+  assert.match(system(withProfile), /## Your notes \[0\/800 chars\]/)
+
+  assert.throws(() => new AgentBuilder('m').memory('/m', { userLimit: -1 }), { code: 'INVALID_ARG' })
+})
+
+test('a conversation id is made, or kept when given', async (t) => {
+  setLangModelProvider('conv-echo', (_, name) => new Echo(name))
+  t.after(() => removeLangModelProvider('conv-echo'))
+
+  const made = await new AgentBuilder('conv-echo/echo').build()
+  assert.ok(made.conversationId)
+  const kept = await new AgentBuilder('conv-echo/echo').conversationId('c-42').build()
+  assert.equal(kept.conversationId, 'c-42')
+  const again = await Agent.fromSpec({ model: 'conv-echo/echo' }, { conversationId: 'c-42' })
+  assert.equal(again.conversationId, 'c-42')
+})
+
 test('a custom provider may stream and be async', async (t) => {
   setLangModelProvider('mine-async', (org, name) => new StreamingEcho(name ?? org))
   t.after(() => removeLangModelProvider('mine-async'))

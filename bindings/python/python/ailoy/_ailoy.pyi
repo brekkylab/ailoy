@@ -68,7 +68,15 @@ class AgentBuilder:
         ``start_url`` is the page the agent's tab opens on.
         """
         ...
-    def memory(self, memfile: str) -> Self: ...
+    def memory(
+        self,
+        dir: str,
+        *,
+        profile: bool = False,
+        user_limit: int | None = None,
+        notes_limit: int | None = None,
+    ) -> Self: ...
+    def conversation_id(self, id: str) -> Self: ...
     def skill(self, dir: str) -> Self: ...
     def context_manager(
         self,
@@ -94,9 +102,12 @@ class Agent:
         history: list[Message] | None = None,
         console: ConsoleClient | None = None,
         memory: str | None = None,
+        conversation_id: str | None = None,
     ) -> Agent: ...
     @property
     def history(self) -> list[Message]: ...
+    @property
+    def conversation_id(self) -> str: ...
     async def start_browser(self) -> None:
         """Connect the browser now rather than on the agent's first use.
 

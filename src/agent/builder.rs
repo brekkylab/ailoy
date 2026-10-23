@@ -43,6 +43,8 @@ pub struct AgentBuilder {
 
     memory: Option<Memory>,
 
+    conversation_id: Option<String>,
+
     context_manager: Option<ContextManager>,
 
     browser: Option<Browser>,
@@ -57,6 +59,7 @@ impl AgentBuilder {
             history: Vec::new(),
             console: None,
             memory: None,
+            conversation_id: None,
             context_manager: None,
             browser: None,
         }
@@ -132,16 +135,25 @@ impl AgentBuilder {
         self
     }
 
-    /// Let this agent remember into `memory`.
+    /// Let this agent remember the user across sessions in the folder `memory` names.
     ///
-    /// Adds the `mem_search` and `mem_insert` tools; they are not spec tools because the
-    /// store is a per-agent value, not a name with a [`ToolProvider`](crate::tool::ToolProvider).
+    /// Each finished turn is added to the folder's history, which the `search_history` tool
+    /// searches; with a profile ([`Memory::with_profile`]), the `profile` tool keeps short notes that the
+    /// system message shows from the next session on. Everything runs on the
+    /// [`console`](Self::console), so one is required. A missing folder is reported by the
+    /// tools and logged at the end of a turn, not by [`build`](Self::build).
     ///
-    /// The store must already exist (`mem init`); a missing file is reported by the first
-    /// memory tool call, not by [`build`](Self::build). Memory tools run on the
-    /// [`console`](Self::console), so one is required too.
+    /// The profile's section goes into the system message the agent writes, not into one a
+    /// [`history`](Self::history) brings; without a profile the system message is left as is.
     pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
         self.memory = Some(memory.into());
+        self
+    }
+
+    /// Name this conversation, to carry one on along with its [`history`](Self::history); a
+    /// new one is made otherwise. See [`AgentState::conversation_id`].
+    pub fn conversation_id(mut self, id: impl Into<String>) -> Self {
+        self.conversation_id = Some(id.into());
         self
     }
 
@@ -177,6 +189,7 @@ impl AgentBuilder {
             history,
             console,
             memory,
+            conversation_id,
             context_manager,
             browser,
         } = self;
@@ -187,6 +200,9 @@ impl AgentBuilder {
         }
         if let Some(memory) = memory {
             state = state.with_memory(memory);
+        }
+        if let Some(id) = conversation_id {
+            state = state.with_conversation_id(id);
         }
         if let Some(browser) = browser {
             browser.check()?;
@@ -347,14 +363,14 @@ mod tests {
     #[tokio::test]
     async fn test_builder_memory_is_applied() {
         let agent = builder()
-            .memory(Memory::new("/work/notes.sqlite"))
+            .memory(Memory::new("/work/memory").with_profile(true))
             .build()
             .await
             .unwrap();
 
         assert_eq!(
             agent.state.memory,
-            Some(Memory::new("/work/notes.sqlite")),
+            Some(Memory::new("/work/memory").with_profile(true)),
             "the memory the builder was given is the one on the state"
         );
     }
@@ -363,11 +379,11 @@ mod tests {
     #[tokio::test]
     async fn test_builder_memory_takes_a_path() {
         let agent = builder()
-            .memory(std::path::Path::new("/work/notes.sqlite"))
+            .memory(std::path::Path::new("/work/memory"))
             .build()
             .await
             .unwrap();
 
-        assert_eq!(agent.state.memory, Some(Memory::new("/work/notes.sqlite")));
+        assert_eq!(agent.state.memory, Some(Memory::new("/work/memory")));
     }
 }
