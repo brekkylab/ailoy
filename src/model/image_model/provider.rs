@@ -7,10 +7,19 @@
 //! ```ignore
 //! use ailoy::model::*;
 //!
+//! // Each model reads only its own API's section, so one set of options serves both.
+//! let options = ImageModelOptions {
+//!     openai: Some(OpenAiImageOptions { quality: Some(OpenAiImageQuality::High), ..Default::default() }),
+//!     gemini: Some(GeminiImageOptions { aspect_ratio: Some(GeminiAspectRatio::Ratio16x9), ..Default::default() }),
+//!     ..Default::default()
+//! };
 //! let model = create_image_model("openai/gpt-image-1").await?;
-//! let output = model.generate("a red cube", &ImageModelOptions::default()).await?;
+//! let output = model.generate("a red cube", &options).await?;
+//! let model = create_image_model("google/gemini-3.1-flash-image").await?;
+//! let output = model.generate("a red cube", &options).await?;
 //!
-//! // Through OpenRouter, which runs `bytedance-seed/seedream-5-0-pro`.
+//! // Through OpenRouter, which runs `bytedance-seed/seedream-5-0-pro` and reads the
+//! // `openrouter` section.
 //! let model = create_image_model("openrouter/bytedance-seed/seedream-5-0-pro").await?;
 //!
 //! // A model of your own.
@@ -197,7 +206,10 @@ mod tests {
             // An out-of-range `n` is refused before sending, in OpenRouter's words.
             Ok(model) => {
                 let options = crate::model::ImageModelOptions {
-                    n: Some(0),
+                    openrouter: Some(crate::model::OpenRouterImageOptions {
+                        n: Some(0),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 };
                 let err = model.generate("x", &options).await.unwrap_err();

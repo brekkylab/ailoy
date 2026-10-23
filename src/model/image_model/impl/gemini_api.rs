@@ -7,7 +7,7 @@ use futures::future::BoxFuture;
 use crate::{
     datatype::{Bytes, Value},
     message::{PartImage, TokenUsage},
-    model::{AspectRatio, ImageModelOptions, ImageOutput, ImageSize, InferImageModel},
+    model::{GeminiAspectRatio, GeminiImageSize, ImageModelOptions, ImageOutput, InferImageModel},
     to_value,
 };
 
@@ -49,12 +49,11 @@ impl GeminiImageApiModel {
         Ok(Self::new(model, api_key))
     }
 
-    /// The request body for one call.
+    /// The request body for one call, from the `gemini` section alone.
     fn body(&self, prompt: &str, options: &ImageModelOptions) -> serde_json::Value {
-        // `aspect_ratio` goes out as `imageConfig.aspectRatio` and `image_size` as
-        // `imageConfig.imageSize`; the other options are not read. Both are sent as asked:
-        // a model that does not take a value says so, and `explain_error` ties that to the
-        // option.
+        let options = options.gemini.clone().unwrap_or_default();
+        // Sent as asked, in `imageConfig`'s camelCase: a model that does not take a value
+        // says so, and `explain_error` ties that to the option.
         let mut image_config = Value::object_empty();
         let image_obj = image_config.as_object_mut().unwrap();
         if let Some(ratio) = options.aspect_ratio {
@@ -95,7 +94,10 @@ impl InferImageModel for GeminiImageApiModel {
         let url = endpoint(&self.model);
         let api_key = self.api_key.clone();
         let model = self.model.clone();
-        let (aspect_ratio, image_size) = (options.aspect_ratio, options.image_size);
+        let (aspect_ratio, image_size) = options
+            .gemini
+            .as_ref()
+            .map_or((None, None), |g| (g.aspect_ratio, g.image_size));
         Box::pin(async move {
             let response = send(&url, &api_key, &body, &model, aspect_ratio, image_size).await?;
             let val: Value = serde_json::from_str(&response.text().await?)
@@ -129,8 +131,8 @@ async fn send(
     api_key: &str,
     body: &serde_json::Value,
     model: &str,
-    aspect_ratio: Option<AspectRatio>,
-    image_size: Option<ImageSize>,
+    aspect_ratio: Option<GeminiAspectRatio>,
+    image_size: Option<GeminiImageSize>,
 ) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
     const MAX_WAIT_SECS: u64 = 10;
@@ -197,8 +199,8 @@ fn is_permanent_quota(body: &str) -> bool {
 /// once the model has said no, so no table of what each model takes is kept.
 fn explain_error(
     model: &str,
-    aspect_ratio: Option<AspectRatio>,
-    image_size: Option<ImageSize>,
+    aspect_ratio: Option<GeminiAspectRatio>,
+    image_size: Option<GeminiImageSize>,
     status: u16,
     body: &str,
 ) -> Option<String> {
@@ -210,7 +212,7 @@ fn explain_error(
         && body.contains("aspect_ratio")
     {
         hints.push(format!(
-            "`aspect_ratio: {}` is not accepted by '{model}'; try another ratio, or leave it \
+            "`gemini.aspect_ratio: {}` is not accepted by '{model}'; try another ratio, or leave it \
              unset to let the model choose",
             <&str>::from(ratio),
         ));
@@ -220,7 +222,7 @@ fn explain_error(
             || (body.contains("Image size") && body.contains("not supported")))
     {
         hints.push(format!(
-            "`image_size: {}` is not accepted by '{model}'; try another size, or leave it \
+            "`gemini.image_size: {}` is not accepted by '{model}'; try another size, or leave it \
              unset to use the model's default size",
             <&str>::from(size),
         ));
@@ -336,7 +338,10 @@ fn parse_usage(usage: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AspectRatio, ImageBackground, ImageFormat, ImageQuality};
+    use crate::model::{
+        GeminiImageOptions, OpenAiImageOptions, OpenAiImageQuality, OpenRouterAspectRatio,
+        OpenRouterImageOptions,
+    };
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
@@ -347,6 +352,13 @@ mod tests {
     fn body(options: &ImageModelOptions) -> serde_json::Value {
         GeminiImageApiModel::new("gemini-3.1-flash-image", "AIza-test")
             .body("a red cube on a white table", options)
+    }
+
+    fn with_gemini(gemini: GeminiImageOptions) -> ImageModelOptions {
+        ImageModelOptions {
+            gemini: Some(gemini),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -362,11 +374,10 @@ mod tests {
 
     #[test]
     fn body_sends_aspect_ratio_and_image_size() {
-        let options = ImageModelOptions {
-            aspect_ratio: Some(AspectRatio::Ratio16x9),
-            image_size: Some(ImageSize::Size512),
-            ..Default::default()
-        };
+        let options = with_gemini(GeminiImageOptions {
+            aspect_ratio: Some(GeminiAspectRatio::Ratio16x9),
+            image_size: Some(GeminiImageSize::Size512),
+        });
         assert_eq!(
             body(&options)["generationConfig"]["imageConfig"],
             serde_json::json!({"aspectRatio": "16:9", "imageSize": "512"})
@@ -374,14 +385,19 @@ mod tests {
     }
 
     #[test]
-    fn body_ignores_fields_gemini_does_not_read() {
-        // `quality` must not turn into a resolution, nor `n` into a candidate count.
+    fn body_ignores_other_sections() {
+        // Another API's `quality` must not turn into a resolution, nor its `n` into a
+        // candidate count, nor its `aspect_ratio` into Gemini's.
         let options = ImageModelOptions {
-            n: Some(2),
-            size: Some("1536x1024".to_owned()),
-            quality: Some(ImageQuality::High),
-            output_format: Some(ImageFormat::Jpeg),
-            background: Some(ImageBackground::Transparent),
+            openai: Some(OpenAiImageOptions {
+                n: Some(2),
+                quality: Some(OpenAiImageQuality::High),
+                ..Default::default()
+            }),
+            openrouter: Some(OpenRouterImageOptions {
+                aspect_ratio: Some(OpenRouterAspectRatio::Ratio16x9),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         assert_eq!(body(&options), body(&ImageModelOptions::default()));
@@ -389,12 +405,12 @@ mod tests {
 
     #[test]
     fn explain_error_names_the_image_size_option() {
-        let with_size = Some(ImageSize::Size512);
+        let with_size = Some(GeminiImageSize::Size512);
         let model = "gemini-3.1-flash-lite-image";
 
         let hint = explain_error(model, None, with_size, 400, SIZE_REFUSAL)
             .expect("an imageSize refusal is explained");
-        assert!(hint.contains("`image_size: 512`"), "{hint}");
+        assert!(hint.contains("`gemini.image_size: 512`"), "{hint}");
         assert!(hint.contains(model), "{hint}");
         assert!(
             hint.contains("leave it unset"),
@@ -420,12 +436,12 @@ mod tests {
         let hint = explain_error(
             model,
             None,
-            Some(ImageSize::Size768),
+            Some(GeminiImageSize::Size512),
             400,
-            r#"{"error":{"code":400,"message":"Unsupported image_size '768'. Supported values are: 1K, 2K, 4K, 512"}}"#,
+            r#"{"error":{"code":400,"message":"Unsupported image_size '512'. Supported values are: 1K, 2K, 4K"}}"#,
         )
         .expect("an image_size refusal is explained");
-        assert!(hint.contains("`image_size: 768`"), "{hint}");
+        assert!(hint.contains("`gemini.image_size: 512`"), "{hint}");
     }
 
     #[test]
@@ -433,15 +449,16 @@ mod tests {
         const RATIO_REFUSAL: &str = r#"{"error":{"code":400,"message":"aspect_ratio must be one of '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'","status":"INVALID_ARGUMENT"}}"#;
         let model = "gemini-3.1-flash-image";
 
-        let hint = explain_error(model, Some(AspectRatio::Auto), None, 400, RATIO_REFUSAL)
+        let ratio = Some(GeminiAspectRatio::Ratio1x8);
+        let hint = explain_error(model, ratio, None, 400, RATIO_REFUSAL)
             .expect("an aspect_ratio refusal is explained");
-        assert!(hint.contains("`aspect_ratio: auto`"), "{hint}");
+        assert!(hint.contains("`gemini.aspect_ratio: 1:8`"), "{hint}");
         assert!(hint.contains(model), "{hint}");
         assert!(hint.contains("leave it unset"), "{hint}");
         assert!(!hint.contains("image_size"), "{hint}");
 
         assert!(explain_error(model, None, None, 400, RATIO_REFUSAL).is_none());
-        assert!(explain_error(model, Some(AspectRatio::Auto), None, 429, RATIO_REFUSAL).is_none());
+        assert!(explain_error(model, ratio, None, 429, RATIO_REFUSAL).is_none());
     }
 
     #[test]
@@ -656,7 +673,7 @@ mod tests {
 
     async fn send_to(
         url: &str,
-        image_size: Option<ImageSize>,
+        image_size: Option<GeminiImageSize>,
     ) -> anyhow::Result<reqwest::Response> {
         send(
             url,
@@ -725,14 +742,14 @@ mod tests {
     async fn send_explains_a_size_refusal() {
         let (url, calls) = mock(|_| (400, SIZE_REFUSAL)).await;
 
-        let err = send_to(&url, Some(ImageSize::Size512))
+        let err = send_to(&url, Some(GeminiImageSize::Size512))
             .await
             .unwrap_err()
             .to_string();
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 
         assert!(err.contains("400"), "{err}");
-        assert!(err.contains("`image_size: 512`"), "{err}");
+        assert!(err.contains("`gemini.image_size: 512`"), "{err}");
         assert!(
             err.contains("Image size 512 is not supported"),
             "the API's own message is kept: {err}"
@@ -747,10 +764,10 @@ mod tests {
             eprintln!("GEMINI_API_KEY is not set; skipping");
             return;
         };
-        let options = ImageModelOptions {
-            aspect_ratio: Some(AspectRatio::Ratio16x9),
+        let options = with_gemini(GeminiImageOptions {
+            aspect_ratio: Some(GeminiAspectRatio::Ratio16x9),
             ..Default::default()
-        };
+        });
 
         let out = model
             .generate("A single red cube on a plain white background", &options)

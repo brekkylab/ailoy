@@ -8,7 +8,8 @@ use crate::{
     datatype::{Bytes, Value},
     message::{PartImage, TokenUsage},
     model::{
-        ImageBackground, ImageFormat, ImageModelOptions, ImageOutput, ImageSize, InferImageModel,
+        ImageModelOptions, ImageOutput, InferImageModel, OpenRouterImageBackground,
+        OpenRouterImageFormat, OpenRouterResolution,
     },
     to_value,
 };
@@ -50,11 +51,10 @@ impl OpenRouterImageApiModel {
         Ok(Self::new(model, api_key))
     }
 
-    /// The request body for one call. A combination OpenRouter never accepts fails here,
-    /// before anything is sent.
+    /// The request body for one call, from the `openrouter` section alone. A combination
+    /// OpenRouter never accepts fails here, before anything is sent.
     fn body(&self, prompt: &str, options: &ImageModelOptions) -> anyhow::Result<serde_json::Value> {
-        // Every option goes out under the same name, except `image_size`, which goes out
-        // as `resolution`.
+        let options = options.openrouter.clone().unwrap_or_default();
         let mut body = to_value!({
             "model": self.model.as_str(),
             "prompt": prompt,
@@ -71,8 +71,8 @@ impl OpenRouterImageApiModel {
         if let Some(size) = &options.size {
             obj.insert("size".into(), size.as_str().into());
         }
-        if let Some(size) = options.image_size {
-            obj.insert("resolution".into(), <&str>::from(size).into());
+        if let Some(resolution) = options.resolution {
+            obj.insert("resolution".into(), <&str>::from(resolution).into());
         }
         if let Some(ratio) = options.aspect_ratio {
             obj.insert("aspect_ratio".into(), <&str>::from(ratio).into());
@@ -80,12 +80,12 @@ impl OpenRouterImageApiModel {
         if let Some(quality) = options.quality {
             obj.insert("quality".into(), <&str>::from(quality).into());
         }
-        if options.background == Some(ImageBackground::Transparent)
-            && options.output_format == Some(ImageFormat::Jpeg)
+        if options.background == Some(OpenRouterImageBackground::Transparent)
+            && options.output_format == Some(OpenRouterImageFormat::Jpeg)
         {
             bail!(
                 "a transparent background needs an alpha-capable format; \
-                 `output_format: jpeg` cannot carry one (use png or webp)"
+                 `openrouter.output_format: jpeg` cannot carry one (use png or webp)"
             );
         }
         if let Some(format) = options.output_format {
@@ -108,10 +108,12 @@ impl InferImageModel for OpenRouterImageApiModel {
         let body = self.body(prompt, options);
         let api_key = self.api_key.clone();
         let model = self.model.clone();
-        let (image_size, size_set) = (options.image_size, options.size.is_some());
-        let asked = options.n.unwrap_or(1) as usize;
+        let section = options.openrouter.as_ref();
+        let resolution = section.and_then(|o| o.resolution);
+        let size_set = section.is_some_and(|o| o.size.is_some());
+        let asked = section.and_then(|o| o.n).unwrap_or(1) as usize;
         Box::pin(async move {
-            let response = send(API_URL, &api_key, &body?, &model, image_size, size_set).await?;
+            let response = send(API_URL, &api_key, &body?, &model, resolution, size_set).await?;
             let val: Value = serde_json::from_str(&response.text().await?)
                 .context("OpenRouter image response is not JSON")?;
             let out = parse_response(&val)?;
@@ -139,13 +141,13 @@ static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|
 /// POSTs `body` to `url`, retrying rate limits (429), failed generations (502, which
 /// OpenRouter does not bill) and overloads (503, 529) with backoff, and returns the
 /// successful response unread. Other errors are not retried: a paid image job may already
-/// have run. A refusal of `image_size` is explained in front of the API's own message.
+/// have run. A refusal of `resolution` is explained in front of the API's own message.
 async fn send(
     url: &str,
     api_key: &str,
     body: &serde_json::Value,
     model: &str,
-    image_size: Option<ImageSize>,
+    resolution: Option<OpenRouterResolution>,
     size_set: bool,
 ) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
@@ -181,7 +183,7 @@ async fn send(
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        match explain_error(model, image_size, size_set, status.as_u16(), &text) {
+        match explain_error(model, resolution, size_set, status.as_u16(), &text) {
             Some(hint) => {
                 bail!("OpenRouter API request failed with status {status} ({hint}): {text}")
             }
@@ -191,23 +193,23 @@ async fn send(
     unreachable!("retry loop returns or bails on every path")
 }
 
-/// Ties a refusal of `resolution` to `image_size`, the option it is sent from. With `size`
-/// also set, the refusal may be about either, so nothing is added.
+/// Names the option behind a refusal of `resolution`. With `size` also set, the refusal may
+/// be about either, so nothing is added.
 fn explain_error(
     model: &str,
-    image_size: Option<ImageSize>,
+    resolution: Option<OpenRouterResolution>,
     size_set: bool,
     status: u16,
     body: &str,
 ) -> Option<String> {
-    let size = image_size?;
+    let resolution = resolution?;
     if size_set || status != 400 || !body.contains("resolution") {
         return None;
     }
     Some(format!(
-        "`image_size: {}` is sent as `resolution`, which '{model}' refused; try another size, \
+        "`openrouter.resolution: {}` is not accepted by '{model}'; try another resolution, \
          or leave it unset to use the model's default size",
-        <&str>::from(size),
+        <&str>::from(resolution),
     ))
 }
 
@@ -263,9 +265,9 @@ fn parse_response(val: &Value) -> anyhow::Result<ImageOutput> {
 fn fallback_mime(data: &[u8]) -> &'static str {
     let head = String::from_utf8_lossy(&data[..data.len().min(512)]);
     if head.contains("<svg") {
-        ImageFormat::Svg.mime_type()
+        OpenRouterImageFormat::Svg.mime_type()
     } else {
-        ImageFormat::Png.mime_type()
+        OpenRouterImageFormat::Png.mime_type()
     }
 }
 
@@ -284,20 +286,27 @@ fn parse_usage(usage: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AspectRatio, ImageQuality};
+    use crate::model::{
+        GeminiImageOptions, GeminiImageSize, OpenAiImageOptions, OpenRouterAspectRatio,
+        OpenRouterImageOptions, OpenRouterImageQuality,
+    };
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
 
-    fn body(options: &ImageModelOptions) -> anyhow::Result<serde_json::Value> {
+    fn body(options: &OpenRouterImageOptions) -> anyhow::Result<serde_json::Value> {
+        let options = ImageModelOptions {
+            openrouter: Some(options.clone()),
+            ..Default::default()
+        };
         OpenRouterImageApiModel::new("google/gemini-3.1-flash-image", "sk-or-test")
-            .body("a red cube on a white table", options)
+            .body("a red cube on a white table", &options)
     }
 
     #[test]
     fn minimal_body_sends_only_model_and_prompt() {
         assert_eq!(
-            body(&ImageModelOptions::default()).unwrap(),
+            body(&OpenRouterImageOptions::default()).unwrap(),
             serde_json::json!({
                 "model": "google/gemini-3.1-flash-image",
                 "prompt": "a red cube on a white table",
@@ -306,15 +315,38 @@ mod tests {
     }
 
     #[test]
-    fn body_maps_every_option_under_openrouter_names() {
+    fn body_ignores_other_sections() {
         let options = ImageModelOptions {
+            openai: Some(OpenAiImageOptions {
+                n: Some(2),
+                size: Some("1536x1024".to_owned()),
+                ..Default::default()
+            }),
+            gemini: Some(GeminiImageOptions {
+                image_size: Some(GeminiImageSize::Size2K),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let model = OpenRouterImageApiModel::new("openai/gpt-image-1", "sk-or-test");
+        assert_eq!(
+            model.body("a red cube", &options).unwrap(),
+            model
+                .body("a red cube", &ImageModelOptions::default())
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn body_maps_every_option_under_openrouter_names() {
+        let options = OpenRouterImageOptions {
             n: Some(2),
             size: Some("1024x1024".to_owned()),
-            quality: Some(ImageQuality::Auto),
-            output_format: Some(ImageFormat::Webp),
-            background: Some(ImageBackground::Transparent),
-            aspect_ratio: Some(AspectRatio::Ratio9x19p5),
-            image_size: Some(ImageSize::Size1p5K),
+            quality: Some(OpenRouterImageQuality::Auto),
+            output_format: Some(OpenRouterImageFormat::Webp),
+            background: Some(OpenRouterImageBackground::Transparent),
+            aspect_ratio: Some(OpenRouterAspectRatio::Ratio9x19p5),
+            resolution: Some(OpenRouterResolution::Res1p5K),
         };
         assert_eq!(
             body(&options).unwrap(),
@@ -336,32 +368,32 @@ mod tests {
     fn body_sends_one_option_alone() {
         let cases = [
             (
-                ImageModelOptions {
-                    image_size: Some(ImageSize::Size768),
+                OpenRouterImageOptions {
+                    resolution: Some(OpenRouterResolution::Res768),
                     ..Default::default()
                 },
                 "resolution",
                 serde_json::json!("768"),
             ),
             (
-                ImageModelOptions {
-                    aspect_ratio: Some(AspectRatio::Auto),
+                OpenRouterImageOptions {
+                    aspect_ratio: Some(OpenRouterAspectRatio::Auto),
                     ..Default::default()
                 },
                 "aspect_ratio",
                 serde_json::json!("auto"),
             ),
             (
-                ImageModelOptions {
-                    output_format: Some(ImageFormat::Svg),
+                OpenRouterImageOptions {
+                    output_format: Some(OpenRouterImageFormat::Svg),
                     ..Default::default()
                 },
                 "output_format",
                 serde_json::json!("svg"),
             ),
             (
-                ImageModelOptions {
-                    background: Some(ImageBackground::Auto),
+                OpenRouterImageOptions {
+                    background: Some(OpenRouterImageBackground::Auto),
                     ..Default::default()
                 },
                 "background",
@@ -379,16 +411,16 @@ mod tests {
     #[test]
     fn body_refuses_what_openrouter_never_accepts() {
         for n in [0, 11] {
-            let options = ImageModelOptions {
+            let options = OpenRouterImageOptions {
                 n: Some(n),
                 ..Default::default()
             };
             let err = body(&options).unwrap_err().to_string();
             assert!(err.contains("between 1 and 10"), "{err}");
         }
-        let options = ImageModelOptions {
-            output_format: Some(ImageFormat::Jpeg),
-            background: Some(ImageBackground::Transparent),
+        let options = OpenRouterImageOptions {
+            output_format: Some(OpenRouterImageFormat::Jpeg),
+            background: Some(OpenRouterImageBackground::Transparent),
             ..Default::default()
         };
         let err = body(&options).unwrap_err().to_string();
@@ -474,25 +506,41 @@ mod tests {
     }
 
     #[test]
-    fn explain_error_names_the_image_size_option() {
+    fn explain_error_names_the_resolution_option() {
         const REFUSAL: &str =
             r#"{"error":{"code":400,"message":"Unsupported resolution '4K' for this model"}}"#;
         let model = "bytedance-seed/seedream-5-0-pro";
 
-        let hint = explain_error(model, Some(ImageSize::Size4K), false, 400, REFUSAL)
-            .expect("a resolution refusal is explained");
-        assert!(hint.contains("`image_size: 4K`"), "{hint}");
-        assert!(hint.contains("`resolution`"), "{hint}");
+        let hint = explain_error(
+            model,
+            Some(OpenRouterResolution::Res4K),
+            false,
+            400,
+            REFUSAL,
+        )
+        .expect("a resolution refusal is explained");
+        assert!(hint.contains("`openrouter.resolution: 4K`"), "{hint}");
         assert!(hint.contains(model), "{hint}");
 
         assert!(explain_error(model, None, false, 400, REFUSAL).is_none());
-        assert!(explain_error(model, Some(ImageSize::Size4K), false, 402, REFUSAL).is_none());
-        // With `size` set too, the refusal may be about either.
-        assert!(explain_error(model, Some(ImageSize::Size4K), true, 400, REFUSAL).is_none());
         assert!(
             explain_error(
                 model,
-                Some(ImageSize::Size4K),
+                Some(OpenRouterResolution::Res4K),
+                false,
+                402,
+                REFUSAL
+            )
+            .is_none()
+        );
+        // With `size` set too, the refusal may be about either.
+        assert!(
+            explain_error(model, Some(OpenRouterResolution::Res4K), true, 400, REFUSAL).is_none()
+        );
+        assert!(
+            explain_error(
+                model,
+                Some(OpenRouterResolution::Res4K),
                 false,
                 400,
                 r#"{"error":{"code":400,"message":"bad aspect_ratio"}}"#
@@ -536,14 +584,14 @@ mod tests {
 
     async fn send_to(
         url: &str,
-        image_size: Option<ImageSize>,
+        resolution: Option<OpenRouterResolution>,
     ) -> anyhow::Result<reqwest::Response> {
         send(
             url,
             "sk-or-test",
             &serde_json::json!({}),
             "openai/gpt-image-1",
-            image_size,
+            resolution,
             false,
         )
         .await
@@ -602,7 +650,10 @@ mod tests {
     #[tokio::test]
     async fn generate_refuses_a_bad_n_before_sending() {
         let options = ImageModelOptions {
-            n: Some(11),
+            openrouter: Some(OpenRouterImageOptions {
+                n: Some(11),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         // The key is fake, so anything that reached the network would fail differently.
@@ -622,7 +673,10 @@ mod tests {
             return;
         };
         let options = ImageModelOptions {
-            aspect_ratio: Some(AspectRatio::Ratio16x9),
+            openrouter: Some(OpenRouterImageOptions {
+                aspect_ratio: Some(OpenRouterAspectRatio::Ratio16x9),
+                ..Default::default()
+            }),
             ..Default::default()
         };
 
