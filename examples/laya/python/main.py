@@ -21,8 +21,8 @@ Without a prompt the agent routes a support inbox: it asks Laya which department
 
 Environment:
 
-* `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its
-  provider's API key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...).
+* `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend has
+  to be set up as `docs/guide/model-providers.md` says.
 
 Read from `.env` as well.
 """

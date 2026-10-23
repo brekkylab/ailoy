@@ -15,8 +15,8 @@
 //! site needs you, to sign in say, the agent says so and ends its turn: do it in its window, then
 //! tell it to go on.
 //!
-//! `AILOY_MODEL` is the agent's model, `anthropic/claude-sonnet-5` by default; its provider's
-//! API key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …), in the environment or in
+//! `AILOY_MODEL` is the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend
+//! has to be set up as `docs/guide/model-providers.md` says, any key in the environment or in
 //! `.env`.
 
 use ailoy::{

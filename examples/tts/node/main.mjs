@@ -21,8 +21,8 @@
 // Environment, also read from `.env`:
 //
 // * `UV` — the `uv` binary `prepare_model.py` runs with; `uv` on `PATH` by default.
-// * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its provider's
-//   API key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...).
+// * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend
+//   has to be set up as `docs/guide/model-providers.md` says.
 //
 // `npm install` here first, after building the addon (`npm run build` in `bindings/node`).
 
