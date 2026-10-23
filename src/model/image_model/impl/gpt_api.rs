@@ -391,11 +391,11 @@ mod tests {
     fn extra_adds_fields_and_wins_over_typed_ones() {
         let options = OpenAiImageOptions {
             quality: Some("high".to_owned()),
-            extra: Some(to_value!({"user": "u-1", "quality": "low"})),
+            extra: Some(to_value!({"safety_identifier": "u-1", "quality": "low"})),
             ..Default::default()
         };
         let body = body(&options).unwrap();
-        assert_eq!(body["user"], "u-1");
+        assert_eq!(body["safety_identifier"], "u-1");
         assert_eq!(body["quality"], "low", "extra wins on conflict");
     }
 
