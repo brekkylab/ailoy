@@ -46,7 +46,7 @@ console = await (
 )
 
 agent = await (
-    AgentBuilder("anthropic/claude-haiku-4-5")
+    AgentBuilder("anthropic/claude-haiku-5-5")
     .system_tools()
     .console(console)
     .skill("/skills/laya")
@@ -60,7 +60,7 @@ const console_ = await ConsoleClient.builder()
   .mountReadonly('./skills/laya', '/skills/laya')
   .build()
 
-const agent = await new AgentBuilder('anthropic/claude-haiku-4-5')
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
   .systemTools()
   .console(console_)
   .skill('/skills/laya')
@@ -74,7 +74,7 @@ let console = ConsoleClient::builder()
     .build()
     .await?;
 
-let agent = AgentBuilder::new("anthropic/claude-haiku-4-5")
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
     .system_tools()
     .console(console)
     .skill("/skills/laya")

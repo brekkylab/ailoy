@@ -42,7 +42,7 @@ The seven tools in the table run in the agent's VM, so the agent needs one: pass
 
 ```python [Python]
 agent = await (
-    AgentBuilder("anthropic/claude-haiku-4-5")
+    AgentBuilder("anthropic/claude-haiku-5-5")
     .web_search_tool(["DuckDuckGo", "Brave"])
     .web_fetch_tool()
     .build()
@@ -50,7 +50,7 @@ agent = await (
 ```
 
 ```js [Node.js]
-const agent = await new AgentBuilder('anthropic/claude-haiku-4-5')
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
   .webSearchTool(['DuckDuckGo', 'Brave'])
   .webFetchTool()
   .build()
@@ -59,7 +59,7 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-4-5')
 ```rust [Rust]
 use ailoy::tool::WebSearchEngineKind;
 
-let agent = AgentBuilder::new("anthropic/claude-haiku-4-5")
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
     .web_search_tool(vec![WebSearchEngineKind::DuckDuckGo, WebSearchEngineKind::Brave])
     .web_fetch_tool()
     .build()
@@ -104,7 +104,7 @@ async def main() -> None:
         order_status,
     )
 
-    agent = await AgentBuilder("anthropic/claude-haiku-4-5").tool(desc).build()
+    agent = await AgentBuilder("anthropic/claude-haiku-5-5").tool(desc).build()
 
     async for output in agent.run("When does order A-1001 arrive?"):
         for part in output["message"]["contents"]:
@@ -137,7 +137,7 @@ async function main() {
     },
   )
 
-  const agent = await new AgentBuilder('anthropic/claude-haiku-4-5').tool(desc).build()
+  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').tool(desc).build()
 
   try {
     for await (const { message } of agent.run('When does order A-1001 arrive?')) {
@@ -184,7 +184,7 @@ async fn main() -> anyhow::Result<()> {
         }),
     );
 
-    let mut agent = AgentBuilder::new("anthropic/claude-haiku-4-5")
+    let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
         .tool(desc)
         .build()
         .await?;

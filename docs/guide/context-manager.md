@@ -15,7 +15,7 @@ It is off until you set it, and both of its settings have defaults:
 
 ```python [Python]
 agent = await (
-    AgentBuilder("anthropic/claude-haiku-4-5")
+    AgentBuilder("anthropic/claude-haiku-5-5")
     .system_tools()
     .console(console)
     .context_manager(max_input_tokens=50_000, preserve_recent_turns=2)
@@ -24,7 +24,7 @@ agent = await (
 ```
 
 ```js [Node.js]
-const agent = await new AgentBuilder('anthropic/claude-haiku-4-5')
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
   .systemTools()
   .console(console_)
   .contextManager({ maxInputTokens: 50000, preserveRecentTurns: 2 })
@@ -34,7 +34,7 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-4-5')
 ```rust [Rust]
 use ailoy::agent::ContextManager;
 
-let agent = AgentBuilder::new("anthropic/claude-haiku-4-5")
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
     .system_tools()
     .console(console)
     .context_manager(ContextManager { max_input_tokens: 50_000, preserve_recent_turns: 2 })
