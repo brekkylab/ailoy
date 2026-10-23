@@ -193,14 +193,6 @@ export interface CustomLangModel {
   ): AsyncIterable<MessageDeltaOutput>
 }
 
-/**
- * An image model of your own, as a factory given to `setImageModelProvider` returns it.
- * `generate` is called with `this` as the model.
- */
-export interface CustomImageModel {
-  generate(prompt: string, options: ImageModelOptions): ImageOutput | Promise<ImageOutput>
-}
-
 export type WebSearchEngine =
   | 'Bing'
   | 'Brave'

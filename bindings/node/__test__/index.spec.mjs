@@ -15,12 +15,9 @@ const {
   ImageModel,
   LangModel,
   registerTool,
-  getImageModelProvider,
   getLangModelProvider,
-  removeImageModelProvider,
   removeLangModelProvider,
   removeToolProvider,
-  setImageModelProvider,
   setLangModelProvider,
   setToolProvider,
 } = ailoy
@@ -381,118 +378,41 @@ test('a factory that throws fails the build', async (t) => {
 
 // ---- image models ------------------------------------------------------------------------
 
-const PIXEL = { type: 'embedded', mime_type: 'image/png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }
-
-/** An image model of the test's own, answering with one fixed image and the prompt. */
-class Painter {
-  constructor(name) {
-    this.name = name
-    this.options = []
+test('an image model needs a known org and a name', async () => {
+  await assert.rejects(ImageModel.create('nobody/model'), { code: 'AILOY_ERROR', message: /'nobody'/ })
+  for (const desc of ['openrouter', 'google']) {
+    await assert.rejects(ImageModel.create(desc), { code: 'AILOY_ERROR', message: /model name/ })
   }
-  generate(prompt, options) {
-    this.options.push(options)
-    return { images: [PIXEL], text: `${this.name}: ${prompt}` }
-  }
-}
-
-test('a custom image provider generates', async (t) => {
-  const seen = []
-  setImageModelProvider('mine', (org, name) => {
-    seen.push([org, name])
-    return new Painter(name)
-  })
-  t.after(() => removeImageModelProvider('mine'))
-
-  const model = await ImageModel.create('mine/x-org/painter')
-  const output = await model.generate('a red cube')
-  assert.deepEqual(output, { images: [PIXEL], text: 'x-org/painter: a red cube' })
-  // Everything after the first `/` is the name.
-  assert.deepEqual(seen, [['mine', 'x-org/painter']])
 })
 
-test('image options cross as the crate reads them', async (t) => {
-  const painter = new Painter('p')
-  setImageModelProvider('options', () => painter)
-  t.after(() => removeImageModelProvider('options'))
-  const model = await ImageModel.create('options/p')
-  const options = {
-    openai: {
-      n: 2,
-      size: '1536x1024',
-      quality: 'high',
-      output_format: 'webp',
-      background: 'transparent',
-      extra: { moderation: 'low' },
-    },
-    gemini: {
-      aspect_ratio: '16:9',
-      image_size: '2K',
-      thinking_level: 'low',
-      extra: { generationConfig: { candidateCount: 1 } },
-    },
-    openrouter: {
-      n: 1,
-      size: '1024x1024',
-      resolution: '1K',
-      aspect_ratio: 'auto',
-      quality: 'auto',
-      output_format: 'png',
-      background: 'opaque',
-      extra: { seed: 7 },
-    },
-  }
-  await model.generate('x', options)
-  // Unknown sections and keys are dropped, unset ones left out.
-  await model.generate('x', { nobody: {}, gemini: { seed: 7 } })
-  await model.generate('x')
-  assert.deepEqual(painter.options, [options, { gemini: {} }, {}])
+test('an image model needs its key', async (t) => {
+  const key = process.env.OPENAI_API_KEY
+  delete process.env.OPENAI_API_KEY
+  t.after(() => {
+    if (key !== undefined) process.env.OPENAI_API_KEY = key
+  })
+  await assert.rejects(ImageModel.create('openai/gpt-image-2'), {
+    code: 'AILOY_ERROR',
+    message: /OPENAI_API_KEY/,
+  })
+})
 
+test('image options are checked before sending', async (t) => {
+  const key = process.env.OPENROUTER_API_KEY
+  process.env.OPENROUTER_API_KEY = 'unused'
+  t.after(() => {
+    if (key === undefined) delete process.env.OPENROUTER_API_KEY
+    else process.env.OPENROUTER_API_KEY = key
+  })
+  const model = await ImageModel.create('openrouter/x-org/some-model')
   assert.throws(() => model.generate('x', { openai: { n: 'two' } }), {
     code: 'INVALID_ARG',
     message: /not image model options/,
   })
-})
-
-test('a custom image model may be async or built in', async (t) => {
-  class Async extends Painter {
-    async generate(prompt, options) {
-      await null
-      return super.generate(prompt, options)
-    }
-  }
-  setImageModelProvider('mine-async', (org, name) => new Async(name ?? org))
-  t.after(() => removeImageModelProvider('mine-async'))
-  const model = await ImageModel.create('mine-async')
-  assert.equal((await model.generate('hi')).text, 'mine-async: hi')
-
-  setImageModelProvider('alias', () => model)
-  t.after(() => removeImageModelProvider('alias'))
-  const alias = await ImageModel.create('alias/any')
-  assert.equal((await alias.generate('hi')).text, 'mine-async: hi')
-})
-
-test('an image factory that throws fails the build', async (t) => {
-  setImageModelProvider('broken', () => {
-    throw new Error('no painters today')
+  await assert.rejects(model.generate('x', { openrouter: { n: 0 } }), {
+    code: 'AILOY_ERROR',
+    message: /OpenRouter/,
   })
-  t.after(() => removeImageModelProvider('broken'))
-  await assert.rejects(ImageModel.create('broken/x'), { message: /no painters today/ })
-})
-
-test('an image provider reads back as it was set', () => {
-  assert.equal(getImageModelProvider('openai/gpt-image-2'), 'api')
-  assert.equal(getImageModelProvider('anthropic'), null, 'the lang model table is apart')
-  setImageModelProvider('read-back', (org, name) => new Painter(name))
-  assert.equal(getImageModelProvider('read-back'), 'custom')
-  removeImageModelProvider('read-back')
-  assert.equal(getImageModelProvider('read-back'), null)
-  assert.throws(() => setImageModelProvider('x', 'smoke-signals'), { code: 'INVALID_ARG' })
-  assert.throws(() => setImageModelProvider('x', 42), { code: 'INVALID_ARG' })
-})
-
-test('an image model needs a known org and a name', async () => {
-  await assert.rejects(ImageModel.create('nobody/model'), { code: 'AILOY_ERROR', message: /nobody/ })
-  await assert.rejects(ImageModel.create('openrouter'), { code: 'AILOY_ERROR', message: /model name/ })
 })
 
 // ---- a shared console, against the console server virtx starts by default ---------------

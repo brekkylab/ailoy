@@ -152,10 +152,10 @@ type InferArgs = FnArgs<(
 
 /// A JavaScript function callable from the runtime's threads; weak, so a model does not keep
 /// the process alive.
-pub type Tsfn<Args, Return> = ThreadsafeFunction<Args, Return, Args, Status, false, true>;
+type Tsfn<Args, Return> = ThreadsafeFunction<Args, Return, Args, Status, false, true>;
 
 /// A JavaScript function, bound to `this`, as a [`Tsfn`]. On the JavaScript thread.
-pub fn bound<Args, Return>(
+fn bound<Args, Return>(
     function: Function<'_, Args, Return>,
     this: Object<'_>,
 ) -> napi::Result<Tsfn<Args, Return>>
