@@ -227,8 +227,6 @@ impl InferLangModel for ClaudeCliModel {
             let mut lines = BufReader::new(stdout).lines();
             // Usage from `message_start`, completed by `message_delta` once the message ends.
             let mut start_usage = None;
-            // The usage of the latest message to end, which is the reply's.
-            let mut reply_usage = None;
             // Why the latest message ended, from its `message_delta`.
             let mut stop_reason = None;
             // The `tool_use` block being streamed.
@@ -333,7 +331,6 @@ impl InferLangModel for ClaudeCliModel {
                             }
                             Some("message_delta") => {
                                 stop_reason = delta["stop_reason"].as_str().map(str::to_owned);
-                                reply_usage = final_usage(start_usage.take(), &inner["usage"]);
                                 // The reply ends with calls to the given tools. They are the
                                 // caller's to run, so the run ends here, before the CLI would
                                 // turn to them.
@@ -342,18 +339,15 @@ impl InferLangModel for ClaudeCliModel {
                                 }
                                 out.delta = out.delta.with_tool_calls(std::mem::take(&mut calls));
                                 out.finish_reason = Some(FinishReason::ToolCall {});
-                                out.usage = reply_usage.take();
+                                out.usage = final_usage(start_usage.take(), &inner["usage"]);
                                 finished = true;
                             }
                             _ => continue,
                         }
                     }
-                    // The run is over: close the message with its usage. The run's own adds
-                    // up every request it made, such as a structured reply the CLI rejected and
-                    // asked again for, so the reply's is its last message's.
+                    // The run is over: close the message with its usage.
                     Some("result") => {
-                        let run_usage = parse_result(&event)?;
-                        out.usage = reply_usage.take().or(run_usage);
+                        out.usage = parse_result(&event)?;
                         if structured {
                             // The reply the CLI accepted; attempts it rejected are left out.
                             let json = match &event["structured_output"] {
@@ -960,46 +954,6 @@ mod tests {
             ]
         );
         assert_eq!(output.usage.unwrap().output_tokens, 40);
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn a_reply_reports_its_last_messages_usage() {
-        // A run of two requests, measured on 2026-10-23 with Claude Code 2.1.308: the CLI ran
-        // its own tool, then answered, and its `result` added up both. The input counts are
-        // the measured ones; the two output counts are made up to add up to the run's 172.
-        let start = |input: u64, read: u64, written: u64| {
-            event(
-                serde_json::json!({"type": "message_start", "message": {"usage": {
-                "input_tokens": input, "cache_read_input_tokens": read,
-                "cache_creation_input_tokens": written, "output_tokens": 1}}}),
-            )
-        };
-        let result = serde_json::json!({"type": "result", "subtype": "success",
-            "is_error": false, "stop_reason": "end_turn", "usage": {"input_tokens": 18,
-            "cache_read_input_tokens": 35_628, "cache_creation_input_tokens": 8_468,
-            "output_tokens": 172}});
-        let two_requests = vec![
-            start(10, 14_235, 7_158),
-            event(serde_json::json!({"type": "message_delta",
-                "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 70}})),
-            start(8, 21_393, 1_310),
-            event(
-                serde_json::json!({"type": "content_block_delta", "index": 0,
-                "delta": {"type": "text_delta", "text": "done"}}),
-            ),
-            event(serde_json::json!({"type": "message_delta",
-                "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 102}})),
-            result.clone(),
-        ];
-        // With no message to read it from, the run's usage stands.
-        for (events, output_tokens, total) in
-            [(two_requests, 102, 22_711), (vec![result], 172, 44_114)]
-        {
-            let usage = replay(&events, &[weather()]).await.usage.unwrap();
-            assert_eq!(usage.output_tokens, output_tokens, "{usage:?}");
-            assert_eq!(ClaudeCliModel::new().total_input_tokens(&usage), total);
-        }
     }
 
     #[cfg(unix)]
