@@ -17,7 +17,7 @@ use crate::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
-    model::{InferLangModel, LangModelOptions},
+    model::{InferLangModel, LangModelOptions, api_error},
     to_value,
     tool::ToolDesc,
 };
@@ -231,8 +231,8 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
             let text = response.text().await.unwrap_or_default();
             // An exhausted balance does not pass with time.
             if text.contains("exceeded_current_quota") {
-                return Err(super::api_error(
-                    status,
+                return Err(api_error(
+                    status.as_u16(),
                     format!("Kimi API request failed with status {status}: {text}"),
                 ));
             }
@@ -245,8 +245,8 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        return Err(super::api_error(
-            status,
+        return Err(api_error(
+            status.as_u16(),
             format!("Kimi API request failed with status {status}: {text}"),
         ));
     }

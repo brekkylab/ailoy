@@ -18,7 +18,7 @@ use crate::{
         Delta as _, FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part,
         PartDelta, PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
-    model::{InferLangModel, LangModelOptions, ThinkingEffort},
+    model::{InferLangModel, LangModelOptions, ThinkingEffort, api_error},
     to_value,
     tool::ToolDesc,
 };
@@ -351,8 +351,8 @@ async fn send(
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        return Err(super::api_error(
-            status,
+        return Err(api_error(
+            status.as_u16(),
             format!("Bedrock request failed with status {status}: {text}"),
         ));
     }

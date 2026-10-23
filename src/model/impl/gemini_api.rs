@@ -19,7 +19,7 @@ use crate::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
-    model::{InferLangModel, LangModelOptions, ThinkingEffort},
+    model::{InferLangModel, LangModelOptions, ThinkingEffort, api_error},
     to_value,
     tool::ToolDesc,
 };
@@ -245,8 +245,8 @@ async fn send(
             let text = response.text().await.unwrap_or_default();
             // A quota that is used up comes without a RetryInfo, and does not pass with time.
             if !text.contains("google.rpc.RetryInfo") {
-                return Err(super::api_error(
-                    status,
+                return Err(api_error(
+                    status.as_u16(),
                     format!("Gemini API request failed with status {status}: {text}"),
                 ));
             }
@@ -268,8 +268,8 @@ async fn send(
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        return Err(super::api_error(
-            status,
+        return Err(api_error(
+            status.as_u16(),
             format!("Gemini API request failed with status {status}: {text}"),
         ));
     }

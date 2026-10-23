@@ -26,13 +26,6 @@ pub struct RequestRefused {
     pub message: String,
 }
 
-impl RequestRefused {
-    /// Whether `status` is such a refusal: 400, 413 and 422.
-    pub fn is_refusal(status: u16) -> bool {
-        matches!(status, 400 | 413 | 422)
-    }
-}
-
 impl std::fmt::Display for RequestRefused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.message)
@@ -40,6 +33,16 @@ impl std::fmt::Display for RequestRefused {
 }
 
 impl std::error::Error for RequestRefused {}
+
+/// The error for a request the API answered with `status`: a [`RequestRefused`] when the
+/// status says the request itself was wrong, else a plain error with the same message.
+pub(crate) fn api_error(status: u16, message: String) -> anyhow::Error {
+    if matches!(status, 400 | 413 | 422) {
+        RequestRefused { status, message }.into()
+    } else {
+        anyhow::anyhow!(message)
+    }
+}
 
 /// Settings every [`InferLangModel`] can apply, whichever way it runs the model.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
