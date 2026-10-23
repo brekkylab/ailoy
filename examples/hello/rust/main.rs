@@ -4,8 +4,8 @@
 //! cargo run --example hello -- [model]
 //! ```
 //!
-//! `model` defaults to `openai/gpt-5.6-luna`; its provider's API key has to be set
-//! (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …), in the environment or in `.env`.
+//! `model` defaults to `openai/gpt-5.6-luna`; its org's backend has to be set up as
+//! `docs/guide/model-providers.md` says, any key in the environment or in `.env`.
 
 use std::io::Write as _;
 

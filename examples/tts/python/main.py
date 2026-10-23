@@ -20,8 +20,8 @@ Qwen3-TTS and its weights are the Qwen team's, under Apache-2.0.
 
 Environment:
 
-* `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its
-  provider's API key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...).
+* `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend has
+  to be set up as `docs/guide/model-providers.md` says.
 
 Read from `.env` as well.
 """
