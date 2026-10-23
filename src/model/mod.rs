@@ -1,6 +1,7 @@
 mod image_model;
 pub(crate) mod r#impl;
 mod infer_decision_model;
+mod infer_image_model;
 mod infer_lang_model;
 mod provider;
 
@@ -11,5 +12,6 @@ pub use r#impl::{
     QwenApiModel, VllmModel,
 };
 pub use infer_decision_model::*;
+pub use infer_image_model::*;
 pub use infer_lang_model::*;
 pub use provider::*;
