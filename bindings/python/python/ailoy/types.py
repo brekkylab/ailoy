@@ -137,6 +137,50 @@ class LangModelOptions(TypedDict):
     output_schema: NotRequired[Value]
 
 
+class OpenAiImageOptions(TypedDict):
+    n: NotRequired[int]
+    size: NotRequired[str]
+    quality: NotRequired[str]
+    output_format: NotRequired[str]
+    background: NotRequired[str]
+    extra: NotRequired[dict[str, Value]]
+
+
+class GeminiImageOptions(TypedDict):
+    aspect_ratio: NotRequired[str]
+    image_size: NotRequired[str]
+    thinking_level: NotRequired[str]
+    extra: NotRequired[dict[str, Value]]
+
+
+class OpenRouterImageOptions(TypedDict):
+    n: NotRequired[int]
+    size: NotRequired[str]
+    resolution: NotRequired[str]
+    aspect_ratio: NotRequired[str]
+    quality: NotRequired[str]
+    output_format: NotRequired[str]
+    background: NotRequired[str]
+    extra: NotRequired[dict[str, Value]]
+
+
+class ImageModelOptions(TypedDict):
+    """One section per API, each read only by the models that call that API. ``extra`` is
+    merged into that API's request body, in the API's own JSON."""
+
+    openai: NotRequired[OpenAiImageOptions]
+    gemini: NotRequired[GeminiImageOptions]
+    openrouter: NotRequired[OpenRouterImageOptions]
+
+
+class ImageOutput(TypedDict):
+    """What ``ImageModel.generate`` gives: at least one image."""
+
+    images: list[Union[EmbeddedImage, UrlImage]]
+    text: NotRequired[str]
+    usage: NotRequired[TokenUsage]
+
+
 class AgentSpec(TypedDict):
     model: str
     instruction: NotRequired[str]
@@ -158,12 +202,17 @@ __all__ = [
     "EmbeddedImage",
     "FinishReason",
     "FunctionPart",
+    "GeminiImageOptions",
+    "ImageModelOptions",
+    "ImageOutput",
     "ImagePart",
     "LangModelOptions",
     "Message",
     "MessageDelta",
     "MessageDeltaOutput",
     "MessageOutput",
+    "OpenAiImageOptions",
+    "OpenRouterImageOptions",
     "Part",
     "PartDelta",
     "PartFunction",

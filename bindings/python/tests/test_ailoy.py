@@ -398,6 +398,112 @@ async def test_an_unknown_org_cannot_make_a_lang_model():
         await ailoy.LangModel.create("nobody/serves-this")
 
 
+# ---- image models -------------------------------------------------------------------------
+
+PIXEL = {"type": "embedded", "mime_type": "image/png", "data": b"\x89PNG"}
+
+
+class Painter:
+    """An image model of the test's own, answering with one fixed image and the prompt."""
+
+    def __init__(self, name):
+        self.name = name
+        self.options = []
+
+    def generate(self, prompt, options):
+        self.options.append(options)
+        return {"images": [PIXEL], "text": f"{self.name}: {prompt}"}
+
+
+async def test_a_custom_image_provider_generates():
+    seen = []
+
+    def factory(org, name):
+        seen.append((org, name))
+        return Painter(name)
+
+    ailoy.set_image_model_provider("mine", factory)
+    try:
+        model = await ailoy.ImageModel.create("mine/x-org/painter")
+        output = await model.generate("a red cube")
+        assert output == {"images": [PIXEL], "text": "x-org/painter: a red cube"}
+        # Everything after the first `/` is the name.
+        assert seen == [("mine", "x-org/painter")]
+    finally:
+        assert ailoy.remove_image_model_provider("mine")
+
+
+async def test_image_options_cross_as_the_crate_reads_them():
+    painter = Painter("p")
+    ailoy.set_image_model_provider("options", lambda org, name: painter)
+    model = await ailoy.ImageModel.create("options/p")
+    options = {
+        "openai": {"n": 2, "size": "1536x1024", "quality": "high", "output_format": "webp",
+                   "background": "transparent", "extra": {"moderation": "low"}},
+        "gemini": {"aspect_ratio": "16:9", "image_size": "2K", "thinking_level": "low",
+                   "extra": {"generationConfig": {"candidateCount": 1}}},
+        "openrouter": {"n": 1, "size": "1024x1024", "resolution": "1K", "aspect_ratio": "auto",
+                       "quality": "auto", "output_format": "png", "background": "opaque",
+                       "extra": {"seed": 7}},
+    }
+    await model.generate("x", options=options)
+    # Unknown sections and keys are dropped, unset ones left out.
+    await model.generate("x", options={"nobody": {}, "gemini": {"seed": 7}})
+    await model.generate("x")
+    assert painter.options == [options, {"gemini": {}}, {}]
+
+    with pytest.raises(ValueError, match="not image model options"):
+        await model.generate("x", options={"openai": {"n": "two"}})
+    ailoy.remove_image_model_provider("options")
+
+
+async def test_a_custom_image_model_may_be_async_or_built_in():
+    class Async(Painter):
+        async def generate(self, prompt, options):
+            await asyncio.sleep(0)
+            return Painter.generate(self, prompt, options)
+
+    ailoy.set_image_model_provider("mine-async", lambda org, name: Async(name or org))
+    model = await ailoy.ImageModel.create("mine-async")
+    assert (await model.generate("hi"))["text"] == "mine-async: hi"
+
+    ailoy.set_image_model_provider("alias", lambda org, name: model)
+    alias = await ailoy.ImageModel.create("alias/any")
+    assert (await alias.generate("hi"))["text"] == "mine-async: hi"
+    ailoy.remove_image_model_provider("alias")
+    ailoy.remove_image_model_provider("mine-async")
+
+
+async def test_an_image_factory_that_raises_fails_the_build():
+    def factory(org, name):
+        raise RuntimeError("no painters today")
+
+    ailoy.set_image_model_provider("broken", factory)
+    with pytest.raises(AiloyError, match="no painters today"):
+        await ailoy.ImageModel.create("broken/x")
+    ailoy.remove_image_model_provider("broken")
+
+
+def test_an_image_provider_reads_back_as_it_was_set():
+    assert ailoy.get_image_model_provider("openai/gpt-image-2") == "api"
+    assert ailoy.get_image_model_provider("anthropic") is None, "the lang model table is apart"
+    ailoy.set_image_model_provider("read-back", lambda org, name: Painter(name))
+    assert ailoy.get_image_model_provider("read-back") == "custom"
+    ailoy.remove_image_model_provider("read-back")
+    assert ailoy.get_image_model_provider("read-back") is None
+    with pytest.raises(ValueError):
+        ailoy.set_image_model_provider("x", "smoke-signals")
+    with pytest.raises(ValueError):
+        ailoy.set_image_model_provider("x", 42)
+
+
+async def test_an_image_model_needs_a_known_org_and_a_name():
+    with pytest.raises(AiloyError, match="nobody"):
+        await ailoy.ImageModel.create("nobody/model")
+    with pytest.raises(AiloyError, match="model name"):
+        await ailoy.ImageModel.create("openrouter")
+
+
 # ---- against the console server virtx starts by default ----------------------------
 
 

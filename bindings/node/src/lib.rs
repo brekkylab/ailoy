@@ -19,6 +19,7 @@ mod agent;
 mod console;
 mod convert;
 mod error;
+mod image_model;
 mod model;
 mod registry;
 mod tool;

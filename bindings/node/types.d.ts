@@ -120,6 +120,50 @@ export interface LangModelOptions {
   output_schema?: Value
 }
 
+export interface OpenAiImageOptions {
+  n?: number
+  size?: string
+  quality?: string
+  output_format?: string
+  background?: string
+  extra?: Record<string, Value>
+}
+
+export interface GeminiImageOptions {
+  aspect_ratio?: string
+  image_size?: string
+  thinking_level?: string
+  extra?: Record<string, Value>
+}
+
+export interface OpenRouterImageOptions {
+  n?: number
+  size?: string
+  resolution?: string
+  aspect_ratio?: string
+  quality?: string
+  output_format?: string
+  background?: string
+  extra?: Record<string, Value>
+}
+
+/**
+ * One section per API, each read only by the models that call that API. `extra` is merged into
+ * that API's request body, in the API's own JSON.
+ */
+export interface ImageModelOptions {
+  openai?: OpenAiImageOptions
+  gemini?: GeminiImageOptions
+  openrouter?: OpenRouterImageOptions
+}
+
+/** What `ImageModel.generate` gives: at least one image. */
+export interface ImageOutput {
+  images: Array<EmbeddedImage | UrlImage>
+  text?: string
+  usage?: TokenUsage
+}
+
 export interface AgentSpec {
   model: string
   instruction?: string
@@ -147,6 +191,14 @@ export interface CustomLangModel {
     tools: Array<ToolDesc>,
     options: LangModelOptions,
   ): AsyncIterable<MessageDeltaOutput>
+}
+
+/**
+ * An image model of your own, as a factory given to `setImageModelProvider` returns it.
+ * `generate` is called with `this` as the model.
+ */
+export interface CustomImageModel {
+  generate(prompt: string, options: ImageModelOptions): ImageOutput | Promise<ImageOutput>
 }
 
 export type WebSearchEngine =
