@@ -24,7 +24,7 @@ use crate::{
 };
 
 /// Per-part size limit for tool results, past which the middle is cut out.
-const MAX_TOOL_RESULT_CHARS: usize = 30_000;
+pub(crate) const MAX_TOOL_RESULT_CHARS: usize = 30_000;
 
 /// An agent that drives an [`InferLangModel`] through multi-turn, tool-augmented
 /// conversations.
@@ -472,17 +472,18 @@ async fn call_tool(
 }
 
 /// Clamp every part of a tool result, so large payloads (e.g. web pages) don't pile up in
-/// the history. An oversized [`Part::Value`] is measured as JSON and replaced by the cut
-/// JSON as a string.
+/// the history. A text part is measured in characters and a [`Part::Value`] in those of its
+/// JSON; past the limit the middle is cut out, and an oversized value becomes its cut JSON, as
+/// a string.
 fn cap_tool_result(mut message: Message) -> Message {
     for part in &mut message.contents {
         match part {
-            Part::Value { value } => {
+            Part::Value { value } if !fits_tool_result(value) => {
                 let json = serde_json::to_string(value).unwrap_or_default();
-                if json.len() > MAX_TOOL_RESULT_CHARS {
-                    *value = Value::string(middle_truncate(&json, MAX_TOOL_RESULT_CHARS));
-                }
+                *value = Value::string(middle_truncate(&json, MAX_TOOL_RESULT_CHARS));
             }
+            // A text has no more characters than bytes, so one of no more bytes than the limit is
+            // left alone uncounted; `middle_truncate` counts the rest.
             Part::Text { text } if text.len() > MAX_TOOL_RESULT_CHARS => {
                 *text = middle_truncate(text, MAX_TOOL_RESULT_CHARS);
             }
@@ -490,6 +491,15 @@ fn cap_tool_result(mut message: Message) -> Message {
         }
     }
     message
+}
+
+/// Whether [`cap_tool_result`] leaves `value`, as a part of a tool result, as it is.
+pub(crate) fn fits_tool_result(value: &Value) -> bool {
+    serde_json::to_string(value)
+        .unwrap_or_default()
+        .chars()
+        .count()
+        <= MAX_TOOL_RESULT_CHARS
 }
 
 /// Keep `max_chars` characters of `s`, half from each end, around a note of what was cut.
@@ -827,6 +837,60 @@ mod tests {
         // Under the limit before that, so the second call saw the result whole.
         let result = seen[1].iter().find(|m| m.role == Role::Tool).unwrap();
         assert_ne!(text_of(result), "[context truncated]");
+    }
+
+    /// A part is cut only when it has more characters than the limit, a value counted in those
+    /// of its JSON. Hangul takes three bytes a character and counts as one.
+    #[test]
+    fn test_cap_tool_result_changes_only_a_part_over_the_limit() {
+        let max = MAX_TOOL_RESULT_CHARS;
+        // A string's JSON is the string between two quotes.
+        for (row, part, kept) in [
+            (
+                "a, max - 2",
+                Part::value(Value::string("a".repeat(max - 2))),
+                true,
+            ),
+            (
+                "a, max - 1",
+                Part::value(Value::string("a".repeat(max - 1))),
+                false,
+            ),
+            (
+                "가, max - 2",
+                Part::value(Value::string("가".repeat(max - 2))),
+                true,
+            ),
+            (
+                "가, max - 1",
+                Part::value(Value::string("가".repeat(max - 1))),
+                false,
+            ),
+            (
+                "object",
+                Part::value(to_value!({"text": "가".repeat(12_000)})),
+                true,
+            ),
+            ("text, max", Part::text("가".repeat(max)), true),
+            ("text, max + 1", Part::text("가".repeat(max + 1)), false),
+        ] {
+            if let Part::Value { value } = &part {
+                assert_eq!(fits_tool_result(value), kept, "{row}");
+            }
+            let capped = cap_tool_result(Message::new(Role::Tool).with_contents([part.clone()]));
+            assert_eq!(capped.contents[0] == part, kept, "{row}");
+            if !kept {
+                // Each cut row is one character over, so the cut keeps the limit's worth around
+                // a note of that one.
+                let note = "\n\n... [1 characters omitted] ...\n\n";
+                let cut = match &capped.contents[0] {
+                    Part::Value { value } => value.as_str().unwrap(),
+                    other => other.as_text().unwrap(),
+                };
+                assert!(cut.contains(note), "{row}");
+                assert_eq!(cut.chars().count(), max + note.chars().count(), "{row}");
+            }
+        }
     }
 
     #[test]
