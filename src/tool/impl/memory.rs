@@ -16,8 +16,12 @@ const DEFAULT_LIMIT: i64 = 10;
 /// agent's cap on a tool result, past which the middle of the answer is cut.
 const MAX_LIMIT: i64 = 15;
 
-/// Lines shown on each side of the best match, and of an `around` id.
+/// Lines shown on each side of the best match, and of an `around` id unless `context` says.
 const NEIGHBOURS: usize = 2;
+
+/// The most lines `context` may ask for on each side: the 11 lines it then reads stay under
+/// the agent's cap on a tool result.
+const MAX_CONTEXT: i64 = 5;
 
 pub fn get_search_history_tool_desc() -> ToolDesc {
     ToolDescBuilder::new("search_history")
@@ -33,7 +37,8 @@ pub fn get_search_history_tool_desc() -> ToolDesc {
             "other words before concluding something never came up. ",
             "Lines of this conversation are left out, since you already have them. ",
             "The best match comes with the lines said just before and after it in its ",
-            "conversation; to read around another result, call again with `around` set to its id. ",
+            "conversation; to read around another result, call again with `around` set to its id, ",
+            "and `context` for more lines on each side. ",
             "No match is an empty list. Which memory is searched is fixed; there is no path to give.",
         ))
         .parameters(crate::to_value!({
@@ -63,6 +68,13 @@ pub fn get_search_history_tool_desc() -> ToolDesc {
                 "around": {
                     "type": "string",
                     "description": "Instead of searching, read the lines around this result id."
+                },
+                "context": {
+                    "type": "integer",
+                    "description": "With `around`: how many lines to read on each side (default 2, at most 5).",
+                    "minimum": 1,
+                    "maximum": MAX_CONTEXT,
+                    "default": NEIGHBOURS as i64
                 }
             }
         }))
@@ -75,7 +87,11 @@ pub fn get_search_history_tool_func(memory: Memory, conversation: String) -> Too
         with [memory = memory.clone(), conversation = conversation.clone()]
     {
         if let Some(id) = args.pointer("/around").and_then(|v| v.as_str()) {
-            return match memory.around(console, id, NEIGHBOURS).await {
+            let n = args
+                .pointer("/context")
+                .and_then(|v| v.as_integer())
+                .map_or(NEIGHBOURS, |n| n.clamp(1, MAX_CONTEXT) as usize);
+            return match memory.around(console, id, n).await {
                 Ok(lines) => match lines.iter().find(|r| r.id == id) {
                     Some(center) => crate::to_value!({
                         "count": 1i64,
@@ -468,6 +484,50 @@ mod tests {
             assert_eq!(best.pointer("/after").unwrap().as_array().unwrap().len(), 2);
         } else {
             assert!(best.pointer("/before").is_none(), "{best:?}");
+        }
+    }
+
+    /// `around` reads two lines on each side, or as many as `context` asks for, up to its cap.
+    #[test_with::executable(mem)]
+    #[tokio::test]
+    async fn test_search_history_reads_around_an_id_as_far_as_context_asks() {
+        let mut console = test_console().await;
+        if !knows(&mut console, &["around"]).await {
+            return;
+        }
+        let lines: Vec<String> = (0..13).map(|i| format!("line {i}")).collect();
+        let memory = filled(
+            &mut console,
+            &lines.iter().map(String::as_str).collect::<Vec<_>>(),
+        )
+        .await;
+        let func = get_search_history_tool_func(memory, "this".into());
+        let found = value(&call(&func, to_value!({ "query": "6" }), &mut console).await);
+        let id = found
+            .pointer("/results/0/id")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let sides = |out: &Value| {
+            let best = out.pointer("/results/0").unwrap();
+            let len = |key: &str| best.pointer(key).unwrap().as_array().unwrap().len();
+            (len("/before"), len("/after"))
+        };
+
+        for (context, expected) in [(None, 2), (Some(4), 4), (Some(50), 5), (Some(0), 1)] {
+            let mut args = to_value!({ "around": id.as_str() });
+            if let Some(n) = context {
+                args.as_object_mut()
+                    .unwrap()
+                    .insert("context".into(), Value::from(n as i64));
+            }
+            let out = value(&call(&func, args, &mut console).await);
+            assert_eq!(
+                sides(&out),
+                (expected, expected),
+                "context {context:?}: {out:?}"
+            );
         }
     }
 
