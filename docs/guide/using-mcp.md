@@ -20,7 +20,7 @@ async def main() -> None:
     tools = await register_mcp_stdio("fetch", "uvx", ["mcp-server-fetch"])
 
     agent = await (
-        AgentBuilder("anthropic/claude-haiku-4-5")
+        AgentBuilder("anthropic/claude-haiku-5-5")
         .tools(tools)
         .build()
     )
@@ -40,7 +40,7 @@ const { AgentBuilder, registerMcpStdio } = require('@brekkylab/ailoy')
 async function main() {
   const tools = await registerMcpStdio('fetch', 'uvx', ['mcp-server-fetch'])
 
-  const agent = await new AgentBuilder('anthropic/claude-haiku-4-5')
+  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
     .tools(tools)
     .build()
 
@@ -70,7 +70,7 @@ use futures::StreamExt as _;
 async fn main() -> anyhow::Result<()> {
     let tools = register_mcp_stdio("fetch", "uvx", ["mcp-server-fetch"]).await?;
 
-    let mut agent = AgentBuilder::new("anthropic/claude-haiku-4-5")
+    let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
         .tools(tools)
         .build()
         .await?;

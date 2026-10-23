@@ -64,9 +64,12 @@ export interface FinishReason {
 }
 
 export interface TokenUsage {
+  /** Every token of input the call processed, cached or not. */
   input_tokens: number
   output_tokens: number
+  /** The part of `input_tokens` written to a prompt cache. */
   cache_creation_input_tokens?: number
+  /** The part of `input_tokens` read from a prompt cache. */
   cache_read_input_tokens?: number
 }
 

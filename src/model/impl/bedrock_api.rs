@@ -18,17 +18,13 @@ use crate::{
         Delta as _, FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part,
         PartDelta, PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
-    model::{InferLangModel, LangModelOptions, ThinkingEffort},
+    model::{InferLangModel, LangModelOptions, ThinkingEffort, api_error},
     to_value,
     tool::ToolDesc,
 };
 
 /// Region used when none is set in the environment.
 const DEFAULT_REGION: &str = "us-east-1";
-
-/// `maxTokens` sent while Claude thinks: thinking counts against it, and the Converse
-/// default is too small to hold it. It stays above the largest thinking budget.
-const CLAUDE_THINKING_MAX_TOKENS: i64 = 32000;
 
 /// Runs a model on Amazon Bedrock through the Converse API.
 ///
@@ -151,11 +147,8 @@ impl BedrockApiModel {
                         "output_config": {"effort": effort_name(effort)},
                     })
                 };
+                // No `maxTokens`: Converse's default is the model's own cap.
                 obj.insert("additionalModelRequestFields".into(), thinking);
-                obj.insert(
-                    "inferenceConfig".into(),
-                    to_value!({"maxTokens": CLAUDE_THINKING_MAX_TOKENS}),
-                );
             } else if self.is_vendor("openai") {
                 obj.insert(
                     "additionalModelRequestFields".into(),
@@ -351,7 +344,10 @@ async fn send(
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        bail!("Bedrock request failed with status {status}: {text}");
+        return Err(api_error(
+            status.as_u16(),
+            format!("Bedrock request failed with status {status}: {text}"),
+        ));
     }
     unreachable!("retry loop returns or bails on every path")
 }
@@ -549,11 +545,17 @@ fn parse_frame(frame: &Frame) -> anyhow::Result<Option<MessageDeltaOutput>> {
                     .and_then(|v| v.as_integer())
                     .map(|v| v as u64)
             };
+            // Converse counts the prompt cache apart from `inputTokens`; `input_tokens`
+            // counts it in.
+            let cache_creation_input_tokens = count("/cacheWriteInputTokens");
+            let cache_read_input_tokens = count("/cacheReadInputTokens");
             out.usage = Some(TokenUsage {
-                input_tokens: count("/inputTokens").unwrap_or(0),
+                input_tokens: count("/inputTokens").unwrap_or(0)
+                    + cache_creation_input_tokens.unwrap_or(0)
+                    + cache_read_input_tokens.unwrap_or(0),
                 output_tokens: count("/outputTokens").unwrap_or(0),
-                cache_creation_input_tokens: count("/cacheWriteInputTokens"),
-                cache_read_input_tokens: count("/cacheReadInputTokens"),
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
             });
         }
         // `contentBlockStop`, and event types added later.
@@ -789,7 +791,7 @@ mod tests {
     }
 
     #[test]
-    fn frames_split_across_chunks_parse_into_a_tool_call() {
+    fn frames_split_across_chunks_parse_into_a_tool_call_and_its_usage() {
         let mut wire = frame(
             "contentBlockStart",
             r#"{"start":{"toolUse":{"toolUseId":"t1","name":"get_weather"}},"contentBlockIndex":0}"#,
@@ -799,6 +801,10 @@ mod tests {
             r#"{"delta":{"toolUse":{"input":"{\"city\":\"Seoul\"}"}},"contentBlockIndex":0}"#,
         ));
         wire.extend(frame("messageStop", r#"{"stopReason":"tool_use"}"#));
+        wire.extend(frame(
+            "metadata",
+            r#"{"usage":{"inputTokens":13,"outputTokens":4,"cacheReadInputTokens":50,"cacheWriteInputTokens":20}}"#,
+        ));
 
         let mut buf = wire[..7].to_vec();
         assert!(next_frame(&mut buf).unwrap().is_none());
@@ -813,6 +819,20 @@ mod tests {
         let calls = out.message.tool_calls.unwrap();
         assert_eq!(calls.len(), 1);
         assert!(matches!(out.finish_reason, FinishReason::ToolCall {}));
+        assert_eq!(out.usage.unwrap().input_tokens, 13 + 20 + 50);
+    }
+
+    #[test]
+    fn claude_thinking_leaves_the_output_cap_to_converse() {
+        let claude = BedrockApiModel::new("us.anthropic.claude-sonnet-5-5", "k", "us-east-1");
+        let messages = [Message::new(Role::User).with_contents([Part::text("hi")])];
+        let options = LangModelOptions {
+            thinking_effort: Some(ThinkingEffort::High),
+            ..Default::default()
+        };
+        let body = claude.body(&messages, &[], &options).unwrap();
+        assert!(body["additionalModelRequestFields"]["thinking"].is_object());
+        assert!(body.get("inferenceConfig").is_none());
     }
 
     #[test]

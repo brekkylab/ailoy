@@ -79,6 +79,10 @@ class FinishReason(TypedDict):
 
 
 class TokenUsage(TypedDict):
+    """``input_tokens`` is every token of input the call processed, cached or not;
+    ``cache_creation_input_tokens`` and ``cache_read_input_tokens`` are the parts of it
+    written to and read from a prompt cache."""
+
     input_tokens: int
     output_tokens: int
     cache_creation_input_tokens: NotRequired[int]

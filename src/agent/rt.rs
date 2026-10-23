@@ -13,7 +13,7 @@ use crate::{
     browser,
     datatype::Value,
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
-    model::{InferLangModel, LangModelOptions, create_lang_model},
+    model::{InferLangModel, LangModelOptions, RequestRefused, create_lang_model},
     tool::{
         ToolDesc, ToolFunc, create_tool,
         r#impl::{
@@ -25,6 +25,10 @@ use crate::{
 
 /// Per-part size limit for tool results, past which the middle is cut out.
 pub(crate) const MAX_TOOL_RESULT_CHARS: usize = 30_000;
+
+/// The error a turn ends with when the model's output limit cut its reply. The cut reply
+/// stays in the history, so the next query can ask for the rest.
+const CUT_OFF: &str = "the model's reply was cut off at its output limit";
 
 /// An agent that drives an [`InferLangModel`] through multi-turn, tool-augmented
 /// conversations.
@@ -165,11 +169,16 @@ impl Agent {
     /// Run one turn, yielding each model message and tool result as it completes.
     ///
     /// If the model fails before its first message of the turn, `query` is taken back out
-    /// of the history, so the agent can be run again.
+    /// of the history, so the agent can be run again. What the model's API refuses in a tool
+    /// result goes back to the model as an error saying so, once per batch. A reply the
+    /// model's output limit cut short is yielded and then ends the turn with an error.
     pub fn run(&mut self, query: Message) -> BoxStream<'_, anyhow::Result<MessageOutput>> {
         Box::pin(async_stream::try_stream! {
             self.begin_turn(query).await;
             let mut committed = false;
+            // The latest tool results as they were before what the API refused in them was
+            // replaced, while that stands: a second refusal puts them back and ends the turn.
+            let mut refused: Option<Vec<Message>> = None;
             loop {
                 self.manage_context();
                 let output = match self
@@ -179,17 +188,28 @@ impl Agent {
                 {
                     Ok(output) => output,
                     Err(e) => {
+                        if let Some(saved) = refused.take() {
+                            restore_results(&mut self.state.history, saved);
+                        } else if let Some(saved) = mend_refusal(&mut self.state.history, &e) {
+                            refused = Some(saved);
+                            continue;
+                        }
                         if !committed {
                             self.state.history.pop();
                         }
                         Err(e)?
                     }
                 };
+                refused = None;
                 self.commit(&output);
                 committed = true;
 
                 let calls = tool_calls(&output);
+                let cut_off = matches!(output.finish_reason, FinishReason::Length {});
                 yield output;
+                if cut_off {
+                    Err(anyhow::anyhow!(CUT_OFF))?;
+                }
                 if calls.is_empty() {
                     break;
                 }
@@ -214,6 +234,7 @@ impl Agent {
         Box::pin(async_stream::try_stream! {
             self.begin_turn(query).await;
             let mut committed = false;
+            let mut refused: Option<Vec<Message>> = None;
             loop {
                 self.manage_context();
                 let mut deltas =
@@ -238,14 +259,24 @@ impl Agent {
                 let output = match failure.map_or_else(|| acc.finish(), Err) {
                     Ok(output) => output,
                     Err(e) => {
+                        if let Some(saved) = refused.take() {
+                            restore_results(&mut self.state.history, saved);
+                        } else if let Some(saved) = mend_refusal(&mut self.state.history, &e) {
+                            refused = Some(saved);
+                            continue;
+                        }
                         if !committed {
                             self.state.history.pop();
                         }
                         Err(e)?
                     }
                 };
+                refused = None;
                 self.commit(&output);
                 committed = true;
+                if matches!(output.finish_reason, FinishReason::Length {}) {
+                    Err(anyhow::anyhow!(CUT_OFF))?;
+                }
 
                 // Already streamed as deltas.
                 let calls = tool_calls(&output);
@@ -421,6 +452,100 @@ fn close_dangling_calls(history: &mut Vec<Message>) {
     history.splice(end..end, results);
 }
 
+/// What the API refused in a request, read from its message, and so what to send the
+/// request again without. Only [`LastImages`](Self::LastImages) is diagnosed and mended;
+/// the rest name the refusals a mend is known for, and are ignored until they have one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refused {
+    /// An image in the tool results ending the history.
+    LastImages,
+    /// Text or values in the tool results ending the history, too large in all though each
+    /// part is within [`MAX_TOOL_RESULT_CHARS`]. Mend: cut the largest down.
+    #[allow(dead_code)]
+    LastTexts,
+    /// An image in an earlier turn, caught by the stricter limits past twenty images in a
+    /// request. Mend: stand a placeholder in for the images of stale turns.
+    #[allow(dead_code)]
+    OlderImages,
+    /// The whole history, over the model's context limit. Mend: truncate it as
+    /// [`ContextManager`] does, without waiting for the usage that triggers it.
+    #[allow(dead_code)]
+    TooLong,
+}
+
+impl Refused {
+    /// `None` for a refusal nothing here can mend (a bad key, a prompt over the limit),
+    /// whose request stays as it was.
+    ///
+    /// "image" is the sign of [`Refused::LastImages`]: broad enough for each backend's
+    /// wording, and absent from the refusals that are not about one. Telling the last batch's
+    /// images from older ones takes the API's path or dimensions, which no rule reads yet.
+    fn diagnose(refused: &RequestRefused) -> Option<Self> {
+        let message = refused.message.to_lowercase();
+        if message.contains("image") {
+            return Some(Self::LastImages);
+        }
+        None
+    }
+
+    /// Replace what was refused so the history can be sent again. Returns the results as
+    /// they were, for [`restore_results`] should the API refuse again; `None` when nothing
+    /// of the kind is there to replace, or this kind has no mend.
+    fn mend(self, history: &mut [Message], refused: &RequestRefused) -> Option<Vec<Message>> {
+        match self {
+            Self::LastImages => replace_last_parts(history, Part::is_image, "image", refused),
+            Self::LastTexts | Self::OlderImages | Self::TooLong => None,
+        }
+    }
+}
+
+/// Replace every part the tool results ending `history` hold for which `is_refused` holds
+/// by a note saying the API refused that `what`, in the API's own words, so the model learns
+/// of it. Returns those results as they were; `None` when none has such a part.
+fn replace_last_parts(
+    history: &mut [Message],
+    is_refused: fn(&Part) -> bool,
+    what: &str,
+    refused: &RequestRefused,
+) -> Option<Vec<Message>> {
+    let from = history
+        .iter()
+        .rposition(|m| m.role != Role::Tool)
+        .map_or(0, |i| i + 1);
+    let results = &mut history[from..];
+    if !results.iter().flat_map(|m| &m.contents).any(is_refused) {
+        return None;
+    }
+    let saved = results.to_vec();
+    let text = middle_truncate(
+        &format!(
+            "The model's API refused this {what}, so it was dropped; return it another way, \
+             or go on without it. The API said: {refused}"
+        ),
+        MAX_TOOL_RESULT_CHARS,
+    );
+    for part in results.iter_mut().flat_map(|m| &mut m.contents) {
+        if is_refused(part) {
+            *part = Part::text(text.clone());
+        }
+    }
+    Some(saved)
+}
+
+/// When `error` is the API refusing something the last tool results carry, replace it so
+/// the history can be sent again. See [`Refused::mend`] for the return; `None` when `error`
+/// is anything else.
+fn mend_refusal(history: &mut [Message], error: &anyhow::Error) -> Option<Vec<Message>> {
+    let refused = error.downcast_ref::<RequestRefused>()?;
+    Refused::diagnose(refused)?.mend(history, refused)
+}
+
+/// Put the results `saved` by [`replace_last_parts`] back in place of their replacements.
+fn restore_results(history: &mut [Message], saved: Vec<Message>) {
+    let from = history.len() - saved.len();
+    history[from..].clone_from_slice(&saved);
+}
+
 fn tool_error(id: String, text: impl Into<String>) -> Message {
     Message::new(Role::Tool)
         .with_contents([Part::text(text)])
@@ -529,6 +654,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        datatype::Bytes,
         message::{Role, TokenUsage},
         model::{LangModelProvider, set_lang_model_provider},
         suppress_panics, to_value,
@@ -584,6 +710,22 @@ mod tests {
         })
     }
 
+    fn cut(text: &str) -> anyhow::Result<MessageOutput> {
+        Ok(MessageOutput {
+            message: Message::new(Role::Assistant).with_contents([Part::text(text)]),
+            finish_reason: FinishReason::Length {},
+            usage: None,
+        })
+    }
+
+    fn refused() -> anyhow::Result<MessageOutput> {
+        Err(RequestRefused {
+            status: 400,
+            message: "X API request failed with status 400: image too large".into(),
+        }
+        .into())
+    }
+
     fn calls(calls: &[(&str, &str)]) -> anyhow::Result<MessageOutput> {
         Ok(MessageOutput {
             message: Message::new(Role::Assistant).with_tool_calls(
@@ -597,7 +739,7 @@ mod tests {
     }
 
     /// Registers `script` as the model `name` and returns its spec, with the `echo`,
-    /// `boom` (panics) and `console_only` tools.
+    /// `shot` (returns an image), `boom` (panics) and `console_only` tools.
     fn scripted(
         name: &str,
         script: impl IntoIterator<Item = anyhow::Result<MessageOutput>>,
@@ -615,6 +757,15 @@ mod tests {
         set_tool_provider(
             "echo",
             tool_func!(|_args: Value| -> Value { Value::string("echoed") }),
+        );
+        set_tool_provider(
+            "shot",
+            tool_func!(|_args: Value, id: String| -> Message {
+                let image = Part::image_embedded("image/png", Bytes::from(vec![0u8; 4])).unwrap();
+                Message::new(Role::Tool)
+                    .with_contents([Part::text("the page"), image])
+                    .with_id(id)
+            }),
         );
         set_tool_provider(
             "boom",
@@ -637,7 +788,12 @@ mod tests {
         };
         let spec = AgentSpec::new(format!("{name}/any"))
             .instruction("Be brief.")
-            .tools([tool("echo"), tool("boom"), tool("console_only")]);
+            .tools([
+                tool("echo"),
+                tool("shot"),
+                tool("boom"),
+                tool("console_only"),
+            ]);
         (model, spec)
     }
 
@@ -744,6 +900,168 @@ mod tests {
         assert!(text_of(&results["c3"]).contains("no tool named"));
         assert!(text_of(&results["c4"]).contains("needs a console"));
         assert_eq!(text_of(agent.history().last().unwrap()), "done");
+    }
+
+    #[test]
+    fn test_only_a_refusal_naming_an_image_is_mended() {
+        let diagnose = |message: &str| {
+            Refused::diagnose(&RequestRefused {
+                status: 400,
+                message: message.into(),
+            })
+        };
+        assert_eq!(
+            diagnose("messages.1.content.16.image.source.base64.data: dimensions exceed"),
+            Some(Refused::LastImages)
+        );
+        assert_eq!(
+            diagnose("Image exceeds 5 MB maximum"),
+            Some(Refused::LastImages)
+        );
+        assert_eq!(
+            diagnose("prompt is too long: 300024 tokens > 200000 maximum"),
+            None
+        );
+        assert_eq!(diagnose("API key not valid"), None);
+    }
+
+    #[tokio::test]
+    async fn test_a_refused_image_goes_back_to_the_model_as_an_error() {
+        let name = "test-agent-refused-image";
+        let (model, spec) = scripted(
+            name,
+            [
+                calls(&[("c1", "echo"), ("c2", "shot")]),
+                refused(),
+                answer("done"),
+            ],
+        );
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let outputs: Vec<_> = agent.run(user("hi")).collect().await;
+        assert!(outputs.iter().all(Result::is_ok));
+        assert_eq!(text_of(agent.history().last().unwrap()), "done");
+        let results: HashMap<_, _> = agent
+            .history()
+            .iter()
+            .filter(|m| m.role == Role::Tool)
+            .map(|m| (m.id.clone().unwrap(), m.clone()))
+            .collect();
+        // Only the image is replaced; the text beside it and the other result stay.
+        assert!(matches!(&results["c1"].contents[..], [Part::Value { .. }]));
+        assert!(matches!(
+            &results["c2"].contents[..],
+            [Part::Text { .. }, Part::Text { .. }]
+        ));
+        assert_eq!(results["c2"].contents[0].as_text(), Some("the page"));
+        assert!(text_of(&results["c2"]).contains("image too large"));
+        // The request after the refusal carried the replaced result.
+        let seen = model.seen.lock().unwrap();
+        assert_eq!(seen.len(), 3);
+        assert!(text_of(seen[2].last().unwrap()).contains("image too large"));
+    }
+
+    #[tokio::test]
+    async fn test_a_second_refusal_ends_the_turn_with_the_results_as_they_were() {
+        let name = "test-agent-refused-twice";
+        let (_, spec) = scripted(name, [calls(&[("c1", "shot")]), refused(), refused()]);
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let outputs: Vec<_> = agent.run(user("hi")).collect().await;
+        assert!(outputs.last().unwrap().is_err());
+        assert_eq!(
+            roles(agent.history()),
+            [Role::System, Role::User, Role::Assistant, Role::Tool]
+        );
+        assert!(matches!(
+            &agent.history()[3].contents[..],
+            [Part::Text { .. }, Part::Image { .. }]
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_a_refused_image_outside_the_last_batch_keeps_the_results() {
+        let name = "test-agent-refused-elsewhere";
+        let (model, spec) = scripted(name, [calls(&[("c1", "echo")]), refused()]);
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let outputs: Vec<_> = agent.run(user("hi")).collect().await;
+        assert!(outputs.last().unwrap().is_err());
+        assert_eq!(model.seen.lock().unwrap().len(), 2);
+        assert!(matches!(
+            &agent.history()[3].contents[..],
+            [Part::Value { .. }]
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_any_other_failure_after_tools_keeps_their_results() {
+        let name = "test-agent-failed-after-tools";
+        let (_, spec) = scripted(
+            name,
+            [calls(&[("c1", "echo")]), Err(anyhow::anyhow!("down"))],
+        );
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let outputs: Vec<_> = agent.run(user("hi")).collect().await;
+        assert!(outputs.last().unwrap().is_err());
+        assert!(matches!(
+            &agent.history()[3].contents[..],
+            [Part::Value { .. }]
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_run_stream_hands_a_refused_image_back_too() {
+        let name = "test-agent-refused-image-stream";
+        let (_, spec) = scripted(name, [calls(&[("c1", "shot")]), refused(), answer("done")]);
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let deltas: Vec<_> = agent.run_stream(user("hi")).collect().await;
+        assert!(deltas.iter().all(Result::is_ok));
+        assert_eq!(text_of(agent.history().last().unwrap()), "done");
+        assert!(text_of(&agent.history()[3]).contains("refused"));
+    }
+
+    #[tokio::test]
+    async fn test_a_cut_off_reply_ends_the_turn_with_an_error() {
+        let name = "test-agent-cut-off";
+        let (_, spec) = scripted(name, [cut("half"), answer("rest")]);
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let outputs: Vec<_> = agent.run(user("hi")).collect().await;
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(text_of(&outputs[0].as_ref().unwrap().message), "half");
+        assert!(
+            outputs[1]
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains("cut off")
+        );
+        // The cut reply stays, so the next query can ask for the rest.
+        assert_eq!(
+            roles(agent.history()),
+            [Role::System, Role::User, Role::Assistant]
+        );
+
+        let deltas: Vec<_> = agent.run_stream(user("go on")).collect().await;
+        assert!(deltas.iter().all(Result::is_ok));
+        assert_eq!(text_of(agent.history().last().unwrap()), "rest");
+    }
+
+    #[tokio::test]
+    async fn test_run_stream_ends_a_cut_off_reply_with_an_error() {
+        let name = "test-agent-cut-off-stream";
+        let (_, spec) = scripted(name, [cut("half")]);
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let deltas: Vec<_> = agent.run_stream(user("hi")).collect().await;
+        assert!(deltas.last().unwrap().is_err());
+        assert_eq!(
+            roles(agent.history()),
+            [Role::System, Role::User, Role::Assistant]
+        );
     }
 
     #[tokio::test]

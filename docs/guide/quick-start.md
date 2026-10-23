@@ -63,7 +63,7 @@ async def main() -> None:
 
     agent = await (
         # For openai, use "openai/gpt-5.6-luna"
-        AgentBuilder("anthropic/claude-haiku-4-5")
+        AgentBuilder("anthropic/claude-haiku-5-5")
         .instruction("Write what you are asked for into /artifacts.")
         .system_tools()
         .console(console)
@@ -92,7 +92,7 @@ async function main() {
     .network(true)
     .build()
   // For openai, use "openai/gpt-5.6-luna"
-  const agent = await new AgentBuilder('anthropic/claude-haiku-4-5')
+  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
     .instruction('Write what you are asked for into /artifacts.')
     .systemTools()
     .console(console_)
@@ -134,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     // For openai, use "openai/gpt-5.6-luna"
-    let mut agent = AgentBuilder::new("anthropic/claude-haiku-4-5")
+    let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
         .instruction("Write what you are asked for into /artifacts.")
         .system_tools()
         .console(console)

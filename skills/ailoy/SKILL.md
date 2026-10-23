@@ -21,7 +21,7 @@ The console is [virtx](https://github.com/brekkylab/virtx)'s: Ailoy takes a `Con
 
 ## 2. Name the model, and decide how it runs
 
-A model is `<org>/<name>`: the maker's own name for it, the official API id for Claude, GPT and Gemini (`anthropic/claude-haiku-4-5`, `openai/gpt-5.6-luna`, `google/gemini-3.1-pro`) and the Hugging Face repo id for open-weight models (`deepseek-ai/DeepSeek-V3.2`). The name stays the same whichever **backend** runs it; the org's backend decides that.
+A model is `<org>/<name>`: the maker's own name for it, the official API id for Claude, GPT and Gemini (`anthropic/claude-haiku-5-5`, `openai/gpt-5.6-luna`, `google/gemini-3.1-pro`) and the Hugging Face repo id for open-weight models (`deepseek-ai/DeepSeek-V3.2`). The name stays the same whichever **backend** runs it; the org's backend decides that.
 
 | Backend | Runs the model through | Needs |
 |---|---|---|
@@ -31,7 +31,7 @@ A model is `<org>/<name>`: the maker's own name for it, the official API id for 
 | `openrouter` | OpenRouter | `OPENROUTER_API_KEY` |
 | `vllm` | A vLLM server | `VLLM_BASE_URL` (default `http://localhost:8000/v1`) |
 
-So with Claude Code, Codex or Gemini CLI logged in on the host, no key is needed: `AgentBuilder("anthropic/claude-haiku-4-5")` runs on that login, and `AgentBuilder("anthropic")` alone runs the CLI's default model. To use a key instead, switch the org's backend before building the agent:
+So with Claude Code, Codex or Gemini CLI logged in on the host, no key is needed: `AgentBuilder("anthropic/claude-haiku-5-5")` runs on that login, and `AgentBuilder("anthropic")` alone runs the CLI's default model. To use a key instead, switch the org's backend before building the agent:
 
 ```python
 import ailoy
@@ -70,7 +70,7 @@ Node is the same calls in camelCase; Rust takes absolute host paths (`std::path:
 from ailoy import AgentBuilder
 
 agent = await (
-    AgentBuilder("anthropic/claude-haiku-4-5")
+    AgentBuilder("anthropic/claude-haiku-5-5")
     .instruction("Write what you are asked for into /artifacts.")
     .system_tools()        # shell, file reading and editing, image reading, in the model family's own style
     .console(console)

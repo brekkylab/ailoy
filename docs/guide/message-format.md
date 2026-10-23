@@ -152,15 +152,15 @@ To resume an earlier conversation, pass the saved messages to the builder:
 ::: code-group
 
 ```python [Python]
-agent = await AgentBuilder("anthropic/claude-haiku-4-5").history(saved_messages).build()
+agent = await AgentBuilder("anthropic/claude-haiku-5-5").history(saved_messages).build()
 ```
 
 ```js [Node.js]
-const agent = await new AgentBuilder('anthropic/claude-haiku-4-5').history(savedMessages).build()
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').history(savedMessages).build()
 ```
 
 ```rust [Rust]
-let agent = AgentBuilder::new("anthropic/claude-haiku-4-5")
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
     .history(saved_messages)
     .build()
     .await?;
