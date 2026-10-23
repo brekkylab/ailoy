@@ -50,17 +50,17 @@ impl GeminiImageApiModel {
     }
 
     /// The request body for one call, from the `gemini` section alone.
-    fn body(&self, prompt: &str, options: &ImageModelOptions) -> serde_json::Value {
+    fn body(&self, prompt: &str, options: &ImageModelOptions) -> anyhow::Result<serde_json::Value> {
         let options = options.gemini.clone().unwrap_or_default();
         // Sent as asked, in `imageConfig`'s camelCase: a model that does not take a value
         // says so, and `explain_error` ties that to the option.
         let mut image_config = Value::object_empty();
         let image_obj = image_config.as_object_mut().unwrap();
-        if let Some(ratio) = options.aspect_ratio {
-            image_obj.insert("aspectRatio".into(), <&str>::from(ratio).into());
+        if let Some(ratio) = &options.aspect_ratio {
+            image_obj.insert("aspectRatio".into(), ratio.as_str().into());
         }
-        if let Some(size) = options.image_size {
-            image_obj.insert("imageSize".into(), <&str>::from(size).into());
+        if let Some(size) = &options.image_size {
+            image_obj.insert("imageSize".into(), size.as_str().into());
         }
 
         let mut config = to_value!({"responseModalities": ["TEXT", "IMAGE"]});
@@ -69,18 +69,26 @@ impl GeminiImageApiModel {
             config_obj.insert("imageConfig".into(), image_config);
         }
         // Thoughts are not asked for (`includeThoughts`); their tokens still count in usage.
-        if let Some(level) = options.thinking_level {
+        if let Some(level) = &options.thinking_level {
             config_obj.insert(
                 "thinkingConfig".into(),
-                to_value!({"thinkingLevel": <&str>::from(level)}),
+                to_value!({"thinkingLevel": level.as_str()}),
             );
         }
 
-        to_value!({
+        let mut body = to_value!({
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": config,
         })
-        .into()
+        .into();
+        // The prompt and the asked-for image output are this model's own.
+        super::merge_extra(
+            &mut body,
+            options.extra.as_ref(),
+            "gemini",
+            &["contents", "generationConfig.responseModalities"],
+        )?;
+        Ok(body)
     }
 }
 
@@ -101,7 +109,7 @@ impl InferImageModel for GeminiImageApiModel {
         let model = self.model.clone();
         let section = options.gemini.clone().unwrap_or_default();
         Box::pin(async move {
-            let response = send(&url, &api_key, &body, &model, &section).await?;
+            let response = send(&url, &api_key, &body?, &model, &section).await?;
             let val: Value = serde_json::from_str(&response.text().await?)
                 .context("Gemini image response is not JSON")?;
             parse_response(&val)
@@ -208,32 +216,32 @@ fn explain_error(
         return None;
     }
     let mut hints = Vec::new();
-    if let Some(ratio) = section.aspect_ratio
+    if let Some(ratio) = &section.aspect_ratio
         && body.contains("aspect_ratio")
     {
         hints.push(format!(
             "`gemini.aspect_ratio: {}` is not accepted by '{model}'; try another ratio, or leave it \
              unset to let the model choose",
-            <&str>::from(ratio),
+            ratio,
         ));
     }
-    if let Some(size) = section.image_size
+    if let Some(size) = &section.image_size
         && (body.contains("image_size")
             || (body.contains("Image size") && body.contains("not supported")))
     {
         hints.push(format!(
             "`gemini.image_size: {}` is not accepted by '{model}'; try another size, or leave it \
              unset to use the model's default size",
-            <&str>::from(size),
+            size,
         ));
     }
-    if let Some(level) = section.thinking_level
+    if let Some(level) = &section.thinking_level
         && (body.contains("thinking_level") || body.contains("Thinking level"))
     {
         hints.push(format!(
             "`gemini.thinking_level: {}` is not accepted by '{model}'; try another level, or \
              leave it unset for the model's default",
-            <&str>::from(level),
+            level,
         ));
     }
     (!hints.is_empty()).then(|| hints.join("; "))
@@ -347,10 +355,7 @@ fn parse_usage(usage: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{
-        GeminiAspectRatio, GeminiImageSize, GeminiThinkingLevel, OpenAiImageOptions,
-        OpenAiImageQuality, OpenRouterAspectRatio, OpenRouterImageOptions,
-    };
+    use crate::model::{OpenAiImageOptions, OpenRouterImageOptions};
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
@@ -361,15 +366,13 @@ mod tests {
     fn body(options: &ImageModelOptions) -> serde_json::Value {
         GeminiImageApiModel::new("gemini-3.1-flash-image", "AIza-test")
             .body("a red cube on a white table", options)
+            .unwrap()
     }
 
-    fn set(
-        aspect_ratio: Option<GeminiAspectRatio>,
-        image_size: Option<GeminiImageSize>,
-    ) -> GeminiImageOptions {
+    fn set(aspect_ratio: Option<&str>, image_size: Option<&str>) -> GeminiImageOptions {
         GeminiImageOptions {
-            aspect_ratio,
-            image_size,
+            aspect_ratio: aspect_ratio.map(str::to_owned),
+            image_size: image_size.map(str::to_owned),
             ..Default::default()
         }
     }
@@ -394,10 +397,7 @@ mod tests {
 
     #[test]
     fn body_sends_aspect_ratio_and_image_size() {
-        let options = with_gemini(set(
-            Some(GeminiAspectRatio::Ratio16x9),
-            Some(GeminiImageSize::Size512),
-        ));
+        let options = with_gemini(set(Some("16:9"), Some("512")));
         assert_eq!(
             body(&options)["generationConfig"]["imageConfig"],
             serde_json::json!({"aspectRatio": "16:9", "imageSize": "512"})
@@ -411,11 +411,11 @@ mod tests {
         let options = ImageModelOptions {
             openai: Some(OpenAiImageOptions {
                 n: Some(2),
-                quality: Some(OpenAiImageQuality::High),
+                quality: Some("high".to_owned()),
                 ..Default::default()
             }),
             openrouter: Some(OpenRouterImageOptions {
-                aspect_ratio: Some(OpenRouterAspectRatio::Ratio16x9),
+                aspect_ratio: Some("16:9".to_owned()),
                 ..Default::default()
             }),
             ..Default::default()
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn explain_error_names_the_image_size_option() {
-        let with_size = Some(GeminiImageSize::Size512);
+        let with_size = Some("512");
         let model = "gemini-3.1-flash-lite-image";
 
         let hint = explain_error(model, &set(None, with_size), 400, SIZE_REFUSAL)
@@ -452,7 +452,7 @@ mod tests {
         assert!(explain_error(model, &set(None, None), 400, SIZE_REFUSAL).is_none());
 
         // The wording another model used for the same refusal.
-        let hint = explain_error(model, &set(None, Some(GeminiImageSize::Size512)), 400,
+        let hint = explain_error(model, &set(None, Some("512")), 400,
             r#"{"error":{"code":400,"message":"Unsupported image_size '512'. Supported values are: 1K, 2K, 4K"}}"#,
         )
         .expect("an image_size refusal is explained");
@@ -460,15 +460,80 @@ mod tests {
     }
 
     #[test]
+    fn extra_merges_into_the_request_body() {
+        let options = with_gemini(GeminiImageOptions {
+            extra: Some(to_value!({
+                "safetySettings": [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}],
+                "generationConfig": {"imageConfig": {"personGeneration": "ALLOW_ALL"}},
+            })),
+            ..set(Some("16:9"), Some("2K"))
+        });
+        let sent = body(&options);
+        assert_eq!(
+            sent["safetySettings"][0]["threshold"], "BLOCK_NONE",
+            "a new field is added"
+        );
+        assert_eq!(
+            sent["generationConfig"]["imageConfig"],
+            serde_json::json!({"aspectRatio": "16:9", "imageSize": "2K", "personGeneration": "ALLOW_ALL"}),
+            "a nested object keeps its typed fields"
+        );
+        assert_eq!(
+            sent["generationConfig"]["responseModalities"],
+            serde_json::json!(["TEXT", "IMAGE"])
+        );
+
+        let options = with_gemini(GeminiImageOptions {
+            extra: Some(to_value!({"generationConfig": {"imageConfig": {"aspectRatio": "1:1"}}})),
+            ..set(Some("16:9"), None)
+        });
+        assert_eq!(
+            body(&options)["generationConfig"]["imageConfig"]["aspectRatio"],
+            "1:1",
+            "extra wins on conflict"
+        );
+    }
+
+    #[test]
+    fn extra_must_be_an_object_and_leave_reserved_keys_alone() {
+        let model = GeminiImageApiModel::new("gemini-3.1-flash-image", "AIza-test");
+        let err_for = |extra| {
+            let options = with_gemini(GeminiImageOptions {
+                extra: Some(extra),
+                ..Default::default()
+            });
+            model.body("a red cube", &options).unwrap_err().to_string()
+        };
+        assert!(
+            err_for(to_value!("x")).contains("`gemini.extra` must be a JSON object"),
+            "a non-object is refused"
+        );
+        assert_eq!(
+            err_for(to_value!({"contents": []})),
+            "`gemini.extra` may not set `contents`"
+        );
+        assert_eq!(
+            err_for(to_value!({"generationConfig": {"responseModalities": ["IMAGE"]}})),
+            "`gemini.extra` may not set `generationConfig.responseModalities`"
+        );
+        // Beside the reserved key, `generationConfig` is open.
+        let options = with_gemini(GeminiImageOptions {
+            extra: Some(to_value!({"generationConfig": {"candidateCount": 1}})),
+            ..Default::default()
+        });
+        assert_eq!(body(&options)["generationConfig"]["candidateCount"], 1);
+    }
+
+    #[test]
     fn body_sends_the_thinking_level_without_asking_for_thoughts() {
         let level = |thinking_level| {
             with_gemini(GeminiImageOptions {
                 thinking_level,
-                ..set(Some(GeminiAspectRatio::Ratio16x9), None)
+                ..set(Some("16:9"), None)
             })
         };
         assert_eq!(
-            body(&level(Some(GeminiThinkingLevel::High)))["generationConfig"],
+            body(&level(Some("high".to_owned())))["generationConfig"],
             serde_json::json!({
                 "responseModalities": ["TEXT", "IMAGE"],
                 "imageConfig": {"aspectRatio": "16:9"},
@@ -482,7 +547,7 @@ mod tests {
         );
 
         let alone = with_gemini(GeminiImageOptions {
-            thinking_level: Some(GeminiThinkingLevel::Minimal),
+            thinking_level: Some("minimal".to_owned()),
             ..Default::default()
         });
         assert_eq!(
@@ -500,7 +565,7 @@ mod tests {
         const LEVEL_REFUSAL: &str = r#"{"error":{"code":400,"message":"Thinking level MEDIUM is not supported for this model. Please retry with other thinking level.","status":"INVALID_ARGUMENT"}}"#;
         let model = "gemini-3.1-flash-lite-image";
         let with_level = GeminiImageOptions {
-            thinking_level: Some(GeminiThinkingLevel::Medium),
+            thinking_level: Some("medium".to_owned()),
             ..Default::default()
         };
 
@@ -519,7 +584,7 @@ mod tests {
         const RATIO_REFUSAL: &str = r#"{"error":{"code":400,"message":"aspect_ratio must be one of '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'","status":"INVALID_ARGUMENT"}}"#;
         let model = "gemini-3.1-flash-image";
 
-        let ratio = Some(GeminiAspectRatio::Ratio1x8);
+        let ratio = Some("1:8");
         let hint = explain_error(model, &set(ratio, None), 400, RATIO_REFUSAL)
             .expect("an aspect_ratio refusal is explained");
         assert!(hint.contains("`gemini.aspect_ratio: 1:8`"), "{hint}");
@@ -741,10 +806,7 @@ mod tests {
         (format!("http://{addr}/"), calls)
     }
 
-    async fn send_to(
-        url: &str,
-        image_size: Option<GeminiImageSize>,
-    ) -> anyhow::Result<reqwest::Response> {
+    async fn send_to(url: &str, image_size: Option<&str>) -> anyhow::Result<reqwest::Response> {
         send(
             url,
             "AIza-test",
@@ -811,10 +873,7 @@ mod tests {
     async fn send_explains_a_size_refusal() {
         let (url, calls) = mock(|_| (400, SIZE_REFUSAL)).await;
 
-        let err = send_to(&url, Some(GeminiImageSize::Size512))
-            .await
-            .unwrap_err()
-            .to_string();
+        let err = send_to(&url, Some("512")).await.unwrap_err().to_string();
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 
         assert!(err.contains("400"), "{err}");
@@ -834,7 +893,7 @@ mod tests {
             return;
         };
         let options = with_gemini(GeminiImageOptions {
-            aspect_ratio: Some(GeminiAspectRatio::Ratio16x9),
+            aspect_ratio: Some("16:9".to_owned()),
             ..Default::default()
         });
 

@@ -9,8 +9,8 @@
 //!
 //! // Each model reads only its own API's section, so one set of options serves both.
 //! let options = ImageModelOptions {
-//!     openai: Some(OpenAiImageOptions { quality: Some(OpenAiImageQuality::High), ..Default::default() }),
-//!     gemini: Some(GeminiImageOptions { aspect_ratio: Some(GeminiAspectRatio::Ratio16x9), ..Default::default() }),
+//!     openai: Some(OpenAiImageOptions { quality: Some("high".to_owned()), ..Default::default() }),
+//!     gemini: Some(GeminiImageOptions { aspect_ratio: Some("16:9".to_owned()), ..Default::default() }),
 //!     ..Default::default()
 //! };
 //! let model = create_image_model("openai/gpt-image-1").await?;

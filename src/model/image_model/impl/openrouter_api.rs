@@ -7,10 +7,7 @@ use futures::future::BoxFuture;
 use crate::{
     datatype::{Bytes, Value},
     message::{PartImage, TokenUsage},
-    model::{
-        ImageModelOptions, ImageOutput, InferImageModel, OpenRouterImageBackground,
-        OpenRouterImageFormat, OpenRouterResolution,
-    },
+    model::{ImageModelOptions, ImageOutput, InferImageModel},
     to_value,
 };
 
@@ -67,35 +64,39 @@ impl OpenRouterImageApiModel {
             }
             obj.insert("n".into(), u64::from(n).into());
         }
-        // Sent as written: the sizes a model accepts differ by model, and it says which.
-        if let Some(size) = &options.size {
-            obj.insert("size".into(), size.as_str().into());
-        }
-        if let Some(resolution) = options.resolution {
-            obj.insert("resolution".into(), <&str>::from(resolution).into());
-        }
-        if let Some(ratio) = options.aspect_ratio {
-            obj.insert("aspect_ratio".into(), <&str>::from(ratio).into());
-        }
-        if let Some(quality) = options.quality {
-            obj.insert("quality".into(), <&str>::from(quality).into());
-        }
-        if options.background == Some(OpenRouterImageBackground::Transparent)
-            && options.output_format == Some(OpenRouterImageFormat::Jpeg)
-        {
+        let is = |value: &Option<String>, want: &str| {
+            value
+                .as_deref()
+                .is_some_and(|v| v.eq_ignore_ascii_case(want))
+        };
+        if is(&options.background, "transparent") && is(&options.output_format, "jpeg") {
             bail!(
                 "a transparent background needs an alpha-capable format; \
                  `openrouter.output_format: jpeg` cannot carry one (use png or webp)"
             );
         }
-        if let Some(format) = options.output_format {
-            obj.insert("output_format".into(), <&str>::from(format).into());
-        }
-        if let Some(background) = options.background {
-            obj.insert("background".into(), <&str>::from(background).into());
+        for (key, value) in [
+            ("size", &options.size),
+            ("resolution", &options.resolution),
+            ("aspect_ratio", &options.aspect_ratio),
+            ("quality", &options.quality),
+            ("output_format", &options.output_format),
+            ("background", &options.background),
+        ] {
+            if let Some(value) = value {
+                obj.insert(key.into(), value.as_str().into());
+            }
         }
 
-        Ok(body.into())
+        let mut body = body.into();
+        // The response is read whole, so it may not be streamed.
+        super::merge_extra(
+            &mut body,
+            options.extra.as_ref(),
+            "openrouter",
+            &["model", "prompt", "stream"],
+        )?;
+        Ok(body)
     }
 }
 
@@ -109,11 +110,19 @@ impl InferImageModel for OpenRouterImageApiModel {
         let api_key = self.api_key.clone();
         let model = self.model.clone();
         let section = options.openrouter.as_ref();
-        let resolution = section.and_then(|o| o.resolution);
+        let resolution = section.and_then(|o| o.resolution.clone());
         let size_set = section.is_some_and(|o| o.size.is_some());
         let asked = section.and_then(|o| o.n).unwrap_or(1) as usize;
         Box::pin(async move {
-            let response = send(API_URL, &api_key, &body?, &model, resolution, size_set).await?;
+            let response = send(
+                API_URL,
+                &api_key,
+                &body?,
+                &model,
+                resolution.as_deref(),
+                size_set,
+            )
+            .await?;
             let val: Value = serde_json::from_str(&response.text().await?)
                 .context("OpenRouter image response is not JSON")?;
             let out = parse_response(&val)?;
@@ -147,7 +156,7 @@ async fn send(
     api_key: &str,
     body: &serde_json::Value,
     model: &str,
-    resolution: Option<OpenRouterResolution>,
+    resolution: Option<&str>,
     size_set: bool,
 ) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
@@ -197,7 +206,7 @@ async fn send(
 /// be about either, so nothing is added.
 fn explain_error(
     model: &str,
-    resolution: Option<OpenRouterResolution>,
+    resolution: Option<&str>,
     size_set: bool,
     status: u16,
     body: &str,
@@ -209,7 +218,7 @@ fn explain_error(
     Some(format!(
         "`openrouter.resolution: {}` is not accepted by '{model}'; try another resolution, \
          or leave it unset to use the model's default size",
-        <&str>::from(resolution),
+        resolution,
     ))
 }
 
@@ -265,9 +274,9 @@ fn parse_response(val: &Value) -> anyhow::Result<ImageOutput> {
 fn fallback_mime(data: &[u8]) -> &'static str {
     let head = String::from_utf8_lossy(&data[..data.len().min(512)]);
     if head.contains("<svg") {
-        OpenRouterImageFormat::Svg.mime_type()
+        "image/svg+xml"
     } else {
-        OpenRouterImageFormat::Png.mime_type()
+        "image/png"
     }
 }
 
@@ -286,10 +295,7 @@ fn parse_usage(usage: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{
-        GeminiImageOptions, GeminiImageSize, OpenAiImageOptions, OpenRouterAspectRatio,
-        OpenRouterImageOptions, OpenRouterImageQuality,
-    };
+    use crate::model::{GeminiImageOptions, OpenAiImageOptions, OpenRouterImageOptions};
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
@@ -323,7 +329,7 @@ mod tests {
                 ..Default::default()
             }),
             gemini: Some(GeminiImageOptions {
-                image_size: Some(GeminiImageSize::Size2K),
+                image_size: Some("2K".to_owned()),
                 ..Default::default()
             }),
             ..Default::default()
@@ -342,11 +348,12 @@ mod tests {
         let options = OpenRouterImageOptions {
             n: Some(2),
             size: Some("1024x1024".to_owned()),
-            quality: Some(OpenRouterImageQuality::Auto),
-            output_format: Some(OpenRouterImageFormat::Webp),
-            background: Some(OpenRouterImageBackground::Transparent),
-            aspect_ratio: Some(OpenRouterAspectRatio::Ratio9x19p5),
-            resolution: Some(OpenRouterResolution::Res1p5K),
+            quality: Some("auto".to_owned()),
+            output_format: Some("webp".to_owned()),
+            background: Some("transparent".to_owned()),
+            aspect_ratio: Some("9:19.5".to_owned()),
+            resolution: Some("1.5K".to_owned()),
+            extra: None,
         };
         assert_eq!(
             body(&options).unwrap(),
@@ -369,7 +376,7 @@ mod tests {
         let cases = [
             (
                 OpenRouterImageOptions {
-                    resolution: Some(OpenRouterResolution::Res768),
+                    resolution: Some("768".to_owned()),
                     ..Default::default()
                 },
                 "resolution",
@@ -377,7 +384,7 @@ mod tests {
             ),
             (
                 OpenRouterImageOptions {
-                    aspect_ratio: Some(OpenRouterAspectRatio::Auto),
+                    aspect_ratio: Some("auto".to_owned()),
                     ..Default::default()
                 },
                 "aspect_ratio",
@@ -385,7 +392,7 @@ mod tests {
             ),
             (
                 OpenRouterImageOptions {
-                    output_format: Some(OpenRouterImageFormat::Svg),
+                    output_format: Some("svg".to_owned()),
                     ..Default::default()
                 },
                 "output_format",
@@ -393,7 +400,7 @@ mod tests {
             ),
             (
                 OpenRouterImageOptions {
-                    background: Some(OpenRouterImageBackground::Auto),
+                    background: Some("auto".to_owned()),
                     ..Default::default()
                 },
                 "background",
@@ -409,6 +416,38 @@ mod tests {
     }
 
     #[test]
+    fn extra_adds_fields_and_wins_over_typed_ones() {
+        let options = OpenRouterImageOptions {
+            quality: Some("high".to_owned()),
+            extra: Some(to_value!({"user": "u-1", "quality": "low"})),
+            ..Default::default()
+        };
+        let body = body(&options).unwrap();
+        assert_eq!(body["user"], "u-1");
+        assert_eq!(body["quality"], "low", "extra wins on conflict");
+    }
+
+    #[test]
+    fn extra_must_be_an_object_and_leave_reserved_keys_alone() {
+        let with_extra = |extra| OpenRouterImageOptions {
+            extra: Some(extra),
+            ..Default::default()
+        };
+        let err = body(&with_extra(to_value!(["user"])))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("`openrouter.extra` must be a JSON object"),
+            "{err}"
+        );
+        for key in ["model", "prompt", "stream"] {
+            let extra = crate::datatype::Value::object([(key, true)]);
+            let err = body(&with_extra(extra)).unwrap_err().to_string();
+            assert_eq!(err, format!("`openrouter.extra` may not set `{key}`"));
+        }
+    }
+
+    #[test]
     fn body_refuses_what_openrouter_never_accepts() {
         for n in [0, 11] {
             let options = OpenRouterImageOptions {
@@ -419,8 +458,8 @@ mod tests {
             assert!(err.contains("between 1 and 10"), "{err}");
         }
         let options = OpenRouterImageOptions {
-            output_format: Some(OpenRouterImageFormat::Jpeg),
-            background: Some(OpenRouterImageBackground::Transparent),
+            output_format: Some("jpeg".to_owned()),
+            background: Some("transparent".to_owned()),
             ..Default::default()
         };
         let err = body(&options).unwrap_err().to_string();
@@ -511,36 +550,19 @@ mod tests {
             r#"{"error":{"code":400,"message":"Unsupported resolution '4K' for this model"}}"#;
         let model = "bytedance-seed/seedream-5-0-pro";
 
-        let hint = explain_error(
-            model,
-            Some(OpenRouterResolution::Res4K),
-            false,
-            400,
-            REFUSAL,
-        )
-        .expect("a resolution refusal is explained");
+        let hint = explain_error(model, Some("4K"), false, 400, REFUSAL)
+            .expect("a resolution refusal is explained");
         assert!(hint.contains("`openrouter.resolution: 4K`"), "{hint}");
         assert!(hint.contains(model), "{hint}");
 
         assert!(explain_error(model, None, false, 400, REFUSAL).is_none());
-        assert!(
-            explain_error(
-                model,
-                Some(OpenRouterResolution::Res4K),
-                false,
-                402,
-                REFUSAL
-            )
-            .is_none()
-        );
+        assert!(explain_error(model, Some("4K"), false, 402, REFUSAL).is_none());
         // With `size` set too, the refusal may be about either.
-        assert!(
-            explain_error(model, Some(OpenRouterResolution::Res4K), true, 400, REFUSAL).is_none()
-        );
+        assert!(explain_error(model, Some("4K"), true, 400, REFUSAL).is_none());
         assert!(
             explain_error(
                 model,
-                Some(OpenRouterResolution::Res4K),
+                Some("4K"),
                 false,
                 400,
                 r#"{"error":{"code":400,"message":"bad aspect_ratio"}}"#
@@ -582,10 +604,7 @@ mod tests {
         (format!("http://{addr}/"), calls)
     }
 
-    async fn send_to(
-        url: &str,
-        resolution: Option<OpenRouterResolution>,
-    ) -> anyhow::Result<reqwest::Response> {
+    async fn send_to(url: &str, resolution: Option<&str>) -> anyhow::Result<reqwest::Response> {
         send(
             url,
             "sk-or-test",
@@ -674,7 +693,7 @@ mod tests {
         };
         let options = ImageModelOptions {
             openrouter: Some(OpenRouterImageOptions {
-                aspect_ratio: Some(OpenRouterAspectRatio::Ratio16x9),
+                aspect_ratio: Some("16:9".to_owned()),
                 ..Default::default()
             }),
             ..Default::default()

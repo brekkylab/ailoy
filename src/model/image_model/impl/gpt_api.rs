@@ -7,9 +7,7 @@ use futures::future::BoxFuture;
 use crate::{
     datatype::{Bytes, Value},
     message::{PartImage, TokenUsage},
-    model::{
-        ImageModelOptions, ImageOutput, InferImageModel, OpenAiImageBackground, OpenAiImageFormat,
-    },
+    model::{ImageModelOptions, ImageOutput, InferImageModel},
     to_value,
 };
 
@@ -68,29 +66,37 @@ impl GptImageApiModel {
             }
             obj.insert("n".into(), u64::from(n).into());
         }
-        // Sent as written: the sizes a model accepts differ by model, and it says which.
-        if let Some(size) = &options.size {
-            obj.insert("size".into(), size.as_str().into());
-        }
-        if let Some(quality) = options.quality {
-            obj.insert("quality".into(), <&str>::from(quality).into());
-        }
-        if options.background == Some(OpenAiImageBackground::Transparent)
-            && options.output_format == Some(OpenAiImageFormat::Jpeg)
-        {
+        let is = |value: &Option<String>, want: &str| {
+            value
+                .as_deref()
+                .is_some_and(|v| v.eq_ignore_ascii_case(want))
+        };
+        if is(&options.background, "transparent") && is(&options.output_format, "jpeg") {
             bail!(
                 "a transparent background needs an alpha-capable format; \
                  `openai.output_format: jpeg` cannot carry one (use png or webp)"
             );
         }
-        if let Some(format) = options.output_format {
-            obj.insert("output_format".into(), <&str>::from(format).into());
-        }
-        if let Some(background) = options.background {
-            obj.insert("background".into(), <&str>::from(background).into());
+        for (key, value) in [
+            ("size", &options.size),
+            ("quality", &options.quality),
+            ("output_format", &options.output_format),
+            ("background", &options.background),
+        ] {
+            if let Some(value) = value {
+                obj.insert(key.into(), value.as_str().into());
+            }
         }
 
-        Ok(body.into())
+        let mut body = body.into();
+        // The response is read whole, so it may not be streamed.
+        super::merge_extra(
+            &mut body,
+            options.extra.as_ref(),
+            "openai",
+            &["model", "prompt", "stream"],
+        )?;
+        Ok(body)
     }
 }
 
@@ -201,10 +207,10 @@ fn parse_response(val: &Value) -> anyhow::Result<ImageOutput> {
 
     // The format produced is echoed at the top level; without it the bytes are sniffed,
     // and PNG is the API's default.
-    let echoed_format = val
+    let echoed_mime = val
         .pointer("/output_format")
         .and_then(|v| v.as_str())
-        .and_then(|format| serde_json::from_value::<OpenAiImageFormat>(format.into()).ok());
+        .and_then(format_mime);
 
     let mut images = Vec::with_capacity(data.len());
     let mut undecodable = 0usize;
@@ -216,8 +222,8 @@ fn parse_response(val: &Value) -> anyhow::Result<ImageOutput> {
                 undecodable += 1;
                 continue;
             };
-            let mime_type = echoed_format
-                .map(|format| format.mime_type().to_owned())
+            let mime_type = echoed_mime
+                .map(str::to_owned)
                 .or_else(|| infer::get(data.as_ref()).map(|t| t.mime_type().to_owned()))
                 .unwrap_or_else(|| "image/png".to_owned());
             images.push(PartImage::Embedded { mime_type, data });
@@ -247,6 +253,17 @@ fn parse_response(val: &Value) -> anyhow::Result<ImageOutput> {
     })
 }
 
+/// The media type of an `output_format` value, if it is one this knows.
+fn format_mime(format: &str) -> Option<&'static str> {
+    Some(match format.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        _ => return None,
+    })
+}
+
 fn parse_usage(usage: &Value) -> Option<TokenUsage> {
     let u = usage.as_object()?;
     let count = |key: &str| u.get(key).and_then(|v| v.as_unsigned()).unwrap_or(0);
@@ -261,10 +278,7 @@ fn parse_usage(usage: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{
-        GeminiAspectRatio, GeminiImageOptions, OpenAiImageOptions, OpenAiImageQuality,
-        OpenRouterImageOptions,
-    };
+    use crate::model::{GeminiImageOptions, OpenAiImageOptions, OpenRouterImageOptions};
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
@@ -291,7 +305,7 @@ mod tests {
     fn body_ignores_other_sections() {
         let options = ImageModelOptions {
             gemini: Some(GeminiImageOptions {
-                aspect_ratio: Some(GeminiAspectRatio::Ratio16x9),
+                aspect_ratio: Some("16:9".to_owned()),
                 ..Default::default()
             }),
             openrouter: Some(OpenRouterImageOptions {
@@ -314,9 +328,10 @@ mod tests {
         let options = OpenAiImageOptions {
             n: Some(3),
             size: Some("1536x1024".to_owned()),
-            quality: Some(OpenAiImageQuality::High),
-            output_format: Some(OpenAiImageFormat::Webp),
-            background: Some(OpenAiImageBackground::Transparent),
+            quality: Some("high".to_owned()),
+            output_format: Some("webp".to_owned()),
+            background: Some("transparent".to_owned()),
+            extra: None,
         };
         assert_eq!(
             body(&options).unwrap(),
@@ -355,18 +370,53 @@ mod tests {
     #[test]
     fn body_rejects_transparent_background_on_jpeg() {
         let options = OpenAiImageOptions {
-            output_format: Some(OpenAiImageFormat::Jpeg),
-            background: Some(OpenAiImageBackground::Transparent),
+            output_format: Some("JPEG".to_owned()),
+            background: Some("Transparent".to_owned()),
             ..Default::default()
         };
         let err = body(&options).unwrap_err().to_string();
-        assert!(err.contains("transparent background"), "{err}");
+        assert!(
+            err.contains("transparent background"),
+            "case does not matter: {err}"
+        );
 
         let options = OpenAiImageOptions {
-            background: Some(OpenAiImageBackground::Opaque),
+            background: Some("opaque".to_owned()),
             ..options
         };
         assert!(body(&options).is_ok());
+    }
+
+    #[test]
+    fn extra_adds_fields_and_wins_over_typed_ones() {
+        let options = OpenAiImageOptions {
+            quality: Some("high".to_owned()),
+            extra: Some(to_value!({"user": "u-1", "quality": "low"})),
+            ..Default::default()
+        };
+        let body = body(&options).unwrap();
+        assert_eq!(body["user"], "u-1");
+        assert_eq!(body["quality"], "low", "extra wins on conflict");
+    }
+
+    #[test]
+    fn extra_must_be_an_object_and_leave_reserved_keys_alone() {
+        let with_extra = |extra| OpenAiImageOptions {
+            extra: Some(extra),
+            ..Default::default()
+        };
+        let err = body(&with_extra(to_value!(["user"])))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("`openai.extra` must be a JSON object"),
+            "{err}"
+        );
+        for key in ["model", "prompt", "stream"] {
+            let extra = crate::datatype::Value::object([(key, true)]);
+            let err = body(&with_extra(extra)).unwrap_err().to_string();
+            assert_eq!(err, format!("`openai.extra` may not set `{key}`"));
+        }
     }
 
     #[test]
@@ -669,7 +719,7 @@ mod tests {
         };
         let options = ImageModelOptions {
             openai: Some(OpenAiImageOptions {
-                quality: Some(OpenAiImageQuality::Low),
+                quality: Some("low".to_owned()),
                 ..Default::default()
             }),
             ..Default::default()

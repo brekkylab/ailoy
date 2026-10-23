@@ -2,7 +2,10 @@ use futures::future::BoxFuture;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::message::{PartImage, TokenUsage};
+use crate::{
+    datatype::Value,
+    message::{PartImage, TokenUsage},
+};
 
 /// Options for one image generation call, in one section per API.
 ///
@@ -11,9 +14,9 @@ use crate::message::{PartImage, TokenUsage};
 /// leaves that API's defaults in place. Fill several sections to switch between models of
 /// different APIs with the same options.
 ///
-/// A combination an API never accepts fails before anything is sent; anything else goes
-/// out as asked, and a refusal comes back as the API's error. Unknown sections and keys
-/// are ignored when deserializing, not rejected.
+/// Values are sent as written: the API decides which it takes, and a refusal comes back as
+/// its error. A combination an API never accepts fails before anything is sent. Unknown
+/// sections and keys are ignored when deserializing, not rejected.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ImageModelOptions {
     /// The OpenAI Images API's parameters, read by models with an `openai/…` desc.
@@ -43,40 +46,50 @@ pub struct OpenAiImageOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub n: Option<u32>,
 
-    /// The pixel size, as `"<width>x<height>"` (e.g. `"1536x1024"`) or `"auto"`, sent as
-    /// written. A string, since the sizes a model accepts differ by model.
+    /// The pixel size, as `"<width>x<height>"` (e.g. `"1536x1024"`) or `"auto"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
 
-    /// How much care goes into the render.
+    /// How much care goes into the render, e.g. `"low"` or `"high"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quality: Option<OpenAiImageQuality>,
+    pub quality: Option<String>,
 
-    /// The encoding of the returned image.
+    /// The encoding of the returned image, e.g. `"png"` or `"webp"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_format: Option<OpenAiImageFormat>,
+    pub output_format: Option<String>,
 
-    /// The background behind the subject. `Transparent` needs an alpha-capable format, so
-    /// it is refused together with `output_format: jpeg`.
+    /// The background behind the subject, e.g. `"transparent"` or `"opaque"`. A
+    /// transparent one needs an alpha-capable format, so it is refused together with a
+    /// `"jpeg"` output format.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub background: Option<OpenAiImageBackground>,
+    pub background: Option<String>,
+
+    /// Extra request fields, merged into this API's request body after the fields above;
+    /// for parameters these options do not cover. Written as the API's own JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra: Option<Value>,
 }
 
 /// The image parameters of the Gemini API.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GeminiImageOptions {
-    /// The width-to-height ratio.
+    /// The width-to-height ratio, e.g. `"16:9"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aspect_ratio: Option<GeminiAspectRatio>,
+    pub aspect_ratio: Option<String>,
 
-    /// The output resolution as a tier: the tier sets roughly the pixel count,
-    /// [`aspect_ratio`](Self::aspect_ratio) its shape.
+    /// The output resolution as a tier, e.g. `"1K"` or `"2K"`: the tier sets roughly the
+    /// pixel count, [`aspect_ratio`](Self::aspect_ratio) its shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image_size: Option<GeminiImageSize>,
+    pub image_size: Option<String>,
 
-    /// How much the model reasons before drawing; not every model takes every level.
+    /// How much the model reasons before drawing, e.g. `"low"` or `"high"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thinking_level: Option<GeminiThinkingLevel>,
+    pub thinking_level: Option<String>,
+
+    /// Extra request fields, merged into this API's request body after the fields above;
+    /// for parameters these options do not cover. Written as the API's own JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra: Option<Value>,
 }
 
 /// The parameters of OpenRouter's Images API.
@@ -86,342 +99,37 @@ pub struct OpenRouterImageOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub n: Option<u32>,
 
-    /// The pixel size, as `"<width>x<height>"` or a size tier, sent as written. A string,
-    /// since the sizes a model accepts differ by model.
+    /// The pixel size, as `"<width>x<height>"` (e.g. `"1024x1024"`) or a size tier.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
 
-    /// The output resolution as a tier: the tier sets roughly the pixel count,
-    /// [`aspect_ratio`](Self::aspect_ratio) its shape.
+    /// The output resolution as a tier, e.g. `"1K"` or `"2K"`: the tier sets roughly the
+    /// pixel count, [`aspect_ratio`](Self::aspect_ratio) its shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolution: Option<OpenRouterResolution>,
+    pub resolution: Option<String>,
 
-    /// The width-to-height ratio.
+    /// The width-to-height ratio, e.g. `"16:9"` or `"auto"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aspect_ratio: Option<OpenRouterAspectRatio>,
+    pub aspect_ratio: Option<String>,
 
-    /// How much care goes into the render.
+    /// How much care goes into the render, e.g. `"low"` or `"high"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quality: Option<OpenRouterImageQuality>,
+    pub quality: Option<String>,
 
-    /// The encoding of the returned image.
+    /// The encoding of the returned image, e.g. `"png"` or `"webp"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_format: Option<OpenRouterImageFormat>,
+    pub output_format: Option<String>,
 
-    /// The background behind the subject. `Transparent` needs an alpha-capable format, so
-    /// it is refused together with `output_format: jpeg`.
+    /// The background behind the subject, e.g. `"transparent"` or `"opaque"`. A
+    /// transparent one needs an alpha-capable format, so it is refused together with a
+    /// `"jpeg"` output format.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub background: Option<OpenRouterImageBackground>,
-}
+    pub background: Option<String>,
 
-// Each enum's wire string is its serde name; `strum` gives the same string as
-// `&'static str` (`let wire: &str = x.into()`), so the two attributes sit on one variant.
-// The enums are per API, even where their values coincide, since each API changes its own.
-
-/// How much care goes into the render. Not every model takes every value.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum OpenAiImageQuality {
-    /// The model picks.
-    Auto,
-    Low,
-    Medium,
-    High,
-    // Named explicitly: `snake_case` would spell it `x_high`.
-    #[serde(rename = "xhigh")]
-    #[strum(serialize = "xhigh")]
-    XHigh,
-    Max,
-}
-
-/// The encoding of the returned image. Not every model takes every value.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum OpenAiImageFormat {
-    Png,
-    Jpeg,
-    Webp,
-}
-
-impl OpenAiImageFormat {
-    /// The IANA media type for this encoding.
-    pub fn mime_type(&self) -> &'static str {
-        match self {
-            Self::Png => "image/png",
-            Self::Jpeg => "image/jpeg",
-            Self::Webp => "image/webp",
-        }
-    }
-}
-
-/// The background behind the subject. Not every model takes every value.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum OpenAiImageBackground {
-    /// The model picks.
-    Auto,
-    Transparent,
-    Opaque,
-}
-
-/// A width-to-height ratio. Not every model takes every value.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
-)]
-pub enum GeminiAspectRatio {
-    #[serde(rename = "1:1")]
-    #[strum(serialize = "1:1")]
-    Ratio1x1,
-    #[serde(rename = "1:4")]
-    #[strum(serialize = "1:4")]
-    Ratio1x4,
-    #[serde(rename = "4:1")]
-    #[strum(serialize = "4:1")]
-    Ratio4x1,
-    #[serde(rename = "1:8")]
-    #[strum(serialize = "1:8")]
-    Ratio1x8,
-    #[serde(rename = "8:1")]
-    #[strum(serialize = "8:1")]
-    Ratio8x1,
-    #[serde(rename = "2:3")]
-    #[strum(serialize = "2:3")]
-    Ratio2x3,
-    #[serde(rename = "3:2")]
-    #[strum(serialize = "3:2")]
-    Ratio3x2,
-    #[serde(rename = "3:4")]
-    #[strum(serialize = "3:4")]
-    Ratio3x4,
-    #[serde(rename = "4:3")]
-    #[strum(serialize = "4:3")]
-    Ratio4x3,
-    #[serde(rename = "4:5")]
-    #[strum(serialize = "4:5")]
-    Ratio4x5,
-    #[serde(rename = "5:4")]
-    #[strum(serialize = "5:4")]
-    Ratio5x4,
-    #[serde(rename = "9:16")]
-    #[strum(serialize = "9:16")]
-    Ratio9x16,
-    #[serde(rename = "16:9")]
-    #[strum(serialize = "16:9")]
-    Ratio16x9,
-    #[serde(rename = "21:9")]
-    #[strum(serialize = "21:9")]
-    Ratio21x9,
-}
-
-/// How much a model reasons before drawing. Not every model takes every level.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
-)]
-#[serde(rename_all = "lowercase")]
-#[strum(serialize_all = "lowercase")]
-pub enum GeminiThinkingLevel {
-    Minimal,
-    Low,
-    Medium,
-    High,
-}
-
-/// An output resolution tier. Not every model takes every value.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
-)]
-pub enum GeminiImageSize {
-    #[serde(rename = "512")]
-    #[strum(serialize = "512")]
-    Size512,
-    #[serde(rename = "1K")]
-    #[strum(serialize = "1K")]
-    Size1K,
-    #[serde(rename = "2K")]
-    #[strum(serialize = "2K")]
-    Size2K,
-    #[serde(rename = "4K")]
-    #[strum(serialize = "4K")]
-    Size4K,
-}
-
-/// An output resolution tier. Not every model takes every value.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
-)]
-pub enum OpenRouterResolution {
-    #[serde(rename = "512")]
-    #[strum(serialize = "512")]
-    Res512,
-    #[serde(rename = "768")]
-    #[strum(serialize = "768")]
-    Res768,
-    #[serde(rename = "1K")]
-    #[strum(serialize = "1K")]
-    Res1K,
-    // `p` stands for the decimal point.
-    #[serde(rename = "1.5K")]
-    #[strum(serialize = "1.5K")]
-    Res1p5K,
-    #[serde(rename = "2K")]
-    #[strum(serialize = "2K")]
-    Res2K,
-    #[serde(rename = "4K")]
-    #[strum(serialize = "4K")]
-    Res4K,
-}
-
-/// A width-to-height ratio. Not every model takes every value.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
-)]
-pub enum OpenRouterAspectRatio {
-    /// The model picks.
-    #[serde(rename = "auto")]
-    #[strum(serialize = "auto")]
-    Auto,
-    #[serde(rename = "1:1")]
-    #[strum(serialize = "1:1")]
-    Ratio1x1,
-    #[serde(rename = "1:4")]
-    #[strum(serialize = "1:4")]
-    Ratio1x4,
-    #[serde(rename = "4:1")]
-    #[strum(serialize = "4:1")]
-    Ratio4x1,
-    #[serde(rename = "1:8")]
-    #[strum(serialize = "1:8")]
-    Ratio1x8,
-    #[serde(rename = "8:1")]
-    #[strum(serialize = "8:1")]
-    Ratio8x1,
-    #[serde(rename = "1:2")]
-    #[strum(serialize = "1:2")]
-    Ratio1x2,
-    #[serde(rename = "2:1")]
-    #[strum(serialize = "2:1")]
-    Ratio2x1,
-    #[serde(rename = "2:3")]
-    #[strum(serialize = "2:3")]
-    Ratio2x3,
-    #[serde(rename = "3:2")]
-    #[strum(serialize = "3:2")]
-    Ratio3x2,
-    #[serde(rename = "3:4")]
-    #[strum(serialize = "3:4")]
-    Ratio3x4,
-    #[serde(rename = "4:3")]
-    #[strum(serialize = "4:3")]
-    Ratio4x3,
-    #[serde(rename = "4:5")]
-    #[strum(serialize = "4:5")]
-    Ratio4x5,
-    #[serde(rename = "5:4")]
-    #[strum(serialize = "5:4")]
-    Ratio5x4,
-    #[serde(rename = "5:2")]
-    #[strum(serialize = "5:2")]
-    Ratio5x2,
-    #[serde(rename = "2.35:1")]
-    #[strum(serialize = "2.35:1")]
-    Ratio2p35x1,
-    #[serde(rename = "5:7")]
-    #[strum(serialize = "5:7")]
-    Ratio5x7,
-    #[serde(rename = "7:5")]
-    #[strum(serialize = "7:5")]
-    Ratio7x5,
-    #[serde(rename = "9:16")]
-    #[strum(serialize = "9:16")]
-    Ratio9x16,
-    #[serde(rename = "16:9")]
-    #[strum(serialize = "16:9")]
-    Ratio16x9,
-    // `p` stands for the decimal point.
-    #[serde(rename = "9:19.5")]
-    #[strum(serialize = "9:19.5")]
-    Ratio9x19p5,
-    #[serde(rename = "19.5:9")]
-    #[strum(serialize = "19.5:9")]
-    Ratio19p5x9,
-    #[serde(rename = "9:20")]
-    #[strum(serialize = "9:20")]
-    Ratio9x20,
-    #[serde(rename = "20:9")]
-    #[strum(serialize = "20:9")]
-    Ratio20x9,
-    #[serde(rename = "9:21")]
-    #[strum(serialize = "9:21")]
-    Ratio9x21,
-    #[serde(rename = "21:9")]
-    #[strum(serialize = "21:9")]
-    Ratio21x9,
-}
-
-/// How much care goes into the render. Not every model takes every value.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum OpenRouterImageQuality {
-    /// The model picks.
-    Auto,
-    Low,
-    Medium,
-    High,
-    // Named explicitly: `snake_case` would spell it `x_high`.
-    #[serde(rename = "xhigh")]
-    #[strum(serialize = "xhigh")]
-    XHigh,
-    Max,
-}
-
-/// The encoding of the returned image. Not every model takes every value.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum OpenRouterImageFormat {
-    Png,
-    Jpeg,
-    Webp,
-    Svg,
-}
-
-impl OpenRouterImageFormat {
-    /// The IANA media type for this encoding.
-    pub fn mime_type(&self) -> &'static str {
-        match self {
-            Self::Png => "image/png",
-            Self::Jpeg => "image/jpeg",
-            Self::Webp => "image/webp",
-            Self::Svg => "image/svg+xml",
-        }
-    }
-}
-
-/// The background behind the subject. Not every model takes every value.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum OpenRouterImageBackground {
-    /// The model picks.
-    Auto,
-    Transparent,
-    Opaque,
+    /// Extra request fields, merged into this API's request body after the fields above;
+    /// for parameters these options do not cover. Written as the API's own JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra: Option<Value>,
 }
 
 /// The result of one [`InferImageModel::generate`] call.
@@ -478,11 +186,17 @@ mod tests {
             "openai": {
                 "n": 2,
                 "size": "1536x1024",
-                "quality": "xhigh",
+                "quality": "high",
                 "output_format": "webp",
-                "background": "transparent"
+                "background": "transparent",
+                "extra": {"moderation": "low"}
             },
-            "gemini": {"aspect_ratio": "16:9", "image_size": "2K", "thinking_level": "minimal"},
+            "gemini": {
+                "aspect_ratio": "16:9",
+                "image_size": "2K",
+                "thinking_level": "minimal",
+                "extra": {"generationConfig": {"candidateCount": 1}}
+            },
             "openrouter": {
                 "n": 1,
                 "size": "1024x1024",
@@ -490,55 +204,21 @@ mod tests {
                 "aspect_ratio": "9:19.5",
                 "quality": "auto",
                 "output_format": "svg",
-                "background": "auto"
+                "background": "auto",
+                "extra": {"seed": 7}
             }
         });
         let options: ImageModelOptions = serde_json::from_value(json.clone()).unwrap();
-        let openai = options.openai.as_ref().unwrap();
-        assert_eq!(openai.quality, Some(OpenAiImageQuality::XHigh));
-        assert_eq!(openai.output_format, Some(OpenAiImageFormat::Webp));
         let gemini = options.gemini.as_ref().unwrap();
-        assert_eq!(gemini.aspect_ratio, Some(GeminiAspectRatio::Ratio16x9));
-        assert_eq!(gemini.image_size, Some(GeminiImageSize::Size2K));
-        assert_eq!(gemini.thinking_level, Some(GeminiThinkingLevel::Minimal));
+        assert_eq!(gemini.aspect_ratio.as_deref(), Some("16:9"));
+        assert_eq!(gemini.thinking_level.as_deref(), Some("minimal"));
         let openrouter = options.openrouter.as_ref().unwrap();
-        assert_eq!(openrouter.resolution, Some(OpenRouterResolution::Res1p5K));
+        assert_eq!(openrouter.resolution.as_deref(), Some("1.5K"));
         assert_eq!(
-            openrouter.aspect_ratio,
-            Some(OpenRouterAspectRatio::Ratio9x19p5)
+            serde_json::to_value(&openrouter.extra).unwrap(),
+            serde_json::json!({"seed": 7})
         );
         assert_eq!(serde_json::to_value(&options).unwrap(), json);
-    }
-
-    #[test]
-    fn a_section_takes_only_its_own_values() {
-        let gemini = |json| serde_json::from_value::<GeminiImageOptions>(json);
-        assert!(gemini(serde_json::json!({"aspect_ratio": "auto"})).is_err());
-        assert!(gemini(serde_json::json!({"image_size": "768"})).is_err());
-        assert!(gemini(serde_json::json!({"image_size": "1k"})).is_err());
-        let openai = |json| serde_json::from_value::<OpenAiImageOptions>(json);
-        assert!(openai(serde_json::json!({"output_format": "svg"})).is_err());
-    }
-
-    #[test]
-    fn the_openrouter_section_takes_its_wider_values() {
-        for (ratio, expected) in [
-            ("9:19.5", OpenRouterAspectRatio::Ratio9x19p5),
-            ("19.5:9", OpenRouterAspectRatio::Ratio19p5x9),
-            ("auto", OpenRouterAspectRatio::Auto),
-        ] {
-            let options: OpenRouterImageOptions =
-                serde_json::from_value(serde_json::json!({"aspect_ratio": ratio})).unwrap();
-            assert_eq!(options.aspect_ratio, Some(expected));
-        }
-        for (resolution, expected) in [
-            ("1.5K", OpenRouterResolution::Res1p5K),
-            ("768", OpenRouterResolution::Res768),
-        ] {
-            let options: OpenRouterImageOptions =
-                serde_json::from_value(serde_json::json!({"resolution": resolution})).unwrap();
-            assert_eq!(options.resolution, Some(expected));
-        }
     }
 
     #[test]
@@ -549,163 +229,5 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(options.openai.unwrap().n, Some(2));
-    }
-
-    /// The JSON a caller writes and the string sent on the wire must be the same.
-    fn assert_wire_matches_serde<T>(values: &[T])
-    where
-        T: Copy + Serialize + Into<&'static str> + std::fmt::Debug,
-    {
-        for &value in values {
-            let wire: &'static str = value.into();
-            assert_eq!(
-                serde_json::to_value(value).unwrap(),
-                serde_json::json!(wire),
-                "{value:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn wire_strings_match_serde_names() {
-        assert_wire_matches_serde(&[
-            GeminiThinkingLevel::Minimal,
-            GeminiThinkingLevel::Low,
-            GeminiThinkingLevel::Medium,
-            GeminiThinkingLevel::High,
-        ]);
-        let level: &str = GeminiThinkingLevel::Minimal.into();
-        assert_eq!(level, "minimal");
-        assert_wire_matches_serde(&[
-            GeminiAspectRatio::Ratio1x1,
-            GeminiAspectRatio::Ratio1x4,
-            GeminiAspectRatio::Ratio4x1,
-            GeminiAspectRatio::Ratio1x8,
-            GeminiAspectRatio::Ratio8x1,
-            GeminiAspectRatio::Ratio2x3,
-            GeminiAspectRatio::Ratio3x2,
-            GeminiAspectRatio::Ratio3x4,
-            GeminiAspectRatio::Ratio4x3,
-            GeminiAspectRatio::Ratio4x5,
-            GeminiAspectRatio::Ratio5x4,
-            GeminiAspectRatio::Ratio9x16,
-            GeminiAspectRatio::Ratio16x9,
-            GeminiAspectRatio::Ratio21x9,
-        ]);
-        assert_wire_matches_serde(&[
-            OpenRouterAspectRatio::Auto,
-            OpenRouterAspectRatio::Ratio1x1,
-            OpenRouterAspectRatio::Ratio1x4,
-            OpenRouterAspectRatio::Ratio4x1,
-            OpenRouterAspectRatio::Ratio1x8,
-            OpenRouterAspectRatio::Ratio8x1,
-            OpenRouterAspectRatio::Ratio1x2,
-            OpenRouterAspectRatio::Ratio2x1,
-            OpenRouterAspectRatio::Ratio2x3,
-            OpenRouterAspectRatio::Ratio3x2,
-            OpenRouterAspectRatio::Ratio3x4,
-            OpenRouterAspectRatio::Ratio4x3,
-            OpenRouterAspectRatio::Ratio4x5,
-            OpenRouterAspectRatio::Ratio5x4,
-            OpenRouterAspectRatio::Ratio5x2,
-            OpenRouterAspectRatio::Ratio2p35x1,
-            OpenRouterAspectRatio::Ratio5x7,
-            OpenRouterAspectRatio::Ratio7x5,
-            OpenRouterAspectRatio::Ratio9x16,
-            OpenRouterAspectRatio::Ratio16x9,
-            OpenRouterAspectRatio::Ratio9x19p5,
-            OpenRouterAspectRatio::Ratio19p5x9,
-            OpenRouterAspectRatio::Ratio9x20,
-            OpenRouterAspectRatio::Ratio20x9,
-            OpenRouterAspectRatio::Ratio9x21,
-            OpenRouterAspectRatio::Ratio21x9,
-        ]);
-        assert_wire_matches_serde(&[
-            GeminiImageSize::Size512,
-            GeminiImageSize::Size1K,
-            GeminiImageSize::Size2K,
-            GeminiImageSize::Size4K,
-        ]);
-        assert_wire_matches_serde(&[
-            OpenRouterResolution::Res512,
-            OpenRouterResolution::Res768,
-            OpenRouterResolution::Res1K,
-            OpenRouterResolution::Res1p5K,
-            OpenRouterResolution::Res2K,
-            OpenRouterResolution::Res4K,
-        ]);
-        for qualities in [
-            [
-                OpenAiImageQuality::Auto,
-                OpenAiImageQuality::Low,
-                OpenAiImageQuality::Medium,
-                OpenAiImageQuality::High,
-                OpenAiImageQuality::XHigh,
-                OpenAiImageQuality::Max,
-            ]
-            .map(<&str>::from),
-            [
-                OpenRouterImageQuality::Auto,
-                OpenRouterImageQuality::Low,
-                OpenRouterImageQuality::Medium,
-                OpenRouterImageQuality::High,
-                OpenRouterImageQuality::XHigh,
-                OpenRouterImageQuality::Max,
-            ]
-            .map(<&str>::from),
-        ] {
-            assert_eq!(qualities, ["auto", "low", "medium", "high", "xhigh", "max"]);
-        }
-        assert_wire_matches_serde(&[
-            OpenAiImageQuality::Auto,
-            OpenAiImageQuality::Low,
-            OpenAiImageQuality::Medium,
-            OpenAiImageQuality::High,
-            OpenAiImageQuality::XHigh,
-            OpenAiImageQuality::Max,
-        ]);
-        assert_wire_matches_serde(&[
-            OpenRouterImageQuality::Auto,
-            OpenRouterImageQuality::Low,
-            OpenRouterImageQuality::Medium,
-            OpenRouterImageQuality::High,
-            OpenRouterImageQuality::XHigh,
-            OpenRouterImageQuality::Max,
-        ]);
-        assert_wire_matches_serde(&[
-            OpenAiImageFormat::Png,
-            OpenAiImageFormat::Jpeg,
-            OpenAiImageFormat::Webp,
-        ]);
-        assert_wire_matches_serde(&[
-            OpenRouterImageFormat::Png,
-            OpenRouterImageFormat::Jpeg,
-            OpenRouterImageFormat::Webp,
-            OpenRouterImageFormat::Svg,
-        ]);
-        assert_wire_matches_serde(&[
-            OpenAiImageBackground::Auto,
-            OpenAiImageBackground::Transparent,
-            OpenAiImageBackground::Opaque,
-        ]);
-        assert_wire_matches_serde(&[
-            OpenRouterImageBackground::Auto,
-            OpenRouterImageBackground::Transparent,
-            OpenRouterImageBackground::Opaque,
-        ]);
-
-        let ratio: &str = OpenRouterAspectRatio::Ratio19p5x9.into();
-        assert_eq!(ratio, "19.5:9");
-        let size: &str = GeminiImageSize::Size512.into();
-        assert_eq!(size, "512");
-    }
-
-    #[test]
-    fn image_format_mime_types() {
-        assert_eq!(OpenAiImageFormat::Png.mime_type(), "image/png");
-        assert_eq!(OpenAiImageFormat::Jpeg.mime_type(), "image/jpeg");
-        assert_eq!(OpenAiImageFormat::Webp.mime_type(), "image/webp");
-        assert_eq!(OpenRouterImageFormat::Webp.mime_type(), "image/webp");
-        assert_eq!(OpenRouterImageFormat::Svg.mime_type(), "image/svg+xml");
     }
 }
