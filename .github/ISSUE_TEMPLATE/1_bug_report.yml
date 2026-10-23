@@ -48,7 +48,7 @@ body:
     attributes:
       label: Ailoy version
       description: "`pip show ailoy-py`, `npm ls @brekkylab/ailoy` or `cargo tree -i ailoy` prints it."
-      placeholder: e.g. 0.3.0
+      placeholder: e.g. 0.3.1
     validations:
       required: true
 
