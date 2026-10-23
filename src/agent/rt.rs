@@ -24,7 +24,11 @@ use crate::{
 };
 
 /// Per-part size limit for tool results, past which the middle is cut out.
-const MAX_TOOL_RESULT_CHARS: usize = 30_000;
+pub(crate) const MAX_TOOL_RESULT_CHARS: usize = 30_000;
+
+/// The error a turn ends with when the model's output limit cut its reply. The cut reply
+/// stays in the history, so the next query can ask for the rest.
+const CUT_OFF: &str = "the model's reply was cut off at its output limit";
 
 /// An agent that drives an [`InferLangModel`] through multi-turn, tool-augmented
 /// conversations.
@@ -166,7 +170,8 @@ impl Agent {
     ///
     /// If the model fails before its first message of the turn, `query` is taken back out
     /// of the history, so the agent can be run again. What the model's API refuses in a tool
-    /// result goes back to the model as an error saying so, once per batch.
+    /// result goes back to the model as an error saying so, once per batch. A reply the
+    /// model's output limit cut short is yielded and then ends the turn with an error.
     pub fn run(&mut self, query: Message) -> BoxStream<'_, anyhow::Result<MessageOutput>> {
         Box::pin(async_stream::try_stream! {
             self.begin_turn(query).await;
@@ -200,7 +205,11 @@ impl Agent {
                 committed = true;
 
                 let calls = tool_calls(&output);
+                let cut_off = matches!(output.finish_reason, FinishReason::Length {});
                 yield output;
+                if cut_off {
+                    Err(anyhow::anyhow!(CUT_OFF))?;
+                }
                 if calls.is_empty() {
                     break;
                 }
@@ -265,6 +274,9 @@ impl Agent {
                 refused = None;
                 self.commit(&output);
                 committed = true;
+                if matches!(output.finish_reason, FinishReason::Length {}) {
+                    Err(anyhow::anyhow!(CUT_OFF))?;
+                }
 
                 // Already streamed as deltas.
                 let calls = tool_calls(&output);
@@ -585,17 +597,18 @@ async fn call_tool(
 }
 
 /// Clamp every part of a tool result, so large payloads (e.g. web pages) don't pile up in
-/// the history. An oversized [`Part::Value`] is measured as JSON and replaced by the cut
-/// JSON as a string.
+/// the history. A text part is measured in characters and a [`Part::Value`] in those of its
+/// JSON; past the limit the middle is cut out, and an oversized value becomes its cut JSON, as
+/// a string.
 fn cap_tool_result(mut message: Message) -> Message {
     for part in &mut message.contents {
         match part {
-            Part::Value { value } => {
+            Part::Value { value } if !fits_tool_result(value) => {
                 let json = serde_json::to_string(value).unwrap_or_default();
-                if json.len() > MAX_TOOL_RESULT_CHARS {
-                    *value = Value::string(middle_truncate(&json, MAX_TOOL_RESULT_CHARS));
-                }
+                *value = Value::string(middle_truncate(&json, MAX_TOOL_RESULT_CHARS));
             }
+            // A text has no more characters than bytes, so one of no more bytes than the limit is
+            // left alone uncounted; `middle_truncate` counts the rest.
             Part::Text { text } if text.len() > MAX_TOOL_RESULT_CHARS => {
                 *text = middle_truncate(text, MAX_TOOL_RESULT_CHARS);
             }
@@ -603,6 +616,15 @@ fn cap_tool_result(mut message: Message) -> Message {
         }
     }
     message
+}
+
+/// Whether [`cap_tool_result`] leaves `value`, as a part of a tool result, as it is.
+pub(crate) fn fits_tool_result(value: &Value) -> bool {
+    serde_json::to_string(value)
+        .unwrap_or_default()
+        .chars()
+        .count()
+        <= MAX_TOOL_RESULT_CHARS
 }
 
 /// Keep `max_chars` characters of `s`, half from each end, around a note of what was cut.
@@ -684,6 +706,14 @@ mod tests {
         Ok(MessageOutput {
             message: Message::new(Role::Assistant).with_contents([Part::text(text)]),
             finish_reason: FinishReason::Stop {},
+            usage: None,
+        })
+    }
+
+    fn cut(text: &str) -> anyhow::Result<MessageOutput> {
+        Ok(MessageOutput {
+            message: Message::new(Role::Assistant).with_contents([Part::text(text)]),
+            finish_reason: FinishReason::Length {},
             usage: None,
         })
     }
@@ -994,6 +1024,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_a_cut_off_reply_ends_the_turn_with_an_error() {
+        let name = "test-agent-cut-off";
+        let (_, spec) = scripted(name, [cut("half"), answer("rest")]);
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let outputs: Vec<_> = agent.run(user("hi")).collect().await;
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(text_of(&outputs[0].as_ref().unwrap().message), "half");
+        assert!(
+            outputs[1]
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains("cut off")
+        );
+        // The cut reply stays, so the next query can ask for the rest.
+        assert_eq!(
+            roles(agent.history()),
+            [Role::System, Role::User, Role::Assistant]
+        );
+
+        let deltas: Vec<_> = agent.run_stream(user("go on")).collect().await;
+        assert!(deltas.iter().all(Result::is_ok));
+        assert_eq!(text_of(agent.history().last().unwrap()), "rest");
+    }
+
+    #[tokio::test]
+    async fn test_run_stream_ends_a_cut_off_reply_with_an_error() {
+        let name = "test-agent-cut-off-stream";
+        let (_, spec) = scripted(name, [cut("half")]);
+        let mut agent = Agent::try_new(spec).await.unwrap();
+
+        let deltas: Vec<_> = agent.run_stream(user("hi")).collect().await;
+        assert!(deltas.last().unwrap().is_err());
+        assert_eq!(
+            roles(agent.history()),
+            [Role::System, Role::User, Role::Assistant]
+        );
+    }
+
+    #[tokio::test]
     async fn test_a_failed_turn_takes_its_query_back() {
         let name = "test-agent-rollback";
         let (_, spec) = scripted(name, [Err(anyhow::anyhow!("down")), answer("up")]);
@@ -1084,6 +1155,60 @@ mod tests {
         // Under the limit before that, so the second call saw the result whole.
         let result = seen[1].iter().find(|m| m.role == Role::Tool).unwrap();
         assert_ne!(text_of(result), "[context truncated]");
+    }
+
+    /// A part is cut only when it has more characters than the limit, a value counted in those
+    /// of its JSON. Hangul takes three bytes a character and counts as one.
+    #[test]
+    fn test_cap_tool_result_changes_only_a_part_over_the_limit() {
+        let max = MAX_TOOL_RESULT_CHARS;
+        // A string's JSON is the string between two quotes.
+        for (row, part, kept) in [
+            (
+                "a, max - 2",
+                Part::value(Value::string("a".repeat(max - 2))),
+                true,
+            ),
+            (
+                "a, max - 1",
+                Part::value(Value::string("a".repeat(max - 1))),
+                false,
+            ),
+            (
+                "가, max - 2",
+                Part::value(Value::string("가".repeat(max - 2))),
+                true,
+            ),
+            (
+                "가, max - 1",
+                Part::value(Value::string("가".repeat(max - 1))),
+                false,
+            ),
+            (
+                "object",
+                Part::value(to_value!({"text": "가".repeat(12_000)})),
+                true,
+            ),
+            ("text, max", Part::text("가".repeat(max)), true),
+            ("text, max + 1", Part::text("가".repeat(max + 1)), false),
+        ] {
+            if let Part::Value { value } = &part {
+                assert_eq!(fits_tool_result(value), kept, "{row}");
+            }
+            let capped = cap_tool_result(Message::new(Role::Tool).with_contents([part.clone()]));
+            assert_eq!(capped.contents[0] == part, kept, "{row}");
+            if !kept {
+                // Each cut row is one character over, so the cut keeps the limit's worth around
+                // a note of that one.
+                let note = "\n\n... [1 characters omitted] ...\n\n";
+                let cut = match &capped.contents[0] {
+                    Part::Value { value } => value.as_str().unwrap(),
+                    other => other.as_text().unwrap(),
+                };
+                assert!(cut.contains(note), "{row}");
+                assert_eq!(cut.chars().count(), max + note.chars().count(), "{row}");
+            }
+        }
     }
 
     #[test]

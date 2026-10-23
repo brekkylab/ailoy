@@ -24,9 +24,9 @@ use crate::{
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
 
-/// The API requires `max_tokens`; this is the one sent. It covers thinking too, and
-/// stays above the largest thinking budget.
-const MAX_TOKENS: u64 = 32000;
+/// The API requires `max_tokens`; this is the one sent: the output cap of every current
+/// Claude model, so it cuts nothing the model would not. Thinking counts against it.
+const MAX_TOKENS: u64 = 128000;
 
 /// The API's name for `effort`.
 fn effort_str(effort: ThinkingEffort) -> &'static str {
@@ -387,14 +387,20 @@ fn parse_finish_reason(reason: &str) -> FinishReason {
     }
 }
 
+/// The API counts the input written to and read from the prompt cache apart from its
+/// `input_tokens`; [`TokenUsage::input_tokens`] counts it in.
 fn parse_usage(usage: &Value) -> Option<TokenUsage> {
     let u = usage.as_object()?;
     let count = |key: &str| u.get(key).and_then(|v| v.as_integer()).map(|v| v as u64);
+    let cache_creation_input_tokens = count("cache_creation_input_tokens");
+    let cache_read_input_tokens = count("cache_read_input_tokens");
     Some(TokenUsage {
-        input_tokens: count("input_tokens").unwrap_or(0),
+        input_tokens: count("input_tokens").unwrap_or(0)
+            + cache_creation_input_tokens.unwrap_or(0)
+            + cache_read_input_tokens.unwrap_or(0),
         output_tokens: count("output_tokens").unwrap_or(0),
-        cache_creation_input_tokens: count("cache_creation_input_tokens"),
-        cache_read_input_tokens: count("cache_read_input_tokens"),
+        cache_creation_input_tokens,
+        cache_read_input_tokens,
     })
 }
 
@@ -579,6 +585,26 @@ fn closed_schema(schema: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The counts of a call that read its history from the prompt cache, measured on
+    /// 2026-10-22 with `claude-haiku-4-5`.
+    #[test]
+    fn input_tokens_counts_the_prompt_cache() {
+        let usage = parse_usage(&to_value!({
+            "input_tokens": 6,
+            "cache_read_input_tokens": 10_434,
+            "cache_creation_input_tokens": 3_276
+        }));
+        assert_eq!(usage.unwrap().input_tokens, 13_716);
+    }
+
+    #[test]
+    fn every_request_carries_the_models_output_cap() {
+        let model = ClaudeApiModel::new("claude-sonnet-5-5", "k");
+        let messages = [Message::new(Role::User).with_contents([Part::text("hi")])];
+        let body = model.body(&messages, &[], &LangModelOptions::default());
+        assert_eq!(body["max_tokens"], 128000);
+    }
 
     #[test]
     fn closed_schema_drops_refused_constraints() {

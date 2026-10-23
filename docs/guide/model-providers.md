@@ -6,7 +6,7 @@ Name the model as `<org>/<name>` when you build the agent. The name is the one i
 
 | Models | Org | Example |
 | --- | --- | --- |
-| Claude | `anthropic` | `anthropic/claude-haiku-4-5` |
+| Claude | `anthropic` | `anthropic/claude-haiku-5-5` |
 | GPT | `openai` | `openai/gpt-5.6-luna` |
 | Gemini | `google` | `google/gemini-3.1-pro` |
 | DeepSeek | `deepseek-ai` | `deepseek-ai/DeepSeek-V3.2` |
@@ -17,15 +17,15 @@ Name the model as `<org>/<name>` when you build the agent. The name is the one i
 ::: code-group
 
 ```python [Python]
-agent = await AgentBuilder("anthropic/claude-haiku-4-5").build()
+agent = await AgentBuilder("anthropic/claude-haiku-5-5").build()
 ```
 
 ```js [Node.js]
-const agent = await new AgentBuilder('anthropic/claude-haiku-4-5').build()
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').build()
 ```
 
 ```rust [Rust]
-let agent = AgentBuilder::new("anthropic/claude-haiku-4-5").build().await?;
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5").build().await?;
 ```
 
 :::
@@ -55,7 +55,7 @@ Not every org runs everywhere:
 | `google` | ✓ | ✓ | | ✓ | |
 | `deepseek-ai`, `moonshotai`, `zai-org`, `Qwen` | | ✓ | ✓ | ✓ | ✓ |
 
-Bedrock and OpenRouter name models their own way. Ailoy looks your model up in their catalogs, so you still write `anthropic/claude-haiku-4-5`, and the catalog decides which Bedrock or OpenRouter id it runs as.
+Bedrock and OpenRouter name models their own way. Ailoy looks your model up in their catalogs, so you still write `anthropic/claude-haiku-5-5`, and the catalog decides which Bedrock or OpenRouter id it runs as.
 
 ## Choosing a backend
 
@@ -67,21 +67,21 @@ Set an org's backend with `set_lang_model_provider` (`setLangModelProvider` in N
 import ailoy
 
 ailoy.set_lang_model_provider("anthropic", "api")
-agent = await AgentBuilder("anthropic/claude-haiku-4-5").build()
+agent = await AgentBuilder("anthropic/claude-haiku-5-5").build()
 ```
 
 ```js [Node.js]
 const { setLangModelProvider } = require('@brekkylab/ailoy')
 
 setLangModelProvider('anthropic', 'api')
-const agent = await new AgentBuilder('anthropic/claude-haiku-4-5').build()
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').build()
 ```
 
 ```rust [Rust]
 use ailoy::model::{Backend, set_lang_model_provider};
 
 set_lang_model_provider("anthropic", Backend::Api);
-let agent = AgentBuilder::new("anthropic/claude-haiku-4-5").build().await?;
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5").build().await?;
 ```
 
 :::
@@ -136,7 +136,7 @@ let agent = AgentBuilder::new("openai/gpt-5.6-luna")
 ```python [Python]
 from ailoy import LangModel
 
-model = await LangModel.create("anthropic/claude-haiku-4-5")
+model = await LangModel.create("anthropic/claude-haiku-5-5")
 messages = [{"role": "user", "contents": [{"type": "text", "text": "Hi"}]}]
 
 output = await model.infer(messages)
@@ -147,7 +147,7 @@ async for delta in model.infer_stream(messages, options={"thinking_effort": "low
 ```js [Node.js]
 const { LangModel } = require('@brekkylab/ailoy')
 
-const model = await LangModel.create('anthropic/claude-haiku-4-5')
+const model = await LangModel.create('anthropic/claude-haiku-5-5')
 const messages = [{ role: 'user', contents: [{ type: 'text', text: 'Hi' }] }]
 
 const output = await model.infer(messages)
@@ -162,7 +162,7 @@ use ailoy::{
     model::{LangModelOptions, create_lang_model},
 };
 
-let model = create_lang_model("anthropic/claude-haiku-4-5").await?;
+let model = create_lang_model("anthropic/claude-haiku-5-5").await?;
 let messages = [Message::new(Role::User).with_contents([Part::text("Hi")])];
 
 let output = model.infer(&messages, &[], &LangModelOptions::default()).await?;
