@@ -18,7 +18,7 @@ use crate::{
         Delta as _, FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part,
         PartDelta, PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
-    model::{InferLangModel, LangModelOptions, ThinkingEffort},
+    model::{InferLangModel, LangModelOptions, ThinkingEffort, api_error},
     to_value,
     tool::ToolDesc,
 };
@@ -344,7 +344,10 @@ async fn send(
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        bail!("Bedrock request failed with status {status}: {text}");
+        return Err(api_error(
+            status.as_u16(),
+            format!("Bedrock request failed with status {status}: {text}"),
+        ));
     }
     unreachable!("retry loop returns or bails on every path")
 }

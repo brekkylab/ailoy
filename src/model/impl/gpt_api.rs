@@ -18,7 +18,7 @@ use crate::{
         Delta as _, FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part,
         PartDelta, PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
-    model::{InferLangModel, LangModelOptions, ThinkingEffort},
+    model::{InferLangModel, LangModelOptions, ThinkingEffort, api_error},
     to_value,
     tool::ToolDesc,
 };
@@ -252,7 +252,10 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
             let text = response.text().await.unwrap_or_default();
             // Running out of quota or credit does not pass with time.
             if text.contains("insufficient_quota") {
-                bail!("OpenAI API request failed with status {status}: {text}");
+                return Err(api_error(
+                    status.as_u16(),
+                    format!("OpenAI API request failed with status {status}: {text}"),
+                ));
             }
             log::warn!(
                 "Request failed with status {status}. Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
@@ -262,7 +265,10 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        bail!("OpenAI API request failed with status {status}: {text}");
+        return Err(api_error(
+            status.as_u16(),
+            format!("OpenAI API request failed with status {status}: {text}"),
+        ));
     }
     unreachable!("retry loop returns or bails on every path")
 }
