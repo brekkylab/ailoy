@@ -74,7 +74,7 @@ body:
     attributes:
       label: Model
       description: The model the agent was built with, if the bug involves one, and the backend if you set one with `set_lang_model_provider`.
-      placeholder: e.g. anthropic/claude-haiku-4-5 on the api backend
+      placeholder: e.g. anthropic/claude-haiku-5-5 on the api backend
 
   - type: textarea
     id: context
