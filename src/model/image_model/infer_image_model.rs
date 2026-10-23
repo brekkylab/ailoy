@@ -73,6 +73,10 @@ pub struct GeminiImageOptions {
     /// [`aspect_ratio`](Self::aspect_ratio) its shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_size: Option<GeminiImageSize>,
+
+    /// How much the model reasons before drawing; not every model takes every level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_level: Option<GeminiThinkingLevel>,
 }
 
 /// The parameters of OpenRouter's Images API.
@@ -216,6 +220,19 @@ pub enum GeminiAspectRatio {
     #[serde(rename = "21:9")]
     #[strum(serialize = "21:9")]
     Ratio21x9,
+}
+
+/// How much a model reasons before drawing. Not every model takes every level.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::IntoStaticStr,
+)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+pub enum GeminiThinkingLevel {
+    Minimal,
+    Low,
+    Medium,
+    High,
 }
 
 /// An output resolution tier. Not every model takes every value.
@@ -459,7 +476,7 @@ mod tests {
                 "output_format": "webp",
                 "background": "transparent"
             },
-            "gemini": {"aspect_ratio": "16:9", "image_size": "2K"},
+            "gemini": {"aspect_ratio": "16:9", "image_size": "2K", "thinking_level": "minimal"},
             "openrouter": {
                 "n": 1,
                 "size": "1024x1024",
@@ -477,6 +494,7 @@ mod tests {
         let gemini = options.gemini.as_ref().unwrap();
         assert_eq!(gemini.aspect_ratio, Some(GeminiAspectRatio::Ratio16x9));
         assert_eq!(gemini.image_size, Some(GeminiImageSize::Size2K));
+        assert_eq!(gemini.thinking_level, Some(GeminiThinkingLevel::Minimal));
         let openrouter = options.openrouter.as_ref().unwrap();
         assert_eq!(openrouter.resolution, Some(OpenRouterResolution::Res1p5K));
         assert_eq!(
@@ -544,6 +562,14 @@ mod tests {
 
     #[test]
     fn wire_strings_match_serde_names() {
+        assert_wire_matches_serde(&[
+            GeminiThinkingLevel::Minimal,
+            GeminiThinkingLevel::Low,
+            GeminiThinkingLevel::Medium,
+            GeminiThinkingLevel::High,
+        ]);
+        let level: &str = GeminiThinkingLevel::Minimal.into();
+        assert_eq!(level, "minimal");
         assert_wire_matches_serde(&[
             GeminiAspectRatio::Ratio1x1,
             GeminiAspectRatio::Ratio1x4,
