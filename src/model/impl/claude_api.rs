@@ -232,10 +232,6 @@ impl InferLangModel for ClaudeApiModel {
             }
         })
     }
-
-    fn total_input_tokens(&self, usage: &TokenUsage) -> u64 {
-        usage.input_with_cache()
-    }
 }
 
 /// One client for every call, so connections are reused. The read timeout bounds each
@@ -388,14 +384,20 @@ fn parse_finish_reason(reason: &str) -> FinishReason {
     }
 }
 
+/// The API counts the input written to and read from the prompt cache apart from its
+/// `input_tokens`; [`TokenUsage::input_tokens`] counts it in.
 fn parse_usage(usage: &Value) -> Option<TokenUsage> {
     let u = usage.as_object()?;
     let count = |key: &str| u.get(key).and_then(|v| v.as_integer()).map(|v| v as u64);
+    let cache_creation_input_tokens = count("cache_creation_input_tokens");
+    let cache_read_input_tokens = count("cache_read_input_tokens");
     Some(TokenUsage {
-        input_tokens: count("input_tokens").unwrap_or(0),
+        input_tokens: count("input_tokens").unwrap_or(0)
+            + cache_creation_input_tokens.unwrap_or(0)
+            + cache_read_input_tokens.unwrap_or(0),
         output_tokens: count("output_tokens").unwrap_or(0),
-        cache_creation_input_tokens: count("cache_creation_input_tokens"),
-        cache_read_input_tokens: count("cache_read_input_tokens"),
+        cache_creation_input_tokens,
+        cache_read_input_tokens,
     })
 }
 
@@ -584,15 +586,13 @@ mod tests {
     /// The counts of a call that read its history from the prompt cache, measured on
     /// 2026-10-22 with `claude-haiku-4-5`.
     #[test]
-    fn total_input_tokens_adds_the_prompt_cache() {
-        let usage = parse_usage(&crate::to_value!({
+    fn input_tokens_counts_the_prompt_cache() {
+        let usage = parse_usage(&to_value!({
             "input_tokens": 6,
             "cache_read_input_tokens": 10_434,
             "cache_creation_input_tokens": 3_276
-        }))
-        .unwrap();
-        let model = ClaudeApiModel::new("claude-haiku-4-5", "unused");
-        assert_eq!(model.total_input_tokens(&usage), 13_716);
+        }));
+        assert_eq!(usage.unwrap().input_tokens, 13_716);
     }
 
     #[test]

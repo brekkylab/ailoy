@@ -25,9 +25,8 @@ pub struct AgentState {
     /// The memory store this agent remembers into; `None` means no memory tools.
     pub memory: Option<Memory>,
 
-    /// Tokens of input the last model call read, cached or not, as
-    /// [`InferLangModel::total_input_tokens`](crate::model::InferLangModel::total_input_tokens)
-    /// counts them; a [`ContextManager`](super::ContextManager) checks it against its limit.
+    /// Input tokens of the last model call, which a
+    /// [`ContextManager`](super::ContextManager) checks against its limit.
     pub last_input_tokens: Option<u64>,
 
     /// The browser this agent drives; `None` means no browser tools.

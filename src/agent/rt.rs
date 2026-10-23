@@ -157,7 +157,7 @@ impl Agent {
     /// [`manage_context`](Self::manage_context).
     fn commit(&mut self, output: &MessageOutput) {
         if let Some(usage) = &output.usage {
-            self.state.last_input_tokens = Some(self.model.total_input_tokens(usage));
+            self.state.last_input_tokens = Some(usage.input_tokens);
         }
         self.state.history.push(output.message.clone());
     }
@@ -797,89 +797,6 @@ mod tests {
             }),
             ..output
         })
-    }
-
-    /// Reports its prompt cache apart from `input_tokens`, as Anthropic's API does, and runs
-    /// the model it wraps.
-    struct CacheApart(Arc<ScriptedModel>);
-
-    impl InferLangModel for CacheApart {
-        fn infer(
-            &self,
-            messages: &[Message],
-            tools: &[ToolDesc],
-            options: &LangModelOptions,
-        ) -> BoxFuture<'static, anyhow::Result<MessageOutput>> {
-            self.0.infer(messages, tools, options)
-        }
-
-        fn infer_stream(
-            &self,
-            messages: &[Message],
-            tools: &[ToolDesc],
-            options: &LangModelOptions,
-        ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
-            self.0.infer_stream(messages, tools, options)
-        }
-
-        fn total_input_tokens(&self, usage: &TokenUsage) -> u64 {
-            usage.input_with_cache()
-        }
-    }
-
-    /// The context manager checks the input the model says it read. The first turn's two calls
-    /// each report 10 tokens of input with 50 read from the cache and 50 written to it, against
-    /// a limit of 100: a model that counts the cache inside `input_tokens` read 10, and one that
-    /// reports it apart read 110.
-    #[tokio::test]
-    async fn test_context_manager_counts_the_input_the_model_read() {
-        for (name, apart, truncated) in [
-            ("test-agent-cache-inside", false, false),
-            ("test-agent-cache-apart", true, true),
-        ] {
-            let cached = |output: anyhow::Result<MessageOutput>| {
-                output.map(|output| MessageOutput {
-                    usage: Some(TokenUsage {
-                        input_tokens: 10,
-                        cache_read_input_tokens: Some(50),
-                        cache_creation_input_tokens: Some(50),
-                        ..TokenUsage::default()
-                    }),
-                    ..output
-                })
-            };
-            let (model, spec) = scripted(
-                name,
-                [
-                    cached(calls(&[("c1", "echo")])),
-                    cached(answer("one")),
-                    answer("two"),
-                ],
-            );
-            if apart {
-                let shared = model.clone();
-                set_lang_model_provider(
-                    name,
-                    LangModelProvider::custom(move |_, _| Ok(Arc::new(CacheApart(shared.clone())))),
-                );
-            }
-            let mut agent = Agent::try_new(spec).await.unwrap();
-            agent.set_context_manager(Some(ContextManager {
-                max_input_tokens: 100,
-                preserve_recent_turns: 1,
-            }));
-
-            agent.run(user("first")).for_each(|_| async {}).await;
-            agent.run(user("second")).for_each(|_| async {}).await;
-
-            let seen = model.seen.lock().unwrap();
-            let result = seen[2].iter().find(|m| m.role == Role::Tool).unwrap();
-            assert_eq!(
-                text_of(result) == "[context truncated]",
-                truncated,
-                "{name}"
-            );
-        }
     }
 
     #[tokio::test]

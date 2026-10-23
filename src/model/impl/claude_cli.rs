@@ -226,7 +226,7 @@ impl InferLangModel for ClaudeCliModel {
 
             let mut lines = BufReader::new(stdout).lines();
             // Usage from `message_start`, completed by `message_delta` once the message ends.
-            let mut start_usage = None;
+            let mut start_usage = serde_json::Value::Null;
             // Why the latest message ended, from its `message_delta`.
             let mut stop_reason = None;
             // The `tool_use` block being streamed.
@@ -270,7 +270,7 @@ impl InferLangModel for ClaudeCliModel {
                         let delta = &inner["delta"];
                         match inner["type"].as_str() {
                             Some("message_start") => {
-                                start_usage = parse_usage(&inner["message"]["usage"]);
+                                start_usage = inner["message"]["usage"].clone();
                                 calls.clear();
                                 continue;
                             }
@@ -339,7 +339,7 @@ impl InferLangModel for ClaudeCliModel {
                                 }
                                 out.delta = out.delta.with_tool_calls(std::mem::take(&mut calls));
                                 out.finish_reason = Some(FinishReason::ToolCall {});
-                                out.usage = final_usage(start_usage.take(), &inner["usage"]);
+                                out.usage = final_usage(&start_usage, &inner["usage"]);
                                 finished = true;
                             }
                             _ => continue,
@@ -388,10 +388,6 @@ impl InferLangModel for ClaudeCliModel {
             // The system prompt file is kept until the process is done with it.
             drop(invocation);
         })
-    }
-
-    fn total_input_tokens(&self, usage: &TokenUsage) -> u64 {
-        usage.input_with_cache()
     }
 }
 
@@ -724,34 +720,31 @@ fn parse_result(result: &serde_json::Value) -> anyhow::Result<Option<TokenUsage>
     Ok(parse_usage(&result["usage"]))
 }
 
+/// The CLI counts the input written to and read from the prompt cache apart from its
+/// `input_tokens`; [`TokenUsage::input_tokens`] counts it in.
 fn parse_usage(u: &serde_json::Value) -> Option<TokenUsage> {
+    let cache_creation_input_tokens = u["cache_creation_input_tokens"].as_u64();
+    let cache_read_input_tokens = u["cache_read_input_tokens"].as_u64();
     Some(TokenUsage {
-        input_tokens: u["input_tokens"].as_u64()?,
+        input_tokens: u["input_tokens"].as_u64()?
+            + cache_creation_input_tokens.unwrap_or(0)
+            + cache_read_input_tokens.unwrap_or(0),
         output_tokens: u["output_tokens"].as_u64()?,
-        cache_creation_input_tokens: u["cache_creation_input_tokens"].as_u64(),
-        cache_read_input_tokens: u["cache_read_input_tokens"].as_u64(),
+        cache_creation_input_tokens,
+        cache_read_input_tokens,
     })
 }
 
 /// The usage of a message once it has ended: `message_delta` carries the final output
 /// count, and the input counts only in some versions, so `message_start`'s fill the rest.
-fn final_usage(start: Option<TokenUsage>, u: &serde_json::Value) -> Option<TokenUsage> {
-    let Some(mut usage) = start else {
-        return parse_usage(u);
-    };
-    if let Some(n) = u["output_tokens"].as_u64() {
-        usage.output_tokens = n;
+fn final_usage(start: &serde_json::Value, u: &serde_json::Value) -> Option<TokenUsage> {
+    let mut usage = start.as_object().cloned().unwrap_or_default();
+    for (key, n) in u.as_object().into_iter().flatten() {
+        if n.is_u64() {
+            usage.insert(key.clone(), n.clone());
+        }
     }
-    if let Some(n) = u["input_tokens"].as_u64() {
-        usage.input_tokens = n;
-    }
-    if let Some(n) = u["cache_creation_input_tokens"].as_u64() {
-        usage.cache_creation_input_tokens = Some(n);
-    }
-    if let Some(n) = u["cache_read_input_tokens"].as_u64() {
-        usage.cache_read_input_tokens = Some(n);
-    }
-    Some(usage)
+    parse_usage(&usage.into())
 }
 
 /// How a reply without tool calls ended, by the API's `stop_reason`.
@@ -769,20 +762,6 @@ fn parse_finish_reason(reason: Option<&str>) -> FinishReason {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The counts the CLI reported for a run whose system prompt came from the cache, measured
-    /// on 2026-10-23 with Claude Code 2.1.308.
-    #[test]
-    fn total_input_tokens_adds_the_prompt_cache() {
-        let usage = parse_usage(&serde_json::json!({
-            "input_tokens": 10,
-            "cache_read_input_tokens": 21_373,
-            "cache_creation_input_tokens": 0,
-            "output_tokens": 40
-        }))
-        .unwrap();
-        assert_eq!(ClaudeCliModel::new().total_input_tokens(&usage), 21_383);
-    }
 
     fn weather() -> ToolDesc {
         crate::tool::ToolDescBuilder::new("get_weather")
@@ -882,7 +861,8 @@ mod tests {
     }
 
     /// Two calls in one reply are both taken, with the arguments as the API streams them,
-    /// and the run ends before the CLI turns to them.
+    /// and the run ends before the CLI turns to them. The reply's usage takes its input
+    /// counts from `message_start` and its output count from `message_delta`.
     #[cfg(unix)]
     #[tokio::test]
     async fn the_calls_a_reply_ends_with_are_taken() {
@@ -906,7 +886,8 @@ mod tests {
         };
         let mut events = vec![
             event(serde_json::json!({"type": "message_start",
-                "message": {"usage": {"input_tokens": 3, "output_tokens": 1}}})),
+                "message": {"usage": {"input_tokens": 3, "cache_creation_input_tokens": 20,
+                    "cache_read_input_tokens": 50, "output_tokens": 1}}})),
             event(
                 serde_json::json!({"type": "content_block_start", "index": 0,
                 "content_block": {"type": "text", "text": ""}}),
@@ -953,7 +934,15 @@ mod tests {
                 ),
             ]
         );
-        assert_eq!(output.usage.unwrap().output_tokens, 40);
+        assert_eq!(
+            output.usage,
+            Some(TokenUsage {
+                input_tokens: 3 + 20 + 50,
+                output_tokens: 40,
+                cache_creation_input_tokens: Some(20),
+                cache_read_input_tokens: Some(50),
+            })
+        );
     }
 
     #[cfg(unix)]

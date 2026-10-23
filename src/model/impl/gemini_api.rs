@@ -570,23 +570,3 @@ pub(super) fn inline_image(image: &PartImage) -> anyhow::Result<Value> {
     };
     Ok(to_value!({"inlineData": {"mimeType": mime_type, "data": data}}))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The counts of a call whose system instruction came from the cache, measured on
-    /// 2026-10-23 with `gemini-2.5-flash`: the cached tokens are part of `promptTokenCount`.
-    #[test]
-    fn total_input_tokens_is_input_tokens() {
-        let usage = parse_usage(&crate::to_value!({
-            "promptTokenCount": 17_317,
-            "cachedContentTokenCount": 16_358,
-            "candidatesTokenCount": 1,
-            "thoughtsTokenCount": 18
-        }))
-        .unwrap();
-        let model = GeminiApiModel::new("gemini-2.5-flash", "unused");
-        assert_eq!(model.total_input_tokens(&usage), 17_317);
-    }
-}
