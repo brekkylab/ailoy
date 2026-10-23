@@ -339,7 +339,7 @@ impl InferLangModel for ClaudeCliModel {
                                 }
                                 out.delta = out.delta.with_tool_calls(std::mem::take(&mut calls));
                                 out.finish_reason = Some(FinishReason::ToolCall {});
-                                out.usage = final_usage(&start_usage, &inner["usage"]);
+                                out.usage = final_usage(&start_usage.take(), &inner["usage"]);
                                 finished = true;
                             }
                             _ => continue,
