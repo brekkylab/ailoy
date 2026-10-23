@@ -328,6 +328,12 @@ pub enum OpenRouterAspectRatio {
     #[serde(rename = "5:4")]
     #[strum(serialize = "5:4")]
     Ratio5x4,
+    #[serde(rename = "5:2")]
+    #[strum(serialize = "5:2")]
+    Ratio5x2,
+    #[serde(rename = "2.35:1")]
+    #[strum(serialize = "2.35:1")]
+    Ratio2p35x1,
     #[serde(rename = "5:7")]
     #[strum(serialize = "5:7")]
     Ratio5x7,
@@ -601,6 +607,8 @@ mod tests {
             OpenRouterAspectRatio::Ratio4x3,
             OpenRouterAspectRatio::Ratio4x5,
             OpenRouterAspectRatio::Ratio5x4,
+            OpenRouterAspectRatio::Ratio5x2,
+            OpenRouterAspectRatio::Ratio2p35x1,
             OpenRouterAspectRatio::Ratio5x7,
             OpenRouterAspectRatio::Ratio7x5,
             OpenRouterAspectRatio::Ratio9x16,
