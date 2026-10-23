@@ -50,9 +50,11 @@ impl GptImageApiModel {
         Ok(Self::new(model, api_key))
     }
 
-    /// The request body for one call. Only the options OpenAI reads go in; a combination
-    /// the API never accepts fails here, before anything is sent.
+    /// The request body for one call. A combination the API never accepts fails here,
+    /// before anything is sent.
     fn body(&self, prompt: &str, options: &ImageModelOptions) -> anyhow::Result<serde_json::Value> {
+        // `n`, `size`, `quality`, `output_format` and `background` go out under the same
+        // names; `aspect_ratio` and `image_size` are not read.
         let mut body = to_value!({
             "model": self.model.as_str(),
             "prompt": prompt,
@@ -99,11 +101,16 @@ impl InferImageModel for GptImageApiModel {
     ) -> BoxFuture<'static, anyhow::Result<ImageOutput>> {
         let body = self.body(prompt, options);
         let api_key = self.api_key.clone();
+        let asked = options.n.unwrap_or(1) as usize;
         Box::pin(async move {
             let response = send(API_URL, &api_key, &body?).await?;
             let val: Value = serde_json::from_str(&response.text().await?)
                 .context("OpenAI image response is not JSON")?;
-            parse_response(&val)
+            let out = parse_response(&val)?;
+            if out.images.len() < asked {
+                log::warn!("asked OpenAI for {asked} images, got {}", out.images.len());
+            }
+            Ok(out)
         })
     }
 }
@@ -180,6 +187,9 @@ fn is_permanent_quota(body: &str) -> bool {
 
 /// Reads a successful response; one without an image is an error.
 fn parse_response(val: &Value) -> anyhow::Result<ImageOutput> {
+    if let Some(message) = val.pointer("/error/message").and_then(|v| v.as_str()) {
+        bail!("OpenAI image request failed: {message}");
+    }
     let data = val
         .pointer("/data")
         .and_then(|v| v.as_array())
@@ -450,6 +460,21 @@ mod tests {
     }
 
     #[test]
+    fn an_error_in_a_successful_response_is_reported() {
+        let response = to_value!({"error": {"message": "the image could not be made"}});
+        let err = parse_response(&response).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "OpenAI image request failed: the image could not be made"
+        );
+    }
+
+    #[test]
+    fn endpoint_is_the_images_api() {
+        assert_eq!(API_URL, "https://api.openai.com/v1/images/generations");
+    }
+
+    #[test]
     fn a_response_without_images_is_an_error() {
         let err = parse_response(&to_value!({"created": 1, "data": []}))
             .unwrap_err()
@@ -555,6 +580,35 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("between 1 and 10"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn send_authenticates_with_a_bearer_token() {
+        use axum::{Router, http::HeaderMap, http::StatusCode, routing::post};
+
+        let app = Router::new().route(
+            "/",
+            post(|headers: HeaderMap| async move {
+                if headers.get("authorization").and_then(|v| v.to_str().ok())
+                    == Some("Bearer sk-test")
+                {
+                    StatusCode::OK
+                } else {
+                    StatusCode::UNAUTHORIZED
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+
+        send(
+            &format!("http://{addr}/"),
+            "sk-test",
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

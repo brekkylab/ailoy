@@ -7,7 +7,7 @@ use futures::future::BoxFuture;
 use crate::{
     datatype::{Bytes, Value},
     message::{PartImage, TokenUsage},
-    model::{ImageModelOptions, ImageOutput, ImageSize, InferImageModel},
+    model::{AspectRatio, ImageModelOptions, ImageOutput, ImageSize, InferImageModel},
     to_value,
 };
 
@@ -49,15 +49,17 @@ impl GeminiImageApiModel {
         Ok(Self::new(model, api_key))
     }
 
-    /// The request body for one call. Only the options Gemini reads go in.
+    /// The request body for one call.
     fn body(&self, prompt: &str, options: &ImageModelOptions) -> serde_json::Value {
+        // `aspect_ratio` goes out as `imageConfig.aspectRatio` and `image_size` as
+        // `imageConfig.imageSize`; the other options are not read. Both are sent as asked:
+        // a model that does not take a value says so, and `explain_error` ties that to the
+        // option.
         let mut image_config = Value::object_empty();
         let image_obj = image_config.as_object_mut().unwrap();
         if let Some(ratio) = options.aspect_ratio {
             image_obj.insert("aspectRatio".into(), <&str>::from(ratio).into());
         }
-        // Sent as asked; a model that does not take the size says so, and
-        // `explain_error` ties that to the option.
         if let Some(size) = options.image_size {
             image_obj.insert("imageSize".into(), <&str>::from(size).into());
         }
@@ -90,17 +92,22 @@ impl InferImageModel for GeminiImageApiModel {
             return Box::pin(async move { Err(e) });
         }
         let body = self.body(prompt, options);
-        let url = format!("{API_BASE}/{}:generateContent", self.model);
+        let url = endpoint(&self.model);
         let api_key = self.api_key.clone();
         let model = self.model.clone();
-        let image_size = options.image_size;
+        let (aspect_ratio, image_size) = (options.aspect_ratio, options.image_size);
         Box::pin(async move {
-            let response = send(&url, &api_key, &body, &model, image_size).await?;
+            let response = send(&url, &api_key, &body, &model, aspect_ratio, image_size).await?;
             let val: Value = serde_json::from_str(&response.text().await?)
                 .context("Gemini image response is not JSON")?;
             parse_response(&val)
         })
     }
+}
+
+/// The `generateContent` URL for `model`.
+fn endpoint(model: &str) -> String {
+    format!("{API_BASE}/{model}:generateContent")
 }
 
 /// One client for every call, so connections are reused. Generating an image can take
@@ -115,13 +122,14 @@ static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|
 
 /// POSTs `body` to `url`, retrying rate limits (429) and overloads (503, 529) with
 /// backoff, and returns the successful response unread. Other errors are not retried: a
-/// paid image job may already have run. A refusal of `image_size` is explained in front
-/// of the API's own message.
+/// paid image job may already have run. A refusal of `aspect_ratio` or `image_size` is
+/// explained in front of the API's own message.
 async fn send(
     url: &str,
     api_key: &str,
     body: &serde_json::Value,
     model: &str,
+    aspect_ratio: Option<AspectRatio>,
     image_size: Option<ImageSize>,
 ) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
@@ -162,7 +170,7 @@ async fn send(
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        match explain_error(model, image_size, status.as_u16(), &text) {
+        match explain_error(model, aspect_ratio, image_size, status.as_u16(), &text) {
             Some(hint) => bail!("Gemini API request failed with status {status} ({hint}): {text}"),
             None => bail!("Gemini API request failed with status {status}: {text}"),
         }
@@ -189,19 +197,35 @@ fn is_permanent_quota(body: &str) -> bool {
 /// once the model has said no, so no table of what each model takes is kept.
 fn explain_error(
     model: &str,
+    aspect_ratio: Option<AspectRatio>,
     image_size: Option<ImageSize>,
     status: u16,
     body: &str,
 ) -> Option<String> {
-    let size = image_size?;
-    if status != 400 || !body.contains("Image size") || !body.contains("not supported") {
+    if status != 400 {
         return None;
     }
-    Some(format!(
-        "`image_size: {}` is not accepted by '{model}'; try another size, or leave it unset \
-         to use the model's default size",
-        <&str>::from(size),
-    ))
+    let mut hints = Vec::new();
+    if let Some(ratio) = aspect_ratio
+        && body.contains("aspect_ratio")
+    {
+        hints.push(format!(
+            "`aspect_ratio: {}` is not accepted by '{model}'; try another ratio, or leave it \
+             unset to let the model choose",
+            <&str>::from(ratio),
+        ));
+    }
+    if let Some(size) = image_size
+        && (body.contains("image_size")
+            || (body.contains("Image size") && body.contains("not supported")))
+    {
+        hints.push(format!(
+            "`image_size: {}` is not accepted by '{model}'; try another size, or leave it \
+             unset to use the model's default size",
+            <&str>::from(size),
+        ));
+    }
+    (!hints.is_empty()).then(|| hints.join("; "))
 }
 
 /// Reads a successful response; one without a final image is an error quoting why.
@@ -350,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn body_ignores_openai_options() {
+    fn body_ignores_fields_gemini_does_not_read() {
         // `quality` must not turn into a resolution, nor `n` into a candidate count.
         let options = ImageModelOptions {
             n: Some(2),
@@ -368,7 +392,7 @@ mod tests {
         let with_size = Some(ImageSize::Size512);
         let model = "gemini-3.1-flash-lite-image";
 
-        let hint = explain_error(model, with_size, 400, SIZE_REFUSAL)
+        let hint = explain_error(model, None, with_size, 400, SIZE_REFUSAL)
             .expect("an imageSize refusal is explained");
         assert!(hint.contains("`image_size: 512`"), "{hint}");
         assert!(hint.contains(model), "{hint}");
@@ -379,17 +403,53 @@ mod tests {
         assert!(!hint.contains("1K"), "{hint}");
 
         // Another status, another error, or no size set: nothing to explain.
-        assert!(explain_error(model, with_size, 429, SIZE_REFUSAL).is_none());
+        assert!(explain_error(model, None, with_size, 429, SIZE_REFUSAL).is_none());
         assert!(
             explain_error(
                 model,
+                None,
                 with_size,
                 400,
                 r#"{"error":{"message":"API key not valid"}}"#
             )
             .is_none()
         );
-        assert!(explain_error(model, None, 400, SIZE_REFUSAL).is_none());
+        assert!(explain_error(model, None, None, 400, SIZE_REFUSAL).is_none());
+
+        // The wording another model used for the same refusal.
+        let hint = explain_error(
+            model,
+            None,
+            Some(ImageSize::Size768),
+            400,
+            r#"{"error":{"code":400,"message":"Unsupported image_size '768'. Supported values are: 1K, 2K, 4K, 512"}}"#,
+        )
+        .expect("an image_size refusal is explained");
+        assert!(hint.contains("`image_size: 768`"), "{hint}");
+    }
+
+    #[test]
+    fn explain_error_names_the_aspect_ratio_option() {
+        const RATIO_REFUSAL: &str = r#"{"error":{"code":400,"message":"aspect_ratio must be one of '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'","status":"INVALID_ARGUMENT"}}"#;
+        let model = "gemini-3.1-flash-image";
+
+        let hint = explain_error(model, Some(AspectRatio::Auto), None, 400, RATIO_REFUSAL)
+            .expect("an aspect_ratio refusal is explained");
+        assert!(hint.contains("`aspect_ratio: auto`"), "{hint}");
+        assert!(hint.contains(model), "{hint}");
+        assert!(hint.contains("leave it unset"), "{hint}");
+        assert!(!hint.contains("image_size"), "{hint}");
+
+        assert!(explain_error(model, None, None, 400, RATIO_REFUSAL).is_none());
+        assert!(explain_error(model, Some(AspectRatio::Auto), None, 429, RATIO_REFUSAL).is_none());
+    }
+
+    #[test]
+    fn endpoint_puts_the_model_in_the_path() {
+        assert_eq!(
+            endpoint("gemini-3.1-flash-image"),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent"
+        );
     }
 
     #[test]
@@ -603,9 +663,30 @@ mod tests {
             "AIza-test",
             &serde_json::json!({}),
             "gemini-3.1-flash-lite-image",
+            None,
             image_size,
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn send_authenticates_with_the_api_key_header() {
+        use axum::{Router, http::HeaderMap, http::StatusCode};
+
+        let app = Router::new().fallback(|headers: HeaderMap| async move {
+            if headers.get("x-goog-api-key").and_then(|v| v.to_str().ok()) == Some("AIza-test")
+                && headers.get("authorization").is_none()
+            {
+                StatusCode::OK
+            } else {
+                StatusCode::UNAUTHORIZED
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+
+        send_to(&format!("http://{addr}/"), None).await.unwrap();
     }
 
     #[tokio::test]

@@ -6,53 +6,49 @@ use crate::message::{PartImage, TokenUsage};
 
 /// Options for one image generation call.
 ///
-/// Every field is optional; `None` leaves the provider's own default in place. Each field
-/// says which APIs read it and under what name; the others skip it. No field is translated
-/// into another concept for an API that lacks it. A combination an API never accepts fails
-/// before anything is sent; anything else goes out as asked, and a refusal comes back as
-/// the API's error.
+/// Every field is optional; `None` leaves the provider's own default in place. Each
+/// provider sends the fields its API takes, under that API's own names, and skips the
+/// rest; no field is translated into another concept for an API that lacks it. A
+/// combination an API never accepts fails before anything is sent; anything else goes out
+/// as asked, and a refusal comes back as the API's error.
 ///
 /// Flat like [`LangModelOptions`](crate::model::LangModelOptions).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ImageModelOptions {
-    /// The image count, sent as `n` by OpenAI and OpenRouter (both take 1–10). `None`
-    /// means one.
+    /// How many images to generate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub n: Option<u32>,
 
-    /// The pixel size, sent verbatim as `size` by OpenAI and OpenRouter (e.g.
-    /// `"1536x1024"`, `"auto"`).
+    /// The pixel size, as `"<width>x<height>"` (e.g. `"1536x1024"`) or a keyword such as
+    /// `"auto"`, sent as written.
     ///
     /// A string, since the sizes a model accepts differ by model; a refused size comes
-    /// back as the API's error. `None` leaves the choice to the model.
+    /// back as the API's error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
 
-    /// The render quality, sent as `quality` by OpenAI and OpenRouter.
+    /// How much care goes into the render.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quality: Option<ImageQuality>,
 
-    /// The encoding of the returned bytes, sent as `output_format` by OpenAI and
-    /// OpenRouter.
+    /// The encoding of the returned bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_format: Option<ImageFormat>,
 
-    /// The background, sent as `background` by OpenAI and OpenRouter. `Transparent` needs
-    /// an alpha-capable format, so it is refused together with `output_format: jpeg`.
+    /// The background behind the subject. `Transparent` needs an alpha-capable format, so
+    /// it is refused together with `output_format: jpeg`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<ImageBackground>,
 
-    /// The width-to-height ratio, sent as `imageConfig.aspectRatio` by Gemini and as
-    /// `aspect_ratio` by OpenRouter. `None` leaves the choice to the model.
+    /// The width-to-height ratio.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aspect_ratio: Option<AspectRatio>,
 
-    /// The output resolution, sent as `imageConfig.imageSize` by Gemini and as
-    /// `resolution` by OpenRouter. The size sets roughly the pixel count,
+    /// The output resolution as a tier. The tier sets roughly the pixel count,
     /// [`aspect_ratio`](Self::aspect_ratio) its shape.
     ///
-    /// Models differ in which sizes they take; a refused size comes back as an error that
-    /// names this field. `None` leaves the model's own default.
+    /// Models differ in which tiers they take; a refused one comes back as an error that
+    /// names this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_size: Option<ImageSize>,
 }

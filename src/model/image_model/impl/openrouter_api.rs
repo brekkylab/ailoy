@@ -50,9 +50,11 @@ impl OpenRouterImageApiModel {
         Ok(Self::new(model, api_key))
     }
 
-    /// The request body for one call. Only the options OpenRouter reads go in; a
-    /// combination it never accepts fails here, before anything is sent.
+    /// The request body for one call. A combination OpenRouter never accepts fails here,
+    /// before anything is sent.
     fn body(&self, prompt: &str, options: &ImageModelOptions) -> anyhow::Result<serde_json::Value> {
+        // Every option goes out under the same name, except `image_size`, which goes out
+        // as `resolution`.
         let mut body = to_value!({
             "model": self.model.as_str(),
             "prompt": prompt,
@@ -106,12 +108,20 @@ impl InferImageModel for OpenRouterImageApiModel {
         let body = self.body(prompt, options);
         let api_key = self.api_key.clone();
         let model = self.model.clone();
-        let image_size = options.image_size;
+        let (image_size, size_set) = (options.image_size, options.size.is_some());
+        let asked = options.n.unwrap_or(1) as usize;
         Box::pin(async move {
-            let response = send(API_URL, &api_key, &body?, &model, image_size).await?;
+            let response = send(API_URL, &api_key, &body?, &model, image_size, size_set).await?;
             let val: Value = serde_json::from_str(&response.text().await?)
                 .context("OpenRouter image response is not JSON")?;
-            parse_response(&val)
+            let out = parse_response(&val)?;
+            if out.images.len() < asked {
+                log::warn!(
+                    "asked OpenRouter for {asked} images, got {}",
+                    out.images.len()
+                );
+            }
+            Ok(out)
         })
     }
 }
@@ -136,6 +146,7 @@ async fn send(
     body: &serde_json::Value,
     model: &str,
     image_size: Option<ImageSize>,
+    size_set: bool,
 ) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
     const MAX_WAIT_SECS: u64 = 10;
@@ -170,7 +181,7 @@ async fn send(
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        match explain_error(model, image_size, status.as_u16(), &text) {
+        match explain_error(model, image_size, size_set, status.as_u16(), &text) {
             Some(hint) => {
                 bail!("OpenRouter API request failed with status {status} ({hint}): {text}")
             }
@@ -180,15 +191,17 @@ async fn send(
     unreachable!("retry loop returns or bails on every path")
 }
 
-/// Ties a refusal of `resolution` to `image_size`, the option it is sent from.
+/// Ties a refusal of `resolution` to `image_size`, the option it is sent from. With `size`
+/// also set, the refusal may be about either, so nothing is added.
 fn explain_error(
     model: &str,
     image_size: Option<ImageSize>,
+    size_set: bool,
     status: u16,
     body: &str,
 ) -> Option<String> {
     let size = image_size?;
-    if status != 400 || !body.contains("resolution") {
+    if size_set || status != 400 || !body.contains("resolution") {
         return None;
     }
     Some(format!(
@@ -200,6 +213,9 @@ fn explain_error(
 
 /// Reads a successful response; one without an image is an error.
 fn parse_response(val: &Value) -> anyhow::Result<ImageOutput> {
+    if let Some(message) = val.pointer("/error/message").and_then(|v| v.as_str()) {
+        bail!("OpenRouter image request failed: {message}");
+    }
     let data = val
         .pointer("/data")
         .and_then(|v| v.as_array())
@@ -434,6 +450,21 @@ mod tests {
     }
 
     #[test]
+    fn an_error_in_a_successful_response_is_reported() {
+        let response = to_value!({"error": {"code": 502, "message": "Provider returned error"}});
+        let err = parse_response(&response).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "OpenRouter image request failed: Provider returned error"
+        );
+    }
+
+    #[test]
+    fn endpoint_is_the_images_api() {
+        assert_eq!(API_URL, "https://openrouter.ai/api/v1/images");
+    }
+
+    #[test]
     fn a_response_without_images_is_an_error() {
         let err = parse_response(&to_value!({"data": []}))
             .unwrap_err()
@@ -448,18 +479,21 @@ mod tests {
             r#"{"error":{"code":400,"message":"Unsupported resolution '4K' for this model"}}"#;
         let model = "bytedance-seed/seedream-5-0-pro";
 
-        let hint = explain_error(model, Some(ImageSize::Size4K), 400, REFUSAL)
+        let hint = explain_error(model, Some(ImageSize::Size4K), false, 400, REFUSAL)
             .expect("a resolution refusal is explained");
         assert!(hint.contains("`image_size: 4K`"), "{hint}");
         assert!(hint.contains("`resolution`"), "{hint}");
         assert!(hint.contains(model), "{hint}");
 
-        assert!(explain_error(model, None, 400, REFUSAL).is_none());
-        assert!(explain_error(model, Some(ImageSize::Size4K), 402, REFUSAL).is_none());
+        assert!(explain_error(model, None, false, 400, REFUSAL).is_none());
+        assert!(explain_error(model, Some(ImageSize::Size4K), false, 402, REFUSAL).is_none());
+        // With `size` set too, the refusal may be about either.
+        assert!(explain_error(model, Some(ImageSize::Size4K), true, 400, REFUSAL).is_none());
         assert!(
             explain_error(
                 model,
                 Some(ImageSize::Size4K),
+                false,
                 400,
                 r#"{"error":{"code":400,"message":"bad aspect_ratio"}}"#
             )
@@ -510,8 +544,32 @@ mod tests {
             &serde_json::json!({}),
             "openai/gpt-image-1",
             image_size,
+            false,
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn send_authenticates_with_a_bearer_token() {
+        use axum::{Router, http::HeaderMap, http::StatusCode, routing::post};
+
+        let app = Router::new().route(
+            "/",
+            post(|headers: HeaderMap| async move {
+                if headers.get("authorization").and_then(|v| v.to_str().ok())
+                    == Some("Bearer sk-or-test")
+                {
+                    StatusCode::OK
+                } else {
+                    StatusCode::UNAUTHORIZED
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+
+        send_to(&format!("http://{addr}/"), None).await.unwrap();
     }
 
     #[tokio::test]

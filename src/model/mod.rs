@@ -1,10 +1,10 @@
-mod image;
+mod image_model;
 pub(crate) mod r#impl;
 mod infer_decision_model;
 mod infer_lang_model;
 mod provider;
 
-pub use image::*;
+pub use image_model::*;
 pub use r#impl::{
     BedrockApiModel, ClaudeApiModel, ClaudeCliModel, CodexCliModel, DeepSeekApiModel,
     GeminiApiModel, GeminiCliModel, GlmApiModel, GptApiModel, KimiApiModel, OpenRouterApiModel,

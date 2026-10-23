@@ -1,7 +1,8 @@
 //! Builds image models from a desc, in a table of their own beside the language models'.
 //!
-//! A desc is `<org>/<name>`, the name being the model's official API id, and the provider
-//! set for the org decides how it runs: the org's own API, or OpenRouter.
+//! A desc is `<org>/<name>`. For `openai` and `google` the name is the model's official
+//! API id; for `openrouter` it is OpenRouter's model slug as is, `/` and all. The provider
+//! set for the org decides how it runs.
 //!
 //! ```ignore
 //! use ailoy::model::*;
@@ -9,24 +10,18 @@
 //! let model = create_image_model("openai/gpt-image-1").await?;
 //! let output = model.generate("a red cube", &ImageModelOptions::default()).await?;
 //!
-//! // Run Gemini through OpenRouter instead, or an org that has no image API here.
-//! set_image_model_provider("google", Backend::OpenRouter);
-//! set_image_model_provider("bytedance-seed", Backend::OpenRouter);
-//! let model = create_image_model("bytedance-seed/seedream-5-0-pro").await?;
+//! // Through OpenRouter, which runs `bytedance-seed/seedream-5-0-pro`.
+//! let model = create_image_model("openrouter/bytedance-seed/seedream-5-0-pro").await?;
 //!
 //! // A model of your own.
 //! set_image_model_provider("mine", ImageModelProvider::custom(|_, name| Ok(Arc::new(MyModel::new(name)))));
 //! ```
 //!
-//! | Org      | Own API                 | Through OpenRouter            |
-//! |----------|-------------------------|-------------------------------|
-//! | `openai` | [`GptImageApiModel`]    | [`OpenRouterImageApiModel`]   |
-//! | `google` | [`GeminiImageApiModel`] | [`OpenRouterImageApiModel`]   |
-//! | any      | —                       | [`OpenRouterImageApiModel`]   |
-//!
-//! The default for `openai` and `google` is the own API, which reads its key from
-//! `OPENAI_API_KEY` or `GEMINI_API_KEY`; OpenRouter reads `OPENROUTER_API_KEY` and runs the
-//! desc as its slug. Any other org runs once a provider is set for it.
+//! | Org          | API                         | Key                  |
+//! |--------------|-----------------------------|----------------------|
+//! | `openai`     | [`GptImageApiModel`]        | `OPENAI_API_KEY`     |
+//! | `google`     | [`GeminiImageApiModel`]     | `GEMINI_API_KEY`     |
+//! | `openrouter` | [`OpenRouterImageApiModel`] | `OPENROUTER_API_KEY` |
 
 use std::{
     collections::HashMap,
@@ -72,9 +67,7 @@ fn required(name: Option<&str>) -> anyhow::Result<&str> {
     name.context("this backend needs a model name, as in \"<org>/<name>\"")
 }
 
-/// Builds `name` of `org` to run through `backend`: as its API model id on the org's own
-/// API, and as `<org>/<name>` on OpenRouter, whose slugs for these orgs' models are the
-/// same ids.
+/// Builds `name` of `org` to run through `backend`, as the id its API knows it by.
 fn build(
     backend: Backend,
     org: &str,
@@ -83,14 +76,11 @@ fn build(
     Ok(match (backend, org) {
         (Backend::Api, "openai") => Arc::new(GptImageApiModel::from_env(required(name)?)?),
         (Backend::Api, "google") => Arc::new(GeminiImageApiModel::from_env(required(name)?)?),
-        (Backend::Api, _) => bail!("'{org}' has no image API"),
-        (Backend::OpenRouter, _) => Arc::new(OpenRouterImageApiModel::from_env(format!(
-            "{org}/{}",
-            required(name)?
-        ))?),
-        (backend, _) => {
-            bail!("image models run only through the org's own API or OpenRouter, not {backend}")
+        (Backend::Api, "openrouter") => {
+            Arc::new(OpenRouterImageApiModel::from_env(required(name)?)?)
         }
+        (Backend::Api, _) => bail!("'{org}' has no image API"),
+        (backend, _) => bail!("image models run only through the org's own API, not {backend}"),
     })
 }
 
@@ -98,10 +88,14 @@ fn build(
 static IMAGE_MODEL_PROVIDERS: LazyLock<RwLock<HashMap<String, ImageModelProvider>>> =
     LazyLock::new(|| {
         RwLock::new(
-            [("openai", Backend::Api), ("google", Backend::Api)]
-                .into_iter()
-                .map(|(org, backend)| (org.to_owned(), backend.into()))
-                .collect(),
+            [
+                ("openai", Backend::Api),
+                ("google", Backend::Api),
+                ("openrouter", Backend::Api),
+            ]
+            .into_iter()
+            .map(|(org, backend)| (org.to_owned(), backend.into()))
+            .collect(),
         )
     });
 
@@ -157,6 +151,10 @@ mod tests {
         };
         assert_eq!(is("openai/gpt-image-1"), Some(Backend::Api));
         assert_eq!(is("google"), Some(Backend::Api));
+        assert_eq!(
+            is("openrouter/google/gemini-3.1-flash-image"),
+            Some(Backend::Api)
+        );
         assert_eq!(is("anthropic"), None, "the lang model table is apart");
 
         set_image_model_provider("image-provider-read-back", Backend::Bedrock);
@@ -177,6 +175,10 @@ mod tests {
             .err()
             .unwrap();
         assert!(err.to_string().contains("bedrock"), "{err}");
+        let err = build(Backend::OpenRouter, "openai", Some("gpt-image-1"))
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("own API"), "{err}");
 
         let err = build(Backend::Api, "zai-org", Some("glm-image"))
             .err()
@@ -187,25 +189,24 @@ mod tests {
         assert!(err.to_string().contains("model name"), "{err}");
     }
 
-    #[test]
-    fn test_openrouter_builds_for_any_org() {
-        // Without a key the build fails at the key, past the backend and name checks.
-        let result = build(
-            Backend::OpenRouter,
-            "bytedance-seed",
-            Some("seedream-5-0-pro"),
-        );
-        match std::env::var("OPENROUTER_API_KEY") {
-            Ok(key) if !key.trim().is_empty() => assert!(result.is_ok()),
-            _ => {
-                let err = result.err().unwrap().to_string();
-                assert!(err.contains("OPENROUTER_API_KEY"), "{err}");
+    #[tokio::test]
+    async fn test_openrouter_builds_from_its_slug() {
+        // Built, or stopped at the key; another test may load `.env` meanwhile, so either
+        // passes. The name gets past the checks before the key either way.
+        match create_image_model("openrouter/x-org/some-model").await {
+            // An out-of-range `n` is refused before sending, in OpenRouter's words.
+            Ok(model) => {
+                let options = crate::model::ImageModelOptions {
+                    n: Some(0),
+                    ..Default::default()
+                };
+                let err = model.generate("x", &options).await.unwrap_err();
+                assert!(err.to_string().contains("OpenRouter"), "{err}");
             }
+            Err(err) => assert!(err.to_string().contains("OPENROUTER_API_KEY"), "{err}"),
         }
 
-        let err = build(Backend::OpenRouter, "bytedance-seed", None)
-            .err()
-            .unwrap();
+        let err = create_image_model("openrouter").await.err().unwrap();
         assert!(err.to_string().contains("model name"), "{err}");
     }
 
@@ -227,11 +228,15 @@ mod tests {
         set_image_model_provider(
             "image-provider-custom",
             ImageModelProvider::custom(|org, name| {
-                assert_eq!((org, name), ("image-provider-custom", Some("m")));
+                // Everything after the first `/` is the name, as an OpenRouter slug needs.
+                assert_eq!(
+                    (org, name),
+                    ("image-provider-custom", Some("x-org/some-model"))
+                );
                 Ok(Arc::new(Fixed))
             }),
         );
-        let model = create_image_model("image-provider-custom/m").await;
+        let model = create_image_model("image-provider-custom/x-org/some-model").await;
         remove_image_model_provider("image-provider-custom");
         let err = model
             .unwrap()
