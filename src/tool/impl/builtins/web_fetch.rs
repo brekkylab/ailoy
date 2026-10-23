@@ -1241,13 +1241,12 @@ mod tests {
         output.message.contents[0].as_value().unwrap().clone()
     }
 
-    /// Paging with `next_offset` reads a long body through in pieces that each fit in one
-    /// tool result. In each body a character can take more than one byte of JSON: an
-    /// escaped quote or newline, an escaped control character, text outside ASCII. Every
-    /// piece but the last holds as many characters as fit when `length` is left out, and
-    /// `size` characters when `length` is small: `length` itself, or 256 when it asks for
-    /// fewer. A page whose title and content type are each longer than a tool result reads
-    /// through the same way, its content type cut to `MAX_FIELD_CHARS`.
+    /// Paging with `next_offset` reads a long body through in pieces that each fit in one tool
+    /// result. A quote or a newline takes two characters of JSON and a control character six;
+    /// Hangul takes one, in three bytes. Every piece but the last holds as many characters as fit
+    /// when `length` is left out, and `size` characters when `length` is small: `length` itself, or
+    /// 256 when it asks for fewer. A page whose title and content type are each longer than a tool
+    /// result reads through the same way, its content type cut to `MAX_FIELD_CHARS`.
     #[tokio::test]
     async fn web_fetch_pages_through_a_long_body_in_pieces_that_fit() {
         let plain = || "text/plain; charset=utf-8".to_string();
