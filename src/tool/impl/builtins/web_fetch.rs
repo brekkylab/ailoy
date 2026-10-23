@@ -10,6 +10,7 @@ use url::Url;
 use wreq::{Client, ClientBuilder};
 use wreq_util::Emulation;
 
+use super::largest_fitting;
 use crate::{
     agent::{MAX_TOOL_RESULT_CHARS, fits_tool_result},
     datatype::Value,
@@ -258,29 +259,6 @@ fn slice_body(text: &str, offset: usize, len: usize) -> (String, usize, Option<u
     let slice = text[s..e].to_string();
     let next_offset = if e < text.len() { Some(end_char) } else { None };
     (slice, total_chars, next_offset)
-}
-
-/// An `n` in `0..=max` for which `fits(n)` holds and, short of `max`, `fits(n + 1)` does not;
-/// the largest such `n` when `fits` holds for every `n` below one it holds for. `None` when
-/// neither `fits(max)` nor `fits(0)` holds.
-fn largest_fitting(max: usize, fits: impl Fn(usize) -> bool) -> Option<usize> {
-    if fits(max) {
-        return Some(max);
-    }
-    if !fits(0) {
-        return None;
-    }
-    // `fits(lo)` holds and `fits(hi)` does not.
-    let (mut lo, mut hi) = (0, max);
-    while hi - lo > 1 {
-        let mid = lo + (hi - lo) / 2;
-        if fits(mid) {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    Some(lo)
 }
 
 fn now_iso_utc() -> String {
@@ -943,36 +921,6 @@ mod tests {
     }
 
     #[test]
-    fn largest_fitting_finds_the_last_n_that_fits() {
-        for max in 0..=12 {
-            // `fits(n)` holds for `n < fitting`.
-            for fitting in 0..=14 {
-                assert_eq!(
-                    largest_fitting(max, |n| n < fitting),
-                    fitting.checked_sub(1).map(|last| last.min(max)),
-                    "max {max}, {fitting} fitting"
-                );
-            }
-        }
-    }
-
-    /// When `fits` fails below `max` and holds again above the gap, the `n` found still fits and
-    /// `n + 1` does not; with neither end fitting, nothing is found.
-    #[test]
-    fn largest_fitting_stops_where_the_next_does_not_fit() {
-        for max in 0..=12 {
-            for gap in 0..=12 {
-                let fits = |n: usize| n < 3 || (gap < n && n < max);
-                let n = largest_fitting(max, fits).unwrap();
-                assert!(fits(n), "max {max}, gap {gap}: {n}");
-                assert!(n == max || !fits(n + 1), "max {max}, gap {gap}: {n}");
-            }
-        }
-        assert_eq!(largest_fitting(5, |n| n == 3), None);
-        assert_eq!(largest_fitting(5, |n| n != 0), Some(5));
-    }
-
-    #[test]
     fn body_format_parse_accepts_known_values() {
         assert_eq!(BodyFormat::parse("text"), Some(BodyFormat::Text));
         assert_eq!(BodyFormat::parse("plain"), Some(BodyFormat::Text));
@@ -1293,13 +1241,12 @@ mod tests {
         output.message.contents[0].as_value().unwrap().clone()
     }
 
-    /// Paging with `next_offset` reads a long body through in pieces that each fit in one
-    /// tool result. In each body a character can take more than one byte of JSON: an
-    /// escaped quote or newline, an escaped control character, text outside ASCII. Every
-    /// piece but the last holds as many characters as fit when `length` is left out, and
-    /// `size` characters when `length` is small: `length` itself, or 256 when it asks for
-    /// fewer. A page whose title and content type are each longer than a tool result reads
-    /// through the same way, its content type cut to `MAX_FIELD_CHARS`.
+    /// Paging with `next_offset` reads a long body through in pieces that each fit in one tool
+    /// result. A quote or a newline takes two characters of JSON and a control character six;
+    /// Hangul takes one, in three bytes. Every piece but the last holds as many characters as fit
+    /// when `length` is left out, and `size` characters when `length` is small: `length` itself, or
+    /// 256 when it asks for fewer. A page whose title and content type are each longer than a tool
+    /// result reads through the same way, its content type cut to `MAX_FIELD_CHARS`.
     #[tokio::test]
     async fn web_fetch_pages_through_a_long_body_in_pieces_that_fit() {
         let plain = || "text/plain; charset=utf-8".to_string();

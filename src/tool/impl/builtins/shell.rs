@@ -1,25 +1,89 @@
 use virtx::protocol::Error;
 
+use super::largest_fitting;
 use crate::{
+    agent::{MAX_TOOL_RESULT_CHARS, fits_tool_result},
+    datatype::Value,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
 };
 
-const MAX_OUTPUT_CHARS: usize = 30_000; // same as Claude Code
-
-/// Truncate `s` to at most `max_chars` characters, keeping equal-sized head and
-/// tail and inserting an omission notice in the middle.
-fn middle_truncate(s: String, max_chars: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max_chars {
-        return s;
+/// `s`, of `len` characters, cut to `keep` of them, half from each end, around a note of how
+/// many were cut; `s` whole when it has no more than `keep`. Finding the cut takes time in
+/// `keep`, not in `len`.
+fn middle_truncate(s: &str, len: usize, keep: usize) -> String {
+    if len <= keep {
+        return s.to_owned();
     }
-    let head = max_chars / 2;
-    let tail = max_chars - head;
-    let omitted = chars.len() - head - tail;
-    let head_str: String = chars[..head].iter().collect();
-    let tail_str: String = chars[chars.len() - tail..].iter().collect();
-    format!("{head_str}\n\n... [{omitted} characters omitted] ...\n\n{tail_str}")
+    let head = keep / 2;
+    let tail = keep - head;
+    let head_end = s.char_indices().nth(head).map_or(s.len(), |(i, _)| i);
+    let tail_start = s
+        .char_indices()
+        .rev()
+        .take(tail)
+        .last()
+        .map_or(s.len(), |(i, _)| i);
+    format!(
+        "{}\n\n... [{} characters omitted] ...\n\n{}",
+        &s[..head_end],
+        len - keep,
+        &s[tail_start..]
+    )
+}
+
+/// What a command printed, each stream with its length in characters, and how it ended.
+struct Output<'a> {
+    stdout: (&'a str, usize),
+    stderr: (&'a str, usize),
+    exit_code: i64,
+    truncated: bool,
+}
+
+impl<'a> Output<'a> {
+    fn new(stdout: &'a str, stderr: &'a str, exit_code: i64, truncated: bool) -> Self {
+        Self {
+            stdout: (stdout, stdout.chars().count()),
+            stderr: (stderr, stderr.chars().count()),
+            exit_code,
+            truncated,
+        }
+    }
+
+    /// The result with each stream cut to `keep` characters around a note of how many were cut,
+    /// or whole when it has no more than `keep`.
+    fn cut_to(&self, keep: usize) -> Value {
+        crate::to_value!({
+            "stdout": middle_truncate(self.stdout.0, self.stdout.1, keep).as_str(),
+            "stderr": middle_truncate(self.stderr.0, self.stderr.1, keep).as_str(),
+            "exit_code": self.exit_code,
+            "timed_out": false,
+            // The console cut output that would not fit one message. Said out loud,
+            // since a model that takes a partial result as whole draws conclusions from it.
+            "truncated": self.truncated
+        })
+    }
+
+    /// The result with each stream cut to the same number of characters at most, the most that
+    /// lets it fit in one tool result, whose middle the agent would cut out. A stream no longer
+    /// than that stays whole.
+    fn fitted(&self) -> Value {
+        let fits = |keep| fits_tool_result(&self.cut_to(keep));
+        // A stream longer than a tool result does not fit, so the search stops there.
+        let longest = self.stdout.1.max(self.stderr.1).min(MAX_TOOL_RESULT_CHARS);
+        let shorter = self.stdout.1.min(self.stderr.1).min(longest);
+        // The result does not shrink as `keep` grows, except at a stream's own length, where the
+        // stream comes whole and drops its note. So `[0, shorter)` and `[shorter, longest]` are
+        // searched one at a time, the higher first.
+        let keep = if fits(longest) {
+            longest
+        } else if fits(shorter) {
+            shorter + largest_fitting(longest - shorter, |more| fits(shorter + more)).unwrap_or(0)
+        } else {
+            largest_fitting(shorter, fits).unwrap_or(0)
+        };
+        self.cut_to(keep)
+    }
 }
 
 pub fn get_shell_tool_desc() -> ToolDesc {
@@ -89,17 +153,9 @@ pub fn get_shell_tool_func() -> ToolFunc {
             }
         };
 
-        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-        crate::to_value!({
-            "stdout": middle_truncate(stdout, MAX_OUTPUT_CHARS).as_str(),
-            "stderr": middle_truncate(stderr, MAX_OUTPUT_CHARS).as_str(),
-            "exit_code": out.code as i64,
-            "timed_out": false,
-            // The console cut output that would not fit one message. Said out loud,
-            // since a model that takes a partial result as whole draws conclusions from it.
-            "truncated": out.truncated
-        })
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        Output::new(&stdout, &stderr, out.code as i64, out.truncated).fitted()
     })
 }
 
@@ -109,6 +165,112 @@ mod tests {
 
     use super::*;
     use crate::{test_console, to_value};
+
+    /// `kept`, the result's copy of `original`: `None` when it is `original` whole; otherwise
+    /// the number of characters it keeps, once its note is checked against what is missing.
+    fn kept_of(original: &str, kept: &str) -> Option<usize> {
+        if kept == original {
+            return None;
+        }
+        let (head, rest) = kept
+            .split_once("\n\n... [")
+            .expect("a cut stream has a note");
+        let (omitted, tail) = rest.split_once(" characters omitted] ...\n\n").unwrap();
+        assert!(original.starts_with(head) && original.ends_with(tail));
+        let keep = head.chars().count() + tail.chars().count();
+        assert_eq!(head.chars().count(), keep / 2);
+        assert_eq!(
+            keep + omitted.parse::<usize>().unwrap(),
+            original.chars().count()
+        );
+        Some(keep)
+    }
+
+    /// Every output fits in one tool result, its exit code and `truncated` as given. A stream is
+    /// cut only when the result would not fit whole, and then to as many characters as fit: no
+    /// larger `keep` fits, neither one character more nor the length at which a stream comes
+    /// whole and drops its note. A note counts what each cut leaves out, and two cut streams
+    /// keep the same number. `seq 1 6000` is shorter than a tool result and still cut: JSON
+    /// escapes its newlines. A stream of 14,942 characters stays whole beside 50,000 of the
+    /// other.
+    #[test]
+    fn output_fits_one_tool_result_and_notes_each_cut() {
+        let seq = |n: usize| (1..=n).map(|i| format!("{i}\n")).collect::<String>();
+        for (stdout, stderr, truncated, stdout_cut, stderr_cut) in [
+            (seq(5_000), String::new(), false, false, false),
+            (seq(6_000), String::new(), true, true, false),
+            ("a".repeat(40_000), String::new(), false, true, false),
+            ("a".repeat(20_000), "b".repeat(20_000), true, true, true),
+            ("x".repeat(100), "e".repeat(50_000), false, false, true),
+            ("가".repeat(40_000), String::new(), true, true, false),
+            ("\u{1}".repeat(10_000), String::new(), false, true, false),
+            ("x".repeat(14_942), "e".repeat(50_000), true, false, true),
+            ("e".repeat(50_000), "x".repeat(14_942), true, true, false),
+            ("a".repeat(14_950), "b".repeat(14_960), false, false, false),
+        ] {
+            let output = Output::new(&stdout, &stderr, 3, truncated);
+            let value = output.fitted();
+            let row = format!(
+                "stdout {}, stderr {}",
+                stdout.chars().count(),
+                stderr.chars().count()
+            );
+            assert!(fits_tool_result(&value), "{row}");
+            assert_eq!(
+                value.pointer("/exit_code").and_then(|v| v.as_integer()),
+                Some(3)
+            );
+            assert_eq!(
+                value.pointer("/truncated").and_then(|v| v.as_bool()),
+                Some(truncated)
+            );
+            assert_eq!(
+                value.pointer("/timed_out").and_then(|v| v.as_bool()),
+                Some(false)
+            );
+            let text = |key: &str| value.pointer(key).and_then(|v| v.as_str()).unwrap();
+            let kept = [
+                kept_of(&stdout, text("/stdout")),
+                kept_of(&stderr, text("/stderr")),
+            ];
+            assert_eq!(
+                [kept[0].is_some(), kept[1].is_some()],
+                [stdout_cut, stderr_cut],
+                "{row}"
+            );
+            if let Some(&keep) = kept.iter().flatten().max() {
+                assert!(kept.iter().flatten().all(|&k| k == keep), "{row}: {kept:?}");
+                let whole = [stdout.chars().count(), stderr.chars().count()];
+                for more in [keep + 1]
+                    .into_iter()
+                    .chain(whole.into_iter().filter(|&n| n > keep))
+                {
+                    assert!(
+                        !fits_tool_result(&output.cut_to(more)),
+                        "{row}: keep {more}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// `seq 1 6000` comes back cut to fit one tool result, its first and last lines kept.
+    #[tokio::test]
+    async fn test_long_output_fits_one_tool_result() {
+        let f = get_shell_tool_func();
+        let mut console = test_console().await;
+        let msg = f
+            .call(to_value!({ "cmd": "seq 1 6000" }), "", &mut console)
+            .next()
+            .await
+            .unwrap()
+            .message;
+        let value = msg.contents[0].as_value().unwrap();
+        assert!(fits_tool_result(value), "{value:?}");
+        let stdout = value.pointer("/stdout").and_then(|v| v.as_str()).unwrap();
+        assert!(stdout.starts_with("1\n2\n") && stdout.ends_with("5999\n6000\n"));
+        assert!(stdout.contains(" characters omitted] "), "{stdout:?}");
+    }
 
     #[tokio::test]
     async fn test_missing_cmd_returns_validation_error() {
