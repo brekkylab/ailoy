@@ -477,13 +477,20 @@ jobs:
 
       # A registry on localhost holding only what `assemble` packed. Published with an
       # explicit --registry and a config of its own: the packages' publishConfig names
-      # npmjs, and nothing here may reach it.
+      # npmjs, and nothing here may reach it. verdaccio is installed before it is started, so
+      # the wait for it covers its start alone and not a download that takes Windows over a
+      # minute.
       - name: Install from a local registry
         shell: bash
         run: |
           cd scripts/packages
-          npx -y verdaccio@6 --config ./verdaccio.yaml --listen 4873 > "$RUNNER_TEMP/verdaccio.log" 2>&1 &
-          for _ in $(seq 60); do curl -sf http://localhost:4873/-/ping >/dev/null && break; sleep 1; done
+          npm install -g verdaccio@6
+          verdaccio --config ./verdaccio.yaml --listen 4873 > "$RUNNER_TEMP/verdaccio.log" 2>&1 &
+          deadline=$((SECONDS + 120))
+          until curl -sf http://localhost:4873/-/ping >/dev/null; do
+            [ "$SECONDS" -lt "$deadline" ] || { echo "::error::verdaccio did not answer within 120s"; exit 1; }
+            sleep 1
+          done
           token=$(curl -sf -X PUT -H 'content-type: application/json' \
             -d '{"name":"ci","password":"ci-local-only"}' \
             http://localhost:4873/-/user/org.couchdb.user:ci | node -pe 'JSON.parse(require("fs").readFileSync(0)).token')
@@ -518,9 +525,14 @@ jobs:
           cd "$RUNNER_TEMP/project" && VIRTX_HOME="$VIRTX_HOME_NODE" node "$GITHUB_WORKSPACE/scripts/packages/smoke/node.mjs"
           VIRTX_HOME="$VIRTX_HOME_PYTHON" "$SMOKE_PYTHON" "$GITHUB_WORKSPACE/scripts/packages/smoke/python.py"
 
+      # The runner image's Homebrew never updates itself (HOMEBREW_NO_AUTO_UPDATE), so its
+      # casks are as old as the image: without `brew update` it installs the FUSE-T of the
+      # day the image was built, which may be older than virtx needs.
       - name: FUSE-T
         if: runner.os == 'macOS'
-        run: brew install --cask fuse-t
+        run: |
+          brew update --quiet
+          brew install --cask fuse-t
 
       - name: Smoke, Node
         shell: bash

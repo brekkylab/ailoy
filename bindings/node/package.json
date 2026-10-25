@@ -1,6 +1,6 @@
 {
   "name": "@brekkylab/ailoy",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Agents that drive a language model through tool-augmented turns, in a virtx console.",
   "license": "Apache-2.0",
   "repository": {
