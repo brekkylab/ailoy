@@ -2,7 +2,8 @@
 name = "tts-ncnn"
 version = "0.1.0"
 description = "Downloads Qwen3-TTS and converts it to ncnn for the tts example, on the host."
-requires-python = ">=3.11"
+# The locked torch has no wheels for Python 3.15, so uv must not pick or download one.
+requires-python = ">=3.11,<3.15"
 dependencies = [
     "huggingface_hub",
     "ncnn",
