@@ -2,7 +2,7 @@
 name = "laya-ncnn"
 version = "0.1.0"
 description = "Downloads the Laya checkpoint and converts it to ncnn for the laya example, on the host."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "huggingface_hub",
     "laya==0.3.20",

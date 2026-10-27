@@ -2,7 +2,7 @@
 name = "ailoy-example-laya"
 version = "0.1.0"
 description = "Laya on ncnn as an agent's skill, on ailoy's Python bindings, and the script that downloads and converts its checkpoint."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "ailoy-py",
     "virtx>=0.1.2,<0.2",
