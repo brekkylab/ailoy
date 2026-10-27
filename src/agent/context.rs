@@ -8,6 +8,8 @@ pub struct ContextManager {
     pub max_input_tokens: u64,
     /// Number of recent user turns to preserve after truncation (system message is always preserved separately).
     pub preserve_recent_turns: usize,
+    /// Images the history may hold at the start of a turn; over it, the oldest are replaced until half remain.
+    pub max_images: usize,
 }
 
 impl Default for ContextManager {
@@ -15,6 +17,7 @@ impl Default for ContextManager {
         Self {
             max_input_tokens: 30_000,
             preserve_recent_turns: 3,
+            max_images: 10,
         }
     }
 }
@@ -62,6 +65,36 @@ impl ContextManager {
                     placeholder
                 };
             }
+        }
+    }
+
+    /// Replace the oldest images in `history` by a text placeholder, when there are more
+    /// than [`max_images`](Self::max_images), until half that many remain: several at once,
+    /// so the prompt cache breaks once in several turns rather than every turn. Images in
+    /// tool results (screenshots, mostly stale a click later) go before those a person
+    /// attached.
+    ///
+    /// Only for the start of a turn: Claude rejects a history altered before a thinking
+    /// block it is handed back, and at turn start none follows.
+    pub(super) fn cap_images(&self, history: &mut [Message]) {
+        let mut images: Vec<(usize, usize)> = history
+            .iter()
+            .enumerate()
+            .flat_map(|(i, m)| {
+                let parts = m.contents.iter().enumerate();
+                parts
+                    .filter(|(_, p)| p.is_image())
+                    .map(move |(j, _)| (i, j))
+            })
+            .collect();
+        if images.len() <= self.max_images {
+            return;
+        }
+        let replaced = images.len() - self.max_images / 2;
+        // A stable sort: within each kind the oldest stay first.
+        images.sort_by_key(|&(i, _)| history[i].role != Role::Tool);
+        for (i, j) in images.into_iter().take(replaced) {
+            history[i].contents[j] = Part::text("[image from an earlier turn removed]");
         }
     }
 }
@@ -132,6 +165,35 @@ mod tests {
         )])
     }
 
+    fn image() -> Part {
+        Part::image_embedded("image/png", vec![0u8; 4].into()).unwrap()
+    }
+
+    fn shot(id: &str) -> Message {
+        Message::new(Role::Tool)
+            .with_id(id)
+            .with_contents([Part::text("the page"), image()])
+    }
+
+    fn user_with_image(text: &str) -> Message {
+        Message::new(Role::User).with_contents([Part::text(text), image()])
+    }
+
+    fn images_in(history: &[Message]) -> usize {
+        history
+            .iter()
+            .flat_map(|m| &m.contents)
+            .filter(|p| p.is_image())
+            .count()
+    }
+
+    fn with_max_images(max_images: usize) -> ContextManager {
+        ContextManager {
+            max_images,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_preserve_recent_turns_boundary() {
         // history: sys, u1, a1, u2, a2, u3, a3
@@ -155,6 +217,7 @@ mod tests {
         let cm = ContextManager {
             max_input_tokens: 30_000,
             preserve_recent_turns: 10,
+            ..Default::default()
         };
         let original_len = history.len();
         cm.truncate_history(&mut history);
@@ -177,6 +240,7 @@ mod tests {
         let cm = ContextManager {
             max_input_tokens: 30_000,
             preserve_recent_turns: 1,
+            ..Default::default()
         };
         cm.truncate_history(&mut history);
 
@@ -219,6 +283,7 @@ mod tests {
         let cm = ContextManager {
             max_input_tokens: 30_000,
             preserve_recent_turns: 1,
+            ..Default::default()
         };
         cm.truncate_history(&mut history);
         assert_eq!(
@@ -266,6 +331,7 @@ mod tests {
         let cm = ContextManager {
             max_input_tokens: 30_000,
             preserve_recent_turns: 1,
+            ..Default::default()
         };
         cm.truncate_history(&mut history);
         let tool_msg = history
@@ -282,5 +348,56 @@ mod tests {
             Some("ok"),
             "tool result inside preserve window must not be replaced"
         );
+    }
+
+    #[test]
+    fn test_over_the_limit_the_oldest_images_go_until_half_remain() {
+        // Five screenshots over a limit of four: the last two stay.
+        let mut history = vec![sys(), user("u1")];
+        history.extend((1..=5).map(|n| shot(&format!("c{n}"))));
+        history.push(asst("a1"));
+        with_max_images(4).cap_images(&mut history);
+
+        assert_eq!(
+            history[2].contents[1].as_text(),
+            Some("[image from an earlier turn removed]")
+        );
+        assert!(history[2..=4].iter().all(|m| m.contents[1].is_text()));
+        assert!(history[5..=6].iter().all(|m| m.contents[1].is_image()));
+        // The note beside each screenshot stays.
+        assert_eq!(history[2].contents[0].as_text(), Some("the page"));
+        assert_eq!(history[2].id.as_deref(), Some("c1"));
+    }
+
+    #[test]
+    fn test_tool_result_images_go_before_a_persons() {
+        // The person's image is the oldest, but every screenshot goes first.
+        let mut history = vec![
+            sys(),
+            user_with_image("u1"),
+            shot("c1"),
+            shot("c2"),
+            shot("c3"),
+            asst("a1"),
+        ];
+        with_max_images(2).cap_images(&mut history);
+
+        assert_eq!(images_in(&history), 1);
+        assert!(history[1].contents[1].is_image());
+        assert!(history[2..=4].iter().all(|m| m.contents[1].is_text()));
+    }
+
+    #[test]
+    fn test_a_persons_images_go_once_no_screenshot_is_left() {
+        let mut history = vec![
+            sys(),
+            user_with_image("u1"),
+            shot("c1"),
+            user_with_image("u2"),
+            asst("a1"),
+        ];
+        with_max_images(0).cap_images(&mut history);
+
+        assert_eq!(images_in(&history), 0);
     }
 }
