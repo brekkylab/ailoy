@@ -2,7 +2,8 @@
 name = "ailoy-example-laya"
 version = "0.1.0"
 description = "Laya on ncnn as an agent's skill, on ailoy's Python bindings, and the script that downloads and converts its checkpoint."
-requires-python = ">=3.11"
+# The same bound as ../shared/pyproject.toml, which says why.
+requires-python = ">=3.11,<3.15"
 dependencies = [
     "ailoy-py",
     "virtx>=0.1.2,<0.2",
