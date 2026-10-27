@@ -78,10 +78,13 @@ pip install ailoy-py
 import asyncio
 
 from ailoy import AgentBuilder
-from virtx import ConsoleClient, Recipe
+from virtx import ConsoleClient, Recipe, ensure_virtx
 
 
 async def main() -> None:
+    # Fetches virtx's server into its cache the first time; a no-op after.
+    await ensure_virtx()
+
     console = await (
         ConsoleClient.builder()
         .image(Recipe("python:3.12-slim-trixie").step("pip install matplotlib"))
@@ -120,29 +123,36 @@ npm install @brekkylab/ailoy @brekkylab/virtx
 
 ```js
 const { AgentBuilder } = require('@brekkylab/ailoy')
-const { ConsoleClient, Recipe } = require('@brekkylab/virtx')
+const { ConsoleClient, Recipe, ensureVirtx } = require('@brekkylab/virtx')
 
-const console_ = await ConsoleClient.builder()
-  .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))
-  .mount('./artifacts', '/artifacts')
-  .network(true)
-  .build()
-// For openai, use "openai/gpt-5.6-luna"
-const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
-  .instruction('Write what you are asked for into /artifacts.')
-  .systemTools()
-  .console(console_)
-  .build()
+async function main() {
+  // Fetches virtx's server into its cache the first time; a no-op after.
+  await ensureVirtx()
 
-try {
-  for await (const { message } of agent.run('Create a bar chart comparing the populations of European countries and save it to /artifacts/population.png.')) {
-    for (const part of message.contents) {
-      if (part.type === 'text') console.log(part.text)
+  const console_ = await ConsoleClient.builder()
+    .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))
+    .mount('./artifacts', '/artifacts')
+    .network(true)
+    .build()
+  // For openai, use "openai/gpt-5.6-luna"
+  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
+    .instruction('Write what you are asked for into /artifacts.')
+    .systemTools()
+    .console(console_)
+    .build()
+
+  try {
+    for await (const { message } of agent.run('Create a bar chart comparing the populations of European countries and save it to /artifacts/population.png.')) {
+      for (const part of message.contents) {
+        if (part.type === 'text') console.log(part.text)
+      }
     }
+  } finally {
+    await agent.close()
   }
-} finally {
-  await agent.close()
 }
+
+main()
 ```
 
 `agent.run` yields one complete message for each step of the tool loop, and `agent.runStream` streams each message token by token as the model writes it.
@@ -169,6 +179,9 @@ use futures::StreamExt as _;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Fetches virtx's server into its cache the first time; a no-op after.
+    virtx::ensure_virtx().await?;
+
     let console = ConsoleClient::builder()
         .image(Recipe::new("python:3.12-slim-trixie").step("pip install matplotlib"))
         .mount(std::path::absolute("./artifacts")?, "/artifacts")

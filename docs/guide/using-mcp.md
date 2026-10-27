@@ -37,21 +37,25 @@ asyncio.run(main())
 ```js [Node.js]
 const { AgentBuilder, registerMcpStdio } = require('@brekkylab/ailoy')
 
-const tools = await registerMcpStdio('fetch', 'uvx', ['mcp-server-fetch'])
+async function main() {
+  const tools = await registerMcpStdio('fetch', 'uvx', ['mcp-server-fetch'])
 
-const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
-  .tools(tools)
-  .build()
+  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
+    .tools(tools)
+    .build()
 
-try {
-  for await (const { message } of agent.run('Summarize https://modelcontextprotocol.io in three sentences.')) {
-    for (const part of message.contents) {
-      if (part.type === 'text') console.log(part.text)
+  try {
+    for await (const { message } of agent.run('Summarize https://modelcontextprotocol.io in three sentences.')) {
+      for (const part of message.contents) {
+        if (part.type === 'text') console.log(part.text)
+      }
     }
+  } finally {
+    await agent.close()
   }
-} finally {
-  await agent.close()
 }
+
+main()
 ```
 
 ```rust [Rust]

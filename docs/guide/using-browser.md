@@ -29,17 +29,21 @@ asyncio.run(main())
 ```js [Node.js]
 const { AgentBuilder } = require('@brekkylab/ailoy')
 
-const agent = await new AgentBuilder('anthropic/claude-sonnet-5').browser().build()
+async function main() {
+  const agent = await new AgentBuilder('anthropic/claude-sonnet-5').browser().build()
 
-try {
-  for await (const { message } of agent.run('Open https://example.com and tell me its title.')) {
-    for (const part of message.contents) {
-      if (part.type === 'text') console.log(part.text)
+  try {
+    for await (const { message } of agent.run('Open https://example.com and tell me its title.')) {
+      for (const part of message.contents) {
+        if (part.type === 'text') console.log(part.text)
+      }
     }
+  } finally {
+    await agent.close()
   }
-} finally {
-  await agent.close()
 }
+
+main()
 ```
 
 ```rust [Rust]
