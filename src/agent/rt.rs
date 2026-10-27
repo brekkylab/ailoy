@@ -302,6 +302,10 @@ impl Agent {
             query.contents.insert(0, Part::text(note));
         }
         self.state.history.push(query);
+        // Images are capped for every agent; only the token limit is opt-in.
+        let default = ContextManager::default();
+        let cm = self.context_manager.as_ref().unwrap_or(&default);
+        cm.cap_images(&mut self.state.history);
         self.seed_mounts().await;
     }
 
@@ -813,6 +817,14 @@ mod tests {
             .collect()
     }
 
+    fn images_in(history: &[Message]) -> usize {
+        history
+            .iter()
+            .flat_map(|m| &m.contents)
+            .filter(|p| p.is_image())
+            .count()
+    }
+
     #[tokio::test]
     async fn test_run_calls_tools_until_the_model_answers() {
         let name = "test-agent-run";
@@ -1142,6 +1154,7 @@ mod tests {
         agent.set_context_manager(Some(ContextManager {
             max_input_tokens: 100,
             preserve_recent_turns: 1,
+            ..Default::default()
         }));
 
         agent.run(user("first")).for_each(|_| async {}).await;
@@ -1155,6 +1168,67 @@ mod tests {
         // Under the limit before that, so the second call saw the result whole.
         let result = seen[1].iter().find(|m| m.role == Role::Tool).unwrap();
         assert_ne!(text_of(result), "[context truncated]");
+    }
+
+    #[tokio::test]
+    async fn test_context_manager_replaces_old_images_at_the_start_of_a_turn() {
+        let name = "test-agent-images";
+        let (model, spec) = scripted(
+            name,
+            [
+                calls(&[("c1", "shot")]),
+                calls(&[("c2", "shot")]),
+                calls(&[("c3", "shot")]),
+                answer("one"),
+                answer("two"),
+            ],
+        );
+        let mut agent = Agent::try_new(spec).await.unwrap();
+        agent.set_context_manager(Some(ContextManager {
+            max_images: 2,
+            ..Default::default()
+        }));
+
+        agent.run(user("first")).for_each(|_| async {}).await;
+        // Within a turn every screenshot stays, over the limit or not.
+        assert_eq!(images_in(&model.seen.lock().unwrap()[3]), 3);
+        assert_eq!(images_in(agent.history()), 3);
+
+        agent.run(user("second")).for_each(|_| async {}).await;
+        // The turn starts by replacing the oldest, down to half the limit.
+        let seen = model.seen.lock().unwrap();
+        assert_eq!(images_in(&seen[4]), 1);
+        let results: Vec<_> = seen[4].iter().filter(|m| m.role == Role::Tool).collect();
+        assert_eq!(
+            text_of(results[0]),
+            "the page[image from an earlier turn removed]"
+        );
+        assert_eq!(
+            text_of(results[1]),
+            "the page[image from an earlier turn removed]"
+        );
+        assert!(results[2].contents[1].is_image());
+    }
+
+    #[tokio::test]
+    async fn test_images_are_capped_at_the_default_without_a_context_manager() {
+        let name = "test-agent-images-default";
+        let max = ContextManager::default().max_images;
+        let shots: Vec<_> = (0..=max)
+            .map(|n| calls(&[(&format!("c{n}"), "shot")]))
+            .collect();
+        let (model, spec) = scripted(
+            name,
+            shots.into_iter().chain([answer("one"), answer("two")]),
+        );
+        let mut agent = Agent::try_new(spec).await.unwrap();
+        assert!(agent.context_manager().is_none());
+
+        agent.run(user("first")).for_each(|_| async {}).await;
+        agent.run(user("second")).for_each(|_| async {}).await;
+
+        let seen = model.seen.lock().unwrap();
+        assert_eq!(images_in(seen.last().unwrap()), max / 2);
     }
 
     /// A part is cut only when it has more characters than the limit, a value counted in those

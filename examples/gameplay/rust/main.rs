@@ -242,6 +242,7 @@ async fn main() -> anyhow::Result<()> {
     .context_manager(ContextManager {
         max_input_tokens: 80_000,
         preserve_recent_turns: 2,
+        ..Default::default()
     })
     .build()
     .await?;
