@@ -27,6 +27,7 @@ export default defineConfig({
             { text: 'Tools', link: '/guide/tools' },
             { text: 'Skills', link: '/guide/skills' },
             { text: 'Context manager', link: '/guide/context-manager' },
+            { text: 'Memory', link: '/guide/memory' },
             { text: 'Using MCP', link: '/guide/using-mcp' },
             { text: 'Using a browser', link: '/guide/using-browser' },
           ],

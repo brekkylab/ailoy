@@ -88,7 +88,7 @@ What else the builder takes, by what the task needs:
 | call your own function | `desc = register_tool({"name": ..., "description": ..., "parameters": <JSON schema>}, func)`, then `.tool(desc)` |
 | drive a web browser | `.browser()` for the user's own Chrome (remote debugging on), `.browser(isolated=True)` for one of its own; it runs on the host, not in the console |
 | follow a procedure you wrote | `.skill("/skills/<name>")`, a directory holding a `SKILL.md`, mounted into the console |
-| remember across sessions | `.memory("/work/notes.sqlite")`, a store made by `mem init` inside the console |
+| remember the user across sessions | `.memory("/memory")`, an existing folder in the console (mount one, so it outlives the session); every turn is saved there and searched with `search_history`, and `profile=True` adds notes on the user to the system message |
 | pick up an earlier conversation | `.history(messages)`, e.g. a previous agent's `agent.history` |
 | keep long runs within the context window | `.context_manager(max_input_tokens=..., preserve_recent_turns=...)`, which blanks old tool results |
 | think harder, or less | `.thinking_effort("low" \| "medium" \| "high")` |
