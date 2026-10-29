@@ -1,9 +1,12 @@
 //! `LangModel`, and the per-org providers models are built through.
 //!
-//! An org's provider is a backend (`'cli'`, `'api'`, `'bedrock'`, `'openrouter'` or `'vllm'`)
-//! or a factory of JavaScript's own, as [`LangModelProvider::custom`] is in Rust: called with
-//! the org and the name after it (`null` for a desc naming only the org), it returns a model.
-//! That is a `LangModel`, used as is, or any object with
+//! An org's provider is a backend (`'cli'`, `'api'`, `'bedrock'`, `'openrouter'`, `'vllm'` or
+//! `'openai-compatible'`), a server of your own as an object (`{ backend: 'openai-compatible',
+//! base_url: 'http://localhost:11434/v1' }`, with an `api_key` if the server wants one, as
+//! [`LangModelServer`] is in Rust), or a factory of JavaScript's own, as
+//! [`LangModelProvider::custom`] is in Rust: called with the org and the name after it (`null`
+//! for a desc naming only the org), it returns a model. That is a `LangModel`, used as is, or
+//! any object with
 //!
 //! - `infer(messages, tools, options)`, returning a `MessageOutput` or a promise of one, and
 //!   optionally
@@ -19,8 +22,8 @@ use std::{ptr, sync::Arc};
 use ailoy::{
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::{
-        Backend, InferLangModel, LangModelOptions, LangModelProvider, create_lang_model,
-        get_lang_model_provider as get_lang_model_provider_rs,
+        Backend, InferLangModel, LangModelOptions, LangModelProvider, LangModelServer,
+        create_lang_model, get_lang_model_provider as get_lang_model_provider_rs,
         remove_lang_model_provider as remove_lang_model_provider_rs,
         set_lang_model_provider as set_lang_model_provider_rs,
     },
@@ -331,14 +334,14 @@ fn custom(factory: Factory) -> LangModelProvider {
 }
 
 /// Build the models of `org` (`'anthropic'`, `'openai'`, `'google'`, `'deepseek-ai'`, …)
-/// through `provider`: a backend, or a factory, as the module says. Replaces the provider the
-/// org had.
+/// through `provider`: a backend, a server object, or a factory, as the module says. Replaces
+/// the provider the org had.
 #[napi]
 pub fn set_lang_model_provider(
     env: &Env,
     org: String,
     #[napi(
-        ts_arg_type = "'cli' | 'api' | 'bedrock' | 'openrouter' | 'vllm' | ((org: string, name: string | null) => LangModel | CustomLangModel)"
+        ts_arg_type = "Backend | LangModelServer | ((org: string, name: string | null) => LangModel | CustomLangModel)"
     )]
     provider: Unknown<'_>,
 ) -> Result<()> {
@@ -346,6 +349,11 @@ pub fn set_lang_model_provider(
         ValueType::String => {
             LangModelProvider::from(from_js::<Backend>(env, provider, "a backend")?)
         }
+        ValueType::Object => LangModelProvider::from(from_js::<LangModelServer>(
+            env,
+            provider,
+            "a lang model server",
+        )?),
         ValueType::Function => {
             let factory = unsafe { Factory::from_napi_value(env.raw(), provider.raw()) }
                 .map_err(|e| invalid(e.reason))?;
@@ -353,7 +361,7 @@ pub fn set_lang_model_provider(
         }
         _ => {
             return Err(invalid(
-                "a lang model provider is a backend's name or a factory of models",
+                "a lang model provider is a backend's name, a server object or a factory of models",
             ));
         }
     };
@@ -361,12 +369,14 @@ pub fn set_lang_model_provider(
     Ok(())
 }
 
-/// How the model `desc` names (`'<org>/<name>'`, or `'<org>'`) is built: a backend's name,
-/// `'custom'` for a factory, or `null` when its org has no provider.
-#[napi(ts_return_type = "'cli' | 'api' | 'bedrock' | 'openrouter' | 'vllm' | 'custom' | null")]
+/// How the model `desc` names (`'<org>/<name>'`, or `'<org>'`) is built: a backend's name
+/// (that of the server's backend, for a server of your own), `'custom'` for a factory, or
+/// `null` when its org has no provider.
+#[napi(ts_return_type = "Backend | 'custom' | null")]
 pub fn get_lang_model_provider(desc: String) -> Option<String> {
     get_lang_model_provider_rs(&desc).map(|provider| match provider {
         LangModelProvider::Backend(backend) => backend.to_string(),
+        LangModelProvider::Server(server) => server.backend().to_string(),
         LangModelProvider::Custom(_) => "custom".to_string(),
     })
 }

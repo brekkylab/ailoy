@@ -63,7 +63,7 @@ To call the provider's API instead, set its key and switch the org to the `api` 
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY
 ```
 
-Amazon Bedrock, OpenRouter and vLLM are backends too; see the [model providers guide](./docs/guide/model-providers.md).
+Amazon Bedrock, OpenRouter, vLLM and any OpenAI-compatible server (llama-server, Ollama, LM Studio) are backends too; see the [model providers guide](./docs/guide/model-providers.md).
 
 Then build your agent with this simple API in your preferred language:
 
