@@ -167,7 +167,15 @@ let agent = AgentBuilder::new("openai/gpt-5.6-luna")
 
 :::
 
-On `vllm` and `openai-compatible`, `thinking_effort` turns thinking on rather than grading it, as the chat template's `enable_thinking` (and `thinking`) in `chat_template_kwargs`, and `output_schema` is sent as a `json_schema` `response_format`. vLLM reads both. So does llama-server, measured with llama.cpp build 11146 serving Qwen3-0.6B on 2026-10-29: `enable_thinking: false` switched the thinking off, and the reply matched the schema. Ollama, LM Studio and SGLang have not been measured; a server that ignores a field keeps the model's default, or answers in its own shape.
+On `vllm` and `openai-compatible`, `thinking_effort` turns thinking on rather than grading it, as the chat template's `enable_thinking` (and `thinking`) in `chat_template_kwargs`, and `output_schema` is sent as a `json_schema` `response_format`. vLLM reads both. What the other servers do with them, measured on 2026-10-29 with Qwen3-0.6B on each, a schema with `additionalProperties: false` telling enforcement from obedience:
+
+| Server | `chat_template_kwargs` | `response_format` | Thinking comes back as |
+| --- | --- | --- | --- |
+| llama-server (llama.cpp build 11146) | Read: `enable_thinking: false` switched the thinking off | Enforced | `reasoning_content` |
+| Ollama 0.40.12 | Ignored; Ollama's own switch is `reasoning_effort: "none"`, which Ailoy does not send | Enforced | `reasoning` |
+| LM Studio 0.4.26 | Ignored | Enforced, with no thinking while the reply is structured | `reasoning_content` |
+
+So on Ollama and LM Studio `thinking_effort` changes nothing: the model thinks, or not, as its template defaults. SGLang has not been measured.
 
 ## Running a model without an agent
 

@@ -30,8 +30,8 @@ use crate::{
 ///   `chat_template_kwargs`; a server or template that reads neither keeps its default. The
 ///   thinking comes back when the server runs a reasoning parser, as `reasoning` (or
 ///   `reasoning_content` on older servers), and is not sent back.
-/// - An output schema is sent as a `json_schema` `response_format`, which vLLM and
-///   llama-server enforce; a server that ignores it answers freely.
+/// - An output schema is sent as a `json_schema` `response_format`, which vLLM, llama-server,
+///   Ollama and LM Studio enforce.
 #[derive(Clone)]
 pub struct OpenAiCompatibleModel {
     model: String,
