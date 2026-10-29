@@ -2,7 +2,8 @@
 name = "laya-ncnn"
 version = "0.1.0"
 description = "Downloads the Laya checkpoint and converts it to ncnn for the laya example, on the host."
-requires-python = ">=3.10"
+# The locked torch has no wheels for Python 3.15, so uv must not pick or download one.
+requires-python = ">=3.11,<3.15"
 dependencies = [
     "huggingface_hub",
     "laya==0.3.20",
