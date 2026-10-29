@@ -13,15 +13,15 @@ Work the steps below in order. Step 3 is the one that gets skipped: an agent giv
 
 | Language | Install | The console comes from |
 |---|---|---|
-| Python | `pip install ailoy-py` | `from virtx import ConsoleClient, Recipe` |
+| Python | `pip install ailoy-py` | `from virtx import ConsoleClient, Recipe, ensure_virtx` |
 | Node.js | `npm install @brekkylab/ailoy @brekkylab/virtx` | `require('@brekkylab/virtx')` |
 | Rust | `ailoy = "0.3"`, `virtx = "0.1"` in `Cargo.toml` | `virtx::console::ConsoleClient` |
 
-The console is [virtx](https://github.com/brekkylab/virtx)'s: Ailoy takes a `ConsoleClient` built with virtx's own package and adds no console API of its own. The first console on a host fetches virtx's server into its cache; `ensure_virtx()` (`ensureVirtx()` in Node) does that ahead of time, so a script can say so before the model is waiting.
+The console is [virtx](https://github.com/brekkylab/virtx)'s: Ailoy takes a `ConsoleClient` built with virtx's own package and adds no console API of its own. A console runs on virtx's server, which `ensure_virtx()` (`ensureVirtx()` in Node) fetches into virtx's cache the first time and leaves as it is after. Call it before building a console: on a host without the server, building one fails with an error that starts `starting the console server:`.
 
 ## 2. Name the model, and decide how it runs
 
-A model is `<org>/<name>`: the maker's own name for it, the official API id for Claude, GPT and Gemini (`anthropic/claude-haiku-4-5`, `openai/gpt-5.6-luna`, `google/gemini-3.1-pro`) and the Hugging Face repo id for open-weight models (`deepseek-ai/DeepSeek-V3.2`). The name stays the same whichever **backend** runs it; the org's backend decides that.
+A model is `<org>/<name>`: the maker's own name for it, the official API id for Claude, GPT and Gemini (`anthropic/claude-haiku-5-5`, `openai/gpt-5.6-luna`, `google/gemini-3.1-pro`) and the Hugging Face repo id for open-weight models (`deepseek-ai/DeepSeek-V3.2`). The name stays the same whichever **backend** runs it; the org's backend decides that.
 
 | Backend | Runs the model through | Needs |
 |---|---|---|
@@ -31,7 +31,7 @@ A model is `<org>/<name>`: the maker's own name for it, the official API id for 
 | `openrouter` | OpenRouter | `OPENROUTER_API_KEY` |
 | `vllm` | A vLLM server | `VLLM_BASE_URL` (default `http://localhost:8000/v1`) |
 
-So with Claude Code, Codex or Gemini CLI logged in on the host, no key is needed: `AgentBuilder("anthropic/claude-haiku-4-5")` runs on that login, and `AgentBuilder("anthropic")` alone runs the CLI's default model. To use a key instead, switch the org's backend before building the agent:
+So with Claude Code, Codex or Gemini CLI logged in on the host, no key is needed: `AgentBuilder("anthropic/claude-haiku-5-5")` runs on that login, and `AgentBuilder("anthropic")` alone runs the CLI's default model. To use a key instead, switch the org's backend before building the agent:
 
 ```python
 import ailoy
@@ -46,8 +46,9 @@ Node is `setLangModelProvider('anthropic', 'api')`; Rust is `ailoy::model::set_l
 Decide what the agent's machine holds before writing the agent: the image is where its software comes from, and mounts are the only way its work reaches the host.
 
 ```python
-from virtx import ConsoleClient, Recipe
+from virtx import ConsoleClient, Recipe, ensure_virtx
 
+await ensure_virtx()   # fetches the server the first time; a no-op after
 console = await (
     ConsoleClient.builder()
     .image(Recipe("python:3.12-slim-trixie").step("pip install matplotlib"))
@@ -69,7 +70,7 @@ Node is the same calls in camelCase; Rust takes absolute host paths (`std::path:
 from ailoy import AgentBuilder
 
 agent = await (
-    AgentBuilder("anthropic/claude-haiku-4-5")
+    AgentBuilder("anthropic/claude-haiku-5-5")
     .instruction("Write what you are asked for into /artifacts.")
     .system_tools()        # shell, file reading and editing, image reading, in the model family's own style
     .console(console)

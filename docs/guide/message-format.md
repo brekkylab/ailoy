@@ -24,7 +24,7 @@ In Python and Node.js a message is a plain dict or object of this shape. In Rust
 | `assistant` | The model. |
 | `tool` | A tool, with the result of a call the model asked for. |
 
-You don't usually write the system message yourself. The agent builds it from `.instruction(...)` (and any skills) and puts it at the front of the history, unless the history you give it already has one.
+You don't usually write the system message yourself. The agent builds it from `.instruction(...)` (and any [skills](./skills)) and puts it at the front of the history, unless the history you give it already has one. When the console has mounts, the agent also adds a `# Mounts` section listing them as a turn starts, to the system message it wrote or the one the history brought, or as a system message of its own when there is neither.
 
 ## Fields
 
@@ -152,15 +152,15 @@ To resume an earlier conversation, pass the saved messages to the builder:
 ::: code-group
 
 ```python [Python]
-agent = await AgentBuilder("anthropic/claude-haiku-4-5").history(saved_messages).build()
+agent = await AgentBuilder("anthropic/claude-haiku-5-5").history(saved_messages).build()
 ```
 
 ```js [Node.js]
-const agent = await new AgentBuilder('anthropic/claude-haiku-4-5').history(savedMessages).build()
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').history(savedMessages).build()
 ```
 
 ```rust [Rust]
-let agent = AgentBuilder::new("anthropic/claude-haiku-4-5")
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
     .history(saved_messages)
     .build()
     .await?;

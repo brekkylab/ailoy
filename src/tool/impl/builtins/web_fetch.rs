@@ -10,14 +10,19 @@ use url::Url;
 use wreq::{Client, ClientBuilder};
 use wreq_util::Emulation;
 
+use super::largest_fitting;
 use crate::{
+    agent::{MAX_TOOL_RESULT_CHARS, fits_tool_result},
     datatype::Value,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
 };
 
-const DEFAULT_BODY_CHARS: usize = 30 * 1024;
-const MAX_BODY_CHARS: usize = 60 * 1024;
+/// A piece holds no more characters of a body than the agent keeps of a tool result.
+const MAX_BODY_CHARS: usize = MAX_TOOL_RESULT_CHARS;
+/// The most characters of a page's title or content type a piece holds. With these two and
+/// the URL bounded, a piece always has room for some of its body.
+const MAX_FIELD_CHARS: usize = 500;
 const MAX_DOWNLOAD_BYTES: usize = 2 * 1024 * 1024;
 const MAX_URL_CHARS: usize = 2048;
 const REQUEST_TIMEOUT_SECS: u64 = 10;
@@ -107,12 +112,23 @@ async fn download(
         })?;
     let status = resp.status().as_u16();
     let final_url = resp.uri().to_string();
+    // A URL reached by a redirect is held to the limit on the one asked for, which was checked
+    // as written rather than percent-encoded.
+    if resp.extensions().get::<wreq::redirect::History>().is_some()
+        && final_url.len() > MAX_URL_CHARS
+    {
+        return Err(format!(
+            "redirected to a url over {MAX_URL_CHARS} characters"
+        ));
+    }
     let content_type = resp
         .headers()
         .get(wreq::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
-        .to_string();
+        .chars()
+        .take(MAX_FIELD_CHARS)
+        .collect();
     // Stream chunks instead of buffering the full body, capped at MAX_DOWNLOAD_BYTES.
     use futures::StreamExt;
     let mut stream = resp.bytes_stream();
@@ -178,7 +194,9 @@ fn convert_with_crate(html: &str, output_format: OutputFormat) -> Converted {
                 .or_else(|| result.metadata.document.open_graph.get("title").cloned())
                 .unwrap_or_default()
                 .trim()
-                .to_string();
+                .chars()
+                .take(MAX_FIELD_CHARS)
+                .collect();
             Converted {
                 body: result.content.unwrap_or_default(),
                 title,
@@ -277,9 +295,9 @@ pub fn get_web_fetch_tool_desc() -> ToolDesc {
         .description(concat!(
             "Fetch a URL and return its body. HTML responses are converted to ",
             "the requested format; non-HTML responses (JSON, plain text, etc.) ",
-            "pass through unchanged. Bodies are clamped to 30 KiB by default; ",
-            "for more, call again with `offset` set to the previous ",
-            "`next_offset`. Rate-limited to 1 request/second per host."
+            "pass through unchanged. A long body comes in pieces; for the next, ",
+            "call again with `offset` set to the previous `next_offset`. ",
+            "Rate-limited to 1 request/second per host."
         ))
         .parameters(crate::to_value!({
             "type": "object",
@@ -302,10 +320,10 @@ pub fn get_web_fetch_tool_desc() -> ToolDesc {
                 },
                 "length": {
                     "type": "integer",
-                    "description": "Maximum number of characters returned in this call. Default 30720 (30 KiB). Hard cap 61440.",
-                    "default": 30720,
+                    "description": "Maximum number of characters returned in this call. A piece can hold fewer, so that it reaches you whole.",
+                    "default": MAX_BODY_CHARS as i64,
                     "minimum": 256,
-                    "maximum": 61440
+                    "maximum": MAX_BODY_CHARS as i64
                 }
             },
             "required": ["url"]
@@ -358,30 +376,41 @@ async fn fetch_one(
         body: readable,
         title,
     } = convert(&body, &content_type, format);
-    let (slice, total_chars, next_offset) = slice_body(&readable, offset, length);
-    let complete = next_offset.is_none();
-    let next_offset = match next_offset {
-        Some(n) => Value::from(n as i64),
-        None => Value::Null,
+    let (slice, total_chars, slice_next_offset) = slice_body(&readable, offset, length);
+    let retrieved_at = now_iso_utc();
+    // The result holding the first `chars` characters of `slice`.
+    let piece = |chars: usize| {
+        let (body, _, rest) = slice_body(&slice, 0, chars);
+        let next_offset = match rest {
+            Some(n) => Some(offset + n),
+            None => slice_next_offset,
+        };
+        crate::to_value!({
+            "url": final_url.as_str(),
+            "status": status as i64,
+            "title": title.as_str(),
+            "content_type": content_type.as_str(),
+            "body": body,
+            "body_length_total": total_chars as i64,
+            "next_offset": next_offset.map_or(Value::Null, |n| Value::from(n as i64)),
+            "complete": next_offset.is_none(),
+            "retrieved_at": retrieved_at.as_str()
+        })
     };
 
-    crate::to_value!({
-        "url": final_url,
-        "status": status as i64,
-        "title": title,
-        "content_type": content_type,
-        "body": slice,
-        "body_length_total": total_chars as i64,
-        "next_offset": next_offset,
-        "complete": complete,
-        "retrieved_at": now_iso_utc()
-    })
+    // The agent cuts the middle out of a result too long for it, so a piece holds only what
+    // fits whole.
+    let slice_chars = slice.chars().count();
+    piece(largest_fitting(slice_chars, |chars| fits_tool_result(&piece(chars))).unwrap_or(0))
 }
 
 /// Factory closes over one [`WebFetchState`] so the rate limiter is shared by
 /// every tool it builds.
 pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> anyhow::Result<ToolFunc> {
-    let state = WebFetchState::new();
+    tool_factory(WebFetchState::new())
+}
+
+fn tool_factory(state: WebFetchState) -> impl Fn(&ToolDesc) -> anyhow::Result<ToolFunc> {
     move |_| {
         let state = state.clone();
         Ok(
@@ -395,7 +424,7 @@ pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> anyhow::Result<Tool
                     .pointer("/length")
                     .and_then(|v| v.as_integer())
                     .map(|n| n.max(256).min(MAX_BODY_CHARS as i64) as usize)
-                    .unwrap_or(DEFAULT_BODY_CHARS);
+                    .unwrap_or(MAX_BODY_CHARS);
                 // Unknown `format` values silently fall back to "text" so a
                 // mistyped value still returns something useful.
                 let format = args
@@ -965,10 +994,16 @@ mod tests {
     }
 
     #[test]
-    fn convert_extracts_title_from_title_tag() {
-        let html = "<html><head><title>Hello World</title></head><body><p>x</p></body></html>";
-        let out = convert(html, "text/html", BodyFormat::Text);
-        assert_eq!(out.title, "Hello World");
+    fn convert_extracts_title_from_title_tag_up_to_max_field_chars() {
+        for (title, extracted) in [
+            ("Hello World".to_string(), "Hello World".to_string()),
+            ("가".repeat(40_000), "가".repeat(MAX_FIELD_CHARS)),
+        ] {
+            let html =
+                format!("<html><head><title>{title}</title></head><body><p>x</p></body></html>");
+            let out = convert(&html, "text/html", BodyFormat::Text);
+            assert_eq!(out.title, extracted);
+        }
     }
 
     #[test]
@@ -1015,7 +1050,7 @@ mod tests {
             WebFetchState::new(),
             format!("http://{addr}/admin"),
             0,
-            DEFAULT_BODY_CHARS,
+            MAX_BODY_CHARS,
             BodyFormat::Text,
         )
         .await;
@@ -1069,7 +1104,7 @@ mod tests {
             WebFetchState::new(),
             format!("http://localhost:{port}/admin"),
             0,
-            DEFAULT_BODY_CHARS,
+            MAX_BODY_CHARS,
             BodyFormat::Text,
         )
         .await;
@@ -1141,7 +1176,7 @@ mod tests {
             state,
             format!("http://first-hop.test:{}/go", addr.port()),
             0,
-            DEFAULT_BODY_CHARS,
+            MAX_BODY_CHARS,
             BodyFormat::Text,
         )
         .await;
@@ -1168,6 +1203,179 @@ mod tests {
         );
     }
 
+    /// Serves `body` as `content_type` at a URL whose host is a name aimed at a local
+    /// server, and returns the URL with a function making a client state that reaches it.
+    /// A state per fetch keeps the per-host rate limit from slowing a test that pages.
+    async fn serve_page(
+        content_type: String,
+        body: String,
+    ) -> (String, impl Fn() -> WebFetchState) {
+        use axum::{Router, http::header::CONTENT_TYPE, routing::get};
+
+        let app = Router::new().route(
+            "/page",
+            get(move || {
+                let (content_type, body) = (content_type.clone(), body.clone());
+                async move { ([(CONTENT_TYPE, content_type)], body) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+        let state = move || {
+            WebFetchState::from_builder(
+                WebFetchState::client_builder()
+                    .no_proxy()
+                    .resolve_to_addrs("page.test", [addr]),
+            )
+        };
+        (format!("http://page.test:{}/page", addr.port()), state)
+    }
+
+    /// Calls `web_fetch` with `args` as the agent does, through a tool built over `state`.
+    async fn call(state: WebFetchState, args: Value) -> Value {
+        use futures::StreamExt;
+
+        let func = tool_factory(state)(&get_web_fetch_tool_desc()).unwrap();
+        let output = func.call_pure(args, "f").unwrap().next().await.unwrap();
+        output.message.contents[0].as_value().unwrap().clone()
+    }
+
+    /// Paging with `next_offset` reads a long body through in pieces that each fit in one tool
+    /// result. A quote or a newline takes two characters of JSON and a control character six;
+    /// Hangul takes one, in three bytes. Every piece but the last holds as many characters as fit
+    /// when `length` is left out, and `size` characters when `length` is small: `length` itself, or
+    /// 256 when it asks for fewer. A page whose title and content type are each longer than a tool
+    /// result reads through the same way, its content type cut to `MAX_FIELD_CHARS`.
+    #[tokio::test]
+    async fn web_fetch_pages_through_a_long_body_in_pieces_that_fit() {
+        let plain = || "text/plain; charset=utf-8".to_string();
+        let said = |n: usize| "He said \"stop\".\n".repeat(n);
+        let long_type = format!("text/html; p={}", "a".repeat(40_000));
+        let long_page = format!(
+            "<html><head><title>{}</title></head><body><p>{}</p></body></html>",
+            "t".repeat(40_000),
+            "He said \"stop\". ".repeat(5_000)
+        );
+        for (content_type, body, length, size) in [
+            (plain(), said(5_000), None, None),
+            (plain(), said(500), Some(1_000), Some(1_000)),
+            (plain(), said(100), Some(10), Some(256)),
+            (plain(), "\u{1}a".repeat(10_000), None, None),
+            (
+                plain(),
+                "가나다라마바사아자차카타파하 ".repeat(2_000),
+                None,
+                None,
+            ),
+            (long_type, long_page, None, None),
+        ] {
+            let (url, state) = serve_page(content_type.clone(), body.clone()).await;
+            let readable = convert(&body, &content_type, BodyFormat::Text).body;
+            let content_type: String = content_type.chars().take(MAX_FIELD_CHARS).collect();
+            let chars: Vec<char> = readable.chars().collect();
+            let mut read = String::new();
+            let mut offset = 0;
+            loop {
+                let mut args = crate::to_value!({"url": url.as_str(), "offset": offset as i64});
+                if let Some(length) = length {
+                    let args = args.as_object_mut().unwrap();
+                    args.insert("length".into(), Value::from(length as i64));
+                }
+                let piece = call(state(), args).await;
+                assert!(fits_tool_result(&piece), "offset {offset}: {piece:?}");
+                assert_eq!(
+                    piece.pointer("/content_type").and_then(|v| v.as_str()),
+                    Some(content_type.as_str())
+                );
+                let text = piece.pointer("/body").and_then(|v| v.as_str()).unwrap();
+                assert!(!text.is_empty(), "offset {offset}");
+                read.push_str(text);
+                let next = piece.pointer("/next_offset").and_then(|v| v.as_integer());
+                assert_eq!(
+                    piece.pointer("/complete").and_then(|v| v.as_bool()),
+                    Some(next.is_none()),
+                    "offset {offset}"
+                );
+                let Some(next) = next else {
+                    break;
+                };
+                let next = next as usize;
+                assert_eq!(next, offset + text.chars().count(), "offset {offset}");
+                match size {
+                    None => {
+                        let mut longer = piece.clone();
+                        longer
+                            .pointer_mut("/body")
+                            .and_then(Value::as_string_mut)
+                            .unwrap()
+                            .push(chars[next]);
+                        *longer.pointer_mut("/next_offset").unwrap() = Value::from(next as i64 + 1);
+                        assert!(!fits_tool_result(&longer), "offset {offset}");
+                    }
+                    Some(size) => assert_eq!(next - offset, size, "offset {offset}"),
+                }
+                offset = next;
+            }
+            assert_eq!(read, readable);
+        }
+    }
+
+    /// A fetch redirected to a URL longer than `MAX_URL_CHARS` is refused, as a URL that long
+    /// is when the model asks for it, and one redirected to a URL of exactly that many is not.
+    /// A URL asked for outright is fetched though percent-encoding its quotes makes it longer
+    /// than that.
+    #[tokio::test]
+    async fn web_fetch_refuses_a_redirect_to_a_url_over_max_url_chars() {
+        use axum::{Router, extract::Path, response::Redirect, routing::get};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let page = format!("http://page.test:{}/page", addr.port());
+        let target = page.clone();
+        let app = Router::new()
+            .route("/page", get(|| async { "body" }))
+            .route(
+                "/to/{len}",
+                get(move |Path(len): Path<usize>| {
+                    let to = format!("{target}?{}", "a".repeat(len - target.len() - 1));
+                    async move { Redirect::temporary(&to) }
+                }),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+
+        let to = |len: usize| format!("http://page.test:{}/to/{len}", addr.port());
+        let refused = format!("redirected to a url over {MAX_URL_CHARS} characters");
+        for (row, url, error) in [
+            ("redirect, at the limit", to(MAX_URL_CHARS), None),
+            (
+                "redirect, over it",
+                to(MAX_URL_CHARS + 1),
+                Some(refused.as_str()),
+            ),
+            (
+                "percent-encoded",
+                format!("{page}?q={}", "\"".repeat(1_000)),
+                None,
+            ),
+        ] {
+            let state = WebFetchState::from_builder(
+                WebFetchState::client_builder()
+                    .no_proxy()
+                    .resolve_to_addrs("page.test", [addr]),
+            );
+            let result = call(state, crate::to_value!({ "url": url.as_str() })).await;
+            let error_of = result.pointer("/error").and_then(|v| v.as_str());
+            assert_eq!(error_of, error, "{row}: {result:?}");
+            let body = error.is_none().then_some("body");
+            assert_eq!(
+                result.pointer("/body").and_then(|v| v.as_str()),
+                body,
+                "{row}"
+            );
+        }
+    }
+
     /// Single-URL fetch against a stable public endpoint.
     #[tokio::test]
     #[ignore = "requires network"]
@@ -1178,7 +1386,7 @@ mod tests {
             "https://www.accuweather.com/ko/kr/bundang-gu/2330398/current-weather/2330398"
                 .to_string(),
             0,
-            DEFAULT_BODY_CHARS,
+            MAX_BODY_CHARS,
             BodyFormat::Text,
         )
         .await;
@@ -1213,7 +1421,7 @@ mod tests {
             state,
             "https://example.com/".to_string(),
             0,
-            DEFAULT_BODY_CHARS,
+            MAX_BODY_CHARS,
             BodyFormat::Html,
         )
         .await;

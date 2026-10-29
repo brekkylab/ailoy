@@ -14,9 +14,8 @@ sign in say, the agent says so and ends its turn: do it in its window, then tell
 
 Environment:
 
-* `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its provider's
-  API key has to be set (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...), in the environment or
-  in `.env`.
+* `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend has
+  to be set up as `docs/guide/model-providers.md` says, any key in the environment or in `.env`.
 
 This folder is a uv project of its own (`pyproject.toml`), which `uv run` sets up with ailoy
 from this checkout; run it from here.
