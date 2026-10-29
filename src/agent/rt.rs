@@ -18,8 +18,9 @@ use crate::{
     tool::{
         ToolDesc, ToolFunc, create_tool,
         r#impl::{
-            get_profile_tool_desc, get_profile_tool_func, get_search_history_tool_desc,
-            get_search_history_tool_func, get_web_search_tool_factory,
+            get_profile_tool_desc, get_profile_tool_func, get_read_around_tool_desc,
+            get_read_around_tool_func, get_search_history_tool_desc, get_search_history_tool_func,
+            get_web_search_tool_factory,
         },
     },
 };
@@ -85,10 +86,16 @@ impl Agent {
 
         // Bound to this agent's `Memory`, so built here rather than taken from the registry.
         if let Some(memory) = &state.memory {
-            let mut memory_tools = vec![(
-                get_search_history_tool_desc(),
-                get_search_history_tool_func(memory.clone(), conversation),
-            )];
+            let mut memory_tools = vec![
+                (
+                    get_search_history_tool_desc(),
+                    get_search_history_tool_func(memory.clone(), conversation),
+                ),
+                (
+                    get_read_around_tool_desc(),
+                    get_read_around_tool_func(memory.clone()),
+                ),
+            ];
             if memory.has_profile() {
                 memory_tools.push((
                     get_profile_tool_desc(),
@@ -870,7 +877,7 @@ mod tests {
     }
 
     /// A profile adds its section after the instruction and the `profile` tool; without one,
-    /// only `search_history` is added.
+    /// only `search_history` and `read_around` are added.
     #[tokio::test]
     async fn test_memory_adds_its_section_and_tools() {
         let name = "test-agent-memory";
@@ -880,12 +887,12 @@ mod tests {
         let system = text_of(&agent.history()[0]);
         assert!(system.starts_with("Be brief.\n\n# Memory\n"), "{system}");
         assert!(system.contains("## About the user"), "{system}");
-        assert!(tool_names(&agent).ends_with(&["search_history", "profile"]));
+        assert!(tool_names(&agent).ends_with(&["search_history", "read_around", "profile"]));
 
         let state = AgentState::new().with_memory(Memory::new("/m"));
         let agent = Agent::try_with_state(spec, state).await.unwrap();
         assert_eq!(text_of(&agent.history()[0]), "Be brief.");
-        assert_eq!(tool_names(&agent).last(), Some(&"search_history"));
+        assert!(tool_names(&agent).ends_with(&["search_history", "read_around"]));
         assert!(!tool_names(&agent).contains(&"profile"));
     }
 

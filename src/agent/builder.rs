@@ -138,8 +138,9 @@ impl AgentBuilder {
     /// Let this agent remember the user across sessions in the folder `memory` names.
     ///
     /// Each finished turn is added to the folder's history, which the `search_history` tool
-    /// searches; with a profile ([`Memory::with_profile`]), the `profile` tool keeps short notes that the
-    /// system message shows from the next session on. Everything runs on the
+    /// searches and `read_around` reads around a result of; with a profile
+    /// ([`Memory::with_profile`]), the `profile` tool keeps short notes that the system message
+    /// shows from the next session on. Everything runs on the
     /// [`console`](Self::console), so one is required. A missing folder is reported by the
     /// tools and logged at the end of a turn, not by [`build`](Self::build).
     ///

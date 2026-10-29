@@ -242,6 +242,10 @@ pub enum MemoryError {
     #[error("the `mem` in this console is too old for {0}")]
     Unsupported(&'static str),
 
+    /// No line in the history has this id.
+    #[error("no entry has the id {0}")]
+    UnknownId(String),
+
     /// What the failing command said.
     #[error("{0}")]
     Failed(String),
@@ -350,6 +354,10 @@ exec mem search "$d/mem.sqlite" "$@""#;
         let args = ["-n", &n.to_string(), "--json", "--", id].map(str::to_string);
         let script = r#"exec mem around "$d/mem.sqlite" "$@""#;
         let out = self.sh(console, script, &args).await?;
+        // `mem` refuses an id it does not have with the same exit as any failure, so by its words.
+        if out.code != 0 && out.stderr.contains("no memory with id") {
+            return Err(MemoryError::UnknownId(id.to_string()));
+        }
         records(&succeeded(out, Some("reading around a line"))?)
     }
 

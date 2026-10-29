@@ -1,4 +1,4 @@
-//! `search_history` and `profile`: an agent's own memory, as tools.
+//! `search_history`, `read_around` and `profile`: an agent's own memory, as tools.
 //!
 //! Built per agent rather than registered, since each is bound to the [`Memory`] that agent was
 //! given: the model never names a folder and cannot name another.
@@ -16,7 +16,7 @@ const DEFAULT_LIMIT: i64 = 10;
 /// agent's cap on a tool result, past which the middle of the answer is cut.
 const MAX_LIMIT: i64 = 15;
 
-/// Lines shown on each side of the best match, and of an `around` id unless `context` says.
+/// Lines shown on each side of the best match, and by `read_around` unless `context` says.
 const NEIGHBOURS: usize = 2;
 
 /// The most lines `context` may ask for on each side: the 11 lines it then reads stay under
@@ -27,18 +27,18 @@ pub fn get_search_history_tool_desc() -> ToolDesc {
     ToolDescBuilder::new("search_history")
         .description(concat!(
             "Search everything said in past conversations with this user: their messages and ",
-            "your replies, word for word, each with the date it was said. ",
+            "your replies, word for word. Each is kept as an entry, or several when long, with ",
+            "the date it was said. ",
             "Search before answering anything that depends on this user, including ",
             "recommendations, and check exact numbers, dates and changed facts here. When ",
             "results disagree, use the most recent one. ",
-            "Matching is by words, not meaning: a line matches if it has any of the query's ",
-            "words, and lines with more of them, and rarer ones, come first. So use a few ",
+            "Matching is by words, not meaning: an entry matches if it has any of the query's ",
+            "words, and entries with more of them, and rarer ones, come first. So use a few ",
             "specific words (names, things, numbers) rather than a whole question, and try ",
             "other words before concluding something never came up. ",
-            "Lines of this conversation are left out, since you already have them. ",
-            "The best match comes with the lines said just before and after it in its ",
-            "conversation; to read around another result, call again with `around` set to its id, ",
-            "and `context` for more lines on each side. ",
+            "Entries of this conversation are left out, since you already have them. ",
+            "The best match by relevance comes with the entries just before and after it in its ",
+            "conversation; to read around another result, give its id to `read_around`. ",
             "No match is an empty list. Which memory is searched is fixed; there is no path to give.",
         ))
         .parameters(crate::to_value!({
@@ -50,7 +50,7 @@ pub fn get_search_history_tool_desc() -> ToolDesc {
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "How many lines to answer with (default 10, at most 15).",
+                    "description": "How many entries to answer with (default 10, at most 15).",
                     "minimum": 1,
                     "maximum": MAX_LIMIT,
                     "default": DEFAULT_LIMIT
@@ -58,25 +58,15 @@ pub fn get_search_history_tool_desc() -> ToolDesc {
                 "sort": {
                     "type": "string",
                     "enum": ["relevance", "newest"],
-                    "description": "'relevance' (default): best match first. 'newest': the same matches, most recent first, for what is true now."
+                    "description": "'relevance' (default): best match first. 'newest': these matches, most recent first."
                 },
                 "role": {
                     "type": "string",
                     "enum": ["user", "assistant"],
-                    "description": "Only lines the user said, or only your replies. Default: both."
-                },
-                "around": {
-                    "type": "string",
-                    "description": "Instead of searching, read the lines around this result id."
-                },
-                "context": {
-                    "type": "integer",
-                    "description": "With `around`: how many lines to read on each side (default 2, at most 5).",
-                    "minimum": 1,
-                    "maximum": MAX_CONTEXT,
-                    "default": NEIGHBOURS as i64
+                    "description": "Only what the user said, or only your replies. Default: both."
                 }
-            }
+            },
+            "required": ["query"]
         }))
         .build()
 }
@@ -86,25 +76,8 @@ pub fn get_search_history_tool_func(memory: Memory, conversation: String) -> Too
     crate::tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value
         with [memory = memory.clone(), conversation = conversation.clone()]
     {
-        if let Some(id) = args.pointer("/around").and_then(|v| v.as_str()) {
-            let n = args
-                .pointer("/context")
-                .and_then(|v| v.as_integer())
-                .map_or(NEIGHBOURS, |n| n.clamp(1, MAX_CONTEXT) as usize);
-            return match memory.around(console, id, n).await {
-                Ok(lines) => match lines.iter().find(|r| r.id == id) {
-                    Some(center) => crate::to_value!({
-                        "count": 1i64,
-                        "results": Value::array([with_context(center, &lines)]),
-                    }),
-                    None => crate::to_value!({ "count": 0i64, "results": [] }),
-                },
-                Err(e) => failure(e),
-            };
-        }
-
         let Some(query) = args.pointer("/query").and_then(|v| v.as_str()) else {
-            return validation("missing parameter: query (or around, to read around a result id)".into());
+            return validation("missing parameter: query".into());
         };
         let limit = args
             .pointer("/limit")
@@ -124,7 +97,7 @@ pub fn get_search_history_tool_func(memory: Memory, conversation: String) -> Too
             // An older `mem` keeps neither who said a line nor where.
             Err(MemoryError::Unsupported(_)) => {
                 if role.is_some() {
-                    note = Some("This memory does not record who said a line, so role was ignored.");
+                    note = Some("This memory does not record who said an entry, so role was ignored.");
                 }
                 memory.search(console, query, limit, None, None).await
             }
@@ -160,6 +133,60 @@ pub fn get_search_history_tool_func(memory: Memory, conversation: String) -> Too
     })
 }
 
+pub fn get_read_around_tool_desc() -> ToolDesc {
+    ToolDescBuilder::new("read_around")
+        .description(concat!(
+            "Read what was said around a `search_history` result: the entries just before and ",
+            "after it in its conversation, each with the date it was said. Use it when a result ",
+            "needs its context, such as what a number referred to, or what was asked and answered ",
+            "around it. Any id from `search_history` works, including those of the entries before ",
+            "and after a result; an id not in the history is refused.",
+        ))
+        .parameters(crate::to_value!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "The id of a `search_history` result, or of an entry before or after one."
+                },
+                "context": {
+                    "type": "integer",
+                    "description": "How many entries to read on each side (default 2, at most 5).",
+                    "minimum": 1,
+                    "maximum": MAX_CONTEXT,
+                    "default": NEIGHBOURS as i64
+                }
+            },
+            "required": ["id"]
+        }))
+        .build()
+}
+
+pub fn get_read_around_tool_func(memory: Memory) -> ToolFunc {
+    crate::tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value
+        with [memory = memory.clone()]
+    {
+        let Some(id) = args.pointer("/id").and_then(|v| v.as_str()) else {
+            return validation("missing parameter: id".into());
+        };
+        let n = args
+            .pointer("/context")
+            .and_then(|v| v.as_integer())
+            .map_or(NEIGHBOURS, |n| n.clamp(1, MAX_CONTEXT) as usize);
+        let unknown = || validation(format!("no entry has the id {id:?}; give an id from `search_history`"));
+        match memory.around(console, id, n).await {
+            Ok(lines) => match lines.iter().find(|r| r.id == id) {
+                Some(center) => crate::to_value!({
+                    "results": Value::array([with_context(center, &lines)]),
+                }),
+                None => unknown(),
+            },
+            Err(MemoryError::UnknownId(_)) => unknown(),
+            Err(e) => failure(e),
+        }
+    })
+}
+
 pub fn get_profile_tool_desc() -> ToolDesc {
     let action = crate::to_value!({
         "type": "string",
@@ -186,7 +213,7 @@ pub fn get_profile_tool_desc() -> ToolDesc {
             "work, lasting preferences, how they like to be helped) and 'notes' for your own ",
             "notes (agreements, what to avoid, lessons learned). ",
             "Only what will matter in every conversation: everything said is already saved ",
-            "word for word and found with search_history, so leave out details, one-off tasks and ",
+            "word for word and found with `search_history`, so leave out details, one-off tasks and ",
             "progress. When a fact changes, replace its entry instead of adding another. End a ",
             "fact whose date matters with the date, as (YYYY-MM-DD). ",
             "Each target has a size limit; when full, remove or shorten entries in the same ",
@@ -487,10 +514,11 @@ mod tests {
         }
     }
 
-    /// `around` reads two lines on each side, or as many as `context` asks for, up to its cap.
+    /// `read_around` reads two lines on each side, or as many as `context` asks for, up to its
+    /// cap.
     #[test_with::executable(mem)]
     #[tokio::test]
-    async fn test_search_history_reads_around_an_id_as_far_as_context_asks() {
+    async fn test_read_around_reads_as_far_as_context_asks() {
         let mut console = test_console().await;
         if !knows(&mut console, &["around"]).await {
             return;
@@ -501,8 +529,9 @@ mod tests {
             &lines.iter().map(String::as_str).collect::<Vec<_>>(),
         )
         .await;
-        let func = get_search_history_tool_func(memory, "this".into());
-        let found = value(&call(&func, to_value!({ "query": "6" }), &mut console).await);
+        let search = get_search_history_tool_func(memory.clone(), "this".into());
+        let read = get_read_around_tool_func(memory);
+        let found = value(&call(&search, to_value!({ "query": "6" }), &mut console).await);
         let id = found
             .pointer("/results/0/id")
             .unwrap()
@@ -516,19 +545,31 @@ mod tests {
         };
 
         for (context, expected) in [(None, 2), (Some(4), 4), (Some(50), 5), (Some(0), 1)] {
-            let mut args = to_value!({ "around": id.as_str() });
+            let mut args = to_value!({ "id": id.as_str() });
             if let Some(n) = context {
                 args.as_object_mut()
                     .unwrap()
                     .insert("context".into(), Value::from(n as i64));
             }
-            let out = value(&call(&func, args, &mut console).await);
+            let out = value(&call(&read, args, &mut console).await);
             assert_eq!(
                 sides(&out),
                 (expected, expected),
                 "context {context:?}: {out:?}"
             );
         }
+
+        // An id `mem` does not have is the model's mistake, not a failure to read.
+        let out = value(&call(&read, to_value!({ "id": "no-such-id" }), &mut console).await);
+        assert_eq!(phase(&out), "validation", "{out:?}");
+        assert!(
+            out.pointer("/error")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("search_history"),
+            "{out:?}"
+        );
     }
 
     #[test_with::executable(mem)]
@@ -571,9 +612,12 @@ mod tests {
     async fn test_search_history_refuses_what_it_cannot_run() {
         let mut console = test_console().await;
         let memory = filled(&mut console, &[]).await;
-        let func = get_search_history_tool_func(memory, "this".into());
+        let func = get_search_history_tool_func(memory.clone(), "this".into());
 
         let out = value(&call(&func, to_value!({}), &mut console).await);
+        assert_eq!(phase(&out), "validation");
+        let read = get_read_around_tool_func(memory);
+        let out = value(&call(&read, to_value!({ "context": 3 }), &mut console).await);
         assert_eq!(phase(&out), "validation");
         let out = value(
             &call(
