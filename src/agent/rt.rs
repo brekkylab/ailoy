@@ -12,13 +12,15 @@ use super::{AgentSpec, AgentState, ContextManager, skill::render_skills, spec::s
 use crate::{
     browser,
     datatype::Value,
+    memory::{Memory, Profile, Speaker},
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
     model::{InferLangModel, LangModelOptions, RequestRefused, create_lang_model},
     tool::{
         ToolDesc, ToolFunc, create_tool,
         r#impl::{
-            get_mem_insert_tool_desc, get_mem_insert_tool_func, get_mem_search_tool_desc,
-            get_mem_search_tool_func, get_web_search_tool_factory,
+            get_profile_tool_desc, get_profile_tool_func, get_read_around_tool_desc,
+            get_read_around_tool_func, get_search_history_tool_desc, get_search_history_tool_func,
+            get_web_search_tool_factory,
         },
     },
 };
@@ -61,10 +63,10 @@ impl Agent {
     ///
     /// The model is built from `spec.model` through [`create_lang_model`], and each of
     /// `spec.tools` through [`create_tool`]. Unless `state.history` already has a
-    /// [`Role::System`] message, one built from `spec.instruction` and
-    /// [`AgentSpec::skills`] is put first.
+    /// [`Role::System`] message, one built from `spec.instruction`, [`AgentSpec::skills`] and
+    /// `state.memory` is put first.
     ///
-    /// Async because skills are read through the console.
+    /// Async because skills and the memory's profile are read through the console.
     pub async fn try_with_state(spec: AgentSpec, mut state: AgentState) -> anyhow::Result<Self> {
         let model = create_lang_model(&spec.model).await?;
 
@@ -81,16 +83,30 @@ impl Agent {
             tools.insert(desc.name.clone(), func);
         }
         let mut tool_descs = spec.tools.clone();
+        let conversation = state
+            .conversation_id
+            .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
+            .clone();
 
-        // The store is this agent's `Memory`, not a registry name, so these are built here.
-        if let Some(memory) = state.memory.clone() {
-            for (desc, func) in [
+        // Bound to this agent's `Memory`, so built here rather than taken from the registry.
+        if let Some(memory) = &state.memory {
+            let mut memory_tools = vec![
                 (
-                    get_mem_search_tool_desc(),
-                    get_mem_search_tool_func(memory.clone()),
+                    get_search_history_tool_desc(),
+                    get_search_history_tool_func(memory.clone(), conversation),
                 ),
-                (get_mem_insert_tool_desc(), get_mem_insert_tool_func(memory)),
-            ] {
+                (
+                    get_read_around_tool_desc(),
+                    get_read_around_tool_func(memory.clone()),
+                ),
+            ];
+            if memory.has_profile() {
+                memory_tools.push((
+                    get_profile_tool_desc(),
+                    get_profile_tool_func(memory.clone()),
+                ));
+            }
+            for (desc, func) in memory_tools {
                 tools.insert(desc.name.clone(), func);
                 tool_descs.push(desc);
             }
@@ -112,7 +128,15 @@ impl Agent {
                 let org = split_desc(&spec.model).0;
                 Some(render_skills(&spec.skills, &state.console, org).await?)
             };
-            let text = [spec.instruction, skills]
+            // Last, so what comes before it stays a cacheable prefix across sessions.
+            // Without a profile, memory adds nothing here: its tool says how to search.
+            let memory = match &state.memory {
+                Some(memory) if memory.has_profile() => {
+                    Some(memory.render(&read_profile(memory, &state.console).await))
+                }
+                _ => None,
+            };
+            let text = [spec.instruction, skills, memory]
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>()
@@ -133,6 +157,11 @@ impl Agent {
             state,
             context_manager: None,
         })
+    }
+
+    /// Which conversation this is; see [`AgentState::conversation_id`].
+    pub fn conversation_id(&self) -> &str {
+        self.state.conversation_id.as_deref().unwrap_or_default()
     }
 
     /// The whole conversation so far.
@@ -172,10 +201,16 @@ impl Agent {
     /// of the history, so the agent can be run again. What the model's API refuses in a tool
     /// result goes back to the model as an error saying so, once per batch. A reply the
     /// model's output limit cut short is yielded and then ends the turn with an error.
+    ///
+    /// With a memory, the query and the turn's answer are added to its history just before
+    /// the last message is yielded, so a caller that stops reading there loses nothing. A
+    /// turn that ends with an error, a cut-off reply among them, is not added.
     pub fn run(&mut self, query: Message) -> BoxStream<'_, anyhow::Result<MessageOutput>> {
         Box::pin(async_stream::try_stream! {
+            let asked = text_of(&query);
             self.begin_turn(query).await;
             let mut committed = false;
+            let mut answered = Vec::new();
             // The latest tool results as they were before what the API refused in them was
             // replaced, while that stands: a second refusal puts them back and ends the turn.
             let mut refused: Option<Vec<Message>> = None;
@@ -205,7 +240,11 @@ impl Agent {
                 committed = true;
 
                 let calls = tool_calls(&output);
+                answered.push(text_of(&output.message));
                 let cut_off = matches!(output.finish_reason, FinishReason::Length {});
+                if calls.is_empty() && !cut_off {
+                    self.remember(&asked, &answered).await;
+                }
                 yield output;
                 if cut_off {
                     Err(anyhow::anyhow!(CUT_OFF))?;
@@ -232,8 +271,10 @@ impl Agent {
         query: Message,
     ) -> BoxStream<'_, anyhow::Result<MessageDeltaOutput>> {
         Box::pin(async_stream::try_stream! {
+            let asked = text_of(&query);
             self.begin_turn(query).await;
             let mut committed = false;
+            let mut answered = Vec::new();
             let mut refused: Option<Vec<Message>> = None;
             loop {
                 self.manage_context();
@@ -242,6 +283,8 @@ impl Agent {
                         .infer_stream(&self.state.history, &self.tool_descs, &self.options);
                 let mut acc = MessageDeltaOutput::new();
                 let mut failure = None;
+                // Held from the finishing delta on, so the turn is saved before its end is seen.
+                let mut held = Vec::new();
                 while let Some(delta) = deltas.next().await {
                     let step = delta.and_then(|delta| {
                         let prev = std::mem::replace(&mut acc, MessageDeltaOutput::new());
@@ -249,6 +292,9 @@ impl Agent {
                         Ok(delta)
                     });
                     match step {
+                        Ok(delta) if delta.finish_reason.is_some() || !held.is_empty() => {
+                            held.push(delta)
+                        }
                         Ok(delta) => yield delta,
                         Err(e) => {
                             failure = Some(e);
@@ -274,12 +320,20 @@ impl Agent {
                 refused = None;
                 self.commit(&output);
                 committed = true;
-                if matches!(output.finish_reason, FinishReason::Length {}) {
+                let cut_off = matches!(output.finish_reason, FinishReason::Length {});
+
+                // Already streamed as deltas, but for `held`.
+                let calls = tool_calls(&output);
+                answered.push(text_of(&output.message));
+                if calls.is_empty() && !cut_off {
+                    self.remember(&asked, &answered).await;
+                }
+                for delta in held {
+                    yield delta;
+                }
+                if cut_off {
                     Err(anyhow::anyhow!(CUT_OFF))?;
                 }
-
-                // Already streamed as deltas.
-                let calls = tool_calls(&output);
                 if calls.is_empty() {
                     break;
                 }
@@ -292,6 +346,48 @@ impl Agent {
                 }
             }
         })
+    }
+
+    /// Add the turn's question and answer to the memory's history; a failure is only logged.
+    ///
+    /// The answer is the text of every model message of the turn, since one may be said beside
+    /// a tool call. The console is stopped after, so a turn without console tools does not
+    /// leave it up.
+    async fn remember(&mut self, asked: &str, answered: &[String]) {
+        let Some(memory) = &self.state.memory else {
+            return;
+        };
+        let answered = answered
+            .iter()
+            .map(|text| text.trim())
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let said = [
+            (Speaker::User, asked),
+            (Speaker::Assistant, answered.as_str()),
+        ];
+        if said.iter().all(|(_, text)| text.trim().is_empty()) {
+            return;
+        }
+        let mut guard = self.state.console.lock().await;
+        let Some(console) = guard.as_mut() else {
+            log::warn!(
+                "this turn was not added to the memory in {}: the agent has no console",
+                memory.dir()
+            );
+            return;
+        };
+        let conversation = self.state.conversation_id.as_deref().unwrap_or_default();
+        if let Err(e) = memory.append(console, conversation, said).await {
+            log::warn!(
+                "this turn was not added to the memory in {}: {e}",
+                memory.dir()
+            );
+        }
+        if let Err(e) = console.stop().await {
+            log::debug!("stopping the console after saving the turn: {e}");
+        }
     }
 
     /// Add `query` to the history, led by a browser reconnection the agent has not heard of,
@@ -406,6 +502,29 @@ impl Agent {
             }
         })
     }
+}
+
+/// The profile `memory` keeps; empty when it keeps none or it cannot be read, so the agent is
+/// built either way.
+async fn read_profile(memory: &Memory, console: &Mutex<Option<ConsoleClient>>) -> Profile {
+    let mut guard = console.lock().await;
+    let (true, Some(console)) = (memory.has_profile(), guard.as_mut()) else {
+        return Profile::default();
+    };
+    memory.read_profile(console).await.unwrap_or_else(|e| {
+        log::warn!("the memory's profile is left out of the prompt: {e}");
+        Profile::default()
+    })
+}
+
+/// The text a person reads in `message`, without thinking or tool calls.
+fn text_of(message: &Message) -> String {
+    message
+        .contents
+        .iter()
+        .filter_map(Part::as_text)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The tool calls `output` stops at; empty when the model has answered.
@@ -805,14 +924,6 @@ mod tests {
         history.iter().map(|m| m.role.clone()).collect()
     }
 
-    fn text_of(message: &Message) -> String {
-        message
-            .contents
-            .iter()
-            .filter_map(|p| p.as_text())
-            .collect()
-    }
-
     #[tokio::test]
     async fn test_run_calls_tools_until_the_model_answers() {
         let name = "test-agent-run";
@@ -1090,6 +1201,113 @@ mod tests {
         let agent = Agent::try_with_state(spec, state).await.unwrap();
         assert_eq!(agent.history().len(), 1);
         assert_eq!(text_of(&agent.history()[0]), "Mine.");
+    }
+
+    fn tool_names(agent: &Agent) -> Vec<&str> {
+        agent.tool_descs.iter().map(|d| d.name.as_str()).collect()
+    }
+
+    /// A profile adds its section after the instruction and the `profile` tool; without one,
+    /// only `search_history` and `read_around` are added.
+    #[tokio::test]
+    async fn test_memory_adds_its_section_and_tools() {
+        let name = "test-agent-memory";
+        let (_, spec) = scripted(name, []);
+        let state = AgentState::new().with_memory(Memory::new("/m").with_profile(true));
+        let agent = Agent::try_with_state(spec.clone(), state).await.unwrap();
+        let system = text_of(&agent.history()[0]);
+        assert!(system.starts_with("Be brief.\n\n# Memory\n"), "{system}");
+        assert!(system.contains("## About the user"), "{system}");
+        assert!(tool_names(&agent).ends_with(&["search_history", "read_around", "profile"]));
+
+        let state = AgentState::new().with_memory(Memory::new("/m"));
+        let agent = Agent::try_with_state(spec, state).await.unwrap();
+        assert_eq!(text_of(&agent.history()[0]), "Be brief.");
+        assert!(tool_names(&agent).ends_with(&["search_history", "read_around"]));
+        assert!(!tool_names(&agent).contains(&"profile"));
+    }
+
+    /// Without a console the turn's history cannot be saved, and the turn is answered anyway.
+    #[tokio::test]
+    async fn test_a_turn_stands_when_its_memory_cannot_be_saved() {
+        let name = "test-agent-memory-no-console";
+        let (_, spec) = scripted(name, [answer("one"), answer("two")]);
+        let state = AgentState::new().with_memory(Memory::new("/m"));
+        let mut agent = Agent::try_with_state(spec, state).await.unwrap();
+
+        let outputs: Vec<_> = agent.run(user("hi")).collect().await;
+        assert!(outputs.iter().all(Result::is_ok));
+        let deltas: Vec<_> = agent.run_stream(user("again")).collect().await;
+        assert!(deltas.iter().all(Result::is_ok));
+        assert_eq!(text_of(agent.history().last().unwrap()), "two");
+    }
+
+    /// A turn saves the question and every text the model said, also beside a tool call, and
+    /// nothing at all on a `mem` that cannot say who spoke.
+    #[test_with::executable(mem)]
+    #[tokio::test]
+    async fn test_a_turn_is_saved_to_the_memory() {
+        let name = "test-agent-memory-saved";
+        let beside_a_call = Ok(MessageOutput {
+            message: Message::new(Role::Assistant)
+                .with_contents([Part::text("Got it, oat milk from now on.")])
+                .with_tool_calls([Part::function("c1", "echo", to_value!({}))]),
+            finish_reason: FinishReason::ToolCall {},
+            usage: None,
+        });
+        let (_, spec) = scripted(name, [beside_a_call, answer("Saved.")]);
+        let mut console = crate::test_console().await;
+        let dir = tempfile::tempdir().unwrap().keep();
+        let memory = Memory::new(dir.to_string_lossy().into_owned()).with_profile(false);
+        let help = console
+            .exec(["mem", "insert", "--help"], None)
+            .await
+            .unwrap();
+        let roles = String::from_utf8_lossy(&help.stdout).contains("--role");
+
+        let state = AgentState::new()
+            .with_console(console)
+            .with_memory(memory.clone());
+        let mut agent = Agent::try_with_state(spec, state).await.unwrap();
+        let outputs: Vec<_> = agent.run(user("I switched to oat milk")).collect().await;
+        assert!(outputs.iter().all(Result::is_ok));
+
+        let conversation = agent.conversation_id().to_string();
+        let mut guard = agent.state.console.lock().await;
+        let console = guard.as_mut().unwrap();
+        let found = memory.search(console, "oat", 10, None, None).await.unwrap();
+        if !roles {
+            assert!(found.is_empty(), "{found:?}");
+            return;
+        }
+        let said: Vec<_> = found.iter().map(|r| (r.role, r.text.as_str())).collect();
+        assert_eq!(said.len(), 2, "{said:?}");
+        assert!(said.contains(&(Some(Speaker::User), "I switched to oat milk")));
+        assert!(said.contains(&(
+            Some(Speaker::Assistant),
+            "Got it, oat milk from now on.\n\nSaved."
+        )));
+        assert!(
+            found
+                .iter()
+                .all(|r| r.conversation.as_deref() == Some(conversation.as_str()))
+        );
+    }
+
+    /// An agent gets a conversation id of its own, or keeps the one it is given to carry a
+    /// conversation on.
+    #[tokio::test]
+    async fn test_a_conversation_id_is_made_or_kept() {
+        let name = "test-agent-conversation-id";
+        let (_, spec) = scripted(name, []);
+        let made = Agent::try_new(spec.clone()).await.unwrap();
+        let other = Agent::try_new(spec.clone()).await.unwrap();
+        assert!(!made.conversation_id().is_empty());
+        assert_ne!(made.conversation_id(), other.conversation_id());
+
+        let state = AgentState::new().with_conversation_id("c-42");
+        let kept = Agent::try_with_state(spec, state).await.unwrap();
+        assert_eq!(kept.conversation_id(), "c-42");
     }
 
     #[tokio::test]
