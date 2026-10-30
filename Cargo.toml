@@ -119,6 +119,10 @@ name = "cad"
 path = "examples/cad/rust/main.rs"
 
 [[example]]
+name = "blender"
+path = "examples/blender/rust/main.rs"
+
+[[example]]
 name = "laya"
 path = "examples/laya/rust/main.rs"
 

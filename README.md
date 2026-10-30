@@ -231,6 +231,7 @@ codex plugin marketplace add brekkylab/ailoy && codex plugin add ailoy@brekkylab
 | --- | --- |
 | [hello](./examples/hello) | One turn with no tools and no console |
 | [cad](./examples/cad) | Writes CadQuery, renders the model from four sides, looks at the renders and iterates |
+| [blender](./examples/blender) | Builds a 3D scene in a live Blender while you watch over VNC, rendering and fixing it as it goes |
 | [offshore_leaks](./examples/offshore_leaks) | Analyses the ICIJ Offshore Leaks database with SQL and Python that the agent writes itself |
 | [retail_bench](./examples/retail_bench) | Runs a supermarket simulator, one day per turn |
 | [gameplay](./examples/gameplay) | Plays OpenTTD (Transport Tycoon Deluxe) while you watch over VNC |

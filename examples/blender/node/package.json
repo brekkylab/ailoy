@@ -1,0 +1,17 @@
+{
+  "name": "ailoy-example-blender",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Scenes built in a live Blender by an agent that looks at what it built, on ailoy's Node bindings.",
+  "type": "module",
+  "scripts": {
+    "start": "node main.mjs"
+  },
+  "dependencies": {
+    "@brekkylab/ailoy": "file:../../../bindings/node",
+    "@brekkylab/virtx": "^0.1.2"
+  },
+  "engines": {
+    "node": ">= 20.12"
+  }
+}
