@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use virtx::protocol::Error;
+
 use crate::console::ConsoleClient;
 
 /// Between two entries of a profile file, and of the profile as the prompt shows it: a blank
@@ -30,6 +32,9 @@ const NO_FOLDER: i32 = 3;
 
 /// `mem`'s exit status for arguments it does not know: a `mem` older than what was asked.
 const MEM_USAGE: i32 = 2;
+
+/// How long saving a turn may take before it is stopped, since the turn's end waits for it.
+const APPEND_TIMEOUT_MS: u64 = 30_000;
 
 /// Who said a line of the history.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -338,7 +343,7 @@ impl Memory {
         args.extend(["--".to_string(), query.to_string()]);
         let script = r#"[ -e "$d/mem.sqlite" ] || exit 0
 exec mem search "$d/mem.sqlite" "$@""#;
-        let out = self.sh(console, script, &args).await?;
+        let out = self.sh(console, script, &args, None).await?;
         let newer = (role.is_some() || exclude_conversation.is_some())
             .then_some("searching by role or conversation");
         records(&succeeded(out, newer)?)
@@ -353,7 +358,7 @@ exec mem search "$d/mem.sqlite" "$@""#;
     ) -> Result<Vec<Record>, MemoryError> {
         let args = ["-n", &n.to_string(), "--json", "--", id].map(str::to_string);
         let script = r#"exec mem around "$d/mem.sqlite" "$@""#;
-        let out = self.sh(console, script, &args).await?;
+        let out = self.sh(console, script, &args, None).await?;
         // `mem` refuses an id it does not have with the same exit as any failure, so by its words.
         if out.code != 0 && out.stderr.contains("no memory with id") {
             return Err(MemoryError::UnknownId(id.to_string()));
@@ -389,7 +394,10 @@ while [ $# -gt 0 ]; do
   mem insert "$s" --role "$1" --conversation "$c" -- "$2" >/dev/null || exit
   shift 2
 done"#;
-        let out = self.sh(console, script, &args).await?;
+        // Searches wait for their answer, but a save holds up the end of the turn.
+        let out = self
+            .sh(console, script, &args, Some(APPEND_TIMEOUT_MS))
+            .await?;
         succeeded(
             out,
             Some("keeping who said a line and in which conversation"),
@@ -402,7 +410,7 @@ done"#;
         let mut profile = Profile::default();
         for target in ProfileTarget::ALL {
             let script = r#"[ ! -f "$d/$1" ] || cat "$d/$1""#;
-            let out = self.sh(console, script, [target.file()]).await?;
+            let out = self.sh(console, script, [target.file()], None).await?;
             *profile.entries_mut(target) = parse_entries(&succeeded(out, None)?);
         }
         Ok(profile)
@@ -440,7 +448,7 @@ done
 for f in USER.md NOTES.md; do
   [ ! -f "$d/.$f.tmp" ] || mv "$d/.$f.tmp" "$d/$f" || exit
 done"#;
-        let out = self.sh(console, script, &args).await?;
+        let out = self.sh(console, script, &args, None).await?;
         succeeded(out, None).map(|_| ())
     }
 
@@ -474,12 +482,13 @@ done"#;
     }
 
     /// Run `script` after [`PRELUDE`] with `args` as its `$1`, `$2`, …: passed as argv, so
-    /// nothing needs quoting.
+    /// nothing needs quoting. Without `timeout_ms` it runs as long as it takes.
     async fn sh(
         &self,
         console: &mut ConsoleClient,
         script: &str,
         args: impl IntoIterator<Item = impl AsRef<str>>,
+        timeout_ms: Option<u64>,
     ) -> Result<Output, MemoryError> {
         let mut argv = vec![
             "sh".to_string(),
@@ -490,10 +499,18 @@ done"#;
         ];
         argv.extend(args.into_iter().map(|a| a.as_ref().to_string()));
 
-        // No timeout: only a large store is slow, and the caller still wants the answer.
-        let result = console.exec(&argv, None).await.map_err(|e| {
-            MemoryError::Failed(format!("the console could not run a memory command: {e}"))
-        })?;
+        let result = console
+            .exec(&argv, timeout_ms)
+            .await
+            .map_err(|e| match e.code() {
+                Some(Error::TIMED_OUT) => MemoryError::Failed(format!(
+                    "the memory command was stopped after {} s",
+                    timeout_ms.unwrap_or_default() / 1_000
+                )),
+                _ => {
+                    MemoryError::Failed(format!("the console could not run a memory command: {e}"))
+                }
+            })?;
         if result.code == NO_FOLDER {
             return Err(MemoryError::NoFolder(self.dir.clone()));
         }
@@ -933,6 +950,21 @@ mod tests {
             .await
             .unwrap();
         assert!(found.is_empty());
+    }
+
+    /// A command given a timeout is stopped at it and fails, so a stuck save cannot hold a
+    /// turn forever.
+    #[tokio::test]
+    async fn test_a_command_past_its_timeout_is_stopped() {
+        let mut console = test_console().await;
+        let started = std::time::Instant::now();
+        let e = folder()
+            .sh(&mut console, "sleep 30", [""; 0], Some(1_000))
+            .await
+            .err()
+            .expect("stopped");
+        assert!(started.elapsed() < std::time::Duration::from_secs(20));
+        assert!(e.to_string().contains("stopped after 1 s"), "{e}");
     }
 
     #[test_with::executable(mem)]
