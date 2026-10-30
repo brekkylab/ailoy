@@ -10,7 +10,11 @@ export default defineConfig({
   head: [['link', { rel: 'icon', href: '/ailoy/img/favicon.ico' }]],
 
   themeConfig: {
-    logo: '/img/ailoy-logo-letter.png',
+    logo: {
+      light: '/img/ailoy-logo-signature-black.png',
+      dark: '/img/ailoy-logo-signature-white.png',
+      alt: 'Ailoy',
+    },
     siteTitle: false,
 
     nav: [{ text: 'Guide', link: '/guide/quick-start', activeMatch: '/guide/' }],
