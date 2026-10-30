@@ -1,6 +1,7 @@
 <p align="center">
   <picture>
-    <img alt="Ailoy" src="https://brekkylab.github.io/ailoy/img/ailoy-logo-letter.png" width="352" style="max-width: 50%;">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/brekkylab/ailoy/main/docs/public/img/ailoy-logo-signature-white.svg">
+    <img alt="Ailoy" src="https://raw.githubusercontent.com/brekkylab/ailoy/main/docs/public/img/ailoy-logo-signature-black.svg" width="352" style="max-width: 50%;">
   </picture>
 </p>
 
