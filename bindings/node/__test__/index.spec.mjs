@@ -122,7 +122,8 @@ const fakeModel = (call = { name: 'add', arguments: { a: 2, b: 3 } }) =>
       let body = ''
       req.on('data', (chunk) => (body += chunk))
       req.on('end', () => {
-        const { messages, stream } = JSON.parse(body)
+        const { model, messages, stream } = JSON.parse(body)
+        server.seen.push([model, req.headers.authorization ?? null])
         const answered = messages[messages.length - 1].role === 'tool'
         const message = answered
           ? { role: 'assistant', content: `the tool said ${lastContent(messages)}` }
@@ -154,6 +155,8 @@ const fakeModel = (call = { name: 'add', arguments: { a: 2, b: 3 } }) =>
         res.end('data: [DONE]\n\n')
       })
     })
+    // Every request's model id and `authorization` header, as sent.
+    server.seen = []
     server.listen(0, '127.0.0.1', () => resolve(server))
   })
 
@@ -247,6 +250,60 @@ test('breaking out of a turn ends it where it stands', async (t) => {
   assert.deepEqual(calls, [])
   // The agent is free again for the next turn.
   assert.ok(Array.isArray(agent.history))
+})
+
+test('a server of your own names the model as the server does', async (t) => {
+  const server = await fakeModel()
+  t.after(() => server.close())
+  const base_url = `http://127.0.0.1:${server.address().port}/v1`
+  setLangModelProvider('ollama', { backend: 'openai-compatible', base_url })
+  setLangModelProvider('meta-llama', { backend: 'vllm', base_url, api_key: 'k' })
+  try {
+    assert.equal(getLangModelProvider('ollama/llama3.3:70b'), 'openai-compatible')
+    assert.equal(getLangModelProvider('meta-llama/Llama-3.3-70B-Instruct'), 'vllm')
+    const messages = [{ role: 'user', contents: [{ type: 'text', text: 'hi' }] }]
+    await (await LangModel.create('ollama/llama3.3:70b')).infer(messages)
+    await (await LangModel.create('meta-llama/Llama-3.3-70B-Instruct')).infer(messages)
+    // vLLM serves Hugging Face repo ids, so its org is the model's maker; any other server is
+    // named by its org and serves the name as it is.
+    assert.deepEqual(server.seen, [
+      ['llama3.3:70b', null],
+      ['meta-llama/Llama-3.3-70B-Instruct', 'Bearer k'],
+    ])
+  } finally {
+    removeLangModelProvider('ollama')
+    removeLangModelProvider('meta-llama')
+  }
+
+  assert.throws(() => setLangModelProvider('x', { backend: 'cli', base_url }), {
+    code: 'INVALID_ARG',
+    message: /openai-compatible/,
+  })
+  assert.throws(() => setLangModelProvider('x', { backend: 'vllm' }), { code: 'INVALID_ARG', message: /base_url/ })
+  assert.throws(() => setLangModelProvider('x', { backend: 'vllm', baseUrl: base_url }), {
+    code: 'INVALID_ARG',
+    message: /baseUrl/,
+  })
+  assert.throws(() => setLangModelProvider('x', { backend: 'vllm', base_url: '' }), { code: 'INVALID_ARG', message: /base_url/ })
+  assert.equal(getLangModelProvider('x'), null)
+})
+
+test('the openai-compatible backend reads its server from the environment', async (t) => {
+  const server = await fakeModel()
+  t.after(() => server.close())
+  setLangModelProvider('env-served', 'openai-compatible')
+  const messages = [{ role: 'user', contents: [{ type: 'text', text: 'hi' }] }]
+  try {
+    delete process.env.OPENAI_COMPATIBLE_BASE_URL
+    await assert.rejects(LangModel.create('env-served/llama3.3:70b'), { message: /OPENAI_COMPATIBLE_BASE_URL/ })
+
+    process.env.OPENAI_COMPATIBLE_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
+    await (await LangModel.create('env-served/llama3.3:70b')).infer(messages)
+    assert.deepEqual(server.seen, [['llama3.3:70b', null]])
+  } finally {
+    delete process.env.OPENAI_COMPATIBLE_BASE_URL
+    removeLangModelProvider('env-served')
+  }
 })
 
 test('a model runs without an agent', async (t) => {

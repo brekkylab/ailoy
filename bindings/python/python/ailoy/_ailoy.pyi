@@ -8,6 +8,7 @@ from .types import (
     AgentSpec,
     Backend,
     LangModelOptions,
+    LangModelServer,
     Message,
     MessageDeltaOutput,
     MessageOutput,
@@ -150,7 +151,9 @@ class StreamingCustomLangModel(CustomLangModel, Protocol):
 
 LangModelFactory = Callable[[str, str | None], LangModel | CustomLangModel]
 
-def set_lang_model_provider(org: str, provider: Backend | LangModelFactory) -> None: ...
+def set_lang_model_provider(
+    org: str, provider: Backend | LangModelServer | LangModelFactory
+) -> None: ...
 def get_lang_model_provider(desc: str) -> Backend | Literal["custom"] | None: ...
 def remove_lang_model_provider(org: str) -> bool: ...
 def set_tool_provider(name: str, func: Callable[..., Any | Awaitable[Any]]) -> None: ...
