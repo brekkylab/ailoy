@@ -303,6 +303,7 @@ mod tests {
         let cm = ContextManager {
             max_input_tokens: 10_000,
             preserve_recent_turns: 2,
+            ..Default::default()
         };
         let agent = builder().context_manager(cm).build().await.unwrap();
         assert!(agent.context_manager().is_some());

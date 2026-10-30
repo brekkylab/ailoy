@@ -216,16 +216,18 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.skill(dir)))
     }
 
-    #[pyo3(signature = (max_input_tokens = None, preserve_recent_turns = None))]
+    #[pyo3(signature = (max_input_tokens = None, preserve_recent_turns = None, max_images = None))]
     fn context_manager(
         slf: PyRef<'_, Self>,
         max_input_tokens: Option<u64>,
         preserve_recent_turns: Option<usize>,
+        max_images: Option<usize>,
     ) -> PyResult<PyRef<'_, Self>> {
         let default = ContextManager::default();
         let cm = ContextManager {
             max_input_tokens: max_input_tokens.unwrap_or(default.max_input_tokens),
             preserve_recent_turns: preserve_recent_turns.unwrap_or(default.preserve_recent_turns),
+            max_images: max_images.unwrap_or(default.max_images),
         };
         Self::update(slf, |b| Ok(b.context_manager(cm)))
     }

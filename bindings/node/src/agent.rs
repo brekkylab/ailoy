@@ -128,6 +128,7 @@ pub struct BrowserOptions {
 pub struct ContextManagerOptions {
     pub max_input_tokens: Option<i64>,
     pub preserve_recent_turns: Option<u32>,
+    pub max_images: Option<u32>,
 }
 
 #[napi]
@@ -297,6 +298,7 @@ impl JsAgentBuilder {
         let options = options.unwrap_or(ContextManagerOptions {
             max_input_tokens: None,
             preserve_recent_turns: None,
+            max_images: None,
         });
         let cm = ContextManager {
             max_input_tokens: unsigned(options.max_input_tokens, "maxInputTokens")?
@@ -304,6 +306,9 @@ impl JsAgentBuilder {
             preserve_recent_turns: options
                 .preserve_recent_turns
                 .map_or(default.preserve_recent_turns, |n| n as usize),
+            max_images: options
+                .max_images
+                .map_or(default.max_images, |n| n as usize),
         };
         self.update(this, |b| Ok(b.context_manager(cm)))
     }
