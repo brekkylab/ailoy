@@ -23,7 +23,7 @@ Ailoy is a library for building AI agents that each own a virtual machine (a [vi
 
 ## Tests and lint
 
-Run these before pushing. There is no pull-request CI, so what you run locally is the gate.
+Run these before pushing. Only `docs/` has pull-request CI (its build), so for the code what you run locally is the gate.
 
 ```bash
 cargo fmt --all --check
@@ -38,6 +38,17 @@ cargo test
 - Tests that need a console start one on virtx's default server (`test_console` in `src/lib.rs`) and fail loudly when it is missing.
 - A bug fix brings a test that fails without it. A behaviour change brings the test that pins the new behaviour, in the same surface the behaviour lives in: the library's tests are in-module under `#[cfg(test)]`, the bindings' are `bindings/python/tests/` and `bindings/node/__test__/`.
 - Examples are self-contained: a reader runs one with the command in `README.md` and nothing else set up beyond the provider key.
+
+## Docs
+
+- Run the site with `cd docs && npm ci && npm run dev` and open the address it prints; the root redirects to `/docs/`. `npm run build` is the pull-request check, and a page can render wrong while the build passes, so look at the pages you touched.
+- A guide is one `.mdx` file in `docs/src/content/docs/docs/guide/`, served at `/docs/guide/<file name>/`. Its frontmatter has a `title` and a one-sentence `description`; the body starts at `##`, since the title is the page's `#`.
+- A new page is listed by hand in two places: the `sidebar` in `docs/astro.config.mjs` and a card in the overview, `docs/src/content/docs/docs/index.mdx`. A page missing from the sidebar still builds, but nothing leads to it.
+- ailoy.co serves these files with its own copy of the sidebar, styles and header (`docs/astro.config.mjs`, `docs/src/styles/`, `docs/src/components/` mirror it). A page added, renamed or moved here, or a change to those files, needs the same change in ailoy.co.
+- Code that differs by language goes in `<Tabs syncKey="lang">` with one `<TabItem label="...">` per language, labelled exactly `Python`, `Node.js` and `Rust` so a reader's choice carries across pages; import both from `@astrojs/starlight/components` at the top. A file name goes on the fence as `title="Cargo.toml"`.
+- Notes are Starlight asides, `:::note`, `:::tip`, `:::caution` or `:::danger`, closed by `:::`. VitePress syntax does not work here and the build does not catch it: `::: code-group` and `::: warning` are printed as text, and `:::warning` or a `[label]` after a fence is silently dropped.
+- MDX reads `{`, `}` and `<` in prose as code: put them in backticks or escape them (`\{`, `&lt;`).
+- Link to another guide relatively with a trailing slash (`../tools/`, `../tools/#a-heading`), or by its full path (`/docs/guide/tools/`). A path without `/docs/` breaks on ailoy.co.
 
 ## Comments and docs
 
