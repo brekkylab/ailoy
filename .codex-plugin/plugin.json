@@ -6,7 +6,7 @@
     "name": "brekkylab",
     "url": "https://github.com/brekkylab"
   },
-  "homepage": "https://brekkylab.github.io/ailoy/",
+  "homepage": "https://ailoy.co/docs/",
   "repository": "https://github.com/brekkylab/ailoy",
   "license": "Apache-2.0",
   "keywords": [
@@ -35,7 +35,7 @@
       "Register your own functions and skill directories as tools",
       "Run on any provider by naming the model, with the key from the environment"
     ],
-    "websiteURL": "https://brekkylab.github.io/ailoy/",
+    "websiteURL": "https://ailoy.co/docs/",
     "screenshots": [
       "./docs/images/ailoy-cad.gif",
       "./docs/images/ailoy-sam3-video.gif"

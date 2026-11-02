@@ -26,7 +26,7 @@
 //!
 //! * `UV` — the `uv` binary `prepare_model.py` runs with; `uv` on `PATH` by default.
 //! * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend
-//!   has to be set up as `docs/guide/model-providers.md` says.
+//!   has to be set up as `docs/src/content/docs/docs/guide/model-providers.mdx` says.
 
 use std::{io::Write as _, path::Path};
 

@@ -3,7 +3,8 @@
     uv run main.py [model]
 
 `model` defaults to `openai/gpt-5.6-luna`; its org's backend has to be set up as
-`docs/guide/model-providers.md` says, any key in the environment or in `.env`.
+`docs/src/content/docs/docs/guide/model-providers.mdx` says, any key in the
+environment or in `.env`.
 
 This folder is a uv project of its own (`pyproject.toml`), which `uv run` sets up with
 ailoy from this checkout; run it from here.

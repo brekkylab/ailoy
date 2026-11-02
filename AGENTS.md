@@ -19,7 +19,7 @@ Ailoy is a library for building AI agents that each own a virtual machine (a [vi
 - `src/console.rs` — the virtx console an agent is given.
 - `bindings/python/src/` and `bindings/node/src/` — the wrappers, in Rust. The Python package itself is `bindings/python/python/ailoy/`; the Node package is `bindings/node/index.js` and its `.d.ts` files.
 - `examples/<name>/` — one folder per language (`rust`, `python`, `node`) and a `shared/` folder for what the three have in common. The Rust example is also registered in `Cargo.toml`.
-- `docs/guide/` — the VitePress site, where anything longer than a README section goes. `README.md` stays short: the pitch, the install lines and one example per language.
+- `docs/` — the Starlight docs site, served at ailoy.co/docs; the guides are in `docs/src/content/docs/docs/guide/`. Anything longer than a README section goes there. `README.md` stays short: the pitch, the install lines and one example per language.
 
 ## Tests and lint
 
