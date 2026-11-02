@@ -1,11 +1,13 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import starlightLinksValidator from 'starlight-links-validator';
 
 // The docs as ailoy.co/docs serves them: same Starlight setup, styles and header.
 // Keep this in step with ailoy.co's astro.config.mjs. The differences: the site is served under
 // base /docs/ (ailoy.co has src/content/docs/docs/ instead, since its root is the product site),
 // so the sidebar slugs have no docs/ prefix; the header's Ailoy name is not a link (the site root
-// lives on ailoy.co); and there is no Examples entry.
+// lives on ailoy.co); the sidebar has Tools, Skills and Context manager, which ailoy.co gets at
+// the next release, and no Tutorials or Examples entry.
 
 const FONTS =
   'https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap';
@@ -46,6 +48,10 @@ export default defineConfig({
         ThemeSelect: './src/components/docs/ThemeSelect.astro',
         ThemeProvider: './src/components/docs/ThemeProvider.astro'
       },
+      // Fails the build on a broken absolute link or heading anchor, such as a path without
+      // /docs/, which would otherwise build and break only once served. Relative links
+      // (../tools/) are allowed and not checked: they resolve the same here and on ailoy.co.
+      plugins: [starlightLinksValidator({ errorOnRelativeLinks: false })],
       // Plain code frames everywhere: shell blocks lose the terminal window dots.
       expressiveCode: { defaultProps: { frame: 'code' } },
       social: [

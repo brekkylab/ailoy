@@ -46,9 +46,9 @@ cargo test
 - A new page is listed by hand in two places: the `sidebar` in `docs/astro.config.mjs` and a card in the overview, `docs/src/content/docs/index.mdx`. A page missing from the sidebar still builds, but nothing leads to it.
 - ailoy.co serves these files with its own copy of the sidebar, styles and header (`docs/astro.config.mjs`, `docs/src/styles/`, `docs/src/components/` mirror it). A page added, renamed or moved here, or a change to those files, needs the same change in ailoy.co. The same goes for the `astro` and `@astrojs/starlight` versions in `docs/package.json`: raise them with ailoy.co's, by hand (Dependabot opens only security updates for `docs/`).
 - Code that differs by language goes in `<Tabs syncKey="lang">` with one `<TabItem label="...">` per language, labelled exactly `Python`, `Node.js` and `Rust` so a reader's choice carries across pages; import both from `@astrojs/starlight/components` at the top. A file name goes on the fence as `title="Cargo.toml"`.
-- Notes are Starlight asides, `:::note`, `:::tip`, `:::caution` or `:::danger`, closed by `:::`. VitePress syntax does not work here and the build does not catch it: `::: code-group` and `::: warning` are printed as text, and `:::warning` or a `[label]` after a fence is silently dropped.
+- Notes are Starlight asides, `:::note`, `:::tip`, `:::caution` or `:::danger`, closed by `:::`. VitePress syntax does not work here and the build does not catch it: `::: code-group` and `::: warning` are printed as text, `:::warning` renders as a plain paragraph, and a `[label]` after a fence is dropped.
 - MDX reads `{`, `}` and `<` in prose as code: put them in backticks or escape them (`\{`, `&lt;`).
-- Link to another guide relatively with a trailing slash (`../tools/`, `../tools/#a-heading`), or by its full path (`/docs/guide/tools/`). A path without `/docs/` breaks on ailoy.co.
+- Link to another guide relatively with a trailing slash (`../tools/`, `../tools/#a-heading`), or by its full path (`/docs/guide/tools/`). A path without `/docs/` breaks on ailoy.co; the build checks absolute links and anchors, not relative ones.
 
 ## Comments and docs
 

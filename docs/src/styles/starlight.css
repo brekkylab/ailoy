@@ -30,3 +30,10 @@
   color: var(--sl-color-accent);
   font-weight: 500;
 }
+
+/* Cards and link cards: square, like the product pages. */
+.card,
+.sl-link-card,
+.pagination-links a {
+  border-radius: 0;
+}

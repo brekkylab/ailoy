@@ -8,6 +8,9 @@ on:
       - docs/**
       - .github/workflows/docs.yaml
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
