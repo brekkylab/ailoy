@@ -8,7 +8,10 @@ use futures::{
 use tokio::sync::Mutex;
 use virtx::console::ConsoleClient;
 
-use super::{AgentSpec, AgentState, ContextManager, skill::render_skills, spec::split_desc};
+use super::{
+    AgentSpec, AgentState, ContextManager, context::restore_images, skill::render_skills,
+    spec::split_desc,
+};
 use crate::{
     browser,
     datatype::Value,
@@ -151,6 +154,7 @@ impl Agent {
     /// Truncate the history if the last call's input went past the context manager's limit.
     fn manage_context(&mut self) {
         if let Some(cm) = &self.context_manager
+            && cm.max_input_tokens > 0
             && self.state.last_input_tokens.unwrap_or(0) > cm.max_input_tokens
         {
             cm.truncate_history(&mut self.state.history);
@@ -174,7 +178,7 @@ impl Agent {
     /// model's output limit cut short is yielded and then ends the turn with an error.
     pub fn run(&mut self, query: Message) -> BoxStream<'_, anyhow::Result<MessageOutput>> {
         Box::pin(async_stream::try_stream! {
-            self.begin_turn(query).await;
+            let mut capped = self.begin_turn(query).await;
             let mut committed = false;
             // The latest tool results as they were before what the API refused in them was
             // replaced, while that stands: a second refusal puts them back and ends the turn.
@@ -196,6 +200,7 @@ impl Agent {
                         }
                         if !committed {
                             self.state.history.pop();
+                            restore_images(&mut self.state.history, std::mem::take(&mut capped));
                         }
                         Err(e)?
                     }
@@ -232,7 +237,7 @@ impl Agent {
         query: Message,
     ) -> BoxStream<'_, anyhow::Result<MessageDeltaOutput>> {
         Box::pin(async_stream::try_stream! {
-            self.begin_turn(query).await;
+            let mut capped = self.begin_turn(query).await;
             let mut committed = false;
             let mut refused: Option<Vec<Message>> = None;
             loop {
@@ -267,6 +272,7 @@ impl Agent {
                         }
                         if !committed {
                             self.state.history.pop();
+                            restore_images(&mut self.state.history, std::mem::take(&mut capped));
                         }
                         Err(e)?
                     }
@@ -295,18 +301,20 @@ impl Agent {
     }
 
     /// Add `query` to the history, led by a browser reconnection the agent has not heard of,
-    /// and tell the model where its console mounts are.
-    async fn begin_turn(&mut self, mut query: Message) {
+    /// and tell the model where its console mounts are. Returns the images capped first, for
+    /// [`restore_images`] should the turn fail before its first reply.
+    async fn begin_turn(&mut self, mut query: Message) -> Vec<(usize, usize, Part)> {
         close_dangling_calls(&mut self.state.history);
+        // Images are capped for every agent; only the token limit is opt-in.
+        let default = ContextManager::default();
+        let cm = self.context_manager.as_ref().unwrap_or(&default);
+        let capped = cm.cap_images(&mut self.state.history);
         if let Some(note) = self.state.browser.as_ref().and_then(|b| b.catch_up()) {
             query.contents.insert(0, Part::text(note));
         }
         self.state.history.push(query);
-        // Images are capped for every agent; only the token limit is opt-in.
-        let default = ContextManager::default();
-        let cm = self.context_manager.as_ref().unwrap_or(&default);
-        cm.cap_images(&mut self.state.history);
         self.seed_mounts().await;
+        capped
     }
 
     /// Connects this agent's browser now rather than on its first use. This is when the browser
@@ -657,6 +665,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::agent::context::IMAGE_PLACEHOLDER;
     use crate::{
         datatype::Bytes,
         message::{Role, TokenUsage},
@@ -1171,6 +1180,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_a_token_limit_of_zero_truncates_nothing() {
+        let name = "test-agent-context-off";
+        let (model, spec) = scripted(
+            name,
+            [
+                with_input(calls(&[("c1", "echo")]), 10),
+                with_input(answer("one"), 200),
+                with_input(answer("two"), 10),
+            ],
+        );
+        let mut agent = Agent::try_new(spec).await.unwrap();
+        agent.set_context_manager(Some(ContextManager {
+            max_input_tokens: 0,
+            preserve_recent_turns: 1,
+            ..Default::default()
+        }));
+
+        agent.run(user("first")).for_each(|_| async {}).await;
+        agent.run(user("second")).for_each(|_| async {}).await;
+
+        let seen = model.seen.lock().unwrap();
+        let result = seen[2].iter().find(|m| m.role == Role::Tool).unwrap();
+        assert_ne!(text_of(result), "[context truncated]");
+    }
+
+    #[tokio::test]
     async fn test_context_manager_replaces_old_images_at_the_start_of_a_turn() {
         let name = "test-agent-images";
         let (model, spec) = scripted(
@@ -1186,35 +1221,30 @@ mod tests {
         let mut agent = Agent::try_new(spec).await.unwrap();
         agent.set_context_manager(Some(ContextManager {
             max_images: 2,
+            preserve_recent_images: 1,
             ..Default::default()
         }));
 
         agent.run(user("first")).for_each(|_| async {}).await;
-        // Within a turn every screenshot stays, over the limit or not.
+        // Within a turn every screenshot stays, over the cap or not.
         assert_eq!(images_in(&model.seen.lock().unwrap()[3]), 3);
         assert_eq!(images_in(agent.history()), 3);
 
         agent.run(user("second")).for_each(|_| async {}).await;
-        // The turn starts by replacing the oldest, down to half the limit.
+        // The turn starts by replacing the oldest, down to those preserved.
         let seen = model.seen.lock().unwrap();
         assert_eq!(images_in(&seen[4]), 1);
         let results: Vec<_> = seen[4].iter().filter(|m| m.role == Role::Tool).collect();
-        assert_eq!(
-            text_of(results[0]),
-            "the page[image from an earlier turn removed]"
-        );
-        assert_eq!(
-            text_of(results[1]),
-            "the page[image from an earlier turn removed]"
-        );
+        assert_eq!(text_of(results[0]), format!("the page{IMAGE_PLACEHOLDER}"));
+        assert_eq!(text_of(results[1]), format!("the page{IMAGE_PLACEHOLDER}"));
         assert!(results[2].contents[1].is_image());
     }
 
     #[tokio::test]
     async fn test_images_are_capped_at_the_default_without_a_context_manager() {
         let name = "test-agent-images-default";
-        let max = ContextManager::default().max_images;
-        let shots: Vec<_> = (0..=max)
+        let default = ContextManager::default();
+        let shots: Vec<_> = (0..=default.max_images)
             .map(|n| calls(&[(&format!("c{n}"), "shot")]))
             .collect();
         let (model, spec) = scripted(
@@ -1228,7 +1258,75 @@ mod tests {
         agent.run(user("second")).for_each(|_| async {}).await;
 
         let seen = model.seen.lock().unwrap();
-        assert_eq!(images_in(seen.last().unwrap()), max / 2);
+        assert_eq!(
+            images_in(seen.last().unwrap()),
+            default.preserve_recent_images
+        );
+    }
+
+    /// Images a person attaches are not capped, so a query keeps its own however many came
+    /// before.
+    #[tokio::test]
+    async fn test_the_query_keeps_its_images() {
+        let name = "test-agent-query-images";
+        let (model, spec) = scripted(
+            name,
+            [calls(&[("c1", "shot")]), answer("one"), answer("two")],
+        );
+        let mut agent = Agent::try_new(spec).await.unwrap();
+        agent.set_context_manager(Some(ContextManager {
+            max_images: 0,
+            preserve_recent_images: 0,
+            ..Default::default()
+        }));
+        let query = |text: &str| {
+            let image = Part::image_embedded("image/png", Bytes::from(vec![0u8; 4])).unwrap();
+            Message::new(Role::User).with_contents([Part::text(text), image.clone(), image])
+        };
+
+        agent.run(query("first")).for_each(|_| async {}).await;
+        agent.run(query("second")).for_each(|_| async {}).await;
+
+        let seen = model.seen.lock().unwrap();
+        let request = seen.last().unwrap();
+        assert_eq!(images_in(request), 5);
+        assert!(
+            request.last().unwrap().contents[1..]
+                .iter()
+                .all(Part::is_image)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_a_turn_refused_before_its_first_reply_puts_the_images_back() {
+        let name = "test-agent-images-refused";
+        let (_, spec) = scripted(
+            name,
+            [
+                calls(&[("c1", "shot")]),
+                calls(&[("c2", "shot")]),
+                answer("one"),
+                refused(),
+                refused(),
+            ],
+        );
+        let mut agent = Agent::try_new(spec).await.unwrap();
+        agent.set_context_manager(Some(ContextManager {
+            max_images: 1,
+            preserve_recent_images: 0,
+            ..Default::default()
+        }));
+
+        agent.run(user("first")).for_each(|_| async {}).await;
+        let before = agent.history().to_vec();
+        assert_eq!(images_in(&before), 2);
+
+        let outputs: Vec<_> = agent.run(user("second")).collect().await;
+        assert!(outputs.last().unwrap().is_err());
+        assert_eq!(
+            serde_json::to_value(agent.history()).unwrap(),
+            serde_json::to_value(&before).unwrap()
+        );
     }
 
     /// A part is cut only when it has more characters than the limit, a value counted in those

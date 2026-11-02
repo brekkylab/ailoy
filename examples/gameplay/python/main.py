@@ -195,7 +195,8 @@ async def main(goal: str) -> None:
             .system_tools()
             .console(console)
             .skill("/skills/openttd")
-            # Many commands a round, each with its output: keep the last two rounds whole.
+            # Many commands a round, each with its output: keep the last two rounds' results
+            # whole, and of the screenshots the agent reads, the latest ten.
             .context_manager(max_input_tokens=80_000, preserve_recent_turns=2)
             .build()
         )

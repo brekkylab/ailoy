@@ -177,7 +177,8 @@ async function main(goal) {
       .systemTools()
       .console(consoleClient)
       .skill('/skills/openttd')
-      // Many commands a round, each with its output: keep the last two rounds whole.
+      // Many commands a round, each with its output: keep the last two rounds' results
+      // whole, and of the screenshots the agent reads, the latest ten.
       .contextManager({ maxInputTokens: 80_000, preserveRecentTurns: 2 })
       .build()
 
