@@ -1,0 +1,32 @@
+/* Starlight, toned to match the product pages: same fonts, same yellow accent on near-black. */
+:root {
+  --sl-font: 'Schibsted Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --sl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+:root[data-theme='dark'] {
+  --sl-color-accent-low: #3a2e0c;
+  --sl-color-accent: #ffc53d;
+  --sl-color-accent-high: #ffe3a1;
+  --sl-color-white: #ecebe6;
+  --sl-color-gray-1: #d6d5d0;
+  --sl-color-gray-2: #b9bac0;
+  --sl-color-gray-3: #7f828a;
+  --sl-color-gray-4: #4a4d54;
+  --sl-color-gray-5: #24262b;
+  --sl-color-gray-6: #121417;
+  --sl-color-black: #0c0d0f;
+}
+:root[data-theme='light'] {
+  --sl-color-accent-low: #fbe9c4;
+  --sl-color-accent: #9a6b00;
+  --sl-color-accent-high: #4a3300;
+}
+
+/* Current page in the sidebar: yellow text, no filled pill. */
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover,
+.sidebar-content a[aria-current='page']:focus {
+  background: transparent;
+  color: var(--sl-color-accent);
+  font-weight: 500;
+}

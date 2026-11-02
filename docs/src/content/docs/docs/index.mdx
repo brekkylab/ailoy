@@ -1,0 +1,29 @@
+---
+title: Ailoy documentation
+description: Build agents that each get a Linux microVM of their own, with the host GPU, from Python, Node.js or Rust.
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+Ailoy is an open-source agent SDK for Python, Node.js and Rust, built around a sandbox: each agent's tools run inside its own Linux microVM on your own machine, with access to the host GPU.
+
+## Start here
+
+<CardGrid>
+  <LinkCard title="Quick start" href="/docs/guide/quick-start/" description="Set up a model, install, and run an agent that draws a chart in its own VM." />
+  <LinkCard title="Model providers" href="/docs/guide/model-providers/" description="Name a model and choose how it runs: a CLI login, the maker's API, Bedrock, OpenRouter or vLLM." />
+</CardGrid>
+
+## Guides
+
+<CardGrid>
+  <LinkCard title="Building VM" href="/docs/guide/building-vm/" description="Declare the agent's machine: image, setup steps, mounts and network." />
+  <LinkCard title="Message format" href="/docs/guide/message-format/" description="The one message format Ailoy uses for every provider." />
+  <LinkCard title="Using MCP" href="/docs/guide/using-mcp/" description="Give an agent the tools of any MCP server." />
+  <LinkCard title="Using a browser" href="/docs/guide/using-browser/" description="Let an agent drive a browser over CDP." />
+</CardGrid>
+
+## More
+
+- [For AI coding assistants](https://github.com/brekkylab/ailoy/blob/main/skills/ailoy/SKILL.md): SKILL.md, the steps an agent should follow to build with Ailoy
+- [Discord](https://discord.gg/27rx3EJy3P): questions and help

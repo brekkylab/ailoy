@@ -1,16 +1,14 @@
 {
-  "name": "ailoy-site",
+  "name": "ailoy-docs",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vitepress dev",
-    "build": "vitepress build",
-    "preview": "vitepress preview"
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
   },
-  "devDependencies": {
-    "vitepress": "^1.6.4"
-  },
-  "overrides": {
-    "vite": "^6.4.4"
+  "dependencies": {
+    "@astrojs/starlight": "0.42.7",
+    "astro": "7.4.0"
   }
 }

@@ -1,0 +1,36 @@
+---
+// The Ailoy "A", simplified from the logo (public/ailoy/ailoy-logo-letter.png): two legs
+// and a crossbar, each a bar with rounded ends, the right leg and the crossbar fixed with a
+// rivet. A background-coloured gap line under each later bar keeps the bars apart; set
+// --ailoy-rivet to the page background.
+interface Props {
+  size?: number;
+  class?: string;
+}
+const { size = 22, class: cls = '' } = Astro.props;
+---
+
+<svg class:list={['ailoy-mark', cls]} width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+  <line x1="5" y1="21" x2="11.2" y2="3" stroke-width="3.6"></line>
+  <line class="gap" x1="12.4" y1="3" x2="19" y2="21" stroke-width="5.2"></line>
+  <line x1="12.4" y1="3" x2="19" y2="21" stroke-width="3.6"></line>
+  <line class="gap" x1="2.4" y1="14.4" x2="21.6" y2="14.4" stroke-width="5.4"></line>
+  <line x1="2.4" y1="14.4" x2="21.6" y2="14.4" stroke-width="3.8"></line>
+  <circle cx="13.2" cy="5.4" r="0.9"></circle>
+  <circle cx="18.2" cy="14.4" r="0.9"></circle>
+</svg>
+
+<style>
+  .ailoy-mark {
+    flex: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+  }
+  .ailoy-mark .gap {
+    stroke: var(--ailoy-rivet, var(--bg, #0a0a0b));
+  }
+  .ailoy-mark circle {
+    fill: var(--ailoy-rivet, var(--bg, #0a0a0b));
+    stroke: none;
+  }
+</style>
