@@ -10,6 +10,22 @@ import starlight from '@astrojs/starlight';
 const FONTS =
   'https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap';
 
+// With base /docs/ the site root is outside the site; `npm run dev` sends it to /docs/.
+const rootToDocs = {
+  name: 'root-to-docs',
+  // Astro puts its base handling, which answers / with a 404, at the front of the stack once the
+  // server is configured; this runs after it (post) and goes in front of it.
+  enforce: 'post',
+  configureServer(server) {
+    return () => server.middlewares.stack.unshift({ route: '', handle: redirectRoot });
+  }
+};
+function redirectRoot(req, res, next) {
+  if (req.url !== '/') return next();
+  res.writeHead(302, { Location: '/docs/' });
+  res.end();
+}
+
 export default defineConfig({
   site: 'https://ailoy.co',
   trailingSlash: 'always',
@@ -62,5 +78,6 @@ export default defineConfig({
         { slug: 'reference' }
       ]
     })
-  ]
+  ],
+  vite: { plugins: [rootToDocs] }
 });
