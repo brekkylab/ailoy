@@ -9,8 +9,8 @@ use tokio::sync::Mutex;
 use virtx::console::ConsoleClient;
 
 use super::{
-    AgentSpec, AgentState, ContextManager, context::restore_images, skill::render_skills,
-    spec::split_desc,
+    AgentSpec, AgentState, ContextManager, context::restore_images, image::fit_images,
+    skill::render_skills, spec::split_desc,
 };
 use crate::{
     browser,
@@ -312,6 +312,7 @@ impl Agent {
         if let Some(note) = self.state.browser.as_ref().and_then(|b| b.catch_up()) {
             query.contents.insert(0, Part::text(note));
         }
+        fit_images(&mut query);
         self.state.history.push(query);
         self.seed_mounts().await;
         capped
@@ -605,6 +606,7 @@ async fn call_tool(
     };
     message.role = Role::Tool;
     message.id.get_or_insert(id);
+    fit_images(&mut message);
     cap_tool_result(message)
 }
 
