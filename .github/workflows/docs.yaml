@@ -1,0 +1,25 @@
+name: Docs - Build
+
+# The docs are served from ailoy.co, which builds them from this folder. This only checks that
+# they still build, so a broken page shows up on the pull request rather than on ailoy.co's deploy.
+on:
+  pull_request:
+    paths:
+      - docs/**
+      - .github/workflows/docs.yaml
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - run: npm ci
+      - run: npm run build
