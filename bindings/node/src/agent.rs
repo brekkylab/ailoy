@@ -21,7 +21,7 @@ use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     browser::{Browser, UserBrowser},
     datatype::Value,
-    memory::Memory,
+    memory::{Memory, ProfileTarget},
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -122,6 +122,13 @@ pub struct BrowserOptions {
     pub careful: Option<bool>,
     /// The page the agent's tab opens on.
     pub start_url: Option<String>,
+}
+
+#[napi(object)]
+pub struct MemoryOptions {
+    pub profile: Option<bool>,
+    pub user_limit: Option<i64>,
+    pub notes_limit: Option<i64>,
 }
 
 #[napi(object)]
@@ -276,10 +283,40 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.browser(browser)))
     }
 
-    /// Remember into the memory store at `memfile`, a path in the console.
+    /// Remember the user across sessions in the folder `dir`, a path in the console;
+    /// `options.profile` (default `false`) keeps `USER.md` and `NOTES.md` and gives the
+    /// `profile` tool, and `userLimit` and `notesLimit` bound those files in characters.
+    #[napi(
+        ts_args_type = "dir: string, options?: { profile?: boolean; userLimit?: number; notesLimit?: number }"
+    )]
+    pub fn memory<'env>(
+        &mut self,
+        this: This<'env>,
+        dir: String,
+        options: Option<MemoryOptions>,
+    ) -> Result<This<'env>> {
+        let options = options.unwrap_or(MemoryOptions {
+            profile: None,
+            user_limit: None,
+            notes_limit: None,
+        });
+        let limit = |value, what, target: ProfileTarget| -> Result<usize> {
+            Ok(unsigned(value, what)?.map_or(target.default_limit(), |n| n as usize))
+        };
+        let memory = Memory::new(dir)
+            .with_profile(options.profile.unwrap_or(false))
+            .with_limits(
+                limit(options.user_limit, "userLimit", ProfileTarget::User)?,
+                limit(options.notes_limit, "notesLimit", ProfileTarget::Notes)?,
+            );
+        self.update(this, |b| Ok(b.memory(memory)))
+    }
+
+    /// Name this conversation, to carry one on along with its history; a new one is made
+    /// otherwise.
     #[napi]
-    pub fn memory<'env>(&mut self, this: This<'env>, memfile: String) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.memory(Memory::new(memfile))))
+    pub fn conversation_id<'env>(&mut self, this: This<'env>, id: String) -> Result<This<'env>> {
+        self.update(this, |b| Ok(b.conversation_id(id)))
     }
 
     #[napi]
@@ -421,9 +458,9 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<It
 #[napi]
 impl JsAgent {
     /// An agent from a spec (the object an `AgentSpec` serializes to). `options.memory` is the
-    /// file to remember into.
+    /// folder to remember into, and `options.conversationId` names the conversation.
     #[napi(
-        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; console?: ConsoleClient; memory?: string }",
+        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; console?: ConsoleClient; memory?: string; conversationId?: string }",
         ts_return_type = "Promise<Agent>"
     )]
     pub fn from_spec<'env>(
@@ -446,8 +483,11 @@ impl JsAgent {
                 if let Some(console) = options.get::<Object>("console").map_err(get)? {
                     state = state.with_console_slot(console::attach(&console)?);
                 }
-                if let Some(memfile) = options.get::<String>("memory").map_err(get)? {
-                    state = state.with_memory(Memory::new(memfile));
+                if let Some(dir) = options.get::<String>("memory").map_err(get)? {
+                    state = state.with_memory(Memory::new(dir));
+                }
+                if let Some(id) = options.get::<String>("conversationId").map_err(get)? {
+                    state = state.with_conversation_id(id);
                 }
             }
             Ok((spec, state))
@@ -473,6 +513,17 @@ impl JsAgent {
             .map_err(|_| error::ailoy("this agent is in the middle of a turn"))?;
         let agent = guard.value.as_ref().ok_or_else(closed)?;
         Ok(Json(agent.history().to_vec()))
+    }
+
+    /// Which conversation this is: keep it with the history to carry the conversation on.
+    #[napi(getter)]
+    pub fn conversation_id(&self) -> Result<String> {
+        let guard = self
+            .agent
+            .try_lock()
+            .map_err(|_| error::ailoy("this agent is in the middle of a turn"))?;
+        let agent = guard.value.as_ref().ok_or_else(closed)?;
+        Ok(agent.conversation_id().to_owned())
     }
 
     /// Connect the agent's browser now rather than on its first use. This is when the browser asks,
