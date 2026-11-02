@@ -1,4 +1,9 @@
-# Skills
+---
+title: "Skills"
+description: "A skill is a folder of instructions for one kind of task, with the files those instructions use, in the Agent Skills format. The agent is told which skills it has and what each is for, and to read…"
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 A skill is a folder of instructions for one kind of task, with the files those instructions use, in the [Agent Skills](https://agentskills.io/specification) format. The agent is told which skills it has and what each is for, and to read a skill's instructions when a task matches it.
 
@@ -35,9 +40,11 @@ Ailoy reads `name` and `description` and nothing else from the frontmatter, each
 
 `skill(dir)` takes the folder's path in the agent's VM, not on your machine, so mount the folder into the VM, with whatever its instructions expect to find there: Laya's reads its model from `/models`, which `examples/laya` mounts too. Call `skill` once for each skill.
 
-::: code-group
+<Tabs syncKey="lang">
 
-```python [Python]
+<TabItem label="Python">
+
+```python
 console = await (
     ConsoleClient.builder()
     .image(Recipe("python:3.12-slim-trixie"))
@@ -54,7 +61,10 @@ agent = await (
 )
 ```
 
-```js [Node.js]
+</TabItem>
+<TabItem label="Node.js">
+
+```js
 const console_ = await ConsoleClient.builder()
   .image(new Recipe('python:3.12-slim-trixie'))
   .mountReadonly('./skills/laya', '/skills/laya')
@@ -67,7 +77,10 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
   .build()
 ```
 
-```rust [Rust]
+</TabItem>
+<TabItem label="Rust">
+
+```rust
 let console = ConsoleClient::builder()
     .image(Recipe::new("python:3.12-slim-trixie"))
     .mount_readonly(std::path::absolute("./skills/laya")?, "/skills/laya")
@@ -82,7 +95,8 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
     .await?;
 ```
 
-:::
+</TabItem>
+</Tabs>
 
 When the agent writes the system message itself, `build()` reads the frontmatter of each `SKILL.md` through the console, and fails if a `SKILL.md` is missing or has no `name` or `description`. The system message gets a list of the skills after the instruction: each one's name, description and location, and a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` stays out of the system message, and the agent reads it with its own tools, so an agent with skills needs a console and a tool that reads files, such as those of `system_tools()`.
 
@@ -108,4 +122,4 @@ For any other org, the same preamble is followed by a Markdown list, one line pe
 - `laya` at /skills/laya/SKILL.md. Answer typed questions about a text with Laya, a machine learning model for decisions. Use it to classify, score or answer yes or no about a message, an email or a ticket, with calibrated probabilities.
 ```
 
-Skills are added only to the system message the agent writes itself. A `history(...)` that brings a system message keeps it: the skills are not read or added, though the `# Mounts` section is, as [Message format](./message-format) describes.
+Skills are added only to the system message the agent writes itself. A `history(...)` that brings a system message keeps it: the skills are not read or added, though the `# Mounts` section is, as [Message format](../message-format/) describes.

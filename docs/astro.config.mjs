@@ -40,7 +40,23 @@ export default defineConfig({
       sidebar: [
         {
           label: 'Getting started',
-          items: [{ label: 'Overview', link: '/docs/' }]
+          items: [
+            { label: 'Overview', link: '/docs/' },
+            { slug: 'docs/guide/quick-start' }
+          ]
+        },
+        {
+          label: 'Guides',
+          items: [
+            { slug: 'docs/guide/model-providers' },
+            { slug: 'docs/guide/building-vm' },
+            { slug: 'docs/guide/message-format' },
+            { slug: 'docs/guide/tools' },
+            { slug: 'docs/guide/skills' },
+            { slug: 'docs/guide/context-manager' },
+            { slug: 'docs/guide/using-mcp' },
+            { slug: 'docs/guide/using-browser' }
+          ]
         },
         // one page each for now: a plain link, not a group holding one item of the same name
         { slug: 'docs/concepts' },

@@ -1,4 +1,9 @@
-# Quick start
+---
+title: "Quick start"
+description: "By default, Claude, GPT and Gemini run through their CLIs, so install and log in to the one for your model: Claude Code (claude), Codex (codex) or Gemini CLI (gemini)."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 ## Set up a model
 
@@ -14,35 +19,49 @@ export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY
 ailoy.set_lang_model_provider("anthropic", "api")
 ```
 
-[Model providers](./model-providers) lists every backend: the CLIs, each org's own API, Amazon Bedrock, OpenRouter and vLLM.
+[Model providers](../model-providers/) lists every backend: the CLIs, each org's own API, Amazon Bedrock, OpenRouter and vLLM.
 
 ## Install
 
-::: code-group
+<Tabs syncKey="lang">
 
-```sh [Python]
+<TabItem label="Python">
+
+```sh
 pip install ailoy-py
 ```
 
-```sh [Node.js]
+
+</TabItem>
+<TabItem label="Node.js">
+
+```sh
 npm install @brekkylab/ailoy @brekkylab/virtx
 ```
 
-```toml [Rust (Cargo.toml)]
+
+</TabItem>
+<TabItem label="Rust">
+
+```toml title="Cargo.toml"
 [dependencies]
 ailoy = "0.3"
 virtx = "0.1"
 ```
 
-:::
+
+</TabItem>
+</Tabs>
 
 ## Run an agent
 
-This gives an agent a Python machine with `./artifacts` mounted at `/artifacts`, and asks it to draw a chart there. `system_tools()` gives the agent a shell and file tools in that machine; [Tools](./tools) lists them.
+This gives an agent a Python machine with `./artifacts` mounted at `/artifacts`, and asks it to draw a chart there. `system_tools()` gives the agent a shell and file tools in that machine; [Tools](../tools/) lists them.
 
-::: code-group
+<Tabs syncKey="lang">
 
-```python [Python]
+<TabItem label="Python">
+
+```python
 import asyncio
 
 from ailoy import AgentBuilder
@@ -78,7 +97,11 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-```js [Node.js]
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
 const { AgentBuilder } = require('@brekkylab/ailoy')
 const { ConsoleClient, Recipe, ensureVirtx } = require('@brekkylab/virtx')
 
@@ -112,7 +135,11 @@ async function main() {
 main()
 ```
 
-```rust [Rust]
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
 use ailoy::{
     agent::AgentBuilder,
     console::ConsoleClient,
@@ -155,7 +182,9 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-:::
+
+</TabItem>
+</Tabs>
 
 `agent.run` yields one complete message for each step of the tool loop, and `run_stream` yields token deltas as the model writes them.
 

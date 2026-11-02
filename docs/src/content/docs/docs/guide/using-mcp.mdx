@@ -1,4 +1,9 @@
-# Using MCP
+---
+title: "Using MCP"
+description: "An agent can use the tools of any MCP server. Register the server, and you get back a description of each of its tools. Pass those to the AgentBuilder with tools(...)."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 An agent can use the tools of any [MCP](https://modelcontextprotocol.io) server. Register the server, and you get back a description of each of its tools. Pass those to the `AgentBuilder` with `tools(...)`.
 
@@ -8,9 +13,11 @@ Each tool is registered as `{prefix}__{name}`, so tools from different servers d
 
 `register_mcp_stdio` starts the server as a local process and talks to it over stdin and stdout. This runs [`mcp-server-fetch`](https://github.com/modelcontextprotocol/servers/tree/main/src/fetch) with `uvx`:
 
-::: code-group
+<Tabs syncKey="lang">
 
-```python [Python]
+<TabItem label="Python">
+
+```python
 import asyncio
 
 from ailoy import AgentBuilder, register_mcp_stdio
@@ -34,7 +41,11 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-```js [Node.js]
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
 const { AgentBuilder, registerMcpStdio } = require('@brekkylab/ailoy')
 
 async function main() {
@@ -58,7 +69,11 @@ async function main() {
 main()
 ```
 
-```rust [Rust]
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
 use ailoy::{
     agent::AgentBuilder,
     message::{Message, Part, Role},
@@ -90,9 +105,11 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-:::
 
-::: warning
+</TabItem>
+</Tabs>
+
+:::caution
 A stdio server runs on the host, not in the agent's VM, with the same access as your program. Register only servers you trust.
 :::
 
@@ -100,27 +117,39 @@ A stdio server runs on the host, not in the agent's VM, with the same access as 
 
 `register_mcp_streamable_http` connects to a remote server by its URL. This registers [DeepWiki](https://deepwiki.com)'s server, which answers questions about GitHub repositories:
 
-::: code-group
+<Tabs syncKey="lang">
 
-```python [Python]
+<TabItem label="Python">
+
+```python
 from ailoy import register_mcp_streamable_http
 
 tools = await register_mcp_streamable_http("deepwiki", "https://mcp.deepwiki.com/mcp")
 ```
 
-```js [Node.js]
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
 const { registerMcpStreamableHttp } = require('@brekkylab/ailoy')
 
 const tools = await registerMcpStreamableHttp('deepwiki', 'https://mcp.deepwiki.com/mcp')
 ```
 
-```rust [Rust]
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
 use ailoy::tool::register_mcp_streamable_http;
 
 let tools = register_mcp_streamable_http("deepwiki", "https://mcp.deepwiki.com/mcp").await?;
 ```
 
-:::
+
+</TabItem>
+</Tabs>
 
 Pass `tools` to `AgentBuilder.tools(...)` as above.
 
@@ -128,22 +157,34 @@ Pass `tools` to `AgentBuilder.tools(...)` as above.
 
 `unregister_mcp` (`unregisterMcp` in Node.js) removes a server's tools by their prefix and closes the connection to the server.
 
-::: code-group
+<Tabs syncKey="lang">
 
-```python [Python]
+<TabItem label="Python">
+
+```python
 from ailoy import unregister_mcp
 
 unregister_mcp("fetch")
 ```
 
-```js [Node.js]
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
 const { unregisterMcp } = require('@brekkylab/ailoy')
 
 unregisterMcp('fetch')
 ```
 
-```rust [Rust]
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
 ailoy::tool::unregister_mcp("fetch");
 ```
 
-:::
+
+</TabItem>
+</Tabs>

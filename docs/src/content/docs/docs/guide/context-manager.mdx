@@ -1,4 +1,9 @@
-# Context manager
+---
+title: "Context manager"
+description: "The agent sends its whole history to the model on every call, so a long run sends more with each step: every tool call adds its result, a file read, a page fetched or a command's output. The…"
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 The agent sends its whole history to the model on every call, so a long run sends more with each step: every tool call adds its result, a file read, a page fetched or a command's output. The context manager keeps it down by replacing old tool results with a placeholder once the model's input grows past a limit.
 
@@ -11,9 +16,11 @@ It is off until you set it, and both of its settings have defaults:
 | `max_input_tokens` (`maxInputTokens`) | 30,000 | The input the model reports, in tokens, past which old tool results are replaced. |
 | `preserve_recent_turns` (`preserveRecentTurns`) | 3 | How many of the latest user turns are left as they are. |
 
-::: code-group
+<Tabs syncKey="lang">
 
-```python [Python]
+<TabItem label="Python">
+
+```python
 agent = await (
     AgentBuilder("anthropic/claude-haiku-5-5")
     .system_tools()
@@ -23,7 +30,11 @@ agent = await (
 )
 ```
 
-```js [Node.js]
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
 const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
   .systemTools()
   .console(console_)
@@ -31,7 +42,11 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
   .build()
 ```
 
-```rust [Rust]
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
 use ailoy::agent::ContextManager;
 
 let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
@@ -42,7 +57,9 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
     .await?;
 ```
 
-:::
+
+</TabItem>
+</Tabs>
 
 `context_manager()` with no arguments (`contextManager()`, `ContextManager::default()`) uses both defaults.
 
@@ -58,6 +75,6 @@ The placeholders replace the results in the agent's history, so `agent.history` 
 
 Because the count comes from a call already made, the first call that goes past the limit is sent whole, and the history is truncated before the next one. A reply without `usage` leaves the last count in place, so a model that never reports usage, such as a model of your own whose replies leave it out, never triggers it. And since only tool results are replaced, a history whose messages alone are past the limit keeps growing.
 
-::: warning
+:::caution
 With `preserve_recent_turns` at `0`, every tool result is replaced, those of the turn in progress too, so past the limit the model no longer sees the results of the tools it has just called.
 :::
