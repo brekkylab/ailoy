@@ -2,9 +2,10 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 // The docs as ailoy.co/docs serves them: same Starlight setup, styles and header.
-// Keep this in step with ailoy.co's astro.config.mjs. The only differences: the root redirects
-// to /docs/, the header's Ailoy name is not a link (the site root lives on ailoy.co), and there
-// is no Examples entry.
+// Keep this in step with ailoy.co's astro.config.mjs. The differences: the site is served under
+// base /docs/ (ailoy.co has src/content/docs/docs/ instead, since its root is the product site),
+// so the sidebar slugs have no docs/ prefix; the header's Ailoy name is not a link (the site root
+// lives on ailoy.co); and there is no Examples entry.
 
 const FONTS =
   'https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap';
@@ -13,9 +14,7 @@ export default defineConfig({
   site: 'https://ailoy.co',
   trailingSlash: 'always',
   build: { format: 'directory' },
-  // The docs live under /docs/, as on ailoy.co; the root only sends you there, so the address
-  // `npm run dev` prints opens the docs.
-  redirects: { '/': '/docs/' },
+  base: '/docs',
   integrations: [
     starlight({
       title: 'Ailoy Docs',
@@ -41,26 +40,26 @@ export default defineConfig({
         {
           label: 'Getting started',
           items: [
-            { label: 'Overview', link: '/docs/' },
-            { slug: 'docs/guide/quick-start' }
+            { label: 'Overview', link: '/' },
+            { slug: 'guide/quick-start' }
           ]
         },
         {
           label: 'Guides',
           items: [
-            { slug: 'docs/guide/model-providers' },
-            { slug: 'docs/guide/building-vm' },
-            { slug: 'docs/guide/message-format' },
-            { slug: 'docs/guide/tools' },
-            { slug: 'docs/guide/skills' },
-            { slug: 'docs/guide/context-manager' },
-            { slug: 'docs/guide/using-mcp' },
-            { slug: 'docs/guide/using-browser' }
+            { slug: 'guide/model-providers' },
+            { slug: 'guide/building-vm' },
+            { slug: 'guide/message-format' },
+            { slug: 'guide/tools' },
+            { slug: 'guide/skills' },
+            { slug: 'guide/context-manager' },
+            { slug: 'guide/using-mcp' },
+            { slug: 'guide/using-browser' }
           ]
         },
         // one page each for now: a plain link, not a group holding one item of the same name
-        { slug: 'docs/concepts' },
-        { slug: 'docs/reference' }
+        { slug: 'concepts' },
+        { slug: 'reference' }
       ]
     })
   ]

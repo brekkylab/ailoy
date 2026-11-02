@@ -17,7 +17,7 @@ converts the model into `data/` on the first run, are the ones the three sides s
 Environment:
 
 * `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its org's backend has to be
-  set up as `docs/src/content/docs/docs/guide/model-providers.mdx` says.
+  set up as `docs/src/content/docs/guide/model-providers.mdx` says.
 
 Read from `.env` as well.
 """

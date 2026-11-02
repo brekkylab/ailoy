@@ -24,7 +24,7 @@
 //! Environment, also read from `.env`:
 //!
 //! * `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its org's backend has to
-//!   be set up as `docs/src/content/docs/docs/guide/model-providers.mdx` says. It has to take
+//!   be set up as `docs/src/content/docs/guide/model-providers.mdx` says. It has to take
 //!   images, or it cannot see what it built.
 
 use std::{io::Write as _, path::Path};

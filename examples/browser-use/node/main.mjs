@@ -14,7 +14,7 @@
 // tell it to go on.
 //
 // `AILOY_MODEL` is the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend has
-// to be set up as `docs/src/content/docs/docs/guide/model-providers.mdx` says, any key in the
+// to be set up as `docs/src/content/docs/guide/model-providers.mdx` says, any key in the
 // environment or in `.env`.
 //
 // `npm install` here first, after building the addon (`npm run build` in `bindings/node`).
