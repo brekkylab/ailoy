@@ -61,8 +61,8 @@ const TOOL_PREFIX: &str = "mcp__ailoy__";
 /// - The CLI adds context of its own to the request: the signed-in user's
 ///   email, the working directory and the date reach the model.
 /// - A structured reply the CLI rejects is asked for again in the same run. The reply's
-///   usage is that of the run's last request, the input the next call grows from, so the
-///   requests that made the rejected attempts are not counted.
+///   usage is that of the run's last request, whose input is what the next call carries
+///   forward; the requests that made the rejected attempts are not counted.
 #[derive(Clone, Debug)]
 pub struct ClaudeCliModel {
     program: String,

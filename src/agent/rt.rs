@@ -482,7 +482,9 @@ enum Refused {
     #[allow(dead_code)]
     OlderImages,
     /// The whole history, over the model's context limit. Mend: truncate it as
-    /// [`ContextManager`] does, without waiting for the usage that triggers it.
+    /// [`ContextManager`] does, without waiting for the usage that triggers it. Past a turn's
+    /// first request this changes what comes before the turn's thinking, so the requests after
+    /// must leave that thinking out (see [`Agent::manage_context`]).
     #[allow(dead_code)]
     TooLong,
 }
@@ -1209,10 +1211,11 @@ mod tests {
 
     /// A call past the limit in the middle of a turn leaves the history as it is for the rest
     /// of that turn, under `run` and `run_stream` alike, and the next turn begins truncated.
+    /// The turn just begun is kept, so `preserve_recent_turns` at `0` does what `1` does.
     #[tokio::test]
     async fn test_truncation_waits_for_the_next_turn() {
-        for stream in [false, true] {
-            let name = format!("test-agent-context-mid-turn-{stream}");
+        for (stream, preserve) in [(false, 1), (true, 1), (false, 0), (true, 0)] {
+            let name = format!("test-agent-context-mid-turn-{stream}-{preserve}");
             let (model, spec) = scripted(
                 &name,
                 [
@@ -1227,7 +1230,7 @@ mod tests {
             let mut agent = Agent::try_new(spec).await.unwrap();
             agent.set_context_manager(Some(ContextManager {
                 max_input_tokens: 100,
-                preserve_recent_turns: 1,
+                preserve_recent_turns: preserve,
                 ..Default::default()
             }));
             for query in ["first", "second", "third"] {
@@ -1248,8 +1251,9 @@ mod tests {
                     .collect()
             };
             // seen[3] is the second turn's second request, and seen[4] the third turn's first.
-            assert_eq!(cut(&seen[3]), [false, false], "stream: {stream}");
-            assert_eq!(cut(&seen[4]), [true, true], "stream: {stream}");
+            let row = format!("stream: {stream}, preserve: {preserve}");
+            assert_eq!(cut(&seen[3]), [false, false], "{row}");
+            assert_eq!(cut(&seen[4]), [true, true], "{row}");
         }
     }
 
