@@ -1295,6 +1295,58 @@ mod tests {
         );
     }
 
+    /// An image past the edge is fitted on both ways into the history: in the query and in a
+    /// tool result.
+    #[tokio::test]
+    async fn test_an_image_past_the_edge_is_fitted_on_its_way_in() {
+        fn big_png() -> Part {
+            let mut out = Vec::new();
+            image::DynamicImage::ImageRgb8(image::RgbImage::new(3000, 10))
+                .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+                .unwrap();
+            Part::image_embedded("image/png", Bytes::from(out)).unwrap()
+        }
+        fn width(part: &Part) -> u32 {
+            let Part::Image {
+                image: crate::message::PartImage::Embedded { data, .. },
+            } = part
+            else {
+                panic!("not an embedded image");
+            };
+            image::load_from_memory(data.as_ref()).unwrap().width()
+        }
+
+        let name = "test-agent-fit";
+        let (model, spec) = scripted(name, [calls(&[("c1", "big_shot")]), answer("one")]);
+        set_tool_provider(
+            "big_shot",
+            tool_func!(|_args: Value, id: String| -> Message {
+                Message::new(Role::Tool)
+                    .with_contents([big_png()])
+                    .with_id(id)
+            }),
+        );
+        let spec = spec.tool(
+            ToolDescBuilder::new("big_shot")
+                .parameters(to_value!({"type": "object", "properties": {}}))
+                .build(),
+        );
+        let mut agent = Agent::try_new(spec).await.unwrap();
+        let query = Message::new(Role::User).with_contents([Part::text("look"), big_png()]);
+        agent.run(query).for_each(|_| async {}).await;
+
+        let seen = model.seen.lock().unwrap();
+        let widths: Vec<u32> = seen
+            .last()
+            .unwrap()
+            .iter()
+            .flat_map(|m| &m.contents)
+            .filter(|p| p.is_image())
+            .map(width)
+            .collect();
+        assert_eq!(widths, [2576, 2576]);
+    }
+
     /// A turn that fails before its first reply takes its query back out but leaves the
     /// images replaced, even once truncation has reshaped the results they were in: a retry
     /// caps the same images again.

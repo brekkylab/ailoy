@@ -94,3 +94,5 @@ A screenshot the agent takes stays in a tool result and is sent again with every
 - The cap counts across every turn, the last `preserve_recent_turns` included, and holds for every agent, with or without a context manager. `max_images` at `0` turns it off.
 
 As with the token limit, the placeholders stay in `agent.history`.
+
+Apart from the cap, and for every model, an embedded image past 2576 pixels on its longer edge, attached or returned by a tool, is shrunk to that edge before it enters the history: 2576 is the largest edge Claude takes, and Claude refuses an edge over 3000 in a request of more than twenty images. The shrunk image is turned upright by its EXIF orientation and keeps its color profile; a WebP comes back as PNG when it has transparent pixels or was lossless, and as JPEG otherwise. An animated image is left as it is, so its frames reach the model's API as they came.
