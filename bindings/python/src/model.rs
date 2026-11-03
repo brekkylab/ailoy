@@ -1,9 +1,12 @@
 //! `LangModel`, and the per-org providers models are built through.
 //!
-//! An org's provider is a backend (`"cli"`, `"api"`, `"bedrock"`, `"openrouter"` or `"vllm"`)
-//! or a factory of Python's own, as [`LangModelProvider::custom`] is in Rust: called with the
-//! org and the name after it (`None` for a desc naming only the org), it returns a model. That
-//! is a `LangModel`, used as is, or any object with
+//! An org's provider is a backend (`"cli"`, `"api"`, `"bedrock"`, `"openrouter"`, `"vllm"` or
+//! `"openai-compatible"`), a server of your own as a dict (`{"backend": "openai-compatible",
+//! "base_url": "http://localhost:11434/v1"}`, with an `api_key` if the server wants one, as
+//! [`LangModelServer`] is in Rust), or a factory of Python's own, as
+//! [`LangModelProvider::custom`] is in Rust: called with the org and the name after it (`None`
+//! for a desc naming only the org), it returns a model. That is a `LangModel`, used as is, or
+//! any object with
 //!
 //! - `infer(messages, tools, options)`, returning a `MessageOutput` dict or an awaitable of
 //!   one, and optionally
@@ -19,8 +22,8 @@ use std::sync::Arc;
 use ailoy::{
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::{
-        Backend, InferLangModel, LangModelOptions, LangModelProvider, create_lang_model,
-        get_lang_model_provider as get_lang_model_provider_rs,
+        Backend, InferLangModel, LangModelOptions, LangModelProvider, LangModelServer,
+        create_lang_model, get_lang_model_provider as get_lang_model_provider_rs,
         remove_lang_model_provider as remove_lang_model_provider_rs,
         set_lang_model_provider as set_lang_model_provider_rs,
     },
@@ -222,25 +225,32 @@ fn custom(factory: Py<PyAny>) -> LangModelProvider {
 }
 
 /// Build the models of `org` (`"anthropic"`, `"openai"`, `"google"`, `"deepseek-ai"`, …)
-/// through `provider`: a backend — `"cli"`, `"api"`, `"bedrock"`, `"openrouter"` or `"vllm"` —
-/// or a factory, as the module says. Replaces the provider the org had.
+/// through `provider`: a backend — `"cli"`, `"api"`, `"bedrock"`, `"openrouter"`, `"vllm"` or
+/// `"openai-compatible"` — a server dict, or a factory, as the module says. Replaces the
+/// provider the org had.
 #[pyfunction]
 fn set_lang_model_provider(org: String, provider: Bound<'_, PyAny>) -> PyResult<()> {
     let provider = if provider.is_instance_of::<pyo3::types::PyString>() {
         LangModelProvider::from(from_py::<Backend>(&provider, "a backend")?)
+    } else if provider.is_instance_of::<pyo3::types::PyDict>() {
+        LangModelProvider::from(from_py::<LangModelServer>(
+            &provider,
+            "a lang model server",
+        )?)
     } else if provider.is_callable() {
         custom(provider.unbind())
     } else {
         return Err(PyValueError::new_err(
-            "a lang model provider is a backend's name or a factory of models",
+            "a lang model provider is a backend's name, a server dict or a factory of models",
         ));
     };
     set_lang_model_provider_rs(org, provider);
     Ok(())
 }
 
-/// How the model `desc` names (`"<org>/<name>"`, or `"<org>"`) is built: a backend's name,
-/// `"custom"` for a factory, or `None` when its org has no provider.
+/// How the model `desc` names (`"<org>/<name>"`, or `"<org>"`) is built: a backend's name
+/// (that of the server's backend, for a server of your own), `"custom"` for a factory, or
+/// `None` when its org has no provider.
 #[pyfunction]
 fn get_lang_model_provider(desc: String) -> Option<String> {
     get_lang_model_provider_rs(&desc).map(|provider| provider_name(&provider))
@@ -250,6 +260,7 @@ fn get_lang_model_provider(desc: String) -> Option<String> {
 fn provider_name(provider: &LangModelProvider) -> String {
     match provider {
         LangModelProvider::Backend(backend) => backend.to_string(),
+        LangModelProvider::Server(server) => server.backend().to_string(),
         LangModelProvider::Custom(_) => "custom".to_string(),
     }
 }

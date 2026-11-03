@@ -30,6 +30,7 @@ A model is `<org>/<name>`: the maker's own name for it, the official API id for 
 | `bedrock` | Amazon Bedrock | `AWS_BEARER_TOKEN_BEDROCK`, and `AWS_REGION` (else `us-east-1`) |
 | `openrouter` | OpenRouter | `OPENROUTER_API_KEY` |
 | `vllm` | A vLLM server | `VLLM_BASE_URL` (default `http://localhost:8000/v1`) |
+| `openai-compatible` | Any OpenAI-compatible server: llama-server, Ollama, LM Studio, SGLang. The org is your name for the server, the name is the server's model id: `ollama/llama3.3:70b` | `OPENAI_COMPATIBLE_BASE_URL` |
 
 So with Claude Code, Codex or Gemini CLI logged in on the host, no key is needed: `AgentBuilder("anthropic/claude-haiku-5-5")` runs on that login, and `AgentBuilder("anthropic")` alone runs the CLI's default model. To use a key instead, switch the org's backend before building the agent:
 
@@ -39,7 +40,7 @@ import ailoy
 ailoy.set_lang_model_provider("anthropic", "api")   # every anthropic/ model built after this uses ANTHROPIC_API_KEY
 ```
 
-Node is `setLangModelProvider('anthropic', 'api')`; Rust is `ailoy::model::set_lang_model_provider("anthropic", Backend::Api)`. Keys are read from the environment when the model is built, so set them before that; a missing one fails at `build()` with `ANTHROPIC_API_KEY is not set`. A CLI that is not installed fails only at the first turn, with `failed to start the claude CLI`. Pick the CLI when the user is running it on their own machine with a subscription, and a key when it runs unattended (CI, servers) where nobody can log in. [`docs/guide/model-providers.md`](../../docs/guide/model-providers.md) has which org runs on which backend.
+Node is `setLangModelProvider('anthropic', 'api')`; Rust is `ailoy::model::set_lang_model_provider("anthropic", Backend::Api)`. A server per org, instead of the one in the environment, is the backend with its URL: `ailoy.set_lang_model_provider("ollama", {"backend": "openai-compatible", "base_url": "http://localhost:11434/v1"})`. Keys are read from the environment when the model is built, so set them before that; a missing one fails at `build()` with `ANTHROPIC_API_KEY is not set`. A CLI that is not installed fails only at the first turn, with `failed to start the claude CLI`. Pick the CLI when the user is running it on their own machine with a subscription, and a key when it runs unattended (CI, servers) where nobody can log in. [`docs/guide/model-providers.md`](../../docs/guide/model-providers.md) has which org runs on which backend.
 
 ## 3. Give it a computer
 

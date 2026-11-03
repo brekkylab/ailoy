@@ -14,7 +14,7 @@ export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY
 ailoy.set_lang_model_provider("anthropic", "api")
 ```
 
-[Model providers](./model-providers) lists every backend: the CLIs, each org's own API, Amazon Bedrock, OpenRouter and vLLM.
+[Model providers](./model-providers) lists every backend: the CLIs, each org's own API, Amazon Bedrock, OpenRouter, vLLM and any OpenAI-compatible server.
 
 ## Install
 

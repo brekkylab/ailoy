@@ -43,19 +43,23 @@ Each org's models run on one **backend**:
 | `bedrock` | Amazon Bedrock | `AWS_BEARER_TOKEN_BEDROCK`; the region from `AWS_REGION`, then `AWS_DEFAULT_REGION`, else `us-east-1` |
 | `openrouter` | OpenRouter | `OPENROUTER_API_KEY` |
 | `vllm` | A vLLM server | `VLLM_BASE_URL` (default `http://localhost:8000/v1`), and `VLLM_API_KEY` if the server wants one |
+| `openai-compatible` | Any server speaking the OpenAI-compatible Chat Completions API: llama-server, Ollama, LM Studio, SGLang, vLLM too | `OPENAI_COMPATIBLE_BASE_URL`, and `OPENAI_COMPATIBLE_API_KEY` if the server wants one |
 
 By default, Claude, GPT and Gemini run through their CLIs, and the other orgs through their own APIs. Keys are read from the environment when a model is built, so set them before that.
 
-Not every org runs everywhere:
+`cli` and `api` know the orgs in [Naming a model](#naming-a-model). The other backends build a model for any org, `meta-llama` or `mistralai` as well:
 
-| Org | `cli` | `api` | `bedrock` | `openrouter` | `vllm` |
-| --- | :-: | :-: | :-: | :-: | :-: |
-| `anthropic` | ✓ | ✓ | ✓ | ✓ | |
-| `openai` | ✓ | ✓ | ✓ | ✓ | |
-| `google` | ✓ | ✓ | | ✓ | |
-| `deepseek-ai`, `moonshotai`, `zai-org`, `Qwen` | | ✓ | ✓ | ✓ | ✓ |
+| Org | `cli` | `api` | `bedrock` | `openrouter` | `vllm` | `openai-compatible` |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: |
+| `anthropic` | ✓ | ✓ | ✓ | ✓ | | ✓ |
+| `openai` | ✓ | ✓ | ✓ | ✓ | | ✓ |
+| `google` | ✓ | ✓ | | ✓ | | ✓ |
+| `deepseek-ai`, `moonshotai`, `zai-org`, `Qwen` | | ✓ | ✓ | ✓ | ✓ | ✓ |
+| any other org | | | ✓ | ✓ | ✓ | ✓ |
 
-Bedrock and OpenRouter name models their own way. Ailoy looks your model up in their catalogs, so you still write `anthropic/claude-haiku-5-5`, and the catalog decides which Bedrock or OpenRouter id it runs as.
+Bedrock and OpenRouter name models their own way. Ailoy looks your model up in their catalogs, so you still write `anthropic/claude-haiku-5-5`, and the catalog decides which Bedrock or OpenRouter id it runs as. vLLM is sent the name as you write it, `meta-llama/Llama-3.3-70B-Instruct`, the Hugging Face repo id it serves the model as.
+
+`openai-compatible` reads the name differently: the org is your name for the server, and what follows it is the id the server serves the model as, slashes included. Ollama's `llama3.3:70b` is `ollama/llama3.3:70b`, and LM Studio's `qwen/qwen3-8b` is `lmstudio/qwen/qwen3-8b`.
 
 ## Choosing a backend
 
@@ -88,9 +92,45 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5").build().await?;
 
 `remove_lang_model_provider` (`removeLangModelProvider`) takes the org's provider away, after which its models can't be built.
 
+## A server of your own
+
+`vllm` and `openai-compatible` read their server from the environment, one for the whole process. To name the server per org, give `set_lang_model_provider` the backend together with the server's URL, and an API key if the server wants one. Two servers, say Ollama for chat and vLLM for code, are two orgs:
+
+::: code-group
+
+```python [Python]
+ailoy.set_lang_model_provider("ollama", {"backend": "openai-compatible", "base_url": "http://localhost:11434/v1"})
+ailoy.set_lang_model_provider("Qwen", {"backend": "vllm", "base_url": "http://gpu-box:8000/v1", "api_key": "..."})
+
+chat = await AgentBuilder("ollama/llama3.3:70b").build()
+coder = await AgentBuilder("Qwen/Qwen3-Coder-30B-A3B-Instruct").build()
+```
+
+```js [Node.js]
+setLangModelProvider('ollama', { backend: 'openai-compatible', base_url: 'http://localhost:11434/v1' })
+setLangModelProvider('Qwen', { backend: 'vllm', base_url: 'http://gpu-box:8000/v1', api_key: '...' })
+
+const chat = await new AgentBuilder('ollama/llama3.3:70b').build()
+const coder = await new AgentBuilder('Qwen/Qwen3-Coder-30B-A3B-Instruct').build()
+```
+
+```rust [Rust]
+use ailoy::model::{Backend, LangModelServer, set_lang_model_provider};
+
+set_lang_model_provider("ollama", LangModelServer::new(Backend::OpenAiCompatible, "http://localhost:11434/v1")?);
+set_lang_model_provider("Qwen", LangModelServer::new(Backend::Vllm, "http://gpu-box:8000/v1")?.with_api_key("..."));
+
+let chat = AgentBuilder::new("ollama/llama3.3:70b").build().await?;
+let coder = AgentBuilder::new("Qwen/Qwen3-Coder-30B-A3B-Instruct").build().await?;
+```
+
+:::
+
+The backend is `vllm` or `openai-compatible`; the names are read as [Backends](#backends) says, so a vLLM server is set for the org that makes the model, and any other server for the org you name it by. `get_lang_model_provider` answers with the backend's name.
+
 ## Model options
 
-Two options work on every backend:
+Two options go to every backend:
 
 | Option | Builder method | Description |
 | --- | --- | --- |
@@ -126,6 +166,16 @@ let agent = AgentBuilder::new("openai/gpt-5.6-luna")
 ```
 
 :::
+
+On `vllm` and `openai-compatible`, `thinking_effort` turns thinking on rather than grading it, as the chat template's `enable_thinking` (and `thinking`) in `chat_template_kwargs`, and `output_schema` is sent as a `json_schema` `response_format`. vLLM reads both. What the other servers do with them, measured on 2026-10-29 with Qwen3-0.6B on each, a schema with `additionalProperties: false` telling enforcement from obedience:
+
+| Server | `chat_template_kwargs` | `response_format` | Thinking comes back as |
+| --- | --- | --- | --- |
+| llama-server (llama.cpp build 11146) | Read: `enable_thinking: false` switched the thinking off | Enforced | `reasoning_content` |
+| Ollama 0.40.12 | Ignored; Ollama's own switch is `reasoning_effort: "none"`, which Ailoy does not send | Enforced | `reasoning` |
+| LM Studio 0.4.26 | Ignored | Enforced, with no thinking while the reply is structured | `reasoning_content` |
+
+So on Ollama and LM Studio `thinking_effort` changes nothing: the model thinks, or not, as its template defaults. SGLang has not been measured.
 
 ## Running a model without an agent
 

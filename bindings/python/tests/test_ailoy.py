@@ -9,7 +9,7 @@ import virtx
 from virtx import ConsoleBroken, ConsoleClient, Recipe
 
 import ailoy
-from ailoy import AgentBuilder, AiloyError
+from ailoy import AgentBuilder, AiloyError, LangModel
 
 
 def content_text(content):
@@ -23,8 +23,12 @@ def content_text(content):
 # first user message, and then answers with whatever that tool returned. Enough to drive a
 # whole turn — model, tool, model — without a network or a key.
 class FakeModel(BaseHTTPRequestHandler):
+    # Every request's model id and `Authorization` header, as sent.
+    seen = []
+
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        self.seen.append((body["model"], self.headers.get("Authorization")))
         messages = body["messages"]
         tool_results = [m for m in messages if m["role"] == "tool"]
         if tool_results:
@@ -123,6 +127,19 @@ def test_set_lang_model_provider_refuses_an_unknown_backend():
         ailoy.set_lang_model_provider("x", "smoke-signals")
 
 
+def test_a_server_of_your_own_runs_a_server_backend():
+    base_url = os.environ["VLLM_BASE_URL"]
+    with pytest.raises(ValueError, match="openai-compatible"):
+        ailoy.set_lang_model_provider("x", {"backend": "cli", "base_url": base_url})
+    with pytest.raises(ValueError, match="base_url"):
+        ailoy.set_lang_model_provider("x", {"backend": "vllm"})
+    with pytest.raises(ValueError, match="baseUrl"):
+        ailoy.set_lang_model_provider("x", {"backend": "vllm", "baseUrl": base_url})
+    with pytest.raises(ValueError, match="base_url"):
+        ailoy.set_lang_model_provider("x", {"backend": "vllm", "base_url": ""})
+    assert ailoy.get_lang_model_provider("x") is None
+
+
 def test_thinking_effort_is_checked():
     with pytest.raises(ValueError):
         AgentBuilder(MODEL).thinking_effort("extreme")
@@ -204,6 +221,43 @@ async def test_a_turn_without_tools():
 
     history = agent.history
     assert [m["role"] for m in history] == ["system", "user", "assistant"]
+
+
+async def test_a_server_of_your_own_names_the_model_as_the_server_does():
+    base_url = os.environ["VLLM_BASE_URL"]
+    ailoy.set_lang_model_provider("ollama", {"backend": "openai-compatible", "base_url": base_url})
+    ailoy.set_lang_model_provider("meta-llama", {"backend": "vllm", "base_url": base_url, "api_key": "k"})
+    try:
+        assert ailoy.get_lang_model_provider("ollama/llama3.3:70b") == "openai-compatible"
+        assert ailoy.get_lang_model_provider("meta-llama/Llama-3.3-70B-Instruct") == "vllm"
+        FakeModel.seen.clear()
+        messages = [{"role": "user", "contents": [{"type": "text", "text": "hi"}]}]
+        output = await (await LangModel.create("ollama/llama3.3:70b")).infer(messages)
+        assert texts([output]) == ["hello"]
+        await (await LangModel.create("meta-llama/Llama-3.3-70B-Instruct")).infer(messages)
+        # vLLM serves Hugging Face repo ids, so its org is the model's maker; any other server
+        # is named by its org and serves the name as it is.
+        assert FakeModel.seen == [("llama3.3:70b", None), ("meta-llama/Llama-3.3-70B-Instruct", "Bearer k")]
+    finally:
+        ailoy.remove_lang_model_provider("ollama")
+        ailoy.remove_lang_model_provider("meta-llama")
+
+
+async def test_the_openai_compatible_backend_reads_its_server_from_the_environment():
+    ailoy.set_lang_model_provider("env-served", "openai-compatible")
+    messages = [{"role": "user", "contents": [{"type": "text", "text": "hi"}]}]
+    try:
+        os.environ.pop("OPENAI_COMPATIBLE_BASE_URL", None)
+        with pytest.raises(AiloyError, match="OPENAI_COMPATIBLE_BASE_URL"):
+            await LangModel.create("env-served/llama3.3:70b")
+
+        os.environ["OPENAI_COMPATIBLE_BASE_URL"] = os.environ["VLLM_BASE_URL"]
+        FakeModel.seen.clear()
+        await (await LangModel.create("env-served/llama3.3:70b")).infer(messages)
+        assert FakeModel.seen == [("llama3.3:70b", None)]
+    finally:
+        os.environ.pop("OPENAI_COMPATIBLE_BASE_URL", None)
+        ailoy.remove_lang_model_provider("env-served")
 
 
 async def test_a_query_may_be_a_message():

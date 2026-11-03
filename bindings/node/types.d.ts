@@ -129,7 +129,18 @@ export interface AgentSpec {
   skills?: Array<string>
 }
 
-export type Backend = 'cli' | 'api' | 'bedrock' | 'openrouter' | 'vllm'
+export type Backend = 'cli' | 'api' | 'bedrock' | 'openrouter' | 'vllm' | 'openai-compatible'
+
+/**
+ * A backend on a server of your own, given to `setLangModelProvider` in place of a backend's
+ * name. `vllm` names the model `<org>/<name>`, the Hugging Face repo id vLLM serves it as;
+ * `openai-compatible` names it `<name>` as it is, the org being your name for the server.
+ */
+export interface LangModelServer {
+  backend: 'vllm' | 'openai-compatible'
+  base_url: string
+  api_key?: string
+}
 
 /**
  * A model of your own, as a factory given to `setLangModelProvider` returns it. Its methods are

@@ -146,7 +146,18 @@ class AgentSpec(TypedDict):
     skills: NotRequired[list[str]]
 
 
-Backend = Literal["cli", "api", "bedrock", "openrouter", "vllm"]
+Backend = Literal["cli", "api", "bedrock", "openrouter", "vllm", "openai-compatible"]
+
+
+class LangModelServer(TypedDict):
+    """A backend on a server of your own, given to ``set_lang_model_provider`` in place of a
+    backend's name. ``vllm`` names the model ``<org>/<name>``, the Hugging Face repo id vLLM
+    serves it as; ``openai-compatible`` names it ``<name>`` as it is, the org being your name
+    for the server."""
+
+    backend: Literal["vllm", "openai-compatible"]
+    base_url: str
+    api_key: NotRequired[str]
 
 WebSearchEngine = Literal[
     "Bing", "Brave", "DuckDuckGo", "Google", "Mojeek", "Naver", "Startpage", "Yahoo", "Yandex"
@@ -160,6 +171,7 @@ __all__ = [
     "FunctionPart",
     "ImagePart",
     "LangModelOptions",
+    "LangModelServer",
     "Message",
     "MessageDelta",
     "MessageDeltaOutput",
