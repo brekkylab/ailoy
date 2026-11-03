@@ -8,11 +8,10 @@
 //! use ailoy::model::*;
 //!
 //! let model = create_image_model("openai/gpt-image-1").await?;
-//! let options: ImageModelOptions = OpenAIImageOptions {
+//! let options = OpenAIImageOptions {
 //!     quality: Some("high".to_owned()),
 //!     ..Default::default()
-//! }
-//! .into();
+//! };
 //! let output = model.generate("a red cube", Some(&options)).await?;
 //!
 //! let model = create_image_model("google/gemini-3.1-flash-image").await?;
@@ -75,12 +74,10 @@ mod tests {
         match create_image_model("openrouter/x-org/some-model").await {
             // An out-of-range `n` is refused before sending, in OpenRouter's words.
             Ok(model) => {
-                let options = crate::model::ImageModelOptions::OpenRouter(
-                    crate::model::OpenRouterImageOptions {
-                        n: Some(0),
-                        ..Default::default()
-                    },
-                );
+                let options = crate::model::OpenRouterImageOptions {
+                    n: Some(0),
+                    ..Default::default()
+                };
                 let err = model.generate("x", Some(&options)).await.unwrap_err();
                 assert!(err.to_string().contains("OpenRouter"), "{err}");
             }

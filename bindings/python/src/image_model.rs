@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use ailoy::model::{ImageModelOptions, InferImageModel, create_image_model};
+use ailoy::model::{ImageModelOptions, ImageOptions, InferImageModel, create_image_model};
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 
@@ -50,7 +50,8 @@ impl PyImageModel {
             .transpose()?;
         let model = self.model();
         future_into_py(py, async move {
-            item(model.generate(&prompt, options.as_ref()).await)
+            let options = options.as_ref().map(|o| o as &dyn ImageOptions);
+            item(model.generate(&prompt, options).await)
         })
     }
 }

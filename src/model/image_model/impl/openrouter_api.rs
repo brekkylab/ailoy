@@ -7,7 +7,7 @@ use futures::future::BoxFuture;
 use crate::{
     datatype::{Bytes, Value},
     message::{PartImage, TokenUsage},
-    model::{ImageModelOptions, ImageOutput, InferImageModel, OpenRouterImageOptions},
+    model::{ImageOptions, ImageOutput, InferImageModel, OpenRouterImageOptions},
     to_value,
 };
 
@@ -106,7 +106,7 @@ impl InferImageModel for OpenRouterImageApiModel {
     fn generate(
         &self,
         prompt: &str,
-        options: Option<&ImageModelOptions>,
+        options: Option<&dyn ImageOptions>,
     ) -> BoxFuture<'static, anyhow::Result<ImageOutput>> {
         let request = super::read_options::<OpenRouterImageOptions>(options, &self.model)
             .and_then(|options| Ok((self.body(prompt, &options)?, options)));
@@ -296,7 +296,7 @@ fn parse_usage(usage: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{GeminiImageOptions, OpenAIImageOptions};
+    use crate::model::{GeminiImageOptions, ImageModelOptions, OpenAIImageOptions};
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";

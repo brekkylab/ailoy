@@ -7,7 +7,7 @@ use futures::future::BoxFuture;
 use crate::{
     datatype::{Bytes, Value},
     message::{PartImage, TokenUsage},
-    model::{GeminiImageOptions, ImageModelOptions, ImageOutput, InferImageModel},
+    model::{GeminiImageOptions, ImageOptions, ImageOutput, InferImageModel},
     to_value,
 };
 
@@ -98,7 +98,7 @@ impl InferImageModel for GeminiImageApiModel {
     fn generate(
         &self,
         prompt: &str,
-        options: Option<&ImageModelOptions>,
+        options: Option<&dyn ImageOptions>,
     ) -> BoxFuture<'static, anyhow::Result<ImageOutput>> {
         // The id goes in the URL path, where these would change what is called.
         if self.model.contains(['/', '?', '#']) {
@@ -358,7 +358,7 @@ fn parse_usage(usage: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{OpenAIImageOptions, OpenRouterImageOptions};
+    use crate::model::{ImageModelOptions, OpenAIImageOptions, OpenRouterImageOptions};
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";

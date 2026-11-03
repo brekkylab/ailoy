@@ -70,6 +70,38 @@ impl From<OpenRouterImageOptions> for ImageModelOptions {
     }
 }
 
+/// Options [`InferImageModel::generate`] takes: one API's parameters, which a model reads as
+/// its own API's. Implemented by [`ImageModelOptions`] and each API's options type, so either
+/// is passed as it is.
+pub trait ImageOptions {
+    /// These options as one flat JSON object of parameters.
+    fn to_json(&self) -> serde_json::Result<serde_json::Value>;
+}
+
+impl ImageOptions for ImageModelOptions {
+    fn to_json(&self) -> serde_json::Result<serde_json::Value> {
+        serde_json::to_value(self)
+    }
+}
+
+impl ImageOptions for OpenAIImageOptions {
+    fn to_json(&self) -> serde_json::Result<serde_json::Value> {
+        serde_json::to_value(self)
+    }
+}
+
+impl ImageOptions for GeminiImageOptions {
+    fn to_json(&self) -> serde_json::Result<serde_json::Value> {
+        serde_json::to_value(self)
+    }
+}
+
+impl ImageOptions for OpenRouterImageOptions {
+    fn to_json(&self) -> serde_json::Result<serde_json::Value> {
+        serde_json::to_value(self)
+    }
+}
+
 /// The parameters of OpenAI's Images API.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -193,7 +225,7 @@ pub trait InferImageModel: Send + Sync {
     fn generate(
         &self,
         prompt: &str,
-        options: Option<&ImageModelOptions>,
+        options: Option<&dyn ImageOptions>,
     ) -> BoxFuture<'static, anyhow::Result<ImageOutput>>;
 }
 

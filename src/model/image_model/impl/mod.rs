@@ -6,18 +6,19 @@ pub use gemini_api::*;
 pub use gpt_api::*;
 pub use openrouter_api::*;
 
-use crate::model::ImageModelOptions;
+use crate::model::ImageOptions;
 
-/// `options` as the parameters `T` of `model`'s API, whichever variant they were built as;
-/// no options read as `T`'s defaults. A field `T` does not have is an error naming it.
+/// `options` as the parameters `T` of `model`'s API, whichever API they were built for; no
+/// options read as `T`'s defaults. A field `T` does not have is an error naming it.
 fn read_options<T: serde::de::DeserializeOwned + Default>(
-    options: Option<&ImageModelOptions>,
+    options: Option<&dyn ImageOptions>,
     model: &str,
 ) -> anyhow::Result<T> {
     let Some(options) = options else {
         return Ok(T::default());
     };
-    serde_json::to_value(options)
+    options
+        .to_json()
         .and_then(serde_json::from_value)
         .map_err(|e| anyhow::anyhow!("invalid image options for '{model}': {e}"))
 }
@@ -66,7 +67,9 @@ fn merge(target: &mut serde_json::Value, patch: serde_json::Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{GeminiImageOptions, OpenAIImageOptions, OpenRouterImageOptions};
+    use crate::model::{
+        GeminiImageOptions, ImageModelOptions, OpenAIImageOptions, OpenRouterImageOptions,
+    };
 
     #[test]
     fn read_options_takes_options_built_for_another_api_when_the_fields_fit() {

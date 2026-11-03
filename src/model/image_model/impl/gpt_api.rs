@@ -7,7 +7,7 @@ use futures::future::BoxFuture;
 use crate::{
     datatype::{Bytes, Value},
     message::{PartImage, TokenUsage},
-    model::{ImageModelOptions, ImageOutput, InferImageModel, OpenAIImageOptions},
+    model::{ImageOptions, ImageOutput, InferImageModel, OpenAIImageOptions},
     to_value,
 };
 
@@ -106,7 +106,7 @@ impl InferImageModel for GptImageApiModel {
     fn generate(
         &self,
         prompt: &str,
-        options: Option<&ImageModelOptions>,
+        options: Option<&dyn ImageOptions>,
     ) -> BoxFuture<'static, anyhow::Result<ImageOutput>> {
         let request =
             super::read_options::<OpenAIImageOptions>(options, &self.model).and_then(|options| {
@@ -284,7 +284,7 @@ fn parse_usage(usage: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{GeminiImageOptions, OpenRouterImageOptions};
+    use crate::model::{GeminiImageOptions, ImageModelOptions, OpenRouterImageOptions};
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
@@ -306,16 +306,22 @@ mod tests {
     async fn generate_takes_only_fields_the_openai_api_has() {
         let model = GptImageApiModel::new("gpt-image-1", "sk-test");
         // The key is fake, so anything that reached the network would fail differently.
-        let options = ImageModelOptions::Gemini(GeminiImageOptions {
+        // One API's options type is passed as it is, as is `ImageModelOptions`.
+        let gemini = GeminiImageOptions {
             aspect_ratio: Some("16:9".to_owned()),
             ..Default::default()
-        });
-        let err = model
-            .generate("a red cube", Some(&options))
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("unknown field `aspect_ratio`"), "{err}");
+        };
+        for options in [
+            &gemini as &dyn ImageOptions,
+            &ImageModelOptions::from(gemini.clone()),
+        ] {
+            let err = model
+                .generate("a red cube", Some(options))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("unknown field `aspect_ratio`"), "{err}");
+        }
 
         // Fields OpenAI has too are read, whichever API the options were built for.
         let options = ImageModelOptions::OpenRouter(OpenRouterImageOptions {

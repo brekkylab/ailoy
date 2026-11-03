@@ -109,25 +109,23 @@ output = await model.generate('a red cube on a white table', {
 ```
 
 ```rust [Rust]
-use ailoy::model::{GeminiImageOptions, ImageModelOptions, OpenAIImageOptions, create_image_model};
+use ailoy::model::{GeminiImageOptions, OpenAIImageOptions, create_image_model};
 
 let model = create_image_model("openai/gpt-image-2").await?;
-let options: ImageModelOptions = OpenAIImageOptions {
+let options = OpenAIImageOptions {
     size: Some("1536x1024".into()),
     quality: Some("high".into()),
     output_format: Some("webp".into()),
     ..Default::default()
-}
-.into();
+};
 let output = model.generate("a red cube on a white table", Some(&options)).await?;
 
 let model = create_image_model("google/gemini-3.1-flash-image").await?;
-let options: ImageModelOptions = GeminiImageOptions {
+let options = GeminiImageOptions {
     aspect_ratio: Some("16:9".into()),
     image_size: Some("2K".into()),
     ..Default::default()
-}
-.into();
+};
 let output = model.generate("a red cube on a white table", Some(&options)).await?;
 ```
 
@@ -162,12 +160,11 @@ options = { extra: { seed: 7, provider: { order: ['google-ai-studio'] } } }
 ```rust [Rust]
 use ailoy::to_value;
 
-let options: ImageModelOptions = OpenAIImageOptions {
+let options = OpenAIImageOptions {
     output_format: Some("webp".into()),
     extra: Some(to_value!({"output_compression": 80, "moderation": "low"})),
     ..Default::default()
-}
-.into();
+};
 ```
 
 :::

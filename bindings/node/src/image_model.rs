@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use ailoy::model::{ImageModelOptions, ImageOutput, InferImageModel, create_image_model};
+use ailoy::model::{
+    ImageModelOptions, ImageOptions, ImageOutput, InferImageModel, create_image_model,
+};
 use napi::{
     Env,
     bindgen_prelude::{PromiseRaw, Unknown},
@@ -63,7 +65,7 @@ impl JsImageModel {
         let model = self.model();
         promise(env, async move {
             model
-                .generate(&prompt, options.as_ref())
+                .generate(&prompt, options.as_ref().map(|o| o as &dyn ImageOptions))
                 .await
                 .map(Json)
                 .map_err(error::anyhow)
