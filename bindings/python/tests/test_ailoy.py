@@ -418,9 +418,12 @@ async def test_image_options_are_checked_before_sending(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "unused")
     model = await ailoy.ImageModel.create("openrouter/x-org/some-model")
     with pytest.raises(ValueError, match="not image model options"):
-        await model.generate("x", options={"openai": {"n": "two"}})
+        await model.generate("x", options={"n": "two"})
     with pytest.raises(AiloyError, match="OpenRouter"):
-        await model.generate("x", options={"openrouter": {"n": 0}})
+        await model.generate("x", options={"n": 0})
+    # Gemini's thinking level is not a parameter of OpenRouter's API.
+    with pytest.raises(AiloyError, match="unknown field `thinking_level`"):
+        await model.generate("x", options={"thinking_level": "high"})
 
 
 # ---- against the console server virtx starts by default ----------------------------

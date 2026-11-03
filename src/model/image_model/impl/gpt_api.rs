@@ -7,7 +7,7 @@ use futures::future::BoxFuture;
 use crate::{
     datatype::{Bytes, Value},
     message::{PartImage, TokenUsage},
-    model::{ImageModelOptions, ImageOutput, InferImageModel},
+    model::{ImageModelOptions, ImageOutput, InferImageModel, OpenAIImageOptions},
     to_value,
 };
 
@@ -50,10 +50,13 @@ impl GptImageApiModel {
         Ok(Self::new(model, api_key))
     }
 
-    /// The request body for one call, from the `openai` section alone. A combination the
-    /// API never accepts fails here, before anything is sent.
-    fn body(&self, prompt: &str, options: &ImageModelOptions) -> anyhow::Result<serde_json::Value> {
-        let options = options.openai.clone().unwrap_or_default();
+    /// The request body for one call. A combination the API never accepts fails here, before
+    /// anything is sent.
+    fn body(
+        &self,
+        prompt: &str,
+        options: &OpenAIImageOptions,
+    ) -> anyhow::Result<serde_json::Value> {
         let mut body = to_value!({
             "model": self.model.as_str(),
             "prompt": prompt,
@@ -74,7 +77,7 @@ impl GptImageApiModel {
         if is(&options.background, "transparent") && is(&options.output_format, "jpeg") {
             bail!(
                 "a transparent background needs an alpha-capable format; \
-                 `openai.output_format: jpeg` cannot carry one (use png or webp)"
+                 `output_format: jpeg` cannot carry one (use png or webp)"
             );
         }
         for (key, value) in [
@@ -93,7 +96,6 @@ impl GptImageApiModel {
         super::merge_extra(
             &mut body,
             options.extra.as_ref(),
-            "openai",
             &["model", "prompt", "stream"],
         )?;
         Ok(body)
@@ -104,13 +106,17 @@ impl InferImageModel for GptImageApiModel {
     fn generate(
         &self,
         prompt: &str,
-        options: &ImageModelOptions,
+        options: Option<&ImageModelOptions>,
     ) -> BoxFuture<'static, anyhow::Result<ImageOutput>> {
-        let body = self.body(prompt, options);
+        let request =
+            super::read_options::<OpenAIImageOptions>(options, &self.model).and_then(|options| {
+                let asked = options.n.unwrap_or(1) as usize;
+                Ok((self.body(prompt, &options)?, asked))
+            });
         let api_key = self.api_key.clone();
-        let asked = options.openai.as_ref().and_then(|o| o.n).unwrap_or(1) as usize;
         Box::pin(async move {
-            let response = send(API_URL, &api_key, &body?).await?;
+            let (body, asked) = request?;
+            let response = send(API_URL, &api_key, &body).await?;
             let val: Value = serde_json::from_str(&response.text().await?)
                 .context("OpenAI image response is not JSON")?;
             let out = parse_response(&val)?;
@@ -278,54 +284,58 @@ fn parse_usage(usage: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{GeminiImageOptions, OpenAiImageOptions, OpenRouterImageOptions};
+    use crate::model::{GeminiImageOptions, OpenRouterImageOptions};
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
 
-    fn body(options: &OpenAiImageOptions) -> anyhow::Result<serde_json::Value> {
-        let options = ImageModelOptions {
-            openai: Some(options.clone()),
-            ..Default::default()
-        };
-        GptImageApiModel::new("gpt-image-1", "sk-test")
-            .body("a red cube on a white table", &options)
+    fn body(options: &OpenAIImageOptions) -> anyhow::Result<serde_json::Value> {
+        GptImageApiModel::new("gpt-image-1", "sk-test").body("a red cube on a white table", options)
     }
 
     #[test]
     fn minimal_body_sends_only_model_and_prompt() {
-        let body = body(&OpenAiImageOptions::default()).unwrap();
+        let body = body(&OpenAIImageOptions::default()).unwrap();
         assert_eq!(
             body,
             serde_json::json!({"model": "gpt-image-1", "prompt": "a red cube on a white table"})
         );
     }
 
-    #[test]
-    fn body_ignores_other_sections() {
-        let options = ImageModelOptions {
-            gemini: Some(GeminiImageOptions {
-                aspect_ratio: Some("16:9".to_owned()),
-                ..Default::default()
-            }),
-            openrouter: Some(OpenRouterImageOptions {
-                n: Some(2),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
+    #[tokio::test]
+    async fn generate_takes_only_fields_the_openai_api_has() {
         let model = GptImageApiModel::new("gpt-image-1", "sk-test");
-        assert_eq!(
-            model.body("a red cube", &options).unwrap(),
-            model
-                .body("a red cube", &ImageModelOptions::default())
-                .unwrap()
+        // The key is fake, so anything that reached the network would fail differently.
+        let options = ImageModelOptions::Gemini(GeminiImageOptions {
+            aspect_ratio: Some("16:9".to_owned()),
+            ..Default::default()
+        });
+        let err = model
+            .generate("a red cube", Some(&options))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown field `aspect_ratio`"), "{err}");
+
+        // Fields OpenAI has too are read, whichever API the options were built for.
+        let options = ImageModelOptions::OpenRouter(OpenRouterImageOptions {
+            n: Some(0),
+            ..Default::default()
+        });
+        let err = model
+            .generate("a red cube", Some(&options))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("OpenAI accepts n between 1 and 10"),
+            "{err}"
         );
     }
 
     #[test]
     fn body_maps_every_openai_option() {
-        let options = OpenAiImageOptions {
+        let options = OpenAIImageOptions {
             n: Some(3),
             size: Some("1536x1024".to_owned()),
             quality: Some("high".to_owned()),
@@ -351,7 +361,7 @@ mod tests {
     #[test]
     fn body_rejects_an_out_of_range_n() {
         for n in [0, 11] {
-            let options = OpenAiImageOptions {
+            let options = OpenAIImageOptions {
                 n: Some(n),
                 ..Default::default()
             };
@@ -359,7 +369,7 @@ mod tests {
             assert!(err.contains("between 1 and 10"), "{err}");
         }
         for n in [1, 10] {
-            let options = OpenAiImageOptions {
+            let options = OpenAIImageOptions {
                 n: Some(n),
                 ..Default::default()
             };
@@ -369,7 +379,7 @@ mod tests {
 
     #[test]
     fn body_rejects_transparent_background_on_jpeg() {
-        let options = OpenAiImageOptions {
+        let options = OpenAIImageOptions {
             output_format: Some("JPEG".to_owned()),
             background: Some("Transparent".to_owned()),
             ..Default::default()
@@ -380,7 +390,7 @@ mod tests {
             "case does not matter: {err}"
         );
 
-        let options = OpenAiImageOptions {
+        let options = OpenAIImageOptions {
             background: Some("opaque".to_owned()),
             ..options
         };
@@ -389,7 +399,7 @@ mod tests {
 
     #[test]
     fn extra_adds_fields_and_wins_over_typed_ones() {
-        let options = OpenAiImageOptions {
+        let options = OpenAIImageOptions {
             quality: Some("high".to_owned()),
             extra: Some(to_value!({"safety_identifier": "u-1", "quality": "low"})),
             ..Default::default()
@@ -401,28 +411,25 @@ mod tests {
 
     #[test]
     fn extra_must_be_an_object_and_leave_reserved_keys_alone() {
-        let with_extra = |extra| OpenAiImageOptions {
+        let with_extra = |extra| OpenAIImageOptions {
             extra: Some(extra),
             ..Default::default()
         };
         let err = body(&with_extra(to_value!(["user"])))
             .unwrap_err()
             .to_string();
-        assert!(
-            err.contains("`openai.extra` must be a JSON object"),
-            "{err}"
-        );
+        assert!(err.contains("`extra` must be a JSON object"), "{err}");
         for key in ["model", "prompt", "stream"] {
             let extra = crate::datatype::Value::object([(key, true)]);
             let err = body(&with_extra(extra)).unwrap_err().to_string();
-            assert_eq!(err, format!("`openai.extra` may not set `{key}`"));
+            assert_eq!(err, format!("`extra` may not set `{key}`"));
         }
     }
 
     #[test]
     fn body_sends_size_verbatim() {
         for size in ["1024x1024", "1920x1088", "auto"] {
-            let options = OpenAiImageOptions {
+            let options = OpenAIImageOptions {
                 size: Some(size.to_owned()),
                 ..Default::default()
             };
@@ -648,16 +655,13 @@ mod tests {
 
     #[tokio::test]
     async fn generate_refuses_a_bad_n_before_sending() {
-        let options = ImageModelOptions {
-            openai: Some(OpenAiImageOptions {
-                n: Some(0),
-                ..Default::default()
-            }),
+        let options = ImageModelOptions::OpenAI(OpenAIImageOptions {
+            n: Some(0),
             ..Default::default()
-        };
+        });
         // The key is fake, so anything that reached the network would fail differently.
         let err = GptImageApiModel::new("gpt-image-1", "sk-test")
-            .generate("a red cube", &options)
+            .generate("a red cube", Some(&options))
             .await
             .unwrap_err();
         assert!(err.to_string().contains("between 1 and 10"), "{err}");
@@ -717,16 +721,16 @@ mod tests {
             eprintln!("OPENAI_API_KEY is not set; skipping");
             return;
         };
-        let options = ImageModelOptions {
-            openai: Some(OpenAiImageOptions {
-                quality: Some("low".to_owned()),
-                ..Default::default()
-            }),
+        let options = ImageModelOptions::OpenAI(OpenAIImageOptions {
+            quality: Some("low".to_owned()),
             ..Default::default()
-        };
+        });
 
         let out = model
-            .generate("A single red cube on a plain white background", &options)
+            .generate(
+                "A single red cube on a plain white background",
+                Some(&options),
+            )
             .await
             .unwrap_or_else(|e| panic!("OpenAI image generation failed: {e:#}"));
 

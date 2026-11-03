@@ -7,7 +7,7 @@ use futures::future::BoxFuture;
 use crate::{
     datatype::{Bytes, Value},
     message::{PartImage, TokenUsage},
-    model::{ImageModelOptions, ImageOutput, InferImageModel},
+    model::{ImageModelOptions, ImageOutput, InferImageModel, OpenRouterImageOptions},
     to_value,
 };
 
@@ -48,10 +48,13 @@ impl OpenRouterImageApiModel {
         Ok(Self::new(model, api_key))
     }
 
-    /// The request body for one call, from the `openrouter` section alone. A combination
-    /// OpenRouter never accepts fails here, before anything is sent.
-    fn body(&self, prompt: &str, options: &ImageModelOptions) -> anyhow::Result<serde_json::Value> {
-        let options = options.openrouter.clone().unwrap_or_default();
+    /// The request body for one call. A combination OpenRouter never accepts fails here,
+    /// before anything is sent.
+    fn body(
+        &self,
+        prompt: &str,
+        options: &OpenRouterImageOptions,
+    ) -> anyhow::Result<serde_json::Value> {
         let mut body = to_value!({
             "model": self.model.as_str(),
             "prompt": prompt,
@@ -72,7 +75,7 @@ impl OpenRouterImageApiModel {
         if is(&options.background, "transparent") && is(&options.output_format, "jpeg") {
             bail!(
                 "a transparent background needs an alpha-capable format; \
-                 `openrouter.output_format: jpeg` cannot carry one (use png or webp)"
+                 `output_format: jpeg` cannot carry one (use png or webp)"
             );
         }
         for (key, value) in [
@@ -93,7 +96,6 @@ impl OpenRouterImageApiModel {
         super::merge_extra(
             &mut body,
             options.extra.as_ref(),
-            "openrouter",
             &["model", "prompt", "stream"],
         )?;
         Ok(body)
@@ -104,23 +106,22 @@ impl InferImageModel for OpenRouterImageApiModel {
     fn generate(
         &self,
         prompt: &str,
-        options: &ImageModelOptions,
+        options: Option<&ImageModelOptions>,
     ) -> BoxFuture<'static, anyhow::Result<ImageOutput>> {
-        let body = self.body(prompt, options);
+        let request = super::read_options::<OpenRouterImageOptions>(options, &self.model)
+            .and_then(|options| Ok((self.body(prompt, &options)?, options)));
         let api_key = self.api_key.clone();
         let model = self.model.clone();
-        let section = options.openrouter.as_ref();
-        let resolution = section.and_then(|o| o.resolution.clone());
-        let size_set = section.is_some_and(|o| o.size.is_some());
-        let asked = section.and_then(|o| o.n).unwrap_or(1) as usize;
         Box::pin(async move {
+            let (body, options) = request?;
+            let asked = options.n.unwrap_or(1) as usize;
             let response = send(
                 API_URL,
                 &api_key,
-                &body?,
+                &body,
                 &model,
-                resolution.as_deref(),
-                size_set,
+                options.resolution.as_deref(),
+                options.size.is_some(),
             )
             .await?;
             let val: Value = serde_json::from_str(&response.text().await?)
@@ -216,7 +217,7 @@ fn explain_error(
         return None;
     }
     Some(format!(
-        "`openrouter.resolution: {}` is not accepted by '{model}'; try another resolution, \
+        "`resolution: {}` is not accepted by '{model}'; try another resolution, \
          or leave it unset to use the model's default size",
         resolution,
     ))
@@ -295,18 +296,14 @@ fn parse_usage(usage: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{GeminiImageOptions, OpenAiImageOptions, OpenRouterImageOptions};
+    use crate::model::{GeminiImageOptions, OpenAIImageOptions};
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
 
     fn body(options: &OpenRouterImageOptions) -> anyhow::Result<serde_json::Value> {
-        let options = ImageModelOptions {
-            openrouter: Some(options.clone()),
-            ..Default::default()
-        };
         OpenRouterImageApiModel::new("google/gemini-3.1-flash-image", "sk-or-test")
-            .body("a red cube on a white table", &options)
+            .body("a red cube on a white table", options)
     }
 
     #[test]
@@ -320,26 +317,48 @@ mod tests {
         );
     }
 
-    #[test]
-    fn body_ignores_other_sections() {
-        let options = ImageModelOptions {
-            openai: Some(OpenAiImageOptions {
-                n: Some(2),
-                size: Some("1536x1024".to_owned()),
-                ..Default::default()
-            }),
-            gemini: Some(GeminiImageOptions {
-                image_size: Some("2K".to_owned()),
-                ..Default::default()
-            }),
+    #[tokio::test]
+    async fn generate_takes_only_fields_the_openrouter_api_has() {
+        let model = OpenRouterImageApiModel::new("google/gemini-3.1-flash-image", "sk-or-test");
+        // Gemini's names for a size tier and for thinking are not OpenRouter's; both are
+        // refused before anything is sent, which the fake key would fail otherwise.
+        for (gemini, field) in [
+            (
+                GeminiImageOptions {
+                    image_size: Some("2K".to_owned()),
+                    ..Default::default()
+                },
+                "image_size",
+            ),
+            (
+                GeminiImageOptions {
+                    thinking_level: Some("high".to_owned()),
+                    ..Default::default()
+                },
+                "thinking_level",
+            ),
+        ] {
+            let err = model
+                .generate("a red cube", Some(&ImageModelOptions::Gemini(gemini)))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(&format!("unknown field `{field}`")), "{err}");
+        }
+
+        // Options built for OpenAI are read where OpenRouter has the same fields.
+        let options = ImageModelOptions::OpenAI(OpenAIImageOptions {
+            n: Some(11),
             ..Default::default()
-        };
-        let model = OpenRouterImageApiModel::new("openai/gpt-image-1", "sk-or-test");
-        assert_eq!(
-            model.body("a red cube", &options).unwrap(),
-            model
-                .body("a red cube", &ImageModelOptions::default())
-                .unwrap()
+        });
+        let err = model
+            .generate("a red cube", Some(&options))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("OpenRouter accepts n between 1 and 10"),
+            "{err}"
         );
     }
 
@@ -436,14 +455,11 @@ mod tests {
         let err = body(&with_extra(to_value!(["user"])))
             .unwrap_err()
             .to_string();
-        assert!(
-            err.contains("`openrouter.extra` must be a JSON object"),
-            "{err}"
-        );
+        assert!(err.contains("`extra` must be a JSON object"), "{err}");
         for key in ["model", "prompt", "stream"] {
             let extra = crate::datatype::Value::object([(key, true)]);
             let err = body(&with_extra(extra)).unwrap_err().to_string();
-            assert_eq!(err, format!("`openrouter.extra` may not set `{key}`"));
+            assert_eq!(err, format!("`extra` may not set `{key}`"));
         }
     }
 
@@ -552,7 +568,7 @@ mod tests {
 
         let hint = explain_error(model, Some("4K"), false, 400, REFUSAL)
             .expect("a resolution refusal is explained");
-        assert!(hint.contains("`openrouter.resolution: 4K`"), "{hint}");
+        assert!(hint.contains("`resolution: 4K`"), "{hint}");
         assert!(hint.contains(model), "{hint}");
 
         assert!(explain_error(model, None, false, 400, REFUSAL).is_none());
@@ -668,16 +684,13 @@ mod tests {
 
     #[tokio::test]
     async fn generate_refuses_a_bad_n_before_sending() {
-        let options = ImageModelOptions {
-            openrouter: Some(OpenRouterImageOptions {
-                n: Some(11),
-                ..Default::default()
-            }),
+        let options = ImageModelOptions::OpenRouter(OpenRouterImageOptions {
+            n: Some(11),
             ..Default::default()
-        };
+        });
         // The key is fake, so anything that reached the network would fail differently.
         let err = OpenRouterImageApiModel::new("openai/gpt-image-1", "sk-or-test")
-            .generate("a red cube", &options)
+            .generate("a red cube", Some(&options))
             .await
             .unwrap_err();
         assert!(err.to_string().contains("between 1 and 10"), "{err}");
@@ -691,16 +704,16 @@ mod tests {
             eprintln!("OPENROUTER_API_KEY is not set; skipping");
             return;
         };
-        let options = ImageModelOptions {
-            openrouter: Some(OpenRouterImageOptions {
-                aspect_ratio: Some("16:9".to_owned()),
-                ..Default::default()
-            }),
+        let options = ImageModelOptions::OpenRouter(OpenRouterImageOptions {
+            aspect_ratio: Some("16:9".to_owned()),
             ..Default::default()
-        };
+        });
 
         let out = model
-            .generate("A single red cube on a plain white background", &options)
+            .generate(
+                "A single red cube on a plain white background",
+                Some(&options),
+            )
             .await
             .unwrap_or_else(|e| panic!("OpenRouter image generation failed: {e:#}"));
 

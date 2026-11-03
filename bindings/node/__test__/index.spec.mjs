@@ -405,13 +405,18 @@ test('image options are checked before sending', async (t) => {
     else process.env.OPENROUTER_API_KEY = key
   })
   const model = await ImageModel.create('openrouter/x-org/some-model')
-  assert.throws(() => model.generate('x', { openai: { n: 'two' } }), {
+  assert.throws(() => model.generate('x', { n: 'two' }), {
     code: 'INVALID_ARG',
     message: /not image model options/,
   })
-  await assert.rejects(model.generate('x', { openrouter: { n: 0 } }), {
+  await assert.rejects(model.generate('x', { n: 0 }), {
     code: 'AILOY_ERROR',
     message: /OpenRouter/,
+  })
+  // Gemini's thinking level is not a parameter of OpenRouter's API.
+  await assert.rejects(model.generate('x', { thinking_level: 'high' }), {
+    code: 'AILOY_ERROR',
+    message: /unknown field `thinking_level`/,
   })
 })
 

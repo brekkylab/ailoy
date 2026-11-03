@@ -137,7 +137,7 @@ class LangModelOptions(TypedDict):
     output_schema: NotRequired[Value]
 
 
-class OpenAiImageOptions(TypedDict):
+class OpenAIImageOptions(TypedDict):
     n: NotRequired[int]
     size: NotRequired[str]
     quality: NotRequired[str]
@@ -164,13 +164,9 @@ class OpenRouterImageOptions(TypedDict):
     extra: NotRequired[dict[str, Value]]
 
 
-class ImageModelOptions(TypedDict):
-    """One section per API, each read only by the models that call that API. ``extra`` is
-    merged into that API's request body, in the API's own JSON."""
-
-    openai: NotRequired[OpenAiImageOptions]
-    gemini: NotRequired[GeminiImageOptions]
-    openrouter: NotRequired[OpenRouterImageOptions]
+# One API's parameters, as one flat dict. A model reads them as its own API's, so a key its
+# API does not have raises. ``extra`` is merged into that API's request body, in its own JSON.
+ImageModelOptions = Union[OpenAIImageOptions, GeminiImageOptions, OpenRouterImageOptions]
 
 
 class ImageOutput(TypedDict):
@@ -211,7 +207,7 @@ __all__ = [
     "MessageDelta",
     "MessageDeltaOutput",
     "MessageOutput",
-    "OpenAiImageOptions",
+    "OpenAIImageOptions",
     "OpenRouterImageOptions",
     "Part",
     "PartDelta",

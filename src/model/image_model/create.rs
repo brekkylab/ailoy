@@ -7,19 +7,18 @@
 //! ```ignore
 //! use ailoy::model::*;
 //!
-//! // Each model reads only its own API's section, so one set of options serves both.
-//! let options = ImageModelOptions {
-//!     openai: Some(OpenAiImageOptions { quality: Some("high".to_owned()), ..Default::default() }),
-//!     gemini: Some(GeminiImageOptions { aspect_ratio: Some("16:9".to_owned()), ..Default::default() }),
-//!     ..Default::default()
-//! };
 //! let model = create_image_model("openai/gpt-image-1").await?;
-//! let output = model.generate("a red cube", &options).await?;
-//! let model = create_image_model("google/gemini-3.1-flash-image").await?;
-//! let output = model.generate("a red cube", &options).await?;
+//! let options: ImageModelOptions = OpenAIImageOptions {
+//!     quality: Some("high".to_owned()),
+//!     ..Default::default()
+//! }
+//! .into();
+//! let output = model.generate("a red cube", Some(&options)).await?;
 //!
-//! // Through OpenRouter, which runs `bytedance-seed/seedream-5-0-pro` and reads the
-//! // `openrouter` section.
+//! let model = create_image_model("google/gemini-3.1-flash-image").await?;
+//! let output = model.generate("a red cube", None).await?;
+//!
+//! // Through OpenRouter, which runs `bytedance-seed/seedream-5-0-pro`.
 //! let model = create_image_model("openrouter/bytedance-seed/seedream-5-0-pro").await?;
 //! ```
 //!
@@ -76,14 +75,13 @@ mod tests {
         match create_image_model("openrouter/x-org/some-model").await {
             // An out-of-range `n` is refused before sending, in OpenRouter's words.
             Ok(model) => {
-                let options = crate::model::ImageModelOptions {
-                    openrouter: Some(crate::model::OpenRouterImageOptions {
+                let options = crate::model::ImageModelOptions::OpenRouter(
+                    crate::model::OpenRouterImageOptions {
                         n: Some(0),
                         ..Default::default()
-                    }),
-                    ..Default::default()
-                };
-                let err = model.generate("x", &options).await.unwrap_err();
+                    },
+                );
+                let err = model.generate("x", Some(&options)).await.unwrap_err();
                 assert!(err.to_string().contains("OpenRouter"), "{err}");
             }
             Err(err) => assert!(err.to_string().contains("OPENROUTER_API_KEY"), "{err}"),

@@ -45,15 +45,13 @@ impl PyImageModel {
         prompt: String,
         options: Option<Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let options = match options {
-            Some(options) => from_py(&options, "image model options")?,
-            None => ImageModelOptions::default(),
-        };
+        let options: Option<ImageModelOptions> = options
+            .map(|options| from_py(&options, "image model options"))
+            .transpose()?;
         let model = self.model();
-        future_into_py(
-            py,
-            async move { item(model.generate(&prompt, &options).await) },
-        )
+        future_into_py(py, async move {
+            item(model.generate(&prompt, options.as_ref()).await)
+        })
     }
 }
 

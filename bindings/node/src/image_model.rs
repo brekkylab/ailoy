@@ -56,16 +56,14 @@ impl JsImageModel {
         prompt: String,
         #[napi(ts_arg_type = "ImageModelOptions")] options: Option<Unknown<'_>>,
     ) -> napi::Result<PromiseRaw<'env, Json<ImageOutput>>> {
-        let options = match options {
-            Some(options) => {
-                from_js(env, options, "image model options").map_err(|e| thrown(env, e))?
-            }
-            None => ImageModelOptions::default(),
-        };
+        let options: Option<ImageModelOptions> = options
+            .map(|options| from_js(env, options, "image model options"))
+            .transpose()
+            .map_err(|e| thrown(env, e))?;
         let model = self.model();
         promise(env, async move {
             model
-                .generate(&prompt, &options)
+                .generate(&prompt, options.as_ref())
                 .await
                 .map(Json)
                 .map_err(error::anyhow)

@@ -1,46 +1,79 @@
 use futures::future::BoxFuture;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use crate::{
     datatype::Value,
     message::{PartImage, TokenUsage},
 };
 
-/// Options for one image generation call, in one section per API.
+/// Options for one image generation call: one API's parameters, under that API's own names.
 ///
-/// Each section holds one API's parameters under that API's own names and is read only by
-/// models that call that API. An unset section, like an unset field, leaves that API's
-/// defaults in place. Fill several sections to switch between models of different APIs with
-/// the same options.
+/// In JSON the options are one flat object, such as `{"size": "1536x1024", "quality":
+/// "high"}`. A model reads them as its own API's parameters, whichever variant they were
+/// built as, so options whose fields another API also has work there too; a field its API
+/// does not have is an error naming the field, raised before anything is sent.
 ///
 /// Values are sent as written: the API decides which it takes, and a refusal comes back as
-/// its error. A combination an API never accepts fails before anything is sent. Unknown
-/// sections and keys are ignored when deserializing, not rejected.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct ImageModelOptions {
-    /// The OpenAI Images API's parameters, read by models with an `openai/…` desc.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub openai: Option<OpenAiImageOptions>,
+/// its error. A combination an API never accepts fails before anything is sent.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ImageModelOptions {
+    /// The OpenAI Images API's parameters, for models with an `openai/…` desc.
+    OpenAI(OpenAIImageOptions),
 
-    /// The Gemini API's parameters, read by models with a `google/…` desc.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gemini: Option<GeminiImageOptions>,
+    /// The Gemini API's parameters, for models with a `google/…` desc.
+    Gemini(GeminiImageOptions),
 
-    /// The OpenRouter Images API's parameters, read by models with an `openrouter/…` desc.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub openrouter: Option<OpenRouterImageOptions>,
+    /// The OpenRouter Images API's parameters, for models with an `openrouter/…` desc.
+    OpenRouter(OpenRouterImageOptions),
 }
 
-impl ImageModelOptions {
-    pub fn new() -> Self {
-        Self::default()
+/// Takes the first API whose fields hold every key; with none, says why each refused.
+impl<'de> Deserialize<'de> for ImageModelOptions {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let openai = match serde_json::from_value(value.clone()) {
+            Ok(options) => return Ok(Self::OpenAI(options)),
+            Err(e) => e,
+        };
+        let gemini = match serde_json::from_value(value.clone()) {
+            Ok(options) => return Ok(Self::Gemini(options)),
+            Err(e) => e,
+        };
+        let openrouter = match serde_json::from_value(value) {
+            Ok(options) => return Ok(Self::OpenRouter(options)),
+            Err(e) => e,
+        };
+        Err(D::Error::custom(format!(
+            "no image API takes these options (OpenAI: {openai}; Gemini: {gemini}; \
+             OpenRouter: {openrouter})"
+        )))
+    }
+}
+
+impl From<OpenAIImageOptions> for ImageModelOptions {
+    fn from(options: OpenAIImageOptions) -> Self {
+        Self::OpenAI(options)
+    }
+}
+
+impl From<GeminiImageOptions> for ImageModelOptions {
+    fn from(options: GeminiImageOptions) -> Self {
+        Self::Gemini(options)
+    }
+}
+
+impl From<OpenRouterImageOptions> for ImageModelOptions {
+    fn from(options: OpenRouterImageOptions) -> Self {
+        Self::OpenRouter(options)
     }
 }
 
 /// The parameters of OpenAI's Images API.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct OpenAiImageOptions {
+#[serde(deny_unknown_fields)]
+pub struct OpenAIImageOptions {
     /// How many images to generate, 1 to 10.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub n: Option<u32>,
@@ -71,6 +104,7 @@ pub struct OpenAiImageOptions {
 
 /// The image parameters of the Gemini API.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GeminiImageOptions {
     /// The width-to-height ratio, e.g. `"16:9"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -93,6 +127,7 @@ pub struct GeminiImageOptions {
 
 /// The parameters of OpenRouter's Images API.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenRouterImageOptions {
     /// How many images to generate, 1 to 10.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -151,14 +186,14 @@ pub struct ImageOutput {
 
 /// A model that generates images from a text prompt.
 pub trait InferImageModel: Send + Sync {
-    /// Generate images from `prompt`.
+    /// Generate images from `prompt`, with `options` or else the API's defaults.
     ///
     /// An `Ok` result carries at least one image. A call that ends with none, such as one
     /// stopped by a safety filter, is an `Err` quoting the reason the provider gave.
     fn generate(
         &self,
         prompt: &str,
-        options: &ImageModelOptions,
+        options: Option<&ImageModelOptions>,
     ) -> BoxFuture<'static, anyhow::Result<ImageOutput>>;
 }
 
@@ -167,36 +202,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn options_omit_unset_sections_and_fields() {
-        assert_eq!(
-            serde_json::to_string(&ImageModelOptions::new()).unwrap(),
-            "{}"
-        );
-        let options = ImageModelOptions {
-            gemini: Some(GeminiImageOptions::default()),
+    fn options_are_one_flat_object_without_unset_fields() {
+        let options: ImageModelOptions = GeminiImageOptions {
+            aspect_ratio: Some("16:9".to_owned()),
             ..Default::default()
-        };
-        assert_eq!(serde_json::to_string(&options).unwrap(), r#"{"gemini":{}}"#);
+        }
+        .into();
+        assert!(matches!(options, ImageModelOptions::Gemini(_)));
+        assert_eq!(
+            serde_json::to_string(&options).unwrap(),
+            r#"{"aspect_ratio":"16:9"}"#
+        );
+        let empty = ImageModelOptions::OpenAI(OpenAIImageOptions::default());
+        assert_eq!(serde_json::to_string(&empty).unwrap(), "{}");
     }
 
     #[test]
     fn options_serde_round_trip() {
-        let json = serde_json::json!({
-            "openai": {
+        for json in [
+            serde_json::json!({
                 "n": 2,
                 "size": "1536x1024",
                 "quality": "high",
                 "output_format": "webp",
                 "background": "transparent",
                 "extra": {"moderation": "low"}
-            },
-            "gemini": {
+            }),
+            serde_json::json!({
                 "aspect_ratio": "16:9",
                 "image_size": "2K",
                 "thinking_level": "minimal",
                 "extra": {"generationConfig": {"candidateCount": 1}}
-            },
-            "openrouter": {
+            }),
+            serde_json::json!({
                 "n": 1,
                 "size": "1024x1024",
                 "resolution": "1.5K",
@@ -205,28 +243,45 @@ mod tests {
                 "output_format": "svg",
                 "background": "auto",
                 "extra": {"seed": 7}
-            }
-        });
-        let options: ImageModelOptions = serde_json::from_value(json.clone()).unwrap();
-        let gemini = options.gemini.as_ref().unwrap();
-        assert_eq!(gemini.aspect_ratio.as_deref(), Some("16:9"));
-        assert_eq!(gemini.thinking_level.as_deref(), Some("minimal"));
-        let openrouter = options.openrouter.as_ref().unwrap();
-        assert_eq!(openrouter.resolution.as_deref(), Some("1.5K"));
-        assert_eq!(
-            serde_json::to_value(&openrouter.extra).unwrap(),
-            serde_json::json!({"seed": 7})
-        );
-        assert_eq!(serde_json::to_value(&options).unwrap(), json);
+            }),
+        ] {
+            let options: ImageModelOptions = serde_json::from_value(json.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&options).unwrap(), json);
+        }
     }
 
     #[test]
-    fn unknown_sections_and_keys_are_ignored() {
-        let options: ImageModelOptions = serde_json::from_value(serde_json::json!({
-            "nobody": {"n": 1},
-            "openai": {"n": 2, "seed": 7}
+    fn deserializing_takes_the_first_api_that_has_every_field() {
+        let read = |json| serde_json::from_value::<ImageModelOptions>(json).unwrap();
+        assert!(matches!(
+            read(serde_json::json!({"n": 2, "quality": "high"})),
+            ImageModelOptions::OpenAI(_)
+        ));
+        assert!(matches!(
+            read(serde_json::json!({"aspect_ratio": "16:9", "thinking_level": "high"})),
+            ImageModelOptions::Gemini(_)
+        ));
+        assert!(matches!(
+            read(serde_json::json!({"aspect_ratio": "16:9", "resolution": "2K"})),
+            ImageModelOptions::OpenRouter(_)
+        ));
+    }
+
+    #[test]
+    fn options_no_api_takes_say_why_each_refused() {
+        let err = serde_json::from_value::<ImageModelOptions>(serde_json::json!({
+            "n": 2,
+            "thinking_level": "high"
         }))
-        .unwrap();
-        assert_eq!(options.openai.unwrap().n, Some(2));
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("no image API takes these options"), "{err}");
+        assert!(err.contains("unknown field `thinking_level`"), "{err}");
+        assert!(err.contains("unknown field `n`"), "{err}");
+
+        let err = serde_json::from_value::<ImageModelOptions>(serde_json::json!({"n": "two"}))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid type"), "{err}");
     }
 }

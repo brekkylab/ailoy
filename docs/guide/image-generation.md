@@ -45,13 +45,10 @@ fs.writeFileSync('cube.jpg', image.data)
 ```
 
 ```rust [Rust]
-use ailoy::{
-    message::PartImage,
-    model::{ImageModelOptions, create_image_model},
-};
+use ailoy::{message::PartImage, model::create_image_model};
 
 let model = create_image_model("google/gemini-3.1-flash-image").await?;
-let output = model.generate("a red cube on a white table", &ImageModelOptions::default()).await?;
+let output = model.generate("a red cube on a white table", None).await?;
 
 if let PartImage::Embedded { data, .. } = &output.images[0] {
     std::fs::write("cube.jpg", data)?;
@@ -68,115 +65,109 @@ The output has
 
 ## Options
 
-The providers' image APIs share almost no option: OpenAI sizes an image in pixels, Gemini by an aspect ratio and a size class. So the options come in one **section** per API, each holding that API's parameters under its own names, and a model reads only its own section. Fill several sections to switch models without changing the options.
+The providers' image APIs share almost no option: OpenAI sizes an image in pixels, Gemini by an aspect ratio and a size class. So the options are one API's parameters, under that API's own names, written as one flat object.
 
-| Section | Read by | Fields |
+| API | Read by | Fields |
 | --- | --- | --- |
-| `openai` | `openai/…` | `n`, `size`, `quality`, `output_format`, `background`, `extra` |
-| `gemini` | `google/…` | `aspect_ratio`, `image_size`, `thinking_level`, `extra` |
-| `openrouter` | `openrouter/…` | `n`, `size`, `resolution`, `aspect_ratio`, `quality`, `output_format`, `background`, `extra` |
+| OpenAI | `openai/…` | `n`, `size`, `quality`, `output_format`, `background`, `extra` |
+| Gemini | `google/…` | `aspect_ratio`, `image_size`, `thinking_level`, `extra` |
+| OpenRouter | `openrouter/…` | `n`, `size`, `resolution`, `aspect_ratio`, `quality`, `output_format`, `background`, `extra` |
 
-Values are written as each API's documentation gives them (`"1536x1024"`, `"16:9"`, `"2K"`, `"high"`) and sent as written. Which values a model takes is up to the model: a value it refuses comes back as the API's error, led by a line naming the option, such as `` `gemini.aspect_ratio: auto` is not accepted by 'gemini-3.1-flash-lite-image' ``. Unknown sections and keys are ignored.
+A model reads the options as its own API's parameters, and a field its API does not have is an error naming the field, raised before anything is sent: `aspect_ratio` for an `openai/…` model, `n` for a `google/…` one. Options whose fields another API also has work there too, so `{"size": "1024x1024", "quality": "high"}` serves an `openai/…` and an `openrouter/…` model alike.
+
+Values are written as each API's documentation gives them (`"1536x1024"`, `"16:9"`, `"2K"`, `"high"`) and sent as written. Which values a model takes is up to the model: a value it refuses comes back as the API's error, led by a line naming the option, such as `` `aspect_ratio: auto` is not accepted by 'gemini-3.1-flash-lite-image' ``.
 
 ::: code-group
 
 ```python [Python]
-options = {
-    "openai": {"size": "1536x1024", "quality": "high", "output_format": "webp"},
-    "gemini": {"aspect_ratio": "16:9", "image_size": "2K"},
-    "openrouter": {"aspect_ratio": "16:9", "resolution": "2K"},
-}
+model = await ImageModel.create("openai/gpt-image-2")
+output = await model.generate(
+    "a red cube on a white table",
+    options={"size": "1536x1024", "quality": "high", "output_format": "webp"},
+)
 
-for name in ["openai/gpt-image-2", "google/gemini-3.1-flash-image"]:
-    model = await ImageModel.create(name)
-    output = await model.generate("a red cube on a white table", options=options)
+model = await ImageModel.create("google/gemini-3.1-flash-image")
+output = await model.generate(
+    "a red cube on a white table",
+    options={"aspect_ratio": "16:9", "image_size": "2K"},
+)
 ```
 
 ```js [Node.js]
-const options = {
-  openai: { size: '1536x1024', quality: 'high', output_format: 'webp' },
-  gemini: { aspect_ratio: '16:9', image_size: '2K' },
-  openrouter: { aspect_ratio: '16:9', resolution: '2K' },
-}
+let model = await ImageModel.create('openai/gpt-image-2')
+let output = await model.generate('a red cube on a white table', {
+  size: '1536x1024',
+  quality: 'high',
+  output_format: 'webp',
+})
 
-for (const name of ['openai/gpt-image-2', 'google/gemini-3.1-flash-image']) {
-  const model = await ImageModel.create(name)
-  const output = await model.generate('a red cube on a white table', options)
-}
+model = await ImageModel.create('google/gemini-3.1-flash-image')
+output = await model.generate('a red cube on a white table', {
+  aspect_ratio: '16:9',
+  image_size: '2K',
+})
 ```
 
 ```rust [Rust]
-use ailoy::model::{
-    GeminiImageOptions, ImageModelOptions, OpenAiImageOptions, OpenRouterImageOptions,
-    create_image_model,
-};
+use ailoy::model::{GeminiImageOptions, ImageModelOptions, OpenAIImageOptions, create_image_model};
 
-let options = ImageModelOptions {
-    openai: Some(OpenAiImageOptions {
-        size: Some("1536x1024".into()),
-        quality: Some("high".into()),
-        output_format: Some("webp".into()),
-        ..Default::default()
-    }),
-    gemini: Some(GeminiImageOptions {
-        aspect_ratio: Some("16:9".into()),
-        image_size: Some("2K".into()),
-        ..Default::default()
-    }),
-    openrouter: Some(OpenRouterImageOptions {
-        aspect_ratio: Some("16:9".into()),
-        resolution: Some("2K".into()),
-        ..Default::default()
-    }),
-};
-
-for name in ["openai/gpt-image-2", "google/gemini-3.1-flash-image"] {
-    let model = create_image_model(name).await?;
-    let output = model.generate("a red cube on a white table", &options).await?;
+let model = create_image_model("openai/gpt-image-2").await?;
+let options: ImageModelOptions = OpenAIImageOptions {
+    size: Some("1536x1024".into()),
+    quality: Some("high".into()),
+    output_format: Some("webp".into()),
+    ..Default::default()
 }
+.into();
+let output = model.generate("a red cube on a white table", Some(&options)).await?;
+
+let model = create_image_model("google/gemini-3.1-flash-image").await?;
+let options: ImageModelOptions = GeminiImageOptions {
+    aspect_ratio: Some("16:9".into()),
+    image_size: Some("2K".into()),
+    ..Default::default()
+}
+.into();
+let output = model.generate("a red cube on a white table", Some(&options)).await?;
 ```
 
 :::
 
-In the `openai` and `openrouter` sections, two settings are refused before anything is sent, because no model takes them: `n` outside 1 to 10, and a `transparent` background with `jpeg` output, which cannot carry one.
+For OpenAI and OpenRouter, two settings are refused before anything is sent, because no model takes them: `n` outside 1 to 10, and a `transparent` background with `jpeg` output, which cannot carry one.
 
 ### Other parameters: `extra`
 
-For a parameter the fields above don't cover, put it in the section's `extra`, written as the API's own JSON. It is merged into that API's request: objects key by key, anything else replacing what was there, so `extra` wins over a field that sets the same thing.
+For a parameter the fields above don't cover, put it in `extra`, written as the API's own JSON. It is merged into that API's request: objects key by key, anything else replacing what was there, so `extra` wins over a field that sets the same thing.
 
 ::: code-group
 
 ```python [Python]
-options = {
-    "openai": {"output_format": "webp", "extra": {"output_compression": 80, "moderation": "low"}},
-    "gemini": {"extra": {"generationConfig": {"seed": 42}}},
-    "openrouter": {"extra": {"seed": 7, "provider": {"order": ["google-ai-studio"]}}},
-}
+# openai/…
+options = {"output_format": "webp", "extra": {"output_compression": 80, "moderation": "low"}}
+# google/…
+options = {"extra": {"generationConfig": {"seed": 42}}}
+# openrouter/…
+options = {"extra": {"seed": 7, "provider": {"order": ["google-ai-studio"]}}}
 ```
 
 ```js [Node.js]
-const options = {
-  openai: { output_format: 'webp', extra: { output_compression: 80, moderation: 'low' } },
-  gemini: { extra: { generationConfig: { seed: 42 } } },
-  openrouter: { extra: { seed: 7, provider: { order: ['google-ai-studio'] } } },
-}
+// openai/…
+let options = { output_format: 'webp', extra: { output_compression: 80, moderation: 'low' } }
+// google/…
+options = { extra: { generationConfig: { seed: 42 } } }
+// openrouter/…
+options = { extra: { seed: 7, provider: { order: ['google-ai-studio'] } } }
 ```
 
 ```rust [Rust]
 use ailoy::to_value;
 
-let options = ImageModelOptions {
-    openai: Some(OpenAiImageOptions {
-        output_format: Some("webp".into()),
-        extra: Some(to_value!({"output_compression": 80, "moderation": "low"})),
-        ..Default::default()
-    }),
-    gemini: Some(GeminiImageOptions {
-        extra: Some(to_value!({"generationConfig": {"seed": 42}})),
-        ..Default::default()
-    }),
+let options: ImageModelOptions = OpenAIImageOptions {
+    output_format: Some("webp".into()),
+    extra: Some(to_value!({"output_compression": 80, "moderation": "low"})),
     ..Default::default()
-};
+}
+.into();
 ```
 
 :::

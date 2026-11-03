@@ -120,7 +120,7 @@ export interface LangModelOptions {
   output_schema?: Value
 }
 
-export interface OpenAiImageOptions {
+export interface OpenAIImageOptions {
   n?: number
   size?: string
   quality?: string
@@ -148,14 +148,10 @@ export interface OpenRouterImageOptions {
 }
 
 /**
- * One section per API, each read only by the models that call that API. `extra` is merged into
- * that API's request body, in the API's own JSON.
+ * One API's parameters, as one flat object. A model reads them as its own API's, so a key its API
+ * does not have is an error. `extra` is merged into that API's request body, in its own JSON.
  */
-export interface ImageModelOptions {
-  openai?: OpenAiImageOptions
-  gemini?: GeminiImageOptions
-  openrouter?: OpenRouterImageOptions
-}
+export type ImageModelOptions = OpenAIImageOptions | GeminiImageOptions | OpenRouterImageOptions
 
 /** What `ImageModel.generate` gives: at least one image. */
 export interface ImageOutput {
