@@ -23,7 +23,7 @@
 //! event per line from stdout (`--output-format stream-json`). The model
 //! calls the tools as declared functions: each call is reported as a
 //! `tool_use` event, the hook then stops the run, and the final `result`
-//! event closes the reply with the calls and the run's usage.
+//! event closes the reply with the calls and the usage of the reply's request.
 
 use std::{path::Path, process::Stdio};
 
@@ -742,13 +742,32 @@ fn texts_of(message: &Message) -> anyhow::Result<String> {
     Ok(texts.join("\n"))
 }
 
-/// Usage summed over every model the run used.
+/// The usage of the request the reply came from, out of the run's `stats`.
+///
+/// The run's own counts add up every request it made, and under the CLI's default model
+/// (`auto`) its router asks a classifier model first, with the latest turns of the history.
+/// `stats.models` counts each model apart, in the order each first answered or failed, so the
+/// reply's model is the last: the router's, and any the CLI fell back from after it failed,
+/// come before it. A model that both routed and answered has both requests in its counts.
+/// Without `models`, the run's counts are all there are.
+///
+/// The CLI's `output_tokens` leaves thinking out, though thinking is billed as output;
+/// `total_tokens` has it, so the output is what the total has beyond the input.
 fn parse_usage(stats: &serde_json::Value) -> Option<TokenUsage> {
+    let counts = stats["models"]
+        .as_object()
+        .and_then(|models| models.values().next_back())
+        .unwrap_or(stats);
+    let input_tokens = counts["input_tokens"].as_u64()?;
+    let output_tokens = match counts["total_tokens"].as_u64() {
+        Some(total) => total.saturating_sub(input_tokens),
+        None => counts["output_tokens"].as_u64()?,
+    };
     Some(TokenUsage {
-        input_tokens: stats["input_tokens"].as_u64()?,
-        output_tokens: stats["output_tokens"].as_u64()?,
+        input_tokens,
+        output_tokens,
         cache_creation_input_tokens: None,
-        cache_read_input_tokens: stats["cached"].as_u64(),
+        cache_read_input_tokens: counts["cached"].as_u64(),
     })
 }
 
@@ -867,6 +886,34 @@ mod tests {
             (usage.input_tokens, usage.cache_read_input_tokens),
             (10, Some(4))
         );
+    }
+
+    /// The reply's usage is its own request's, thinking counted as output. Measured on
+    /// 2026-11-03 with gemini-cli 0.66.0: a call to `get_weather` under the CLI's default model,
+    /// whose router asked `gemini-3.5-flash-lite` first and then sent the request to
+    /// `gemini-3.8-flash`, and the same call with `--model gemini-2.5-flash`.
+    #[test]
+    fn the_usage_is_the_replys_own_request() {
+        let usage = |stats: serde_json::Value| {
+            let outs = read(&[
+                serde_json::json!({"type": "message", "role": "assistant", "content": "Hi.", "delta": true}),
+                serde_json::json!({"type": "result", "status": "success", "stats": stats}),
+            ])
+            .unwrap();
+            let usage = outs.last().unwrap().usage.clone().unwrap();
+            (
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_read_input_tokens,
+            )
+        };
+        let routed = serde_json::json!({"total_tokens": 1943, "input_tokens": 1250, "output_tokens": 53, "cached": 0, "input": 1250, "duration_ms": 7651, "tool_calls": 1, "models": {
+            "gemini-3.5-flash-lite": {"total_tokens": 1343, "input_tokens": 757, "output_tokens": 33, "cached": 0, "input": 757},
+            "gemini-3.8-flash": {"total_tokens": 600, "input_tokens": 493, "output_tokens": 20, "cached": 0, "input": 493}}});
+        assert_eq!(usage(routed), (493, 600 - 493, Some(0)));
+        let named = serde_json::json!({"total_tokens": 573, "input_tokens": 504, "output_tokens": 18, "cached": 0, "input": 504, "duration_ms": 2212, "tool_calls": 1, "models": {
+            "gemini-2.5-flash": {"total_tokens": 573, "input_tokens": 504, "output_tokens": 18, "cached": 0, "input": 504}}});
+        assert_eq!(usage(named), (504, 573 - 504, Some(0)));
     }
 
     #[test]
