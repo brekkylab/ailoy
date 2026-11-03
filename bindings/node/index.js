@@ -4,9 +4,10 @@
 // with `for await`. A model is named `<org>/<name>` (`'anthropic/claude-sonnet-5-5'`) and runs on
 // the backend set for its org with `setLangModelProvider`: by default its CLI, or its own API
 // when it has none. `LangModel.create(desc)` builds one to run without an agent.
-// `ImageModel.create(desc)` builds an image model through its org's own API. A tool is built
-// by name through the provider set for it (`setToolProvider`, `registerTool`,
-// `registerMcpStdio`, ...); every built-in tool has one from the start.
+// `ImageModel.create(desc)` builds an image model through its org's own API, and
+// `ImageModel.custom(model)` runs one of your own. A tool is built by name through the provider
+// set for it (`setToolProvider`, `registerTool`, `registerMcpStdio`, ...); every built-in tool
+// has one from the start.
 //
 // Messages, specs and tool descriptions are plain objects in their JSON form; `types.d.ts`
 // spells out their shapes.

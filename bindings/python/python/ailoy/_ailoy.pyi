@@ -155,13 +155,24 @@ LangModelFactory = Callable[[str, str | None], LangModel | CustomLangModel]
 def set_lang_model_provider(org: str, provider: Backend | LangModelFactory) -> None: ...
 def get_lang_model_provider(desc: str) -> Backend | Literal["custom"] | None: ...
 def remove_lang_model_provider(org: str) -> bool: ...
+
+class CustomImageModel(Protocol):
+    """An image model of your own, as ``ImageModel.custom`` takes it. ``options`` is the dict
+    ``ImageModel.generate`` was given, or ``None``; its keys are the model's to read."""
+
+    def generate(
+        self, prompt: str, options: dict[str, Value] | None
+    ) -> ImageOutput | Awaitable[ImageOutput]: ...
+
 class ImageModel:
-    """An image model built from its desc, run on a prompt."""
+    """An image model built from its desc, or around one of your own, run on a prompt."""
 
     @staticmethod
     async def create(desc: str) -> ImageModel: ...
+    @staticmethod
+    def custom(model: CustomImageModel) -> ImageModel: ...
     async def generate(
-        self, prompt: str, *, options: ImageModelOptions | None = None
+        self, prompt: str, *, options: ImageModelOptions | dict[str, Value] | None = None
     ) -> ImageOutput: ...
 
 def set_tool_provider(name: str, func: Callable[..., Any | Awaitable[Any]]) -> None: ...

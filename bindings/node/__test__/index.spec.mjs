@@ -405,9 +405,13 @@ test('image options are checked before sending', async (t) => {
     else process.env.OPENROUTER_API_KEY = key
   })
   const model = await ImageModel.create('openrouter/x-org/some-model')
-  assert.throws(() => model.generate('x', { n: 'two' }), {
+  assert.throws(() => model.generate('x', ['n']), {
     code: 'INVALID_ARG',
     message: /not image model options/,
+  })
+  await assert.rejects(model.generate('x', { n: 'two' }), {
+    code: 'AILOY_ERROR',
+    message: /invalid type/,
   })
   await assert.rejects(model.generate('x', { n: 0 }), {
     code: 'AILOY_ERROR',
@@ -418,6 +422,53 @@ test('image options are checked before sending', async (t) => {
     code: 'AILOY_ERROR',
     message: /unknown field `thinking_level`/,
   })
+})
+
+const PIXEL = { type: 'embedded', mime_type: 'image/png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }
+
+/** An image model of the test's own, answering with one fixed image and the prompt. */
+class Painter {
+  constructor() {
+    this.options = []
+  }
+  generate(prompt, options) {
+    this.options.push(options)
+    return { images: [PIXEL], text: `painted: ${prompt}` }
+  }
+}
+
+test('a custom image model reads its own options', async () => {
+  const painter = new Painter()
+  const model = ImageModel.custom(painter)
+  const output = await model.generate('a red cube', { steps: 30, extra: { seed: 7 } })
+  assert.deepEqual(output, { images: [PIXEL], text: 'painted: a red cube' })
+  await model.generate('x')
+  assert.deepEqual(painter.options, [{ steps: 30, extra: { seed: 7 } }, null])
+})
+
+test('a custom image model may be async', async () => {
+  class Async extends Painter {
+    async generate(prompt, options) {
+      await null
+      return super.generate(prompt, options)
+    }
+  }
+  const model = ImageModel.custom(new Async())
+  assert.equal((await model.generate('hi')).text, 'painted: hi')
+})
+
+test('a custom image model needs generate, and its errors reach the caller', async () => {
+  assert.throws(() => ImageModel.custom({}), { message: /`generate`/ })
+
+  const broken = ImageModel.custom({
+    generate() {
+      throw new Error('no painters today')
+    },
+  })
+  await assert.rejects(broken.generate('x'), { code: 'AILOY_ERROR', message: /no painters today/ })
+
+  const blank = ImageModel.custom({ generate: () => ({ text: 'nothing' }) })
+  await assert.rejects(blank.generate('x'), { code: 'AILOY_ERROR' })
 })
 
 // ---- a shared console, against the console server virtx starts by default ---------------

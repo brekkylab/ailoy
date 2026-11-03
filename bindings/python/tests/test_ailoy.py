@@ -418,12 +418,66 @@ async def test_image_options_are_checked_before_sending(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "unused")
     model = await ailoy.ImageModel.create("openrouter/x-org/some-model")
     with pytest.raises(ValueError, match="not image model options"):
+        await model.generate("x", options=["n"])
+    with pytest.raises(AiloyError, match="invalid type"):
         await model.generate("x", options={"n": "two"})
     with pytest.raises(AiloyError, match="OpenRouter"):
         await model.generate("x", options={"n": 0})
     # Gemini's thinking level is not a parameter of OpenRouter's API.
     with pytest.raises(AiloyError, match="unknown field `thinking_level`"):
         await model.generate("x", options={"thinking_level": "high"})
+
+
+PIXEL = {"type": "embedded", "mime_type": "image/png", "data": b"\x89PNG"}
+
+
+class Painter:
+    """An image model of the test's own, answering with one fixed image and the prompt."""
+
+    def __init__(self):
+        self.options = []
+
+    def generate(self, prompt, options):
+        self.options.append(options)
+        return {"images": [PIXEL], "text": f"painted: {prompt}"}
+
+
+async def test_a_custom_image_model_reads_its_own_options():
+    painter = Painter()
+    model = ailoy.ImageModel.custom(painter)
+    output = await model.generate("a red cube", options={"steps": 30, "extra": {"seed": 7}})
+    assert output == {"images": [PIXEL], "text": "painted: a red cube"}
+    await model.generate("x")
+    assert painter.options == [{"steps": 30, "extra": {"seed": 7}}, None]
+
+
+async def test_a_custom_image_model_may_be_async():
+    class Async(Painter):
+        async def generate(self, prompt, options):
+            await asyncio.sleep(0)
+            return Painter.generate(self, prompt, options)
+
+    model = ailoy.ImageModel.custom(Async())
+    assert (await model.generate("hi"))["text"] == "painted: hi"
+
+
+async def test_a_custom_image_model_needs_generate_and_its_errors_reach_the_caller():
+    with pytest.raises(ValueError, match="`generate`"):
+        ailoy.ImageModel.custom(object())
+
+    class Broken:
+        def generate(self, prompt, options):
+            raise RuntimeError("no painters today")
+
+    with pytest.raises(AiloyError, match="no painters today"):
+        await ailoy.ImageModel.custom(Broken()).generate("x")
+
+    class Blank:
+        def generate(self, prompt, options):
+            return {"text": "nothing"}
+
+    with pytest.raises(AiloyError, match="an image output"):
+        await ailoy.ImageModel.custom(Blank()).generate("x")
 
 
 # ---- against the console server virtx starts by default ----------------------------

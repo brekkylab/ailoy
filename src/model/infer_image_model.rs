@@ -19,8 +19,8 @@ use crate::{
 ///
 /// The variant says nothing about the API meant: one deserialized from JSON is the first
 /// whose fields hold every key, so `{"n": 1}` written for OpenRouter is [`Self::OpenAI`].
-/// Do not branch on it. What the type does is check, where options arrive as JSON, that some
-/// API takes them, and give their JSON Schema.
+/// Do not branch on it. What the type gives is one value for any built-in API's options, a
+/// check when deserializing that one of those APIs takes every key, and their JSON Schema.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ImageModelOptions {

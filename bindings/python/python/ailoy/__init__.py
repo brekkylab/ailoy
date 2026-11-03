@@ -5,9 +5,9 @@ iterated with ``async for``. A model is named ``<org>/<name>``
 (``"anthropic/claude-sonnet-5-5"``) and runs on the backend set for its org with
 ``set_lang_model_provider``: by default its CLI, or its own API when it has none.
 ``LangModel.create(desc)`` builds one to run without an agent. ``ImageModel.create(desc)``
-builds an image model through its org's own API. A tool is built by name through the provider
-set for it (``set_tool_provider``, ``register_tool``, ``register_mcp_stdio``, ...); every
-built-in tool has one from the start.
+builds an image model through its org's own API, and ``ImageModel.custom(model)`` runs one of
+your own. A tool is built by name through the provider set for it (``set_tool_provider``,
+``register_tool``, ``register_mcp_stdio``, ...); every built-in tool has one from the start.
 
 Messages, specs and tool descriptions are dicts in their JSON form; ``ailoy.types`` spells
 out their shapes.

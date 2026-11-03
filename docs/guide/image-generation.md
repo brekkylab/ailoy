@@ -14,7 +14,7 @@ Name the model as `<org>/<name>`:
 
 Image models run only through their org's own API; the [backends](./model-providers#backends) of language models do not apply. To reach a model through OpenRouter, name it under `openrouter/`, which works next to the org's own API: `google/gemini-3.1-flash-image` and `openrouter/google/gemini-3.1-flash-image` are the same model, reached two ways.
 
-Only these three orgs are built in. A model of your own is called directly; in Rust, implementing `InferImageModel` gives it the same `generate` as the built-in models, and `options.read()` reads the options it is given as its own parameters type.
+Only these three orgs are built in; a model of your own runs through [`ImageModel.custom`](#a-model-of-your-own).
 
 ## Generating an image
 
@@ -170,6 +170,65 @@ let options = OpenAIImageOptions {
 :::
 
 The Gemini request nests its settings under `generationConfig`, so its `extra` does too. `extra` may not set what Ailoy sets itself: `model`, `prompt` and `stream` for OpenAI and OpenRouter, `contents` and `generationConfig.responseModalities` for Gemini.
+
+## A model of your own
+
+A model the three orgs do not cover, such as a local server, runs as an `ImageModel` too. Give `ImageModel.custom` an object with `generate(prompt, options)` that returns an image output, or a promise of one; in Rust, implement `InferImageModel`. The options it gets are what `generate` was given, with whatever keys your model reads, or none.
+
+::: code-group
+
+```python [Python]
+class LocalModel:
+    async def generate(self, prompt, options):
+        steps = (options or {}).get("steps", 20)
+        data = await render(prompt, steps)  # your own call
+        return {"images": [{"type": "embedded", "mime_type": "image/png", "data": data}]}
+
+model = ImageModel.custom(LocalModel())
+output = await model.generate("a red cube on a white table", options={"steps": 30})
+```
+
+```js [Node.js]
+const model = ImageModel.custom({
+  async generate(prompt, options) {
+    const steps = options?.steps ?? 20
+    const data = await render(prompt, steps) // your own call, giving a Buffer
+    return { images: [{ type: 'embedded', mime_type: 'image/png', data }] }
+  },
+})
+const output = await model.generate('a red cube on a white table', { steps: 30 })
+```
+
+```rust [Rust]
+use ailoy::model::{ImageOptions, ImageOutput, InferImageModel};
+use futures::future::BoxFuture;
+
+#[derive(Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LocalOptions {
+    steps: Option<u32>,
+}
+
+struct LocalModel;
+
+impl InferImageModel for LocalModel {
+    fn generate(
+        &self,
+        prompt: &str,
+        options: Option<&dyn ImageOptions>,
+    ) -> BoxFuture<'static, anyhow::Result<ImageOutput>> {
+        // A key `LocalOptions` does not have is an error naming it.
+        let options = options.map(|o| o.read::<LocalOptions>()).transpose();
+        let prompt = prompt.to_owned();
+        Box::pin(async move {
+            let options = options?.unwrap_or_default();
+            render(&prompt, options.steps.unwrap_or(20)).await // your own call
+        })
+    }
+}
+```
+
+:::
 
 ## Retries
 
