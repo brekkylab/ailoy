@@ -86,11 +86,9 @@ impl ContextManager {
     /// Only for the start of a turn: Claude rejects a history altered before a thinking block
     /// it is handed back, and at turn start none follows, since `marshal_messages` (Claude)
     /// and `conversation` (Bedrock) replay thinking only after the last user message.
-    ///
-    /// Returns each image replaced with its place, for [`restore_images`].
-    pub(super) fn cap_images(&self, history: &mut [Message]) -> Vec<(usize, usize, Part)> {
+    pub(super) fn cap_images(&self, history: &mut [Message]) {
         if self.max_images == 0 {
-            return Vec::new();
+            return;
         }
         let images: Vec<(usize, usize)> = history
             .iter()
@@ -104,26 +102,12 @@ impl ContextManager {
             })
             .collect();
         if images.len() <= self.max_images {
-            return Vec::new();
+            return;
         }
         let replaced = images.len().saturating_sub(self.preserve_recent_images);
-        images
-            .into_iter()
-            .take(replaced)
-            .map(|(i, j)| {
-                let part =
-                    std::mem::replace(&mut history[i].contents[j], Part::text(IMAGE_PLACEHOLDER));
-                (i, j, part)
-            })
-            .collect()
-    }
-}
-
-/// Put back the images [`cap_images`](ContextManager::cap_images) replaced, when the turn
-/// they were replaced for never reached the model.
-pub(super) fn restore_images(history: &mut [Message], replaced: Vec<(usize, usize, Part)>) {
-    for (i, j, part) in replaced {
-        history[i].contents[j] = part;
+        for (i, j) in images.into_iter().take(replaced) {
+            history[i].contents[j] = Part::text(IMAGE_PLACEHOLDER);
+        }
     }
 }
 
@@ -385,7 +369,7 @@ mod tests {
         let mut history = vec![sys(), user("u1")];
         history.extend((1..=5).map(|n| shot(&format!("c{n}"))));
         history.push(asst("a1"));
-        let replaced = with_images(4, 2).cap_images(&mut history);
+        with_images(4, 2).cap_images(&mut history);
 
         assert_eq!(history[2].contents[1].as_text(), Some(IMAGE_PLACEHOLDER));
         assert!(history[2..=4].iter().all(|m| m.contents[1].is_text()));
@@ -393,18 +377,13 @@ mod tests {
         // The note beside each screenshot stays.
         assert_eq!(history[2].contents[0].as_text(), Some("the page"));
         assert_eq!(history[2].id.as_deref(), Some("c1"));
-
-        let places: Vec<_> = replaced.iter().map(|(i, j, _)| (*i, *j)).collect();
-        assert_eq!(places, [(2, 1), (3, 1), (4, 1)]);
-        restore_images(&mut history, replaced);
-        assert_eq!(images_in(&history), 5);
     }
 
     #[test]
     fn test_at_the_cap_nothing_goes() {
         let mut history = vec![sys(), user("u1")];
         history.extend((1..=4).map(|n| shot(&format!("c{n}"))));
-        assert!(with_images(4, 2).cap_images(&mut history).is_empty());
+        with_images(4, 2).cap_images(&mut history);
         assert_eq!(images_in(&history), 4);
     }
 
@@ -420,7 +399,7 @@ mod tests {
             shot("c2"),
             asst("a1"),
         ];
-        assert!(with_images(2, 1).cap_images(&mut history).is_empty());
+        with_images(2, 1).cap_images(&mut history);
         assert_eq!(images_in(&history), 5);
 
         // A third screenshot passes it: the two oldest go, the person's three stay.
@@ -443,7 +422,7 @@ mod tests {
         let mut history = vec![sys(), user("u1")];
         history.extend((1..=12).map(|n| shot(&format!("c{n}"))));
 
-        assert!(with_images(0, 0).cap_images(&mut history).is_empty());
+        with_images(0, 0).cap_images(&mut history);
         assert_eq!(images_in(&history), 12);
 
         with_images(3, 0).cap_images(&mut history);

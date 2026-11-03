@@ -9,8 +9,8 @@ use tokio::sync::Mutex;
 use virtx::console::ConsoleClient;
 
 use super::{
-    AgentSpec, AgentState, ContextManager, context::restore_images, image::fit_images,
-    skill::render_skills, spec::split_desc,
+    AgentSpec, AgentState, ContextManager, image::fit_images, skill::render_skills,
+    spec::split_desc,
 };
 use crate::{
     browser,
@@ -178,7 +178,7 @@ impl Agent {
     /// model's output limit cut short is yielded and then ends the turn with an error.
     pub fn run(&mut self, query: Message) -> BoxStream<'_, anyhow::Result<MessageOutput>> {
         Box::pin(async_stream::try_stream! {
-            let mut capped = self.begin_turn(query).await;
+            self.begin_turn(query).await;
             let mut committed = false;
             // The latest tool results as they were before what the API refused in them was
             // replaced, while that stands: a second refusal puts them back and ends the turn.
@@ -200,7 +200,6 @@ impl Agent {
                         }
                         if !committed {
                             self.state.history.pop();
-                            restore_images(&mut self.state.history, std::mem::take(&mut capped));
                         }
                         Err(e)?
                     }
@@ -237,7 +236,7 @@ impl Agent {
         query: Message,
     ) -> BoxStream<'_, anyhow::Result<MessageDeltaOutput>> {
         Box::pin(async_stream::try_stream! {
-            let mut capped = self.begin_turn(query).await;
+            self.begin_turn(query).await;
             let mut committed = false;
             let mut refused: Option<Vec<Message>> = None;
             loop {
@@ -272,7 +271,6 @@ impl Agent {
                         }
                         if !committed {
                             self.state.history.pop();
-                            restore_images(&mut self.state.history, std::mem::take(&mut capped));
                         }
                         Err(e)?
                     }
@@ -301,21 +299,19 @@ impl Agent {
     }
 
     /// Add `query` to the history, led by a browser reconnection the agent has not heard of,
-    /// and tell the model where its console mounts are. Returns the images capped first, for
-    /// [`restore_images`] should the turn fail before its first reply.
-    async fn begin_turn(&mut self, mut query: Message) -> Vec<(usize, usize, Part)> {
+    /// and tell the model where its console mounts are.
+    async fn begin_turn(&mut self, mut query: Message) {
         close_dangling_calls(&mut self.state.history);
         // Images are capped for every agent; only the token limit is opt-in.
         let default = ContextManager::default();
         let cm = self.context_manager.as_ref().unwrap_or(&default);
-        let capped = cm.cap_images(&mut self.state.history);
+        cm.cap_images(&mut self.state.history);
         if let Some(note) = self.state.browser.as_ref().and_then(|b| b.catch_up()) {
             query.contents.insert(0, Part::text(note));
         }
         fit_images(&mut query);
         self.state.history.push(query);
         self.seed_mounts().await;
-        capped
     }
 
     /// Connects this agent's browser now rather than on its first use. This is when the browser
@@ -1299,36 +1295,44 @@ mod tests {
         );
     }
 
+    /// A turn that fails before its first reply takes its query back out but leaves the
+    /// images replaced, even once truncation has reshaped the results they were in: a retry
+    /// caps the same images again.
     #[tokio::test]
-    async fn test_a_turn_refused_before_its_first_reply_puts_the_images_back() {
-        let name = "test-agent-images-refused";
-        let (_, spec) = scripted(
-            name,
-            [
-                calls(&[("c1", "shot")]),
-                calls(&[("c2", "shot")]),
-                answer("one"),
-                refused(),
-                refused(),
-            ],
-        );
-        let mut agent = Agent::try_new(spec).await.unwrap();
-        agent.set_context_manager(Some(ContextManager {
-            max_images: 1,
-            preserve_recent_images: 0,
-            ..Default::default()
-        }));
+    async fn test_a_failed_turn_leaves_the_images_replaced() {
+        for streamed in [false, true] {
+            let name = format!("test-agent-images-failed-{streamed}");
+            let (_, spec) = scripted(
+                &name,
+                [
+                    calls(&[("c1", "shot")]),
+                    calls(&[("c2", "shot")]),
+                    with_input(answer("one"), 200),
+                    Err(anyhow::anyhow!("overloaded")),
+                ],
+            );
+            let mut agent = Agent::try_new(spec).await.unwrap();
+            agent.set_context_manager(Some(ContextManager {
+                max_input_tokens: 100,
+                preserve_recent_turns: 1,
+                max_images: 1,
+                preserve_recent_images: 0,
+            }));
 
-        agent.run(user("first")).for_each(|_| async {}).await;
-        let before = agent.history().to_vec();
-        assert_eq!(images_in(&before), 2);
+            agent.run(user("first")).for_each(|_| async {}).await;
+            let turns = agent.history().len();
+            let failed = if streamed {
+                let outputs: Vec<_> = agent.run_stream(user("second")).collect().await;
+                outputs.last().unwrap().is_err()
+            } else {
+                let outputs: Vec<_> = agent.run(user("second")).collect().await;
+                outputs.last().unwrap().is_err()
+            };
 
-        let outputs: Vec<_> = agent.run(user("second")).collect().await;
-        assert!(outputs.last().unwrap().is_err());
-        assert_eq!(
-            serde_json::to_value(agent.history()).unwrap(),
-            serde_json::to_value(&before).unwrap()
-        );
+            assert!(failed, "streamed: {streamed}");
+            assert_eq!(agent.history().len(), turns, "streamed: {streamed}");
+            assert_eq!(images_in(agent.history()), 0, "streamed: {streamed}");
+        }
     }
 
     /// A part is cut only when it has more characters than the limit, a value counted in those
