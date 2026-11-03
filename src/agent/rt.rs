@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 use virtx::console::ConsoleClient;
 
 use super::{
-    AgentSpec, AgentState, ContextManager, image::fit_images, skill::render_skills,
+    AgentSpec, AgentState, ContextManager, image::fit_images_off_runtime, skill::render_skills,
     spec::split_desc,
 };
 use crate::{
@@ -309,7 +309,7 @@ impl Agent {
         if let Some(note) = self.state.browser.as_ref().and_then(|b| b.catch_up()) {
             query.contents.insert(0, Part::text(note));
         }
-        fit_images(&mut query);
+        let query = fit_images_off_runtime(query).await;
         self.state.history.push(query);
         self.seed_mounts().await;
     }
@@ -602,8 +602,7 @@ async fn call_tool(
     };
     message.role = Role::Tool;
     message.id.get_or_insert(id);
-    fit_images(&mut message);
-    cap_tool_result(message)
+    cap_tool_result(fit_images_off_runtime(message).await)
 }
 
 /// Clamp every part of a tool result, so large payloads (e.g. web pages) don't pile up in

@@ -26,18 +26,44 @@ const MAX_PNG_FROM_WEBP_BYTES: usize = 3_750_000;
 
 /// Shrink every embedded image of `message` to fit [`MAX_IMAGE_EDGE`], keeping its shape.
 /// An image that fits, is reached by URL, cannot be read, or is animated is left as it is:
-/// what becomes of an animation's frames is the model's API to decide.
+/// what becomes of an animation's frames is the model's API to decide. So is one whose
+/// decoder panics, so that a malformed image never takes the turn down.
 pub(crate) fn fit_images(message: &mut Message) {
     for part in &mut message.contents {
         if let Part::Image {
             image: PartImage::Embedded { mime_type, data },
         } = part
-            && let Some((format, fitted)) = fit(data.as_ref())
+            && let Ok(Some((format, fitted))) = std::panic::catch_unwind(|| fit(data.as_ref()))
         {
             *mime_type = format.to_mime_type().to_owned();
             *data = fitted.into();
         }
     }
+}
+
+/// [`fit_images`] on a blocking thread, since decoding and encoding a large image takes
+/// a runtime thread for up to a few hundred milliseconds. A message with no embedded image
+/// stays where it is, and one whose thread never ran, as when the runtime shuts down, comes
+/// back unfitted.
+pub(crate) async fn fit_images_off_runtime(message: Message) -> Message {
+    let embedded = message.contents.iter().any(|part| {
+        matches!(
+            part,
+            Part::Image {
+                image: PartImage::Embedded { .. }
+            }
+        )
+    });
+    if !embedded {
+        return message;
+    }
+    let mut fitted = message.clone();
+    tokio::task::spawn_blocking(move || {
+        fit_images(&mut fitted);
+        fitted
+    })
+    .await
+    .unwrap_or(message)
 }
 
 /// `data` re-encoded with its longest edge at [`MAX_IMAGE_EDGE`], turned upright by its EXIF
