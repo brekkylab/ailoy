@@ -1269,11 +1269,16 @@ mod tests {
         let name = "test-agent-query-images";
         let (model, spec) = scripted(
             name,
-            [calls(&[("c1", "shot")]), answer("one"), answer("two")],
+            [
+                calls(&[("c1", "shot")]),
+                calls(&[("c2", "shot")]),
+                answer("one"),
+                answer("two"),
+            ],
         );
         let mut agent = Agent::try_new(spec).await.unwrap();
         agent.set_context_manager(Some(ContextManager {
-            max_images: 0,
+            max_images: 1,
             preserve_recent_images: 0,
             ..Default::default()
         }));
@@ -1287,7 +1292,8 @@ mod tests {
 
         let seen = model.seen.lock().unwrap();
         let request = seen.last().unwrap();
-        assert_eq!(images_in(request), 5);
+        // Both screenshots go; the person's four stay.
+        assert_eq!(images_in(request), 4);
         assert!(
             request.last().unwrap().contents[1..]
                 .iter()
