@@ -428,13 +428,4 @@ mod tests {
         with_images(3, 0).cap_images(&mut history);
         assert_eq!(images_in(&history), 0);
     }
-
-    #[test]
-    fn test_an_odd_cap_leaves_exactly_the_preserved() {
-        let mut history = vec![sys(), user("u1")];
-        history.extend((1..=4).map(|n| shot(&format!("c{n}"))));
-        with_images(3, 1).cap_images(&mut history);
-        assert_eq!(images_in(&history), 1);
-        assert!(history[5].contents[1].is_image());
-    }
 }

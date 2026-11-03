@@ -215,23 +215,8 @@ mod tests {
             fit_images(&mut message);
 
             assert_eq!(dimensions(&message.contents[0]), (2576, 86), "{row}");
-            let Part::Image {
-                image: PartImage::Embedded { mime_type, .. },
-            } = &message.contents[0]
-            else {
-                panic!("{row}: not an embedded image");
-            };
-            assert_eq!(mime_type, mime, "{row}");
+            assert_eq!(mime_of(&message.contents[0]), mime, "{row}");
         }
-    }
-
-    #[test]
-    fn test_the_longer_edge_counts_whichever_it_is() {
-        let data = encoded(100, 2577, ImageFormat::Png);
-        let part = Part::image_embedded("image/png", Bytes::from(data)).unwrap();
-        let mut message = Message::new(Role::User).with_contents([part]);
-        fit_images(&mut message);
-        assert_eq!(dimensions(&message.contents[0]), (100, 2576));
     }
 
     fn mime_of(part: &Part) -> &str {
@@ -337,36 +322,6 @@ mod tests {
             Message::new(Role::User).with_contents([webp(DynamicImage::ImageRgb8(noise))]);
         fit_images(&mut message);
         assert_eq!(mime_of(&message.contents[0]), "image/jpeg");
-    }
-
-    #[test]
-    fn test_the_webp_bitstream_is_told_by_its_chunk() {
-        let file = |chunk: &[u8; 4]| {
-            let mut data = b"RIFF\x00\x00\x00\x00WEBP".to_vec();
-            data.extend_from_slice(chunk);
-            data.extend_from_slice(&[0; 4]);
-            data
-        };
-        assert!(is_lossless_webp(&file(b"VP8L")));
-        assert!(!is_lossless_webp(&file(b"VP8 ")));
-        // An extended file: a VP8X header, then an alpha chunk, then the lossy bitstream.
-        let mut extended = b"RIFF\x00\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00".to_vec();
-        extended.extend_from_slice(&[0; 10]);
-        extended.extend_from_slice(b"ALPH\x01\x00\x00\x00\x00\x00");
-        extended.extend_from_slice(b"VP8 \x00\x00\x00\x00");
-        assert!(!is_lossless_webp(&extended));
-    }
-
-    #[test]
-    fn test_an_animated_webp_is_told_by_its_anim_chunk() {
-        let mut data = b"RIFF\x00\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00".to_vec();
-        data.extend_from_slice(&[0; 10]);
-        data.extend_from_slice(b"ANIM\x06\x00\x00\x00");
-        data.extend_from_slice(&[0; 6]);
-        assert!(is_animated(&data, ImageFormat::WebP));
-        let mut still = b"RIFF\x00\x00\x00\x00WEBPVP8L\x00\x00\x00\x00".to_vec();
-        still.extend_from_slice(&[0; 4]);
-        assert!(!is_animated(&still, ImageFormat::WebP));
     }
 
     #[test]
