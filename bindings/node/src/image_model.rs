@@ -3,7 +3,7 @@
 //!
 //! A model of JavaScript's own is any object with `generate(prompt, options)`, returning an
 //! `ImageOutput` or a promise of one, called with `this` as the model. `options` is the object
-//! `ImageModel.generate` was given, or `null`; its keys are the model's to read.
+//! `ImageModel.generate` was given, or `{}` without any; its keys are the model's to read.
 
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -102,7 +102,7 @@ impl JsImageModel {
 }
 
 /// The arguments a custom model's `generate` is called with.
-type GenerateArgs = FnArgs<(String, Json<Option<Value>>)>;
+type GenerateArgs = FnArgs<(String, Json<Value>)>;
 
 /// An image model of JavaScript's own.
 struct JsModel(Arc<Tsfn<GenerateArgs, Returned<ImageOutput>>>);
@@ -115,7 +115,11 @@ impl InferImageModel for JsModel {
     ) -> BoxFuture<'static, anyhow::Result<ImageOutput>> {
         let generate = self.0.clone();
         let prompt = prompt.to_owned();
-        let options = options.map(|o| o.read::<Value>()).transpose();
+        // No options reach the model as an empty object, so it need not tell the two apart.
+        let options = options
+            .map(|o| o.read::<Value>())
+            .transpose()
+            .map(|o| o.unwrap_or_else(Value::object_empty));
         Box::pin(async move {
             let args = FnArgs {
                 data: (prompt, Json(options?)),

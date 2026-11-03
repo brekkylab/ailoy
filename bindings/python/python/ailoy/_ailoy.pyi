@@ -158,10 +158,11 @@ def remove_lang_model_provider(org: str) -> bool: ...
 
 class CustomImageModel(Protocol):
     """An image model of your own, as ``ImageModel.custom`` takes it. ``options`` is the dict
-    ``ImageModel.generate`` was given, or ``None``; its keys are the model's to read."""
+    ``ImageModel.generate`` was given, or ``{}`` without any; its keys are the model's to
+    read."""
 
     def generate(
-        self, prompt: str, options: dict[str, Value] | None
+        self, prompt: str, options: dict[str, Value]
     ) -> ImageOutput | Awaitable[ImageOutput]: ...
 
 class ImageModel:

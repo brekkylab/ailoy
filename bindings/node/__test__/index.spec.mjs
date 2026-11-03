@@ -443,7 +443,7 @@ test('a custom image model reads its own options', async () => {
   const output = await model.generate('a red cube', { steps: 30, extra: { seed: 7 } })
   assert.deepEqual(output, { images: [PIXEL], text: 'painted: a red cube' })
   await model.generate('x')
-  assert.deepEqual(painter.options, [{ steps: 30, extra: { seed: 7 } }, null])
+  assert.deepEqual(painter.options, [{ steps: 30, extra: { seed: 7 } }, {}])
 })
 
 test('a custom image model may be async', async () => {

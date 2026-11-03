@@ -173,14 +173,14 @@ The Gemini request nests its settings under `generationConfig`, so its `extra` d
 
 ## A model of your own
 
-A model the three orgs do not cover, such as a local server, runs as an `ImageModel` too. Give `ImageModel.custom` an object with `generate(prompt, options)` that returns an image output, or a promise of one; in Rust, implement `InferImageModel`. The options it gets are what `generate` was given, with whatever keys your model reads, or none.
+A model the three orgs do not cover, such as a local server, runs as an `ImageModel` too. Give `ImageModel.custom` an object with `generate(prompt, options)` that returns an image output, or a promise of one; in Rust, implement `InferImageModel`. The options it gets are what `generate` was given, with whatever keys your model reads, or an empty one without any.
 
 ::: code-group
 
 ```python [Python]
 class LocalModel:
     async def generate(self, prompt, options):
-        steps = (options or {}).get("steps", 20)
+        steps = options.get("steps", 20)
         data = await render(prompt, steps)  # your own call
         return {"images": [{"type": "embedded", "mime_type": "image/png", "data": data}]}
 
@@ -191,7 +191,7 @@ output = await model.generate("a red cube on a white table", options={"steps": 3
 ```js [Node.js]
 const model = ImageModel.custom({
   async generate(prompt, options) {
-    const steps = options?.steps ?? 20
+    const steps = options.steps ?? 20
     const data = await render(prompt, steps) // your own call, giving a Buffer
     return { images: [{ type: 'embedded', mime_type: 'image/png', data }] }
   },

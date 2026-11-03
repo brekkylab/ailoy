@@ -448,7 +448,7 @@ async def test_a_custom_image_model_reads_its_own_options():
     output = await model.generate("a red cube", options={"steps": 30, "extra": {"seed": 7}})
     assert output == {"images": [PIXEL], "text": "painted: a red cube"}
     await model.generate("x")
-    assert painter.options == [{"steps": 30, "extra": {"seed": 7}}, None]
+    assert painter.options == [{"steps": 30, "extra": {"seed": 7}}, {}]
 
 
 async def test_a_custom_image_model_may_be_async():

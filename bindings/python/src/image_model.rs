@@ -3,8 +3,8 @@
 //!
 //! A model of Python's own is any object with `generate(prompt, options)`, returning an
 //! `ImageOutput` dict or an awaitable of one. `options` is the dict `ImageModel.generate` was
-//! given, or `None`; its keys are the model's to read. `generate` runs off the event loop when
-//! synchronous and on the caller's when async.
+//! given, or `{}` without any; its keys are the model's to read. `generate` runs off the event
+//! loop when synchronous and on the caller's when async.
 
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -92,7 +92,11 @@ impl InferImageModel for PyModel {
     ) -> BoxFuture<'static, anyhow::Result<ImageOutput>> {
         let model = self.0.clone();
         let prompt = prompt.to_owned();
-        let options = options.map(|o| o.read::<Value>()).transpose();
+        // No options reach the model as an empty object, so it need not tell the two apart.
+        let options = options
+            .map(|o| o.read::<Value>())
+            .transpose()
+            .map(|o| o.unwrap_or_else(Value::object_empty));
         Box::pin(async move {
             let options = options?;
             let returned = call_py(move |py| {
