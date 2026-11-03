@@ -87,9 +87,9 @@ With `preserve_recent_turns` at `0`, every tool result is replaced, those of the
 
 ## Images past the cap
 
-A screenshot the agent takes stays in a tool result and is sent again with every call, at about 1,500 tokens each, and a screen changes with every click. So at the start of each turn, when the tool results hold more than `max_images` images, the oldest become the text `[image from an earlier turn removed]` until `preserve_recent_images` remain. Many go at once, so the prompt cache breaks once in several turns rather than at every one.
+A screenshot the agent takes stays in a tool result and is sent again with every call, at about 1,300 tokens for a 1280×800 screenshot, and a screen changes with every click. So at the start of each turn, when the tool results hold more than `max_images` images, the oldest become the text `[image from an earlier turn removed]` until `preserve_recent_images` remain. Many go at once, so the prompt cache breaks once in several turns rather than at every one.
 
-- Only images in tool results count and only they are replaced: a screenshot, an image read with `imgread`, an image an MCP tool returned. Images you attach to a message are never touched.
+- Only images in tool results count and only they are replaced: a screenshot, an image read with `imgread`, an image an MCP tool returned. Images you attach to a message are never replaced.
 - Within a turn nothing is replaced, so a turn of many screenshots sends them all until the next turn starts. Claude rejects a history altered before thinking it is handed back, and only at the start of a turn is there none.
 - The cap counts across every turn, the last `preserve_recent_turns` included.
 
