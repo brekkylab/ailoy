@@ -233,6 +233,12 @@ impl GeminiCliModel {
                 // Keeps the directory listing out of the context the CLI adds.
                 "includeDirectoryTree": false,
             },
+            "model": {
+                // The CLI's default, kept should the user's settings turn the check on: it asks
+                // another model whether to go on after the reply, and that request would be
+                // the last in the run's stats, which `parse_usage` reads the reply's usage from.
+                "skipNextSpeakerCheck": true,
+            },
             "hooksConfig": {
                 // On even if the user's settings turn hooks off, or the hook would not run.
                 "enabled": true,
@@ -745,23 +751,31 @@ fn texts_of(message: &Message) -> anyhow::Result<String> {
 /// The usage of the request the reply came from, out of the run's `stats`.
 ///
 /// The run's own counts add up every request it made, and under the CLI's default model
-/// (`auto`) its router asks a classifier model first, with the latest turns of the history.
-/// `stats.models` counts each model apart, in the order each first answered or failed, so the
-/// reply's model is the last: the router's, and any the CLI fell back from after it failed,
-/// come before it. A model that both routed and answered has both requests in its counts.
-/// Without `models`, the run's counts are all there are.
+/// (`auto`) its router asks a classifier model first, with the latest entries of the history.
+/// `stats.models` counts each model apart, in the order each first returned or failed a
+/// response. With no request after the reply (see [`GeminiCliModel::settings`]), the reply's
+/// model is the last of those that has tokens: models that only failed have none. A model
+/// that served an earlier request of the run as well has that request in its counts. Without
+/// `models`, or with it empty, the run's counts are all there are.
 ///
-/// The CLI's `output_tokens` leaves thinking out, though thinking is billed as output;
-/// `total_tokens` has it, so the output is what the total has beyond the input.
+/// The CLI's `output_tokens` leaves thinking out, though thinking is billed as output, and
+/// `total_tokens` has it. So the output is what the total has beyond the input, unless the
+/// total is missing or smaller than the input and output it should hold.
 fn parse_usage(stats: &serde_json::Value) -> Option<TokenUsage> {
+    let has_tokens = |counts: &&serde_json::Value| {
+        ["input_tokens", "output_tokens", "total_tokens"]
+            .iter()
+            .any(|key| counts[*key].as_u64().unwrap_or(0) > 0)
+    };
     let counts = stats["models"]
         .as_object()
-        .and_then(|models| models.values().next_back())
+        .and_then(|models| models.values().rev().find(has_tokens))
         .unwrap_or(stats);
     let input_tokens = counts["input_tokens"].as_u64()?;
+    let reported_output = counts["output_tokens"].as_u64()?;
     let output_tokens = match counts["total_tokens"].as_u64() {
-        Some(total) => total.saturating_sub(input_tokens),
-        None => counts["output_tokens"].as_u64()?,
+        Some(total) if total >= input_tokens + reported_output => total - input_tokens,
+        _ => reported_output,
     };
     Some(TokenUsage {
         input_tokens,
@@ -883,37 +897,95 @@ mod tests {
         );
         let usage = last.usage.as_ref().unwrap();
         assert_eq!(
-            (usage.input_tokens, usage.cache_read_input_tokens),
-            (10, Some(4))
-        );
-    }
-
-    /// The reply's usage is its own request's, thinking counted as output. Measured on
-    /// 2026-11-03 with gemini-cli 0.66.0: a call to `get_weather` under the CLI's default model,
-    /// whose router asked `gemini-3.5-flash-lite` first and then sent the request to
-    /// `gemini-3.8-flash`, and the same call with `--model gemini-2.5-flash`.
-    #[test]
-    fn the_usage_is_the_replys_own_request() {
-        let usage = |stats: serde_json::Value| {
-            let outs = read(&[
-                serde_json::json!({"type": "message", "role": "assistant", "content": "Hi.", "delta": true}),
-                serde_json::json!({"type": "result", "status": "success", "stats": stats}),
-            ])
-            .unwrap();
-            let usage = outs.last().unwrap().usage.clone().unwrap();
             (
                 usage.input_tokens,
                 usage.output_tokens,
-                usage.cache_read_input_tokens,
-            )
-        };
-        let routed = serde_json::json!({"total_tokens": 1943, "input_tokens": 1250, "output_tokens": 53, "cached": 0, "input": 1250, "duration_ms": 7651, "tool_calls": 1, "models": {
-            "gemini-3.5-flash-lite": {"total_tokens": 1343, "input_tokens": 757, "output_tokens": 33, "cached": 0, "input": 757},
-            "gemini-3.8-flash": {"total_tokens": 600, "input_tokens": 493, "output_tokens": 20, "cached": 0, "input": 493}}});
-        assert_eq!(usage(routed), (493, 600 - 493, Some(0)));
-        let named = serde_json::json!({"total_tokens": 573, "input_tokens": 504, "output_tokens": 18, "cached": 0, "input": 504, "duration_ms": 2212, "tool_calls": 1, "models": {
-            "gemini-2.5-flash": {"total_tokens": 573, "input_tokens": 504, "output_tokens": 18, "cached": 0, "input": 504}}});
-        assert_eq!(usage(named), (504, 573 - 504, Some(0)));
+                usage.cache_read_input_tokens
+            ),
+            (10, 5, Some(4))
+        );
+    }
+
+    /// The `(input, output, cached)` usage `stats` gives a reply.
+    fn usage_of(stats: serde_json::Value) -> (u64, u64, Option<u64>) {
+        let outs = read(&[
+            serde_json::json!({"type": "message", "role": "assistant", "content": "Hi.", "delta": true}),
+            serde_json::json!({"type": "result", "status": "success", "stats": stats}),
+        ])
+        .unwrap();
+        let usage = outs.last().unwrap().usage.clone().unwrap();
+        (
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cache_read_input_tokens,
+        )
+    }
+
+    /// The reply's usage is its own request's, thinking counted as output. The first two rows
+    /// are the `stats` of a call to `get_weather`, measured on 2026-11-03 with gemini-cli
+    /// 0.66.0: under the CLI's default model, whose router asked `gemini-3.5-flash-lite` before
+    /// the request went to `gemini-3.8-flash`, and with `--model gemini-2.5-flash`.
+    #[test]
+    fn the_usage_is_the_replys_own_request() {
+        let counts = |input: u64, output: u64, total: u64| serde_json::json!({"total_tokens": total, "input_tokens": input, "output_tokens": output, "cached": 0, "input": input});
+        let run = |models: serde_json::Value| serde_json::json!({"total_tokens": 1943, "input_tokens": 1250, "output_tokens": 53, "cached": 0, "input": 1250, "duration_ms": 1, "tool_calls": 1, "models": models});
+        for (row, stats, usage) in [
+            (
+                "routed",
+                run(
+                    serde_json::json!({"gemini-3.5-flash-lite": counts(757, 33, 1343), "gemini-3.8-flash": counts(493, 20, 600)}),
+                ),
+                (493, 600 - 493, Some(0)),
+            ),
+            (
+                "named",
+                run(serde_json::json!({"gemini-2.5-flash": counts(504, 18, 573)})),
+                (504, 573 - 504, Some(0)),
+            ),
+            // The CLI's order, not the names', says which model answered.
+            (
+                "order",
+                run(
+                    serde_json::json!({"zz-router": counts(757, 33, 1343), "aa-answer": counts(493, 20, 600)}),
+                ),
+                (493, 107, Some(0)),
+            ),
+            // A model that only failed after the reply has no tokens to read.
+            (
+                "failed last",
+                run(serde_json::json!({"a": counts(493, 20, 600), "b": counts(0, 0, 0)})),
+                (493, 107, Some(0)),
+            ),
+            (
+                "no total",
+                run(
+                    serde_json::json!({"a": {"input_tokens": 100, "output_tokens": 5, "cached": 0}}),
+                ),
+                (100, 5, Some(0)),
+            ),
+            (
+                "total short",
+                run(serde_json::json!({"a": counts(100, 5, 0)})),
+                (100, 5, Some(0)),
+            ),
+            (
+                "no models",
+                run(serde_json::json!({})),
+                (1250, 1943 - 1250, Some(0)),
+            ),
+        ] {
+            assert_eq!(usage_of(stats), usage, "{row}");
+        }
+    }
+
+    /// The project settings keep the check that would make a request after the reply off, so
+    /// the reply's model stays the last in the run's stats.
+    #[test]
+    fn settings_skip_the_next_speaker_check() {
+        let settings = GeminiCliModel::new()
+            .settings(&LangModelOptions::default())
+            .unwrap();
+        assert_eq!(settings["model"]["skipNextSpeakerCheck"], true);
     }
 
     #[test]
