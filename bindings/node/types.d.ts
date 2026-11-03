@@ -148,8 +148,9 @@ export interface OpenRouterImageOptions {
 }
 
 /**
- * One API's parameters, as one flat object. A model reads them as its own API's, so a key its API
- * does not have is an error. `extra` is merged into that API's request body, in its own JSON.
+ * The options of one built-in API, as one flat object; no Rust type has this name. A model reads
+ * them as its own API's, so a key its API does not have is an error. `extra` is merged into that
+ * API's request body, in its own JSON.
  */
 export type ImageModelOptions = OpenAIImageOptions | GeminiImageOptions | OpenRouterImageOptions
 

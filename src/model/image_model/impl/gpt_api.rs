@@ -284,7 +284,7 @@ fn parse_usage(usage: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{GeminiImageOptions, ImageModelOptions, OpenRouterImageOptions};
+    use crate::model::{GeminiImageOptions, OpenRouterImageOptions};
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
@@ -306,14 +306,14 @@ mod tests {
     async fn generate_takes_only_fields_the_openai_api_has() {
         let model = GptImageApiModel::new("gpt-image-1", "sk-test");
         // The key is fake, so anything that reached the network would fail differently.
-        // One API's options type is passed as it is, as is `ImageModelOptions`.
+        // An API's options type is passed as it is, as is plain JSON.
         let gemini = GeminiImageOptions {
             aspect_ratio: Some("16:9".to_owned()),
             ..Default::default()
         };
         for options in [
             &gemini as &dyn ImageOptions,
-            &ImageModelOptions::from(gemini.clone()),
+            &serde_json::json!({"aspect_ratio": "16:9"}),
         ] {
             let err = model
                 .generate("a red cube", Some(options))

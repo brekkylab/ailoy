@@ -164,8 +164,9 @@ class OpenRouterImageOptions(TypedDict):
     extra: NotRequired[dict[str, Value]]
 
 
-# One API's parameters, as one flat dict. A model reads them as its own API's, so a key its
-# API does not have raises. ``extra`` is merged into that API's request body, in its own JSON.
+# The options of one built-in API, as one flat dict; no Rust type has this name. A model reads
+# them as its own API's, so a key its API does not have raises. ``extra`` is merged into that
+# API's request body, in its own JSON.
 ImageModelOptions = Union[OpenAIImageOptions, GeminiImageOptions, OpenRouterImageOptions]
 
 
