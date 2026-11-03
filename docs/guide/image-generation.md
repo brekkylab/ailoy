@@ -226,6 +226,10 @@ impl InferImageModel for LocalModel {
         })
     }
 }
+
+let model = LocalModel;
+let options = serde_json::json!({"steps": 30});
+let output = model.generate("a red cube on a white table", Some(&options)).await?;
 ```
 
 :::
