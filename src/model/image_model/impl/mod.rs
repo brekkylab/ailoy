@@ -24,7 +24,7 @@ fn read_options<T: serde::de::DeserializeOwned + Default>(
 
 /// Deep-merges `extra` into the request `body`: objects merge key by key, any other value
 /// replaces. `extra` must be an object and may not set a `reserved` path (dotted, as in
-/// `generationConfig.responseModalities`).
+/// `generationConfig.responseModalities`), nor replace an object on the way to one.
 fn merge_extra(
     body: &mut serde_json::Value,
     extra: Option<&crate::datatype::Value>,
@@ -38,9 +38,20 @@ fn merge_extra(
         anyhow::bail!("`extra` must be a JSON object");
     }
     for path in reserved {
-        let pointer = format!("/{}", path.replace('.', "/"));
-        if extra.pointer(&pointer).is_some() {
-            anyhow::bail!("`extra` may not set `{path}`");
+        let keys: Vec<&str> = path.split('.').collect();
+        let mut value = &extra;
+        for (depth, key) in keys.iter().enumerate() {
+            let Some(next) = value.get(key) else {
+                break;
+            };
+            if depth + 1 == keys.len() {
+                anyhow::bail!("`extra` may not set `{path}`");
+            }
+            if !next.is_object() {
+                let prefix = keys[..=depth].join(".");
+                anyhow::bail!("`extra` may not replace `{prefix}`, which holds `{path}`");
+            }
+            value = next;
         }
     }
     merge(body, extra);
@@ -132,6 +143,15 @@ mod tests {
         assert_eq!(err.to_string(), "`extra` may not set `a.b`");
         // A sibling of a reserved path is fine.
         merge_extra(&mut body, Some(&extra), &["a.c"]).unwrap();
+        // Anything but an object on the way would wipe the reserved path out.
+        for extra in [serde_json::json!({"a": null}), serde_json::json!({"a": 1})] {
+            let extra = crate::datatype::Value::from(extra);
+            let err = merge_extra(&mut body, Some(&extra), &["a.b"]).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "`extra` may not replace `a`, which holds `a.b`"
+            );
+        }
 
         let err = merge_extra(&mut body, Some(&crate::to_value!([1])), &[]).unwrap_err();
         assert!(err.to_string().contains("must be a JSON object"), "{err}");

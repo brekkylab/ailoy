@@ -10,9 +10,8 @@ use crate::{
 /// Options for one image generation call: one API's parameters, under that API's own names,
 /// as one flat JSON object such as `{"size": "1536x1024", "quality": "high"}`.
 ///
-/// Every serializable type is one, so an API's options type ([`OpenAIImageOptions`],
-/// [`GeminiImageOptions`], [`OpenRouterImageOptions`]), a `serde_json::Value` or a model's own
-/// options type is passed as it is. A model reads the options as its own API's parameters,
+/// Every serializable type is one, so an API's options type, a `serde_json::Value` or a
+/// model's own options type is passed as it is. A model reads the options as its own API's parameters,
 /// whichever type they were built as, so options whose fields another API also has work there
 /// too; a field its API does not have, or anything but a JSON object, is an error raised
 /// before anything is sent.

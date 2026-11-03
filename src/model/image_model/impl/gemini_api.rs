@@ -530,6 +530,11 @@ mod tests {
             err_for(to_value!({"generationConfig": {"responseModalities": ["IMAGE"]}})),
             "`extra` may not set `generationConfig.responseModalities`"
         );
+        assert_eq!(
+            err_for(serde_json::json!({"generationConfig": null}).into()),
+            "`extra` may not replace `generationConfig`, which holds \
+             `generationConfig.responseModalities`"
+        );
         // Beside the reserved key, `generationConfig` is open.
         let options = GeminiImageOptions {
             extra: Some(to_value!({"generationConfig": {"candidateCount": 1}})),

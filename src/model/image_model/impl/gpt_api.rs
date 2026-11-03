@@ -64,21 +64,7 @@ impl GptImageApiModel {
         let obj = body.as_object_mut().unwrap();
 
         if let Some(n) = options.n {
-            if !(1..=10).contains(&n) {
-                bail!("OpenAI accepts n between 1 and 10; requested n = {n}");
-            }
             obj.insert("n".into(), u64::from(n).into());
-        }
-        let is = |value: &Option<String>, want: &str| {
-            value
-                .as_deref()
-                .is_some_and(|v| v.eq_ignore_ascii_case(want))
-        };
-        if is(&options.background, "transparent") && is(&options.output_format, "jpeg") {
-            bail!(
-                "a transparent background needs an alpha-capable format; \
-                 `output_format: jpeg` cannot carry one (use png or webp)"
-            );
         }
         for (key, value) in [
             ("size", &options.size),
@@ -98,6 +84,24 @@ impl GptImageApiModel {
             options.extra.as_ref(),
             &["model", "prompt", "stream"],
         )?;
+
+        // Checked as sent, so a value `extra` set is checked too.
+        if let Some(n) = body.get("n")
+            && !n.as_u64().is_some_and(|n| (1..=10).contains(&n))
+        {
+            bail!("OpenAI accepts n between 1 and 10; requested n = {n}");
+        }
+        let is = |key: &str, want: &str| {
+            body.get(key)
+                .and_then(|v| v.as_str())
+                .is_some_and(|v| v.eq_ignore_ascii_case(want))
+        };
+        if is("background", "transparent") && is("output_format", "jpeg") {
+            bail!(
+                "a transparent background needs an alpha-capable format; \
+                 `output_format: jpeg` cannot carry one (use png or webp)"
+            );
+        }
         Ok(body)
     }
 }
@@ -108,10 +112,11 @@ impl InferImageModel for GptImageApiModel {
         prompt: &str,
         options: Option<&dyn ImageOptions>,
     ) -> BoxFuture<'static, anyhow::Result<ImageOutput>> {
-        let request =
-            super::read_options::<OpenAIImageOptions>(options, &self.model).and_then(|options| {
-                let asked = options.n.unwrap_or(1) as usize;
-                Ok((self.body(prompt, &options)?, asked))
+        let request = super::read_options::<OpenAIImageOptions>(options, &self.model)
+            .and_then(|options| self.body(prompt, &options))
+            .map(|body| {
+                let asked = body.get("n").and_then(|n| n.as_u64()).unwrap_or(1) as usize;
+                (body, asked)
             });
         let api_key = self.api_key.clone();
         Box::pin(async move {
@@ -381,6 +386,16 @@ mod tests {
             };
             assert_eq!(body(&options).unwrap()["n"], n);
         }
+        // `extra` is checked as well, as the body is sent.
+        for extra in [to_value!({"n": 50}), to_value!({"n": "2"})] {
+            let options = OpenAIImageOptions {
+                n: Some(2),
+                extra: Some(extra),
+                ..Default::default()
+            };
+            let err = body(&options).unwrap_err().to_string();
+            assert!(err.contains("between 1 and 10"), "{err}");
+        }
     }
 
     #[test]
@@ -401,6 +416,15 @@ mod tests {
             ..options
         };
         assert!(body(&options).is_ok());
+
+        // Set through `extra`, it is refused all the same.
+        let options = OpenAIImageOptions {
+            output_format: Some("jpeg".to_owned()),
+            extra: Some(to_value!({"background": "transparent"})),
+            ..Default::default()
+        };
+        let err = body(&options).unwrap_err().to_string();
+        assert!(err.contains("transparent background"), "{err}");
     }
 
     #[test]

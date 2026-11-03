@@ -48,9 +48,12 @@ impl PyImageModel {
     }
 
     /// An `ImageModel` that runs `model`, an object of Python's own with `generate`, as the
-    /// module says.
+    /// module says. An `ImageModel` is taken as it is.
     #[staticmethod]
     fn custom(model: Bound<'_, PyAny>) -> PyResult<PyImageModel> {
+        if let Ok(model) = model.cast::<PyImageModel>() {
+            return Ok(PyImageModel(OnRuntime(Some(model.get().model()))));
+        }
         if !model.hasattr("generate")? {
             return Err(PyValueError::new_err(
                 "an image model has a `generate` method",
@@ -104,9 +107,10 @@ impl InferImageModel for PyModel {
                 model.call_method1(py, "generate", (prompt, options))
             })
             .await?;
-            Ok(Python::attach(|py| {
-                from_py::<ImageOutput>(returned.bind(py), "an image output")
-            })?)
+            let output =
+                Python::attach(|py| from_py::<ImageOutput>(returned.bind(py), "an image output"))?;
+            anyhow::ensure!(!output.images.is_empty(), "an image output has no images");
+            Ok(output)
         })
     }
 }

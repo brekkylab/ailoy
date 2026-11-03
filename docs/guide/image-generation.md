@@ -173,7 +173,7 @@ The Gemini request nests its settings under `generationConfig`, so its `extra` d
 
 ## A model of your own
 
-A model the three orgs do not cover, such as a local server, runs as an `ImageModel` too. Give `ImageModel.custom` an object with `generate(prompt, options)` that returns an image output, or a promise of one; in Rust, implement `InferImageModel`. The options it gets are what `generate` was given, with whatever keys your model reads, or an empty one without any.
+A model the three orgs do not cover, such as a local server, runs as an `ImageModel` too. Give `ImageModel.custom` an object with `generate(prompt, options)` that returns an image output, or a promise of one; in Rust, implement `InferImageModel`. The options it gets are what `generate` was given, with whatever keys your model reads; without any, Python and Node.js pass an empty object and Rust passes `None`. The output needs at least one image, or the call fails.
 
 ::: code-group
 
@@ -232,4 +232,4 @@ impl InferImageModel for LocalModel {
 
 ## Retries
 
-A rate limit (429) or an overloaded server (503, 529) is retried up to three times, waiting as the response's `retry-after` asks, else 1, 2 then 4 seconds, and never more than 10 seconds at a time. A spent quota is not retried. Other server errors are not either, since the image may already have been made and billed; OpenRouter alone also retries 502, which it documents as a failed generation it does not bill.
+A rate limit (429) or an overloaded server (503, 529) is retried up to three times, waiting as the response's `retry-after` asks, else 1, 2 then 4 seconds, and never more than 10 seconds at a time. A 429 from OpenAI or Gemini that reports a spent quota is not retried. Other server errors are not either, since the image may already have been made and billed; OpenRouter alone also retries 502, which it documents as a failed generation it does not bill.

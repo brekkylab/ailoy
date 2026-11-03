@@ -479,6 +479,21 @@ async def test_a_custom_image_model_needs_generate_and_its_errors_reach_the_call
     with pytest.raises(AiloyError, match="an image output"):
         await ailoy.ImageModel.custom(Blank()).generate("x")
 
+    class Empty:
+        def generate(self, prompt, options):
+            return {"images": []}
+
+    with pytest.raises(AiloyError, match="no images"):
+        await ailoy.ImageModel.custom(Empty()).generate("x")
+
+
+async def test_a_custom_image_model_may_be_an_image_model():
+    painter = Painter()
+    model = ailoy.ImageModel.custom(ailoy.ImageModel.custom(painter))
+    output = await model.generate("hi", options={"steps": 30})
+    assert output["text"] == "painted: hi"
+    assert painter.options == [{"steps": 30}]
+
 
 # ---- against the console server virtx starts by default ----------------------------
 

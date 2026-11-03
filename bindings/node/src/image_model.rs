@@ -128,7 +128,9 @@ impl InferImageModel for JsModel {
                 .call_async_catch(args)
                 .await
                 .map_err(|e| anyhow::anyhow!(reason(e)))?;
-            returned.settle().await.map_err(anyhow::Error::msg)
+            let output = returned.settle().await.map_err(anyhow::Error::msg)?;
+            anyhow::ensure!(!output.images.is_empty(), "an image output has no images");
+            Ok(output)
         })
     }
 }

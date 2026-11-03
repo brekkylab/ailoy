@@ -469,6 +469,9 @@ test('a custom image model needs generate, and its errors reach the caller', asy
 
   const blank = ImageModel.custom({ generate: () => ({ text: 'nothing' }) })
   await assert.rejects(blank.generate('x'), { code: 'AILOY_ERROR' })
+
+  const empty = ImageModel.custom({ generate: () => ({ images: [] }) })
+  await assert.rejects(empty.generate('x'), { code: 'AILOY_ERROR', message: /no images/ })
 })
 
 // ---- a shared console, against the console server virtx starts by default ---------------
