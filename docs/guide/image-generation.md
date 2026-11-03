@@ -14,7 +14,7 @@ Name the model as `<org>/<name>`:
 
 Image models run only through their org's own API; the [backends](./model-providers#backends) of language models do not apply. To reach a model through OpenRouter, name it under `openrouter/`, which works next to the org's own API: `google/gemini-3.1-flash-image` and `openrouter/google/gemini-3.1-flash-image` are the same model, reached two ways.
 
-Only these three orgs are built in. A model of your own is called directly; in Rust, implementing `InferImageModel` gives it the same `generate` as the built-in models.
+Only these three orgs are built in. A model of your own is called directly; in Rust, implementing `InferImageModel` gives it the same `generate` as the built-in models, and `options.read()` reads the options it is given as its own parameters type.
 
 ## Generating an image
 

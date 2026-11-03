@@ -1,6 +1,6 @@
 use futures::future::BoxFuture;
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned, de::Error as _};
 
 use crate::{
     datatype::Value,
@@ -16,6 +16,11 @@ use crate::{
 ///
 /// Values are sent as written: the API decides which it takes, and a refusal comes back as
 /// its error. A combination an API never accepts fails before anything is sent.
+///
+/// The variant says nothing about the API meant: one deserialized from JSON is the first
+/// whose fields hold every key, so `{"n": 1}` written for OpenRouter is [`Self::OpenAI`].
+/// Do not branch on it. What the type does is check, where options arrive as JSON, that some
+/// API takes them, and give their JSON Schema.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ImageModelOptions {
@@ -71,34 +76,25 @@ impl From<OpenRouterImageOptions> for ImageModelOptions {
 }
 
 /// Options [`InferImageModel::generate`] takes: one API's parameters, which a model reads as
-/// its own API's. Implemented by [`ImageModelOptions`] and each API's options type, so either
-/// is passed as it is.
+/// its own API's. Every serializable type is one, so [`ImageModelOptions`], an API's options
+/// type, a `serde_json::Value` or a model's own options type is passed as it is; anything but
+/// a JSON object of parameters fails when the model reads it.
 pub trait ImageOptions {
-    /// These options as one flat JSON object of parameters.
+    /// These options as JSON: one flat object of parameters.
     fn to_json(&self) -> serde_json::Result<serde_json::Value>;
 }
 
-impl ImageOptions for ImageModelOptions {
+impl<T: Serialize> ImageOptions for T {
     fn to_json(&self) -> serde_json::Result<serde_json::Value> {
         serde_json::to_value(self)
     }
 }
 
-impl ImageOptions for OpenAIImageOptions {
-    fn to_json(&self) -> serde_json::Result<serde_json::Value> {
-        serde_json::to_value(self)
-    }
-}
-
-impl ImageOptions for GeminiImageOptions {
-    fn to_json(&self) -> serde_json::Result<serde_json::Value> {
-        serde_json::to_value(self)
-    }
-}
-
-impl ImageOptions for OpenRouterImageOptions {
-    fn to_json(&self) -> serde_json::Result<serde_json::Value> {
-        serde_json::to_value(self)
+impl dyn ImageOptions + '_ {
+    /// These options as `T`, the parameters of a model's API: a field `T` does not have is an
+    /// error naming it. A model of your own reads its options this way.
+    pub fn read<T: DeserializeOwned>(&self) -> serde_json::Result<T> {
+        self.to_json().and_then(serde_json::from_value)
     }
 }
 

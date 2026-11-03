@@ -8,8 +8,8 @@ pub use openrouter_api::*;
 
 use crate::model::ImageOptions;
 
-/// `options` as the parameters `T` of `model`'s API, whichever API they were built for; no
-/// options read as `T`'s defaults. A field `T` does not have is an error naming it.
+/// `options` as the parameters `T` of `model`'s API, or `T`'s defaults without any; an error
+/// names the model.
 fn read_options<T: serde::de::DeserializeOwned + Default>(
     options: Option<&dyn ImageOptions>,
     model: &str,
@@ -18,8 +18,7 @@ fn read_options<T: serde::de::DeserializeOwned + Default>(
         return Ok(T::default());
     };
     options
-        .to_json()
-        .and_then(serde_json::from_value)
+        .read()
         .map_err(|e| anyhow::anyhow!("invalid image options for '{model}': {e}"))
 }
 
@@ -84,6 +83,19 @@ mod tests {
 
         let none: GeminiImageOptions = read_options(None, "m").unwrap();
         assert!(none.aspect_ratio.is_none() && none.extra.is_none());
+    }
+
+    #[test]
+    fn read_options_takes_any_json_object_of_parameters() {
+        let read: GeminiImageOptions =
+            read_options(Some(&serde_json::json!({"aspect_ratio": "16:9"})), "m").unwrap();
+        assert_eq!(read.aspect_ratio.as_deref(), Some("16:9"));
+
+        // Compiles, as anything serializable does, and fails when read.
+        let err = read_options::<GeminiImageOptions>(Some(&"16:9"), "m")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid type"), "{err}");
     }
 
     #[test]
