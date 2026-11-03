@@ -296,7 +296,7 @@ fn parse_usage(usage: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{GeminiImageOptions, ImageModelOptions, OpenAIImageOptions};
+    use crate::model::{GeminiImageOptions, OpenAIImageOptions};
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
@@ -339,7 +339,7 @@ mod tests {
             ),
         ] {
             let err = model
-                .generate("a red cube", Some(&ImageModelOptions::Gemini(gemini)))
+                .generate("a red cube", Some(&gemini))
                 .await
                 .unwrap_err()
                 .to_string();
@@ -347,10 +347,10 @@ mod tests {
         }
 
         // Options built for OpenAI are read where OpenRouter has the same fields.
-        let options = ImageModelOptions::OpenAI(OpenAIImageOptions {
+        let options = OpenAIImageOptions {
             n: Some(11),
             ..Default::default()
-        });
+        };
         let err = model
             .generate("a red cube", Some(&options))
             .await
@@ -684,10 +684,10 @@ mod tests {
 
     #[tokio::test]
     async fn generate_refuses_a_bad_n_before_sending() {
-        let options = ImageModelOptions::OpenRouter(OpenRouterImageOptions {
+        let options = OpenRouterImageOptions {
             n: Some(11),
             ..Default::default()
-        });
+        };
         // The key is fake, so anything that reached the network would fail differently.
         let err = OpenRouterImageApiModel::new("openai/gpt-image-1", "sk-or-test")
             .generate("a red cube", Some(&options))
@@ -704,10 +704,10 @@ mod tests {
             eprintln!("OPENROUTER_API_KEY is not set; skipping");
             return;
         };
-        let options = ImageModelOptions::OpenRouter(OpenRouterImageOptions {
+        let options = OpenRouterImageOptions {
             aspect_ratio: Some("16:9".to_owned()),
             ..Default::default()
-        });
+        };
 
         let out = model
             .generate(

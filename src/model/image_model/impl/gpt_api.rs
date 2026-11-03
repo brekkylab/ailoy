@@ -324,10 +324,10 @@ mod tests {
         }
 
         // Fields OpenAI has too are read, whichever API the options were built for.
-        let options = ImageModelOptions::OpenRouter(OpenRouterImageOptions {
+        let options = OpenRouterImageOptions {
             n: Some(0),
             ..Default::default()
-        });
+        };
         let err = model
             .generate("a red cube", Some(&options))
             .await
@@ -661,10 +661,10 @@ mod tests {
 
     #[tokio::test]
     async fn generate_refuses_a_bad_n_before_sending() {
-        let options = ImageModelOptions::OpenAI(OpenAIImageOptions {
+        let options = OpenAIImageOptions {
             n: Some(0),
             ..Default::default()
-        });
+        };
         // The key is fake, so anything that reached the network would fail differently.
         let err = GptImageApiModel::new("gpt-image-1", "sk-test")
             .generate("a red cube", Some(&options))
@@ -727,10 +727,10 @@ mod tests {
             eprintln!("OPENAI_API_KEY is not set; skipping");
             return;
         };
-        let options = ImageModelOptions::OpenAI(OpenAIImageOptions {
+        let options = OpenAIImageOptions {
             quality: Some("low".to_owned()),
             ..Default::default()
-        });
+        };
 
         let out = model
             .generate(

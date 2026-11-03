@@ -66,17 +66,15 @@ fn merge(target: &mut serde_json::Value, patch: serde_json::Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{
-        GeminiImageOptions, ImageModelOptions, OpenAIImageOptions, OpenRouterImageOptions,
-    };
+    use crate::model::{GeminiImageOptions, OpenAIImageOptions, OpenRouterImageOptions};
 
     #[test]
     fn read_options_takes_options_built_for_another_api_when_the_fields_fit() {
-        let options = ImageModelOptions::OpenAI(OpenAIImageOptions {
+        let options = OpenAIImageOptions {
             n: Some(2),
             size: Some("1536x1024".to_owned()),
             ..Default::default()
-        });
+        };
         let read: OpenRouterImageOptions = read_options(Some(&options), "m").unwrap();
         assert_eq!(read.n, Some(2));
         assert_eq!(read.size.as_deref(), Some("1536x1024"));
@@ -100,10 +98,10 @@ mod tests {
 
     #[test]
     fn read_options_names_a_field_the_api_does_not_have() {
-        let options = ImageModelOptions::OpenRouter(OpenRouterImageOptions {
+        let options = OpenRouterImageOptions {
             aspect_ratio: Some("16:9".to_owned()),
             ..Default::default()
-        });
+        };
         let err = read_options::<OpenAIImageOptions>(Some(&options), "gpt-image-1")
             .unwrap_err()
             .to_string();

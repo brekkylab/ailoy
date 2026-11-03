@@ -358,7 +358,7 @@ fn parse_usage(usage: &Value) -> Option<TokenUsage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ImageModelOptions, OpenAIImageOptions, OpenRouterImageOptions};
+    use crate::model::{OpenAIImageOptions, OpenRouterImageOptions};
 
     /// An 8-byte PNG header, enough for `infer` to recognise the format.
     const PNG_HEADER_B64: &str = "iVBORw0KGgo=";
@@ -405,24 +405,20 @@ mod tests {
         let model = GeminiImageApiModel::new("gemini-3.1-flash-image", "AIza-test");
         // An `n` is not a candidate count, nor a `quality` a size: both are refused before
         // anything is sent, which the fake key would fail otherwise.
+        let openai = OpenAIImageOptions {
+            n: Some(2),
+            ..Default::default()
+        };
+        let openrouter = OpenRouterImageOptions {
+            quality: Some("high".to_owned()),
+            ..Default::default()
+        };
         for (options, field) in [
-            (
-                ImageModelOptions::OpenAI(OpenAIImageOptions {
-                    n: Some(2),
-                    ..Default::default()
-                }),
-                "n",
-            ),
-            (
-                ImageModelOptions::OpenRouter(OpenRouterImageOptions {
-                    quality: Some("high".to_owned()),
-                    ..Default::default()
-                }),
-                "quality",
-            ),
+            (&openai as &dyn ImageOptions, "n"),
+            (&openrouter, "quality"),
         ] {
             let err = model
-                .generate("a red cube", Some(&options))
+                .generate("a red cube", Some(options))
                 .await
                 .unwrap_err()
                 .to_string();
@@ -430,10 +426,10 @@ mod tests {
         }
 
         // An `aspect_ratio` built for OpenRouter is Gemini's as well.
-        let options = ImageModelOptions::OpenRouter(OpenRouterImageOptions {
+        let options = OpenRouterImageOptions {
             aspect_ratio: Some("16:9".to_owned()),
             ..Default::default()
-        });
+        };
         let read: GeminiImageOptions = super::super::read_options(Some(&options), "m").unwrap();
         assert_eq!(
             body(&read)["generationConfig"]["imageConfig"],
@@ -908,10 +904,10 @@ mod tests {
             eprintln!("GEMINI_API_KEY is not set; skipping");
             return;
         };
-        let options = ImageModelOptions::Gemini(GeminiImageOptions {
+        let options = GeminiImageOptions {
             aspect_ratio: Some("16:9".to_owned()),
             ..Default::default()
-        });
+        };
 
         let out = model
             .generate(
