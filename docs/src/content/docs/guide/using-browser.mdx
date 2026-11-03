@@ -122,7 +122,7 @@ Rather than being handed the page at every step, the agent reads it with `browse
 | `browser_search_page` | Searches the page's text, like grep, with the text around each match and the element it is in. |
 | `browser_find_elements` | Queries elements by CSS selector, with their text, the attributes asked for and how many children they have. |
 | `browser_evaluate` | Runs JavaScript in the page and returns its value; an image it returns as a data URL is shown as one. |
-| `browser_screenshot` | A picture of the current tab, at most 1280 pixels wide; `browser_click`'s coordinates are its pixels. |
+| `browser_screenshot` | A picture of the current tab, at most 1280 pixels wide; `browser_click`'s coordinates are its pixels. Old screenshots are capped as in [Images past the cap](./context-manager.md#images-past-the-cap). |
 | `browser_wait` | Waits for text to appear, or for some seconds. |
 | `browser_dialog` | Accepts or dismisses a confirm, or answers a prompt. An alert is accepted on its own, and the agent is told. |
 | `browser_tabs` | Lists the agent's tabs, by id. |

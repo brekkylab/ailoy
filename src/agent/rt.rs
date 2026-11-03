@@ -302,7 +302,7 @@ impl Agent {
     /// and tell the model where its console mounts are.
     async fn begin_turn(&mut self, mut query: Message) {
         close_dangling_calls(&mut self.state.history);
-        // Images are capped for every agent; only the token limit is opt-in.
+        // No context manager acts as one with every setting left out.
         let default = ContextManager::default();
         let cm = self.context_manager.as_ref().unwrap_or(&default);
         cm.cap_images(&mut self.state.history);

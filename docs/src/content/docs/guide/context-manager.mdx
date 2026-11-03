@@ -9,11 +9,11 @@ The agent sends its whole history to the model on every call, so a long run send
 
 ## Turning it on
 
-The token limit is off until you set a context manager, and `max_input_tokens` at `0` keeps it off; the image cap is on from the start, at its defaults, and a context manager changes them. Every setting has a default:
+Without a context manager, an agent acts as with one whose settings are all left out: the image cap is on at its defaults, and the token limit is off until you give `max_input_tokens`. Either at `0` is off. Every setting has a default:
 
 | Setting | Default | What it is |
 | --- | --- | --- |
-| `max_input_tokens` (`maxInputTokens`) | 30,000 | The input the model reports, in tokens, past which old tool results are replaced. `0` turns truncation off. |
+| `max_input_tokens` (`maxInputTokens`) | 0 | The input the model reports, in tokens, past which old tool results are replaced. `0` turns truncation off. |
 | `preserve_recent_turns` (`preserveRecentTurns`) | 3 | How many of the latest user turns are left as they are. |
 | `max_images` (`maxImages`) | 30 | Images in tool results the history may hold at the start of a turn. `0` turns the cap off. |
 | `preserve_recent_images` (`preserveRecentImages`) | 10 | Images in tool results left once the cap is passed. |
@@ -67,7 +67,7 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
 </TabItem>
 </Tabs>
 
-`context_manager()` with no arguments (`contextManager()`, `ContextManager::default()`) uses every default.
+`context_manager()` with no arguments (`contextManager()`, `ContextManager::default()`) is the same as setting none.
 
 ## Tool results past the token limit
 
@@ -91,7 +91,7 @@ A screenshot the agent takes stays in a tool result and is sent again with every
 
 - Only images in tool results count and only they are replaced: a screenshot, an image read with `imgread`, an image an MCP tool returned. Images you attach to a message are never touched.
 - Within a turn nothing is replaced, so a turn of many screenshots sends them all until the next turn starts. Claude rejects a history altered before thinking it is handed back, and only at the start of a turn is there none.
-- The cap counts across every turn, the last `preserve_recent_turns` included, and holds for every agent, with or without a context manager. `max_images` at `0` turns it off.
+- The cap counts across every turn, the last `preserve_recent_turns` included.
 
 As with the token limit, the placeholders stay in `agent.history`.
 

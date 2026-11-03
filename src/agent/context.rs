@@ -6,7 +6,7 @@ use crate::message::{Message, Part, Role};
 #[serde(default)]
 pub struct ContextManager {
     /// Triggers truncation when input_tokens from the previous API call exceeds this value.
-    /// `0` turns truncation off.
+    /// `0`, the default, turns truncation off.
     pub max_input_tokens: u64,
     /// Number of recent user turns to preserve after truncation (system message is always preserved separately).
     pub preserve_recent_turns: usize,
@@ -20,7 +20,7 @@ pub struct ContextManager {
 impl Default for ContextManager {
     fn default() -> Self {
         Self {
-            max_input_tokens: 30_000,
+            max_input_tokens: 0,
             preserve_recent_turns: 3,
             max_images: 30,
             preserve_recent_images: 10,
