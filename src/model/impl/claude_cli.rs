@@ -62,7 +62,8 @@ const TOOL_PREFIX: &str = "mcp__ailoy__";
 ///   email, the working directory and the date reach the model.
 /// - A structured reply the CLI rejects is asked for again in the same run. The reply's
 ///   usage is that of the run's last request, whose input is what the next call carries
-///   forward; the requests that made the rejected attempts are not counted.
+///   forward; the input and output of the requests that made the rejected attempts are not
+///   counted.
 #[derive(Clone, Debug)]
 pub struct ClaudeCliModel {
     program: String,
@@ -352,8 +353,8 @@ impl InferLangModel for ClaudeCliModel {
                         }
                     }
                     // The run is over: close the message with its last request's usage. The
-                    // run's own adds up all its requests, and stands in only when no message
-                    // ended before it.
+                    // run's own adds up all its requests, and stands in only when the latest
+                    // message to end left no usage, or none ended before it.
                     Some("result") => {
                         out.usage = last_usage.take().or(parse_result(&event)?);
                         if structured {
@@ -844,6 +845,15 @@ mod tests {
     /// the model makes of them.
     #[cfg(unix)]
     async fn replay(events: &[serde_json::Value], tools: &[ToolDesc]) -> MessageOutput {
+        try_replay(events, tools).await.unwrap()
+    }
+
+    /// [`replay`], with the model's error, if any, returned.
+    #[cfg(unix)]
+    async fn try_replay(
+        events: &[serde_json::Value],
+        tools: &[ToolDesc],
+    ) -> anyhow::Result<MessageOutput> {
         use std::os::unix::fs::PermissionsExt as _;
 
         let dir = tempfile::tempdir().unwrap();
@@ -862,7 +872,6 @@ mod tests {
         model
             .infer(&messages, tools, &LangModelOptions::default())
             .await
-            .unwrap()
     }
 
     fn event(event: serde_json::Value) -> serde_json::Value {
@@ -1016,6 +1025,15 @@ mod tests {
                 cache_read_input_tokens: Some(21_393),
             })
         );
+
+        // A failed run is an error, whatever usage its messages had.
+        let mut failed = result.clone();
+        failed["is_error"] = true.into();
+        failed["subtype"] = "error_during_execution".into();
+        failed["result"] = "boom".into();
+        let mut failing = events.to_vec();
+        *failing.last_mut().unwrap() = failed;
+        assert!(try_replay(&failing, &[weather()]).await.is_err());
 
         // Without a message that ended, the run's usage is all there is.
         let output = replay(&[result], &[weather()]).await;
