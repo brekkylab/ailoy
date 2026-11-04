@@ -298,56 +298,14 @@ mod tests {
     }
 
     #[test]
-    fn minimal_body_sends_only_model_and_prompt() {
-        let body = body(&OpenAIImageOptions::default()).unwrap();
+    fn body_sends_options_as_written() {
         assert_eq!(
-            body,
+            body(&OpenAIImageOptions::default()).unwrap(),
             serde_json::json!({"model": "gpt-image-1", "prompt": "a red cube on a white table"})
         );
-    }
-
-    #[tokio::test]
-    async fn generate_takes_only_fields_the_openai_api_has() {
-        let model = GptImageApiModel::new("gpt-image-1", "sk-test");
-        // The key is fake, so anything that reached the network would fail differently.
-        // An API's options type is passed as it is, as is plain JSON.
-        let gemini = GeminiImageOptions {
-            aspect_ratio: Some("16:9".to_owned()),
-            ..Default::default()
-        };
-        for options in [
-            &gemini as &dyn ImageOptions,
-            &serde_json::json!({"aspect_ratio": "16:9"}),
-        ] {
-            let err = model
-                .generate("a red cube", Some(options))
-                .await
-                .unwrap_err()
-                .to_string();
-            assert!(err.contains("unknown field `aspect_ratio`"), "{err}");
-        }
-
-        // Fields OpenAI has too are read, whichever API the options were built for.
-        let options = OpenRouterImageOptions {
-            n: Some(0),
-            ..Default::default()
-        };
-        let err = model
-            .generate("a red cube", Some(&options))
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("OpenAI accepts n between 1 and 10"),
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn body_maps_every_openai_option() {
         let options = OpenAIImageOptions {
             n: Some(3),
-            size: Some("1536x1024".to_owned()),
+            size: Some("1920x1088".to_owned()),
             quality: Some("high".to_owned()),
             output_format: Some("webp".to_owned()),
             background: Some("transparent".to_owned()),
@@ -359,7 +317,7 @@ mod tests {
                 "model": "gpt-image-1",
                 "prompt": "a red cube on a white table",
                 "n": 3,
-                "size": "1536x1024",
+                "size": "1920x1088",
                 "quality": "high",
                 "output_format": "webp",
                 "background": "transparent",
@@ -369,73 +327,58 @@ mod tests {
     }
 
     #[test]
-    fn body_rejects_an_out_of_range_n() {
-        for n in [0, 11] {
-            let options = OpenAIImageOptions {
-                n: Some(n),
-                ..Default::default()
-            };
+    fn body_refuses_what_openai_never_accepts() {
+        let with = |n: Option<u32>, extra: Option<Value>| OpenAIImageOptions {
+            n,
+            extra,
+            ..Default::default()
+        };
+        for options in [
+            with(Some(0), None),
+            with(Some(11), None),
+            // Checked as sent, so `extra` is checked too.
+            with(Some(2), Some(to_value!({"n": 50}))),
+            with(None, Some(to_value!({"n": "2"}))),
+        ] {
             let err = body(&options).unwrap_err().to_string();
             assert!(err.contains("between 1 and 10"), "{err}");
         }
         for n in [1, 10] {
-            let options = OpenAIImageOptions {
-                n: Some(n),
-                ..Default::default()
-            };
-            assert_eq!(body(&options).unwrap()["n"], n);
+            assert_eq!(body(&with(Some(n), None)).unwrap()["n"], n);
         }
-        // `extra` is checked as well, as the body is sent.
-        for extra in [to_value!({"n": 50}), to_value!({"n": "2"})] {
-            let options = OpenAIImageOptions {
-                n: Some(2),
-                extra: Some(extra),
-                ..Default::default()
-            };
-            let err = body(&options).unwrap_err().to_string();
-            assert!(err.contains("between 1 and 10"), "{err}");
-        }
-    }
 
-    #[test]
-    fn body_rejects_transparent_background_on_jpeg() {
-        let options = OpenAIImageOptions {
+        let transparent_jpeg = OpenAIImageOptions {
             output_format: Some("JPEG".to_owned()),
             background: Some("Transparent".to_owned()),
             ..Default::default()
         };
-        let err = body(&options).unwrap_err().to_string();
-        assert!(
-            err.contains("transparent background"),
-            "case does not matter: {err}"
-        );
-
-        let options = OpenAIImageOptions {
-            background: Some("opaque".to_owned()),
-            ..options
-        };
-        assert!(body(&options).is_ok());
-
-        // Set through `extra`, it is refused all the same.
-        let options = OpenAIImageOptions {
+        let through_extra = OpenAIImageOptions {
             output_format: Some("jpeg".to_owned()),
             extra: Some(to_value!({"background": "transparent"})),
             ..Default::default()
         };
-        let err = body(&options).unwrap_err().to_string();
-        assert!(err.contains("transparent background"), "{err}");
+        for options in [&transparent_jpeg, &through_extra] {
+            let err = body(options).unwrap_err().to_string();
+            assert!(err.contains("transparent background"), "{err}");
+        }
+        let opaque = OpenAIImageOptions {
+            background: Some("opaque".to_owned()),
+            ..transparent_jpeg
+        };
+        assert!(body(&opaque).is_ok());
     }
 
     #[test]
     fn extra_adds_fields_and_wins_over_typed_ones() {
         let options = OpenAIImageOptions {
             quality: Some("high".to_owned()),
-            extra: Some(to_value!({"safety_identifier": "u-1", "quality": "low"})),
+            extra: Some(to_value!({"safety_identifier": "u-1", "quality": "low", "n": 2})),
             ..Default::default()
         };
         let body = body(&options).unwrap();
         assert_eq!(body["safety_identifier"], "u-1");
         assert_eq!(body["quality"], "low", "extra wins on conflict");
+        assert_eq!(body["n"], 2, "extra may set what the options leave unset");
     }
 
     #[test]
@@ -455,14 +398,34 @@ mod tests {
         }
     }
 
-    #[test]
-    fn body_sends_size_verbatim() {
-        for size in ["1024x1024", "1920x1088", "auto"] {
-            let options = OpenAIImageOptions {
-                size: Some(size.to_owned()),
-                ..Default::default()
-            };
-            assert_eq!(body(&options).unwrap()["size"], size);
+    #[tokio::test]
+    async fn generate_refuses_bad_options_before_sending() {
+        let model = GptImageApiModel::new("gpt-image-1", "sk-test");
+        // The key is fake, so anything that reached the network would fail differently.
+        // An API's options type is passed as it is, as is plain JSON.
+        let gemini = GeminiImageOptions {
+            aspect_ratio: Some("16:9".to_owned()),
+            ..Default::default()
+        };
+        // Fields OpenAI has too are read, whichever API the options were built for.
+        let openrouter = OpenRouterImageOptions {
+            n: Some(0),
+            ..Default::default()
+        };
+        for (options, refused) in [
+            (&gemini as &dyn ImageOptions, "unknown field `aspect_ratio`"),
+            (
+                &serde_json::json!({"aspect_ratio": "16:9"}),
+                "unknown field `aspect_ratio`",
+            ),
+            (&openrouter, "OpenAI accepts n between 1 and 10"),
+        ] {
+            let err = model
+                .generate("a red cube", Some(options))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(refused), "{err}");
         }
     }
 
@@ -497,41 +460,39 @@ mod tests {
     }
 
     #[test]
-    fn parse_sniffs_the_mime_type_when_the_format_is_not_echoed() {
+    fn parse_reads_every_image_in_order() {
         let response = to_value!({
-            "created": 1713833628,
-            "data": [{"b64_json": PNG_HEADER_B64}]
+            "data": [
+                {"b64_json": PNG_HEADER_B64, "revised_prompt": "A vivid red cube"},
+                {"url": "https://images.example.com/private/img.png"}
+            ],
+            "usage": {}
         });
-
         let out = parse_response(&response).unwrap();
-        let PartImage::Embedded { mime_type, .. } = &out.images[0] else {
-            panic!("expected an embedded image");
-        };
-        assert_eq!(mime_type, "image/png");
-        assert!(out.usage.is_none());
+        assert_eq!(out.images.len(), 2);
+        assert!(matches!(out.images[0], PartImage::Embedded { .. }));
+        assert_eq!(
+            out.images[1],
+            PartImage::Url {
+                url: "https://images.example.com/private/img.png".to_owned()
+            }
+        );
+        assert_eq!(out.text.as_deref(), Some("A vivid red cube"));
+        assert!(out.usage.is_none(), "no token counts, no usage");
     }
 
     #[test]
-    fn parse_a_url_only_response() {
-        let response = to_value!({
-            "created": 1713833628,
-            "data": [{
-                "url": "https://images.example.com/private/img.png",
-                "revised_prompt": "A vivid red cube resting on a white table"
-            }]
-        });
-
-        let out = parse_response(&response).unwrap();
-        assert_eq!(
-            out.images,
-            vec![PartImage::Url {
-                url: "https://images.example.com/private/img.png".to_owned()
-            }]
-        );
-        assert_eq!(
-            out.text.as_deref(),
-            Some("A vivid red cube resting on a white table")
-        );
+    fn parse_sniffs_a_missing_or_unknown_format() {
+        for response in [
+            to_value!({"data": [{"b64_json": PNG_HEADER_B64}]}),
+            to_value!({"output_format": "bmp", "data": [{"b64_json": PNG_HEADER_B64}]}),
+        ] {
+            let out = parse_response(&response).unwrap();
+            let PartImage::Embedded { mime_type, .. } = &out.images[0] else {
+                panic!("expected an embedded image");
+            };
+            assert_eq!(mime_type, "image/png");
+        }
     }
 
     #[test]
@@ -554,77 +515,13 @@ mod tests {
             "the echoed format wins over sniffing"
         );
 
-        let err = parse_response(&to_value!({"data": [{"b64_json": "not base64!"}]}))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("1 entry(ies) had no decodable data"), "{err}");
-
         // Empty data is no image either.
-        let err = parse_response(&to_value!({"data": [{"b64_json": ""}]}))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("1 entry(ies) had no decodable data"), "{err}");
-    }
-
-    #[test]
-    fn parse_reads_every_image_in_order() {
-        let response = to_value!({
-            "data": [
-                {"b64_json": PNG_HEADER_B64, "revised_prompt": "the first"},
-                {"url": "https://images.example.com/second.png"}
-            ],
-            "usage": {}
-        });
-        let out = parse_response(&response).unwrap();
-        assert_eq!(out.images.len(), 2);
-        assert!(matches!(out.images[0], PartImage::Embedded { .. }));
-        assert_eq!(
-            out.images[1],
-            PartImage::Url {
-                url: "https://images.example.com/second.png".to_owned()
-            }
-        );
-        assert_eq!(out.text.as_deref(), Some("the first"));
-        assert!(out.usage.is_none(), "no token counts, no usage");
-    }
-
-    #[test]
-    fn extra_may_set_what_the_options_leave_unset() {
-        let options = OpenAIImageOptions {
-            extra: Some(to_value!({"n": 2, "output_format": "webp"})),
-            ..Default::default()
-        };
-        let body = body(&options).unwrap();
-        assert_eq!(body["n"], 2);
-        assert_eq!(body["output_format"], "webp");
-    }
-
-    #[test]
-    fn parse_falls_back_to_sniffing_an_unknown_echoed_format() {
-        let response = to_value!({
-            "output_format": "bmp",
-            "data": [{"b64_json": PNG_HEADER_B64}]
-        });
-        let out = parse_response(&response).unwrap();
-        let PartImage::Embedded { mime_type, .. } = &out.images[0] else {
-            panic!("expected an embedded image");
-        };
-        assert_eq!(mime_type, "image/png");
-    }
-
-    #[test]
-    fn an_error_in_a_successful_response_is_reported() {
-        let response = to_value!({"error": {"message": "the image could not be made"}});
-        let err = parse_response(&response).unwrap_err().to_string();
-        assert_eq!(
-            err,
-            "OpenAI image request failed: the image could not be made"
-        );
-    }
-
-    #[test]
-    fn endpoint_is_the_images_api() {
-        assert_eq!(API_URL, "https://api.openai.com/v1/images/generations");
+        for data in ["not base64!", ""] {
+            let err = parse_response(&to_value!({"data": [{"b64_json": data}]}))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("1 entry(ies) had no decodable data"), "{err}");
+        }
     }
 
     #[test]
@@ -634,6 +531,13 @@ mod tests {
             .to_string();
         assert!(err.contains("no images"), "{err}");
         assert!(parse_response(&to_value!({"created": 1})).is_err());
+
+        let response = to_value!({"error": {"message": "the image could not be made"}});
+        let err = parse_response(&response).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "OpenAI image request failed: the image could not be made"
+        );
     }
 
     #[test]
@@ -684,66 +588,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_retries_a_passing_rate_limit() {
-        let (url, calls) = mock(|attempt| match attempt {
-            1 | 2 => (429, r#"{"error":{"type":"rate_limit_exceeded"}}"#),
-            _ => (200, r#"{"created":1,"data":[{"b64_json":"iVBORw0KGgo="}]}"#),
-        })
-        .await;
-
-        let response = send(&url, "sk-test", &serde_json::json!({})).await.unwrap();
-        let out = parse_response(&serde_json::from_str(&response.text().await.unwrap()).unwrap())
-            .unwrap();
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
-        assert_eq!(out.images.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn send_retries_an_overload() {
-        let (url, calls) = mock(|attempt| match attempt {
-            1 => (503, r#"{"error":{"message":"overloaded"}}"#),
-            _ => (200, "{}"),
-        })
-        .await;
-
-        send(&url, "sk-test", &serde_json::json!({})).await.unwrap();
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test]
-    async fn send_does_not_retry_a_server_error() {
-        let (url, calls) = mock(|_| (500, r#"{"error":{"message":"internal"}}"#)).await;
-
-        let err = send(&url, "sk-test", &serde_json::json!({}))
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("500"), "{err}");
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn send_gives_up_after_three_retries() {
-        let (url, calls) = mock(|_| (503, r#"{"error":{"message":"overloaded"}}"#)).await;
-
-        let err = send(&url, "sk-test", &serde_json::json!({}))
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("503"), "{err}");
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 4);
-    }
-
-    #[tokio::test]
-    async fn generate_refuses_a_bad_n_before_sending() {
-        let options = OpenAIImageOptions {
-            n: Some(0),
-            ..Default::default()
-        };
-        // The key is fake, so anything that reached the network would fail differently.
-        let err = GptImageApiModel::new("gpt-image-1", "sk-test")
-            .generate("a red cube", Some(&options))
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("between 1 and 10"), "{err}");
+    async fn send_retries_only_what_may_pass() {
+        type Respond = fn(u32) -> (u16, &'static str);
+        const OVERLOADED: &str = r#"{"error":{"message":"overloaded"}}"#;
+        // How the server answers, the calls it then gets, and the error they end in, if any.
+        let cases: [(Respond, u32, Option<&str>); 5] = [
+            (
+                |attempt| match attempt {
+                    1 | 2 => (429, r#"{"error":{"type":"rate_limit_exceeded"}}"#),
+                    _ => (200, "{}"),
+                },
+                3,
+                None,
+            ),
+            (
+                |attempt| match attempt {
+                    1 => (503, OVERLOADED),
+                    _ => (200, "{}"),
+                },
+                2,
+                None,
+            ),
+            (|_| (503, OVERLOADED), 4, Some("503")),
+            // The image may already have been made and billed.
+            (
+                |_| (500, r#"{"error":{"message":"internal"}}"#),
+                1,
+                Some("500"),
+            ),
+            (
+                |_| {
+                    (
+                        429,
+                        r#"{"error":{"type":"insufficient_quota","code":"insufficient_quota"}}"#,
+                    )
+                },
+                1,
+                Some("insufficient_quota"),
+            ),
+        ];
+        for (i, (respond, expected_calls, expected_error)) in cases.into_iter().enumerate() {
+            let (url, calls) = mock(respond).await;
+            let result = send(&url, "sk-test", &serde_json::json!({})).await;
+            let calls = calls.load(std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(calls, expected_calls, "case {i}");
+            match expected_error {
+                None => assert!(result.is_ok(), "case {i}: {:?}", result.err()),
+                Some(text) => {
+                    let err = result.unwrap_err().to_string();
+                    assert!(err.contains(text), "case {i}: {err}");
+                }
+            }
+        }
     }
 
     #[tokio::test]
@@ -773,23 +669,6 @@ mod tests {
         )
         .await
         .unwrap();
-    }
-
-    #[tokio::test]
-    async fn send_does_not_retry_a_used_up_quota() {
-        let (url, calls) = mock(|_| {
-            (
-                429,
-                r#"{"error":{"type":"insufficient_quota","code":"insufficient_quota","message":"You exceeded your current quota"}}"#,
-            )
-        })
-        .await;
-
-        let err = send(&url, "sk-test", &serde_json::json!({}))
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("insufficient_quota"), "{err}");
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

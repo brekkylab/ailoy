@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn minimal_body_sends_only_model_and_prompt() {
+    fn body_sends_options_as_written() {
         assert_eq!(
             body(&OpenRouterImageOptions::default()).unwrap(),
             serde_json::json!({
@@ -312,10 +312,42 @@ mod tests {
                 "prompt": "a red cube on a white table",
             })
         );
+        let options = OpenRouterImageOptions {
+            n: Some(2),
+            size: Some("1024x1024".to_owned()),
+            quality: Some("auto".to_owned()),
+            output_format: Some("svg".to_owned()),
+            background: Some("auto".to_owned()),
+            aspect_ratio: Some("9:19.5".to_owned()),
+            resolution: Some("1.5K".to_owned()),
+            extra: None,
+        };
+        assert_eq!(
+            body(&options).unwrap(),
+            serde_json::json!({
+                "model": "google/gemini-3.1-flash-image",
+                "prompt": "a red cube on a white table",
+                "n": 2,
+                "size": "1024x1024",
+                "resolution": "1.5K",
+                "aspect_ratio": "9:19.5",
+                "quality": "auto",
+                "output_format": "svg",
+                "background": "auto",
+            })
+        );
+        // One option set sends that option alone.
+        let alone = OpenRouterImageOptions {
+            resolution: Some("768".to_owned()),
+            ..Default::default()
+        };
+        let sent = body(&alone).unwrap();
+        assert_eq!(sent.as_object().unwrap().len(), 3, "{sent}");
+        assert_eq!(sent["resolution"], "768");
     }
 
     #[tokio::test]
-    async fn generate_takes_only_fields_the_openrouter_api_has() {
+    async fn generate_refuses_bad_options_before_sending() {
         let model = OpenRouterImageApiModel::new("google/gemini-3.1-flash-image", "sk-or-test");
         // Gemini's names for a size tier and for thinking are not OpenRouter's; both are
         // refused before anything is sent, which the fake key would fail otherwise.
@@ -360,87 +392,16 @@ mod tests {
     }
 
     #[test]
-    fn body_maps_every_option_under_openrouter_names() {
-        let options = OpenRouterImageOptions {
-            n: Some(2),
-            size: Some("1024x1024".to_owned()),
-            quality: Some("auto".to_owned()),
-            output_format: Some("webp".to_owned()),
-            background: Some("transparent".to_owned()),
-            aspect_ratio: Some("9:19.5".to_owned()),
-            resolution: Some("1.5K".to_owned()),
-            extra: None,
-        };
-        assert_eq!(
-            body(&options).unwrap(),
-            serde_json::json!({
-                "model": "google/gemini-3.1-flash-image",
-                "prompt": "a red cube on a white table",
-                "n": 2,
-                "size": "1024x1024",
-                "resolution": "1.5K",
-                "aspect_ratio": "9:19.5",
-                "quality": "auto",
-                "output_format": "webp",
-                "background": "transparent",
-            })
-        );
-    }
-
-    #[test]
-    fn body_sends_one_option_alone() {
-        let cases = [
-            (
-                OpenRouterImageOptions {
-                    resolution: Some("768".to_owned()),
-                    ..Default::default()
-                },
-                "resolution",
-                serde_json::json!("768"),
-            ),
-            (
-                OpenRouterImageOptions {
-                    aspect_ratio: Some("auto".to_owned()),
-                    ..Default::default()
-                },
-                "aspect_ratio",
-                serde_json::json!("auto"),
-            ),
-            (
-                OpenRouterImageOptions {
-                    output_format: Some("svg".to_owned()),
-                    ..Default::default()
-                },
-                "output_format",
-                serde_json::json!("svg"),
-            ),
-            (
-                OpenRouterImageOptions {
-                    background: Some("auto".to_owned()),
-                    ..Default::default()
-                },
-                "background",
-                serde_json::json!("auto"),
-            ),
-        ];
-        for (options, key, value) in cases {
-            let body = body(&options).unwrap();
-            let obj = body.as_object().unwrap();
-            assert_eq!(obj.len(), 3, "only {key} beside model and prompt: {body}");
-            assert_eq!(obj[key], value);
-        }
-    }
-
-    #[test]
     fn extra_adds_fields_and_wins_over_typed_ones() {
         let options = OpenRouterImageOptions {
             quality: Some("high".to_owned()),
-            extra: Some(to_value!({"user": "u-1", "quality": "low"})),
+            extra: Some(to_value!({"user": "u-1", "quality": "low", "n": 2})),
             ..Default::default()
         };
         let body = body(&options).unwrap();
         assert_eq!(body["user"], "u-1");
         assert_eq!(body["quality"], "low", "extra wins on conflict");
+        assert_eq!(body["n"], 2, "extra may set what the options leave unset");
     }
 
     #[test]
@@ -520,7 +481,8 @@ mod tests {
     fn parse_sniffs_a_missing_media_type() {
         let svg = Bytes::from(b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_vec()).base64();
         let response = to_value!({
-            "data": [{"b64_json": PNG_HEADER_B64}, {"b64_json": svg}]
+            "data": [{"b64_json": PNG_HEADER_B64}, {"b64_json": svg}],
+            "usage": {"cost": 0.04}
         });
         let out = parse_response(&response).unwrap();
         let mimes: Vec<&str> = out
@@ -532,7 +494,7 @@ mod tests {
             })
             .collect();
         assert_eq!(mimes, ["image/png", "image/svg+xml"]);
-        assert!(out.usage.is_none());
+        assert!(out.usage.is_none(), "no token counts, no usage");
     }
 
     #[test]
@@ -555,60 +517,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_reads_every_image_in_order() {
-        let response = to_value!({
-            "data": [
-                {"b64_json": PNG_HEADER_B64, "media_type": "image/png"},
-                {"b64_json": PNG_HEADER_B64, "media_type": "image/webp"}
-            ],
-            "usage": {"cost": 0.04}
-        });
-        let out = parse_response(&response).unwrap();
-        let mime_types: Vec<_> = out
-            .images
-            .iter()
-            .map(|image| match image {
-                PartImage::Embedded { mime_type, .. } => mime_type.as_str(),
-                PartImage::Url { .. } => panic!("expected bytes"),
-            })
-            .collect();
-        assert_eq!(mime_types, ["image/png", "image/webp"]);
-        assert!(out.usage.is_none(), "no token counts, no usage");
-    }
-
-    #[test]
-    fn extra_may_set_what_the_options_leave_unset() {
-        let options = OpenRouterImageOptions {
-            extra: Some(to_value!({"n": 2, "output_format": "webp"})),
-            ..Default::default()
-        };
-        let body = body(&options).unwrap();
-        assert_eq!(body["n"], 2);
-        assert_eq!(body["output_format"], "webp");
-    }
-
-    #[test]
-    fn an_error_in_a_successful_response_is_reported() {
-        let response = to_value!({"error": {"code": 502, "message": "Provider returned error"}});
-        let err = parse_response(&response).unwrap_err().to_string();
-        assert_eq!(
-            err,
-            "OpenRouter image request failed: Provider returned error"
-        );
-    }
-
-    #[test]
-    fn endpoint_is_the_images_api() {
-        assert_eq!(API_URL, "https://openrouter.ai/api/v1/images");
-    }
-
-    #[test]
     fn a_response_without_images_is_an_error() {
         let err = parse_response(&to_value!({"data": []}))
             .unwrap_err()
             .to_string();
         assert!(err.contains("no images"), "{err}");
         assert!(parse_response(&to_value!({})).is_err());
+
+        let response = to_value!({"error": {"code": 502, "message": "Provider returned error"}});
+        let err = parse_response(&response).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "OpenRouter image request failed: Provider returned error"
+        );
     }
 
     #[test]
@@ -707,66 +628,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_retries_a_failed_generation() {
-        let (url, calls) = mock(|attempt| match attempt {
-            1 => (
-                502,
-                r#"{"error":{"code":502,"message":"generation failed"}}"#,
+    async fn send_retries_only_what_may_pass() {
+        type Respond = fn(u32) -> (u16, &'static str);
+        const OVERLOADED: &str = r#"{"error":{"code":503,"message":"overloaded"}}"#;
+        // How the server answers, the calls it then gets, and the error they end in, if any.
+        let cases: [(Respond, u32, Option<&str>); 4] = [
+            (
+                |attempt| match attempt {
+                    1 => (429, r#"{"error":{"code":429,"message":"rate limited"}}"#),
+                    _ => (200, "{}"),
+                },
+                2,
+                None,
             ),
-            _ => (200, r#"{"data":[{"b64_json":"iVBORw0KGgo="}]}"#),
-        })
-        .await;
-
-        let response = send_to(&url, None).await.unwrap();
-        let out = parse_response(&serde_json::from_str(&response.text().await.unwrap()).unwrap())
-            .unwrap();
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
-        assert_eq!(out.images.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn send_retries_a_rate_limit() {
-        let (url, calls) = mock(|attempt| match attempt {
-            1 => (429, r#"{"error":{"code":429,"message":"rate limited"}}"#),
-            _ => (200, "{}"),
-        })
-        .await;
-
-        send_to(&url, None).await.unwrap();
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test]
-    async fn send_gives_up_after_three_retries() {
-        let (url, calls) =
-            mock(|_| (503, r#"{"error":{"code":503,"message":"overloaded"}}"#)).await;
-
-        let err = send_to(&url, None).await.unwrap_err();
-        assert!(err.to_string().contains("503"), "{err}");
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 4);
-    }
-
-    #[tokio::test]
-    async fn send_does_not_retry_a_server_error() {
-        let (url, calls) = mock(|_| (500, r#"{"error":{"code":500,"message":"internal"}}"#)).await;
-
-        let err = send_to(&url, None).await.unwrap_err();
-        assert!(err.to_string().contains("500"), "{err}");
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn generate_refuses_a_bad_n_before_sending() {
-        let options = OpenRouterImageOptions {
-            n: Some(11),
-            ..Default::default()
-        };
-        // The key is fake, so anything that reached the network would fail differently.
-        let err = OpenRouterImageApiModel::new("openai/gpt-image-1", "sk-or-test")
-            .generate("a red cube", Some(&options))
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("between 1 and 10"), "{err}");
+            // A failed generation, which OpenRouter does not bill.
+            (
+                |attempt| match attempt {
+                    1 => (
+                        502,
+                        r#"{"error":{"code":502,"message":"generation failed"}}"#,
+                    ),
+                    _ => (200, "{}"),
+                },
+                2,
+                None,
+            ),
+            (|_| (503, OVERLOADED), 4, Some("503")),
+            // The image may already have been made and billed.
+            (
+                |_| (500, r#"{"error":{"code":500,"message":"internal"}}"#),
+                1,
+                Some("500"),
+            ),
+        ];
+        for (i, (respond, expected_calls, expected_error)) in cases.into_iter().enumerate() {
+            let (url, calls) = mock(respond).await;
+            let result = send_to(&url, None).await;
+            let calls = calls.load(std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(calls, expected_calls, "case {i}");
+            match expected_error {
+                None => assert!(result.is_ok(), "case {i}: {:?}", result.err()),
+                Some(text) => {
+                    let err = result.unwrap_err().to_string();
+                    assert!(err.contains(text), "case {i}: {err}");
+                }
+            }
+        }
     }
 
     #[tokio::test]

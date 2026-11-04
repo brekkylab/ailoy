@@ -399,27 +399,42 @@ mod tests {
     }
 
     #[test]
-    fn minimal_body_asks_for_text_and_image_only() {
+    fn body_sends_options_under_their_wire_names() {
         assert_eq!(
             body(&GeminiImageOptions::default()),
             serde_json::json!({
                 "contents": [{"parts": [{"text": "a red cube on a white table"}]}],
                 "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+            }),
+            "text and image only, and no thoughts asked for"
+        );
+        let all = GeminiImageOptions {
+            thinking_level: Some("high".to_owned()),
+            ..set(Some("16:9"), Some("512"))
+        };
+        assert_eq!(
+            body(&all)["generationConfig"],
+            serde_json::json!({
+                "responseModalities": ["TEXT", "IMAGE"],
+                "imageConfig": {"aspectRatio": "16:9", "imageSize": "512"},
+                "thinkingConfig": {"thinkingLevel": "high"},
+            })
+        );
+        let level_alone = GeminiImageOptions {
+            thinking_level: Some("minimal".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(
+            body(&level_alone)["generationConfig"],
+            serde_json::json!({
+                "responseModalities": ["TEXT", "IMAGE"],
+                "thinkingConfig": {"thinkingLevel": "minimal"},
             })
         );
     }
 
-    #[test]
-    fn body_sends_aspect_ratio_and_image_size() {
-        let options = set(Some("16:9"), Some("512"));
-        assert_eq!(
-            body(&options)["generationConfig"]["imageConfig"],
-            serde_json::json!({"aspectRatio": "16:9", "imageSize": "512"})
-        );
-    }
-
     #[tokio::test]
-    async fn generate_takes_only_fields_the_gemini_api_has() {
+    async fn generate_refuses_bad_options_before_sending() {
         let model = GeminiImageApiModel::new("gemini-3.1-flash-image", "AIza-test");
         // An `n` is not a candidate count, nor a `quality` a size: both are refused before
         // anything is sent, which the fake key would fail otherwise.
@@ -456,39 +471,42 @@ mod tests {
     }
 
     #[test]
-    fn explain_error_names_the_image_size_option() {
-        let with_size = Some("512");
+    fn explain_error_names_the_refused_option() {
+        // Bodies real 400s carried, each refusing one value.
+        const RATIO_REFUSAL: &str = r#"{"error":{"code":400,"message":"aspect_ratio must be one of '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'","status":"INVALID_ARGUMENT"}}"#;
+        const OTHER_SIZE_REFUSAL: &str = r#"{"error":{"code":400,"message":"Unsupported image_size '512'. Supported values are: 1K, 2K, 4K"}}"#;
+        const LEVEL_REFUSAL: &str = r#"{"error":{"code":400,"message":"Thinking level MEDIUM is not supported for this model. Please retry with other thinking level.","status":"INVALID_ARGUMENT"}}"#;
         let model = "gemini-3.1-flash-lite-image";
+        let level = GeminiImageOptions {
+            thinking_level: Some("medium".to_owned()),
+            ..Default::default()
+        };
 
-        let hint = explain_error(model, &set(None, with_size), 400, SIZE_REFUSAL)
-            .expect("an imageSize refusal is explained");
-        assert!(hint.contains("`image_size: 512`"), "{hint}");
-        assert!(hint.contains(model), "{hint}");
-        assert!(
-            hint.contains("leave it unset"),
-            "the advice must hold for any model, not name a size: {hint}"
-        );
-        assert!(!hint.contains("1K"), "{hint}");
+        for (options, refusal, named) in [
+            (set(Some("1:8"), None), RATIO_REFUSAL, "`aspect_ratio: 1:8`"),
+            (set(None, Some("512")), SIZE_REFUSAL, "`image_size: 512`"),
+            (
+                set(None, Some("512")),
+                OTHER_SIZE_REFUSAL,
+                "`image_size: 512`",
+            ),
+            (level, LEVEL_REFUSAL, "`thinking_level: medium`"),
+        ] {
+            let hint = explain_error(model, &options, 400, refusal)
+                .unwrap_or_else(|| panic!("{named} is explained"));
+            assert!(hint.contains(named), "{hint}");
+            assert!(hint.contains(model), "{hint}");
+            // The advice holds for any model, so it names no value to use instead.
+            assert!(hint.contains("leave it unset"), "{hint}");
+            assert!(!hint.contains("1K"), "{hint}");
 
-        // Another status, another error, or no size set: nothing to explain.
-        assert!(explain_error(model, &set(None, with_size), 429, SIZE_REFUSAL).is_none());
-        assert!(
-            explain_error(
-                model,
-                &set(None, with_size),
-                400,
-                r#"{"error":{"message":"API key not valid"}}"#
-            )
-            .is_none()
-        );
-        assert!(explain_error(model, &set(None, None), 400, SIZE_REFUSAL).is_none());
-
-        // The wording another model used for the same refusal.
-        let hint = explain_error(model, &set(None, Some("512")), 400,
-            r#"{"error":{"code":400,"message":"Unsupported image_size '512'. Supported values are: 1K, 2K, 4K"}}"#,
-        )
-        .expect("an image_size refusal is explained");
-        assert!(hint.contains("`image_size: 512`"), "{hint}");
+            // Another status, or no value set: nothing to explain.
+            assert!(explain_error(model, &options, 429, refusal).is_none());
+            assert!(explain_error(model, &set(None, None), 400, refusal).is_none());
+        }
+        // Another error, with a size set.
+        let unrelated = r#"{"error":{"message":"API key not valid"}}"#;
+        assert!(explain_error(model, &set(Some("1:8"), Some("512")), 400, unrelated).is_none());
     }
 
     #[test]
@@ -562,84 +580,6 @@ mod tests {
     }
 
     #[test]
-    fn body_sends_the_thinking_level_without_asking_for_thoughts() {
-        let level = |thinking_level| GeminiImageOptions {
-            thinking_level,
-            ..set(Some("16:9"), None)
-        };
-        assert_eq!(
-            body(&level(Some("high".to_owned())))["generationConfig"],
-            serde_json::json!({
-                "responseModalities": ["TEXT", "IMAGE"],
-                "imageConfig": {"aspectRatio": "16:9"},
-                "thinkingConfig": {"thinkingLevel": "high"},
-            })
-        );
-        let without = body(&level(None));
-        assert!(
-            without["generationConfig"].get("thinkingConfig").is_none(),
-            "{without}"
-        );
-
-        let alone = GeminiImageOptions {
-            thinking_level: Some("minimal".to_owned()),
-            ..Default::default()
-        };
-        assert_eq!(
-            body(&alone)["generationConfig"],
-            serde_json::json!({
-                "responseModalities": ["TEXT", "IMAGE"],
-                "thinkingConfig": {"thinkingLevel": "minimal"},
-            })
-        );
-    }
-
-    #[test]
-    fn explain_error_names_the_thinking_level_option() {
-        // The body a real `gemini-3.1-flash-lite-image` 400 carried for `medium`.
-        const LEVEL_REFUSAL: &str = r#"{"error":{"code":400,"message":"Thinking level MEDIUM is not supported for this model. Please retry with other thinking level.","status":"INVALID_ARGUMENT"}}"#;
-        let model = "gemini-3.1-flash-lite-image";
-        let with_level = GeminiImageOptions {
-            thinking_level: Some("medium".to_owned()),
-            ..Default::default()
-        };
-
-        let hint = explain_error(model, &with_level, 400, LEVEL_REFUSAL)
-            .expect("a thinking level refusal is explained");
-        assert!(hint.contains("`thinking_level: medium`"), "{hint}");
-        assert!(hint.contains(model), "{hint}");
-        assert!(hint.contains("leave it unset"), "{hint}");
-
-        assert!(explain_error(model, &set(None, None), 400, LEVEL_REFUSAL).is_none());
-        assert!(explain_error(model, &with_level, 429, LEVEL_REFUSAL).is_none());
-    }
-
-    #[test]
-    fn explain_error_names_the_aspect_ratio_option() {
-        const RATIO_REFUSAL: &str = r#"{"error":{"code":400,"message":"aspect_ratio must be one of '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'","status":"INVALID_ARGUMENT"}}"#;
-        let model = "gemini-3.1-flash-image";
-
-        let ratio = Some("1:8");
-        let hint = explain_error(model, &set(ratio, None), 400, RATIO_REFUSAL)
-            .expect("an aspect_ratio refusal is explained");
-        assert!(hint.contains("`aspect_ratio: 1:8`"), "{hint}");
-        assert!(hint.contains(model), "{hint}");
-        assert!(hint.contains("leave it unset"), "{hint}");
-        assert!(!hint.contains("image_size"), "{hint}");
-
-        assert!(explain_error(model, &set(None, None), 400, RATIO_REFUSAL).is_none());
-        assert!(explain_error(model, &set(ratio, None), 429, RATIO_REFUSAL).is_none());
-    }
-
-    #[test]
-    fn endpoint_puts_the_model_in_the_path() {
-        assert_eq!(
-            endpoint("gemini-3.1-flash-image"),
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent"
-        );
-    }
-
-    #[test]
     fn parse_text_and_inline_data() {
         let response = to_value!({
             "candidates": [{
@@ -673,24 +613,20 @@ mod tests {
     }
 
     #[test]
-    fn no_image_reports_the_finish_reason() {
+    fn no_image_reports_why() {
         let response = to_value!({
             "candidates": [{
                 "content": {"role": "model", "parts": [{"text": "I can't create that."}]},
                 "finishReason": "IMAGE_SAFETY"
             }]
         });
-
         let err = parse_response(&response).unwrap_err().to_string();
         assert!(err.contains("IMAGE_SAFETY"), "{err}");
         assert!(
             err.contains("I can't create that."),
             "the model's own explanation survives: {err}"
         );
-    }
 
-    #[test]
-    fn no_image_reports_a_prompt_block() {
         let response = to_value!({"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}});
         let err = parse_response(&response).unwrap_err().to_string();
         assert!(err.contains("PROHIBITED_CONTENT"), "{err}");
@@ -884,30 +820,70 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_retries_an_overload() {
-        let (url, calls) = mock(|attempt| match attempt {
-            1 => (503, r#"{"error":{"status":"UNAVAILABLE"}}"#),
-            _ => (200, "{}"),
-        })
-        .await;
-
-        send_to(&url, &GeminiImageOptions::default()).await.unwrap();
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test]
-    async fn send_does_not_retry_a_server_error() {
-        let (url, calls) = mock(|_| (500, r#"{"error":{"status":"INTERNAL"}}"#)).await;
-
-        let err = send_to(&url, &GeminiImageOptions::default())
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("500"), "{err}");
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    async fn send_retries_only_what_may_pass() {
+        type Respond = fn(u32) -> (u16, &'static str);
+        const UNAVAILABLE: &str = r#"{"error":{"status":"UNAVAILABLE"}}"#;
+        // How the server answers, the calls it then gets, and the error they end in, if any.
+        let cases: [(Respond, u32, Option<&str>); 5] = [
+            (
+                |attempt| match attempt {
+                    1 => (503, UNAVAILABLE),
+                    _ => (200, "{}"),
+                },
+                2,
+                None,
+            ),
+            // A RetryInfo marks a limit that passes.
+            (
+                |attempt| match attempt {
+                    1 => (
+                        429,
+                        r#"{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"0s"}]}}"#,
+                    ),
+                    _ => (200, "{}"),
+                },
+                2,
+                None,
+            ),
+            (|_| (503, UNAVAILABLE), 4, Some("503")),
+            // The image may already have been made and billed.
+            (
+                |_| (500, r#"{"error":{"status":"INTERNAL"}}"#),
+                1,
+                Some("500"),
+            ),
+            (
+                |_| {
+                    (
+                        429,
+                        r#"{"error":{"code":429,"message":"quota","status":"RESOURCE_EXHAUSTED"}}"#,
+                    )
+                },
+                1,
+                Some("RESOURCE_EXHAUSTED"),
+            ),
+        ];
+        for (i, (respond, expected_calls, expected_error)) in cases.into_iter().enumerate() {
+            let (url, calls) = mock(respond).await;
+            let result = send_to(&url, &GeminiImageOptions::default()).await;
+            let calls = calls.load(std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(calls, expected_calls, "case {i}");
+            match expected_error {
+                None => assert!(result.is_ok(), "case {i}: {:?}", result.err()),
+                Some(text) => {
+                    let err = result.unwrap_err().to_string();
+                    assert!(err.contains(text), "case {i}: {err}");
+                }
+            }
+        }
     }
 
     #[tokio::test]
     async fn generate_refuses_a_model_id_that_would_change_the_url() {
+        assert_eq!(
+            endpoint("gemini-3.1-flash-image"),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent"
+        );
         for model in ["models/gemini", "gemini?alt=sse", "gemini#x"] {
             let err = GeminiImageApiModel::new(model, "AIza-test")
                 .generate("a red cube", None)
@@ -942,49 +918,6 @@ mod tests {
         };
         let err = send_to(&url, &options).await.unwrap_err().to_string();
         assert!(err.contains("`image_size: 512`"), "{err}");
-    }
-
-    #[tokio::test]
-    async fn send_retries_a_passing_rate_limit() {
-        let (url, calls) = mock(|attempt| match attempt {
-            1 => (
-                429,
-                r#"{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"0s"}]}}"#,
-            ),
-            _ => (200, "{}"),
-        })
-        .await;
-
-        send_to(&url, &GeminiImageOptions::default()).await.unwrap();
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test]
-    async fn send_does_not_retry_a_used_up_quota() {
-        let (url, calls) = mock(|_| {
-            (
-                429,
-                r#"{"error":{"code":429,"message":"quota","status":"RESOURCE_EXHAUSTED"}}"#,
-            )
-        })
-        .await;
-
-        let err = send_to(&url, &GeminiImageOptions::default())
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("RESOURCE_EXHAUSTED"), "{err}");
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn send_gives_up_after_three_retries() {
-        let (url, calls) = mock(|_| (503, r#"{"error":{"status":"UNAVAILABLE"}}"#)).await;
-
-        let err = send_to(&url, &GeminiImageOptions::default())
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("503"), "{err}");
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 4);
     }
 
     #[tokio::test]

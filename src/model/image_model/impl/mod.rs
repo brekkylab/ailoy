@@ -92,7 +92,8 @@ mod tests {
     use crate::model::{GeminiImageOptions, OpenAIImageOptions, OpenRouterImageOptions};
 
     #[test]
-    fn read_options_takes_options_built_for_another_api_when_the_fields_fit() {
+    fn read_options_reads_any_options_as_the_api_parameters() {
+        // Another API's options type, where the fields fit.
         let options = OpenAIImageOptions {
             n: Some(2),
             size: Some("1536x1024".to_owned()),
@@ -102,25 +103,20 @@ mod tests {
         assert_eq!(read.n, Some(2));
         assert_eq!(read.size.as_deref(), Some("1536x1024"));
 
-        let none: GeminiImageOptions = read_options(None, "m").unwrap();
-        assert!(none.aspect_ratio.is_none() && none.extra.is_none());
-    }
-
-    #[test]
-    fn read_options_takes_any_json_object_of_parameters() {
+        // Plain JSON, and none at all.
         let read: GeminiImageOptions =
             read_options(Some(&serde_json::json!({"aspect_ratio": "16:9"})), "m").unwrap();
         assert_eq!(read.aspect_ratio.as_deref(), Some("16:9"));
+        let none: GeminiImageOptions = read_options(None, "m").unwrap();
+        assert!(none.aspect_ratio.is_none() && none.extra.is_none());
 
-        // Compiles, as anything serializable does, and fails when read.
+        // Anything serializable compiles, and anything but an object fails when read.
         let err = read_options::<GeminiImageOptions>(Some(&"16:9"), "m")
             .unwrap_err()
             .to_string();
         assert!(err.contains("invalid type"), "{err}");
-    }
 
-    #[test]
-    fn read_options_names_a_field_the_api_does_not_have() {
+        // A field the API does not have is named, with the model and the fields it has.
         let options = OpenRouterImageOptions {
             aspect_ratio: Some("16:9".to_owned()),
             ..Default::default()

@@ -400,15 +400,12 @@ async def test_an_unknown_org_cannot_make_a_lang_model():
 
 # ---- image models -------------------------------------------------------------------------
 
-async def test_an_image_model_needs_a_known_org_and_a_name():
+async def test_an_image_model_needs_a_known_org_a_name_and_its_key(monkeypatch):
     with pytest.raises(AiloyError, match="'nobody'"):
         await ailoy.ImageModel.create("nobody/model")
     for desc in ["openrouter", "google"]:
         with pytest.raises(AiloyError, match="model name"):
             await ailoy.ImageModel.create(desc)
-
-
-async def test_an_image_model_needs_its_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(AiloyError, match="OPENAI_API_KEY"):
         await ailoy.ImageModel.create("openai/gpt-image-2")
@@ -449,30 +446,29 @@ async def test_a_custom_image_model_reads_its_own_options():
     assert output == {"images": [PIXEL], "text": "painted: a red cube"}
     await model.generate("x")
     await model.generate("x", options=None)
-    assert painter.options == [{"steps": 30, "extra": {"seed": 7}}, {}, {}]
+    # An `ImageModel` is taken as it is.
+    await ailoy.ImageModel.custom(model).generate("x", options={"steps": 20})
+    assert painter.options == [{"steps": 30, "extra": {"seed": 7}}, {}, {}, {"steps": 20}]
 
 
-async def test_a_synchronous_custom_image_model_runs_off_the_event_loop():
+async def test_a_custom_image_model_runs_synchronously_off_the_loop_or_async_on_it():
     loop_thread = threading.get_ident()
 
-    class Where(Painter):
+    class Sync(Painter):
         def generate(self, prompt, options):
             self.thread = threading.get_ident()
             return Painter.generate(self, prompt, options)
 
-    where = Where()
-    await ailoy.ImageModel.custom(where).generate("x")
-    assert where.thread != loop_thread
-
-
-async def test_a_custom_image_model_may_be_async():
     class Async(Painter):
         async def generate(self, prompt, options):
+            self.thread = threading.get_ident()
             await asyncio.sleep(0)
             return Painter.generate(self, prompt, options)
 
-    model = ailoy.ImageModel.custom(Async())
-    assert (await model.generate("hi"))["text"] == "painted: hi"
+    for model, off_the_loop in [(Sync(), True), (Async(), False)]:
+        output = await ailoy.ImageModel.custom(model).generate("hi")
+        assert output["text"] == "painted: hi"
+        assert (model.thread != loop_thread) == off_the_loop
 
 
 async def test_a_custom_image_model_needs_generate_and_its_errors_reach_the_caller():
@@ -499,14 +495,6 @@ async def test_a_custom_image_model_needs_generate_and_its_errors_reach_the_call
 
     with pytest.raises(AiloyError, match="no images"):
         await ailoy.ImageModel.custom(Empty()).generate("x")
-
-
-async def test_a_custom_image_model_may_be_an_image_model():
-    painter = Painter()
-    model = ailoy.ImageModel.custom(ailoy.ImageModel.custom(painter))
-    output = await model.generate("hi", options={"steps": 30})
-    assert output["text"] == "painted: hi"
-    assert painter.options == [{"steps": 30}]
 
 
 # ---- against the console server virtx starts by default ----------------------------

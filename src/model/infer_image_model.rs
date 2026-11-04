@@ -169,7 +169,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn options_are_one_flat_object_without_unset_fields() {
+    fn options_are_one_flat_object_that_round_trips() {
+        // Unset fields are left out.
         let options = GeminiImageOptions {
             aspect_ratio: Some("16:9".to_owned()),
             ..Default::default()
@@ -184,10 +185,7 @@ mod tests {
                 .unwrap(),
             serde_json::json!({})
         );
-    }
 
-    #[test]
-    fn options_serde_round_trip() {
         fn round_trip<T: Serialize + DeserializeOwned>(json: serde_json::Value) {
             let options: T = serde_json::from_value(json.clone()).unwrap();
             assert_eq!(serde_json::to_value(&options).unwrap(), json);

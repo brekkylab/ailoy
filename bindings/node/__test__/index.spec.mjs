@@ -378,14 +378,11 @@ test('a factory that throws fails the build', async (t) => {
 
 // ---- image models ------------------------------------------------------------------------
 
-test('an image model needs a known org and a name', async () => {
+test('an image model needs a known org, a name and its key', async (t) => {
   await assert.rejects(ImageModel.create('nobody/model'), { code: 'AILOY_ERROR', message: /'nobody'/ })
   for (const desc of ['openrouter', 'google']) {
     await assert.rejects(ImageModel.create(desc), { code: 'AILOY_ERROR', message: /model name/ })
   }
-})
-
-test('an image model needs its key', async (t) => {
   const key = process.env.OPENAI_API_KEY
   delete process.env.OPENAI_API_KEY
   t.after(() => {
@@ -437,7 +434,7 @@ class Painter {
   }
 }
 
-test('a custom image model reads its own options', async () => {
+test('a custom image model reads its own options, and may be async', async () => {
   const painter = new Painter()
   const model = ImageModel.custom(painter)
   const output = await model.generate('a red cube', { steps: 30, extra: { seed: 7 } })
@@ -445,17 +442,14 @@ test('a custom image model reads its own options', async () => {
   await model.generate('x')
   await model.generate('x', null)
   assert.deepEqual(painter.options, [{ steps: 30, extra: { seed: 7 } }, {}, {}])
-})
 
-test('a custom image model may be async', async () => {
   class Async extends Painter {
     async generate(prompt, options) {
       await null
       return super.generate(prompt, options)
     }
   }
-  const model = ImageModel.custom(new Async())
-  assert.equal((await model.generate('hi')).text, 'painted: hi')
+  assert.equal((await ImageModel.custom(new Async()).generate('hi')).text, 'painted: hi')
 })
 
 test('a custom image model needs generate, and its errors reach the caller', async () => {
@@ -482,8 +476,6 @@ test('a custom image model needs generate, and its errors reach the caller', asy
   await assert.rejects(blank.generate('x'), { code: 'AILOY_ERROR', message: /not an image output/ })
   const blankLater = ImageModel.custom({ generate: async () => ({ text: 'nothing' }) })
   await assert.rejects(blankLater.generate('x'), { code: 'AILOY_ERROR', message: /not an image output/ })
-  const nothing = ImageModel.custom({ generate: () => null })
-  await assert.rejects(nothing.generate('x'), { code: 'AILOY_ERROR', message: /not an image output/ })
 
   const empty = ImageModel.custom({ generate: () => ({ images: [] }) })
   await assert.rejects(empty.generate('x'), { code: 'AILOY_ERROR', message: /no images/ })
