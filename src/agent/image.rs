@@ -20,14 +20,14 @@ pub(crate) const MAX_IMAGE_EDGE: u32 = 2576;
 /// JPEG quality a fitted image is written at, high enough to keep small text legible.
 const JPEG_QUALITY: u8 = 90;
 
-/// Largest PNG an opaque lossless WebP is fitted into before it goes as JPEG instead: 5 MB
-/// in base64, Bedrock's limit for one image.
-const MAX_PNG_FROM_WEBP_BYTES: usize = 3_750_000;
+/// Largest a fitted image may come out: 5 MB in base64, Bedrock's limit for one image.
+/// Past it the image is left as it came.
+const MAX_IMAGE_BYTES: usize = 3_750_000;
 
 /// Shrink every embedded image of `message` to fit [`MAX_IMAGE_EDGE`], keeping its shape.
-/// An image that fits, is reached by URL, cannot be read, or is animated is left as it is:
-/// what becomes of an animation's frames is the model's API to decide. So is one whose
-/// decoder panics, so that a malformed image never takes the turn down.
+/// An image that fits, is reached by URL, cannot be read, would come out too large, or is
+/// animated is left as it is: what becomes of an animation's frames is the model's API to
+/// decide. So is one whose decoder panics, so that a malformed image never takes the turn down.
 pub(crate) fn fit_images(message: &mut Message) {
     for part in &mut message.contents {
         if let Part::Image {
@@ -67,12 +67,13 @@ pub(crate) async fn fit_images_off_runtime(message: Message) -> Message {
 }
 
 /// `data` re-encoded with its longest edge at [`MAX_IMAGE_EDGE`], turned upright by its EXIF
-/// orientation and keeping its color profile; `None` when it fits already or is not an
-/// image this build can decode and encode.
+/// orientation and keeping its color profile; `None` when it fits already, is not an
+/// image this build can decode and encode, or would come out past [`MAX_IMAGE_BYTES`].
 ///
 /// The `image` crate writes WebP lossless only, which makes a lossy photo several times
 /// larger, so a WebP comes back as PNG when it has transparent pixels or was lossless
-/// (a screenshot or a drawing, whose text JPEG would blur), and as JPEG otherwise.
+/// (a screenshot or a drawing, whose text JPEG would blur), and as JPEG otherwise or when
+/// an opaque one's PNG is too large.
 fn fit(data: &[u8]) -> Option<(ImageFormat, Vec<u8>)> {
     let format = image::guess_format(data).ok()?;
     if !format.writing_enabled() {
@@ -92,21 +93,23 @@ fn fit(data: &[u8]) -> Option<(ImageFormat, Vec<u8>)> {
     // `resize` keeps the aspect ratio within the box, so the longer edge lands on the limit.
     let fitted = picture.resize(MAX_IMAGE_EDGE, MAX_IMAGE_EDGE, FilterType::Triangle);
 
-    if format != ImageFormat::WebP {
-        return Some((format, encode(&fitted, format, icc)?));
-    }
-    // Judged before the resize, whose filter may leave an opaque edge just short of opaque.
-    if has_transparency(&picture) {
-        return Some((ImageFormat::Png, encode(&fitted, ImageFormat::Png, icc)?));
-    }
-    let opaque = DynamicImage::ImageRgb8(fitted.to_rgb8());
-    if is_lossless_webp(data)
-        && let Some(png) = encode(&opaque, ImageFormat::Png, icc.clone())
-        && png.len() <= MAX_PNG_FROM_WEBP_BYTES
-    {
-        return Some((ImageFormat::Png, png));
-    }
-    Some((ImageFormat::Jpeg, encode(&opaque, ImageFormat::Jpeg, icc)?))
+    let (format, out) = if format != ImageFormat::WebP {
+        (format, encode(&fitted, format, icc)?)
+    } else if has_transparency(&picture) {
+        // Judged before the resize, whose filter may leave an opaque edge just short of opaque.
+        (ImageFormat::Png, encode(&fitted, ImageFormat::Png, icc)?)
+    } else {
+        let opaque = DynamicImage::ImageRgb8(fitted.to_rgb8());
+        match is_lossless_webp(data)
+            .then(|| encode(&opaque, ImageFormat::Png, icc.clone()))
+            .flatten()
+            .filter(|png| png.len() <= MAX_IMAGE_BYTES)
+        {
+            Some(png) => (ImageFormat::Png, png),
+            None => (ImageFormat::Jpeg, encode(&opaque, ImageFormat::Jpeg, icc)?),
+        }
+    };
+    (out.len() <= MAX_IMAGE_BYTES).then_some((format, out))
 }
 
 /// `picture` written as `format`, carrying `icc` where the format holds one.
@@ -311,12 +314,12 @@ mod tests {
 
     #[test]
     fn test_an_opaque_webp_too_large_as_png_comes_back_as_jpeg() {
-        // Noise compresses poorly: about 8 MB as a 2576-wide PNG.
+        // Faint noise compresses poorly as PNG but well enough as JPEG.
         let mut seed = 1u32;
-        let noise = RgbImage::from_fn(2600, 1000, |_, _| {
+        let noise = RgbImage::from_fn(2600, 1500, |_, _| {
             seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             let [r, g, b, _] = seed.to_le_bytes();
-            [r, g, b].into()
+            [120 + r % 16, 120 + g % 16, 120 + b % 16].into()
         });
         let mut message =
             Message::new(Role::User).with_contents([webp(DynamicImage::ImageRgb8(noise))]);
