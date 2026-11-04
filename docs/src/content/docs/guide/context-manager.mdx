@@ -1,6 +1,6 @@
 ---
 title: "Context manager"
-description: "Replace old tool results once a long run's input passes a token limit."
+description: "Replace old tool results past a token limit, and old screenshots past a cap."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
@@ -9,7 +9,7 @@ The agent sends its whole history to the model on every call, so a long run send
 
 ## Turning it on
 
-Without a context manager, an agent acts as with one whose settings are all left out: the image cap is on at its defaults, and the token limit is off until you give `max_input_tokens`. Either at `0` is off. Every setting has a default:
+Every setting has a default, and an agent without a context manager acts as one with them all: the image cap is on and the token limit is off.
 
 | Setting | Default | What it is |
 | --- | --- | --- |
@@ -67,8 +67,6 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
 </TabItem>
 </Tabs>
 
-`context_manager()` with no arguments (`contextManager()`, `ContextManager::default()`) is the same as setting none.
-
 ## Tool results past the token limit
 
 Before each call to the model, the agent looks at the last input token count the model reported. When that is more than `max_input_tokens`, it truncates the history:
@@ -87,12 +85,12 @@ With `preserve_recent_turns` at `0`, every tool result is replaced, those of the
 
 ## Images past the cap
 
-A screenshot the agent takes stays in a tool result and is sent again with every call, at about 1,300 tokens for a 1280×800 screenshot, and a screen changes with every click. So at the start of each turn, when the tool results hold more than `max_images` images, the oldest become the text `[image from an earlier turn removed]` until `preserve_recent_images` remain. Many go at once, so the prompt cache breaks once in several turns rather than at every one.
+At the start of each turn, when the tool results hold more than `max_images` images, the oldest become the text `[image from an earlier turn removed]` until `preserve_recent_images` remain.
 
 - Only images in tool results count and only they are replaced: a screenshot, an image read with `imgread`, an image an MCP tool returned. Images you attach to a message are never replaced.
-- Within a turn nothing is replaced, so a turn of many screenshots sends them all until the next turn starts. Claude rejects a history altered before thinking it is handed back, and only at the start of a turn is there none.
+- Within a turn nothing is replaced, so a turn of many screenshots sends them all until the next turn starts.
 - The cap counts across every turn, the last `preserve_recent_turns` included.
 
 As with the token limit, the placeholders stay in `agent.history`.
 
-Apart from the cap, and for every model, an embedded image past 2576 pixels on its longer edge, attached or returned by a tool, is shrunk to that edge before it enters the history: 2576 is the largest edge Claude takes, and Claude refuses an edge over 3000 in a request of more than twenty images. The shrunk image is turned upright by its EXIF orientation and keeps its color profile; a WebP comes back as PNG when it has transparent pixels or was lossless, and as JPEG otherwise or when an opaque one's PNG would pass 5 MB in base64. An image that would still come out past that is left as it is, and so is an animated one, whose frames reach the model's API as they came.
+Apart from the cap, and for every model, an embedded image past 2576 pixels on its longer edge, attached or returned by a tool, is shrunk to that edge before it enters the history. The shrunk image is turned upright by its EXIF orientation and keeps its color profile. A WebP comes back as PNG when it has transparent pixels or was lossless, and as JPEG otherwise or when an opaque one's PNG would pass 5 MB in base64. An image that would still come out past 5 MB in base64, or that is animated, is left as it is.
