@@ -1,12 +1,19 @@
-# Using a browser
+---
+title: "Using a browser"
+description: "Let an agent drive a browser over CDP."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 An agent can drive a browser with its `browser_*` tools: your own, or one of its own. Give it one with `browser(...)` on the `AgentBuilder`. The tools reach the browser from your program over the Chrome DevTools Protocol (CDP), not from the agent's console, so an agent needs no console to browse.
 
-By default the browser is your own (`Browser::user()` in Rust), a Chromium-based one that speaks CDP: Chrome by default. For a browser of the agent's own, see [A browser of the agent's own](#a-browser-of-the-agent-s-own). It needs remote debugging on; in Chrome 144 or later, open `chrome://inspect/#remote-debugging` and turn it on. Then:
+By default the browser is your own (`Browser::user()` in Rust), a Chromium-based one that speaks CDP: Chrome by default. For a browser of the agent's own, see [A browser of the agent's own](#a-browser-of-the-agents-own). It needs remote debugging on; in Chrome 144 or later, open `chrome://inspect/#remote-debugging` and turn it on. Then:
 
-::: code-group
+<Tabs syncKey="lang">
 
-```python [Python]
+<TabItem label="Python">
+
+```python
 import asyncio
 
 from ailoy import AgentBuilder
@@ -26,7 +33,11 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-```js [Node.js]
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
 const { AgentBuilder } = require('@brekkylab/ailoy')
 
 async function main() {
@@ -46,7 +57,11 @@ async function main() {
 main()
 ```
 
-```rust [Rust]
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
 use ailoy::{agent::AgentBuilder, browser::Browser};
 
 let mut agent = AgentBuilder::new("anthropic/claude-sonnet-5")
@@ -55,7 +70,9 @@ let mut agent = AgentBuilder::new("anthropic/claude-sonnet-5")
     .await?;
 ```
 
-:::
+
+</TabItem>
+</Tabs>
 
 Nothing connects until the agent first uses a browser tool. Then the browser asks you whether to allow it. While it is allowed, Chrome shows that it is being controlled by automated software. The agent opens a window of its own and works there. The browser asks only once for the agent's whole life, because ailoy keeps one connection to it open.
 
@@ -67,7 +84,7 @@ To connect sooner, say while you are at your screen, call `start_browser()` (`st
 
 ailoy finds the browser by the `DevToolsActivePort` file a Chromium-based browser writes in its user data directory while remote debugging is on. By default it looks at Chrome, Chrome Beta, Dev and Canary, Chromium, Edge and Brave, and takes whichever turned remote debugging on last. To name one, pass `user_browser` (`userBrowser` in Node, `Browser::user_browser` in Rust): `"chrome"`, `"chrome-beta"`, `"chrome-dev"`, `"chrome-canary"`, `"chromium"`, `"edge"` or `"brave"`, or any other by its user data directory (a path in Python, `{ userDataDir }` in Node, `UserBrowser::Custom` in Rust).
 
-::: warning
+:::caution
 The agent uses your real browser, signed in wherever you are. Its tools cannot reach your other tabs, but in its own window it can do anything you could. The browser tools' descriptions tell it to ask you before anything that cannot be undone, such as paying, sending or deleting. That is an instruction, though, not a limit, so use your own browser only with an agent and a task you trust.
 :::
 

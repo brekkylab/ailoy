@@ -39,7 +39,7 @@ import ailoy
 ailoy.set_lang_model_provider("anthropic", "api")   # every anthropic/ model built after this uses ANTHROPIC_API_KEY
 ```
 
-Node is `setLangModelProvider('anthropic', 'api')`; Rust is `ailoy::model::set_lang_model_provider("anthropic", Backend::Api)`. Keys are read from the environment when the model is built, so set them before that; a missing one fails at `build()` with `ANTHROPIC_API_KEY is not set`. A CLI that is not installed fails only at the first turn, with `failed to start the claude CLI`. Pick the CLI when the user is running it on their own machine with a subscription, and a key when it runs unattended (CI, servers) where nobody can log in. [`docs/guide/model-providers.md`](../../docs/guide/model-providers.md) has which org runs on which backend.
+Node is `setLangModelProvider('anthropic', 'api')`; Rust is `ailoy::model::set_lang_model_provider("anthropic", Backend::Api)`. Keys are read from the environment when the model is built, so set them before that; a missing one fails at `build()` with `ANTHROPIC_API_KEY is not set`. A CLI that is not installed fails only at the first turn, with `failed to start the claude CLI`. Pick the CLI when the user is running it on their own machine with a subscription, and a key when it runs unattended (CI, servers) where nobody can log in. [`docs/src/content/docs/guide/model-providers.mdx`](../../docs/src/content/docs/guide/model-providers.mdx) has which org runs on which backend.
 
 ## 3. Give it a computer
 
@@ -62,7 +62,7 @@ console = await (
 - Mount what the agent must read or write, at an absolute guest path, and nothing more. A read-only input goes through `mount_readonly`. Mounting needs FUSE on the host: FUSE-T on macOS, Dokany on Windows.
 - Tell the agent in its instruction where the mounts are; it cannot see the host's paths.
 
-Node is the same calls in camelCase; Rust takes absolute host paths (`std::path::absolute("./artifacts")?`). [`docs/guide/building-vm.md`](../../docs/guide/building-vm.md) has images, CPUs, memory and the GPU.
+Node is the same calls in camelCase; Rust takes absolute host paths (`std::path::absolute("./artifacts")?`). [`docs/src/content/docs/guide/building-vm.mdx`](../../docs/src/content/docs/guide/building-vm.mdx) has images, CPUs, memory and the GPU.
 
 ## 4. Build the agent
 
@@ -94,7 +94,7 @@ What else the builder takes, by what the task needs:
 | think harder, or less | `.thinking_effort("low" \| "medium" \| "high")` |
 | answer in a fixed shape | `.output_schema({...})`, a JSON schema |
 
-A stdio MCP server runs on the host, with your program's access, not in the console. Register only servers you trust. [`docs/guide/using-mcp.md`](../../docs/guide/using-mcp.md) has both transports in all three languages. [`docs/guide/using-browser.md`](../../docs/guide/using-browser.md) has the browser's options and what it asks the user before letting the agent in.
+A stdio MCP server runs on the host, with your program's access, not in the console. Register only servers you trust. [`docs/src/content/docs/guide/using-mcp.mdx`](../../docs/src/content/docs/guide/using-mcp.mdx) has both transports in all three languages. [`docs/src/content/docs/guide/using-browser.mdx`](../../docs/src/content/docs/guide/using-browser.mdx) has the browser's options and what it asks the user before letting the agent in.
 
 ## 5. Run it, and read what comes back
 
@@ -105,7 +105,7 @@ async for output in agent.run("Create a bar chart of European populations and sa
             print(part["text"])
 ```
 
-`run` yields one complete message per step of the tool loop: the model's text, its tool calls in `tool_calls`, and each tool's result as a `tool` message. `run_stream` (`runStream`) yields deltas instead, for token-by-token output. A message is `{"role", "contents": [parts]}`; a part is `text`, `image`, `function` or `value`. To send an image, pass a whole message rather than a string. [`docs/guide/message-format.md`](../../docs/guide/message-format.md) has every field.
+`run` yields one complete message per step of the tool loop: the model's text, its tool calls in `tool_calls`, and each tool's result as a `tool` message. `run_stream` (`runStream`) yields deltas instead, for token-by-token output. A message is `{"role", "contents": [parts]}`; a part is `text`, `image`, `function` or `value`. To send an image, pass a whole message rather than a string. [`docs/src/content/docs/guide/message-format.mdx`](../../docs/src/content/docs/guide/message-format.mdx) has every field.
 
 In Node, close the agent in a `finally`; in Python, the console is an async context manager. Closing the agent leaves a console you built open, so one console can serve several agents in turn.
 

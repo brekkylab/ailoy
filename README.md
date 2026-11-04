@@ -15,7 +15,7 @@
 
 </p>
 <p align="center">
-  <a href="https://brekkylab.github.io/ailoy/"><img src="https://img.shields.io/badge/docs-eng-5a9cae" alt="Documentation"></a>
+  <a href="https://ailoy.co/docs/"><img src="https://img.shields.io/badge/docs-eng-5a9cae" alt="Documentation"></a>
   <!-- <a href="https://docs.rs/ailoy"><img src="https://img.shields.io/docsrs/ailoy?label=docs.rs" alt="docs.rs"></a> -->
   <a href="https://discord.gg/27rx3EJy3P"><img src="https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://x.com/brekkylab"><img src="https://img.shields.io/badge/X-000000?logo=x&logoColor=white" alt="X"></a>
@@ -64,7 +64,7 @@ To call the provider's API instead, set its key and switch the org to the `api` 
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY
 ```
 
-Amazon Bedrock, OpenRouter and vLLM are backends too; see the [model providers guide](./docs/guide/model-providers.md).
+Amazon Bedrock, OpenRouter and vLLM are backends too; see the [model providers guide](https://ailoy.co/docs/guide/model-providers/).
 
 Then build your agent with this simple API in your preferred language:
 

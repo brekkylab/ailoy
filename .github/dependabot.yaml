@@ -18,9 +18,7 @@ updates:
           - "patch"
 
   - package-ecosystem: "npm"
-    directories:
-      - "/bindings/node"
-      - "/docs"
+    directory: "/bindings/node"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
@@ -37,6 +35,19 @@ updates:
         update-types:
           - "minor"
           - "patch"
+
+  # The docs keep ailoy.co's Astro and Starlight versions, so they are raised by hand with
+  # ailoy.co's. A limit of 0 turns off version updates here; security updates still come.
+  - package-ecosystem: "npm"
+    directory: "/docs"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    groups:
+      docs-npm-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
 
   - package-ecosystem: "uv"
     directory: "/bindings/python"
