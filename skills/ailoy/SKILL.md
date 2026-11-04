@@ -90,7 +90,7 @@ What else the builder takes, by what the task needs:
 | follow a procedure you wrote | `.skill("/skills/<name>")`, a directory holding a `SKILL.md`, mounted into the console |
 | remember across sessions | `.memory("/work/notes.sqlite")`, a store made by `mem init` inside the console |
 | pick up an earlier conversation | `.history(messages)`, e.g. a previous agent's `agent.history` |
-| keep long runs within the context window | `.context_manager(max_input_tokens=..., preserve_recent_turns=...)`, which blanks old tool results |
+| keep long runs within the context window | `.context_manager(max_input_tokens=..., preserve_recent_turns=..., max_images=..., preserve_recent_images=...)`, which blanks old tool results past `max_input_tokens` (off unless given) and old screenshots past `max_images` (30, `0` for off) |
 | think harder, or less | `.thinking_effort("low" \| "medium" \| "high")` |
 | answer in a fixed shape | `.output_schema({...})`, a JSON schema |
 

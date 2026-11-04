@@ -238,10 +238,13 @@ async fn main() -> anyhow::Result<()> {
             .with_context(|| "starting the agent's console")?,
     )
     .skill("/skills/openttd")
-    // Many commands a round, each with its output: keep the last two rounds whole.
+    // Many commands a round, each with its output: keep the last two rounds' results whole,
+    // and of the screenshots the agent reads, the latest ten once more than thirty have
+    // built up.
     .context_manager(ContextManager {
         max_input_tokens: 80_000,
         preserve_recent_turns: 2,
+        ..Default::default()
     })
     .build()
     .await?;

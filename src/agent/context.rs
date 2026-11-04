@@ -3,21 +3,33 @@ use serde::{Deserialize, Serialize};
 use crate::message::{Message, Part, Role};
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
 pub struct ContextManager {
     /// Triggers truncation when input_tokens from the previous API call exceeds this value.
+    /// `0`, the default, turns truncation off.
     pub max_input_tokens: u64,
     /// Number of recent user turns to preserve after truncation (system message is always preserved separately).
     pub preserve_recent_turns: usize,
+    /// Images in tool results the history may hold at the start of a turn; over it, the
+    /// oldest become a placeholder. `0` turns the cap off.
+    pub max_images: usize,
+    /// Images in tool results left once the cap is passed.
+    pub preserve_recent_images: usize,
 }
 
 impl Default for ContextManager {
     fn default() -> Self {
         Self {
-            max_input_tokens: 30_000,
+            max_input_tokens: 0,
             preserve_recent_turns: 3,
+            max_images: 30,
+            preserve_recent_images: 10,
         }
     }
 }
+
+/// What stands in for an image [`cap_images`](ContextManager::cap_images) replaced.
+pub(super) const IMAGE_PLACEHOLDER: &str = "[image from an earlier turn removed]";
 
 impl ContextManager {
     /// Truncate the conversation history to reduce context size.
@@ -62,6 +74,39 @@ impl ContextManager {
                     placeholder
                 };
             }
+        }
+    }
+
+    /// Over [`max_images`](Self::max_images) images in the tool results of `history`, replace
+    /// the oldest by [`IMAGE_PLACEHOLDER`] until
+    /// [`preserve_recent_images`](Self::preserve_recent_images) remain: many at once, so the prompt
+    /// cache breaks once in several turns rather than every turn. Images a person attached are
+    /// left alone.
+    ///
+    /// Only for the start of a turn: Claude rejects a history altered before a thinking block
+    /// it is handed back, and at turn start none follows, since `marshal_messages` (Claude)
+    /// and `conversation` (Bedrock) replay thinking only after the last user message.
+    pub(super) fn cap_images(&self, history: &mut [Message]) {
+        if self.max_images == 0 {
+            return;
+        }
+        let images: Vec<(usize, usize)> = history
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == Role::Tool)
+            .flat_map(|(i, m)| {
+                let parts = m.contents.iter().enumerate();
+                parts
+                    .filter(|(_, p)| p.is_image())
+                    .map(move |(j, _)| (i, j))
+            })
+            .collect();
+        if images.len() <= self.max_images {
+            return;
+        }
+        let replaced = images.len().saturating_sub(self.preserve_recent_images);
+        for (i, j) in images.into_iter().take(replaced) {
+            history[i].contents[j] = Part::text(IMAGE_PLACEHOLDER);
         }
     }
 }
@@ -132,6 +177,36 @@ mod tests {
         )])
     }
 
+    fn image() -> Part {
+        Part::image_embedded("image/png", vec![0u8; 4].into()).unwrap()
+    }
+
+    fn shot(id: &str) -> Message {
+        Message::new(Role::Tool)
+            .with_id(id)
+            .with_contents([Part::text("the page"), image()])
+    }
+
+    fn user_with_image(text: &str) -> Message {
+        Message::new(Role::User).with_contents([Part::text(text), image()])
+    }
+
+    fn images_in(history: &[Message]) -> usize {
+        history
+            .iter()
+            .flat_map(|m| &m.contents)
+            .filter(|p| p.is_image())
+            .count()
+    }
+
+    fn with_images(max_images: usize, preserve_recent_images: usize) -> ContextManager {
+        ContextManager {
+            max_images,
+            preserve_recent_images,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_preserve_recent_turns_boundary() {
         // history: sys, u1, a1, u2, a2, u3, a3
@@ -155,6 +230,7 @@ mod tests {
         let cm = ContextManager {
             max_input_tokens: 30_000,
             preserve_recent_turns: 10,
+            ..Default::default()
         };
         let original_len = history.len();
         cm.truncate_history(&mut history);
@@ -177,6 +253,7 @@ mod tests {
         let cm = ContextManager {
             max_input_tokens: 30_000,
             preserve_recent_turns: 1,
+            ..Default::default()
         };
         cm.truncate_history(&mut history);
 
@@ -219,6 +296,7 @@ mod tests {
         let cm = ContextManager {
             max_input_tokens: 30_000,
             preserve_recent_turns: 1,
+            ..Default::default()
         };
         cm.truncate_history(&mut history);
         assert_eq!(
@@ -266,6 +344,7 @@ mod tests {
         let cm = ContextManager {
             max_input_tokens: 30_000,
             preserve_recent_turns: 1,
+            ..Default::default()
         };
         cm.truncate_history(&mut history);
         let tool_msg = history
@@ -282,5 +361,71 @@ mod tests {
             Some("ok"),
             "tool result inside preserve window must not be replaced"
         );
+    }
+
+    #[test]
+    fn test_over_the_cap_the_oldest_screenshots_go_until_the_preserved_remain() {
+        // Five screenshots over a cap of four: the last two stay.
+        let mut history = vec![sys(), user("u1")];
+        history.extend((1..=5).map(|n| shot(&format!("c{n}"))));
+        history.push(asst("a1"));
+        with_images(4, 2).cap_images(&mut history);
+
+        assert_eq!(history[2].contents[1].as_text(), Some(IMAGE_PLACEHOLDER));
+        assert!(history[2..=4].iter().all(|m| m.contents[1].is_text()));
+        assert!(history[5..=6].iter().all(|m| m.contents[1].is_image()));
+        // The note beside each screenshot stays.
+        assert_eq!(history[2].contents[0].as_text(), Some("the page"));
+        assert_eq!(history[2].id.as_deref(), Some("c1"));
+    }
+
+    #[test]
+    fn test_at_the_cap_nothing_goes() {
+        let mut history = vec![sys(), user("u1")];
+        history.extend((1..=4).map(|n| shot(&format!("c{n}"))));
+        with_images(4, 2).cap_images(&mut history);
+        assert_eq!(images_in(&history), 4);
+    }
+
+    #[test]
+    fn test_a_persons_images_are_neither_counted_nor_replaced() {
+        // Three of a person's images and two screenshots are under a cap of two.
+        let mut history = vec![
+            sys(),
+            user_with_image("u1"),
+            user_with_image("u2"),
+            shot("c1"),
+            user_with_image("u3"),
+            shot("c2"),
+            asst("a1"),
+        ];
+        with_images(2, 1).cap_images(&mut history);
+        assert_eq!(images_in(&history), 5);
+
+        // A third screenshot passes it: the two oldest go, the person's three stay.
+        history.push(shot("c3"));
+        with_images(2, 1).cap_images(&mut history);
+        assert_eq!(images_in(&history), 4);
+        assert!(history[3].contents[1].is_text());
+        assert!(history[5].contents[1].is_text());
+        assert!(history[7].contents[1].is_image());
+        assert!(
+            history
+                .iter()
+                .filter(|m| m.role == Role::User)
+                .all(|m| m.contents[1].is_image())
+        );
+    }
+
+    #[test]
+    fn test_a_cap_of_zero_is_off_and_keeping_none_clears_them() {
+        let mut history = vec![sys(), user("u1")];
+        history.extend((1..=12).map(|n| shot(&format!("c{n}"))));
+
+        with_images(0, 0).cap_images(&mut history);
+        assert_eq!(images_in(&history), 12);
+
+        with_images(3, 0).cap_images(&mut history);
+        assert_eq!(images_in(&history), 0);
     }
 }
