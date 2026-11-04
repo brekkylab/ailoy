@@ -18,6 +18,7 @@ mod agent;
 mod console;
 mod convert;
 mod error;
+mod image_model;
 mod model;
 mod registry;
 mod tool;
@@ -28,5 +29,6 @@ fn _ailoy(m: &Bound<'_, PyModule>) -> PyResult<()> {
     registry::register(m)?;
     agent::register(m)?;
     model::register(m)?;
+    image_model::register(m)?;
     Ok(())
 }

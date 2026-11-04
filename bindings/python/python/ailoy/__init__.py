@@ -4,9 +4,10 @@ An ``Agent`` is built with an ``AgentBuilder`` and awaited; a turn is ``agent.ru
 iterated with ``async for``. A model is named ``<org>/<name>``
 (``"anthropic/claude-sonnet-5-5"``) and runs on the backend set for its org with
 ``set_lang_model_provider``: by default its CLI, or its own API when it has none.
-``LangModel.create(desc)`` builds one to run without an agent. A tool is built by name through
-the provider set for it (``set_tool_provider``, ``register_tool``, ``register_mcp_stdio``, ...);
-every built-in tool has one from the start.
+``LangModel.create(desc)`` builds one to run without an agent. ``ImageModel.create(desc)``
+builds an image model through its org's own API, and ``ImageModel.custom(model)`` runs one of
+your own. A tool is built by name through the provider set for it (``set_tool_provider``,
+``register_tool``, ``register_mcp_stdio``, ...); every built-in tool has one from the start.
 
 Messages, specs and tool descriptions are dicts in their JSON form; ``ailoy.types`` spells
 out their shapes.
@@ -23,6 +24,7 @@ from ._ailoy import (
     AgentBuilder,
     AgentRun,
     AiloyError,
+    ImageModel,
     LangModel,
     register_mcp_stdio,
     register_mcp_streamable_http,
@@ -40,6 +42,7 @@ __all__ = [
     "AgentBuilder",
     "AgentRun",
     "AiloyError",
+    "ImageModel",
     "LangModel",
     "get_lang_model_provider",
     "register_mcp_stdio",

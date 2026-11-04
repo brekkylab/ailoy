@@ -27,6 +27,7 @@ export default defineConfig({
             { text: 'Quick start', link: '/guide/quick-start' },
             { text: 'Message format', link: '/guide/message-format' },
             { text: 'Model providers', link: '/guide/model-providers' },
+            { text: 'Image generation', link: '/guide/image-generation' },
             { text: 'Building VM', link: '/guide/building-vm' },
             { text: 'Tools', link: '/guide/tools' },
             { text: 'Skills', link: '/guide/skills' },

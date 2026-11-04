@@ -120,6 +120,47 @@ export interface LangModelOptions {
   output_schema?: Value
 }
 
+export interface OpenAIImageOptions {
+  n?: number
+  size?: string
+  quality?: string
+  output_format?: string
+  background?: string
+  extra?: Record<string, Value>
+}
+
+export interface GeminiImageOptions {
+  aspect_ratio?: string
+  image_size?: string
+  thinking_level?: string
+  extra?: Record<string, Value>
+}
+
+export interface OpenRouterImageOptions {
+  n?: number
+  size?: string
+  resolution?: string
+  aspect_ratio?: string
+  quality?: string
+  output_format?: string
+  background?: string
+  extra?: Record<string, Value>
+}
+
+/**
+ * The options of one built-in API, as one flat object; no Rust type has this name. A model reads
+ * them as its own API's, so a key its API does not have is an error. `extra` is merged into that
+ * API's request body, in its own JSON.
+ */
+export type ImageModelOptions = OpenAIImageOptions | GeminiImageOptions | OpenRouterImageOptions
+
+/** What `ImageModel.generate` gives: at least one image. */
+export interface ImageOutput {
+  images: Array<EmbeddedImage | UrlImage>
+  text?: string
+  usage?: TokenUsage
+}
+
 export interface AgentSpec {
   model: string
   instruction?: string
@@ -147,6 +188,15 @@ export interface CustomLangModel {
     tools: Array<ToolDesc>,
     options: LangModelOptions,
   ): AsyncIterable<MessageDeltaOutput>
+}
+
+/**
+ * An image model of your own, as `ImageModel.custom` takes it. `generate` is called with `this`
+ * as the model, and `options` is the object `ImageModel.generate` was given, or `{}` without
+ * any; its keys are the model's to read.
+ */
+export interface CustomImageModel {
+  generate(prompt: string, options: Record<string, Value>): ImageOutput | Promise<ImageOutput>
 }
 
 export type WebSearchEngine =

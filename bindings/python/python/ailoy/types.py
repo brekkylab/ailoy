@@ -137,6 +137,47 @@ class LangModelOptions(TypedDict):
     output_schema: NotRequired[Value]
 
 
+class OpenAIImageOptions(TypedDict):
+    n: NotRequired[int]
+    size: NotRequired[str]
+    quality: NotRequired[str]
+    output_format: NotRequired[str]
+    background: NotRequired[str]
+    extra: NotRequired[dict[str, Value]]
+
+
+class GeminiImageOptions(TypedDict):
+    aspect_ratio: NotRequired[str]
+    image_size: NotRequired[str]
+    thinking_level: NotRequired[str]
+    extra: NotRequired[dict[str, Value]]
+
+
+class OpenRouterImageOptions(TypedDict):
+    n: NotRequired[int]
+    size: NotRequired[str]
+    resolution: NotRequired[str]
+    aspect_ratio: NotRequired[str]
+    quality: NotRequired[str]
+    output_format: NotRequired[str]
+    background: NotRequired[str]
+    extra: NotRequired[dict[str, Value]]
+
+
+# The options of one built-in API, as one flat dict; no Rust type has this name. A model reads
+# them as its own API's, so a key its API does not have raises. ``extra`` is merged into that
+# API's request body, in its own JSON.
+ImageModelOptions = Union[OpenAIImageOptions, GeminiImageOptions, OpenRouterImageOptions]
+
+
+class ImageOutput(TypedDict):
+    """What ``ImageModel.generate`` gives: at least one image."""
+
+    images: list[Union[EmbeddedImage, UrlImage]]
+    text: NotRequired[str]
+    usage: NotRequired[TokenUsage]
+
+
 class AgentSpec(TypedDict):
     model: str
     instruction: NotRequired[str]
@@ -158,12 +199,17 @@ __all__ = [
     "EmbeddedImage",
     "FinishReason",
     "FunctionPart",
+    "GeminiImageOptions",
+    "ImageModelOptions",
+    "ImageOutput",
     "ImagePart",
     "LangModelOptions",
     "Message",
     "MessageDelta",
     "MessageDeltaOutput",
     "MessageOutput",
+    "OpenAIImageOptions",
+    "OpenRouterImageOptions",
     "Part",
     "PartDelta",
     "PartFunction",

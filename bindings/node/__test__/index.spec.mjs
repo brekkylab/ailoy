@@ -12,6 +12,7 @@ const virtx = require('@brekkylab/virtx')
 const {
   Agent,
   AgentBuilder,
+  ImageModel,
   LangModel,
   registerTool,
   getLangModelProvider,
@@ -373,6 +374,111 @@ test('a factory that throws fails the build', async (t) => {
   })
   t.after(() => removeLangModelProvider('broken'))
   await assert.rejects(new AgentBuilder('broken/x').build(), { message: /no models today/ })
+})
+
+// ---- image models ------------------------------------------------------------------------
+
+test('an image model needs a known org, a name and its key', async (t) => {
+  await assert.rejects(ImageModel.create('nobody/model'), { code: 'AILOY_ERROR', message: /'nobody'/ })
+  for (const desc of ['openrouter', 'google']) {
+    await assert.rejects(ImageModel.create(desc), { code: 'AILOY_ERROR', message: /model name/ })
+  }
+  const key = process.env.OPENAI_API_KEY
+  delete process.env.OPENAI_API_KEY
+  t.after(() => {
+    if (key !== undefined) process.env.OPENAI_API_KEY = key
+  })
+  await assert.rejects(ImageModel.create('openai/gpt-image-2'), {
+    code: 'AILOY_ERROR',
+    message: /OPENAI_API_KEY/,
+  })
+})
+
+test('image options are checked before sending', async (t) => {
+  const key = process.env.OPENROUTER_API_KEY
+  process.env.OPENROUTER_API_KEY = 'unused'
+  t.after(() => {
+    if (key === undefined) delete process.env.OPENROUTER_API_KEY
+    else process.env.OPENROUTER_API_KEY = key
+  })
+  const model = await ImageModel.create('openrouter/x-org/some-model')
+  assert.throws(() => model.generate('x', ['n']), {
+    code: 'INVALID_ARG',
+    message: /not image model options/,
+  })
+  await assert.rejects(model.generate('x', { n: 'two' }), {
+    code: 'AILOY_ERROR',
+    message: /invalid type/,
+  })
+  await assert.rejects(model.generate('x', { n: 0 }), {
+    code: 'AILOY_ERROR',
+    message: /OpenRouter/,
+  })
+  // Gemini's thinking level is not a parameter of OpenRouter's API.
+  await assert.rejects(model.generate('x', { thinking_level: 'high' }), {
+    code: 'AILOY_ERROR',
+    message: /unknown field `thinking_level`/,
+  })
+})
+
+const PIXEL = { type: 'embedded', mime_type: 'image/png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }
+
+/** An image model of the test's own, answering with one fixed image and the prompt. */
+class Painter {
+  constructor() {
+    this.options = []
+  }
+  generate(prompt, options) {
+    this.options.push(options)
+    return { images: [PIXEL], text: `painted: ${prompt}` }
+  }
+}
+
+test('a custom image model reads its own options, and may be async', async () => {
+  const painter = new Painter()
+  const model = ImageModel.custom(painter)
+  const output = await model.generate('a red cube', { steps: 30, extra: { seed: 7 } })
+  assert.deepEqual(output, { images: [PIXEL], text: 'painted: a red cube' })
+  await model.generate('x')
+  await model.generate('x', null)
+  assert.deepEqual(painter.options, [{ steps: 30, extra: { seed: 7 } }, {}, {}])
+
+  class Async extends Painter {
+    async generate(prompt, options) {
+      await null
+      return super.generate(prompt, options)
+    }
+  }
+  assert.equal((await ImageModel.custom(new Async()).generate('hi')).text, 'painted: hi')
+})
+
+test('a custom image model needs generate, and its errors reach the caller', async () => {
+  assert.throws(() => ImageModel.custom({}), { message: /`generate`/ })
+
+  const broken = ImageModel.custom({
+    generate() {
+      throw new Error('no painters today')
+    },
+  })
+  await assert.rejects(broken.generate('x'), { code: 'AILOY_ERROR', message: /no painters today/ })
+
+  const rejecting = ImageModel.custom({
+    async generate() {
+      throw new TypeError('no painters tonight')
+    },
+  })
+  const thrown = await rejecting.generate('x').catch((e) => e)
+  assert.equal(thrown.code, 'AILOY_ERROR')
+  assert.match(thrown.message, /no painters tonight/)
+  assert.doesNotMatch(thrown.message, /not an image output/, 'a throw is not a bad output')
+
+  const blank = ImageModel.custom({ generate: () => ({ text: 'nothing' }) })
+  await assert.rejects(blank.generate('x'), { code: 'AILOY_ERROR', message: /not an image output/ })
+  const blankLater = ImageModel.custom({ generate: async () => ({ text: 'nothing' }) })
+  await assert.rejects(blankLater.generate('x'), { code: 'AILOY_ERROR', message: /not an image output/ })
+
+  const empty = ImageModel.custom({ generate: () => ({ images: [] }) })
+  await assert.rejects(empty.generate('x'), { code: 'AILOY_ERROR', message: /no images/ })
 })
 
 // ---- a shared console, against the console server virtx starts by default ---------------
