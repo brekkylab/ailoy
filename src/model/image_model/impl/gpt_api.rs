@@ -152,7 +152,6 @@ async fn send(
     body: &serde_json::Value,
 ) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
-    const MAX_WAIT_SECS: u64 = 10;
     // Rate limits, and overloads where the request was not taken on.
     const RETRY_STATUSES: [u16; 3] = [429, 503, 529];
 
@@ -169,13 +168,7 @@ async fn send(
             return Ok(response);
         }
         if RETRY_STATUSES.contains(&status.as_u16()) && attempt < MAX_RETRIES {
-            let wait_secs = response
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(1u64 << attempt)
-                .min(MAX_WAIT_SECS);
+            let wait_secs = super::retry_wait_secs(response.headers(), attempt);
             let text = response.text().await.unwrap_or_default();
             // Running out of quota or credit does not pass with time.
             if is_permanent_quota(&text) {
@@ -228,8 +221,10 @@ fn parse_response(val: &Value) -> anyhow::Result<ImageOutput> {
     for entry in data {
         if let Some(b64) = entry.pointer("/b64_json").and_then(|v| v.as_str()) {
             // A broken entry does not sink the response; another may still be good.
-            let Ok(data) = Bytes::from_base64(b64) else {
-                log::warn!("skipping an OpenAI image entry whose `b64_json` does not decode");
+            let Some(data) = Bytes::from_base64(b64).ok().filter(|d| !d.is_empty()) else {
+                log::warn!(
+                    "skipping an OpenAI image entry whose `b64_json` is empty or does not decode"
+                );
                 undecodable += 1;
                 continue;
             };
@@ -277,6 +272,10 @@ fn format_mime(format: &str) -> Option<&'static str> {
 
 fn parse_usage(usage: &Value) -> Option<TokenUsage> {
     let u = usage.as_object()?;
+    // Without either count, nothing was reported.
+    if u.get("input_tokens").is_none() && u.get("output_tokens").is_none() {
+        return None;
+    }
     let count = |key: &str| u.get(key).and_then(|v| v.as_unsigned()).unwrap_or(0);
     Some(TokenUsage {
         input_tokens: count("input_tokens"),
@@ -559,6 +558,45 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("1 entry(ies) had no decodable data"), "{err}");
+
+        // Empty data is no image either.
+        let err = parse_response(&to_value!({"data": [{"b64_json": ""}]}))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("1 entry(ies) had no decodable data"), "{err}");
+    }
+
+    #[test]
+    fn parse_reads_every_image_in_order() {
+        let response = to_value!({
+            "data": [
+                {"b64_json": PNG_HEADER_B64, "revised_prompt": "the first"},
+                {"url": "https://images.example.com/second.png"}
+            ],
+            "usage": {}
+        });
+        let out = parse_response(&response).unwrap();
+        assert_eq!(out.images.len(), 2);
+        assert!(matches!(out.images[0], PartImage::Embedded { .. }));
+        assert_eq!(
+            out.images[1],
+            PartImage::Url {
+                url: "https://images.example.com/second.png".to_owned()
+            }
+        );
+        assert_eq!(out.text.as_deref(), Some("the first"));
+        assert!(out.usage.is_none(), "no token counts, no usage");
+    }
+
+    #[test]
+    fn extra_may_set_what_the_options_leave_unset() {
+        let options = OpenAIImageOptions {
+            extra: Some(to_value!({"n": 2, "output_format": "webp"})),
+            ..Default::default()
+        };
+        let body = body(&options).unwrap();
+        assert_eq!(body["n"], 2);
+        assert_eq!(body["output_format"], "webp");
     }
 
     #[test]
@@ -684,6 +722,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn send_gives_up_after_three_retries() {
+        let (url, calls) = mock(|_| (503, r#"{"error":{"message":"overloaded"}}"#)).await;
+
+        let err = send(&url, "sk-test", &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("503"), "{err}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
     async fn generate_refuses_a_bad_n_before_sending() {
         let options = OpenAIImageOptions {
             n: Some(0),
@@ -770,6 +819,7 @@ mod tests {
         };
         assert_eq!(mime_type, "image/png");
         assert_eq!(&data.as_ref()[..4], &[0x89, 0x50, 0x4E, 0x47]);
-        assert!(out.usage.is_some(), "gpt-image reports token usage");
+        let usage = out.usage.expect("gpt-image reports token usage");
+        assert!(usage.output_tokens > 0, "{usage:?}");
     }
 }

@@ -160,7 +160,6 @@ async fn send(
     size_set: bool,
 ) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
-    const MAX_WAIT_SECS: u64 = 10;
     // Rate limits, unbilled failures, and overloads where the request was not taken on.
     const RETRY_STATUSES: [u16; 4] = [429, 502, 503, 529];
 
@@ -177,13 +176,7 @@ async fn send(
             return Ok(response);
         }
         if RETRY_STATUSES.contains(&status.as_u16()) && attempt < MAX_RETRIES {
-            let wait_secs = response
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(1u64 << attempt)
-                .min(MAX_WAIT_SECS);
+            let wait_secs = super::retry_wait_secs(response.headers(), attempt);
             log::warn!(
                 "Request failed with status {status}. Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
                 attempt + 1
@@ -243,6 +236,7 @@ fn parse_response(val: &Value) -> anyhow::Result<ImageOutput> {
             .pointer("/b64_json")
             .and_then(|v| v.as_str())
             .and_then(|b64| Bytes::from_base64(b64).ok())
+            .filter(|data| !data.is_empty())
         else {
             log::warn!("skipping an OpenRouter image entry with no decodable `b64_json`");
             undecodable += 1;
@@ -283,6 +277,10 @@ fn fallback_mime(data: &[u8]) -> &'static str {
 /// The token counts; the `cost` beside them has no place in [`TokenUsage`].
 fn parse_usage(usage: &Value) -> Option<TokenUsage> {
     let u = usage.as_object()?;
+    // Without either count, nothing was reported.
+    if u.get("prompt_tokens").is_none() && u.get("completion_tokens").is_none() {
+        return None;
+    }
     let count = |key: &str| u.get(key).and_then(|v| v.as_unsigned()).unwrap_or(0);
     Some(TokenUsage {
         input_tokens: count("prompt_tokens"),
@@ -548,6 +546,45 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("1 entry(ies) had no decodable data"), "{err}");
+
+        // Empty data is no image either.
+        let err = parse_response(&to_value!({"data": [{"b64_json": ""}]}))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("1 entry(ies) had no decodable data"), "{err}");
+    }
+
+    #[test]
+    fn parse_reads_every_image_in_order() {
+        let response = to_value!({
+            "data": [
+                {"b64_json": PNG_HEADER_B64, "media_type": "image/png"},
+                {"b64_json": PNG_HEADER_B64, "media_type": "image/webp"}
+            ],
+            "usage": {"cost": 0.04}
+        });
+        let out = parse_response(&response).unwrap();
+        let mime_types: Vec<_> = out
+            .images
+            .iter()
+            .map(|image| match image {
+                PartImage::Embedded { mime_type, .. } => mime_type.as_str(),
+                PartImage::Url { .. } => panic!("expected bytes"),
+            })
+            .collect();
+        assert_eq!(mime_types, ["image/png", "image/webp"]);
+        assert!(out.usage.is_none(), "no token counts, no usage");
+    }
+
+    #[test]
+    fn extra_may_set_what_the_options_leave_unset() {
+        let options = OpenRouterImageOptions {
+            extra: Some(to_value!({"n": 2, "output_format": "webp"})),
+            ..Default::default()
+        };
+        let body = body(&options).unwrap();
+        assert_eq!(body["n"], 2);
+        assert_eq!(body["output_format"], "webp");
     }
 
     #[test]
@@ -688,6 +725,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn send_retries_a_rate_limit() {
+        let (url, calls) = mock(|attempt| match attempt {
+            1 => (429, r#"{"error":{"code":429,"message":"rate limited"}}"#),
+            _ => (200, "{}"),
+        })
+        .await;
+
+        send_to(&url, None).await.unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn send_gives_up_after_three_retries() {
+        let (url, calls) =
+            mock(|_| (503, r#"{"error":{"code":503,"message":"overloaded"}}"#)).await;
+
+        let err = send_to(&url, None).await.unwrap_err();
+        assert!(err.to_string().contains("503"), "{err}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
     async fn send_does_not_retry_a_server_error() {
         let (url, calls) = mock(|_| (500, r#"{"error":{"code":500,"message":"internal"}}"#)).await;
 
@@ -742,6 +801,7 @@ mod tests {
             width > height,
             "16:9 must be landscape, got {width}x{height}"
         );
-        assert!(out.usage.is_some(), "OpenRouter reports usage");
+        let usage = out.usage.expect("OpenRouter reports usage");
+        assert!(usage.output_tokens > 0, "{usage:?}");
     }
 }

@@ -106,13 +106,13 @@ impl InferImageModel for GeminiImageApiModel {
             return Box::pin(async move { Err(e) });
         }
         let request = super::read_options::<GeminiImageOptions>(options, &self.model)
-            .and_then(|options| Ok((self.body(prompt, &options)?, options)));
+            .and_then(|options| self.body(prompt, &options));
         let url = endpoint(&self.model);
         let api_key = self.api_key.clone();
         let model = self.model.clone();
         Box::pin(async move {
-            let (body, options) = request?;
-            let response = send(&url, &api_key, &body, &model, &options).await?;
+            let body = request?;
+            let response = send(&url, &api_key, &body, &model).await?;
             let val: Value = serde_json::from_str(&response.text().await?)
                 .context("Gemini image response is not JSON")?;
             parse_response(&val)
@@ -137,17 +137,15 @@ static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|
 
 /// POSTs `body` to `url`, retrying rate limits (429) and overloads (503, 529) with
 /// backoff, and returns the successful response unread. Other errors are not retried: a
-/// paid image job may already have run. A refusal of one of `options` is explained in front
-/// of the API's own message.
+/// paid image job may already have run. A refusal of an option in `body` is explained in
+/// front of the API's own message.
 async fn send(
     url: &str,
     api_key: &str,
     body: &serde_json::Value,
     model: &str,
-    options: &GeminiImageOptions,
 ) -> anyhow::Result<reqwest::Response> {
     const MAX_RETRIES: u32 = 3;
-    const MAX_WAIT_SECS: u64 = 10;
     // Rate limits, and overloads where the request was not taken on.
     const RETRY_STATUSES: [u16; 3] = [429, 503, 529];
 
@@ -164,13 +162,7 @@ async fn send(
             return Ok(response);
         }
         if RETRY_STATUSES.contains(&status.as_u16()) && attempt < MAX_RETRIES {
-            let wait_secs = response
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(1u64 << attempt)
-                .min(MAX_WAIT_SECS);
+            let wait_secs = super::retry_wait_secs(response.headers(), attempt);
             let text = response.text().await.unwrap_or_default();
             // A quota that is used up does not pass with time.
             if status.as_u16() == 429 && is_permanent_quota(&text) {
@@ -184,7 +176,7 @@ async fn send(
             continue;
         }
         let text = response.text().await.unwrap_or_default();
-        match explain_error(model, options, status.as_u16(), &text) {
+        match explain_error(model, &sent_options(body), status.as_u16(), &text) {
             Some(hint) => bail!("Gemini API request failed with status {status} ({hint}): {text}"),
             None => bail!("Gemini API request failed with status {status}: {text}"),
         }
@@ -205,6 +197,20 @@ fn is_permanent_quota(body: &str) -> bool {
                 .as_str()
                 .is_some_and(|t| t.ends_with("google.rpc.RetryInfo"))
         })
+}
+
+/// The options `body` sends, read back from it, so a value `extra` set is the one named.
+fn sent_options(body: &serde_json::Value) -> GeminiImageOptions {
+    let sent = |path: &str| {
+        body.pointer(path)
+            .map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_owned))
+    };
+    GeminiImageOptions {
+        aspect_ratio: sent("/generationConfig/imageConfig/aspectRatio"),
+        image_size: sent("/generationConfig/imageConfig/imageSize"),
+        thinking_level: sent("/generationConfig/thinkingConfig/thinkingLevel"),
+        extra: None,
+    }
 }
 
 /// Names the option behind a refusal, which the API reports by its wire field. Runs only
@@ -277,6 +283,7 @@ fn parse_response(val: &Value) -> anyhow::Result<ImageOutput> {
                 .pointer("/data")
                 .and_then(|v| v.as_str())
                 .and_then(|b64| Bytes::from_base64(b64).ok())
+                .filter(|data| !data.is_empty())
             else {
                 log::warn!("skipping a Gemini inlineData part with no decodable `data`");
                 undecodable += 1;
@@ -340,6 +347,17 @@ fn parse_response(val: &Value) -> anyhow::Result<ImageOutput> {
 fn parse_usage(usage: &Value) -> Option<TokenUsage> {
     let u = usage.as_object()?;
     let count = |key: &str| u.get(key).and_then(|v| v.as_unsigned());
+    // Without any count, nothing was reported.
+    if [
+        "promptTokenCount",
+        "candidatesTokenCount",
+        "totalTokenCount",
+    ]
+    .iter()
+    .all(|key| count(key).is_none())
+    {
+        return None;
+    }
     let input_tokens = count("promptTokenCount").unwrap_or(0);
     // Everything past the prompt is billed as output, thinking included, which is
     // reported apart from the candidates.
@@ -754,6 +772,13 @@ mod tests {
             err.contains("1 inlineData part(s) had no decodable data"),
             "{err}"
         );
+
+        // Empty data is no image either.
+        let response = to_value!({
+            "candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": ""}}]}}]
+        });
+        let err = parse_response(&response).unwrap_err().to_string();
+        assert!(err.contains("1 inlineData part(s)"), "{err}");
     }
 
     #[test]
@@ -790,6 +815,9 @@ mod tests {
         ] {
             assert_eq!(parse_usage(&usage).unwrap().output_tokens, 1227);
         }
+
+        // No count at all is no usage, not zero tokens.
+        assert!(parse_usage(&to_value!({"trafficType": "ON_DEMAND"})).is_none());
     }
 
     /// Serves `respond(attempt)` for every request, counting attempts from 1.
@@ -823,13 +851,12 @@ mod tests {
         (format!("http://{addr}/"), calls)
     }
 
-    async fn send_to(url: &str, image_size: Option<&str>) -> anyhow::Result<reqwest::Response> {
+    async fn send_to(url: &str, options: &GeminiImageOptions) -> anyhow::Result<reqwest::Response> {
         send(
             url,
             "AIza-test",
-            &serde_json::json!({}),
+            &body(options),
             "gemini-3.1-flash-lite-image",
-            &set(None, image_size),
         )
         .await
     }
@@ -851,7 +878,9 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.ok() });
 
-        send_to(&format!("http://{addr}/"), None).await.unwrap();
+        send_to(&format!("http://{addr}/"), &GeminiImageOptions::default())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -862,7 +891,7 @@ mod tests {
         })
         .await;
 
-        send_to(&url, None).await.unwrap();
+        send_to(&url, &GeminiImageOptions::default()).await.unwrap();
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
@@ -870,7 +899,9 @@ mod tests {
     async fn send_does_not_retry_a_server_error() {
         let (url, calls) = mock(|_| (500, r#"{"error":{"status":"INTERNAL"}}"#)).await;
 
-        let err = send_to(&url, None).await.unwrap_err();
+        let err = send_to(&url, &GeminiImageOptions::default())
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("500"), "{err}");
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
@@ -890,7 +921,10 @@ mod tests {
     async fn send_explains_a_size_refusal() {
         let (url, calls) = mock(|_| (400, SIZE_REFUSAL)).await;
 
-        let err = send_to(&url, Some("512")).await.unwrap_err().to_string();
+        let err = send_to(&url, &set(None, Some("512")))
+            .await
+            .unwrap_err()
+            .to_string();
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 
         assert!(err.contains("400"), "{err}");
@@ -899,6 +933,58 @@ mod tests {
             err.contains("Image size 512 is not supported"),
             "the API's own message is kept: {err}"
         );
+
+        // A size set through `extra` is the one sent, so it is the one named.
+        let options = GeminiImageOptions {
+            image_size: Some("1K".to_owned()),
+            extra: Some(to_value!({"generationConfig": {"imageConfig": {"imageSize": "512"}}})),
+            ..Default::default()
+        };
+        let err = send_to(&url, &options).await.unwrap_err().to_string();
+        assert!(err.contains("`image_size: 512`"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn send_retries_a_passing_rate_limit() {
+        let (url, calls) = mock(|attempt| match attempt {
+            1 => (
+                429,
+                r#"{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"0s"}]}}"#,
+            ),
+            _ => (200, "{}"),
+        })
+        .await;
+
+        send_to(&url, &GeminiImageOptions::default()).await.unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn send_does_not_retry_a_used_up_quota() {
+        let (url, calls) = mock(|_| {
+            (
+                429,
+                r#"{"error":{"code":429,"message":"quota","status":"RESOURCE_EXHAUSTED"}}"#,
+            )
+        })
+        .await;
+
+        let err = send_to(&url, &GeminiImageOptions::default())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("RESOURCE_EXHAUSTED"), "{err}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn send_gives_up_after_three_retries() {
+        let (url, calls) = mock(|_| (503, r#"{"error":{"status":"UNAVAILABLE"}}"#)).await;
+
+        let err = send_to(&url, &GeminiImageOptions::default())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("503"), "{err}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 4);
     }
 
     #[tokio::test]
@@ -934,5 +1020,7 @@ mod tests {
             width > height,
             "16:9 must be landscape, got {width}x{height}"
         );
+        let usage = out.usage.expect("Gemini reports usage");
+        assert!(usage.output_tokens > 0, "{usage:?}");
     }
 }

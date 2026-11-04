@@ -17,6 +17,7 @@ use napi::{
     bindgen_prelude::{FnArgs, Function, Object, PromiseRaw, Unknown, within_runtime_if_available},
 };
 use napi_derive::napi;
+use serde::{Deserialize, Deserializer, de::Error as _};
 use tokio::runtime::Handle;
 
 use crate::{
@@ -62,7 +63,7 @@ impl JsImageModel {
     /// module says.
     #[napi(factory)]
     pub fn custom(#[napi(ts_arg_type = "CustomImageModel")] model: Object<'_>) -> Result<Self> {
-        let generate: Function<GenerateArgs, Returned<ImageOutput>> = model
+        let generate: Function<GenerateArgs, Returned<Output>> = model
             .get("generate")
             .map_err(|e| invalid(e.reason))?
             .ok_or_else(|| invalid("an image model has a `generate` method"))?;
@@ -104,8 +105,19 @@ impl JsImageModel {
 /// The arguments a custom model's `generate` is called with.
 type GenerateArgs = FnArgs<(String, Json<Value>)>;
 
+/// What a model of JavaScript's own returned, named as not an image output when it is not one.
+struct Output(ImageOutput);
+
+impl<'de> Deserialize<'de> for Output {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        ImageOutput::deserialize(deserializer)
+            .map(Output)
+            .map_err(|e| D::Error::custom(format!("not an image output: {e}")))
+    }
+}
+
 /// An image model of JavaScript's own.
-struct JsModel(Arc<Tsfn<GenerateArgs, Returned<ImageOutput>>>);
+struct JsModel(Arc<Tsfn<GenerateArgs, Returned<Output>>>);
 
 impl InferImageModel for JsModel {
     fn generate(
@@ -128,7 +140,7 @@ impl InferImageModel for JsModel {
                 .call_async_catch(args)
                 .await
                 .map_err(|e| anyhow::anyhow!(reason(e)))?;
-            let output = returned.settle().await.map_err(anyhow::Error::msg)?;
+            let Output(output) = returned.settle().await.map_err(anyhow::Error::msg)?;
             anyhow::ensure!(!output.images.is_empty(), "an image output has no images");
             Ok(output)
         })

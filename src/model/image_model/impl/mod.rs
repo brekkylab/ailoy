@@ -58,6 +58,18 @@ fn merge_extra(
     Ok(())
 }
 
+/// Seconds to wait before retry `attempt`, counted from 0: what `retry-after` asks, else 1, 2
+/// then 4, and never more than 10.
+fn retry_wait_secs(headers: &reqwest::header::HeaderMap, attempt: u32) -> u64 {
+    const MAX_WAIT_SECS: u64 = 10;
+    headers
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(1u64 << attempt)
+        .min(MAX_WAIT_SECS)
+}
+
 fn merge(target: &mut serde_json::Value, patch: serde_json::Value) {
     match (target, patch) {
         (serde_json::Value::Object(target), serde_json::Value::Object(patch)) => {
@@ -121,6 +133,31 @@ mod tests {
         assert!(
             err.contains("`size`"),
             "the fields it has are listed: {err}"
+        );
+    }
+
+    #[test]
+    fn retry_waits_as_asked_else_doubling_and_never_past_ten_seconds() {
+        use reqwest::header::{HeaderMap, HeaderValue};
+
+        let none = HeaderMap::new();
+        let waits: Vec<_> = (0..3)
+            .map(|attempt| retry_wait_secs(&none, attempt))
+            .collect();
+        assert_eq!(waits, [1, 2, 4]);
+
+        let asking = |secs: &'static str| {
+            let mut headers = HeaderMap::new();
+            headers.insert("retry-after", HeaderValue::from_static(secs));
+            headers
+        };
+        assert_eq!(retry_wait_secs(&asking("3"), 0), 3);
+        assert_eq!(retry_wait_secs(&asking("0"), 2), 0);
+        assert_eq!(retry_wait_secs(&asking("30"), 0), 10);
+        // A date, which is not read, counts as no ask.
+        assert_eq!(
+            retry_wait_secs(&asking("Wed, 21 Oct 2026 07:28:00 GMT"), 1),
+            2
         );
     }
 

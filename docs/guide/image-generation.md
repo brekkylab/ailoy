@@ -75,7 +75,7 @@ The providers' image APIs share almost no option: OpenAI sizes an image in pixel
 
 A model reads the options as its own API's parameters, and a field its API does not have is an error naming the field, raised before anything is sent: `aspect_ratio` for an `openai/…` model, `n` for a `google/…` one. Options whose fields another API also has work there too, so `{"size": "1024x1024", "quality": "high"}` serves an `openai/…` and an `openrouter/…` model alike.
 
-Values are written as each API's documentation gives them (`"1536x1024"`, `"16:9"`, `"2K"`, `"high"`) and sent as written. Which values a model takes is up to the model: a value it refuses comes back as the API's error, led by a line naming the option, such as `` `aspect_ratio: auto` is not accepted by 'gemini-3.1-flash-lite-image' ``.
+Values are written as each API's documentation gives them (`"1536x1024"`, `"16:9"`, `"2K"`, `"high"`) and sent as written. Which values a model takes is up to the model: a value it refuses comes back as the API's error. Where that error names the value only by its wire field (Gemini's size, ratio and thinking level, OpenRouter's `resolution`), a note in front of it names the option, such as `` `aspect_ratio: auto` is not accepted by 'gemini-3.1-flash-lite-image' ``.
 
 ::: code-group
 

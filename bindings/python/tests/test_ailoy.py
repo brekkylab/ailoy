@@ -448,7 +448,21 @@ async def test_a_custom_image_model_reads_its_own_options():
     output = await model.generate("a red cube", options={"steps": 30, "extra": {"seed": 7}})
     assert output == {"images": [PIXEL], "text": "painted: a red cube"}
     await model.generate("x")
-    assert painter.options == [{"steps": 30, "extra": {"seed": 7}}, {}]
+    await model.generate("x", options=None)
+    assert painter.options == [{"steps": 30, "extra": {"seed": 7}}, {}, {}]
+
+
+async def test_a_synchronous_custom_image_model_runs_off_the_event_loop():
+    loop_thread = threading.get_ident()
+
+    class Where(Painter):
+        def generate(self, prompt, options):
+            self.thread = threading.get_ident()
+            return Painter.generate(self, prompt, options)
+
+    where = Where()
+    await ailoy.ImageModel.custom(where).generate("x")
+    assert where.thread != loop_thread
 
 
 async def test_a_custom_image_model_may_be_async():

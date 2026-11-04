@@ -443,7 +443,8 @@ test('a custom image model reads its own options', async () => {
   const output = await model.generate('a red cube', { steps: 30, extra: { seed: 7 } })
   assert.deepEqual(output, { images: [PIXEL], text: 'painted: a red cube' })
   await model.generate('x')
-  assert.deepEqual(painter.options, [{ steps: 30, extra: { seed: 7 } }, {}])
+  await model.generate('x', null)
+  assert.deepEqual(painter.options, [{ steps: 30, extra: { seed: 7 } }, {}, {}])
 })
 
 test('a custom image model may be async', async () => {
@@ -467,8 +468,22 @@ test('a custom image model needs generate, and its errors reach the caller', asy
   })
   await assert.rejects(broken.generate('x'), { code: 'AILOY_ERROR', message: /no painters today/ })
 
+  const rejecting = ImageModel.custom({
+    async generate() {
+      throw new TypeError('no painters tonight')
+    },
+  })
+  const thrown = await rejecting.generate('x').catch((e) => e)
+  assert.equal(thrown.code, 'AILOY_ERROR')
+  assert.match(thrown.message, /no painters tonight/)
+  assert.doesNotMatch(thrown.message, /not an image output/, 'a throw is not a bad output')
+
   const blank = ImageModel.custom({ generate: () => ({ text: 'nothing' }) })
-  await assert.rejects(blank.generate('x'), { code: 'AILOY_ERROR' })
+  await assert.rejects(blank.generate('x'), { code: 'AILOY_ERROR', message: /not an image output/ })
+  const blankLater = ImageModel.custom({ generate: async () => ({ text: 'nothing' }) })
+  await assert.rejects(blankLater.generate('x'), { code: 'AILOY_ERROR', message: /not an image output/ })
+  const nothing = ImageModel.custom({ generate: () => null })
+  await assert.rejects(nothing.generate('x'), { code: 'AILOY_ERROR', message: /not an image output/ })
 
   const empty = ImageModel.custom({ generate: () => ({ images: [] }) })
   await assert.rejects(empty.generate('x'), { code: 'AILOY_ERROR', message: /no images/ })
