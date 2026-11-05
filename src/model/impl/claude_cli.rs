@@ -60,6 +60,10 @@ const TOOL_PREFIX: &str = "mcp__ailoy__";
 ///   after the transcript, so each call writes the history to the cache again.
 /// - The CLI adds context of its own to the request: the signed-in user's
 ///   email, the working directory and the date reach the model.
+/// - A structured reply the CLI rejects is asked for again in the same run. The reply's
+///   usage is that of the run's last request, whose input is what the next call carries
+///   forward; the input and output of the requests that made the rejected attempts are not
+///   counted.
 #[derive(Clone, Debug)]
 pub struct ClaudeCliModel {
     program: String,
@@ -227,6 +231,8 @@ impl InferLangModel for ClaudeCliModel {
             let mut lines = BufReader::new(stdout).lines();
             // Usage from `message_start`, completed by `message_delta` once the message ends.
             let mut start_usage = serde_json::Value::Null;
+            // The usage of the latest message to end.
+            let mut last_usage = None;
             // Why the latest message ended, from its `message_delta`.
             let mut stop_reason = None;
             // The `tool_use` block being streamed.
@@ -331,6 +337,7 @@ impl InferLangModel for ClaudeCliModel {
                             }
                             Some("message_delta") => {
                                 stop_reason = delta["stop_reason"].as_str().map(str::to_owned);
+                                last_usage = final_usage(&start_usage.take(), &inner["usage"]);
                                 // The reply ends with calls to the given tools. They are the
                                 // caller's to run, so the run ends here, before the CLI would
                                 // turn to them.
@@ -339,15 +346,17 @@ impl InferLangModel for ClaudeCliModel {
                                 }
                                 out.delta = out.delta.with_tool_calls(std::mem::take(&mut calls));
                                 out.finish_reason = Some(FinishReason::ToolCall {});
-                                out.usage = final_usage(&start_usage.take(), &inner["usage"]);
+                                out.usage = last_usage.take();
                                 finished = true;
                             }
                             _ => continue,
                         }
                     }
-                    // The run is over: close the message with its usage.
+                    // The run is over: close the message with its last request's usage. The
+                    // run's own adds up all its requests, and stands in only when the latest
+                    // message to end left no usage, or none ended before it.
                     Some("result") => {
-                        out.usage = parse_result(&event)?;
+                        out.usage = last_usage.take().or(parse_result(&event)?);
                         if structured {
                             // The reply the CLI accepted; attempts it rejected are left out.
                             let json = match &event["structured_output"] {
@@ -710,7 +719,8 @@ fn texts_of(message: &Message) -> anyhow::Result<String> {
     Ok(texts.join("\n"))
 }
 
-/// The usage from the CLI's final `result` object, or an error if the run failed.
+/// The usage of every request of the run, added up, from the CLI's final `result` object, or
+/// an error if the run failed.
 fn parse_result(result: &serde_json::Value) -> anyhow::Result<Option<TokenUsage>> {
     if result["is_error"].as_bool().unwrap_or(false) {
         let text = result["result"].as_str().unwrap_or_default();
@@ -835,6 +845,15 @@ mod tests {
     /// the model makes of them.
     #[cfg(unix)]
     async fn replay(events: &[serde_json::Value], tools: &[ToolDesc]) -> MessageOutput {
+        try_replay(events, tools).await.unwrap()
+    }
+
+    /// [`replay`], with the model's error, if any, returned.
+    #[cfg(unix)]
+    async fn try_replay(
+        events: &[serde_json::Value],
+        tools: &[ToolDesc],
+    ) -> anyhow::Result<MessageOutput> {
         use std::os::unix::fs::PermissionsExt as _;
 
         let dir = tempfile::tempdir().unwrap();
@@ -853,7 +872,6 @@ mod tests {
         model
             .infer(&messages, tools, &LangModelOptions::default())
             .await
-            .unwrap()
     }
 
     fn event(event: serde_json::Value) -> serde_json::Value {
@@ -964,6 +982,70 @@ mod tests {
         assert_eq!(output.finish_reason, FinishReason::Stop {});
         assert_eq!(output.message.contents[0].as_text(), Some("Sunny."));
         assert!(output.message.tool_calls.is_none_or(|c| c.is_empty()));
+    }
+
+    /// A run of two requests reports the second's usage, not the sum in `result`. The input
+    /// counts were measured on 2026-10-23 with Claude Code 2.1.308 and `claude-haiku-4-5`, the
+    /// CLI's Bash tool on, the first request calling it and the second answering; the output
+    /// counts are made up to add up to the run's 172.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_reply_of_several_requests_takes_the_last_ones_usage() {
+        let start = |input: u64, read: u64, written: u64| {
+            event(
+                serde_json::json!({"type": "message_start", "message": {"usage": {
+                "input_tokens": input, "cache_read_input_tokens": read,
+                "cache_creation_input_tokens": written, "output_tokens": 1}}}),
+            )
+        };
+        let result = serde_json::json!({"type": "result", "subtype": "success",
+            "is_error": false, "stop_reason": "end_turn", "usage": {"input_tokens": 18,
+            "cache_read_input_tokens": 35_628, "cache_creation_input_tokens": 8_468,
+            "output_tokens": 172}});
+        let events = [
+            start(10, 14_235, 7_158),
+            event(serde_json::json!({"type": "message_delta",
+                "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 70}})),
+            start(8, 21_393, 1_310),
+            event(
+                serde_json::json!({"type": "content_block_delta", "index": 0,
+                "delta": {"type": "text_delta", "text": "done"}}),
+            ),
+            event(serde_json::json!({"type": "message_delta",
+                "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 102}})),
+            result.clone(),
+        ];
+        let output = replay(&events, &[weather()]).await;
+        assert_eq!(
+            output.usage,
+            Some(TokenUsage {
+                input_tokens: 8 + 21_393 + 1_310,
+                output_tokens: 102,
+                cache_creation_input_tokens: Some(1_310),
+                cache_read_input_tokens: Some(21_393),
+            })
+        );
+
+        // A failed run is an error, whatever usage its messages had.
+        let mut failed = result.clone();
+        failed["is_error"] = true.into();
+        failed["subtype"] = "error_during_execution".into();
+        failed["result"] = "boom".into();
+        let mut failing = events.to_vec();
+        *failing.last_mut().unwrap() = failed;
+        assert!(try_replay(&failing, &[weather()]).await.is_err());
+
+        // Without a message that ended, the run's usage is all there is.
+        let output = replay(&[result], &[weather()]).await;
+        assert_eq!(
+            output.usage,
+            Some(TokenUsage {
+                input_tokens: 18 + 35_628 + 8_468,
+                output_tokens: 172,
+                cache_creation_input_tokens: Some(8_468),
+                cache_read_input_tokens: Some(35_628),
+            })
+        );
     }
 
     #[test]
