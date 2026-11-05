@@ -235,8 +235,7 @@ impl GeminiCliModel {
             },
             "model": {
                 // The CLI's default, kept should the user's settings turn the check on: it asks
-                // another model whether to go on after the reply, and that request would be
-                // the last in the run's stats, which `parse_usage` reads the reply's usage from.
+                // another model after the reply, and `parse_usage` takes the last model's counts.
                 "skipNextSpeakerCheck": true,
             },
             "hooksConfig": {
@@ -750,17 +749,16 @@ fn texts_of(message: &Message) -> anyhow::Result<String> {
 
 /// The usage of the request the reply came from, out of the run's `stats`.
 ///
-/// The run's own counts add up every request it made, and under the CLI's default model
-/// (`auto`) its router asks a classifier model first, with the latest entries of the history.
-/// `stats.models` counts each model apart, in the order each first returned or failed a
-/// response. With no request after the reply (see [`GeminiCliModel::settings`]), the reply's
-/// model is the last of those that has tokens: models that only failed have none. A model
-/// that served an earlier request of the run as well has that request in its counts. Without
-/// `models`, or with it empty, the run's counts are all there are.
+/// The run's own counts add up every request it made, the router's too under the CLI's
+/// default model (`auto`). `stats.models` counts each model apart, in the order each first
+/// returned or failed a response, and with no request after the reply (see
+/// [`GeminiCliModel::settings`]) the reply's model is the last one with tokens. A model that
+/// also served an earlier request of the run has that request in its counts. Without a model
+/// with tokens, the run's counts are used.
 ///
-/// The CLI's `output_tokens` leaves thinking out, though thinking is billed as output, and
-/// `total_tokens` has it. So the output is what the total has beyond the input, unless the
-/// total is missing or smaller than the input and output it should hold.
+/// Thinking is billed as output: `output_tokens` leaves it out and `total_tokens` has it, so
+/// the output is the total less the input, unless the total is missing or smaller than the
+/// input and output it should hold.
 fn parse_usage(stats: &serde_json::Value) -> Option<TokenUsage> {
     let has_tokens = |counts: &&serde_json::Value| {
         ["input_tokens", "output_tokens", "total_tokens"]
@@ -921,10 +919,9 @@ mod tests {
         )
     }
 
-    /// The reply's usage is its own request's, thinking counted as output. The first two rows
-    /// are the `stats` of a call to `get_weather`, measured on 2026-11-03 with gemini-cli
-    /// 0.66.0: under the CLI's default model, whose router asked `gemini-3.5-flash-lite` before
-    /// the request went to `gemini-3.8-flash`, and with `--model gemini-2.5-flash`.
+    /// The `routed` and `named` rows are the `stats` of a call to `get_weather`, measured on
+    /// 2026-11-03 with gemini-cli 0.66.0, under the CLI's default model and with
+    /// `--model gemini-2.5-flash`.
     #[test]
     fn the_usage_is_the_replys_own_request() {
         let counts = |input: u64, output: u64, total: u64| serde_json::json!({"total_tokens": total, "input_tokens": input, "output_tokens": output, "cached": 0, "input": input});
@@ -978,8 +975,6 @@ mod tests {
         }
     }
 
-    /// The project settings keep the check that would make a request after the reply off, so
-    /// the reply's model stays the last in the run's stats.
     #[test]
     fn settings_skip_the_next_speaker_check() {
         let settings = GeminiCliModel::new()
