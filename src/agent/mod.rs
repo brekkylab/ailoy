@@ -12,6 +12,7 @@
 
 mod builder;
 mod context;
+mod image;
 mod rt;
 mod skill;
 mod spec;

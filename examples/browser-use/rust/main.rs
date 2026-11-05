@@ -16,8 +16,8 @@
 //! tell it to go on.
 //!
 //! `AILOY_MODEL` is the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend
-//! has to be set up as `docs/guide/model-providers.md` says, any key in the environment or in
-//! `.env`.
+//! has to be set up as `docs/src/content/docs/guide/model-providers.mdx` says, any key in
+//! the environment or in `.env`.
 
 use ailoy::{
     agent::AgentBuilder,
@@ -28,7 +28,7 @@ use futures::StreamExt as _;
 use virtx::{console::ConsoleClient, image::Recipe};
 
 /// Where the browser starts.
-const START: &str = "https://brekkylab.github.io/ailoy/";
+const START: &str = "https://ailoy.co/docs/";
 
 /// What the agent has, with a console and without.
 const WITH_CONSOLE: &str = "a web browser and a console: the browser is {whose}, which you \

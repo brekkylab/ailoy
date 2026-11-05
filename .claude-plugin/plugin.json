@@ -6,7 +6,7 @@
     "name": "brekkylab",
     "url": "https://github.com/brekkylab"
   },
-  "homepage": "https://brekkylab.github.io/ailoy/",
+  "homepage": "https://ailoy.co/docs/",
   "repository": "https://github.com/brekkylab/ailoy",
   "license": "Apache-2.0",
   "keywords": ["agent", "llm", "ai", "tool-use", "sandbox", "mcp", "python", "nodejs", "rust"]

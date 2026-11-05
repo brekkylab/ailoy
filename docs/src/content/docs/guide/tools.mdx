@@ -1,6 +1,11 @@
-# Tools
+---
+title: "Tools"
+description: "The built-in tools, functions of your own, and the tools of MCP servers and the browser."
+---
 
-An agent calls the tools you give it on the `AgentBuilder`: the built-in ones on this page, functions of your own, the tools of an [MCP server](./using-mcp) or of the [browser](./using-browser), and those `memory(...)` adds.
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+An agent calls the tools you give it on the `AgentBuilder`: the built-in ones on this page, functions of your own, the tools of an [MCP server](../using-mcp/) or of the [browser](../using-browser/), and those `memory(...)` adds.
 
 ## Built-in tools
 
@@ -29,7 +34,7 @@ An agent calls the tools you give it on the `AgentBuilder`: the built-in ones on
 
 `shell_tool()` (`shellTool()`) adds `shell` alone.
 
-The seven tools in the table run in the agent's VM, so the agent needs one: pass it with `console(...)`, as in [Building VM](./building-vm). Without a console, each call to one of them comes back to the model as an error. The VM is started for each batch of tool calls that has one of these tools in it, and stopped after; stopping keeps its session, so the next batch finds the files as the last one left them.
+The seven tools in the table run in the agent's VM, so the agent needs one: pass it with `console(...)`, as in [Building VM](../building-vm/). Without a console, each call to one of them comes back to the model as an error. The VM is started for each batch of tool calls that has one of these tools in it, and stopped after; stopping keeps its session, so the next batch finds the files as the last one left them.
 
 ### The web
 
@@ -38,9 +43,11 @@ The seven tools in the table run in the agent's VM, so the agent needs one: pass
 - `web_search` sends the query to several search engines at once and merges what they find, one result per URL, best first. It answers with up to 10 results, or up to 30 when the model asks for more. `web_search_tool` takes the engines to use: `Bing`, `Brave`, `DuckDuckGo`, `Google`, `Mojeek`, `Naver`, `Startpage`, `Yahoo` and `Yandex`. None, or an empty list, uses them all.
 - `web_fetch` fetches one URL. An HTML page comes back as its visible text (the default), as Markdown, or as the HTML itself; any other body, such as JSON, comes back as it is. A long body comes in pieces, the model asking for the next one with `offset`, and only its first 2 MiB are read. It makes at most one request a second to a host, and only to addresses on the public internet: loopback, the local network and cloud metadata addresses are refused.
 
-::: code-group
+<Tabs syncKey="lang">
 
-```python [Python]
+<TabItem label="Python">
+
+```python
 agent = await (
     AgentBuilder("anthropic/claude-haiku-5-5")
     .web_search_tool(["DuckDuckGo", "Brave"])
@@ -49,14 +56,22 @@ agent = await (
 )
 ```
 
-```js [Node.js]
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
 const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
   .webSearchTool(['DuckDuckGo', 'Brave'])
   .webFetchTool()
   .build()
 ```
 
-```rust [Rust]
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
 use ailoy::tool::WebSearchEngineKind;
 
 let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
@@ -66,7 +81,9 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
     .await?;
 ```
 
-:::
+
+</TabItem>
+</Tabs>
 
 ## Your own functions
 
@@ -74,9 +91,11 @@ A function of your program becomes a tool once it is registered with a **tool de
 
 This gives the agent `order_status`, which looks an order up by its id:
 
-::: code-group
+<Tabs syncKey="lang">
 
-```python [Python]
+<TabItem label="Python">
+
+```python
 import asyncio
 
 from ailoy import AgentBuilder, register_tool
@@ -115,7 +134,11 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-```js [Node.js]
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
 const { AgentBuilder, registerTool } = require('@brekkylab/ailoy')
 
 async function main() {
@@ -153,7 +176,11 @@ async function main() {
 main()
 ```
 
-```rust [Rust]
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
 use ailoy::{
     agent::AgentBuilder,
     datatype::Value,
@@ -203,7 +230,9 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-:::
+
+</TabItem>
+</Tabs>
 
 How the function is called:
 

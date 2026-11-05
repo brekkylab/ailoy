@@ -1,0 +1,43 @@
+---
+// Starlight override: the docs header shows the same mark and name as ailoy.co's product header,
+// followed by a /docs path segment that links to the docs overview. On ailoy.co the name links
+// to the site root; here it is not a link, since the site root lives on ailoy.co.
+import AiloyMark from '../AiloyMark.astro';
+---
+
+<div class="site-title">
+  <span class="home">
+    <AiloyMark />
+    <span>Ailoy</span>
+  </span>
+  <a href="/docs/" class="seg">/docs</a>
+</div>
+
+<style>
+  .site-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    white-space: nowrap;
+  }
+  .site-title a {
+    text-decoration: none;
+  }
+  .home {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--sl-color-white);
+  }
+  .seg {
+    padding-block: 8px; /* a taller hit area without moving the row */
+    font: 400 13px var(--sl-font-mono);
+    color: var(--sl-color-gray-3);
+  }
+  .seg:hover {
+    color: var(--sl-color-white);
+  }
+</style>

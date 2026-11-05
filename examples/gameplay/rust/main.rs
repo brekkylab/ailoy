@@ -50,8 +50,8 @@
 //! Environment, also read from `.env`:
 //!
 //! * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend
-//!   has to be set up as `docs/guide/model-providers.md` says. It reads screenshots when it looks,
-//!   so it should take images.
+//!   has to be set up as `docs/src/content/docs/guide/model-providers.mdx` says. It reads
+//!   screenshots when it looks, so it should take images.
 //! * `OPENTTD_YEARS` — how many years of the game the agent plays, `3` by default. A game
 //!   month takes a minute to pass.
 //! * `OPENTTD_SAVE` — a saved game in `artifacts/user/openttd/save/` to go on with, such as
@@ -238,10 +238,13 @@ async fn main() -> anyhow::Result<()> {
             .with_context(|| "starting the agent's console")?,
     )
     .skill("/skills/openttd")
-    // Many commands a round, each with its output: keep the last two rounds whole.
+    // Many commands a round, each with its output: keep the last two rounds' results whole,
+    // and of the screenshots the agent reads, the latest ten once more than thirty have
+    // built up.
     .context_manager(ContextManager {
         max_input_tokens: 80_000,
         preserve_recent_turns: 2,
+        ..Default::default()
     })
     .build()
     .await?;
