@@ -5,10 +5,11 @@ use crate::message::{Message, Part, Role};
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
 pub struct ContextManager {
-    /// Triggers truncation when input_tokens from the previous API call exceeds this value.
-    /// `0`, the default, turns truncation off.
+    /// Triggers truncation, as a turn begins, when input_tokens from the previous API call
+    /// exceeds this value. `0`, the default, turns truncation off.
     pub max_input_tokens: u64,
-    /// Number of recent user turns to preserve after truncation (system message is always preserved separately).
+    /// Number of recent user turns to preserve after truncation (system message is always
+    /// preserved separately). The turn just begun is one of them, so `0` keeps it too.
     pub preserve_recent_turns: usize,
     /// Images in tool results the history may hold at the start of a turn; over it, the
     /// oldest become a placeholder. `0` turns the cap off.

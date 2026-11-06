@@ -26,7 +26,7 @@ pub struct AgentState {
     pub memory: Option<Memory>,
 
     /// Input tokens of the last model call, which a
-    /// [`ContextManager`](super::ContextManager) checks against its limit.
+    /// [`ContextManager`](super::ContextManager) checks against its limit as a turn begins.
     pub last_input_tokens: Option<u64>,
 
     /// The browser this agent drives; `None` means no browser tools.

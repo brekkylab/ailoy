@@ -50,7 +50,8 @@ pub struct Agent {
 
     pub state: AgentState,
 
-    /// Cuts old tool results out of the history once a call's input grows past its limit.
+    /// Cuts old tool results out of the history as a turn begins, once a call's input has
+    /// grown past its limit.
     context_manager: Option<ContextManager>,
 }
 
@@ -152,6 +153,10 @@ impl Agent {
     }
 
     /// Truncate the history if the last call's input went past the context manager's limit.
+    ///
+    /// Run only as a turn begins. A turn's requests send back the thinking the model has produced
+    /// in it, and the Claude API can refuse a thinking block once anything before it has changed,
+    /// so a turn's input may grow past the limit until the next turn begins.
     fn manage_context(&mut self) {
         if let Some(cm) = &self.context_manager
             && cm.max_input_tokens > 0
@@ -184,7 +189,6 @@ impl Agent {
             // replaced, while that stands: a second refusal puts them back and ends the turn.
             let mut refused: Option<Vec<Message>> = None;
             loop {
-                self.manage_context();
                 let output = match self
                     .model
                     .infer(&self.state.history, &self.tool_descs, &self.options)
@@ -240,7 +244,6 @@ impl Agent {
             let mut committed = false;
             let mut refused: Option<Vec<Message>> = None;
             loop {
-                self.manage_context();
                 let mut deltas =
                     self.model
                         .infer_stream(&self.state.history, &self.tool_descs, &self.options);
@@ -299,7 +302,8 @@ impl Agent {
     }
 
     /// Add `query` to the history, led by a browser reconnection the agent has not heard of,
-    /// and tell the model where its console mounts are.
+    /// truncate the history if it has grown past the context manager's limit, and tell the
+    /// model where its console mounts are.
     async fn begin_turn(&mut self, mut query: Message) {
         close_dangling_calls(&mut self.state.history);
         // No context manager acts as one with every setting left out.
@@ -311,6 +315,7 @@ impl Agent {
         }
         let query = fit_images_off_runtime(query).await;
         self.state.history.push(query);
+        self.manage_context();
         self.seed_mounts().await;
     }
 
@@ -477,7 +482,9 @@ enum Refused {
     #[allow(dead_code)]
     OlderImages,
     /// The whole history, over the model's context limit. Mend: truncate it as
-    /// [`ContextManager`] does, without waiting for the usage that triggers it.
+    /// [`ContextManager`] does, without waiting for the usage that triggers it. Past a turn's
+    /// first request this changes what comes before the turn's thinking, so the requests after
+    /// must leave that thinking out (see [`Agent::manage_context`]).
     #[allow(dead_code)]
     TooLong,
 }
@@ -1200,6 +1207,54 @@ mod tests {
         let seen = model.seen.lock().unwrap();
         let result = seen[2].iter().find(|m| m.role == Role::Tool).unwrap();
         assert_ne!(text_of(result), "[context truncated]");
+    }
+
+    /// A call past the limit in the middle of a turn leaves the history as it is for the rest
+    /// of that turn, under `run` and `run_stream` alike, and the next turn begins truncated.
+    /// The turn just begun is kept, so `preserve_recent_turns` at `0` does what `1` does.
+    #[tokio::test]
+    async fn test_truncation_waits_for_the_next_turn() {
+        for (stream, preserve) in [(false, 1), (true, 1), (false, 0), (true, 0)] {
+            let name = format!("test-agent-context-mid-turn-{stream}-{preserve}");
+            let (model, spec) = scripted(
+                &name,
+                [
+                    with_input(calls(&[("c1", "echo")]), 10),
+                    with_input(answer("one"), 10),
+                    // The second turn's first call reads past the limit.
+                    with_input(calls(&[("c2", "echo")]), 200),
+                    with_input(answer("two"), 210),
+                    with_input(answer("three"), 10),
+                ],
+            );
+            let mut agent = Agent::try_new(spec).await.unwrap();
+            agent.set_context_manager(Some(ContextManager {
+                max_input_tokens: 100,
+                preserve_recent_turns: preserve,
+                ..Default::default()
+            }));
+            for query in ["first", "second", "third"] {
+                if stream {
+                    agent.run_stream(user(query)).for_each(|_| async {}).await;
+                } else {
+                    agent.run(user(query)).for_each(|_| async {}).await;
+                }
+            }
+
+            let seen = model.seen.lock().unwrap();
+            // Whether each tool result a request carries was truncated.
+            let cut = |request: &[Message]| -> Vec<bool> {
+                request
+                    .iter()
+                    .filter(|m| m.role == Role::Tool)
+                    .map(|m| text_of(m) == "[context truncated]")
+                    .collect()
+            };
+            // seen[3] is the second turn's second request, and seen[4] the third turn's first.
+            let row = format!("stream: {stream}, preserve: {preserve}");
+            assert_eq!(cut(&seen[3]), [false, false], "{row}");
+            assert_eq!(cut(&seen[4]), [true, true], "{row}");
+        }
     }
 
     #[tokio::test]
