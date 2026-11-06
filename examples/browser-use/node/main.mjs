@@ -3,9 +3,9 @@
 //     node main.mjs [--noshell] [--isolated]
 //
 // The agent uses your own browser (Chrome by default), in a window of its own opened on the ailoy
-// docs, and drives it with its `browser_*` tools. It also has a console with python and curl, for
+// docs, and drives it with its `browser_*` tools. It also has a sandbox with python and curl, for
 // what is easier done there, such as fetching a page's data or computing over it; `--noshell`
-// leaves it out, so the agent has the browser alone and needs no console server. Turn on remote
+// leaves it out, so the agent has the browser alone and needs no sandbox server. Turn on remote
 // debugging at chrome://inspect/#remote-debugging (Chrome 144 or later) and allow the browser's
 // prompt, which appears as it starts. `--isolated` gives the agent a browser of its own instead: a
 // Chromium-based one installed here, started with a fresh profile and closed at the end, with no
@@ -30,13 +30,16 @@ import virtx from '@brekkylab/virtx'
 const HERE = dirname(fileURLToPath(import.meta.url))
 
 const { AgentBuilder } = ailoy
-const { ConsoleClient, Recipe, ensureVirtx } = virtx
+const { Client, Recipe } = virtx
+
+// The image the sandbox boots, built once on the virtx server and kept under this tag.
+const IMAGE = 'ailoy-browser-use:1'
 
 // Where the browser starts.
 const START = 'https://ailoy.co/docs/'
 
-// What the agent has, with a console and without.
-const WITH_CONSOLE = 'a web browser and a console: the browser is {whose}, which you drive with the browser tools'
+// What the agent has, with a sandbox and without.
+const WITH_SANDBOX = 'a web browser and a sandbox: the browser is {whose}, which you drive with the browser tools'
 const BROWSER_ONLY = 'a web browser: {whose}, which you drive with the browser tools'
 
 // What the agent is for.
@@ -74,30 +77,36 @@ function show(message) {
 }
 
 async function main(model, shell, isolated) {
-  // The browser tools reach the browser from this process; the console is for the other tools.
+  // The browser tools reach the browser from this process; the sandbox is for the other tools.
   const whose = isolated ? "your own, apart from the user's" : "the user's own"
-  const has = (shell ? WITH_CONSOLE : BROWSER_ONLY).replace('{whose}', whose)
+  const has = (shell ? WITH_SANDBOX : BROWSER_ONLY).replace('{whose}', whose)
   let builder = new AgentBuilder(model)
     .instruction(`You are a helpful assistant with ${has}. ${INSTRUCTION}`)
     .browser({ startUrl: START, isolated })
-  let console_ = null
+  let client = null
   if (shell) {
-    // The console server, fetched into virtx's cache the first time: a host that installed only
-    // ailoy has none.
-    await ensureVirtx()
-    console_ = await ConsoleClient.builder()
-      .image(
-        new Recipe('python:3.12-slim-trixie').step(
-          'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*',
-        ),
+    // The virtx server, fetched into virtx's cache the first time: a host that installed only
+    // ailoy has none. The sandboxes it holds go when it is closed.
+    client = Client.spawn()
+
+    // The image, built once: python, and curl on it.
+    // The server answers a tag in its full form, as `docker.io/library/ailoy-browser-use:1`.
+    if (!(await client.listImage()).some((image) => image.reference.split('/').pop() === IMAGE)) {
+      console.log(`Building ${IMAGE}, once; it takes a few minutes.`)
+      const recipe = new Recipe('python:3.12-slim-trixie').run(
+        'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*',
       )
-      .network(true)
-      .build()
-    builder = builder.systemTools().console(console_)
+      for await (const entry of client.buildImage(recipe, IMAGE)) {
+        if ('end' in entry && entry.end.error) throw new Error(`building ${IMAGE}: ${entry.end.error}`)
+      }
+    }
+
+    const sandbox = await client.createSandbox(IMAGE, { network: true })
+    builder = builder.systemTools().sandbox(sandbox)
   }
   const agent = await builder.build()
   console.log(`model     ${model}`)
-  console.log(`has       ${shell ? 'browser, console' : 'browser'}\n`)
+  console.log(`has       ${shell ? 'browser, sandbox' : 'browser'}\n`)
   try {
     console.log(
       isolated
@@ -125,7 +134,7 @@ async function main(model, shell, isolated) {
     }
   } finally {
     await agent.close()
-    await console_?.close()
+    await client?.close()
   }
 }
 

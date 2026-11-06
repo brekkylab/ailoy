@@ -5,9 +5,9 @@
 //! ```
 //!
 //! The agent uses your own browser (Chrome by default), in a window of its own opened on the ailoy
-//! docs, and drives it with its `browser_*` tools. It also has a console with python and curl, for
+//! docs, and drives it with its `browser_*` tools. It also has a sandbox with python and curl, for
 //! what is easier done there, such as fetching a page's data or computing over it; `--noshell`
-//! leaves it out, so the agent has the browser alone and needs no console server. Turn on remote
+//! leaves it out, so the agent has the browser alone and needs no sandbox server. Turn on remote
 //! debugging at chrome://inspect/#remote-debugging (Chrome 144 or later) and allow the browser's
 //! prompt, which appears as it starts. `--isolated` gives the agent a browser of its own instead:
 //! a Chromium-based one installed here, started with a fresh profile and closed at the end, with
@@ -24,14 +24,18 @@ use ailoy::{
     browser::Browser,
     message::{Message, Part, Role},
 };
+use anyhow::bail;
 use futures::StreamExt as _;
-use virtx::{console::ConsoleClient, image::Recipe};
+use virtx::{Client, ImageJobEntry, Recipe, SandboxCreateArgs};
+
+/// The image the sandbox boots, built once on the virtx server and kept under this tag.
+const IMAGE: &str = "ailoy-browser-use:1";
 
 /// Where the browser starts.
 const START: &str = "https://ailoy.co/docs/";
 
-/// What the agent has, with a console and without.
-const WITH_CONSOLE: &str = "a web browser and a console: the browser is {whose}, which you \
+/// What the agent has, with a sandbox and without.
+const WITH_SANDBOX: &str = "a web browser and a sandbox: the browser is {whose}, which you \
      drive with the browser tools";
 const BROWSER_ONLY: &str = "a web browser: {whose}, which you drive with the browser tools";
 
@@ -69,33 +73,51 @@ async fn main() -> anyhow::Result<()> {
     } else {
         (Browser::user(), "the user's own")
     };
-    let has = if shell { WITH_CONSOLE } else { BROWSER_ONLY }.replace("{whose}", whose);
+    let has = if shell { WITH_SANDBOX } else { BROWSER_ONLY }.replace("{whose}", whose);
 
-    // The browser tools reach the browser from this process; the console is for the other tools.
+    // The browser tools reach the browser from this process; the sandbox is for the other tools.
     let mut builder = AgentBuilder::new(&model)
         .instruction(format!(
             "You are a helpful assistant with {has}. {INSTRUCTION}"
         ))
         .browser(browser.start_url(START));
     if shell {
-        // The console server, fetched into virtx's cache the first time: a host that installed
-        // only ailoy has none.
-        virtx::ensure_virtx().await?;
-        let console = ConsoleClient::builder()
-            .image(Recipe::new("python:3.12-slim-trixie").step(
+        // The virtx server, fetched into virtx's cache the first time: a host that installed
+        // only ailoy has none. The sandboxes it holds go when this program does.
+        let client = tokio::task::spawn_blocking(|| Client::spawn_virtx([] as [&str; 0])).await??;
+
+        // The image, built once: python, and curl on it.
+        // The server answers a tag in its full form, as `docker.io/library/ailoy-browser-use:1`.
+        let images = client.list_image().await?;
+        if !images
+            .iter()
+            .any(|i| i.reference.rsplit('/').next() == Some(IMAGE))
+        {
+            println!("Building {IMAGE}, once; it takes a few minutes.");
+            let recipe = Recipe::new("python:3.12-slim-trixie").step(
                 "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl \
                  && rm -rf /var/lib/apt/lists/*",
-            ))
-            .network(true)
-            .build()
-            .await?;
-        builder = builder.system_tools().console(console);
+            );
+            let mut log = client.build_image(recipe, IMAGE).log();
+            while let Some(entry) = log.next().await {
+                if let ImageJobEntry::End(end) = entry?.entry
+                    && let Some(error) = end.error
+                {
+                    bail!("building {IMAGE}: {error}");
+                }
+            }
+        }
+
+        let mut args = SandboxCreateArgs::new(IMAGE);
+        args.network = true;
+        let sandbox = client.create_sandbox(&args).await?;
+        builder = builder.system_tools().sandbox(sandbox);
     }
     let mut agent = builder.build().await?;
     println!("model     {model}");
     println!(
         "has       {}\n",
-        if shell { "browser, console" } else { "browser" }
+        if shell { "browser, sandbox" } else { "browser" }
     );
 
     if isolated {

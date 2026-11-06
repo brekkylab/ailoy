@@ -5,19 +5,22 @@ skill.
     uv run main.py "Route the tickets in /context/inbox, but send anything about contracts to legal"
 
 The Python side of the Rust `laya` example in `examples/laya/rust`, whose `main.rs` has the
-long form. The skill is `SKILL.md` and `run_laya.py`, mounted at `/skills/laya` from memory,
-which the agent runs with its `shell` tool. They and `prepare_model.py`, which downloads and
-converts the model into `data/` on the first run, are the ones the three sides share in
-`examples/laya/shared`. What a run uses is in this folder, which is a uv project of its own
+long form. The skill is `SKILL.md` and `run_laya.py`, put each run onto the volume
+`ailoy-laya-skill` of the virtx server mounted at `/skills/laya`, which the agent runs with its
+`shell` tool. They and `prepare_model.py`, which downloads and converts the model into `data/` on
+the first run, are the ones the three sides share in `examples/laya/shared`. `data/ncnn/` goes
+each run onto the volume `ailoy-laya-models` at `/models`, read-only. What a run uses is in this folder, which is a uv project of its own
 (`pyproject.toml`) that `uv run` sets up with ailoy from this checkout; run it from here.
 
 Without a prompt the agent routes a support inbox: it asks Laya which department each ticket in
 `shared/tickets/` belongs to and files a copy in that department's folder.
 
-* `context/` at `/context`, read-only — what to decide on, when it is not in the prompt.
-  `context/inbox/` is a fresh copy of `shared/tickets/` on every run.
-* `artifacts/` at `/artifacts`, writable — where what the agent hands back goes: the tickets
-  filed under `artifacts/routes/<department>/`, emptied at the start of every run.
+* The volume `ailoy-laya-context` at `/context`, read-only — `context/`, what to decide on, when
+  it is not in the prompt, put there each run. `context/inbox/` is a fresh copy of
+  `shared/tickets/` on every run.
+* The volume `ailoy-laya-artifacts` at `/artifacts`, writable — where what the agent hands back
+  goes: the tickets filed under `routes/<department>/`, emptied at the start of every run. It
+  stays on the server between runs, and is copied to `artifacts/` here at the end.
 
 Environment:
 
@@ -34,7 +37,6 @@ import shutil
 import sys
 from pathlib import Path
 
-# Absolute, because a mount is named to the server as a `file://` URL.
 HERE = Path(__file__).resolve().parent
 # What the Rust, Python and Node sides share: the skill and the scripts that fetch its data.
 SHARED = HERE.parent / "shared"
@@ -43,14 +45,30 @@ PROJECT = HERE
 
 # This folder is a uv project of its own. Started from another environment, as with
 # `python examples/laya/python/main.py` from the top of the checkout, run again in this one.
-if Path(sys.prefix).resolve() != HERE / ".venv" and "AILOY_EXAMPLE_REEXEC" not in os.environ:
+if (
+    Path(sys.prefix).resolve() != HERE / ".venv"
+    and "AILOY_EXAMPLE_REEXEC" not in os.environ
+):
     env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
-    env["AILOY_EXAMPLE_REEXEC"] = "1"  # once: not again if uv puts the environment elsewhere
-    os.execvpe("uv", ["uv", "run", "--directory", str(HERE), "main.py", *sys.argv[1:]], env)
+    env["AILOY_EXAMPLE_REEXEC"] = (
+        "1"  # once: not again if uv puts the environment elsewhere
+    )
+    os.execvpe(
+        "uv", ["uv", "run", "--directory", str(HERE), "main.py", *sys.argv[1:]], env
+    )
 
 import ailoy  # noqa: E402
-from virtx import ConsoleClient, Directory, HostMount, Recipe, ensure_virtx  # noqa: E402
+from virtx import (  # noqa: E402
+    Client,
+    ImageJobEnd,
+    Recipe,
+    SandboxVolume,
+    VirtxError,
+)
 from dotenv import load_dotenv  # noqa: E402
+
+# The image the sandbox boots, built once on the virtx server and kept under this tag.
+IMAGE = "ailoy-laya:1"
 
 # The request when none is given.
 QUERY = (
@@ -114,25 +132,28 @@ def clear_routes(project: Path) -> None:
 
 async def main(prompt: str) -> None:
     await prepare(SHARED, PROJECT)
-    # `skill` too, which is empty on the host: it is where the skill is mounted from memory.
-    for name in ["context", "artifacts", "skill"]:
+    for name in ["context", "artifacts"]:
         (PROJECT / name).mkdir(parents=True, exist_ok=True)
     fill_inbox(SHARED, PROJECT)
     clear_routes(PROJECT)
 
-    # The console server, fetched into virtx's cache the first time: a host that installed only
-    # ailoy has none.
-    await ensure_virtx()
-    console = await (
-        ConsoleClient.builder()
+    # The virtx server, fetched into virtx's cache the first time: a host that installed only
+    # ailoy has none. The sandboxes it holds go when this program does.
+    client = Client.spawn()
+
+    # The image, built once. The server answers a tag in its full form, as
+    # `docker.io/library/ailoy-laya:1`.
+    images = await client.list_image()
+    if not any(image.reference.split("/")[-1] == IMAGE for image in images):
+        print(f"Building {IMAGE}, once; it takes a few minutes.")
         # Debian, not Alpine: PyPI's musllinux ncnn wheel crashes freeing its first `Mat`,
         # where the manylinux (glibc) one runs laya.
-        .image(
+        recipe = (
             Recipe("python:3.12-slim-trixie")
             # `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader the
             # wheel opens. Mesa from backports: venus passes VK_KHR_shader_bfloat16 through
             # from 26.0 on, and trixie itself has 25.0.
-            .step(
+            .run(
                 "echo 'deb http://deb.debian.org/debian trixie-backports main' "
                 "> /etc/apt/sources.list.d/backports.list "
                 "&& apt-get update && apt-get install -y --no-install-recommends "
@@ -140,25 +161,58 @@ async def main(prompt: str) -> None:
                 "&& apt-get install -y --no-install-recommends libvulkan1 "
                 "&& rm -rf /var/lib/apt/lists/*"
             )
-            .step("pip install --no-cache-dir ncnn numpy tokenizers")
+            .run("pip install --no-cache-dir ncnn numpy tokenizers")
         )
-        .mount_readonly(PROJECT / "data" / "ncnn", "/models")
-        .mount_readonly(
-            HostMount(
-                Directory()
-                .with_file("SKILL.md", (SHARED / "SKILL.md").read_bytes())
-                .with_file("run_laya.py", (SHARED / "run_laya.py").read_bytes()),
-                PROJECT / "skill",
-            ),
-            "/skills/laya",
-        )
-        .mount_readonly(PROJECT / "context", "/context")
-        .mount(PROJECT / "artifacts", "/artifacts")
-        .gpu(True)
-        .vcpus(2)
-        .memory_mib(4096)
-        .gpu_memory_mib(12288)
-        .build()
+        async for entry in client.build_image(recipe, IMAGE):
+            if isinstance(entry.entry, ImageJobEnd) and entry.entry.error:
+                raise RuntimeError(f"building {IMAGE}: {entry.entry.error}")
+
+    # The volumes, made the first time and kept on the server: `409` says one is there already.
+    volumes = []
+    for name in [
+        "ailoy-laya-models",
+        "ailoy-laya-skill",
+        "ailoy-laya-context",
+        "ailoy-laya-artifacts",
+    ]:
+        try:
+            volumes.append(await client.create_volume(name))
+        except VirtxError as e:
+            if e.status != 409:
+                raise
+            volumes.append(await client.get_volume(name))
+    models, skill, context, artifacts = volumes
+
+    # The skill, `SKILL.md` and `run_laya.py` of `shared/`, onto its own.
+    for name in ["SKILL.md", "run_laya.py"]:
+        await skill.write_file(name, (SHARED / name).read_bytes())
+    # A fresh inbox and no routes, as on this side.
+    await context.remove_file("inbox", missing_ok=True)
+    await artifacts.remove_file("routes", missing_ok=True)
+    # `data/ncnn/` and `context/`, every file of them, onto theirs.
+    for volume, root in [
+        (models, PROJECT / "data" / "ncnn"),
+        (context, PROJECT / "context"),
+    ]:
+        for path in sorted(root.rglob("*")):
+            to = path.relative_to(root).as_posix()
+            if path.is_dir():
+                await volume.create_dir_all(to)
+            else:
+                await volume.write_file(to, path.read_bytes())
+
+    sandbox = await client.create_sandbox(
+        IMAGE,
+        volumes=[
+            SandboxVolume(volume=models.name, path="/models", readonly=True),
+            SandboxVolume(volume=skill.name, path="/skills/laya", readonly=True),
+            SandboxVolume(volume=context.name, path="/context", readonly=True),
+            SandboxVolume(volume=artifacts.name, path="/artifacts"),
+        ],
+        vcpus=2,
+        memory_mib=4096,
+        gpu=True,
+        gpu_memory_mib=12288,
     )
 
     agent = await (
@@ -167,26 +221,41 @@ async def main(prompt: str) -> None:
         .system_tools()
         .web_fetch_tool()
         .web_search_tool([])
-        .console(console)
+        .sandbox(sandbox)
         .skill("/skills/laya")
         .build()
     )
 
-    async with console:
-        async for output in agent.run(prompt):
-            message = output["message"]
-            if message["role"] == "assistant":
-                for part in message["contents"]:
-                    if part["type"] == "text":
-                        print(part["text"])
-                for call in message.get("tool_calls") or []:
-                    function = call["function"]
-                    print(f"→ {function['name']} {json.dumps(function['arguments'], indent=2)}")
-            # Laya's answers are small, and they are what the reply is made from: shown whole.
-            elif message["role"] == "tool":
-                for part in message["contents"]:
-                    print(f"← {json.dumps(part, indent=2, ensure_ascii=False, default=_bytes)}")
-            sys.stdout.flush()
+    async for output in agent.run(prompt):
+        message = output["message"]
+        if message["role"] == "assistant":
+            for part in message["contents"]:
+                if part["type"] == "text":
+                    print(part["text"])
+            for call in message.get("tool_calls") or []:
+                function = call["function"]
+                print(
+                    f"→ {function['name']} {json.dumps(function['arguments'], indent=2)}"
+                )
+        # Laya's answers are small, and they are what the reply is made from: shown whole.
+        elif message["role"] == "tool":
+            for part in message["contents"]:
+                print(
+                    f"← {json.dumps(part, indent=2, ensure_ascii=False, default=_bytes)}"
+                )
+        sys.stdout.flush()
+
+    # The artifacts, every file of them, to `artifacts/` here.
+    dirs = [""]
+    while dirs:
+        at = dirs.pop()
+        (PROJECT / "artifacts" / at).mkdir(parents=True, exist_ok=True)
+        for entry in await artifacts.read_dir(at):
+            if entry.metadata.is_dir:
+                dirs.append(f"{at}{entry.name}/")
+            else:
+                data = await artifacts.read_file(f"{at}{entry.name}")
+                (PROJECT / "artifacts" / at / entry.name).write_bytes(data)
 
 
 if __name__ == "__main__":

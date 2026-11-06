@@ -31,9 +31,7 @@ SERVER_CONSOLE = 121
 SERVER_GAMESCRIPT = 124
 SERVER_RCON_END = 125
 
-# Where the game is: the same address from either console. In the game's own it is the
-# server itself, and from the agent's it is the port the game's console published, which
-# every console on the host reaches at 127.0.0.1.
+# Where the game is: in the sandbox, beside the agent's commands.
 ADMIN_ADDRESSES = [("127.0.0.1", 3977)]
 SHOT_ADDRESSES = [("127.0.0.1", 5902)]
 

@@ -17,8 +17,16 @@
 //       days.jsonl        one line per closed day: funds, net worth, sales
 //       tool_calls.jsonl  one line per action, in RetailBench's own field names
 //       days/NNN.json     the messages of one day's turn
-//       context/          the tree as it stood when the run ended, at `/context`, read-only
-//       artifacts/        what the agent wrote, notes/<date>.md among it, at `/artifacts`
+//       context/          the tree as it stood when the run ended
+//       artifacts/        what the agent wrote, notes/<date>.md among it
+//
+// The agent runs its commands in a sandbox of `python:3.12-slim-trixie`, without a network.
+// Two volumes on the virtx server are mounted into it, each emptied as a run starts:
+//
+// * `ailoy-retail-bench-context` at `/context`, read-only — `context/`, put there every
+//   morning, and what an action rewrote of it after each action.
+// * `ailoy-retail-bench-artifacts` at `/artifacts`, writable — what the agent writes, copied
+//   to `artifacts/` of the run when it ends.
 //
 // The store stops with the run; `--keep-store` leaves it up to be asked
 // (`simulator/sim view view_inventory --run runs/<slug>`).
@@ -32,7 +40,15 @@
 
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -40,7 +56,6 @@ import ailoy from '@brekkylab/ailoy'
 import virtx from '@brekkylab/virtx'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-// Absolute, because a mount is named to the console server as a `file://` URL.
 // What the Rust, Python and Node sides share: the prompts and the store's
 // simulator, which keeps the upstream code and the dataset it fetched beside itself.
 const SHARED = resolve(HERE, '../shared')
@@ -52,11 +67,10 @@ const {
   AgentBuilder,
   registerTool,
 } = ailoy
-const {
-  ConsoleClient,
-  Recipe,
-  ensureVirtx,
-} = virtx
+const { Client } = virtx
+
+// The image the sandbox boots, pulled once onto the virtx server: Python, and nothing else.
+const IMAGE = 'python:3.12-slim-trixie'
 
 const SYSTEM = readFileSync(join(SHARED, 'system.md'), 'utf8')
 // Sent every morning.
@@ -131,27 +145,54 @@ async function main() {
   // ── the store
   const store = await Store.start(runDir, context, args.config, args.days)
 
+  // ── the sandbox
+  // The virtx server, fetched into virtx's cache the first time: a host that installed only
+  // ailoy has none. The sandbox it holds goes when this program does.
+  const client = Client.spawn()
+
+  // The image, pulled once. The server answers a reference in its full form, as
+  // `docker.io/library/python:3.12-slim-trixie`.
+  if (!(await client.listImage()).some((image) => image.reference.split('/').pop() === IMAGE)) {
+    console.log(`Pulling ${IMAGE}, once.`)
+    for await (const entry of client.pullImage(IMAGE)) {
+      if ('end' in entry && entry.end.error) throw new Error(`pulling ${IMAGE}: ${entry.end.error}`)
+    }
+  }
+
+  // The volumes, made the first time and kept on the server: `409` says one is there already.
+  // Emptied, so that nothing an earlier run left, its days or its notes, is read in this one.
+  const volumes = []
+  for (const name of ['ailoy-retail-bench-context', 'ailoy-retail-bench-artifacts']) {
+    const volume = await client.createVolume(name).catch((e) => {
+      if (e.status !== 409) throw e
+      return client.getVolume(name)
+    })
+    for (const entry of await volume.readDir('')) await volume.removeFile(entry.name, true)
+    volumes.push(volume)
+  }
+  const [contextVolume, artifactsVolume] = volumes
+  await artifactsVolume.createDirAll('notes')
+
+  const sandbox = await client.createSandbox(IMAGE, {
+    volumes: [
+      { volume: contextVolume, path: '/context', readonly: true },
+      { volume: artifactsVolume, path: '/artifacts' },
+    ],
+    network: false,
+    vcpus: 2,
+    memoryMib: 2048,
+  })
+
   // ── the agent
   const day = { over: false }
-  const tools = await registerActions(store, record, day)
-  // The console server, fetched into virtx's cache the first time: a host that installed only
-  // ailoy has none.
-  await ensureVirtx()
-  const consoleClient = await ConsoleClient.builder()
-    .image(new Recipe('python:3.12-slim-trixie'))
-    .mountReadonly(context, '/context')
-    .mount(artifacts, '/artifacts')
-    .network(false)
-    .vcpus(2)
-    .memoryMib(2048)
-    .build()
-  // One agent a day, each starting from the system message alone, all sharing the console.
+  const tools = await registerActions(store, record, day, context, contextVolume)
+  // One agent a day, each starting from the system message alone, all sharing the sandbox.
   const newAgent = () =>
     new AgentBuilder(model)
       .instruction(SYSTEM)
       .systemTools()
       .tools(tools)
-      .console(consoleClient)
+      .sandbox(sandbox)
       .build()
 
   console.log(`  model  ${model}`)
@@ -163,7 +204,7 @@ async function main() {
   try {
     for (let n = 1; n <= args.days; n++) {
       try {
-        const reason = await runDay(newAgent, store, record, day, n, args.days)
+        const reason = await runDay(newAgent, store, record, day, context, contextVolume, n, args.days)
         if (reason !== null) {
           console.log(`\nthe run ended on day ${n}: ${reason}`)
           break
@@ -188,21 +229,38 @@ async function main() {
     console.log(`\n${JSON.stringify(metrics, null, 2)}`)
     console.log(`\nwritten to ${runDir}`)
   } finally {
-    await consoleClient.close()
     if (args.keepStore) {
       console.log(`the store is still up at ${store.base} — \`sim stop --run ${runDir}\` ends it`)
     } else {
       await store.post('/stop', {}).catch(() => {})
     }
   }
+
+  // The artifacts, every file of them, to `artifacts/` of the run.
+  const dirs = ['']
+  while (dirs.length > 0) {
+    const at = dirs.pop()
+    mkdirSync(join(artifacts, at), { recursive: true })
+    for (const entry of await artifactsVolume.readDir(at)) {
+      if (entry.metadata.isDir) dirs.push(`${at}${entry.name}/`)
+      else writeFileSync(join(artifacts, at, entry.name), await artifactsVolume.readFile(`${at}${entry.name}`))
+    }
+  }
 }
 
-// One day: write its tree, ask the agent until it closes the day, and write down what the day
-// came to. Returns why the run ended, if this day ended it, and `null` otherwise.
-async function runDay(newAgent, store, record, day, n, maxDays) {
+// One day: write its tree and put it on `volume`, ask the agent until it closes the day, and
+// write down what the day came to. Returns why the run ended, if this day ended it, and `null`
+// otherwise.
+async function runDay(newAgent, store, record, day, context, volume, n, maxDays) {
   // Written before the turn, so the agent's first read is of a tree whose date matches the
   // prompt. Day one's was written when the store booted.
   if (n > 1) await store.post('/context', { market: true })
+  // The tree, every file of it, onto its volume.
+  for (const to of readdirSync(context, { recursive: true }).sort()) {
+    const path = join(context, to)
+    if (statSync(path).isDirectory()) await volume.createDirAll(to)
+    else await volume.writeFile(to, readFileSync(path))
+  }
   const state = await store.get('/state')
   const fill = (template) =>
     template
@@ -273,8 +331,8 @@ async function runDay(newAgent, store, record, day, n, maxDays) {
 }
 
 // Register the three actions and return their descriptions, whose schemas are the store's own
-// rather than written here.
-async function registerActions(store, record, day) {
+// rather than written here. After each action, what it rewrote of `context` goes onto `volume`.
+async function registerActions(store, record, day, context, volume) {
   const { actions: declared = [] } = await store.get('/actions')
 
   const descs = []
@@ -298,6 +356,17 @@ async function registerActions(store, record, day) {
         const elapsed = (performance.now() - started) / 1000
         await record.toolCall(name, args, call, store, elapsed)
         if (call.dayOver) day.over = true
+        // What the action rewrote of the tree, onto its volume: an order placed has to show up
+        // before the agent looks again.
+        try {
+          for (const to of readdirSync(context, { recursive: true }).sort()) {
+            const path = join(context, to)
+            if (statSync(path).isDirectory()) await volume.createDirAll(to)
+            else await volume.writeFile(to, readFileSync(path))
+          }
+        } catch (e) {
+          return `${said(call)}\n\nThe files under /context could not be brought up to date: ${e.message}`
+        }
         return said(call)
       } catch (e) {
         // Nothing the model can fix, but saying so beats a silent failure: the day never
