@@ -30,10 +30,14 @@ cp -r "$HERE/game/AiloyBridge" "$DATA/game/"
 #
 # The game is paused but for when the agent acts or waits, so it neither pauses for a
 # client joining nor for there being none. A script gets far more work done in a tick than
-# by default, so that finding a road takes game hours, not weeks.
+# by default, so that finding a road takes game hours, not weeks. A save is written before
+# `save` answers, so a file copied once it has is whole.
 cat >"$SERVER/openttd.cfg" <<EOF
 [version]
 ini_version = 7
+
+[gui]
+threaded_saves = false
 
 [game_creation]
 map_x = ${OPENTTD_MAP_X:-8}
