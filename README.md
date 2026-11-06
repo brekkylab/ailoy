@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<h3 align="center">AI agent builder with a VM at its heart.</h3>
+<h3 align="center">The open-source agent SDK that gives every agent its own VM.</h3>
 
 <p align="center">
   <img src="https://cdn.simpleicons.org/rust/000000/ffffff" width="16"/> <a href="https://crates.io/crates/ailoy"><img src="https://img.shields.io/crates/v/ailoy?label=ailoy&color=dea584" alt="crates.io"></a>
@@ -13,7 +13,6 @@
   <img src="https://cdn.simpleicons.org/nodedotjs" width="16"/> <a href="https://www.npmjs.com/package/@brekkylab/ailoy"><img src="https://img.shields.io/npm/v/@brekkylab/ailoy?label=@brekkylab/ailoy&color=339933" alt="npm node"></a>
 </p>
 
-</p>
 <p align="center">
   <a href="https://ailoy.co/docs/"><img src="https://img.shields.io/badge/docs-eng-5a9cae" alt="Documentation"></a>
   <!-- <a href="https://docs.rs/ailoy"><img src="https://img.shields.io/docsrs/ailoy?label=docs.rs" alt="docs.rs"></a> -->
@@ -23,7 +22,7 @@
 
 <br>
 
-Ailoy is a library for building any kind of AI agents right in your own code.
+Ailoy is an open-source SDK for building AI agents right in your own code. Every agent gets a Linux VM of its own as its sandbox, so it can install software, write and run code and keep files without touching your machine. The sandbox is part of how you build the agent, not a separate service you wire in.
 
 <table align="center">
   <tr>
@@ -263,17 +262,18 @@ npm install
 npm start
 ```
 
-## How It Works
+## How it works
 
-Ailoy give the agent **a computer of its own**.
+Ailoy gives the agent **a computer of its own**.
 
-This lets you build agents that do more than call predefined tools: they can install and use software, create their own scripts, and operate in a general-purpose computing environment—without touching the host system beyond what you explicitly expose.
+Agent stacks are often put together from separate pieces: a library that runs the loop around the model, a hosted service that provides the sandbox, and glue code between the two. Ailoy keeps the loop and the sandbox in one SDK:
 
-To make this possible, Ailoy uses krun-based virtualization to **give each agent a virtual machine of its own**, with no separate VM daemon to install.
+- The **Ailoy SDK** runs the agent loop on your host. It sends the prompt to the model, runs the tool calls the model asks for, feeds the results back, and decides when the agent is done.
+- **[virtx](https://github.com/brekkylab/virtx)** gives each agent a Linux VM of its own, built on krun, with no separate VM daemon to install. The VM is the agent's sandbox: its commands and file tools run inside it, and it reaches your machine only through the folders you mount.
 
-The virtualization used in Ailoy also **supports the GPU**, so an agent can run ML models, or even games, inside its VM.
+That lets you build agents that do more than call predefined tools. Inside its VM an agent can install and use software, write its own scripts and work in a general-purpose computing environment. The VM supports the GPU too, so an agent can run ML models, or even games, in there.
 
-See [virtx](https://github.com/brekkylab/virtx) for more details.
+The [docs](https://ailoy.co/docs/) cover the VM's image, mounts and resources, and the [virtx](https://github.com/brekkylab/virtx) README covers the VM layer itself.
 
 ## Building from source
 
@@ -289,6 +289,10 @@ For the bindings:
 cd bindings/python && uv run maturin develop  # Python
 cd bindings/node && npm install && npm run build  # Node.js
 ```
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome. [CONTRIBUTING.md](./CONTRIBUTING.md) covers setup, tests and how to open a PR. Questions and show-and-tell go on [Discord](https://discord.gg/27rx3EJy3P).
 
 ## License
 
