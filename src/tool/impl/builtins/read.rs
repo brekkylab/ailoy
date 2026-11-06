@@ -1,6 +1,6 @@
 use super::imgread::image_mime;
 use crate::{
-    console::ConsoleClient,
+    console::Sandbox,
     message::{Message, Part, Role},
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
@@ -24,22 +24,11 @@ fn check_text(bytes: &[u8]) -> Result<(), String> {
 /// The text of the file at `path`, for both `read` styles. An error comes with
 /// its phase, `"io"` or `"validation"`.
 pub(super) async fn load_text(
-    console: &mut ConsoleClient,
+    sandbox: &Sandbox,
     path: &str,
 ) -> Result<String, (String, &'static str)> {
-    // `size` is the whole file's, so a short answer means the file is bigger
-    // than one message — reported rather than returned as if it were the file.
-    let bytes = match console.read(path, None, None).await {
-        Ok(r) if (r.data.len() as u64) < r.size => {
-            return Err((
-                format!(
-                    "read {path}: file is {} bytes, more than one message carries",
-                    r.size
-                ),
-                "io",
-            ));
-        }
-        Ok(r) => r.data,
+    let bytes = match crate::console::read(sandbox, path).await {
+        Ok(bytes) => bytes,
         Err(e) => return Err((format!("read {path}: {e}"), "io")),
     };
 
@@ -127,11 +116,11 @@ pub fn get_read_tool_desc() -> ToolDesc {
 
 pub fn get_read_tool_func() -> ToolFunc {
     tool_func!(
-        async |args: Value, id: String, console: &mut ConsoleClient| -> Message {
+        async |args: Value, id: String, sandbox: &Sandbox| -> Message {
             let Some(path_str) = args.pointer("/path").and_then(|v| v.as_str()) else {
                 return error_message(id, "missing required parameter: path", "validation");
             };
-            let text = match load_text(console, path_str).await {
+            let text = match load_text(sandbox, path_str).await {
                 Ok(text) => text,
                 Err((e, phase)) => return error_message(id, e, phase),
             };
@@ -161,23 +150,23 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, test_console, to_value};
+    use crate::{console::Sandbox, datatype::Value, test_sandbox, to_value};
 
-    async fn call(args: Value) -> Message {
+    /// Where a test puts the file a call works on.
+    const PATH: &str = "/tmp/subject";
+
+    async fn call(sandbox: &Sandbox, args: Value) -> Message {
         let f = get_read_tool_func();
-        let mut console = test_console().await;
-        f.call(args, "1", &mut console)
-            .next()
-            .await
-            .unwrap()
-            .message
+        f.call(args, "1", sandbox).next().await.unwrap().message
     }
 
     #[tokio::test]
     async fn test_read_returns_numbered_lines() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "alpha\nbeta\ngamma\n").unwrap();
-        let msg = call(to_value!({ "path": tmp.path().to_string_lossy().to_string() })).await;
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, "alpha\nbeta\ngamma\n")
+            .await
+            .unwrap();
+        let msg = call(&sandbox, to_value!({ "path": PATH })).await;
         let content = msg.contents[0]
             .as_value()
             .unwrap()
@@ -200,13 +189,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_offset_and_limit() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "a\nb\nc\nd\ne\n").unwrap();
-        let msg = call(to_value!({
-            "path": tmp.path().to_string_lossy().to_string(),
-            "offset": 2,
-            "limit": 2,
-        }))
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, "a\nb\nc\nd\ne\n")
+            .await
+            .unwrap();
+        let msg = call(
+            &sandbox,
+            to_value!({
+                "path": PATH,
+                "offset": 2,
+                "limit": 2,
+            }),
+        )
         .await;
         let content = msg.contents[0]
             .as_value()
@@ -223,7 +217,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_missing_path() {
-        let msg = call(to_value!({})).await;
+        let msg = call(&test_sandbox().await, to_value!({})).await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -235,7 +229,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_nonexistent_returns_io_error() {
-        let msg = call(to_value!({ "path": "/this/path/does/not/exist/xyz" })).await;
+        let msg = call(
+            &test_sandbox().await,
+            to_value!({ "path": "/this/path/does/not/exist/xyz" }),
+        )
+        .await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -249,9 +247,9 @@ mod tests {
     async fn test_read_unsupported_binary() {
         // Real PDF magic bytes — classified as unsupported by content sniffing.
         let pdf: &[u8] = b"%PDF-1.4\n%\xC7\xEC\x8F\xA2\n1 0 obj\n<<>>\nendobj\n";
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), pdf).unwrap();
-        let msg = call(to_value!({ "path": tmp.path().to_string_lossy().to_string() })).await;
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, pdf).await.unwrap();
+        let msg = call(&sandbox, to_value!({ "path": PATH })).await;
         let err = msg.contents[0]
             .as_value()
             .unwrap()
@@ -278,9 +276,9 @@ mod tests {
     async fn test_read_utf8_bom_stripped() {
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice("hello\n".as_bytes());
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), &bytes).unwrap();
-        let msg = call(to_value!({ "path": tmp.path().to_string_lossy().to_string() })).await;
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, &bytes).await.unwrap();
+        let msg = call(&sandbox, to_value!({ "path": PATH })).await;
         let content = read_content(&msg);
         assert!(content.contains("\thello"), "got: {content}");
         assert!(!content.contains('\u{FEFF}'), "BOM should be stripped");
@@ -290,9 +288,9 @@ mod tests {
     async fn test_read_utf16_le() {
         // UTF-16 LE BOM + "hi\n"
         let bytes: &[u8] = &[0xFF, 0xFE, 0x68, 0x00, 0x69, 0x00, 0x0A, 0x00];
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), bytes).unwrap();
-        let msg = call(to_value!({ "path": tmp.path().to_string_lossy().to_string() })).await;
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, bytes).await.unwrap();
+        let msg = call(&sandbox, to_value!({ "path": PATH })).await;
         let content = read_content(&msg);
         assert!(content.contains("\thi"), "got: {content}");
     }
@@ -301,9 +299,9 @@ mod tests {
     async fn test_read_image_points_to_imgread() {
         // PNG signature is enough for content sniffing.
         let png: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00];
-        let tmp = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
-        std::fs::write(tmp.path(), png).unwrap();
-        let msg = call(to_value!({ "path": tmp.path().to_string_lossy().to_string() })).await;
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, png).await.unwrap();
+        let msg = call(&sandbox, to_value!({ "path": PATH })).await;
         let err = msg.contents[0]
             .as_value()
             .unwrap()

@@ -11,8 +11,8 @@ every built-in tool has one from the start.
 Messages, specs and tool descriptions are dicts in their JSON form; ``ailoy.types`` spells
 out their shapes.
 
-Tools run commands in a console from the ``virtx`` package, which ailoy depends on: a
-``virtx.ConsoleClient`` handed to ``AgentBuilder.console`` is shared with the agent.
+Tools run commands in a sandbox from the ``virtx`` package, which ailoy depends on: a
+``virtx.Sandbox`` handed to ``AgentBuilder.sandbox`` stays the caller's, and the agent runs in it.
 
 See the Rust crate's documentation for details.
 """

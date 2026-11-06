@@ -5,7 +5,7 @@
 //! use ailoy::agent::*;
 //!
 //! let spec = AgentSpec::new("anthropic/claude-sonnet-5-5").instruction("Be brief.").system_tools();
-//! let mut agent = Agent::try_with_state(spec, AgentState::new().with_console(console)).await?;
+//! let mut agent = Agent::try_with_state(spec, AgentState::new().with_sandbox(sandbox)).await?;
 //! let mut turn = agent.run(Message::new(Role::User).with_contents([Part::text("Hi")]));
 //! while let Some(output) = turn.next().await { /* … */ }
 //! ```

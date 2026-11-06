@@ -1,26 +1,17 @@
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
-use virtx::console::ConsoleClient;
-
-use crate::{browser::BrowserSession, memory::Memory, message::Message};
+use crate::{browser::BrowserSession, console::Sandbox, memory::Memory, message::Message};
 
 /// What an [`Agent`](super::Agent) carries from one turn to the next.
 #[derive(Default)]
 pub struct AgentState {
     pub history: Vec<Message>,
 
-    /// Where this agent's console tools run.
+    /// The sandbox this agent's sandbox tools run in.
     ///
-    /// With `None`, pure tools still run and console tools fail with an error; nothing
-    /// fills this in, since building a console means choosing a console server.
-    ///
-    /// Need not be started: each tool batch that has a console tool starts it.
-    ///
-    /// `Arc` because tool calls run as `'static` futures that each carry a handle;
-    /// `Mutex` because the protocol allows one outstanding request at a time (every
-    /// `ConsoleClient` method takes `&mut self`).
-    pub console: Arc<Mutex<Option<ConsoleClient>>>,
+    /// With `None`, pure tools still run and sandbox tools fail with an error; nothing
+    /// fills this in, since making a sandbox means choosing a virtx server.
+    pub sandbox: Option<Sandbox>,
 
     /// The memory store this agent remembers into; `None` means no memory tools.
     pub memory: Option<Memory>,
@@ -43,15 +34,9 @@ impl AgentState {
         self
     }
 
-    /// Run console tools in `console`; it need not be started.
-    pub fn with_console(mut self, console: ConsoleClient) -> Self {
-        self.console = Arc::new(Mutex::new(Some(console)));
-        self
-    }
-
-    /// Share `console`'s slot with whoever else holds it, such as another agent.
-    pub fn with_console_slot(mut self, console: Arc<Mutex<Option<ConsoleClient>>>) -> Self {
-        self.console = console;
+    /// Run sandbox tools in `sandbox`.
+    pub fn with_sandbox(mut self, sandbox: Sandbox) -> Self {
+        self.sandbox = Some(sandbox);
         self
     }
 

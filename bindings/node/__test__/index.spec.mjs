@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -20,36 +18,17 @@ const {
   setLangModelProvider,
   setToolProvider,
 } = ailoy
-const { ConsoleClient, Recipe, ensureVirtx } = virtx
+const { Client } = virtx
 
-// ---- the console, from @brekkylab/virtx -----------------------------------------------------
+// ---- the sandbox, from @brekkylab/virtx -----------------------------------------------------
 
 test('virtx is a dependency, not re-exported', () => {
-  assert.equal(ailoy.ConsoleClient, undefined)
-  assert.equal(typeof ConsoleClient, 'function')
+  assert.equal(ailoy.Sandbox, undefined)
+  assert.equal(typeof Client, 'function')
 })
 
-test('an agent takes only a virtx console', () => {
-  assert.throws(() => new AgentBuilder('any/model').console({}), { code: 'INVALID_ARG' })
-})
-
-test('a console without a server fails with virtx’s code', async () => {
-  // The builder looks for the server under $VIRTX_HOME/bin when it is made, so an empty home
-  // is a host with no server, whatever this one has.
-  const home = process.env.VIRTX_HOME
-  process.env.VIRTX_HOME = mkdtempSync(join(tmpdir(), 'ailoy-no-server-'))
-  try {
-    await assert.rejects(ConsoleClient.builder().build(), { code: 'VIRTX_ERROR' })
-  } finally {
-    if (home === undefined) delete process.env.VIRTX_HOME
-    else process.env.VIRTX_HOME = home
-  }
-})
-
-test('a console the server refuses fails with the refusal’s code', async () => {
-  await ensureVirtx()
-  // A session boots on an image, and this builder names none.
-  await assert.rejects(ConsoleClient.builder().build(), { code: 'INVALID_PARAMS', message: /image/ })
+test('an agent takes only a virtx sandbox', () => {
+  assert.throws(() => new AgentBuilder('any/model').sandbox({}), { code: 'INVALID_ARG' })
 })
 
 // ---- the builder and the registries --------------------------------------------------------
@@ -375,52 +354,34 @@ test('a factory that throws fails the build', async (t) => {
   await assert.rejects(new AgentBuilder('broken/x').build(), { message: /no models today/ })
 })
 
-// ---- a shared console, against the console server virtx starts by default ---------------
+// ---- the caller's sandbox, against the server virtx starts by default ---------------------
 
-test('an agent shares its console, and closing the agent leaves it open', async () => {
-  const console_ = await ConsoleClient.builder()
-    .image(new Recipe('python:3.12-slim-trixie'))
-    .network(false)
-    .build()
-  try {
-    // Never asked anything, so the model only has to be built.
-    process.env.VLLM_BASE_URL = 'http://127.0.0.1:9/v1'
-    setLangModelProvider('fake-console', 'vllm')
-    const agent = await new AgentBuilder('fake-console/model').shellTool().console(console_).build()
-    await agent.close()
-    const result = await console_.exec(['echo', 'still here'])
-    assert.equal(result.stdout.toString().trim(), 'still here')
-  } finally {
-    await console_.close()
-  }
-})
-
-test('an agent runs its console tools in the shared session, until the console closes', async (t) => {
-  const server = await fakeModel({ name: 'shell', arguments: { cmd: 'echo relayed > /tmp/out.txt' } })
+test('an agent runs its console tools in the caller’s sandbox, until it is removed', async (t) => {
+  const server = await fakeModel({ name: 'shell', arguments: { cmd: 'echo shared > /tmp/out.txt' } })
   t.after(() => server.close())
-
-  const console_ = await ConsoleClient.builder()
-    .image(new Recipe('python:3.12-slim-trixie'))
-    .network(false)
-    .build()
-  serve('fake-shell', server)
-  const agent = await new AgentBuilder('fake-shell/model').shellTool().console(console_).build()
-  const later = await Agent.fromSpec({ model: 'fake-shell/model', tools: [] }, { console: console_ })
-  try {
-    const outputs = []
-    for await (const output of agent.run('write it')) outputs.push(output)
-    assert.equal(outputs[1].message.role, 'tool')
-    const result = await console_.exec(['cat', '/tmp/out.txt'])
-    assert.equal(result.stdout.toString(), 'relayed\n')
-  } finally {
-    await console_.close()
+  const client = Client.spawn()
+  t.after(() => client.close())
+  for await (const entry of client.pullImage('python:3.12-slim')) {
+    if ('end' in entry) assert.equal(entry.end.error, undefined)
   }
+  const sandbox = await client.createSandbox('python:3.12-slim', { network: false, memoryMib: 1024 })
 
-  // The session was the console's: an agent attached to it fails once it is closed.
-  const shell = await new AgentBuilder('fake-shell/model').shellTool().console(console_).build()
-  await assert.rejects(async () => {
-    for await (const _ of shell.run('write it again'));
-  }, { code: 'CONSOLE_BROKEN', message: /closed/ })
+  serve('fake-shell', server)
+  const agent = await new AgentBuilder('fake-shell/model').shellTool().sandbox(sandbox).build()
+  const outputs = []
+  for await (const output of agent.run('write it')) outputs.push(output)
+  assert.equal(outputs[1].message.role, 'tool')
+  // The sandbox is still the caller's to use.
+  assert.equal(await sandbox.readText('tmp/out.txt'), 'shared\n')
+
+  // Removed, it is gone for an agent too.
+  const later = await new AgentBuilder('fake-shell/model').shellTool().sandbox(sandbox).build()
+  const fromSpec = await Agent.fromSpec({ model: 'fake-shell/model', tools: [] }, { sandbox })
+  await sandbox.remove()
+  const after = []
+  for await (const output of later.run('write it again')) after.push(output)
+  assert.match(JSON.stringify(after[1].message.contents), /404/)
   await agent.close()
   await later.close()
+  await fromSpec.close()
 })

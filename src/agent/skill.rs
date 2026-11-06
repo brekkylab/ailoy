@@ -1,8 +1,8 @@
-//! Skills: directories in the console, each with a `SKILL.md` saying how to use it.
+//! Skills: directories in the sandbox, each with a `SKILL.md` saying how to use it.
 
 use anyhow::Context as _;
-use tokio::sync::Mutex;
-use virtx::console::ConsoleClient;
+
+use crate::console::Sandbox;
 
 /// The skills in `dirs`, as the section of the system message that lists them.
 ///
@@ -14,18 +14,15 @@ use virtx::console::ConsoleClient;
 /// Markdown list otherwise; `org` is the spec's model org, e.g. `"anthropic"`.
 pub(super) async fn render_skills(
     dirs: &[String],
-    console: &Mutex<Option<ConsoleClient>>,
+    sandbox: Option<&Sandbox>,
     org: &str,
 ) -> anyhow::Result<String> {
-    let mut guard = console.lock().await;
-    let console = guard
-        .as_mut()
-        .context("an agent with skills needs a console to read them from")?;
+    let sandbox = sandbox.context("an agent with skills needs a sandbox to read them from")?;
 
     let mut skills = Vec::with_capacity(dirs.len());
     for dir in dirs {
         let location = format!("{}/SKILL.md", dir.trim_end_matches('/'));
-        let text = read_to_string(console, &location)
+        let text = read_to_string(sandbox, &location)
             .await
             .with_context(|| format!("reading the skill {location}"))?;
         let (name, description) =
@@ -47,7 +44,7 @@ pub(super) async fn render_skills(
 struct Skill {
     name: String,
     description: String,
-    /// The skill's `SKILL.md`, as the console spells it.
+    /// The skill's `SKILL.md`, as the sandbox spells it.
     location: String,
 }
 
@@ -91,17 +88,9 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// Read the whole file at `path`, re-requesting from the current offset until `size` is reached.
-async fn read_to_string(console: &mut ConsoleClient, path: &str) -> anyhow::Result<String> {
-    let mut data = Vec::new();
-    loop {
-        let resp = console.read(path, Some(data.len() as u64), None).await?;
-        let got = resp.data.len();
-        data.extend(resp.data);
-        if got == 0 || data.len() as u64 >= resp.size {
-            break;
-        }
-    }
+/// The whole file at `path`, as text.
+async fn read_to_string(sandbox: &Sandbox, path: &str) -> anyhow::Result<String> {
+    let data = crate::console::read(sandbox, path).await?;
     String::from_utf8(data).context("the file is not UTF-8")
 }
 

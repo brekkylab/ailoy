@@ -1,5 +1,3 @@
-use virtx::protocol::Error;
-
 use super::largest_fitting;
 use crate::{
     agent::{MAX_TOOL_RESULT_CHARS, fits_tool_result},
@@ -58,7 +56,7 @@ impl<'a> Output<'a> {
             "stderr": middle_truncate(self.stderr.0, self.stderr.1, keep).as_str(),
             "exit_code": self.exit_code,
             "timed_out": false,
-            // The console cut output that would not fit one message. Said out loud,
+            // The sandbox cut output that would not fit one message. Said out loud,
             // since a model that takes a partial result as whole draws conclusions from it.
             "truncated": self.truncated
         })
@@ -109,7 +107,7 @@ pub fn get_shell_tool_desc() -> ToolDesc {
 }
 
 pub fn get_shell_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value {
+    tool_func!(async |args: Value, sandbox: &Sandbox| -> Value {
         let cmd = match args.pointer("/cmd").and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
@@ -122,7 +120,7 @@ pub fn get_shell_tool_func() -> ToolFunc {
             }
         };
 
-        // Fractional seconds allowed; 0 or absent defers to the console's own timeout.
+        // Fractional seconds allowed; 0 or absent defers to the sandbox's own timeout.
         let timeout_ms = args
             .pointer("/timeout_secs")
             .and_then(|v| v.as_float().or_else(|| v.as_unsigned().map(|u| u as f64)))
@@ -131,11 +129,10 @@ pub fn get_shell_tool_func() -> ToolFunc {
 
         // virtx consults no shell, so asking for shell semantics means asking for a
         // shell.
-        let out = match console.exec(["sh", "-c", cmd.as_str()], timeout_ms).await {
-            Ok(out) => out,
-            // A killed command has no result — no exit code, and whatever it wrote is
-            // gone with it — so virtx refuses the execution instead of inventing one.
-            Err(e) if e.code() == Some(Error::TIMED_OUT) => {
+        let out = match crate::console::exec(sandbox, ["sh", "-c", cmd.as_str()], timeout_ms).await
+        {
+            // A killed command has no exit code of its own.
+            Ok(out) if out.timed_out => {
                 return crate::to_value!({
                     "stdout": "",
                     "stderr": "",
@@ -143,6 +140,7 @@ pub fn get_shell_tool_func() -> ToolFunc {
                     "timed_out": true
                 });
             }
+            Ok(out) => out,
             Err(e) => {
                 return crate::to_value!({
                     "stdout": "",
@@ -153,9 +151,7 @@ pub fn get_shell_tool_func() -> ToolFunc {
             }
         };
 
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        Output::new(&stdout, &stderr, out.code as i64, out.truncated).fitted()
+        Output::new(&out.stdout, &out.stderr, out.code as i64, out.truncated).fitted()
     })
 }
 
@@ -164,7 +160,7 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{test_console, to_value};
+    use crate::{test_sandbox, to_value};
 
     /// `kept`, the result's copy of `original`: `None` when it is `original` whole; otherwise
     /// the number of characters it keeps, once its note is checked against what is missing.
@@ -258,9 +254,9 @@ mod tests {
     #[tokio::test]
     async fn test_long_output_fits_one_tool_result() {
         let f = get_shell_tool_func();
-        let mut console = test_console().await;
+        let sandbox = test_sandbox().await;
         let msg = f
-            .call(to_value!({ "cmd": "seq 1 6000" }), "", &mut console)
+            .call(to_value!({ "cmd": "seq 1 6000" }), "", &sandbox)
             .next()
             .await
             .unwrap()
@@ -275,9 +271,9 @@ mod tests {
     #[tokio::test]
     async fn test_missing_cmd_returns_validation_error() {
         let f = get_shell_tool_func();
-        let mut console = test_console().await;
+        let sandbox = test_sandbox().await;
         let msg = f
-            .call(to_value!({}), "", &mut console)
+            .call(to_value!({}), "", &sandbox)
             .next()
             .await
             .unwrap()
@@ -294,9 +290,9 @@ mod tests {
     #[tokio::test]
     async fn test_echo_returns_stdout() {
         let f = get_shell_tool_func();
-        let mut console = test_console().await;
+        let sandbox = test_sandbox().await;
         let msg = f
-            .call(to_value!({ "cmd": "echo ailoy" }), "", &mut console)
+            .call(to_value!({ "cmd": "echo ailoy" }), "", &sandbox)
             .next()
             .await
             .unwrap()
@@ -313,12 +309,12 @@ mod tests {
     #[tokio::test]
     async fn test_timeout_secs_bounds_the_command() {
         let f = get_shell_tool_func();
-        let mut console = test_console().await;
+        let sandbox = test_sandbox().await;
         let msg = f
             .call(
                 to_value!({ "cmd": "sleep 30", "timeout_secs": 1 }),
                 "",
-                &mut console,
+                &sandbox,
             )
             .next()
             .await
@@ -336,9 +332,9 @@ mod tests {
     #[tokio::test]
     async fn test_exit_code_is_captured() {
         let f = get_shell_tool_func();
-        let mut console = test_console().await;
+        let sandbox = test_sandbox().await;
         let msg = f
-            .call(to_value!({ "cmd": "exit 42" }), "", &mut console)
+            .call(to_value!({ "cmd": "exit 42" }), "", &sandbox)
             .next()
             .await
             .unwrap()
@@ -354,16 +350,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_state_persists_across_calls() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let path = tmp.path().to_string_lossy().to_string();
+        let path = "/tmp/persisted.txt";
         let f = get_shell_tool_func();
-        let mut console = test_console().await;
+        let sandbox = test_sandbox().await;
 
         let r1 = f
             .call(
                 to_value!({ "cmd": format!("echo persisted > {path}") }),
                 "",
-                &mut console,
+                &sandbox,
             )
             .next()
             .await
@@ -380,11 +375,7 @@ mod tests {
         );
 
         let r2 = f
-            .call(
-                to_value!({ "cmd": format!("cat {path}") }),
-                "",
-                &mut console,
-            )
+            .call(to_value!({ "cmd": format!("cat {path}") }), "", &sandbox)
             .next()
             .await
             .unwrap()

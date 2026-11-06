@@ -5,10 +5,8 @@
 //! lock's owned guard in its stream, which also makes a second `run` wait for the first to
 //! finish, as `&mut self` would in Rust.
 //!
-//! `AgentBuilder.console` attaches the agent to a `virtx.ConsoleClient`'s session (see
-//! [`crate::console`]). The `ConsoleClient` stays usable: its calls and the agent's take turns
-//! on its lock, one protocol call at a time, the agent starts and stops its backend around each
-//! batch of tool calls, and `ConsoleClient.close()` ends the session for both.
+//! `AgentBuilder.sandbox` gives the agent a `virtx.Sandbox` (see [`crate::console`]), which
+//! stays the caller's: the agent runs in it over the same client, and never removes it.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -35,10 +33,8 @@ use crate::{
     error::{self, AiloyError},
 };
 
-/// A value let go of on the binding's runtime. Dropping an agent or a turn's stream may drop
-/// the last hold on its console, whose client is let go of on a task when dropped on a runtime
-/// (an attached console says no `quit`: the session is the `virtx.ConsoleClient`'s), and a
-/// Python finalizer is not on one.
+/// A value let go of on the binding's runtime: what an agent or a turn's stream holds may let
+/// go of itself on a task, and a Python finalizer is not on a runtime.
 pub struct OnRuntime<T>(pub Option<T>);
 
 impl<T> Drop for OnRuntime<T> {
@@ -149,14 +145,14 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.history(history)))
     }
 
-    /// Run the agent's console tools in the session of `console`, a `virtx.ConsoleClient`,
-    /// which the agent then shares.
-    fn console<'py>(
+    /// Run the agent's console tools in `sandbox`, a `virtx.Sandbox`, which stays the
+    /// caller's.
+    fn sandbox<'py>(
         slf: PyRef<'py, Self>,
-        console: Bound<'py, PyAny>,
+        sandbox: Bound<'py, PyAny>,
     ) -> PyResult<PyRef<'py, Self>> {
-        let slot = console::attach(&console)?;
-        Self::update(slf, |b| Ok(b.shared_console(slot)))
+        let sandbox = console::sandbox(&sandbox)?;
+        Self::update(slf, |b| Ok(b.sandbox(sandbox)))
     }
 
     /// A browser the agent drives with its `browser_*` tools over CDP from this process rather
@@ -327,12 +323,12 @@ impl PyAgent {
     /// An agent from a spec — the dict an `AgentSpec` serializes to — for a caller who holds
     /// one rather than building it up. Awaitable.
     #[staticmethod]
-    #[pyo3(signature = (spec, *, history = None, console = None, memory = None))]
+    #[pyo3(signature = (spec, *, history = None, sandbox = None, memory = None))]
     fn from_spec<'py>(
         py: Python<'py>,
         spec: Bound<'py, PyAny>,
         history: Option<Bound<'py, PyAny>>,
-        console: Option<Bound<'py, PyAny>>,
+        sandbox: Option<Bound<'py, PyAny>>,
         memory: Option<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let spec: AgentSpec = from_py(&spec, "an agent spec")?;
@@ -340,8 +336,8 @@ impl PyAgent {
         if let Some(history) = history {
             state = state.with_history(from_py::<Vec<Message>>(&history, "a list of messages")?);
         }
-        if let Some(console) = console {
-            state = state.with_console_slot(console::attach(&console)?);
+        if let Some(sandbox) = sandbox {
+            state = state.with_sandbox(console::sandbox(&sandbox)?);
         }
         if let Some(memfile) = memory {
             state = state.with_memory(Memory::new(memfile));
@@ -395,7 +391,7 @@ impl PyAgent {
         PyAgentRun::new(turn(self.agent.clone(), query.0, Mode::Deltas))
     }
 
-    /// Let go of the agent now, and of its console if nothing else holds it. Waits for a turn
+    /// Let go of the agent now, and of its hold of its sandbox's client. Waits for a turn
     /// being iterated to finish. Closing twice is the same as closing once.
     fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let agent = self.agent.clone();

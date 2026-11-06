@@ -40,7 +40,7 @@ pub fn get_edit_tool_desc() -> ToolDesc {
 }
 
 pub fn get_edit_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value {
+    tool_func!(async |args: Value, sandbox: &Sandbox| -> Value {
         let Some(path) = args.pointer("/path").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: path",
@@ -70,19 +70,8 @@ pub fn get_edit_tool_func() -> ToolFunc {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        // `size` is the whole file's, so a short read means the file exceeds one
-        // message; editing only the front and writing it back would drop the rest.
-        let bytes = match console.read(path, None, None).await {
-            Ok(r) if (r.data.len() as u64) < r.size => {
-                return crate::to_value!({
-                    "error": format!(
-                        "read {path}: file is {} bytes, more than one message carries",
-                        r.size
-                    ),
-                    "phase": "io",
-                });
-            }
-            Ok(r) => r.data,
+        let bytes = match crate::console::read(sandbox, path).await {
+            Ok(bytes) => bytes,
             Err(e) => {
                 return crate::to_value!({
                     "error": format!("read {path}: {e}"),
@@ -124,9 +113,8 @@ pub fn get_edit_tool_func() -> ToolFunc {
         };
         let replacements = if replace_all { count } else { 1 };
 
-        // `None` offset: the file *becomes* these bytes, so a shorter replacement
-        // leaves no stale tail. No `mkdir`: the file was just read, so its parent exists.
-        match console.write(path, updated.into_bytes(), None).await {
+        // No `mkdir`: the file was just read, so its parent exists.
+        match crate::console::write(sandbox, path, updated).await {
             Ok(_) => crate::to_value!({
                 "ok": true,
                 "replacements": replacements as i64,
@@ -144,27 +132,30 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, message::Message, test_console, to_value};
+    use crate::{console::Sandbox, datatype::Value, message::Message, test_sandbox, to_value};
 
-    async fn call(args: Value) -> Message {
+    /// Where a test puts the file a call works on.
+    const PATH: &str = "/tmp/subject";
+
+    async fn call(sandbox: &Sandbox, args: Value) -> Message {
         let f = get_edit_tool_func();
-        let mut console = test_console().await;
-        f.call(args, "1", &mut console)
-            .next()
-            .await
-            .unwrap()
-            .message
+        f.call(args, "1", sandbox).next().await.unwrap().message
     }
 
     #[tokio::test]
     async fn test_edit_unique_replacement() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "hello world\n").unwrap();
-        let msg = call(to_value!({
-            "path": tmp.path().to_string_lossy().to_string(),
-            "old_string": "world",
-            "new_string": "ailoy",
-        }))
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, "hello world\n")
+            .await
+            .unwrap();
+        let msg = call(
+            &sandbox,
+            to_value!({
+                "path": PATH,
+                "old_string": "world",
+                "new_string": "ailoy",
+            }),
+        )
         .await;
         assert!(
             msg.contents[0]
@@ -175,20 +166,25 @@ mod tests {
                 .unwrap_or(false)
         );
         assert_eq!(
-            std::fs::read_to_string(tmp.path()).unwrap(),
+            String::from_utf8(crate::console::read(&sandbox, PATH).await.unwrap()).unwrap(),
             "hello ailoy\n"
         );
     }
 
     #[tokio::test]
     async fn test_edit_ambiguous_match_fails() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "x\nx\n").unwrap();
-        let msg = call(to_value!({
-            "path": tmp.path().to_string_lossy().to_string(),
-            "old_string": "x",
-            "new_string": "y",
-        }))
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, "x\nx\n")
+            .await
+            .unwrap();
+        let msg = call(
+            &sandbox,
+            to_value!({
+                "path": PATH,
+                "old_string": "x",
+                "new_string": "y",
+            }),
+        )
         .await;
         let phase = msg.contents[0]
             .as_value()
@@ -197,19 +193,27 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap();
         assert_eq!(phase, "ambiguous_match");
-        assert_eq!(std::fs::read_to_string(tmp.path()).unwrap(), "x\nx\n");
+        assert_eq!(
+            String::from_utf8(crate::console::read(&sandbox, PATH).await.unwrap()).unwrap(),
+            "x\nx\n"
+        );
     }
 
     #[tokio::test]
     async fn test_edit_replace_all() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "x\nx\nx\n").unwrap();
-        let msg = call(to_value!({
-            "path": tmp.path().to_string_lossy().to_string(),
-            "old_string": "x",
-            "new_string": "y",
-            "replace_all": true,
-        }))
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, "x\nx\nx\n")
+            .await
+            .unwrap();
+        let msg = call(
+            &sandbox,
+            to_value!({
+                "path": PATH,
+                "old_string": "x",
+                "new_string": "y",
+                "replace_all": true,
+            }),
+        )
         .await;
         let n = msg.contents[0]
             .as_value()
@@ -218,18 +222,24 @@ mod tests {
             .and_then(|v| v.as_integer())
             .unwrap();
         assert_eq!(n, 3);
-        assert_eq!(std::fs::read_to_string(tmp.path()).unwrap(), "y\ny\ny\n");
+        assert_eq!(
+            String::from_utf8(crate::console::read(&sandbox, PATH).await.unwrap()).unwrap(),
+            "y\ny\ny\n"
+        );
     }
 
     #[tokio::test]
     async fn test_edit_no_match() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "abc").unwrap();
-        let msg = call(to_value!({
-            "path": tmp.path().to_string_lossy().to_string(),
-            "old_string": "zzz",
-            "new_string": "yyy",
-        }))
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, "abc").await.unwrap();
+        let msg = call(
+            &sandbox,
+            to_value!({
+                "path": PATH,
+                "old_string": "zzz",
+                "new_string": "yyy",
+            }),
+        )
         .await;
         let phase = msg.contents[0]
             .as_value()
@@ -242,11 +252,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_edit_old_equals_new_rejected() {
-        let msg = call(to_value!({
-            "path": "/tmp/anything",
-            "old_string": "same",
-            "new_string": "same",
-        }))
+        let msg = call(
+            &test_sandbox().await,
+            to_value!({
+                "path": "/tmp/anything",
+                "old_string": "same",
+                "new_string": "same",
+            }),
+        )
         .await;
         let phase = msg.contents[0]
             .as_value()

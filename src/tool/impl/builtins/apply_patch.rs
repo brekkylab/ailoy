@@ -1,9 +1,5 @@
-use std::path::Path;
-
-use virtx::protocol::Error;
-
 use crate::{
-    console::ConsoleClient,
+    console::Sandbox,
     datatype::Value,
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
@@ -198,55 +194,29 @@ fn apply_hunks(path: &str, mut content: String, hunks: &[Hunk]) -> anyhow::Resul
     Ok(content)
 }
 
-/// Write `bytes` to `path`, making its directories if they are not there yet —
-/// only after virtx says the write missed, since `write` creates the file but
-/// nothing above it.
-async fn write_creating_dirs(
-    console: &mut ConsoleClient,
-    path: &str,
-    bytes: Vec<u8>,
-) -> anyhow::Result<()> {
-    let mut wrote = console.write(path, bytes.clone(), None).await;
-    if wrote.as_ref().err().and_then(|e| e.code()) == Some(Error::NOT_FOUND)
-        && let Some(parent) = Path::new(path)
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-    {
-        let parent = parent.to_string_lossy().into_owned();
-        let mkdir = console.exec(["mkdir", "-p", &parent], None).await?;
-        if mkdir.code != 0 {
-            anyhow::bail!(
-                "{path}: mkdir {parent} failed (exit {}): {}",
-                mkdir.code,
-                String::from_utf8_lossy(&mkdir.stderr).trim()
-            );
-        }
-        wrote = console.write(path, bytes, None).await;
-    }
-    wrote?;
+/// Write `bytes` to `path`, making its directories if they are not there yet.
+async fn write_creating_dirs(sandbox: &Sandbox, path: &str, bytes: Vec<u8>) -> anyhow::Result<()> {
+    crate::console::write(sandbox, path, bytes).await?;
     Ok(())
 }
 
-async fn remove(console: &mut ConsoleClient, path: &str) -> anyhow::Result<()> {
-    let result = console.exec(["rm", "-f", path], None).await?;
+async fn remove(sandbox: &Sandbox, path: &str) -> anyhow::Result<()> {
+    let result = crate::console::exec(sandbox, ["rm", "-f", path], None).await?;
     if result.code != 0 {
-        anyhow::bail!(
-            "rm {path}: {}",
-            String::from_utf8_lossy(&result.stderr).trim()
-        );
+        anyhow::bail!("rm {path}: {}", result.stderr.trim());
     }
     Ok(())
 }
 
-async fn apply_op(op: &PatchOp, console: &mut ConsoleClient) -> anyhow::Result<String> {
+async fn apply_op(op: &PatchOp, sandbox: &Sandbox) -> anyhow::Result<String> {
     match op {
         // `Add` and a move may name a path whose directories are not there yet.
         PatchOp::Add { path, content } => {
-            write_creating_dirs(console, path, content.as_bytes().to_vec()).await?;
+            write_creating_dirs(sandbox, path, content.as_bytes().to_vec()).await?;
             Ok(format!("added {path}"))
         }
         PatchOp::Delete { path } => {
-            remove(console, path).await?;
+            remove(sandbox, path).await?;
             Ok(format!("deleted {path}"))
         }
         PatchOp::Update {
@@ -254,28 +224,17 @@ async fn apply_op(op: &PatchOp, console: &mut ConsoleClient) -> anyhow::Result<S
             move_to,
             hunks,
         } => {
-            // A hunk is matched against the whole file and the whole file is written
-            // back, so a partial read would silently drop everything past it.
-            let read = console.read(path, None, None).await?;
-            if (read.data.len() as u64) < read.size {
-                anyhow::bail!(
-                    "read {path}: file is {} bytes, more than one message carries",
-                    read.size
-                );
-            }
-            let content = String::from_utf8(read.data)
+            let content = String::from_utf8(crate::console::read(sandbox, path).await?)
                 .map_err(|_| anyhow::anyhow!("file {path} is not valid UTF-8"))?;
             let content = apply_hunks(path, content, hunks)?;
             match move_to {
                 Some(to) => {
-                    write_creating_dirs(console, to, content.into_bytes()).await?;
-                    remove(console, path).await?;
+                    write_creating_dirs(sandbox, to, content.into_bytes()).await?;
+                    remove(sandbox, path).await?;
                     Ok(format!("updated {path}, moved to {to}"))
                 }
                 None => {
-                    // `None` offset, so the file becomes the patched text rather
-                    // than being written into.
-                    console.write(path, content.into_bytes(), None).await?;
+                    crate::console::write(sandbox, path, content).await?;
                     Ok(format!("updated {path}"))
                 }
             }
@@ -369,7 +328,7 @@ It is important to remember:
 }
 
 pub fn get_apply_patch_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value {
+    tool_func!(async |args: Value, sandbox: &Sandbox| -> Value {
         let Some(patch_text) = args.pointer("/input").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: input",
@@ -389,7 +348,7 @@ pub fn get_apply_patch_tool_func() -> ToolFunc {
 
         let mut summary: Vec<Value> = Vec::new();
         for op in &ops {
-            match apply_op(op, console).await {
+            match apply_op(op, sandbox).await {
                 Ok(msg) => summary.push(Value::from(msg)),
                 Err(e) => {
                     return crate::to_value!({
@@ -412,49 +371,23 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{message::Message, test_console, to_value};
+    use crate::{console::Sandbox, message::Message, test_sandbox, to_value};
 
-    async fn call(args: Value) -> Message {
+    /// Where a test puts the file a call works on.
+    const PATH: &str = "/tmp/subject";
+
+    async fn call(sandbox: &Sandbox, args: Value) -> Message {
         let f = get_apply_patch_tool_func();
-        let mut console = test_console().await;
-        f.call(args, "1", &mut console)
-            .next()
-            .await
-            .unwrap()
-            .message
+        f.call(args, "1", sandbox).next().await.unwrap().message
     }
 
     #[tokio::test]
     async fn test_apply_patch_add_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("new.txt");
-        let patch = format!(
-            "*** Begin Patch\n*** Add File: {}\n+hello\n+world\n*** End Patch",
-            path.display()
-        );
-        let msg = call(to_value!({ "input": patch })).await;
-        assert!(
-            msg.contents[0]
-                .as_value()
-                .unwrap()
-                .pointer("/ok")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            "result: {:?}",
-            msg.contents[0]
-        );
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello\nworld\n");
-    }
-
-    #[tokio::test]
-    async fn test_apply_patch_update_file() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "alpha\nbeta\ngamma\n").unwrap();
-        let patch = format!(
-            "*** Begin Patch\n*** Update File: {}\n@@\n alpha\n-beta\n+BETA\n gamma\n*** End Patch",
-            tmp.path().display()
-        );
-        let msg = call(to_value!({ "input": patch })).await;
+        // In directories that are not there yet, which the tool makes.
+        let path = "/tmp/new/dir/new.txt";
+        let patch = format!("*** Begin Patch\n*** Add File: {path}\n+hello\n+world\n*** End Patch");
+        let sandbox = test_sandbox().await;
+        let msg = call(&sandbox, to_value!({ "input": patch })).await;
         assert!(
             msg.contents[0]
                 .as_value()
@@ -466,18 +399,46 @@ mod tests {
             msg.contents[0]
         );
         assert_eq!(
-            std::fs::read_to_string(tmp.path()).unwrap(),
+            crate::console::read(&sandbox, path).await.unwrap(),
+            b"hello\nworld\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_patch_update_file() {
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, "alpha\nbeta\ngamma\n")
+            .await
+            .unwrap();
+        let patch = format!(
+            "*** Begin Patch\n*** Update File: {}\n@@\n alpha\n-beta\n+BETA\n gamma\n*** End Patch",
+            PATH
+        );
+        let msg = call(&sandbox, to_value!({ "input": patch })).await;
+        assert!(
+            msg.contents[0]
+                .as_value()
+                .unwrap()
+                .pointer("/ok")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            "result: {:?}",
+            msg.contents[0]
+        );
+        assert_eq!(
+            String::from_utf8(crate::console::read(&sandbox, PATH).await.unwrap()).unwrap(),
             "alpha\nBETA\ngamma\n"
         );
     }
 
     #[tokio::test]
     async fn test_apply_patch_delete_file() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "doomed").unwrap();
-        let path_str = tmp.path().to_string_lossy().to_string();
-        let patch = format!("*** Begin Patch\n*** Delete File: {path_str}\n*** End Patch");
-        let msg = call(to_value!({ "input": patch })).await;
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, "doomed")
+            .await
+            .unwrap();
+        let patch = format!("*** Begin Patch\n*** Delete File: {PATH}\n*** End Patch");
+        let msg = call(&sandbox, to_value!({ "input": patch })).await;
         assert!(
             msg.contents[0]
                 .as_value()
@@ -486,12 +447,17 @@ mod tests {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false)
         );
-        assert!(!std::path::Path::new(&path_str).exists());
+        let gone = crate::console::read(&sandbox, PATH).await.unwrap_err();
+        assert_eq!(gone.status(), Some(404), "{gone}");
     }
 
     #[tokio::test]
     async fn test_apply_patch_missing_envelope() {
-        let msg = call(to_value!({ "input": "*** Add File: foo\n+x" })).await;
+        let msg = call(
+            &test_sandbox().await,
+            to_value!({ "input": "*** Add File: foo\n+x" }),
+        )
+        .await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -503,13 +469,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_patch_hunk_not_found() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "alpha\nbeta\n").unwrap();
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, "alpha\nbeta\n")
+            .await
+            .unwrap();
         let patch = format!(
             "*** Begin Patch\n*** Update File: {}\n@@\n nonexistent\n-beta\n+BETA\n*** End Patch",
-            tmp.path().display()
+            PATH
         );
-        let msg = call(to_value!({ "input": patch })).await;
+        let msg = call(&sandbox, to_value!({ "input": patch })).await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()
@@ -518,7 +486,7 @@ mod tests {
             .unwrap();
         assert_eq!(phase, "apply");
         assert_eq!(
-            std::fs::read_to_string(tmp.path()).unwrap(),
+            String::from_utf8(crate::console::read(&sandbox, PATH).await.unwrap()).unwrap(),
             "alpha\nbeta\n",
             "file must be unchanged when hunk fails"
         );
@@ -526,13 +494,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_patch_multi_hunk_in_one_file() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "a\nb\nc\nd\ne\n").unwrap();
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, "a\nb\nc\nd\ne\n")
+            .await
+            .unwrap();
         let patch = format!(
             "*** Begin Patch\n*** Update File: {}\n@@\n-a\n+A\n@@\n-d\n+D\n*** End Patch",
-            tmp.path().display()
+            PATH
         );
-        let msg = call(to_value!({ "input": patch })).await;
+        let msg = call(&sandbox, to_value!({ "input": patch })).await;
         assert!(
             msg.contents[0]
                 .as_value()
@@ -544,7 +514,7 @@ mod tests {
             msg.contents[0]
         );
         assert_eq!(
-            std::fs::read_to_string(tmp.path()).unwrap(),
+            String::from_utf8(crate::console::read(&sandbox, PATH).await.unwrap()).unwrap(),
             "A\nb\nc\nD\ne\n"
         );
     }

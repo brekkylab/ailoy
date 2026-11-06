@@ -17,9 +17,9 @@ use std::{
     time::Duration,
 };
 
+use crate::console::Sandbox;
 use anyhow::{Context as _, bail};
 use futures::future::BoxFuture;
-use virtx::console::ConsoleClient;
 
 use crate::{
     datatype::{Bytes, Value},
@@ -941,12 +941,9 @@ fn console_tools(session: &Arc<BrowserSession>) -> Vec<(ToolDesc, ToolFunc)> {
 /// The most a download copied into the console may be.
 const MAX_DOWNLOAD: u64 = 512 * 1024 * 1024;
 
-/// How much of a file goes to the console in one write, well under virtx's 64 MiB message.
-const CHUNK: usize = 16 * 1024 * 1024;
-
 fn save_download_tool(session: &Arc<BrowserSession>) -> ToolFunc {
     let session = session.clone();
-    crate::tool_func!(async |args: Value, id: String, console: &mut ConsoleClient| -> Message
+    crate::tool_func!(async |args: Value, id: String, sandbox: &Sandbox| -> Message
         with [session = session.clone()]
     {
         let said = async {
@@ -967,8 +964,8 @@ fn save_download_tool(session: &Arc<BrowserSession>) -> ToolFunc {
                     thousands(size as usize)
                 );
             }
-            let path = console_path(console, str_arg(&args, "file_name").unwrap_or(name)).await?;
-            copy_to_console(console, host, &path, CHUNK).await?;
+            let path = console_path(sandbox, str_arg(&args, "file_name").unwrap_or(name)).await?;
+            write_console_file(sandbox, &path, tokio::fs::read(host).await?).await?;
             anyhow::Ok(format!(
                 "Saved the download {name} ({} bytes) to {path}.",
                 thousands(size as usize)
@@ -979,45 +976,19 @@ fn save_download_tool(session: &Arc<BrowserSession>) -> ToolFunc {
     })
 }
 
-/// Copies the host's file `from` to `to` in the console, `chunk` bytes per write.
-async fn copy_to_console(
-    console: &mut ConsoleClient,
-    from: &std::path::Path,
-    to: &str,
-    chunk: usize,
-) -> anyhow::Result<()> {
-    use tokio::io::AsyncReadExt as _;
-    let mut file = tokio::fs::File::open(from).await?;
-    let mut offset = 0u64;
-    loop {
-        let mut buf = Vec::with_capacity(chunk);
-        (&mut file).take(chunk as u64).read_to_end(&mut buf).await?;
-        let read = buf.len() as u64;
-        if offset == 0 {
-            write_console_file(console, to, buf).await?;
-        } else if read > 0 {
-            console.write(to, buf, Some(offset)).await?;
-        }
-        offset += read;
-        if read < chunk as u64 {
-            return Ok(());
-        }
-    }
-}
-
 /// The bytes a page gives to keep as a file.
 type Take = for<'a> fn(&'a mut page::Tabs) -> BoxFuture<'a, anyhow::Result<Vec<u8>>>;
 
 fn save_tool(session: &Arc<BrowserSession>, what: &'static str, take: Take) -> ToolFunc {
     let session = session.clone();
-    crate::tool_func!(async |args: Value, id: String, console: &mut ConsoleClient| -> Message
+    crate::tool_func!(async |args: Value, id: String, sandbox: &Sandbox| -> Message
         with [session = session.clone()]
     {
         let said = async {
             let name = str_arg(&args, "file_name").context("missing required parameter: file_name")?;
-            let path = console_path(console, name).await?;
+            let path = console_path(sandbox, name).await?;
             let bytes = session.run(take).await?;
-            write_console_file(console, &path, bytes).await?;
+            write_console_file(sandbox, &path, bytes).await?;
             anyhow::Ok(format!("Saved the {what} to {path}."))
         }
         .await;
@@ -1027,7 +998,7 @@ fn save_tool(session: &Arc<BrowserSession>, what: &'static str, take: Take) -> T
 
 fn pdf_tool(session: &Arc<BrowserSession>) -> ToolFunc {
     let session = session.clone();
-    crate::tool_func!(async |args: Value, id: String, console: &mut ConsoleClient| -> Message
+    crate::tool_func!(async |args: Value, id: String, sandbox: &Sandbox| -> Message
         with [session = session.clone()]
     {
         let said = async {
@@ -1053,18 +1024,18 @@ fn pdf_tool(session: &Arc<BrowserSession>) -> ToolFunc {
                 }
             };
             let name = if name.to_lowercase().ends_with(".pdf") { name } else { format!("{name}.pdf") };
-            let mut path = console_path(console, &name).await?;
+            let mut path = console_path(sandbox, &name).await?;
             // A file already there is kept, and this one numbered after it.
-            if console_has(console, &path).await {
+            if console_has(sandbox, &path).await {
                 let base = path[..path.len() - 4].to_string();
                 let mut n = 1;
-                while console_has(console, &format!("{base} ({n}).pdf")).await {
+                while console_has(sandbox, &format!("{base} ({n}).pdf")).await {
                     n += 1;
                 }
                 path = format!("{base} ({n}).pdf");
             }
             let size = bytes.len();
-            write_console_file(console, &path, bytes).await?;
+            write_console_file(sandbox, &path, bytes).await?;
             anyhow::Ok(format!("Saved page as PDF: {path} ({} bytes)", thousands(size)))
         }
         .await;
@@ -1073,22 +1044,24 @@ fn pdf_tool(session: &Arc<BrowserSession>) -> ToolFunc {
 }
 
 /// Whether the console has a file at `path`.
-async fn console_has(console: &mut ConsoleClient, path: &str) -> bool {
-    console
-        .exec(["test", "-e", path], Some(10_000))
+async fn console_has(sandbox: &Sandbox, path: &str) -> bool {
+    crate::console::exec(sandbox, ["test", "-e", path], Some(10_000))
         .await
         .is_ok_and(|out| out.code == 0)
 }
 
 fn upload_tool(session: &Arc<BrowserSession>) -> ToolFunc {
     let session = session.clone();
-    crate::tool_func!(async |args: Value, id: String, console: &mut ConsoleClient| -> Message
+    crate::tool_func!(async |args: Value, id: String, sandbox: &Sandbox| -> Message
         with [session = session.clone()]
     {
         let (Some(r), Some(path)) = (str_arg(&args, "ref").map(str::to_string), str_arg(&args, "path")) else {
             return tool_text(id, Err(anyhow::anyhow!("missing required parameters: ref and path")));
         };
-        let bytes = match read_console_file(console, path).await {
+        let bytes = match crate::console::read(sandbox, path)
+            .await
+            .map_err(anyhow::Error::from)
+        {
             Ok(bytes) if bytes.is_empty() => {
                 return tool_text(id, Err(anyhow::anyhow!("File {path} is empty (0 bytes). The file may not have been saved correctly.")));
             }
@@ -1115,46 +1088,21 @@ fn tool_text(id: String, said: anyhow::Result<String>) -> Message {
 }
 
 /// `name` as a path in the console: as given when absolute, else in its current directory.
-async fn console_path(console: &mut ConsoleClient, name: &str) -> anyhow::Result<String> {
+async fn console_path(sandbox: &Sandbox, name: &str) -> anyhow::Result<String> {
     if name.starts_with('/') {
         return Ok(name.to_string());
     }
-    let out = console.exec(["pwd"], Some(10_000)).await?;
-    let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    Ok(format!("{}/{name}", dir.trim_end_matches('/')))
+    let out = crate::console::exec(sandbox, ["pwd"], Some(10_000)).await?;
+    Ok(format!(
+        "{}/{name}",
+        out.stdout.trim().trim_end_matches('/')
+    ))
 }
 
 /// Writes `bytes` to `path` in the console, making its directory if it is not there.
-async fn write_console_file(
-    console: &mut ConsoleClient,
-    path: &str,
-    bytes: Vec<u8>,
-) -> anyhow::Result<()> {
-    if console.write(path, bytes.clone(), None).await.is_ok() {
-        return Ok(());
-    }
-    if let Some((parent, _)) = path.rsplit_once('/').filter(|(p, _)| !p.is_empty()) {
-        console.exec(["mkdir", "-p", parent], Some(10_000)).await?;
-    }
-    console.write(path, bytes, None).await?;
+async fn write_console_file(sandbox: &Sandbox, path: &str, bytes: Vec<u8>) -> anyhow::Result<()> {
+    crate::console::write(sandbox, path, bytes).await?;
     Ok(())
-}
-
-/// The whole of the console's file at `path`, read as far as its size says.
-async fn read_console_file(console: &mut ConsoleClient, path: &str) -> anyhow::Result<Vec<u8>> {
-    let mut data = Vec::new();
-    loop {
-        let read = console.read(path, Some(data.len() as u64), None).await?;
-        let size = read.size;
-        if read.data.is_empty() {
-            break;
-        }
-        data.extend(read.data);
-        if data.len() as u64 >= size {
-            break;
-        }
-    }
-    Ok(data)
 }
 
 /// `n` with commas between thousands.
@@ -1784,15 +1732,15 @@ mod tests {
         );
         session.start().await.unwrap();
         let tools = tools(&session, true);
-        let mut console = crate::test_console().await;
+        let sandbox = crate::test_sandbox().await;
         let by_console = |name: &str, args: serde_json::Value| {
             let (_, func) = tools.iter().find(|(d, _)| d.name == name).unwrap();
             let args: Value = serde_json::from_value(args).unwrap();
             (func.clone(), args)
         };
-        async fn run(func: ToolFunc, args: Value, console: &mut ConsoleClient) -> String {
+        async fn run(func: ToolFunc, args: Value, sandbox: &Sandbox) -> String {
             use futures::StreamExt as _;
-            let mut stream = func.call(args, "1", console);
+            let mut stream = func.call(args, "1", sandbox);
             let mut last = None;
             while let Some(output) = stream.next().await {
                 last = Some(output.message);
@@ -1809,25 +1757,24 @@ mod tests {
             "browser_save_screenshot",
             serde_json::json!({ "file_name": "/tmp/shots/page.png" }),
         );
-        let saved = run(f, a, &mut console).await;
+        let saved = run(f, a, &sandbox).await;
         assert!(saved.contains("/tmp/shots/page.png"), "{saved}");
-        let png = console
-            .read("/tmp/shots/page.png", None, Some(8))
+        let png = crate::console::read(&sandbox, "/tmp/shots/page.png")
             .await
             .unwrap();
-        assert_eq!(&png.data[..4], b"\x89PNG");
+        assert_eq!(&png[..4], b"\x89PNG");
         let (f, a) = by_console(
             "browser_save_as_pdf",
             serde_json::json!({ "file_name": "page.pdf" }),
         );
-        let saved = run(f, a, &mut console).await;
+        let saved = run(f, a, &sandbox).await;
         assert!(
             saved.starts_with("Saved page as PDF:") && saved.contains("page.pdf"),
             "{saved}"
         );
         for named in ["Files.pdf", "Files (1).pdf"] {
             let (f, a) = by_console("browser_save_as_pdf", serde_json::json!({}));
-            let saved = run(f, a, &mut console).await;
+            let saved = run(f, a, &sandbox).await;
             assert!(
                 saved.contains(named),
                 "named after the title, numbered when taken: {saved}"
@@ -1846,33 +1793,22 @@ mod tests {
             "browser_save_download",
             serde_json::json!({ "name": "notes.txt", "file_name": "/tmp/dl/notes.txt" }),
         );
-        let copied = run(f, a, &mut console).await;
+        let copied = run(f, a, &sandbox).await;
         assert!(
             copied.contains("(11 bytes) to /tmp/dl/notes.txt"),
             "{copied}"
         );
-        let read = console.read("/tmp/dl/notes.txt", None, None).await.unwrap();
-        assert_eq!(read.data, b"hello world");
+        let read = crate::console::read(&sandbox, "/tmp/dl/notes.txt")
+            .await
+            .unwrap();
+        assert_eq!(read, b"hello world");
         let (f, a) = by_console(
             "browser_save_download",
             serde_json::json!({ "name": "/etc/hosts" }),
         );
-        let refused = run(f, a, &mut console).await;
+        let refused = run(f, a, &sandbox).await;
         assert!(refused.contains("no download named"), "{refused}");
-        // In pieces, as a large file goes.
-        let host = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(host.path(), b"0123456789").unwrap();
-        copy_to_console(&mut console, host.path(), "/tmp/dl/pieces.txt", 3)
-            .await
-            .unwrap();
-        let read = console
-            .read("/tmp/dl/pieces.txt", None, None)
-            .await
-            .unwrap();
-        assert_eq!(read.data, b"0123456789");
-
-        console
-            .write("/tmp/note.txt", b"hello".to_vec(), None)
+        crate::console::write(&sandbox, "/tmp/note.txt", b"hello")
             .await
             .unwrap();
         let (snapshot, _) = call(&tools, "browser_snapshot", serde_json::json!({})).await;
@@ -1886,7 +1822,7 @@ mod tests {
             "browser_upload_file",
             serde_json::json!({ "ref": input, "path": "/tmp/note.txt" }),
         );
-        let uploaded = run(f, a, &mut console).await;
+        let uploaded = run(f, a, &sandbox).await;
         assert!(uploaded.contains("got:note.txt:5"), "{uploaded}");
         drop(chrome);
     }

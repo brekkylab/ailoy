@@ -2,7 +2,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable
 from types import TracebackType
 from typing import Any, Generic, Literal, Protocol, Self, TypeVar
 
-from virtx import ConsoleClient
+from virtx import Sandbox
 
 from .types import (
     AgentSpec,
@@ -33,7 +33,7 @@ class AgentBuilder:
     def web_search_tool(self, engines: list[WebSearchEngine] | None = None) -> Self: ...
     def web_fetch_tool(self) -> Self: ...
     def history(self, history: list[Message]) -> Self: ...
-    def console(self, console: ConsoleClient) -> Self: ...
+    def sandbox(self, sandbox: Sandbox) -> Self: ...
     def browser(
         self,
         *,
@@ -94,7 +94,7 @@ class Agent:
         spec: AgentSpec,
         *,
         history: list[Message] | None = None,
-        console: ConsoleClient | None = None,
+        sandbox: Sandbox | None = None,
         memory: str | None = None,
     ) -> Agent: ...
     @property

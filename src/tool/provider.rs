@@ -159,9 +159,8 @@ pub(crate) fn remove_mcp(providers: &mut HashMap<String, ToolProvider>, prefix: 
 /// Connect to a stdio MCP server and set a provider for each of its tools under
 /// `prefix`, returning the [`ToolDesc`]s to put in an [`AgentSpec`](crate::agent::AgentSpec).
 ///
-/// The server runs on the host, outside the [`ConsoleClient`](crate::console::ConsoleClient)
-/// sandbox that the built-in tools use: `ConsoleClient::exec` is one-shot, so there is
-/// nowhere inside it to keep a process that must hold its stdio open. An MCP
+/// The server runs on the host, outside the [`Sandbox`](crate::console::Sandbox) that the
+/// built-in tools use, where a process runs as a job and is not one to hold the stdio of. An MCP
 /// server therefore has whatever access this process has — register only servers
 /// the caller trusts.
 pub async fn register_mcp_stdio(
