@@ -109,7 +109,7 @@ try {
     const host = fs.mkdtempSync(path.join(os.tmpdir(), 'ailoy-smoke-host-'))
     fs.writeFileSync(path.join(host, 'from-host.txt'), 'by path')
     const console_ = await virtx.ConsoleClient.builder().image(new virtx.Recipe('alpine:latest')).mount(host, '/host').build()
-    const agent = await new ailoy.AgentBuilder('fake/model').shellTool().console(console_).build()
+    const agent = await new ailoy.AgentBuilder('fake/model').console(console_).build()
     const cmd = 'uname -m; cat /host/from-host.txt; echo written > /host/from-vm.txt'
     const outputs = await run(agent, `shell ${JSON.stringify({ cmd })}`)
     const said = JSON.stringify(outputs[1]?.message.contents)

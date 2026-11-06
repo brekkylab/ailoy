@@ -102,7 +102,7 @@ async function main(model, shell, isolated) {
     }
 
     const sandbox = await client.createSandbox(IMAGE, { network: true })
-    builder = builder.systemTools().sandbox(sandbox)
+    builder = builder.sandbox(sandbox)
   }
   const agent = await builder.build()
   console.log(`model     ${model}`)

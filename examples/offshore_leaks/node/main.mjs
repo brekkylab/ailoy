@@ -170,7 +170,6 @@ async function main(prompt) {
 
   const agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'openai/gpt-6-astra')
     .instruction(INSTRUCTION)
-    .systemTools()
     .sandbox(sandbox)
     .skill('/skills/offshore-leaks')
     .build()

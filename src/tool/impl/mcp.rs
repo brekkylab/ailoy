@@ -19,7 +19,7 @@
 //!     .await?;
 //!
 //! let spec = AgentSpec::new("anthropic/claude-sonnet-4-6")
-//!     .system_tools()
+//!     .sandbox_tools()
 //!     .tools(descs);
 //!
 //! // ... build and run agents against `spec` ...

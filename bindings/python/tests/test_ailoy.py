@@ -406,13 +406,13 @@ async def test_the_agent_runs_in_the_callers_sandbox():
             if isinstance(entry.entry, ImageJobEnd):
                 assert entry.entry.error is None, entry.entry.error
         sandbox = await client.create_sandbox("python:3.12-slim", network=False, memory_mib=1024)
-        agent = await AgentBuilder(MODEL).shell_tool().sandbox(sandbox).build()
+        agent = await AgentBuilder(MODEL).sandbox(sandbox).build()
         outputs = await run(agent, 'shell {"cmd": "echo shared > /root/out.txt"}')
         assert outputs[1]["message"]["role"] == "tool"
 
         # The sandbox is still the caller's to use, and removing it removes it for an agent too.
         assert await sandbox.read_text("root/out.txt") == "shared\n"
-        later = await AgentBuilder(MODEL).shell_tool().sandbox(sandbox).build()
+        later = await AgentBuilder(MODEL).sandbox(sandbox).build()
         await sandbox.remove()
         outputs = await run(later, 'shell {"cmd": "true"}')
         assert "404" in json.dumps(outputs[1]["message"]["contents"])

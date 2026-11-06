@@ -189,7 +189,6 @@ async def main() -> None:
     agent = await (
         ailoy.AgentBuilder(os.environ.get("AILOY_MODEL", "anthropic/claude-sonnet-5"))
         .instruction(INSTRUCTION)
-        .system_tools()
         .sandbox(sandbox)
         .skill("/skills/tts")
         .build()

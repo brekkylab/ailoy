@@ -112,14 +112,6 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.tools(descs)))
     }
 
-    fn system_tools(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
-        Self::update(slf, |b| Ok(b.system_tools()))
-    }
-
-    fn shell_tool(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
-        Self::update(slf, |b| Ok(b.shell_tool()))
-    }
-
     /// `engines` by name — `"Google"`, `"DuckDuckGo"`, … — or every engine when empty.
     #[pyo3(signature = (engines = None))]
     fn web_search_tool<'py>(

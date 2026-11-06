@@ -169,16 +169,6 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.tools(descs)))
     }
 
-    #[napi]
-    pub fn system_tools<'env>(&mut self, this: This<'env>) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.system_tools()))
-    }
-
-    #[napi]
-    pub fn shell_tool<'env>(&mut self, this: This<'env>) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.shell_tool()))
-    }
-
     /// `engines` by name — `'Google'`, `'DuckDuckGo'`, … — or every engine when empty.
     #[napi]
     pub fn web_search_tool<'env>(

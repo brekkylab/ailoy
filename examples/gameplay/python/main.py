@@ -200,7 +200,6 @@ async def main(goal: str) -> None:
     agent = await (
         ailoy.AgentBuilder(os.environ.get("AILOY_MODEL", "anthropic/claude-sonnet-5"))
         .instruction(INSTRUCTION)
-        .system_tools()
         .sandbox(sandbox)
         .skill("/skills/openttd")
         # Many commands a round, each with its output: keep the last two rounds' results

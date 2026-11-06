@@ -111,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
         let mut args = SandboxCreateArgs::new(IMAGE);
         args.network = true;
         let sandbox = client.create_sandbox(&args).await?;
-        builder = builder.system_tools().sandbox(sandbox);
+        builder = builder.sandbox(sandbox);
     }
     let mut agent = builder.build().await?;
     println!("model     {model}");

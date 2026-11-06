@@ -73,18 +73,6 @@ impl AgentBuilder {
         self
     }
 
-    /// Append the canonical local-execution toolset.
-    /// See [`AgentSpec::system_tools`] for the per-family tool selection.
-    pub fn system_tools(mut self) -> Self {
-        self.spec = self.spec.system_tools();
-        self
-    }
-
-    pub fn shell_tool(mut self) -> Self {
-        self.spec = self.spec.shell_tool();
-        self
-    }
-
     pub fn web_search_tool(mut self, engines: Vec<WebSearchEngineKind>) -> Self {
         self.spec = self.spec.web_search_tool(engines);
         self
@@ -105,9 +93,13 @@ impl AgentBuilder {
 
     /// Run this agent's sandbox tools in `sandbox`, with whatever volumes it was made with.
     ///
+    /// Also adds [`AgentSpec::sandbox_tools`] to the spec: a shell and file tools there, in
+    /// the style of the model's org.
+    ///
     /// Nothing makes a sandbox implicitly, since that means choosing a virtx server.
     /// Without one, pure tools still run and sandbox tools fail with an error.
     pub fn sandbox(mut self, sandbox: virtx::Sandbox) -> Self {
+        self.spec = self.spec.sandbox_tools();
         self.sandbox = Some(sandbox);
         self
     }
@@ -266,6 +258,7 @@ mod tests {
     async fn test_builder_no_instruction() {
         let agent = builder().build().await.unwrap();
         assert!(agent.history().is_empty());
+        assert!(agent.tool_descs.is_empty(), "no sandbox, no system tools");
     }
 
     /// `sandbox()` puts the supplied sandbox into `state.sandbox`.
@@ -276,6 +269,7 @@ mod tests {
             .build()
             .await
             .unwrap();
+        assert!(agent.tool_descs.iter().any(|t| t.name == "shell"));
 
         let sandbox = agent
             .state

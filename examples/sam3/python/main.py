@@ -192,7 +192,6 @@ async def main(prompt: str) -> None:
     agent = await (
         ailoy.AgentBuilder(os.environ.get("AILOY_MODEL", "openai/gpt-6-astra"))
         .instruction(INSTRUCTION)
-        .system_tools()
         .web_fetch_tool()
         .web_search_tool([])
         .sandbox(sandbox)

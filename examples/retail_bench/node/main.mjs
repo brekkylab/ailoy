@@ -190,7 +190,6 @@ async function main() {
   const newAgent = () =>
     new AgentBuilder(model)
       .instruction(SYSTEM)
-      .systemTools()
       .tools(tools)
       .sandbox(sandbox)
       .build()

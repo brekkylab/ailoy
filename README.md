@@ -91,7 +91,6 @@ async def main() -> None:
         # For openai, use "openai/gpt-5.6-luna"
         AgentBuilder("anthropic/claude-haiku-5-5")
         .instruction("Write what you are asked for into /artifacts.")
-        .system_tools()
         .sandbox(sandbox)
         .build()
     )
@@ -131,7 +130,6 @@ async function main() {
   // For openai, use "openai/gpt-5.6-luna"
   const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
     .instruction('Write what you are asked for into /artifacts.')
-    .systemTools()
     .sandbox(sandbox)
     .build()
 
@@ -185,7 +183,6 @@ async fn main() -> anyhow::Result<()> {
     // For openai, use "openai/gpt-5.6-luna"
     let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
         .instruction("Write what you are asked for into /artifacts.")
-        .system_tools()
         .sandbox(sandbox.clone())
         .build()
         .await?;

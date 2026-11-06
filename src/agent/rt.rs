@@ -43,7 +43,7 @@ pub struct Agent {
 
     options: LangModelOptions,
 
-    tool_descs: Vec<ToolDesc>,
+    pub(super) tool_descs: Vec<ToolDesc>,
 
     tools: HashMap<String, ToolFunc>,
 

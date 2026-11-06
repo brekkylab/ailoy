@@ -121,7 +121,7 @@ async def main(model: str, shell: bool, isolated: bool) -> None:
                     raise RuntimeError(f"building {IMAGE}: {entry.entry.error}")
 
         sandbox = await client.create_sandbox(IMAGE, network=True)
-        builder = builder.system_tools().sandbox(sandbox)
+        builder = builder.sandbox(sandbox)
     agent = await builder.build()
     print(f"model     {model}")
     print(f"has       {'browser, sandbox' if shell else 'browser'}\n")

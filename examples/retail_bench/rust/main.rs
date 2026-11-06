@@ -223,7 +223,6 @@ async fn main() -> anyhow::Result<()> {
     let tools = register_actions(&store, &record, &day_over, &context, &context_volume).await?;
     let mut agent = AgentBuilder::new(&model)
         .instruction(SYSTEM)
-        .system_tools()
         .tools(tools)
         .sandbox(sandbox)
         .build()

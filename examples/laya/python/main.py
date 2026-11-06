@@ -218,7 +218,6 @@ async def main(prompt: str) -> None:
     agent = await (
         ailoy.AgentBuilder(os.environ.get("AILOY_MODEL", "anthropic/claude-sonnet-5"))
         .instruction(INSTRUCTION)
-        .system_tools()
         .web_fetch_tool()
         .web_search_tool([])
         .sandbox(sandbox)

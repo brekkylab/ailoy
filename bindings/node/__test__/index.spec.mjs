@@ -367,7 +367,7 @@ test('an agent runs its console tools in the caller’s sandbox, until it is rem
   const sandbox = await client.createSandbox('python:3.12-slim', { network: false, memoryMib: 1024 })
 
   serve('fake-shell', server)
-  const agent = await new AgentBuilder('fake-shell/model').shellTool().sandbox(sandbox).build()
+  const agent = await new AgentBuilder('fake-shell/model').sandbox(sandbox).build()
   const outputs = []
   for await (const output of agent.run('write it')) outputs.push(output)
   assert.equal(outputs[1].message.role, 'tool')
@@ -375,7 +375,7 @@ test('an agent runs its console tools in the caller’s sandbox, until it is rem
   assert.equal(await sandbox.readText('tmp/out.txt'), 'shared\n')
 
   // Removed, it is gone for an agent too.
-  const later = await new AgentBuilder('fake-shell/model').shellTool().sandbox(sandbox).build()
+  const later = await new AgentBuilder('fake-shell/model').sandbox(sandbox).build()
   const fromSpec = await Agent.fromSpec({ model: 'fake-shell/model', tools: [] }, { sandbox })
   await sandbox.remove()
   const after = []

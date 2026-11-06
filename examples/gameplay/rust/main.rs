@@ -242,7 +242,6 @@ async fn main() -> anyhow::Result<()> {
         "vehicles, what each earns, and your plan. Update them as you go. Command output from ",
         "earlier rounds drops out of what you remember; the notes do not.",
     ))
-    .system_tools()
     .sandbox(sandbox.clone())
     .skill("/skills/openttd")
     // Many commands a round, each with its output: keep the last two rounds' results whole,

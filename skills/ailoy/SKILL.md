@@ -72,7 +72,6 @@ from ailoy import AgentBuilder
 agent = await (
     AgentBuilder("anthropic/claude-haiku-5-5")
     .instruction("Write what you are asked for into /artifacts.")
-    .system_tools()        # shell, file reading and editing, image reading, in the model family's own style
     .console(console)
     .build()
 )
@@ -82,7 +81,6 @@ What else the builder takes, by what the task needs:
 
 | The agent should | Builder call |
 |---|---|
-| run commands and edit files in its console | `.system_tools()`, or `.shell_tool()` alone |
 | read the web | `.web_fetch_tool()`, `.web_search_tool([...])` |
 | use an MCP server's tools | `tools = await register_mcp_stdio("fetch", "uvx", ["mcp-server-fetch"])`, then `.tools(tools)`; `register_mcp_streamable_http(prefix, url)` for a remote one |
 | call your own function | `desc = register_tool({"name": ..., "description": ..., "parameters": <JSON schema>}, func)`, then `.tool(desc)` |

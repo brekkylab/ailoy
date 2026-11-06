@@ -213,7 +213,6 @@ async function main(prompt) {
 
   const agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'anthropic/claude-sonnet-5')
     .instruction(INSTRUCTION)
-    .systemTools()
     .webFetchTool()
     .webSearchTool([])
     .sandbox(sandbox)

@@ -173,7 +173,6 @@ async function main(goal) {
 
   const agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'anthropic/claude-sonnet-5')
     .instruction(INSTRUCTION)
-    .systemTools()
     .sandbox(sandbox)
     .skill('/skills/openttd')
     // Many commands a round, each with its output: keep the last two rounds' results

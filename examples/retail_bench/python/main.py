@@ -305,7 +305,6 @@ async def run_day(
     agent = await (
         ailoy.AgentBuilder(model)
         .instruction(SYSTEM)
-        .system_tools()
         .tools(tools)
         .sandbox(sandbox)
         .build()

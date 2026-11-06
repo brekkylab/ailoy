@@ -129,7 +129,7 @@ async def main():
         host = tempfile.mkdtemp(prefix="ailoy-smoke-host-")
         open(os.path.join(host, "from-host.txt"), "w").write("by path")
         console = await virtx.ConsoleClient.builder().image(virtx.Recipe("alpine:latest")).mount(host, "/host").build()
-        agent = await ailoy.AgentBuilder("fake/model").shell_tool().console(console).build()
+        agent = await ailoy.AgentBuilder("fake/model").console(console).build()
         cmd = "uname -m; cat /host/from-host.txt; echo written > /host/from-vm.txt"
         outputs = await run(agent, "shell " + json.dumps({"cmd": cmd}))
         said = json.dumps(outputs[1]["message"]["contents"]) if len(outputs) > 1 else ""
