@@ -1,6 +1,6 @@
 # Hello
 
-The smallest example: one agent turn with a fixed question, no tools, no console and no system message.
+The smallest example: one agent turn with a fixed question, no tools, no sandbox and no system message.
 
 ## Running
 

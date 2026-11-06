@@ -24,3 +24,4 @@ package = false
 [tool.uv.sources]
 # The bindings in this checkout, built by maturin on the first `uv run`.
 ailoy-py = { path = "../../../bindings/python", editable = true }
+virtx = { path = "../../../../virtx/virtx-py", editable = true }

@@ -1,5 +1,5 @@
 //! Design 3D parts with an agent that writes CadQuery, looks at what it built and fixes it, in
-//! a console.
+//! a sandbox.
 //!
 //! ```sh
 //! cargo run --example cad
@@ -14,12 +14,16 @@
 //! pictures with its `imgread` tool and goes round again until the model is what was asked for.
 //! `render.py` rasterizes on the CPU, so there is no model to download and no GPU needed.
 //!
-//! The skill (`SKILL.md`, `render.py`) is mounted from memory at `/skills/cad`.
+//! Three volumes on the virtx server are mounted into the sandbox:
 //!
-//! * `context/` at `/context`, read-only — what the request is about, when it is not in the
-//!   prompt: a sketch, a photo of the thing it has to fit, the STEP of a part to mate with.
-//! * `artifacts/` at `/artifacts`, writable — the script, the STEP, STL and GLB files, and the
-//!   pictures.
+//! * `ailoy-cad-skill` at `/skills/cad`, read-only — the skill (`SKILL.md`, `render.py`) from
+//!   `../shared/`, put there each run.
+//! * `ailoy-cad-context` at `/context`, read-only — `context/` beside this file, put there each
+//!   run: what the request is about, when it is not in the prompt: a sketch, a photo of the
+//!   thing it has to fit, the STEP of a part to mate with.
+//! * `ailoy-cad-artifacts` at `/artifacts`, writable — the script, the STEP, STL and GLB files,
+//!   and the pictures. It stays on the server between runs, and is copied to `artifacts/`
+//!   beside this file at the end.
 //!
 //! Environment, also read from `.env`:
 //!
@@ -31,21 +35,14 @@ use std::{io::Write as _, path::Path};
 
 use ailoy::{
     agent::AgentBuilder,
-    console::ConsoleClient,
     message::{FinishReason, Message, Part, Role},
 };
-use anyhow::Context as _;
-// One host binding per platform (mounts on `try_new`, unmounts on `Drop`), so the tree
-// below is written once. Three arms, not `not(windows)`: virtx's default `mount` feature
-// compiles only its target's binding, each a distinct guard type.
+use anyhow::{Context as _, bail};
 use futures::StreamExt as _;
-#[cfg(windows)]
-use virtx::fs::DokanMount as HostMount;
-#[cfg(target_os = "linux")]
-use virtx::fs::FuseMount as HostMount;
-#[cfg(target_os = "macos")]
-use virtx::fs::FuseTMount as HostMount;
-use virtx::{fs::Directory, image::Recipe};
+use virtx::{Client, Files as _, ImageJobEntry, Recipe, SandboxCreateArgs, SandboxVolume};
+
+/// The image the sandbox boots, built once on the virtx server and kept under this tag.
+const IMAGE: &str = "ailoy-cad:1";
 
 /// The request when none is given.
 const QUERY: &str = "Design a gear bearing that prints in one piece, already assembled: a \
@@ -65,19 +62,112 @@ async fn main() -> anyhow::Result<()> {
         prompt
     };
 
-    // Absolute, because a mount is named to the server as a `file://` URL.
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+    // What the Rust, Python and Node sides share: the skill.
+    let shared = examples.join("cad/shared");
     // What a run reads and writes, beside this file.
     let project_path = examples.join("cad/rust");
-    // `skill` too, which is empty on the host: it is where the skill is mounted from memory.
-    for dir in ["context", "artifacts", "skill"] {
-        let dir = project_path.join(dir);
-        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let context = project_path.join("context");
+    std::fs::create_dir_all(&context).with_context(|| format!("creating {}", context.display()))?;
+
+    // The virtx server, fetched into virtx's cache the first time: a host that installed only
+    // ailoy has none. The sandboxes it holds go when this program does.
+    let client = tokio::task::spawn_blocking(|| Client::spawn_virtx([] as [&str; 0])).await??;
+
+    // The image, built once. The server answers a tag in its full form, as
+    // `docker.io/library/ailoy-cad:1`.
+    let images = client.list_image().await?;
+    if !images
+        .iter()
+        .any(|i| i.reference.rsplit('/').next() == Some(IMAGE))
+    {
+        println!("Building {IMAGE}, once; it takes a few minutes.");
+        let recipe = Recipe::new("python:3.12-slim-trixie")
+            // OpenCascade's wheel links libGL and libX11, which the slim image leaves out.
+            .step(
+                "apt-get update && apt-get install -y --no-install-recommends \
+                libgl1 libx11-6 && rm -rf /var/lib/apt/lists/*",
+            )
+            .step("pip install --no-cache-dir vtk==9.6.2")
+            .step("pip install --no-cache-dir cadquery-ocp==7.9.3.1.1")
+            .step(
+                "pip install --no-cache-dir --no-deps cadquery==2.8.0 \
+                && pip install --no-cache-dir casadi ezdxf multimethod nlopt pyparsing \
+                runtype scipy typing_extensions trimesh numpy pillow",
+            );
+        let mut log = client.build_image(recipe, IMAGE).log();
+        while let Some(entry) = log.next().await {
+            if let ImageJobEntry::End(end) = entry?.entry
+                && let Some(error) = end.error
+            {
+                bail!("building {IMAGE}: {error}");
+            }
+        }
     }
 
-    // The console server, fetched into virtx's cache the first time: a host that installed only
-    // ailoy has none.
-    virtx::ensure_virtx().await?;
+    // The volumes, made the first time and kept on the server: `409` says one is there already.
+    let mut volumes = Vec::new();
+    for name in [
+        "ailoy-cad-skill",
+        "ailoy-cad-context",
+        "ailoy-cad-artifacts",
+    ] {
+        volumes.push(match client.create_volume(Some(name)).await {
+            Err(e) if e.status() == Some(409) => client.get_volume(name).await?,
+            made => made?,
+        });
+    }
+    let [skill, context_volume, artifacts] = <[_; 3]>::try_from(volumes).unwrap();
+
+    // The skill onto the first.
+    for name in ["SKILL.md", "render.py"] {
+        skill
+            .write_file(name, std::fs::read(shared.join(name))?, None)
+            .await?;
+    }
+
+    // `context/`, every file of it, onto the second.
+    let mut dirs = vec![(context.clone(), String::new())];
+    while let Some((dir, at)) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let to = format!("{at}{}", entry.file_name().to_string_lossy());
+            if entry.file_type()?.is_dir() {
+                context_volume.create_dir_all(to.clone()).await?;
+                dirs.push((entry.path(), format!("{to}/")));
+            } else {
+                context_volume
+                    .write_file(to, std::fs::read(entry.path())?, None)
+                    .await?;
+            }
+        }
+    }
+
+    let mut args = SandboxCreateArgs::new(IMAGE);
+    args.volumes = vec![
+        SandboxVolume {
+            volume: skill.name().to_string(),
+            path: "/skills/cad".to_string(),
+            readonly: true,
+        },
+        SandboxVolume {
+            volume: context_volume.name().to_string(),
+            path: "/context".to_string(),
+            readonly: true,
+        },
+        SandboxVolume {
+            volume: artifacts.name().to_string(),
+            path: "/artifacts".to_string(),
+            readonly: false,
+        },
+    ];
+    args.vcpus = Some(4);
+    args.memory_mib = Some(4096);
+    let sandbox = client
+        .create_sandbox(&args)
+        .await
+        .with_context(|| "starting the sandbox")?;
+
     let mut agent = AgentBuilder::new(
         std::env::var("AILOY_MODEL").unwrap_or_else(|_| "openai/gpt-6-astra".to_string()),
     )
@@ -93,42 +183,7 @@ async fn main() -> anyhow::Result<()> {
         "Write every result here, such as a report, a figure, or the file the user came for. ",
         "Everything in this folder is collected and handed back to the user, and a result left anywhere else is not delivered.",
     ))
-    .system_tools()
-    .console(
-        ConsoleClient::builder()
-            .image(
-                Recipe::new("python:3.12-slim-trixie")
-                    // OpenCascade's wheel links libGL and libX11, which the slim image leaves out.
-                    .step(
-                        "apt-get update && apt-get install -y --no-install-recommends \
-                        libgl1 libx11-6 && rm -rf /var/lib/apt/lists/*",
-                    )
-                    .step("pip install --no-cache-dir vtk==9.6.2")
-                    .step("pip install --no-cache-dir cadquery-ocp==7.9.3.1.1")
-                    .step(
-                        "pip install --no-cache-dir --no-deps cadquery==2.8.0 \
-                        && pip install --no-cache-dir casadi ezdxf multimethod nlopt pyparsing \
-                        runtype scipy typing_extensions trimesh numpy pillow",
-                    ),
-            )
-            .mount_readonly(
-                HostMount::try_new(
-                    Directory::new()
-                        .with_file("SKILL.md", include_str!("../shared/SKILL.md").as_bytes())?
-                        .with_file("render.py", include_str!("../shared/render.py").as_bytes())?,
-                    &project_path.join("skill"),
-                )
-                .with_context(|| "mounting the skill")?,
-                "/skills/cad",
-            )
-            .mount_readonly(project_path.join("context"), "/context")
-            .mount(project_path.join("artifacts"), "/artifacts")
-            .vcpus(4)
-            .memory_mib(4096)
-            .build()
-            .await
-            .with_context(|| "starting the console")?,
-    )
+    .sandbox(sandbox)
     .skill("/skills/cad")
     .build()
     .await?;
@@ -166,6 +221,21 @@ async fn main() -> anyhow::Result<()> {
             _ => {}
         }
         std::io::stdout().flush()?;
+    }
+
+    // The artifacts, every file of them, to `artifacts/` here.
+    let mut dirs = vec![String::new()];
+    while let Some(at) = dirs.pop() {
+        std::fs::create_dir_all(project_path.join("artifacts").join(&at))?;
+        for entry in artifacts.read_dir(at.clone()).await? {
+            let from = format!("{at}{}", entry.name);
+            if entry.metadata.is_dir {
+                dirs.push(format!("{from}/"));
+            } else {
+                let bytes = artifacts.read_file(from.clone(), 0, None).await?;
+                std::fs::write(project_path.join("artifacts").join(&from), bytes)?;
+            }
+        }
     }
 
     Ok(())

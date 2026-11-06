@@ -54,7 +54,6 @@ console = await (
 
 agent = await (
     AgentBuilder("anthropic/claude-haiku-5-5")
-    .system_tools()
     .console(console)
     .skill("/skills/laya")
     .build()
@@ -71,7 +70,6 @@ const console_ = await ConsoleClient.builder()
   .build()
 
 const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
-  .systemTools()
   .console(console_)
   .skill('/skills/laya')
   .build()
@@ -88,7 +86,6 @@ let console = ConsoleClient::builder()
     .await?;
 
 let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
-    .system_tools()
     .console(console)
     .skill("/skills/laya")
     .build()
@@ -98,7 +95,7 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
 </TabItem>
 </Tabs>
 
-When the agent writes the system message itself, `build()` reads the frontmatter of each `SKILL.md` through the console, and fails if a `SKILL.md` is missing or has no `name` or `description`. The system message gets a list of the skills after the instruction: each one's name, description and location, and a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` stays out of the system message, and the agent reads it with its own tools, so an agent with skills needs a console and a tool that reads files, such as those of `system_tools()`.
+When the agent writes the system message itself, `build()` reads the frontmatter of each `SKILL.md` through the console, and fails if a `SKILL.md` is missing or has no `name` or `description`. The system message gets a list of the skills after the instruction: each one's name, description and location, and a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` stays out of the system message, and the agent reads it with its own tools, so an agent with skills needs a console and a tool that reads files, such as `read`, which a sandbox brings with it.
 
 For `anthropic` models the list is an XML block:
 

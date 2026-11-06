@@ -1,22 +1,26 @@
 // Analyze ICIJ's Offshore Leaks database with an agent that writes and runs its own SQL and
-// Python, in a console, against the data it is given as context.
+// Python, in a sandbox, against the data it is given as context.
 //
 //     node main.mjs
 //     node main.mjs "Which South Korean officers appear in more than one leak?"
 //     node main.mjs "Map who is behind the entities Mossack Fonseca set up in Niue"
 //
 // The Node side of the Rust `offshore_leaks` example, whose `main.rs` has the long form. The
-// skill (`SKILL.md`, `oldb.py`, mounted from memory at `/skills/offshore-leaks`) and
-// `prepare_data.py` are the ones the three sides share, in `examples/offshore_leaks/shared`.
-// What a run uses is in this folder: `data/`, where `prepare_data.py` downloads ICIJ's CSVs on
-// the first run before loading them into one DuckDB file in `context/`, and these two:
+// skill (`SKILL.md`, `oldb.py`, which go each run onto the volume `ailoy-offshore-leaks-skill`
+// of the virtx server, mounted at `/skills/offshore-leaks`) and `prepare_data.py` are the ones
+// the three sides share, in `examples/offshore_leaks/shared`. What a run uses is in this
+// folder: `data/`, where `prepare_data.py` downloads ICIJ's CSVs on the first run before
+// loading them into one DuckDB file in `context/`, and these two volumes:
 //
-// * `context/` at `/context`, read-only — `offshore_leaks.duckdb`, and whatever else the
-//   request is about, such as a list of names to look for.
-// * `artifacts/` at `/artifacts`, writable — where the reports, tables and charts go.
+// * `ailoy-offshore-leaks-context` at `/context`, read-only — `context/` here, every file of
+//   it, put there each run: `offshore_leaks.duckdb`, and whatever else the request is about,
+//   such as a list of names to look for.
+// * `ailoy-offshore-leaks-artifacts` at `/artifacts`, writable — where the reports, tables and
+//   charts go. It stays on the server between runs, and is copied to `artifacts/` here at the
+//   end.
 //
-// The agent's code runs in the console, which sees nothing of the host but these two
-// directories, and has no network.
+// The agent's code runs in the sandbox, which sees nothing of the host but these three
+// volumes, and has no network.
 //
 // The data is ICIJ's, under the Open Database License, and its contents under CC BY-SA. Being
 // in it is not evidence of wrongdoing, as ICIJ says and the skill tells the agent.
@@ -32,7 +36,7 @@
 
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -40,14 +44,16 @@ import ailoy from '@brekkylab/ailoy'
 import virtx from '@brekkylab/virtx'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-// Absolute, because a mount is named to the server as a `file://` URL.
 // What the Rust, Python and Node sides share: the skill and the scripts that fetch its data.
 const SHARED = resolve(HERE, '../shared')
 // What a run reads and writes, beside this file.
 const PROJECT = HERE
 
 const { AgentBuilder } = ailoy
-const { ConsoleClient, Directory, HostMount, Recipe, ensureVirtx } = virtx
+const { Client, Recipe } = virtx
+
+// The image the sandbox boots, built once on the virtx server and kept under this tag.
+const IMAGE = 'ailoy-offshore-leaks:1'
 
 const INSTRUCTION =
   '# Context\n\n' +
@@ -106,67 +112,94 @@ async function prepare(shared, project) {
 }
 
 async function main(prompt) {
-  // `skill` too, which is empty on the host: it is where the skill is mounted from memory.
-  for (const name of ['context', 'artifacts', 'skill']) {
+  for (const name of ['context', 'artifacts']) {
     mkdirSync(join(PROJECT, name), { recursive: true })
   }
   await prepare(SHARED, PROJECT)
 
-  // Held here, not left to garbage collection: Node runs no finalizer on exit, and a mount
-  // comes down only when the last holder lets go.
-  const skill = new HostMount(
-    new Directory()
-      .withFile('SKILL.md', readFileSync(join(SHARED, 'SKILL.md')))
-      .withFile('oldb.py', readFileSync(join(SHARED, 'oldb.py'))),
-    join(PROJECT, 'skill'),
-  )
+  // The virtx server, fetched into virtx's cache the first time: a host that installed only
+  // ailoy has none. The sandboxes it holds go when it is closed.
+  const client = Client.spawn()
 
-  // The console server, fetched into virtx's cache the first time: a host that installed only
-  // ailoy has none.
-  await ensureVirtx()
-
-  let consoleClient, agent
-  try {
-    consoleClient = await ConsoleClient.builder()
-      .image(
-        new Recipe('python:3.12-slim-trixie').step(
-          // The DuckDB `prepare_data.py` writes the file with (pinned in pyproject.toml); an
-          // older one may not read it.
-          'pip install --no-cache-dir duckdb==1.5.5 pandas matplotlib networkx',
-        ),
-      )
-      .mountReadonly(skill, '/skills/offshore-leaks')
-      .mountReadonly(join(PROJECT, 'context'), '/context')
-      .mount(join(PROJECT, 'artifacts'), '/artifacts')
-      .network(false)
-      .vcpus(2)
-      .memoryMib(2048)
-      .build()
-
-    agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'openai/gpt-6-astra')
-      .instruction(INSTRUCTION)
-      .systemTools()
-      .console(consoleClient)
-      .skill('/skills/offshore-leaks')
-      .build()
-
-    for await (const { message } of agent.run(prompt)) {
-      if (message.role === 'assistant') {
-        for (const part of message.contents) {
-          if (part.type === 'text') console.log(part.text)
-        }
-        for (const call of message.tool_calls ?? []) {
-          console.log(`→ ${call.function.name} ${pretty(call.function.arguments)}`)
-        }
-      } else if (message.role === 'tool') {
-        for (const part of message.contents) console.log(`← ${pretty(part)}`)
-      }
+  // The image, built once: Python, and what the agent's code reads the data and draws with.
+  // The server answers a tag in its full form, as `docker.io/library/ailoy-offshore-leaks:1`.
+  if (!(await client.listImage()).some((image) => image.reference.split('/').pop() === IMAGE)) {
+    console.log(`Building ${IMAGE}, once; it takes a few minutes.`)
+    const recipe = new Recipe('python:3.12-slim-trixie').run(
+      // The DuckDB `prepare_data.py` writes the file with (pinned in pyproject.toml); an
+      // older one may not read it.
+      'pip install --no-cache-dir duckdb==1.5.5 pandas matplotlib networkx',
+    )
+    for await (const entry of client.buildImage(recipe, IMAGE)) {
+      if ('end' in entry && entry.end.error) throw new Error(`building ${IMAGE}: ${entry.end.error}`)
     }
-  } finally {
-    await agent?.close()
-    await consoleClient?.close()
-    await skill.unmount()
   }
+
+  // The volumes, made the first time and kept on the server: `409` says one is there already.
+  const volumes = []
+  for (const name of ['ailoy-offshore-leaks-skill', 'ailoy-offshore-leaks-context', 'ailoy-offshore-leaks-artifacts']) {
+    volumes.push(await client.createVolume(name).catch((e) => {
+      if (e.status !== 409) throw e
+      return client.getVolume(name)
+    }))
+  }
+  const [skill, context, artifacts] = volumes
+
+  // The skill onto the first.
+  for (const name of ['SKILL.md', 'oldb.py']) {
+    await skill.writeFile(name, readFileSync(join(SHARED, name)))
+  }
+
+  // `context/`, every file of it, onto the second.
+  for (const to of readdirSync(join(PROJECT, 'context'), { recursive: true }).sort()) {
+    const path = join(PROJECT, 'context', to)
+    if (statSync(path).isDirectory()) await context.createDirAll(to)
+    else await context.writeFile(to, readFileSync(path))
+  }
+
+  const sandbox = await client.createSandbox(IMAGE, {
+    volumes: [
+      { volume: skill, path: '/skills/offshore-leaks', readonly: true },
+      { volume: context, path: '/context', readonly: true },
+      { volume: artifacts, path: '/artifacts' },
+    ],
+    network: false,
+    vcpus: 2,
+    memoryMib: 2048,
+  })
+
+  const agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'openai/gpt-6-astra')
+    .instruction(INSTRUCTION)
+    .sandbox(sandbox)
+    .skill('/skills/offshore-leaks')
+    .build()
+
+  for await (const { message } of agent.run(prompt)) {
+    if (message.role === 'assistant') {
+      for (const part of message.contents) {
+        if (part.type === 'text') console.log(part.text)
+      }
+      for (const call of message.tool_calls ?? []) {
+        console.log(`→ ${call.function.name} ${pretty(call.function.arguments)}`)
+      }
+    } else if (message.role === 'tool') {
+      for (const part of message.contents) console.log(`← ${pretty(part)}`)
+    }
+  }
+
+  // The artifacts, every file of them, to `artifacts/` here.
+  const dirs = ['']
+  while (dirs.length) {
+    const at = dirs.pop()
+    mkdirSync(join(PROJECT, 'artifacts', at), { recursive: true })
+    for (const entry of await artifacts.readDir(at)) {
+      if (entry.metadata.isDir) dirs.push(`${at}${entry.name}/`)
+      else writeFileSync(join(PROJECT, 'artifacts', at, entry.name), await artifacts.readFile(`${at}${entry.name}`))
+    }
+  }
+
+  await agent.close()
+  await client.close()
 }
 
 loadDotenv()

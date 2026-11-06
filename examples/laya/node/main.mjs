@@ -5,15 +5,18 @@
 //     node main.mjs "Route the tickets in /context/inbox, but send anything about contracts to legal"
 //
 // The Node side of the Rust `laya` example, whose `main.rs` has the long form. The skill
-// (`SKILL.md`, `run_laya.py`, mounted from memory at `/skills/laya`) and `prepare_model.py` are
-// the ones the three sides share, in `examples/laya/shared`. What a run uses is in this folder:
-// `data/`, which `prepare_model.py` downloads and converts the model into on the first run, and
-// these two:
+// (`SKILL.md`, `run_laya.py`, put each run onto the volume `ailoy-laya-skill` of the virtx server
+// mounted at `/skills/laya`) and `prepare_model.py` are the ones the three sides share, in
+// `examples/laya/shared`. What a run uses is in this folder: `data/`, which `prepare_model.py`
+// downloads and converts the model into on the first run and whose `ncnn/` goes each run onto
+// the volume `ailoy-laya-models` at `/models`, read-only, and these two:
 //
-// * `context/` at `/context`, read-only — what to decide on, when it is not in the prompt.
-//   `context/inbox/` is a fresh copy of `shared/tickets/` on every run.
-// * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes: the tickets
-//   filed under `artifacts/routes/<department>/`, emptied at the start of every run.
+// * The volume `ailoy-laya-context` at `/context`, read-only — `context/`, what to decide on,
+//   when it is not in the prompt, put there each run. `context/inbox/` is a fresh copy of
+//   `shared/tickets/` on every run.
+// * The volume `ailoy-laya-artifacts` at `/artifacts`, writable — where what the agent hands back
+//   goes: the tickets filed under `routes/<department>/`, emptied at the start of every run. It
+//   stays on the server between runs, and is copied to `artifacts/` here at the end.
 //
 // Without a prompt the agent routes a support inbox: it asks Laya which department each ticket in
 // `shared/tickets/` belongs to and files a copy in that department's folder.
@@ -28,7 +31,16 @@
 
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -36,14 +48,16 @@ import ailoy from '@brekkylab/ailoy'
 import virtx from '@brekkylab/virtx'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-// Absolute, because a mount is named to the server as a `file://` URL.
 // What the Rust, Python and Node sides share: the skill and the scripts that fetch its data.
 const SHARED = resolve(HERE, '../shared')
 // What a run reads and writes, beside this file.
 const PROJECT = HERE
 
 const { AgentBuilder } = ailoy
-const { ConsoleClient, Directory, HostMount, Recipe, ensureVirtx } = virtx
+const { Client, Recipe } = virtx
+
+// The image the sandbox boots, built once on the virtx server and kept under this tag.
+const IMAGE = 'ailoy-laya:1'
 
 // The request when none is given.
 const QUERY =
@@ -121,84 +135,118 @@ function clearRoutes(project) {
 
 async function main(prompt) {
   await prepare(SHARED, PROJECT)
-  // `skill` too, which is empty on the host: it is where the skill is mounted from memory.
-  for (const name of ['context', 'artifacts', 'skill']) {
+  for (const name of ['context', 'artifacts']) {
     mkdirSync(join(PROJECT, name), { recursive: true })
   }
   fillInbox(SHARED, PROJECT)
   clearRoutes(PROJECT)
 
-  // Held here, not left to garbage collection: Node runs no finalizer on exit, and a mount
-  // comes down only when the last holder lets go.
-  const skill = new HostMount(
-    new Directory()
-      .withFile('SKILL.md', readFileSync(join(SHARED, 'SKILL.md')))
-      .withFile('run_laya.py', readFileSync(join(SHARED, 'run_laya.py'))),
-    join(PROJECT, 'skill'),
-  )
+  // The virtx server, fetched into virtx's cache the first time: a host that installed only
+  // ailoy has none. The sandboxes it holds go when it is closed.
+  const client = Client.spawn()
 
-  // The console server, fetched into virtx's cache the first time: a host that installed only
-  // ailoy has none.
-  await ensureVirtx()
-
-  let consoleClient, agent
-  try {
-    consoleClient = await ConsoleClient.builder()
-      // Debian, not Alpine: PyPI's musllinux ncnn wheel crashes freeing its first `Mat`, where
-      // the manylinux (glibc) one runs laya.
-      .image(
-        new Recipe('python:3.12-slim-trixie')
-          // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader the wheel
-          // opens. Mesa from backports: venus passes VK_KHR_shader_bfloat16 through from 26.0
-          // on, and trixie itself has 25.0.
-          .step(
-            "echo 'deb http://deb.debian.org/debian trixie-backports main' " +
-              '> /etc/apt/sources.list.d/backports.list ' +
-              '&& apt-get update && apt-get install -y --no-install-recommends ' +
-              '-t trixie-backports mesa-vulkan-drivers ' +
-              '&& apt-get install -y --no-install-recommends libvulkan1 ' +
-              '&& rm -rf /var/lib/apt/lists/*',
-          )
-          .step('pip install --no-cache-dir ncnn numpy tokenizers'),
+  // The image, built once. The server answers a tag in its full form, as
+  // `docker.io/library/ailoy-laya:1`.
+  if (!(await client.listImage()).some((image) => image.reference.split('/').pop() === IMAGE)) {
+    console.log(`Building ${IMAGE}, once; it takes a few minutes.`)
+    // Debian, not Alpine: PyPI's musllinux ncnn wheel crashes freeing its first `Mat`, where the
+    // manylinux (glibc) one runs laya.
+    const recipe = new Recipe('python:3.12-slim-trixie')
+      // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader the wheel
+      // opens. Mesa from backports: venus passes VK_KHR_shader_bfloat16 through from 26.0 on,
+      // and trixie itself has 25.0.
+      .run(
+        "echo 'deb http://deb.debian.org/debian trixie-backports main' " +
+          '> /etc/apt/sources.list.d/backports.list ' +
+          '&& apt-get update && apt-get install -y --no-install-recommends ' +
+          '-t trixie-backports mesa-vulkan-drivers ' +
+          '&& apt-get install -y --no-install-recommends libvulkan1 ' +
+          '&& rm -rf /var/lib/apt/lists/*',
       )
-      .mountReadonly(join(PROJECT, 'data', 'ncnn'), '/models')
-      .mountReadonly(skill, '/skills/laya')
-      .mountReadonly(join(PROJECT, 'context'), '/context')
-      .mount(join(PROJECT, 'artifacts'), '/artifacts')
-      .gpu(true)
-      .vcpus(2)
-      .memoryMib(4096)
-      .gpuMemoryMib(12288)
-      .build()
+      .run('pip install --no-cache-dir ncnn numpy tokenizers')
+    for await (const entry of client.buildImage(recipe, IMAGE)) {
+      if ('end' in entry && entry.end.error) throw new Error(`building ${IMAGE}: ${entry.end.error}`)
+    }
+  }
 
-    agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'anthropic/claude-sonnet-5')
-      .instruction(INSTRUCTION)
-      .systemTools()
-      .webFetchTool()
-      .webSearchTool([])
-      .console(consoleClient)
-      .skill('/skills/laya')
-      .build()
+  // The volumes, made the first time and kept on the server: `409` says one is there already.
+  const volumes = []
+  for (const name of ['ailoy-laya-models', 'ailoy-laya-skill', 'ailoy-laya-context', 'ailoy-laya-artifacts']) {
+    volumes.push(await client.createVolume(name).catch((e) => {
+      if (e.status !== 409) throw e
+      return client.getVolume(name)
+    }))
+  }
+  const [models, skill, context, artifacts] = volumes
 
-    for await (const { message } of agent.run(prompt)) {
-      if (message.role === 'assistant') {
-        for (const part of message.contents) {
-          if (part.type === 'text') console.log(part.text)
-        }
-        for (const call of message.tool_calls ?? []) {
-          console.log(`→ ${call.function.name} ${pretty(call.function.arguments)}`)
-        }
+  // The skill, `SKILL.md` and `run_laya.py` of `shared/`, onto its own.
+  for (const name of ['SKILL.md', 'run_laya.py']) {
+    await skill.writeFile(name, readFileSync(join(SHARED, name)))
+  }
+  // A fresh inbox and no routes, as on this side.
+  await context.removeFile('inbox', true)
+  await artifacts.removeFile('routes', true)
+  // `data/ncnn/` and `context/`, every file of them, onto theirs.
+  for (const [volume, root] of [
+    [models, join(PROJECT, 'data', 'ncnn')],
+    [context, join(PROJECT, 'context')],
+  ]) {
+    for (const to of readdirSync(root, { recursive: true }).sort()) {
+      const path = join(root, to)
+      if (statSync(path).isDirectory()) await volume.createDirAll(to)
+      else await volume.writeFile(to, readFileSync(path))
+    }
+  }
+
+  const sandbox = await client.createSandbox(IMAGE, {
+    volumes: [
+      { volume: models, path: '/models', readonly: true },
+      { volume: skill, path: '/skills/laya', readonly: true },
+      { volume: context, path: '/context', readonly: true },
+      { volume: artifacts, path: '/artifacts' },
+    ],
+    vcpus: 2,
+    memoryMib: 4096,
+    gpu: true,
+    gpuMemoryMib: 12288,
+  })
+
+  const agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'anthropic/claude-sonnet-5')
+    .instruction(INSTRUCTION)
+    .webFetchTool()
+    .webSearchTool([])
+    .sandbox(sandbox)
+    .skill('/skills/laya')
+    .build()
+
+  for await (const { message } of agent.run(prompt)) {
+    if (message.role === 'assistant') {
+      for (const part of message.contents) {
+        if (part.type === 'text') console.log(part.text)
       }
-      // Laya's answers are small, and they are what the reply is made from: shown whole.
-      else if (message.role === 'tool') {
-        for (const part of message.contents) console.log(`← ${pretty(part)}`)
+      for (const call of message.tool_calls ?? []) {
+        console.log(`→ ${call.function.name} ${pretty(call.function.arguments)}`)
       }
     }
-  } finally {
-    await agent?.close()
-    await consoleClient?.close()
-    await skill.unmount()
+    // Laya's answers are small, and they are what the reply is made from: shown whole.
+    else if (message.role === 'tool') {
+      for (const part of message.contents) console.log(`← ${pretty(part)}`)
+    }
   }
+
+  // The artifacts, every file of them, to `artifacts/` here.
+  const dirs = ['']
+  while (dirs.length) {
+    const at = dirs.pop()
+    mkdirSync(join(PROJECT, 'artifacts', at), { recursive: true })
+    for (const entry of await artifacts.readDir(at)) {
+      if (entry.metadata.isDir) dirs.push(`${at}${entry.name}/`)
+      else writeFileSync(join(PROJECT, 'artifacts', at, entry.name), await artifacts.readFile(`${at}${entry.name}`))
+    }
+  }
+
+  await agent.close()
+  await client.close()
 }
 
 loadDotenv()

@@ -11,7 +11,7 @@ An agent calls the tools you give it on the `AgentBuilder`: the built-in ones on
 
 ### A shell and files
 
-`system_tools()` (`systemTools()` in Node.js) gives the agent a shell and tools to read and change files in its VM. Which tools come with the shell depends on the model's org:
+An agent given a sandbox with `sandbox(...)` gets a shell and tools to read and change files in it, with nothing else to call. Which tools come with the shell depends on the model's org:
 
 | Org | Tools |
 | --- | --- |
@@ -32,13 +32,11 @@ An agent calls the tools you give it on the `AgentBuilder`: the built-in ones on
 
 `imgread` is left out for `deepseek-ai`, `moonshotai`, `zai-org` and `Qwen` because their backends pass a tool result to the model as text, so the model would get a label in place of the image.
 
-`shell_tool()` (`shellTool()`) adds `shell` alone.
-
-The seven tools in the table run in the agent's VM, so the agent needs one: pass it with `console(...)`, as in [Building VM](../building-vm/). Without a console, each call to one of them comes back to the model as an error. The VM is started for each batch of tool calls that has one of these tools in it, and stopped after; stopping keeps its session, so the next batch finds the files as the last one left them.
+The seven tools in the table run in the sandbox, as in [Building VM](../building-vm/); an agent without one does not get them. The VM is started for each batch of tool calls that has one of these tools in it, and stopped after; stopping keeps its session, so the next batch finds the files as the last one left them.
 
 ### The web
 
-`web_search_tool` and `web_fetch_tool` (`webSearchTool`, `webFetchTool`) are not part of `system_tools()`. The two tools run in your program's process, not in the VM, so they work without a console.
+`web_search_tool` and `web_fetch_tool` (`webSearchTool`, `webFetchTool`) do not come with the sandbox. The two tools run in your program's process, not in the VM, so they work without a console.
 
 - `web_search` sends the query to several search engines at once and merges what they find, one result per URL, best first. It answers with up to 10 results, or up to 30 when the model asks for more. `web_search_tool` takes the engines to use: `Bing`, `Brave`, `DuckDuckGo`, `Google`, `Mojeek`, `Naver`, `Startpage`, `Yahoo` and `Yandex`. None, or an empty list, uses them all.
 - `web_fetch` fetches one URL. An HTML page comes back as its visible text (the default), as Markdown, or as the HTML itself; any other body, such as JSON, comes back as it is. A long body comes in pieces, the model asking for the next one with `offset`, and only its first 2 MiB are read. It makes at most one request a second to a host, and only to addresses on the public internet: loopback, the local network and cloud metadata addresses are refused.

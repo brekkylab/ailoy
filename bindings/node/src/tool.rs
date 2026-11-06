@@ -4,8 +4,8 @@
 //! parameters schema names, and returns the result or a promise of it. The result must be what
 //! a message can hold: `null`, a boolean, a number, a string, or an array or object of those.
 //!
-//! A JavaScript tool is not handed the console; one that runs commands holds its own
-//! `ConsoleClient`.
+//! A JavaScript tool is not handed the sandbox; one that runs commands holds its own
+//! `Sandbox`.
 
 use std::sync::Arc;
 

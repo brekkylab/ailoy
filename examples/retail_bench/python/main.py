@@ -13,11 +13,11 @@ code and dataset cache included, are the ones the three sides share in
 its own (`pyproject.toml`) that `uv run` sets up with ailoy from this checkout; run it from
 here.
 
-Every morning the store writes what the agent may read into `runs/<slug>/context/`, mounted
-read-only at `/context`. The agent reads it, calls `place_order` and `modify_sku_price` to
-change something, and closes the day with `end_today`. Then the store writes tomorrow's tree
-and the agent is asked again, with an empty history: only its notes in `/artifacts/notes/`
-survive the night.
+Every morning the store writes what the agent may read into `runs/<slug>/context/`, and the
+tree goes onto a volume mounted read-only at `/context`, again after every action. The agent
+reads it, calls `place_order` and `modify_sku_price` to change something, and closes the day
+with `end_today`. Then the store writes tomorrow's tree and the agent is asked again, with an
+empty history: only its notes in `/artifacts/notes/` survive the night.
 
     runs/<slug>/
       metrics.json      run_days, final_networth, total_sales, and the ratios
@@ -26,6 +26,14 @@ survive the night.
       days/NNN.json     the messages of one day's turn
       context/          the tree as it stood when the run ended
       artifacts/        what the agent wrote, notes/<date>.md among it
+
+The agent runs its commands in a sandbox of `python:3.12-slim-trixie`, without a network. Two
+volumes on the virtx server are mounted into it, each emptied as a run starts:
+
+* `ailoy-retail-bench-context` at `/context`, read-only — `context/`, put there every morning,
+  and what an action rewrote of it after each action.
+* `ailoy-retail-bench-artifacts` at `/artifacts`, writable — what the agent writes, copied to
+  `artifacts/` of the run when it ends.
 
 The store stops with the run; `--keep-store` leaves it up to be asked.
 
@@ -50,7 +58,6 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-# Absolute, because a mount is named to the console server as a `file://` URL.
 HERE = Path(__file__).resolve().parent
 # What the Rust, Python and Node sides share: the prompts and the store's
 # simulator, which keeps the upstream code and the dataset it fetched beside itself.
@@ -60,14 +67,31 @@ PROJECT = HERE
 
 # This folder is a uv project of its own. Started from another environment, as with
 # `python examples/retail_bench/python/main.py` from the top of the checkout, run again in this one.
-if Path(sys.prefix).resolve() != HERE / ".venv" and "AILOY_EXAMPLE_REEXEC" not in os.environ:
+if (
+    Path(sys.prefix).resolve() != HERE / ".venv"
+    and "AILOY_EXAMPLE_REEXEC" not in os.environ
+):
     env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
-    env["AILOY_EXAMPLE_REEXEC"] = "1"  # once: not again if uv puts the environment elsewhere
-    os.execvpe("uv", ["uv", "run", "--directory", str(HERE), "main.py", *sys.argv[1:]], env)
+    env["AILOY_EXAMPLE_REEXEC"] = (
+        "1"  # once: not again if uv puts the environment elsewhere
+    )
+    os.execvpe(
+        "uv", ["uv", "run", "--directory", str(HERE), "main.py", *sys.argv[1:]], env
+    )
 
 import ailoy  # noqa: E402
-from virtx import ConsoleClient, Recipe, ensure_virtx  # noqa: E402
+from virtx import (  # noqa: E402
+    Client,
+    ImageJobEnd,
+    Sandbox,
+    SandboxVolume,
+    VirtxError,
+    Volume,
+)
 from dotenv import load_dotenv  # noqa: E402
+
+# The image the sandbox boots, pulled once onto the virtx server: Python, and nothing else.
+IMAGE = "python:3.12-slim-trixie"
 
 # The store's simulator, which keeps the upstream code and the dataset it fetched beside itself.
 SIM = SHARED / "simulator" / "sim"
@@ -95,7 +119,9 @@ def parse_args() -> argparse.Namespace:
         help="dynamic_hard | dynamic_middle | still_hard | still_middle",
     )
     parser.add_argument(
-        "--smoke", action="store_true", help="eight SKUs and two days: the machinery, not a result"
+        "--smoke",
+        action="store_true",
+        help="eight SKUs and two days: the machinery, not a result",
     )
     parser.add_argument(
         "--keep-store",
@@ -122,22 +148,50 @@ async def main(args: argparse.Namespace) -> None:
     # ── the store
     store = Store.start(run_dir, context, args.config, args.days)
 
+    # ── the sandbox
+    # The virtx server, fetched into virtx's cache the first time: a host that installed only
+    # ailoy has none. The sandbox it holds goes when this program does.
+    client = Client.spawn()
+
+    # The image, pulled once. The server answers a reference in its full form, as
+    # `docker.io/library/python:3.12-slim-trixie`.
+    images = await client.list_image()
+    if not any(image.reference.split("/")[-1] == IMAGE for image in images):
+        print(f"Pulling {IMAGE}, once.")
+        async for entry in client.pull_image(IMAGE):
+            if isinstance(entry.entry, ImageJobEnd) and entry.entry.error:
+                raise RuntimeError(f"pulling {IMAGE}: {entry.entry.error}")
+
+    # The volumes, made the first time and kept on the server: `409` says one is there already.
+    # Emptied, so that nothing an earlier run left, its days or its notes, is read in this one.
+    volumes = []
+    for name in ["ailoy-retail-bench-context", "ailoy-retail-bench-artifacts"]:
+        try:
+            volume = await client.create_volume(name)
+        except VirtxError as e:
+            if e.status != 409:
+                raise
+            volume = await client.get_volume(name)
+        for entry in await volume.read_dir(""):
+            await volume.remove_file(entry.name, missing_ok=True)
+        volumes.append(volume)
+    context_volume, artifacts_volume = volumes
+    await artifacts_volume.create_dir_all("notes")
+
+    sandbox = await client.create_sandbox(
+        IMAGE,
+        volumes=[
+            SandboxVolume(volume=context_volume.name, path="/context", readonly=True),
+            SandboxVolume(volume=artifacts_volume.name, path="/artifacts"),
+        ],
+        network=False,
+        vcpus=2,
+        memory_mib=2048,
+    )
+
     # ── the agent
     day_over = threading.Event()
-    tools = register_actions(store, record, day_over)
-    # The console server, fetched into virtx's cache the first time: a host that installed only
-    # ailoy has none.
-    await ensure_virtx()
-    console = await (
-        ConsoleClient.builder()
-        .image(Recipe("python:3.12-slim-trixie"))
-        .mount_readonly(context, "/context")
-        .mount(artifacts, "/artifacts")
-        .network(False)
-        .vcpus(2)
-        .memory_mib(2048)
-        .build()
-    )
+    tools = register_actions(store, record, day_over, context, context_volume)
 
     print(f"  model  {model}")
     print(f"  store  {store.base}")
@@ -145,19 +199,29 @@ async def main(args: argparse.Namespace) -> None:
 
     # ── the days
     failure = None
-    async with console:
-        for day in range(1, args.days + 1):
-            try:
-                reason = await run_day(model, tools, console, store, record, day_over, day, args.days)
-            # A failed day ends the run and not the process: the days before it are a
-            # result, and late in a run that is hours of work.
-            except Exception as e:
-                print(f"\nday {day} failed: {e}")
-                failure = f"day {day}: {e}"
-                break
-            if reason is not None:
-                print(f"\nthe run ended on day {day}: {reason}")
-                break
+    for day in range(1, args.days + 1):
+        try:
+            reason = await run_day(
+                model,
+                tools,
+                sandbox,
+                store,
+                record,
+                day_over,
+                context,
+                context_volume,
+                day,
+                args.days,
+            )
+        # A failed day ends the run and not the process: the days before it are a
+        # result, and late in a run that is hours of work.
+        except Exception as e:
+            print(f"\nday {day} failed: {e}")
+            failure = f"day {day}: {e}"
+            break
+        if reason is not None:
+            print(f"\nthe run ended on day {day}: {reason}")
+            break
 
     try:
         metrics = store.get("/metrics")
@@ -177,30 +241,53 @@ async def main(args: argparse.Namespace) -> None:
     print(f"\nwritten to {run_dir}")
 
     if args.keep_store:
-        print(f"the store is still up at {store.base} — `sim stop --run {run_dir}` ends it")
+        print(
+            f"the store is still up at {store.base} — `sim stop --run {run_dir}` ends it"
+        )
     else:
         try:
             store.post("/stop", {})
         except Exception:
             pass
 
+    # The artifacts, every file of them, to `artifacts/` of the run.
+    dirs = [""]
+    while dirs:
+        at = dirs.pop()
+        (artifacts / at).mkdir(parents=True, exist_ok=True)
+        for entry in await artifacts_volume.read_dir(at):
+            if entry.metadata.is_dir:
+                dirs.append(f"{at}{entry.name}/")
+            else:
+                data = await artifacts_volume.read_file(f"{at}{entry.name}")
+                (artifacts / at / entry.name).write_bytes(data)
+
 
 async def run_day(
     model: str,
     tools: list,
-    console: ConsoleClient,
+    sandbox: Sandbox,
     store: "Store",
     record: "Record",
     day_over: threading.Event,
+    context: Path,
+    volume: Volume,
     day: int,
     max_days: int,
 ) -> str | None:
-    """One day: write its tree, ask the agent until it closes the day, and write down what the
-    day came to. Returns why the run ended, if this day ended it."""
+    """One day: write its tree and put it on `volume`, ask the agent until it closes the day,
+    and write down what the day came to. Returns why the run ended, if this day ended it."""
     # Written before the turn, so the agent's first read is of a tree whose date matches the
     # prompt. Day one's was written when the store booted.
     if day > 1:
         store.post("/context", {"market": True})
+    # The tree, every file of it, onto its volume.
+    for path in sorted(context.rglob("*")):
+        to = path.relative_to(context).as_posix()
+        if path.is_dir():
+            await volume.create_dir_all(to)
+        else:
+            await volume.write_file(to, path.read_bytes())
     state = store.get("/state")
 
     def fill(template: str) -> str:
@@ -214,13 +301,12 @@ async def run_day(
 
     # An empty history every morning: the system message, and nothing the agent did yesterday
     # except what it wrote into its notes. `Agent.history` cannot be set, so it is a new agent
-    # on the same console.
+    # on the same sandbox.
     agent = await (
         ailoy.AgentBuilder(model)
         .instruction(SYSTEM)
-        .system_tools()
         .tools(tools)
-        .console(console)
+        .sandbox(sandbox)
         .build()
     )
     day_over.clear()
@@ -286,9 +372,16 @@ async def run_day(
     return terminated if isinstance(terminated, str) else None
 
 
-def register_actions(store: "Store", record: "Record", day_over: threading.Event) -> list:
+def register_actions(
+    store: "Store",
+    record: "Record",
+    day_over: threading.Event,
+    context: Path,
+    volume: Volume,
+) -> list:
     """Register the three actions and return their descriptions, whose schemas are the
-    store's own rather than written here."""
+    store's own rather than written here. After each action, what it rewrote of `context` goes
+    onto `volume`."""
     declared = store.get("/actions").get("actions") or []
 
     descs = []
@@ -305,15 +398,31 @@ def register_actions(store: "Store", record: "Record", day_over: threading.Event
                 " This ends your turn: call it once, when you are done for the day, and expect "
                 "no further instructions afterwards."
             )
-        desc = {"name": name, "description": description, "parameters": spec["input_schema"]}
-        descs.append(ailoy.register_tool(desc, action(name, store, record, day_over)))
+        desc = {
+            "name": name,
+            "description": description,
+            "parameters": spec["input_schema"],
+        }
+        descs.append(
+            ailoy.register_tool(
+                desc, action(name, store, record, day_over, context, volume)
+            )
+        )
     return descs
 
 
-def action(name: str, store: "Store", record: "Record", day_over: threading.Event):
-    """The tool function for one action. Synchronous: ailoy runs it off the event loop."""
+def action(
+    name: str,
+    store: "Store",
+    record: "Record",
+    day_over: threading.Event,
+    context: Path,
+    volume: Volume,
+):
+    """The tool function for one action. Asynchronous, for the volume: ailoy awaits it on the
+    turn's event loop, which the store's own requests hold while they last."""
 
-    def call(**args: Any) -> str:
+    async def call(**args: Any) -> str:
         started = time.monotonic()
         try:
             result = store.act(name, args)
@@ -324,6 +433,17 @@ def action(name: str, store: "Store", record: "Record", day_over: threading.Even
         record.tool_call(name, args, result, store, time.monotonic() - started)
         if result.day_over:
             day_over.set()
+        # What the action rewrote of the tree, onto its volume: an order placed has to show up
+        # before the agent looks again.
+        try:
+            for path in sorted(context.rglob("*")):
+                to = path.relative_to(context).as_posix()
+                if path.is_dir():
+                    await volume.create_dir_all(to)
+                else:
+                    await volume.write_file(to, path.read_bytes())
+        except Exception as e:
+            return f"{said(result)}\n\nThe files under /context could not be brought up to date: {e}"
         return said(result)
 
     return call
@@ -332,7 +452,9 @@ def action(name: str, store: "Store", record: "Record", day_over: threading.Even
 class Call:
     """What one action came back as. A refusal is an answer, not an error."""
 
-    def __init__(self, said: str, ok: bool, day_over: bool, terminated: str | None, body: dict):
+    def __init__(
+        self, said: str, ok: bool, day_over: bool, terminated: str | None, body: dict
+    ):
         self.said = said
         self.ok = ok
         self.day_over = day_over
@@ -383,8 +505,15 @@ class Store:
         """Start this run's server — booting loads the store's data, and `sim serve` waits
         for it."""
         status = sim(
-            "serve", "--run", str(run), "--context", str(context),
-            "--config", config, "--days", str(days),
+            "serve",
+            "--run",
+            str(run),
+            "--context",
+            str(context),
+            "--config",
+            config,
+            "--days",
+            str(days),
         ).returncode
         if status != 0:
             sys.exit(f"`sim serve` failed: exit status {status}")
@@ -458,14 +587,18 @@ class Record:
         (self.path / name).write_text(text, encoding="utf-8")
 
     def append(self, name: str, value: Any) -> None:
-        line = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=_bytes)
+        line = json.dumps(
+            value, ensure_ascii=False, separators=(",", ":"), default=_bytes
+        )
         try:
             with self.lock, open(self.path / name, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
         except OSError as e:
             print(f"could not append to {self.path / name}: {e}", file=sys.stderr)
 
-    def tool_call(self, tool: str, args: Any, call: Call, store: Store, elapsed: float) -> None:
+    def tool_call(
+        self, tool: str, args: Any, call: Call, store: Store, elapsed: float
+    ) -> None:
         """One action, in the field names RetailBench's own `analysis/` scripts read."""
         try:
             state = store.get("/state")
@@ -498,7 +631,9 @@ def show(day: int, message: dict) -> None:
                 print(f"{day:>3}   {truncate(lines[0], 140)}")
     for call in message.get("tool_calls") or []:
         function = call["function"]
-        args = json.dumps(function["arguments"], ensure_ascii=False, separators=(",", ":"))
+        args = json.dumps(
+            function["arguments"], ensure_ascii=False, separators=(",", ":")
+        )
         print(f"{day:>3} → {function['name']}({truncate(args, 120)})")
     sys.stdout.flush()
 

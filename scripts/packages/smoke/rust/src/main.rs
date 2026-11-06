@@ -156,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
             .mount(host.clone(), "/host")
             .build()
             .await?;
-        let mut agent = AgentBuilder::new("fake/model").shell_tool().console(console).build().await?;
+        let mut agent = AgentBuilder::new("fake/model").console(console).build().await?;
         let cmd = "uname -m; cat /host/from-host.txt; echo written > /host/from-vm.txt";
         let outputs = run(&mut agent, &format!("shell {}", json!({ "cmd": cmd }))).await?;
         let said = outputs.get(1).map(|o| serde_json::to_string(&o.message.contents)).transpose()?.unwrap_or_default();

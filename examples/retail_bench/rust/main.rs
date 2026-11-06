@@ -13,10 +13,11 @@
 //!
 //! # A day is a turn
 //!
-//! Every morning the store writes what the agent may read into `runs/<slug>/context/`,
-//! mounted read-only at `/context`. The agent reads it with its file tools and its shell,
-//! calls an action to change something, and closes the day with `end_today`. Then the store
-//! writes tomorrow's tree and the agent is asked again, **with an empty history**.
+//! Every morning the store writes what the agent may read into `runs/<slug>/context/`, and
+//! the tree goes onto a volume mounted read-only at `/context`, again after every action. The
+//! agent reads it with its file tools and its shell, calls an action to change something, and
+//! closes the day with `end_today`. Then the store writes tomorrow's tree and the agent is
+//! asked again, **with an empty history**.
 //!
 //! Fifteen of RetailBench's nineteen tools only look, and here looking is reading a file.
 //! Three stay tools because the store can *refuse* them, and a file cannot say no:
@@ -35,6 +36,14 @@
 //!   context/          the tree as it stood when the run ended
 //!   artifacts/        what the agent wrote, notes/<date>.md among it
 //! ```
+//!
+//! The agent runs its commands in a sandbox of `python:3.12-slim-trixie`, without a network.
+//! Two volumes on the virtx server are mounted into it, each emptied as a run starts:
+//!
+//! * `ailoy-retail-bench-context` at `/context`, read-only — `context/`, put there every
+//!   morning, and what an action rewrote of it after each action.
+//! * `ailoy-retail-bench-artifacts` at `/artifacts`, writable — what the agent writes, copied
+//!   to `artifacts/` of the run when it ends.
 //!
 //! The store stops with the run; `--keep-store` leaves it up to be asked
 //! (`simulator/sim view view_inventory --run runs/<slug>`).
@@ -56,7 +65,6 @@ use std::{
 
 use ailoy::{
     agent::AgentBuilder,
-    console::ConsoleClient,
     message::{Message, Part, Role},
     tool::{ToolDesc, ToolDescBuilder, set_tool_provider},
     tool_func,
@@ -64,7 +72,10 @@ use ailoy::{
 use anyhow::{Context as _, bail};
 use futures::StreamExt as _;
 use serde_json::{Value as Json, json};
-use virtx::image::Recipe;
+use virtx::{Client, Files as _, ImageJobEntry, SandboxCreateArgs, SandboxVolume, Volume};
+
+/// The image the sandbox boots, pulled once onto the virtx server: Python, and nothing else.
+const IMAGE: &str = "python:3.12-slim-trixie";
 
 const SYSTEM: &str = include_str!("../shared/system.md");
 /// Sent every morning.
@@ -127,7 +138,6 @@ async fn main() -> anyhow::Result<()> {
     let args = parse_args()?;
     let model = std::env::var("AILOY_MODEL").unwrap_or_else(|_| "openai/gpt-6-astra".to_string());
 
-    // Absolute, because a mount is named to the console server as a `file://` URL.
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
     // What the Rust, Python and Node sides share: the store's simulator, which keeps the upstream
     // code and the dataset it fetched beside itself.
@@ -148,28 +158,73 @@ async fn main() -> anyhow::Result<()> {
     // ── the store
     let store = Store::start(&sim, &run_dir, &context, &args.config, args.days).await?;
 
+    // ── the sandbox
+    // The virtx server, fetched into virtx's cache the first time: a host that installed only
+    // ailoy has none. The sandbox it holds goes when this program does.
+    let client = tokio::task::spawn_blocking(|| Client::spawn_virtx([] as [&str; 0])).await??;
+
+    // The image, pulled once. The server answers a reference in its full form, as
+    // `docker.io/library/python:3.12-slim-trixie`.
+    let images = client.list_image().await?;
+    if !images
+        .iter()
+        .any(|i| i.reference.rsplit('/').next() == Some(IMAGE))
+    {
+        println!("Pulling {IMAGE}, once.");
+        let mut log = client.pull_image(IMAGE, None).log();
+        while let Some(entry) = log.next().await {
+            if let ImageJobEntry::End(end) = entry?.entry
+                && let Some(error) = end.error
+            {
+                bail!("pulling {IMAGE}: {error}");
+            }
+        }
+    }
+
+    // The volumes, made the first time and kept on the server: `409` says one is there already.
+    // Emptied, so that nothing an earlier run left, its days or its notes, is read in this one.
+    let mut volumes = Vec::new();
+    for name in ["ailoy-retail-bench-context", "ailoy-retail-bench-artifacts"] {
+        let volume = match client.create_volume(Some(name)).await {
+            Err(e) if e.status() == Some(409) => client.get_volume(name).await?,
+            made => made?,
+        };
+        for entry in volume.read_dir("").await? {
+            volume.remove_file(entry.name, true).await?;
+        }
+        volumes.push(volume);
+    }
+    let [context_volume, artifacts_volume] = <[_; 2]>::try_from(volumes).unwrap();
+    artifacts_volume.create_dir_all("notes").await?;
+
+    let mut sandbox_args = SandboxCreateArgs::new(IMAGE);
+    sandbox_args.volumes = vec![
+        SandboxVolume {
+            volume: context_volume.name().to_string(),
+            path: "/context".to_string(),
+            readonly: true,
+        },
+        SandboxVolume {
+            volume: artifacts_volume.name().to_string(),
+            path: "/artifacts".to_string(),
+            readonly: false,
+        },
+    ];
+    sandbox_args.network = false;
+    sandbox_args.vcpus = Some(2);
+    sandbox_args.memory_mib = Some(2048);
+    let sandbox = client
+        .create_sandbox(&sandbox_args)
+        .await
+        .with_context(|| "starting the sandbox")?;
+
     // ── the agent
     let day_over = Arc::new(AtomicBool::new(false));
-    let tools = register_actions(&store, &record, &day_over).await?;
-    // The console server, fetched into virtx's cache the first time: a host that installed only
-    // ailoy has none.
-    virtx::ensure_virtx().await?;
+    let tools = register_actions(&store, &record, &day_over, &context, &context_volume).await?;
     let mut agent = AgentBuilder::new(&model)
         .instruction(SYSTEM)
-        .system_tools()
         .tools(tools)
-        .console(
-            ConsoleClient::builder()
-                .image(Recipe::new("python:3.12-slim-trixie"))
-                .mount_readonly(context.clone(), "/context")
-                .mount(artifacts.clone(), "/artifacts")
-                .network(false)
-                .vcpus(2)
-                .memory_mib(2048)
-                .build()
-                .await
-                .with_context(|| "starting the console")?,
-        )
+        .sandbox(sandbox)
         .build()
         .await?;
 
@@ -180,7 +235,18 @@ async fn main() -> anyhow::Result<()> {
     // ── the days
     let mut failure: Option<String> = None;
     for day in 1..=args.days {
-        match run_day(&mut agent, &store, &record, &day_over, day, args.days).await {
+        match run_day(
+            &mut agent,
+            &store,
+            &record,
+            &day_over,
+            &context,
+            &context_volume,
+            day,
+            args.days,
+        )
+        .await
+        {
             Ok(None) => {}
             Ok(Some(reason)) => {
                 println!("\nthe run ended on day {day}: {reason}");
@@ -215,16 +281,34 @@ async fn main() -> anyhow::Result<()> {
     } else {
         store.post("/stop", json!({})).await.ok();
     }
+
+    // The artifacts, every file of them, to `artifacts/` of the run.
+    let mut dirs = vec![String::new()];
+    while let Some(at) = dirs.pop() {
+        std::fs::create_dir_all(artifacts.join(&at))?;
+        for entry in artifacts_volume.read_dir(at.clone()).await? {
+            let from = format!("{at}{}", entry.name);
+            if entry.metadata.is_dir {
+                dirs.push(format!("{from}/"));
+            } else {
+                let bytes = artifacts_volume.read_file(from.clone(), 0, None).await?;
+                std::fs::write(artifacts.join(&from), bytes)?;
+            }
+        }
+    }
     Ok(())
 }
 
-/// One day: write its tree, ask the agent until it closes the day, and write down what the day
-/// came to. Returns why the run ended, if this day ended it.
+/// One day: write its tree and put it on `volume`, ask the agent until it closes the day, and
+/// write down what the day came to. Returns why the run ended, if this day ended it.
+#[allow(clippy::too_many_arguments)]
 async fn run_day(
     agent: &mut ailoy::agent::Agent,
     store: &Store,
     record: &Record,
     day_over: &AtomicBool,
+    context: &Path,
+    volume: &Volume,
     day: u32,
     max_days: u32,
 ) -> anyhow::Result<Option<String>> {
@@ -232,6 +316,22 @@ async fn run_day(
     // prompt. Day one's was written when the store booted.
     if day > 1 {
         store.post("/context", json!({"market": true})).await?;
+    }
+    // The tree, every file of it, onto its volume.
+    let mut dirs = vec![(context.to_path_buf(), String::new())];
+    while let Some((dir, at)) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let to = format!("{at}{}", entry.file_name().to_string_lossy());
+            if entry.file_type()?.is_dir() {
+                volume.create_dir_all(to.clone()).await?;
+                dirs.push((entry.path(), format!("{to}/")));
+            } else {
+                volume
+                    .write_file(to, std::fs::read(entry.path())?, None)
+                    .await?;
+            }
+        }
     }
     let state = store.get("/state").await?;
     let fill = |template: &str| {
@@ -317,11 +417,14 @@ async fn run_day(
 }
 
 /// Set a tool provider for each of the three actions and return their descriptions, whose
-/// schemas are the store's own rather than written here.
+/// schemas are the store's own rather than written here. After each action, what it rewrote of
+/// `context` goes onto `volume`.
 async fn register_actions(
     store: &Store,
     record: &Record,
     day_over: &Arc<AtomicBool>,
+    context: &Path,
+    volume: &Volume,
 ) -> anyhow::Result<Vec<ToolDesc>> {
     let declared = store.get("/actions").await?;
     let declared = declared["actions"].as_array().cloned().unwrap_or_default();
@@ -349,10 +452,17 @@ async fn register_actions(
         );
 
         let (store, record, day_over) = (store.clone(), record.clone(), day_over.clone());
+        let (context, volume) = (context.to_path_buf(), volume.clone());
         set_tool_provider(
             name,
             tool_func!(async |args: Value| -> Value
-                with [store = store.clone(), record = record.clone(), day_over = day_over.clone()]
+                with [
+                    store = store.clone(),
+                    record = record.clone(),
+                    day_over = day_over.clone(),
+                    context = context.clone(),
+                    volume = volume.clone()
+                ]
                 {
                     let args: Json = args.into();
                     let started = Instant::now();
@@ -363,7 +473,36 @@ async fn register_actions(
                             if call.day_over {
                                 day_over.store(true, Ordering::SeqCst);
                             }
-                            said(&call)
+                            // What the action rewrote of the tree, onto its volume: an order
+                            // placed has to show up before the agent looks again.
+                            let synced = async {
+                                let mut dirs = vec![(context.clone(), String::new())];
+                                while let Some((dir, at)) = dirs.pop() {
+                                    for entry in std::fs::read_dir(&dir)? {
+                                        let entry = entry?;
+                                        let to =
+                                            format!("{at}{}", entry.file_name().to_string_lossy());
+                                        if entry.file_type()?.is_dir() {
+                                            volume.create_dir_all(to.clone()).await?;
+                                            dirs.push((entry.path(), format!("{to}/")));
+                                        } else {
+                                            volume
+                                                .write_file(to, std::fs::read(entry.path())?, None)
+                                                .await?;
+                                        }
+                                    }
+                                }
+                                anyhow::Ok(())
+                            }
+                            .await;
+                            match synced {
+                                Ok(()) => said(&call),
+                                Err(e) => format!(
+                                    "{}\n\nThe files under /context could not be brought up \
+                                     to date: {e:#}",
+                                    said(&call)
+                                ),
+                            }
                         }
                         // Nothing the model can fix, but saying so beats a silent failure: the
                         // day never closes, and the harness closes it.

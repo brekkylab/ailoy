@@ -54,6 +54,31 @@ pub(super) fn split_desc(desc: &str) -> (&str, &str) {
     desc.split_once('/').unwrap_or((desc, ""))
 }
 
+/// The shell and file tools for a sandbox, in the style of the model's org.
+fn sandbox_tool_descs(org: &str) -> Vec<ToolDesc> {
+    let mut descs = vec![get_shell_tool_desc()];
+    // GPT reads files through `shell`, as in Codex.
+    if org == "openai" {
+        descs.push(get_apply_patch_tool_desc());
+    } else {
+        // DeepSeek, Kimi and GLM serve Anthropic-compatible APIs for Claude Code, so
+        // likely follow the Claude style.
+        descs.push(match org {
+            "google" => get_read_file_tool_desc(),
+            _ => get_read_tool_desc(),
+        });
+        descs.push(get_write_tool_desc());
+        descs.push(get_edit_tool_desc());
+    }
+
+    // `imgread` only where the image reaches the model: the backends of these take tool
+    // results as text alone (an image becomes a label), even for vision models.
+    if !matches!(org, "deepseek-ai" | "moonshotai" | "zai-org" | "Qwen") {
+        descs.push(get_imgread_tool_desc());
+    }
+    descs
+}
+
 impl AgentSpec {
     pub fn new(model: impl Into<String>) -> Self {
         Self {
@@ -94,37 +119,15 @@ impl AgentSpec {
         self
     }
 
-    /// Append the canonical local-execution toolset for the spec's model.
-    pub fn system_tools(mut self) -> Self {
-        self.tools.push(get_shell_tool_desc());
-
-        let org = split_desc(&self.model).0;
-        // GPT reads files through `shell`, as in Codex.
-        if org == "openai" {
-            self.tools.push(get_apply_patch_tool_desc());
-        } else {
-            // DeepSeek, Kimi and GLM serve Anthropic-compatible APIs for Claude Code, so
-            // likely follow the Claude style.
-            self.tools.push(match org {
-                "google" => get_read_file_tool_desc(),
-                _ => get_read_tool_desc(),
-            });
-            self.tools.push(get_write_tool_desc());
-            self.tools.push(get_edit_tool_desc());
+    /// Add the shell and file tools for a sandbox, in the style of the model's org, skipping
+    /// any the spec already has. [`AgentBuilder::sandbox`](super::AgentBuilder::sandbox) adds
+    /// them itself.
+    pub fn sandbox_tools(mut self) -> Self {
+        for desc in sandbox_tool_descs(split_desc(&self.model).0) {
+            if !self.tools.iter().any(|t| t.name == desc.name) {
+                self.tools.push(desc);
+            }
         }
-
-        // `imgread` only where the image reaches the model: the backends of these take tool
-        // results as text alone (an image becomes a label), even for vision models.
-        if !matches!(org, "deepseek-ai" | "moonshotai" | "zai-org" | "Qwen") {
-            self.tools.push(get_imgread_tool_desc());
-        }
-
-        self
-    }
-
-    /// Append only the `shell` tool, without the other `system_tools` entries.
-    pub fn shell_tool(mut self) -> Self {
-        self.tools.push(get_shell_tool_desc());
         self
     }
 
@@ -139,7 +142,7 @@ impl AgentSpec {
 
     /// Add the `web_fetch` tool to the spec.
     ///
-    /// Not part of `system_tools()`. The tool fetches one `url` per call, pages long bodies
+    /// The tool fetches one `url` per call, pages long bodies
     /// through `offset`, and allows one request per second per host.
     pub fn web_fetch_tool(mut self) -> Self {
         self.tools.push(get_web_fetch_tool_desc());
@@ -170,27 +173,32 @@ mod tests {
         spec.tools.iter().map(|t| t.name.as_str()).collect()
     }
 
+    fn system_names(org: &str) -> Vec<String> {
+        sandbox_tool_descs(org)
+            .into_iter()
+            .map(|t| t.name)
+            .collect()
+    }
+
     #[test]
-    fn test_system_tools_follow_the_model() {
-        let gpt = AgentSpec::new("openai/gpt-6-luna").system_tools();
-        assert_eq!(names(&gpt), ["shell", "apply_patch", "imgread"]);
+    fn test_sandbox_tools_follow_the_model() {
+        assert_eq!(system_names("openai"), ["shell", "apply_patch", "imgread"]);
+        assert!(system_names("google").contains(&"read_file".into()));
 
-        let gemini = AgentSpec::new("google").system_tools();
-        assert!(
-            names(&gemini).contains(&"read_file"),
-            "{:?}",
-            names(&gemini)
-        );
+        let claude = system_names("anthropic");
+        assert!(claude.contains(&"read".into()), "{claude:?}");
+        assert!(claude.contains(&"imgread".into()), "{claude:?}");
 
-        let claude = AgentSpec::new("anthropic/claude-sonnet-5-5").system_tools();
-        assert!(names(&claude).contains(&"read"), "{:?}", names(&claude));
-        assert!(names(&claude).contains(&"imgread"), "{:?}", names(&claude));
+        assert!(!system_names("deepseek-ai").contains(&"imgread".into()));
+        assert!(!system_names("moonshotai").contains(&"imgread".into()));
+    }
 
-        let deepseek = AgentSpec::new("deepseek-ai/deepseek-chat").system_tools();
-        assert!(!names(&deepseek).contains(&"imgread"));
-
-        let kimi = AgentSpec::new("moonshotai/Kimi-K2-Thinking").system_tools();
-        assert!(!names(&kimi).contains(&"imgread"));
+    #[test]
+    fn test_sandbox_tools_skip_tools_already_there() {
+        let spec = AgentSpec::new("openai/gpt-6-luna")
+            .sandbox_tools()
+            .sandbox_tools();
+        assert_eq!(names(&spec), ["shell", "apply_patch", "imgread"]);
     }
 
     #[test]

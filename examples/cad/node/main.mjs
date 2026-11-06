@@ -1,18 +1,21 @@
 // Design 3D parts with an agent that writes CadQuery, looks at what it built and fixes it, in a
-// console.
+// sandbox.
 //
 //     node main.mjs
 //     node main.mjs "A wall mount for a 60 mm fan, with four M3 screw holes"
 //     node main.mjs "A twisted vase, 150 mm tall, hexagonal at the base and round at the top"
 //
 // The Node side of the Rust `cad` example, whose `main.rs` has the long form. The skill
-// (`SKILL.md`, `render.py`, mounted from memory at `/skills/cad`) is the one the three sides
-// share, in `examples/cad/shared`. What a run uses is in this folder:
+// (`SKILL.md`, `render.py`) is the one the three sides share, in `examples/cad/shared`, put
+// each run onto the volume `ailoy-cad-skill` of the virtx server mounted at `/skills/cad`. What
+// a run uses is in this folder:
 //
-// * `context/` at `/context`, read-only — what the request is about, when it is not in the
-//   prompt: a sketch, a photo of the thing it has to fit, the STEP of a part to mate with.
-// * `artifacts/` at `/artifacts`, writable — the script, the STEP, STL and GLB files, and the
-//   pictures.
+// * The volume `ailoy-cad-context` at `/context`, read-only — `context/` here, put there each
+//   run: what the request is about, when it is not in the prompt: a sketch, a photo of the
+//   thing it has to fit, the STEP of a part to mate with.
+// * The volume `ailoy-cad-artifacts` at `/artifacts`, writable — the script, the STEP, STL and
+//   GLB files, and the pictures. It stays on the server between runs, and is copied to
+//   `artifacts/` here at the end.
 //
 // `render.py` rasterizes on the CPU, so there is no model to download and no GPU needed.
 //
@@ -24,7 +27,7 @@
 //
 // `npm install` here first, after building the addon (`npm run build` in `bindings/node`).
 
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -32,14 +35,16 @@ import ailoy from '@brekkylab/ailoy'
 import virtx from '@brekkylab/virtx'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-// Absolute, because a mount is named to the server as a `file://` URL.
 // What the Rust, Python and Node sides share: the skill.
 const SHARED = resolve(HERE, '../shared')
 // What a run reads and writes, beside this file.
 const PROJECT = HERE
 
 const { AgentBuilder } = ailoy
-const { ConsoleClient, Directory, HostMount, Recipe, ensureVirtx } = virtx
+const { Client, Recipe } = virtx
+
+// The image the sandbox boots, built once on the virtx server and kept under this tag.
+const IMAGE = 'ailoy-cad:1'
 
 const INSTRUCTION =
   '# Context\n\n' +
@@ -72,53 +77,71 @@ function loadDotenv() {
 const pretty = (value) => JSON.stringify(value, null, 2)
 
 async function main(prompt) {
-  // `skill` too, which is empty on the host: it is where the skill is mounted from memory.
-  for (const name of ['context', 'artifacts', 'skill']) {
-    mkdirSync(join(PROJECT, name), { recursive: true })
+  mkdirSync(join(PROJECT, 'context'), { recursive: true })
+
+  // The virtx server, fetched into virtx's cache the first time: a host that installed only
+  // ailoy has none. The sandboxes it holds go when it is closed.
+  const client = Client.spawn()
+
+  // The image, built once. The server answers a tag in its full form, as
+  // `docker.io/library/ailoy-cad:1`.
+  if (!(await client.listImage()).some((image) => image.reference.split('/').pop() === IMAGE)) {
+    console.log(`Building ${IMAGE}, once; it takes a few minutes.`)
+    const recipe = new Recipe('python:3.12-slim-trixie')
+      // OpenCascade's wheel links libGL and libX11, which the slim image leaves out.
+      .run(
+        'apt-get update && apt-get install -y --no-install-recommends ' +
+          'libgl1 libx11-6 && rm -rf /var/lib/apt/lists/*',
+      )
+      .run('pip install --no-cache-dir vtk==9.6.2')
+      .run('pip install --no-cache-dir cadquery-ocp==7.9.3.1.1')
+      .run(
+        'pip install --no-cache-dir --no-deps cadquery==2.8.0 ' +
+          '&& pip install --no-cache-dir casadi ezdxf multimethod nlopt pyparsing ' +
+          'runtype scipy typing_extensions trimesh numpy pillow',
+      )
+    for await (const entry of client.buildImage(recipe, IMAGE)) {
+      if ('end' in entry && entry.end.error) throw new Error(`building ${IMAGE}: ${entry.end.error}`)
+    }
   }
 
-  // Held here, not left to garbage collection: Node runs no finalizer on exit, and a mount
-  // comes down only when the last holder lets go.
-  const skill = new HostMount(
-    new Directory()
-      .withFile('SKILL.md', readFileSync(join(SHARED, 'SKILL.md')))
-      .withFile('render.py', readFileSync(join(SHARED, 'render.py'))),
-    join(PROJECT, 'skill'),
-  )
+  // The volumes, made the first time and kept on the server: `409` says one is there already.
+  const volumes = []
+  for (const name of ['ailoy-cad-skill', 'ailoy-cad-context', 'ailoy-cad-artifacts']) {
+    volumes.push(await client.createVolume(name).catch((e) => {
+      if (e.status !== 409) throw e
+      return client.getVolume(name)
+    }))
+  }
+  const [skill, context, artifacts] = volumes
 
-  // The console server, fetched into virtx's cache the first time: a host that installed only
-  // ailoy has none.
-  await ensureVirtx()
+  // The skill onto the first.
+  for (const name of ['SKILL.md', 'render.py']) {
+    await skill.writeFile(name, readFileSync(join(SHARED, name)))
+  }
 
-  let consoleClient, agent
+  // `context/`, every file of it, onto the second.
+  for (const to of readdirSync(join(PROJECT, 'context'), { recursive: true }).sort()) {
+    const path = join(PROJECT, 'context', to)
+    if (statSync(path).isDirectory()) await context.createDirAll(to)
+    else await context.writeFile(to, readFileSync(path))
+  }
+
+  let agent
   try {
-    consoleClient = await ConsoleClient.builder()
-      .image(
-        new Recipe('python:3.12-slim-trixie')
-          // OpenCascade's wheel links libGL and libX11, which the slim image leaves out.
-          .step(
-            'apt-get update && apt-get install -y --no-install-recommends ' +
-              'libgl1 libx11-6 && rm -rf /var/lib/apt/lists/*',
-          )
-          .step('pip install --no-cache-dir vtk==9.6.2')
-          .step('pip install --no-cache-dir cadquery-ocp==7.9.3.1.1')
-          .step(
-            'pip install --no-cache-dir --no-deps cadquery==2.8.0 ' +
-              '&& pip install --no-cache-dir casadi ezdxf multimethod nlopt pyparsing ' +
-              'runtype scipy typing_extensions trimesh numpy pillow',
-          ),
-      )
-      .mountReadonly(skill, '/skills/cad')
-      .mountReadonly(join(PROJECT, 'context'), '/context')
-      .mount(join(PROJECT, 'artifacts'), '/artifacts')
-      .vcpus(4)
-      .memoryMib(4096)
-      .build()
+    const sandbox = await client.createSandbox(IMAGE, {
+      volumes: [
+        { volume: skill, path: '/skills/cad', readonly: true },
+        { volume: context, path: '/context', readonly: true },
+        { volume: artifacts, path: '/artifacts' },
+      ],
+      vcpus: 4,
+      memoryMib: 4096,
+    })
 
     agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'openai/gpt-6-astra')
       .instruction(INSTRUCTION)
-      .systemTools()
-      .console(consoleClient)
+      .sandbox(sandbox)
       .skill('/skills/cad')
       .build()
 
@@ -142,10 +165,20 @@ async function main(prompt) {
         }
       }
     }
+
+    // The artifacts, every file of them, to `artifacts/` here.
+    const dirs = ['']
+    while (dirs.length) {
+      const at = dirs.pop()
+      mkdirSync(join(PROJECT, 'artifacts', at), { recursive: true })
+      for (const entry of await artifacts.readDir(at)) {
+        if (entry.metadata.isDir) dirs.push(`${at}${entry.name}/`)
+        else writeFileSync(join(PROJECT, 'artifacts', at, entry.name), await artifacts.readFile(`${at}${entry.name}`))
+      }
+    }
   } finally {
     await agent?.close()
-    await consoleClient?.close()
-    await skill.unmount()
+    await client.close()
   }
 }
 

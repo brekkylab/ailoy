@@ -5,14 +5,18 @@
 //     node main.mjs "Find every cat in the photos in context and mask them"
 //
 // The Node side of the Rust `sam3` example, whose `main.rs` has the long form. The skill
-// (`SKILL.md`, `run_sam3.py`, mounted from memory at `/skills/sam3`) and `prepare_model.py` are
-// the ones the three sides share, in `examples/sam3/shared`. What a run uses is in this folder:
-// `data/`, which `prepare_model.py` downloads and converts the model into on the first run, and
-// these two:
+// (`SKILL.md`, `run_sam3.py`, put each run onto the volume `ailoy-sam3-skill` of the virtx
+// server mounted at `/skills/sam3`) and `prepare_model.py` are the ones the three sides share,
+// in `examples/sam3/shared`. What a run uses is in this folder: `data/`, which
+// `prepare_model.py` downloads and converts the model into on the first run, and these:
 //
-// * `context/` at `/context`, read-only — the images and frames to segment, when they are not
-//   in the prompt.
-// * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes.
+// * The volume `ailoy-sam3-models` at `/models`, read-only — `data/ncnn/` here, the converted
+//   models, put there each run.
+// * The volume `ailoy-sam3-context` at `/context`, read-only — `context/` here, put there each
+//   run: the images and frames to segment, when they are not in the prompt.
+// * The volume `ailoy-sam3-artifacts` at `/artifacts`, writable — where what the agent hands
+//   back goes. It stays on the server between runs, and is copied to `artifacts/` here at the
+//   end.
 //
 // Environment, also read from `.env`:
 //
@@ -24,7 +28,7 @@
 
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -32,14 +36,16 @@ import ailoy from '@brekkylab/ailoy'
 import virtx from '@brekkylab/virtx'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-// Absolute, because a mount is named to the server as a `file://` URL.
 // What the Rust, Python and Node sides share: the skill and the scripts that fetch its data.
 const SHARED = resolve(HERE, '../shared')
 // What a run reads and writes, beside this file.
 const PROJECT = HERE
 
 const { AgentBuilder } = ailoy
-const { ConsoleClient, Directory, HostMount, Recipe, ensureVirtx } = virtx
+const { Client, Recipe } = virtx
+
+// The image the sandbox boots, built once on the virtx server and kept under this tag.
+const IMAGE = 'ailoy-sam3:1'
 
 const INSTRUCTION =
   '# Context\n\n' +
@@ -92,68 +98,91 @@ async function prepare(shared, project) {
 
 async function main(prompt) {
   await prepare(SHARED, PROJECT)
-  // `skill` too, which is empty on the host: it is where the skill is mounted from memory.
-  for (const name of ['context', 'artifacts', 'skill']) {
-    mkdirSync(join(PROJECT, name), { recursive: true })
+  mkdirSync(join(PROJECT, 'context'), { recursive: true })
+
+  // The virtx server, fetched into virtx's cache the first time: a host that installed only
+  // ailoy has none. The sandboxes it holds go when it is closed.
+  const client = Client.spawn()
+
+  // The image, built once. The server answers a tag in its full form, as
+  // `docker.io/library/ailoy-sam3:1`.
+  if (!(await client.listImage()).some((image) => image.reference.split('/').pop() === IMAGE)) {
+    console.log(`Building ${IMAGE}, once; it takes a few minutes.`)
+    // Debian, not Alpine: PyPI's ncnn wheels are manylinux (glibc) only.
+    const recipe = new Recipe('python:3.12-slim-trixie')
+      // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader the wheel
+      // opens. Mesa from backports: venus passes VK_KHR_shader_bfloat16 and
+      // VK_KHR_cooperative_matrix through from 26.0 on, and trixie itself has 25.0.
+      .run(
+        "echo 'deb http://deb.debian.org/debian trixie-backports main' " +
+          '> /etc/apt/sources.list.d/backports.list ' +
+          '&& apt-get update && apt-get install -y --no-install-recommends ' +
+          '-t trixie-backports mesa-vulkan-drivers ' +
+          '&& apt-get install -y --no-install-recommends libvulkan1 ' +
+          '&& rm -rf /var/lib/apt/lists/*',
+      )
+      // Headless OpenCV: `opencv-python` needs libGL, which the slim image lacks. `ncnn` asks
+      // for it by name, and both wheels install the same `cv2` package, so `--no-deps` on
+      // `ncnn` and its own dependencies spelled out, opencv aside.
+      .run(
+        'pip install --no-cache-dir av numpy opencv-python-headless pillow ' +
+          'portalocker requests tokenizers tqdm ' +
+          '&& pip install --no-cache-dir --no-deps ncnn',
+      )
+    for await (const entry of client.buildImage(recipe, IMAGE)) {
+      if ('end' in entry && entry.end.error) throw new Error(`building ${IMAGE}: ${entry.end.error}`)
+    }
   }
 
-  // Held here, not left to garbage collection: Node runs no finalizer on exit, and a mount
-  // comes down only when the last holder lets go.
-  const skill = new HostMount(
-    new Directory()
-      .withFile('SKILL.md', readFileSync(join(SHARED, 'SKILL.md')))
-      .withFile('run_sam3.py', readFileSync(join(SHARED, 'run_sam3.py'))),
-    join(PROJECT, 'skill'),
-  )
+  // The volumes, made the first time and kept on the server: `409` says one is there already.
+  const volumes = []
+  for (const name of ['ailoy-sam3-skill', 'ailoy-sam3-models', 'ailoy-sam3-context', 'ailoy-sam3-artifacts']) {
+    volumes.push(await client.createVolume(name).catch((e) => {
+      if (e.status !== 409) throw e
+      return client.getVolume(name)
+    }))
+  }
+  const [skill, models, context, artifacts] = volumes
 
-  // The console server, fetched into virtx's cache the first time: a host that installed only
-  // ailoy has none.
-  await ensureVirtx()
+  // The skill onto the first.
+  for (const name of ['SKILL.md', 'run_sam3.py']) {
+    await skill.writeFile(name, readFileSync(join(SHARED, name)))
+  }
 
-  let consoleClient, agent
+  // `data/ncnn/`, every file of it, onto the second.
+  for (const to of readdirSync(join(PROJECT, 'data', 'ncnn'), { recursive: true }).sort()) {
+    const path = join(PROJECT, 'data', 'ncnn', to)
+    if (statSync(path).isDirectory()) await models.createDirAll(to)
+    else await models.writeFile(to, readFileSync(path))
+  }
+
+  // `context/`, every file of it, onto the third.
+  for (const to of readdirSync(join(PROJECT, 'context'), { recursive: true }).sort()) {
+    const path = join(PROJECT, 'context', to)
+    if (statSync(path).isDirectory()) await context.createDirAll(to)
+    else await context.writeFile(to, readFileSync(path))
+  }
+
+  let agent
   try {
-    // `build()` builds the image before it starts the console, which takes a while.
-    console.log('building the image ...')
-    consoleClient = await ConsoleClient.builder()
-      // Debian, not Alpine: PyPI's ncnn wheels are manylinux (glibc) only.
-      .image(
-        new Recipe('python:3.12-slim-trixie')
-          // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader the wheel
-          // opens. Mesa from backports: venus passes VK_KHR_shader_bfloat16 and
-          // VK_KHR_cooperative_matrix through from 26.0 on, and trixie itself has 25.0.
-          .step(
-            "echo 'deb http://deb.debian.org/debian trixie-backports main' " +
-              '> /etc/apt/sources.list.d/backports.list ' +
-              '&& apt-get update && apt-get install -y --no-install-recommends ' +
-              '-t trixie-backports mesa-vulkan-drivers ' +
-              '&& apt-get install -y --no-install-recommends libvulkan1 ' +
-              '&& rm -rf /var/lib/apt/lists/*',
-          )
-          // Headless OpenCV: `opencv-python` needs libGL, which the slim image lacks. `ncnn` asks
-          // for it by name, and both wheels install the same `cv2` package, so `--no-deps` on
-          // `ncnn` and its own dependencies spelled out, opencv aside.
-          .step(
-            'pip install --no-cache-dir av numpy opencv-python-headless pillow ' +
-              'portalocker requests tokenizers tqdm ' +
-              '&& pip install --no-cache-dir --no-deps ncnn',
-          ),
-      )
-      .mountReadonly(join(PROJECT, 'data', 'ncnn'), '/models')
-      .mountReadonly(skill, '/skills/sam3')
-      .mountReadonly(join(PROJECT, 'context'), '/context')
-      .mount(join(PROJECT, 'artifacts'), '/artifacts')
-      .gpu(true)
-      .vcpus(2)
-      .memoryMib(4096)
-      .gpuMemoryMib(12288)
-      .build()
+    const sandbox = await client.createSandbox(IMAGE, {
+      volumes: [
+        { volume: models, path: '/models', readonly: true },
+        { volume: skill, path: '/skills/sam3', readonly: true },
+        { volume: context, path: '/context', readonly: true },
+        { volume: artifacts, path: '/artifacts' },
+      ],
+      gpu: true,
+      vcpus: 2,
+      memoryMib: 4096,
+      gpuMemoryMib: 12288,
+    })
 
     agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'openai/gpt-6-astra')
       .instruction(INSTRUCTION)
-      .systemTools()
       .webFetchTool()
       .webSearchTool([])
-      .console(consoleClient)
+      .sandbox(sandbox)
       .skill('/skills/sam3')
       .build()
 
@@ -172,10 +201,20 @@ async function main(prompt) {
         for (const part of message.contents) console.log(`← ${pretty(part)}`)
       }
     }
+
+    // The artifacts, every file of them, to `artifacts/` here.
+    const dirs = ['']
+    while (dirs.length) {
+      const at = dirs.pop()
+      mkdirSync(join(PROJECT, 'artifacts', at), { recursive: true })
+      for (const entry of await artifacts.readDir(at)) {
+        if (entry.metadata.isDir) dirs.push(`${at}${entry.name}/`)
+        else writeFileSync(join(PROJECT, 'artifacts', at, entry.name), await artifacts.readFile(`${at}${entry.name}`))
+      }
+    }
   } finally {
     await agent?.close()
-    await consoleClient?.close()
-    await skill.unmount()
+    await client.close()
   }
 }
 

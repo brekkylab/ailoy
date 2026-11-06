@@ -1,25 +1,25 @@
 //! Memories, as `mem` keeps them.
 //!
-//! A store is one file made by `mem init`; every read or write is a `mem` command run on a
-//! [`ConsoleClient`], so `mem` must be on the console side's `PATH` and the memory file is a
-//! path the console side opens. Nothing here opens the database or knows its schema.
+//! A store is one file made by `mem init`; every read or write is a `mem` command run in a
+//! [`Sandbox`], so `mem` must be on the sandbox's `PATH` and the memory file is a path the
+//! sandbox opens. Nothing here opens the database or knows its schema.
 
 use std::path::{Path, PathBuf};
 
-use crate::console::ConsoleClient;
+use crate::console::Sandbox;
 
 /// One memory store, named by its file.
 ///
 /// Just a path: `mem` opens the file per command, so this is cheap to clone and share;
-/// the console lock serializes access. The console is passed per call so an
-/// [`Agent`](crate::agent::Agent)'s own console slot stays the one source of truth.
+/// the sandbox lock serializes access. The sandbox is passed per call so an
+/// [`Agent`](crate::agent::Agent)'s own sandbox slot stays the one source of truth.
 ///
 /// ```rust,no_run
 /// # use ailoy::memory::Memory;
-/// # async fn f(console: &mut ailoy::console::ConsoleClient) -> anyhow::Result<()> {
+/// # async fn f(sandbox: &ailoy::console::Sandbox) -> anyhow::Result<()> {
 /// let memory = Memory::new("/work/notes.sqlite");
-/// memory.insert(console, ["User switched to oat milk"]).await?;
-/// let found = memory.search(console, "what does the user drink?").await?;
+/// memory.insert(sandbox, ["User switched to oat milk"]).await?;
+/// let found = memory.search(sandbox, "what does the user drink?").await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -32,7 +32,7 @@ impl Memory {
     /// The store at `memfile`, expected to exist already (`mem init`); never created here, so a
     /// mistyped name cannot silently become an empty store.
     ///
-    /// Unchecked, since checking needs a console; a missing store surfaces on the first
+    /// Unchecked, since checking needs a sandbox; a missing store surfaces on the first
     /// [`search`](Self::search) or [`insert`](Self::insert).
     pub fn new(memfile: impl Into<String>) -> Self {
         Self {
@@ -55,13 +55,13 @@ impl Memory {
     /// # Errors
     ///
     /// A missing store, a non-store file, or an unrunnable `mem` (the error is `mem`'s
-    /// stderr), or a console failure.
+    /// stderr), or a sandbox failure.
     pub async fn search(
         &self,
-        console: &mut ConsoleClient,
+        sandbox: &Sandbox,
         query: impl AsRef<str>,
     ) -> anyhow::Result<Vec<String>> {
-        self.run(console, "search", [query.as_ref()]).await
+        self.run(sandbox, "search", [query.as_ref()]).await
     }
 
     /// Write `memories` into the store verbatim, returning the lines `mem` reports.
@@ -76,7 +76,7 @@ impl Memory {
     /// nothing is written.
     pub async fn insert(
         &self,
-        console: &mut ConsoleClient,
+        sandbox: &Sandbox,
         memories: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> anyhow::Result<Vec<String>> {
         let memories: Vec<String> = memories
@@ -85,13 +85,13 @@ impl Memory {
             .collect();
 
         // An empty list still runs `mem`, so a missing store is still reported.
-        self.run(console, "insert", &memories).await
+        self.run(sandbox, "insert", &memories).await
     }
 
     /// Run `mem <subcommand> <memfile> <rest>...` and return its non-blank output lines.
     async fn run(
         &self,
-        console: &mut ConsoleClient,
+        sandbox: &Sandbox,
         subcommand: &str,
         rest: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> anyhow::Result<Vec<String>> {
@@ -101,15 +101,13 @@ impl Memory {
         argv.extend(rest.into_iter().map(|arg| arg.as_ref().to_string()));
 
         // No timeout: only a large store makes this slow, and the caller still wants it.
-        let result = console
-            .exec(&argv, None)
+        let result = crate::console::exec(sandbox, &argv, None)
             .await
             .map_err(|e| anyhow::anyhow!("`mem {subcommand} {memfile}` could not be run: {e}"))?;
 
         if result.code != 0 {
             // `mem`'s stderr names the store and reason; the exit code adds nothing.
-            let said = String::from_utf8_lossy(&result.stderr);
-            let said = said.trim();
+            let said = result.stderr.trim();
             anyhow::bail!(if said.is_empty() {
                 format!("`mem {subcommand} {memfile}` failed (exit {})", result.code)
             } else {
@@ -118,7 +116,8 @@ impl Memory {
         }
 
         // `mem` never stores a blank memory, so blank lines are just trailing newlines.
-        Ok(String::from_utf8_lossy(&result.stdout)
+        Ok(result
+            .stdout
             .lines()
             .filter(|line| !line.trim().is_empty())
             .map(|line| line.to_string())
@@ -155,28 +154,31 @@ impl From<&Path> for Memory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_console;
+    use crate::test_sandbox;
 
-    /// An empty store made by `mem init` on the test's console, not a fixture.
-    async fn store(console: &mut ConsoleClient) -> Memory {
-        let dir = tempfile::tempdir().unwrap();
-        // Kept so the file outlives this function.
-        let path = dir
-            .keep()
-            .join("notes.sqlite")
-            .to_string_lossy()
-            .to_string();
+    /// A path in a test sandbox's `/tmp` that no other call answers.
+    fn fresh_path(name: &str) -> String {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        format!("/tmp/{name}-{n}.sqlite")
+    }
 
-        let init = console.exec(["mem", "init", &path], None).await.unwrap();
-        assert_eq!(init.code, 0, "{}", String::from_utf8_lossy(&init.stderr));
+    /// An empty store made by `mem init` on the test's sandbox, not a fixture.
+    async fn store(sandbox: &Sandbox) -> Memory {
+        let path = fresh_path("notes");
+
+        let init = crate::console::exec(sandbox, ["mem", "init", &path], None)
+            .await
+            .unwrap();
+        assert_eq!(init.code, 0, "{}", init.stderr);
 
         Memory::new(path)
     }
 
     /// A store filled by `mem` directly, not [`Memory::insert`], so search tests don't
     /// depend on insert.
-    async fn filled(console: &mut ConsoleClient, memories: &[&str]) -> Memory {
-        let memory = store(console).await;
+    async fn filled(sandbox: &Sandbox, memories: &[&str]) -> Memory {
+        let memory = store(sandbox).await;
 
         let mut argv = vec![
             "mem".to_string(),
@@ -184,60 +186,45 @@ mod tests {
             memory.memfile().to_string(),
         ];
         argv.extend(memories.iter().map(|m| m.to_string()));
-        let insert = console.exec(&argv, None).await.unwrap();
-        assert_eq!(
-            insert.code,
-            0,
-            "{}",
-            String::from_utf8_lossy(&insert.stderr)
-        );
+        let insert = crate::console::exec(sandbox, &argv, None).await.unwrap();
+        assert_eq!(insert.code, 0, "{}", insert.stderr);
 
         memory
     }
 
     /// A store that was never made.
     fn missing() -> Memory {
-        let dir = tempfile::tempdir().unwrap();
-        Memory::new(
-            dir.keep()
-                .join("missing.sqlite")
-                .to_string_lossy()
-                .to_string(),
-        )
+        Memory::new(fresh_path("missing"))
     }
 
     #[test_with::executable(mem)]
     #[tokio::test]
     async fn test_search_finds_the_nearest_memory() {
-        let mut console = test_console().await;
-        let memory = filled(
-            &mut console,
-            &["User drinks tea", "User switched to oat milk"],
-        )
-        .await;
+        let sandbox = test_sandbox().await;
+        let memory = filled(&sandbox, &["User drinks tea", "User switched to oat milk"]).await;
 
-        let found = memory.search(&mut console, "oat milk").await.unwrap();
+        let found = memory.search(&sandbox, "oat milk").await.unwrap();
         assert_eq!(found, ["User switched to oat milk"]);
     }
 
     #[test_with::executable(mem)]
     #[tokio::test]
     async fn test_search_with_nothing_near_is_empty() {
-        let mut console = test_console().await;
-        let memory = filled(&mut console, &["User drinks tea"]).await;
+        let sandbox = test_sandbox().await;
+        let memory = filled(&sandbox, &["User drinks tea"]).await;
 
-        let found = memory.search(&mut console, "almond").await.unwrap();
+        let found = memory.search(&sandbox, "almond").await.unwrap();
         assert!(found.is_empty(), "nothing near the query: {found:?}");
     }
 
     #[test_with::executable(mem)]
     #[tokio::test]
     async fn test_search_on_a_store_that_is_not_there_is_an_error() {
-        let mut console = test_console().await;
+        let sandbox = test_sandbox().await;
         let memory = missing();
 
         let e = memory
-            .search(&mut console, "oat milk")
+            .search(&sandbox, "oat milk")
             .await
             .expect_err("there is no such store");
         assert!(e.to_string().contains(memory.memfile()), "{e}");
@@ -247,32 +234,26 @@ mod tests {
     #[test_with::executable(mem)]
     #[tokio::test]
     async fn test_insert_writes_what_it_was_given() {
-        let mut console = test_console().await;
-        let memory = store(&mut console).await;
+        let sandbox = test_sandbox().await;
+        let memory = store(&sandbox).await;
 
         let written = memory
-            .insert(
-                &mut console,
-                ["User switched to oat milk", "User drinks tea"],
-            )
+            .insert(&sandbox, ["User switched to oat milk", "User drinks tea"])
             .await
             .unwrap();
         assert_eq!(written, ["User switched to oat milk", "User drinks tea"]);
 
-        let found = memory.search(&mut console, "oat milk").await.unwrap();
+        let found = memory.search(&sandbox, "oat milk").await.unwrap();
         assert_eq!(found, ["User switched to oat milk"]);
     }
 
     #[test_with::executable(mem)]
     #[tokio::test]
     async fn test_insert_with_nothing_to_write_writes_nothing() {
-        let mut console = test_console().await;
-        let memory = store(&mut console).await;
+        let sandbox = test_sandbox().await;
+        let memory = store(&sandbox).await;
 
-        let written = memory
-            .insert(&mut console, Vec::<String>::new())
-            .await
-            .unwrap();
+        let written = memory.insert(&sandbox, Vec::<String>::new()).await.unwrap();
         assert!(written.is_empty(), "no memories, so no lines: {written:?}");
     }
 
@@ -280,26 +261,26 @@ mod tests {
     #[test_with::executable(mem)]
     #[tokio::test]
     async fn test_insert_refuses_an_empty_memory() {
-        let mut console = test_console().await;
-        let memory = store(&mut console).await;
+        let sandbox = test_sandbox().await;
+        let memory = store(&sandbox).await;
 
         memory
-            .insert(&mut console, ["User drinks tea", "   "])
+            .insert(&sandbox, ["User drinks tea", "   "])
             .await
             .expect_err("a memory is a statement, and the second is empty");
 
-        let found = memory.search(&mut console, "tea").await.unwrap();
+        let found = memory.search(&sandbox, "tea").await.unwrap();
         assert!(found.is_empty(), "nothing was written: {found:?}");
     }
 
     #[test_with::executable(mem)]
     #[tokio::test]
     async fn test_insert_into_a_store_that_is_not_there_is_an_error() {
-        let mut console = test_console().await;
+        let sandbox = test_sandbox().await;
         let memory = missing();
 
         let e = memory
-            .insert(&mut console, ["User drinks tea"])
+            .insert(&sandbox, ["User drinks tea"])
             .await
             .expect_err("there is no such store");
         assert!(e.to_string().contains(memory.memfile()), "{e}");

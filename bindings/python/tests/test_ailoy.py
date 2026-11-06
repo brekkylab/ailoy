@@ -5,8 +5,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
-import virtx
-from virtx import ConsoleBroken, ConsoleClient, Recipe
+from virtx import Client, ImageJobEnd
 
 import ailoy
 from ailoy import AgentBuilder, AiloyError
@@ -98,9 +97,9 @@ async def run(agent, query):
 # ---- offline --------------------------------------------------------------------------
 
 
-def test_console_takes_only_a_virtx_console():
-    with pytest.raises(TypeError, match="virtx.ConsoleClient"):
-        AgentBuilder(MODEL).console(object())
+def test_sandbox_takes_only_a_virtx_sandbox():
+    with pytest.raises(TypeError, match="virtx.Sandbox"):
+        AgentBuilder(MODEL).sandbox(object())
 
 
 def test_register_tool_hands_back_its_desc():
@@ -398,42 +397,22 @@ async def test_an_unknown_org_cannot_make_a_lang_model():
         await ailoy.LangModel.create("nobody/serves-this")
 
 
-# ---- against the console server virtx starts by default ----------------------------
+# ---- against the server virtx starts by default -----------------------------------------
 
 
-async def test_the_agent_shares_the_console(tmp_path):
-    console = await (
-        ConsoleClient.builder()
-        .image(Recipe("python:3.12-slim-trixie"))
-        .mount(tmp_path, "/work")
-        .network(False)
-        .build()
-    )
-    agent = await (
-        AgentBuilder(MODEL)
-        .shell_tool()
-        .console(console)
-        .build()
-    )
-    outputs = await run(agent, 'shell {"cmd": "echo shared > /work/out.txt"}')
-    assert outputs[1]["message"]["role"] == "tool"
-    assert (tmp_path / "out.txt").read_text() == "shared\n"
+async def test_the_agent_runs_in_the_callers_sandbox():
+    with Client.spawn() as client:
+        async for entry in client.pull_image("python:3.12-slim"):
+            if isinstance(entry.entry, ImageJobEnd):
+                assert entry.entry.error is None, entry.entry.error
+        sandbox = await client.create_sandbox("python:3.12-slim", network=False, memory_mib=1024)
+        agent = await AgentBuilder(MODEL).sandbox(sandbox).build()
+        outputs = await run(agent, 'shell {"cmd": "echo shared > /root/out.txt"}')
+        assert outputs[1]["message"]["role"] == "tool"
 
-    # The console is still the caller's to use, and closing it ends it for the agent too.
-    await console.start()
-    result = await console.exec(["cat", "/work/out.txt"])
-    assert result.stdout == b"shared\n"
-    await console.stop()
-
-    # The session is the console's: an agent attached to it fails once it is closed.
-    later = await (
-        AgentBuilder(MODEL)
-        .shell_tool()
-        .console(console)
-        .build()
-    )
-    await console.close()
-    with pytest.raises(virtx.VirtxError):
-        await console.exec(["true"])
-    with pytest.raises(ConsoleBroken, match="closed"):
-        await run(later, 'shell {"cmd": "true"}')
+        # The sandbox is still the caller's to use, and removing it removes it for an agent too.
+        assert await sandbox.read_text("root/out.txt") == "shared\n"
+        later = await AgentBuilder(MODEL).sandbox(sandbox).build()
+        await sandbox.remove()
+        outputs = await run(later, 'shell {"cmd": "true"}')
+        assert "404" in json.dumps(outputs[1]["message"]["contents"])
