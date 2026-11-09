@@ -21,7 +21,7 @@ use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     browser::{Browser, UserBrowser},
     datatype::Value,
-    memory::{Memory, MemoryFile},
+    memory::MemoryFile,
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -283,12 +283,6 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.browser(browser)))
     }
 
-    /// Remember into the memory store at `memfile`, a path in the console.
-    #[napi]
-    pub fn memory<'env>(&mut self, this: This<'env>, memfile: String) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.memory(Memory::new(memfile))))
-    }
-
     /// Keep short notes in the file at `path` on this host, which the system message shows,
     /// and give the `memory` tool; `options.limit` bounds the file in characters (3,000 by
     /// default).
@@ -452,10 +446,10 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<It
 
 #[napi]
 impl JsAgent {
-    /// An agent from a spec (the object an `AgentSpec` serializes to). `options.memory` is the
-    /// file to remember into, and `options.memoryFile` the file to keep notes in.
+    /// An agent from a spec (the object an `AgentSpec` serializes to). `options.memoryFile` is
+    /// the file to keep notes in.
     #[napi(
-        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; console?: ConsoleClient; memory?: string; memoryFile?: string }",
+        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; console?: ConsoleClient; memoryFile?: string }",
         ts_return_type = "Promise<Agent>"
     )]
     pub fn from_spec<'env>(
@@ -477,9 +471,6 @@ impl JsAgent {
                 }
                 if let Some(console) = options.get::<Object>("console").map_err(get)? {
                     state = state.with_console_slot(console::attach(&console)?);
-                }
-                if let Some(memfile) = options.get::<String>("memory").map_err(get)? {
-                    state = state.with_memory(Memory::new(memfile));
                 }
                 if let Some(path) = options.get::<String>("memoryFile").map_err(get)? {
                     state = state.with_memory_file(MemoryFile::new(path));

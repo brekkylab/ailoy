@@ -3,11 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use virtx::console::ConsoleClient;
 
-use crate::{
-    browser::BrowserSession,
-    memory::{Memory, MemoryFile},
-    message::Message,
-};
+use crate::{browser::BrowserSession, memory::MemoryFile, message::Message};
 
 /// What an [`Agent`](super::Agent) carries from one turn to the next.
 #[derive(Default)]
@@ -25,9 +21,6 @@ pub struct AgentState {
     /// `Mutex` because the protocol allows one outstanding request at a time (every
     /// `ConsoleClient` method takes `&mut self`).
     pub console: Arc<Mutex<Option<ConsoleClient>>>,
-
-    /// The memory store this agent remembers into; `None` means no memory tools.
-    pub memory: Option<Memory>,
 
     /// The file this agent keeps notes in, which its system message shows; `None` means no
     /// `memory` tool.
@@ -60,15 +53,6 @@ impl AgentState {
     /// Share `console`'s slot with whoever else holds it, such as another agent.
     pub fn with_console_slot(mut self, console: Arc<Mutex<Option<ConsoleClient>>>) -> Self {
         self.console = console;
-        self
-    }
-
-    /// Remember into `memory`, which adds the `mem_search` and `mem_insert` tools.
-    ///
-    /// The store must already exist (`mem init`); a missing file surfaces on the first
-    /// memory tool call.
-    pub fn with_memory(mut self, memory: Memory) -> Self {
-        self.memory = Some(memory);
         self
     }
 

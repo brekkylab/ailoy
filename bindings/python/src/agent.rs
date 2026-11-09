@@ -16,7 +16,7 @@ use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     browser::{Browser, UserBrowser},
     datatype::Value,
-    memory::{Memory, MemoryFile},
+    memory::MemoryFile,
     message::Message,
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -207,11 +207,6 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.browser(browser)))
     }
 
-    /// Remember into the memory store at `memfile`, a path in the console.
-    fn memory(slf: PyRef<'_, Self>, memfile: String) -> PyResult<PyRef<'_, Self>> {
-        Self::update(slf, |b| Ok(b.memory(Memory::new(memfile))))
-    }
-
     /// Keep short notes in the file at `path` on this host, which the system message shows,
     /// and give the `memory` tool; `limit` bounds the file in characters (3,000 by default).
     #[pyo3(signature = (path, *, limit = None))]
@@ -342,13 +337,12 @@ impl PyAgent {
     /// An agent from a spec — the dict an `AgentSpec` serializes to — for a caller who holds
     /// one rather than building it up. Awaitable.
     #[staticmethod]
-    #[pyo3(signature = (spec, *, history = None, console = None, memory = None, memory_file = None))]
+    #[pyo3(signature = (spec, *, history = None, console = None, memory_file = None))]
     fn from_spec<'py>(
         py: Python<'py>,
         spec: Bound<'py, PyAny>,
         history: Option<Bound<'py, PyAny>>,
         console: Option<Bound<'py, PyAny>>,
-        memory: Option<String>,
         memory_file: Option<PathBuf>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let spec: AgentSpec = from_py(&spec, "an agent spec")?;
@@ -358,9 +352,6 @@ impl PyAgent {
         }
         if let Some(console) = console {
             state = state.with_console_slot(console::attach(&console)?);
-        }
-        if let Some(memfile) = memory {
-            state = state.with_memory(Memory::new(memfile));
         }
         if let Some(path) = memory_file {
             state = state.with_memory_file(MemoryFile::new(path));

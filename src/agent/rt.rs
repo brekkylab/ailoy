@@ -19,11 +19,7 @@ use crate::{
     model::{InferLangModel, LangModelOptions, RequestRefused, create_lang_model},
     tool::{
         ToolDesc, ToolFunc, create_tool,
-        r#impl::{
-            get_mem_insert_tool_desc, get_mem_insert_tool_func, get_mem_search_tool_desc,
-            get_mem_search_tool_func, get_memory_tool_desc, get_memory_tool_func,
-            get_web_search_tool_factory,
-        },
+        r#impl::{get_memory_tool_desc, get_memory_tool_func, get_web_search_tool_factory},
     },
 };
 
@@ -87,20 +83,6 @@ impl Agent {
             tools.insert(desc.name.clone(), func);
         }
         let mut tool_descs = spec.tools.clone();
-
-        // The store is this agent's `Memory`, not a registry name, so these are built here.
-        if let Some(memory) = state.memory.clone() {
-            for (desc, func) in [
-                (
-                    get_mem_search_tool_desc(),
-                    get_mem_search_tool_func(memory.clone()),
-                ),
-                (get_mem_insert_tool_desc(), get_mem_insert_tool_func(memory)),
-            ] {
-                tools.insert(desc.name.clone(), func);
-                tool_descs.push(desc);
-            }
-        }
 
         // The file is read now, for the system message; made absolute first, so a later change
         // of the current directory still finds it.
