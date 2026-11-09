@@ -1,4 +1,9 @@
-# Building VM
+---
+title: "Building VM"
+description: "Declare the agent's machine: image, setup steps, mounts and network."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 The computer an agent works on is a Linux VM run by [virtx](https://github.com/brekkylab/virtx). Ailoy depends on virtx, and your code uses it directly:
 
@@ -20,9 +25,11 @@ Two clients do the work:
 
 A `Recipe` is a base image plus steps, much like a Dockerfile. `ImageClient` builds it and stores it under a name, so a console can boot from it later without building it again.
 
-::: code-group
+<Tabs syncKey="lang">
 
-```python [Python]
+<TabItem label="Python">
+
+```python
 import asyncio
 
 from virtx import ImageClient, Recipe, ensure_virtx
@@ -44,7 +51,11 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-```js [Node.js]
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
 const { ImageClient, Recipe, ensureVirtx } = require('@brekkylab/virtx')
 
 async function main() {
@@ -68,7 +79,11 @@ async function main() {
 main()
 ```
 
-```rust [Rust]
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
 use virtx::image::{ImageClient, Recipe};
 
 #[tokio::main]
@@ -88,17 +103,46 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-:::
+
+</TabItem>
+</Tabs>
 
 You don't have to build ahead of time: passing a `Recipe` straight to a console builds it on first use.
+
+### From a shell
+
+The `virtx` command builds and manages the same images from a shell, with `docker`'s spelling. The virtx packages install it, so a project that installed Ailoy has it: `pip install ailoy-py` puts it in the environment's `bin/`, and `@brekkylab/virtx` in `node_modules/.bin`. Without installing anything:
+
+```bash
+uvx virtx --help
+npx @brekkylab/virtx --help
+```
+
+```bash
+virtx build -t plot:latest .                         # ./Dockerfile
+virtx build -t plot:latest - <<'EOF'                 # a Dockerfile from stdin
+FROM python:3.12-slim-trixie
+RUN pip install matplotlib
+EOF
+virtx images                                         # one line per ref, with its image ID
+virtx inspect plot:latest                            # its digest and refs, as JSON
+virtx tag plot:latest plot:v1                        # another ref on the same image
+virtx rmi plot:v1                                    # by ref, image ID or digest
+virtx pull alpine:3.20                               # a base from a registry, as it is named
+virtx save -o plot.tar plot:latest                   # to an OCI archive; `virtx load` reads one back
+```
+
+`virtx <COMMAND> --help` says what each command takes, and each is also an `image` command, as in `docker` (`virtx image ls`, `virtx image rm`, `virtx image prune`). It starts the same server a client does; `--host URL` reaches one over HTTP instead. Ctrl-C during a build or pull cancels it.
 
 ## Consoles
 
 `ConsoleClient.builder()` sets up the VM: the image to boot, host directories to mount, network access, CPUs, memory and GPU. `build()` boots it, and `exec` runs a command in it.
 
-::: code-group
+<Tabs syncKey="lang">
 
-```python [Python]
+<TabItem label="Python">
+
+```python
 import asyncio
 
 from virtx import ConsoleClient, ImageSource
@@ -122,7 +166,11 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-```js [Node.js]
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
 const { ConsoleClient, ImageSource } = require('@brekkylab/virtx')
 
 async function main() {
@@ -143,7 +191,11 @@ async function main() {
 main()
 ```
 
-```rust [Rust]
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
 use virtx::{console::ConsoleClient, image::ImageSource};
 
 #[tokio::main]
@@ -163,20 +215,28 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-:::
+
+</TabItem>
+</Tabs>
 
 Once nothing boots from a stored image, remove it by its reference, or by `ImageSource.digest(...)` (`ImageSource::digest(..)` in Rust) for its digest:
 
-::: code-group
+<Tabs syncKey="lang">
 
-```python [Python]
+<TabItem label="Python">
+
+```python
 from virtx import ImageClient, ImageSource
 
 async with await ImageClient.try_new() as images:
     await images.remove(ImageSource.reference("plot:latest"))
 ```
 
-```js [Node.js]
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
 const { ImageClient, ImageSource } = require('@brekkylab/virtx')
 
 const images = await ImageClient.tryNew()
@@ -187,16 +247,22 @@ try {
 }
 ```
 
-```rust [Rust]
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
 use virtx::image::{ImageClient, ImageSource};
 
 let mut images = ImageClient::try_new().await?;
 images.remove(ImageSource::reference("plot:latest")).await?;
 ```
 
-:::
 
-::: tip
+</TabItem>
+</Tabs>
+
+:::tip
 An image built from a `Recipe` passed straight to `.image(...)` is removed when the console closes.
 :::
 

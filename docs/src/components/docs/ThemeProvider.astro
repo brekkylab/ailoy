@@ -1,0 +1,8 @@
+---
+// Starlight override: always dark, like the product pages, whatever the OS or a stored choice.
+---
+
+<script is:inline>
+  document.documentElement.dataset.theme = 'dark';
+  window.StarlightThemeProvider = { updatePickers() {} };
+</script>

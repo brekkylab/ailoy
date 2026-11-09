@@ -19,8 +19,8 @@
 // Environment, also read from `.env`:
 //
 // * `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its org's backend has to be
-//   set up as `docs/guide/model-providers.md` says. It has to take images, or it cannot see what it
-//   built.
+//   set up as `docs/src/content/docs/guide/model-providers.mdx` says. It has to take images,
+//   or it cannot see what it built.
 //
 // `npm install` here first, after building the addon (`npm run build` in `bindings/node`).
 

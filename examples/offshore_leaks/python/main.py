@@ -23,7 +23,7 @@ Environment:
 
 * `OFFSHORE_LEAKS_URL` — the archive `prepare_data.py` downloads; ICIJ's latest by default.
 * `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its org's backend has to be
-  set up as `docs/guide/model-providers.md` says.
+  set up as `docs/src/content/docs/guide/model-providers.mdx` says.
 
 Read from `.env` as well.
 """

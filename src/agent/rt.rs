@@ -8,7 +8,10 @@ use futures::{
 use tokio::sync::Mutex;
 use virtx::console::ConsoleClient;
 
-use super::{AgentSpec, AgentState, ContextManager, skill::render_skills, spec::split_desc};
+use super::{
+    AgentSpec, AgentState, ContextManager, image::fit_images_off_runtime, skill::render_skills,
+    spec::split_desc,
+};
 use crate::{
     browser,
     datatype::Value,
@@ -47,7 +50,8 @@ pub struct Agent {
 
     pub state: AgentState,
 
-    /// Cuts old tool results out of the history once a call's input grows past its limit.
+    /// Cuts old tool results out of the history as a turn begins, once a call's input has
+    /// grown past its limit.
     context_manager: Option<ContextManager>,
 }
 
@@ -149,8 +153,13 @@ impl Agent {
     }
 
     /// Truncate the history if the last call's input went past the context manager's limit.
+    ///
+    /// Run only as a turn begins. A turn's requests send back the thinking the model has produced
+    /// in it, and the Claude API can refuse a thinking block once anything before it has changed,
+    /// so a turn's input may grow past the limit until the next turn begins.
     fn manage_context(&mut self) {
         if let Some(cm) = &self.context_manager
+            && cm.max_input_tokens > 0
             && self.state.last_input_tokens.unwrap_or(0) > cm.max_input_tokens
         {
             cm.truncate_history(&mut self.state.history);
@@ -180,7 +189,6 @@ impl Agent {
             // replaced, while that stands: a second refusal puts them back and ends the turn.
             let mut refused: Option<Vec<Message>> = None;
             loop {
-                self.manage_context();
                 let output = match self
                     .model
                     .infer(&self.state.history, &self.tool_descs, &self.options)
@@ -236,7 +244,6 @@ impl Agent {
             let mut committed = false;
             let mut refused: Option<Vec<Message>> = None;
             loop {
-                self.manage_context();
                 let mut deltas =
                     self.model
                         .infer_stream(&self.state.history, &self.tool_descs, &self.options);
@@ -295,13 +302,20 @@ impl Agent {
     }
 
     /// Add `query` to the history, led by a browser reconnection the agent has not heard of,
-    /// and tell the model where its console mounts are.
+    /// truncate the history if it has grown past the context manager's limit, and tell the
+    /// model where its console mounts are.
     async fn begin_turn(&mut self, mut query: Message) {
         close_dangling_calls(&mut self.state.history);
+        // No context manager acts as one with every setting left out.
+        let default = ContextManager::default();
+        let cm = self.context_manager.as_ref().unwrap_or(&default);
+        cm.cap_images(&mut self.state.history);
         if let Some(note) = self.state.browser.as_ref().and_then(|b| b.catch_up()) {
             query.contents.insert(0, Part::text(note));
         }
+        let query = fit_images_off_runtime(query).await;
         self.state.history.push(query);
+        self.manage_context();
         self.seed_mounts().await;
     }
 
@@ -468,7 +482,9 @@ enum Refused {
     #[allow(dead_code)]
     OlderImages,
     /// The whole history, over the model's context limit. Mend: truncate it as
-    /// [`ContextManager`] does, without waiting for the usage that triggers it.
+    /// [`ContextManager`] does, without waiting for the usage that triggers it. Past a turn's
+    /// first request this changes what comes before the turn's thinking, so the requests after
+    /// must leave that thinking out (see [`Agent::manage_context`]).
     #[allow(dead_code)]
     TooLong,
 }
@@ -593,7 +609,7 @@ async fn call_tool(
     };
     message.role = Role::Tool;
     message.id.get_or_insert(id);
-    cap_tool_result(message)
+    cap_tool_result(fit_images_off_runtime(message).await)
 }
 
 /// Clamp every part of a tool result, so large payloads (e.g. web pages) don't pile up in
@@ -653,6 +669,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::agent::context::IMAGE_PLACEHOLDER;
     use crate::{
         datatype::Bytes,
         message::{Role, TokenUsage},
@@ -811,6 +828,14 @@ mod tests {
             .iter()
             .filter_map(|p| p.as_text())
             .collect()
+    }
+
+    fn images_in(history: &[Message]) -> usize {
+        history
+            .iter()
+            .flat_map(|m| &m.contents)
+            .filter(|p| p.is_image())
+            .count()
     }
 
     #[tokio::test]
@@ -1142,6 +1167,7 @@ mod tests {
         agent.set_context_manager(Some(ContextManager {
             max_input_tokens: 100,
             preserve_recent_turns: 1,
+            ..Default::default()
         }));
 
         agent.run(user("first")).for_each(|_| async {}).await;
@@ -1155,6 +1181,270 @@ mod tests {
         // Under the limit before that, so the second call saw the result whole.
         let result = seen[1].iter().find(|m| m.role == Role::Tool).unwrap();
         assert_ne!(text_of(result), "[context truncated]");
+    }
+
+    #[tokio::test]
+    async fn test_a_token_limit_of_zero_truncates_nothing() {
+        let name = "test-agent-context-off";
+        let (model, spec) = scripted(
+            name,
+            [
+                with_input(calls(&[("c1", "echo")]), 10),
+                with_input(answer("one"), 200),
+                with_input(answer("two"), 10),
+            ],
+        );
+        let mut agent = Agent::try_new(spec).await.unwrap();
+        agent.set_context_manager(Some(ContextManager {
+            max_input_tokens: 0,
+            preserve_recent_turns: 1,
+            ..Default::default()
+        }));
+
+        agent.run(user("first")).for_each(|_| async {}).await;
+        agent.run(user("second")).for_each(|_| async {}).await;
+
+        let seen = model.seen.lock().unwrap();
+        let result = seen[2].iter().find(|m| m.role == Role::Tool).unwrap();
+        assert_ne!(text_of(result), "[context truncated]");
+    }
+
+    /// A call past the limit in the middle of a turn leaves the history as it is for the rest
+    /// of that turn, under `run` and `run_stream` alike, and the next turn begins truncated.
+    /// The turn just begun is kept, so `preserve_recent_turns` at `0` does what `1` does.
+    #[tokio::test]
+    async fn test_truncation_waits_for_the_next_turn() {
+        for (stream, preserve) in [(false, 1), (true, 1), (false, 0), (true, 0)] {
+            let name = format!("test-agent-context-mid-turn-{stream}-{preserve}");
+            let (model, spec) = scripted(
+                &name,
+                [
+                    with_input(calls(&[("c1", "echo")]), 10),
+                    with_input(answer("one"), 10),
+                    // The second turn's first call reads past the limit.
+                    with_input(calls(&[("c2", "echo")]), 200),
+                    with_input(answer("two"), 210),
+                    with_input(answer("three"), 10),
+                ],
+            );
+            let mut agent = Agent::try_new(spec).await.unwrap();
+            agent.set_context_manager(Some(ContextManager {
+                max_input_tokens: 100,
+                preserve_recent_turns: preserve,
+                ..Default::default()
+            }));
+            for query in ["first", "second", "third"] {
+                if stream {
+                    agent.run_stream(user(query)).for_each(|_| async {}).await;
+                } else {
+                    agent.run(user(query)).for_each(|_| async {}).await;
+                }
+            }
+
+            let seen = model.seen.lock().unwrap();
+            // Whether each tool result a request carries was truncated.
+            let cut = |request: &[Message]| -> Vec<bool> {
+                request
+                    .iter()
+                    .filter(|m| m.role == Role::Tool)
+                    .map(|m| text_of(m) == "[context truncated]")
+                    .collect()
+            };
+            // seen[3] is the second turn's second request, and seen[4] the third turn's first.
+            let row = format!("stream: {stream}, preserve: {preserve}");
+            assert_eq!(cut(&seen[3]), [false, false], "{row}");
+            assert_eq!(cut(&seen[4]), [true, true], "{row}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_context_manager_replaces_old_images_at_the_start_of_a_turn() {
+        let name = "test-agent-images";
+        let (model, spec) = scripted(
+            name,
+            [
+                calls(&[("c1", "shot")]),
+                calls(&[("c2", "shot")]),
+                calls(&[("c3", "shot")]),
+                answer("one"),
+                answer("two"),
+            ],
+        );
+        let mut agent = Agent::try_new(spec).await.unwrap();
+        agent.set_context_manager(Some(ContextManager {
+            max_images: 2,
+            preserve_recent_images: 1,
+            ..Default::default()
+        }));
+
+        agent.run(user("first")).for_each(|_| async {}).await;
+        // Within a turn every screenshot stays, over the cap or not.
+        assert_eq!(images_in(&model.seen.lock().unwrap()[3]), 3);
+        assert_eq!(images_in(agent.history()), 3);
+
+        agent.run(user("second")).for_each(|_| async {}).await;
+        // The turn starts by replacing the oldest, down to those preserved.
+        let seen = model.seen.lock().unwrap();
+        assert_eq!(images_in(&seen[4]), 1);
+        let results: Vec<_> = seen[4].iter().filter(|m| m.role == Role::Tool).collect();
+        assert_eq!(text_of(results[0]), format!("the page{IMAGE_PLACEHOLDER}"));
+        assert_eq!(text_of(results[1]), format!("the page{IMAGE_PLACEHOLDER}"));
+        assert!(results[2].contents[1].is_image());
+    }
+
+    #[tokio::test]
+    async fn test_images_are_capped_at_the_default_without_a_context_manager() {
+        let name = "test-agent-images-default";
+        let default = ContextManager::default();
+        let shots: Vec<_> = (0..=default.max_images)
+            .map(|n| calls(&[(&format!("c{n}"), "shot")]))
+            .collect();
+        let (model, spec) = scripted(
+            name,
+            shots.into_iter().chain([answer("one"), answer("two")]),
+        );
+        let mut agent = Agent::try_new(spec).await.unwrap();
+        assert!(agent.context_manager().is_none());
+
+        agent.run(user("first")).for_each(|_| async {}).await;
+        agent.run(user("second")).for_each(|_| async {}).await;
+
+        let seen = model.seen.lock().unwrap();
+        assert_eq!(
+            images_in(seen.last().unwrap()),
+            default.preserve_recent_images
+        );
+    }
+
+    /// Images a person attaches are not capped, so a query keeps its own however many came
+    /// before.
+    #[tokio::test]
+    async fn test_the_query_keeps_its_images() {
+        let name = "test-agent-query-images";
+        let (model, spec) = scripted(
+            name,
+            [
+                calls(&[("c1", "shot")]),
+                calls(&[("c2", "shot")]),
+                answer("one"),
+                answer("two"),
+            ],
+        );
+        let mut agent = Agent::try_new(spec).await.unwrap();
+        agent.set_context_manager(Some(ContextManager {
+            max_images: 1,
+            preserve_recent_images: 0,
+            ..Default::default()
+        }));
+        let query = |text: &str| {
+            let image = Part::image_embedded("image/png", Bytes::from(vec![0u8; 4])).unwrap();
+            Message::new(Role::User).with_contents([Part::text(text), image.clone(), image])
+        };
+
+        agent.run(query("first")).for_each(|_| async {}).await;
+        agent.run(query("second")).for_each(|_| async {}).await;
+
+        let seen = model.seen.lock().unwrap();
+        let request = seen.last().unwrap();
+        // Both screenshots go; the person's four stay.
+        assert_eq!(images_in(request), 4);
+        assert!(
+            request.last().unwrap().contents[1..]
+                .iter()
+                .all(Part::is_image)
+        );
+    }
+
+    /// An image past the edge is fitted on both ways into the history: in the query and in a
+    /// tool result.
+    #[tokio::test]
+    async fn test_an_image_past_the_edge_is_fitted_on_its_way_in() {
+        fn big_png() -> Part {
+            let mut out = Vec::new();
+            image::DynamicImage::ImageRgb8(image::RgbImage::new(3000, 10))
+                .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+                .unwrap();
+            Part::image_embedded("image/png", Bytes::from(out)).unwrap()
+        }
+        fn width(part: &Part) -> u32 {
+            let Part::Image {
+                image: crate::message::PartImage::Embedded { data, .. },
+            } = part
+            else {
+                panic!("not an embedded image");
+            };
+            image::load_from_memory(data.as_ref()).unwrap().width()
+        }
+
+        let name = "test-agent-fit";
+        let (model, spec) = scripted(name, [calls(&[("c1", "big_shot")]), answer("one")]);
+        set_tool_provider(
+            "big_shot",
+            tool_func!(|_args: Value, id: String| -> Message {
+                Message::new(Role::Tool)
+                    .with_contents([big_png()])
+                    .with_id(id)
+            }),
+        );
+        let spec = spec.tool(
+            ToolDescBuilder::new("big_shot")
+                .parameters(to_value!({"type": "object", "properties": {}}))
+                .build(),
+        );
+        let mut agent = Agent::try_new(spec).await.unwrap();
+        let query = Message::new(Role::User).with_contents([Part::text("look"), big_png()]);
+        agent.run(query).for_each(|_| async {}).await;
+
+        let seen = model.seen.lock().unwrap();
+        let widths: Vec<u32> = seen
+            .last()
+            .unwrap()
+            .iter()
+            .flat_map(|m| &m.contents)
+            .filter(|p| p.is_image())
+            .map(width)
+            .collect();
+        assert_eq!(widths, [2576, 2576]);
+    }
+
+    /// A turn that fails before its first reply takes its query back out but leaves the
+    /// images replaced, even once truncation has reshaped the results they were in: a retry
+    /// caps the same images again.
+    #[tokio::test]
+    async fn test_a_failed_turn_leaves_the_images_replaced() {
+        for streamed in [false, true] {
+            let name = format!("test-agent-images-failed-{streamed}");
+            let (_, spec) = scripted(
+                &name,
+                [
+                    calls(&[("c1", "shot")]),
+                    calls(&[("c2", "shot")]),
+                    with_input(answer("one"), 200),
+                    Err(anyhow::anyhow!("overloaded")),
+                ],
+            );
+            let mut agent = Agent::try_new(spec).await.unwrap();
+            agent.set_context_manager(Some(ContextManager {
+                max_input_tokens: 100,
+                preserve_recent_turns: 1,
+                max_images: 1,
+                preserve_recent_images: 0,
+            }));
+
+            agent.run(user("first")).for_each(|_| async {}).await;
+            let turns = agent.history().len();
+            let failed = if streamed {
+                let outputs: Vec<_> = agent.run_stream(user("second")).collect().await;
+                outputs.last().unwrap().is_err()
+            } else {
+                let outputs: Vec<_> = agent.run(user("second")).collect().await;
+                outputs.last().unwrap().is_err()
+            };
+
+            assert!(failed, "streamed: {streamed}");
+            assert_eq!(agent.history().len(), turns, "streamed: {streamed}");
+            assert_eq!(images_in(agent.history()), 0, "streamed: {streamed}");
+        }
     }
 
     /// A part is cut only when it has more characters than the limit, a value counted in those

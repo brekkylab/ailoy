@@ -9,7 +9,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 rust-version = "1.95.0"
 license = "Apache-2.0"
@@ -95,7 +95,7 @@ uuid = { version = "1.18.0", features = ["v4"] }
 # crate relies on is named here; wreq-util's emulation-compression supplies the
 # content-encoding profile. Re-check this list whenever the pin moves, since a
 # feature leaving default is a silent behavior change.
-wreq = { version = "=6.0.0-rc.29", features = ["brotli", "charset", "deflate", "gzip", "stream", "system-proxy", "zstd"] }
+wreq = { version = "=6.0.0-rc.31", features = ["brotli", "charset", "deflate", "gzip", "stream", "system-proxy", "zstd"] }
 wreq-util = { version = "=3.0.0-rc.14", features = ["emulation-compression"] }
 
 [dev-dependencies]
