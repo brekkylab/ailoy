@@ -1,88 +1,74 @@
-//! A `ConsoleClient` from `@brekkylab/virtx`, as the console an agent runs in.
+//! A `Sandbox` from `@brekkylab/virtx`, as the sandbox an agent runs in.
 //!
-//! That console lives in virtx's own addon, whose Rust types this one cannot see (each links
-//! its own virtx). So an agent drives its session through `ConsoleClient._relay`: protocol
-//! frames as `Buffer`s, answered on virtx's runtime, under the console's own lock (see
-//! [`virtx::console::Relay`]). The two addons need only speak one protocol version, not be
-//! built from one virtx.
-//!
-//! The agent holds the `ConsoleClient` (through `_relay`, bound to it), so the session lasts
-//! at least as long as the agent. It stays the caller's: the agent never ends it, and `close()`
-//! ends it under the agent too, whose next console call then rejects with `CONSOLE_BROKEN`.
+//! Both packages reach the server through one `libvirtx_core` in the process: this addon opens
+//! the one `@brekkylab/virtx` opened, by the path virtx's `libraryPath()` answers, and takes a
+//! hold of the sandbox's client's `VirtxClient*` of its own, so the sandbox the agent holds is the
+//! caller's, over the same session.
 
-use std::sync::Arc;
-
-use ailoy::console::ConsoleClient;
-use napi::{
-    Status,
-    bindgen_prelude::{Buffer, Function, Object, Promise},
-    threadsafe_function::ThreadsafeFunction,
+use std::{
+    ffi::c_void,
+    mem::ManuallyDrop,
+    sync::{Mutex, PoisonError},
 };
-use tokio::sync::Mutex;
-use virtx::{BoxFuture, console::Relay, protocol::Failure};
 
-use crate::error::{Result, invalid};
+use napi::{
+    Env,
+    bindgen_prelude::{Function, FunctionRef, Object},
+};
+use napi_derive::napi;
 
-/// What an agent holds its console in.
-pub type Slot = Arc<Mutex<Option<ConsoleClient>>>;
+use crate::error::{Result, invalid, virtx as virtx_error};
 
-/// `ConsoleClient._relay`, bound to its console. Threadsafe because JavaScript runs only on its
-/// own thread, which a turn leaves free as promises iterate it; weak so an agent does not keep
-/// the process alive.
-type RelayFn = ThreadsafeFunction<Buffer, Promise<Buffer>, Buffer, Status, false, true>;
+/// `@brekkylab/virtx`'s `libraryPath`, which `index.js` hands over as it loads.
+static LIBRARY_PATH: Mutex<Option<FunctionRef<(), Option<String>>>> = Mutex::new(None);
 
-/// A slot holding a console attached to `console`'s session.
-pub fn attach(console: &Object<'_>) -> Result<Slot> {
-    let not_one = || {
-        invalid(
-            "expected a ConsoleClient from @brekkylab/virtx that can be shared with an agent \
-             (one with `_relay`; upgrade @brekkylab/virtx if it is one)",
-        )
-    };
-    let relay = console
-        .get::<Function<'_, Buffer, Promise<Buffer>>>("_relay")
-        .map_err(|_| not_one())?
+/// Take `@brekkylab/virtx`'s `libraryPath`, to open the library it opened; for `index.js`.
+#[napi(js_name = "_useVirtx")]
+pub fn use_virtx(library_path: Function<(), Option<String>>) -> napi::Result<()> {
+    let held = library_path.create_ref()?;
+    *LIBRARY_PATH.lock().unwrap_or_else(PoisonError::into_inner) = Some(held);
+    Ok(())
+}
+
+/// The sandbox `sandbox`, a `@brekkylab/virtx` `Sandbox`, names, over its own client.
+pub fn sandbox(env: &Env, sandbox: &Object<'_>) -> Result<virtx::Sandbox> {
+    let not_one = || invalid("expected a Sandbox from @brekkylab/virtx");
+    let get = |e: napi::Error| invalid(e.reason);
+    let client = sandbox
+        .get::<Object>("client")
+        .map_err(get)?
         .ok_or_else(not_one)?;
-    let mounts = console
-        .get::<Vec<String>>("mounts")
-        .map_err(|e| invalid(e.reason))?
-        .unwrap_or_default();
+    let id = sandbox
+        .get::<String>("id")
+        .map_err(get)?
+        .ok_or_else(not_one)?;
+    let as_raw = client
+        .get::<Function<(), f64>>("asRaw")
+        .map_err(get)?
+        .ok_or_else(not_one)?;
 
-    let relay: RelayFn = relay
-        .bind(console)
-        .and_then(|bound| {
-            bound
-                .build_threadsafe_function()
-                .callee_handled::<false>()
-                .weak::<true>()
-                .build()
-        })
-        .map_err(|e| invalid(e.reason))?;
-
-    Ok(Arc::new(Mutex::new(Some(ConsoleClient::attach(
-        JsRelay(relay),
-        mounts,
-    )))))
-}
-
-struct JsRelay(RelayFn);
-
-impl Relay for JsRelay {
-    fn relay(&mut self, frame: Vec<u8>) -> BoxFuture<'_, std::result::Result<Vec<u8>, Failure>> {
-        Box::pin(async move {
-            let answer = self.0.call_async_catch(Buffer::from(frame)).await;
-            match answer {
-                Ok(promise) => promise.await.map(|frame| frame.to_vec()).map_err(broken),
-                Err(e) => Err(broken(e)),
-            }
-        })
-    }
-}
-
-/// A rejection's own message. It comes back wrapped once more, as
-/// `"GenericFailure, <message>"`, which is napi's bookkeeping rather than virtx's.
-fn broken(error: napi::Error) -> Failure {
-    let reason = error.reason.as_str();
-    let reason = reason.strip_prefix("GenericFailure, ").unwrap_or(reason);
-    Failure::Broken(anyhow::Error::msg(reason.to_string()))
+    let library = LIBRARY_PATH
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+        .ok_or_else(|| invalid("@brekkylab/virtx was not handed over; load ailoy by its index.js"))?
+        .borrow_back(env)
+        .and_then(|library_path| library_path.call(()))
+        .map_err(get)?
+        .ok_or_else(|| invalid("@brekkylab/virtx has no library open"))?;
+    virtx::load(&library).map_err(virtx_error)?;
+    let raw = as_raw.apply(client, ()).map_err(get)? as usize;
+    // Safety: virtx made it with the library just opened, and holds it for as long as this
+    // borrows it; the sandbox takes a hold of its own.
+    let borrowed = ManuallyDrop::new(
+        unsafe { virtx::Client::from_raw(raw as *mut c_void) }.map_err(virtx_error)?,
+    );
+    let info = virtx::SandboxInfo {
+        id,
+        image: sandbox.get("image").map_err(get)?.ok_or_else(not_one)?,
+        snapshot: sandbox.get("snapshot").map_err(get)?,
+        running: sandbox.get("running").map_err(get)?.ok_or_else(not_one)?,
+        ports: Vec::new(),
+    };
+    Ok((*borrowed).sandbox(info))
 }

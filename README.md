@@ -44,9 +44,7 @@ It supports <img src="https://cdn.simpleicons.org/python" width="16"/> Python, <
 
 No system dependencies are required, but your agent's model needs a way to run: by default its provider's CLI (Claude Code, Codex or Gemini CLI), or its API with a key.
 
-Mounting host folders into the console (`virtx`'s virtual filesystem) needs FUSE: install FUSE-T on macOS or Dokany on Windows. See the [`virtx` documentation](https://github.com/brekkylab/virtx) for details.
-
-On Windows, the console's micro-VM runs on the *Windows Hypervisor Platform*, which is off by default.
+On Windows, the sandbox's micro-VM runs on the *Windows Hypervisor Platform*, which is off by default.
 Turn the optional feature on from an administrator PowerShell and restart, with virtualization enabled in the firmware:
 
 ```powershell
@@ -76,29 +74,24 @@ pip install ailoy-py
 
 ```python
 import asyncio
+from pathlib import Path
 
 from ailoy import AgentBuilder
-from virtx import ConsoleClient, Recipe, ensure_virtx
+from virtx import Client
 
 
 async def main() -> None:
-    # Fetches virtx's server into its cache the first time; a no-op after.
-    await ensure_virtx()
-
-    console = await (
-        ConsoleClient.builder()
-        .image(Recipe("python:3.12-slim-trixie").step("pip install matplotlib"))
-        .mount("./artifacts", "/artifacts")
-        .network(True)
-        .build()
-    )
+    # Starts virtx's server, fetched into its cache the first time.
+    client = Client.spawn()
+    async for _ in client.pull_image("python:3.12-slim-trixie"):
+        pass
+    sandbox = await client.create_sandbox("python:3.12-slim-trixie")
 
     agent = await (
         # For openai, use "openai/gpt-5.6-luna"
         AgentBuilder("anthropic/claude-haiku-5-5")
         .instruction("Write what you are asked for into /artifacts.")
-        .system_tools()
-        .console(console)
+        .sandbox(sandbox)
         .build()
     )
 
@@ -106,6 +99,8 @@ async def main() -> None:
         for part in output["message"]["contents"]:
             if part["type"] == "text":
                 print(part["text"])
+
+    Path("population.png").write_bytes(await sandbox.read_file("artifacts/population.png"))
 
 asyncio.run(main())
 ```
@@ -122,34 +117,31 @@ npm install @brekkylab/ailoy @brekkylab/virtx
 ```
 
 ```js
+const { writeFileSync } = require('node:fs')
 const { AgentBuilder } = require('@brekkylab/ailoy')
-const { ConsoleClient, Recipe, ensureVirtx } = require('@brekkylab/virtx')
+const { Client } = require('@brekkylab/virtx')
 
 async function main() {
-  // Fetches virtx's server into its cache the first time; a no-op after.
-  await ensureVirtx()
+  // Starts virtx's server, fetched into its cache the first time.
+  const client = Client.spawn()
+  for await (const _ of client.pullImage('python:3.12-slim-trixie'));
+  const sandbox = await client.createSandbox('python:3.12-slim-trixie')
 
-  const console_ = await ConsoleClient.builder()
-    .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))
-    .mount('./artifacts', '/artifacts')
-    .network(true)
-    .build()
   // For openai, use "openai/gpt-5.6-luna"
   const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
     .instruction('Write what you are asked for into /artifacts.')
-    .systemTools()
-    .console(console_)
+    .sandbox(sandbox)
     .build()
 
-  try {
-    for await (const { message } of agent.run('Create a bar chart comparing the populations of European countries and save it to /artifacts/population.png.')) {
-      for (const part of message.contents) {
-        if (part.type === 'text') console.log(part.text)
-      }
+  for await (const { message } of agent.run('Create a bar chart comparing the populations of European countries and save it to /artifacts/population.png.')) {
+    for (const part of message.contents) {
+      if (part.type === 'text') console.log(part.text)
     }
-  } finally {
-    await agent.close()
   }
+
+  writeFileSync('population.png', await sandbox.readFile('artifacts/population.png'))
+  await agent.close()
+  await client.close()
 }
 
 main()
@@ -165,35 +157,33 @@ main()
 ```toml
 [dependencies]
 ailoy = "0.3"
-virtx = "0.1"
+virtx = { package = "virtx-rs", version = "0.1" }
 ```
 
 ```rust
 use ailoy::{
     agent::AgentBuilder,
-    console::ConsoleClient,
     message::{Message, Part, Role},
 };
-use virtx::image::Recipe;
 use futures::StreamExt as _;
+use virtx::{Client, Files as _, SandboxCreateArgs};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Fetches virtx's server into its cache the first time; a no-op after.
-    virtx::ensure_virtx().await?;
-
-    let console = ConsoleClient::builder()
-        .image(Recipe::new("python:3.12-slim-trixie").step("pip install matplotlib"))
-        .mount(std::path::absolute("./artifacts")?, "/artifacts")
-        .network(true)
-        .build()
+    // Starts virtx's server, fetched into its cache the first time.
+    let client = Client::spawn_virtx([] as [&str; 0])?;
+    let mut pull = client.pull_image("python:3.12-slim-trixie", None).log();
+    while let Some(entry) = pull.next().await {
+        entry?;
+    }
+    let sandbox = client
+        .create_sandbox(&SandboxCreateArgs::new("python:3.12-slim-trixie"))
         .await?;
 
     // For openai, use "openai/gpt-5.6-luna"
     let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
         .instruction("Write what you are asked for into /artifacts.")
-        .system_tools()
-        .console(console)
+        .sandbox(sandbox.clone())
         .build()
         .await?;
 
@@ -207,6 +197,9 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
+
+    let png = sandbox.read_file("artifacts/population.png", 0, None).await?;
+    std::fs::write("population.png", png)?;
     Ok(())
 }
 ```
@@ -229,7 +222,7 @@ codex plugin marketplace add brekkylab/ailoy && codex plugin add ailoy@brekkylab
 
 | Example | Description |
 | --- | --- |
-| [hello](./examples/hello) | One turn with no tools and no console |
+| [hello](./examples/hello) | One turn with no tools and no sandbox |
 | [cad](./examples/cad) | Writes CadQuery, renders the model from four sides, looks at the renders and iterates |
 | [offshore_leaks](./examples/offshore_leaks) | Analyses the ICIJ Offshore Leaks database with SQL and Python that the agent writes itself |
 | [retail_bench](./examples/retail_bench) | Runs a supermarket simulator, one day per turn |
@@ -269,11 +262,11 @@ Ailoy gives the agent **a computer of its own**.
 Agent stacks are often put together from separate pieces: a library that runs the loop around the model, a hosted service that provides the sandbox, and glue code between the two. Ailoy keeps the loop and the sandbox in one SDK:
 
 - The **Ailoy SDK** runs the agent loop on your host. It sends the prompt to the model, runs the tool calls the model asks for, feeds the results back, and decides when the agent is done.
-- **[virtx](https://github.com/brekkylab/virtx)** gives each agent a Linux VM of its own, built on krun, with no separate VM daemon to install. The VM is the agent's sandbox: its commands and file tools run inside it, and it reaches your machine only through the folders you mount.
+- **[virtx](https://github.com/brekkylab/virtx)** gives each agent a Linux VM of its own, built on krun, with no separate VM daemon to install. The VM is the agent's sandbox: its commands and file tools run inside it, and files go in and out of it through virtx, never through your machine's own folders.
 
 That lets you build agents that do more than call predefined tools. Inside its VM an agent can install and use software, write its own scripts and work in a general-purpose computing environment. The VM supports the GPU too, so an agent can run ML models, or even games, in there.
 
-The [docs](https://ailoy.co/docs/) cover the VM's image, mounts and resources, and the [virtx](https://github.com/brekkylab/virtx) README covers the VM layer itself.
+The [docs](https://ailoy.co/docs/) cover the VM's image, volumes and resources, and the [virtx](https://github.com/brekkylab/virtx) README covers the VM layer itself.
 
 ## Building from source
 

@@ -25,8 +25,7 @@ Every setting has a default, and an agent without a context manager acts as one 
 ```python
 agent = await (
     AgentBuilder("anthropic/claude-haiku-5-5")
-    .system_tools()
-    .console(console)
+    .sandbox(sandbox)
     .context_manager(max_input_tokens=50_000, preserve_recent_turns=2)
     .build()
 )
@@ -38,8 +37,7 @@ agent = await (
 
 ```js
 const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
-  .systemTools()
-  .console(console_)
+  .sandbox(sandbox)
   .contextManager({ maxInputTokens: 50000, preserveRecentTurns: 2 })
   .build()
 ```
@@ -52,8 +50,7 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
 use ailoy::agent::ContextManager;
 
 let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
-    .system_tools()
-    .console(console)
+    .sandbox(sandbox)
     .context_manager(ContextManager {
         max_input_tokens: 50_000,
         preserve_recent_turns: 2,

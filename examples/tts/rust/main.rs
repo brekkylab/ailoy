@@ -15,10 +15,16 @@
 //! There is no prompt: the agent reads `text.txt` and `instruct.txt` from the context folder,
 //! speaks the text in that voice and hands back the WAV.
 //!
-//! The skill (`SKILL.md`, `run_tts.py`) is mounted from memory at `/skills/tts`.
+//! Four volumes on the virtx server are mounted into the sandbox:
 //!
-//! * `context/` at `/context`, read-only — the text and the instruction.
-//! * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes.
+//! * `ailoy-tts-models` at `/models`, read-only — `data/ncnn/` beside this file, the converted
+//!   models, put there each run.
+//! * `ailoy-tts-skill` at `/skills/tts`, read-only — the skill (`SKILL.md`, `run_tts.py`) from
+//!   `../shared/`, put there each run.
+//! * `ailoy-tts-context` at `/context`, read-only — `context/` beside this file, the text and the
+//!   instruction, put there each run.
+//! * `ailoy-tts-artifacts` at `/artifacts`, writable — where what the agent hands back goes. It
+//!   stays on the server between runs, and is copied to `artifacts/` beside this file at the end.
 //!
 //! Qwen3-TTS and its weights are the Qwen team's, under Apache-2.0.
 //!
@@ -32,35 +38,26 @@ use std::{io::Write as _, path::Path};
 
 use ailoy::{
     agent::AgentBuilder,
-    console::ConsoleClient,
     message::{Message, Part, Role},
 };
-use anyhow::Context as _;
-// One host binding per platform (mounts on `try_new`, unmounts on `Drop`), so the tree
-// below is written once. Three arms, not `not(windows)`: virtx's default `mount` feature
-// compiles only its target's binding, each a distinct guard type.
+use anyhow::{Context as _, bail};
 use futures::StreamExt as _;
-#[cfg(windows)]
-use virtx::fs::DokanMount as HostMount;
-#[cfg(target_os = "linux")]
-use virtx::fs::FuseMount as HostMount;
-#[cfg(target_os = "macos")]
-use virtx::fs::FuseTMount as HostMount;
-use virtx::{fs::Directory, image::Recipe};
+use virtx::{Client, Files as _, ImageJobEntry, Recipe, SandboxCreateArgs, SandboxVolume};
+
+/// The image the sandbox boots, built once on the virtx server and kept under this tag.
+const IMAGE: &str = "ailoy-tts:1";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
-    // Absolute, because a mount is named to the server as a `file://` URL.
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
     // What the Rust, Python and Node sides share: the skill and the scripts that fetch its data.
     let shared_path = examples.join("tts/shared");
     // What a run reads and writes, beside this file.
     let project_path = examples.join("tts/rust");
     prepare(&shared_path, &project_path).await?;
-    // `skill` too, which is empty on the host: it is where the skill is mounted from memory.
-    for dir in ["context", "artifacts", "skill"] {
+    for dir in ["context", "artifacts"] {
         let dir = project_path.join(dir);
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     }
@@ -74,9 +71,114 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // The console server, fetched into virtx's cache the first time: a host that installed only
-    // ailoy has none.
-    virtx::ensure_virtx().await?;
+    // The virtx server, fetched into virtx's cache the first time: a host that installed only
+    // ailoy has none. The sandboxes it holds go when this program does.
+    let client = tokio::task::spawn_blocking(|| Client::spawn_virtx([] as [&str; 0])).await??;
+
+    // The image, built once. Debian, not Alpine: PyPI's ncnn wheels are manylinux (glibc) only.
+    // The server answers a tag in its full form, as `docker.io/library/ailoy-tts:1`.
+    let images = client.list_image().await?;
+    if !images
+        .iter()
+        .any(|i| i.reference.rsplit('/').next() == Some(IMAGE))
+    {
+        println!("Building {IMAGE}, once; it takes a few minutes.");
+        let recipe = Recipe::new("python:3.12-slim-trixie")
+            // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader the
+            // wheel opens. Mesa from backports: 26.0 against trixie's 25.0.
+            .step(
+                "echo 'deb http://deb.debian.org/debian trixie-backports main' \
+                > /etc/apt/sources.list.d/backports.list \
+                && apt-get update && apt-get install -y --no-install-recommends \
+                -t trixie-backports mesa-vulkan-drivers \
+                && apt-get install -y --no-install-recommends libvulkan1 \
+                && rm -rf /var/lib/apt/lists/*",
+            )
+            .step("pip install --no-cache-dir ncnn numpy tokenizers");
+        let mut log = client.build_image(recipe, IMAGE).log();
+        while let Some(entry) = log.next().await {
+            if let ImageJobEntry::End(end) = entry?.entry
+                && let Some(error) = end.error
+            {
+                bail!("building {IMAGE}: {error}");
+            }
+        }
+    }
+
+    // The volumes, made the first time and kept on the server: `409` says one is there already.
+    let mut volumes = Vec::new();
+    for name in [
+        "ailoy-tts-models",
+        "ailoy-tts-skill",
+        "ailoy-tts-context",
+        "ailoy-tts-artifacts",
+    ] {
+        volumes.push(match client.create_volume(Some(name)).await {
+            Err(e) if e.status() == Some(409) => client.get_volume(name).await?,
+            made => made?,
+        });
+    }
+    let [models, skill, context_volume, artifacts] = <[_; 4]>::try_from(volumes).unwrap();
+
+    // `data/ncnn/` and `context/`, every file of them, onto theirs.
+    for (from, volume) in [
+        (project_path.join("data/ncnn"), &models),
+        (context, &context_volume),
+    ] {
+        let mut dirs = vec![(from, String::new())];
+        while let Some((dir, at)) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir)? {
+                let entry = entry?;
+                let to = format!("{at}{}", entry.file_name().to_string_lossy());
+                if entry.file_type()?.is_dir() {
+                    volume.create_dir_all(to.clone()).await?;
+                    dirs.push((entry.path(), format!("{to}/")));
+                } else {
+                    volume
+                        .write_file(to, std::fs::read(entry.path())?, None)
+                        .await?;
+                }
+            }
+        }
+    }
+    // The skill, from `shared/`.
+    for name in ["SKILL.md", "run_tts.py"] {
+        skill
+            .write_file(name, std::fs::read(shared_path.join(name))?, None)
+            .await?;
+    }
+
+    let mut args = SandboxCreateArgs::new(IMAGE);
+    args.volumes = vec![
+        SandboxVolume {
+            volume: models.name().to_string(),
+            path: "/models".to_string(),
+            readonly: true,
+        },
+        SandboxVolume {
+            volume: skill.name().to_string(),
+            path: "/skills/tts".to_string(),
+            readonly: true,
+        },
+        SandboxVolume {
+            volume: context_volume.name().to_string(),
+            path: "/context".to_string(),
+            readonly: true,
+        },
+        SandboxVolume {
+            volume: artifacts.name().to_string(),
+            path: "/artifacts".to_string(),
+            readonly: false,
+        },
+    ];
+    args.gpu = Some(true);
+    args.vcpus = Some(2);
+    // The talker is 2.8 GB on the device in fp16, and its cache and the codec's buffers come on
+    // top of it there; the run itself takes under 1 GB of memory.
+    args.memory_mib = Some(4096);
+    args.gpu_memory_mib = Some(8192);
+    let sandbox = client.create_sandbox(&args).await?;
+
     let mut agent = AgentBuilder::new(
         std::env::var("AILOY_MODEL").unwrap_or_else(|_| "anthropic/claude-sonnet-5".to_string()),
     )
@@ -92,47 +194,7 @@ async fn main() -> anyhow::Result<()> {
         "Write every result here, such as a report, a figure, or the file the user came for. ",
         "Everything in this folder is collected and handed back to the user, and a result left anywhere else is not delivered.",
     ))
-    .system_tools()
-    .console(
-        ConsoleClient::builder()
-            // Debian, not Alpine: PyPI's ncnn wheels are manylinux (glibc) only.
-            .image(
-                Recipe::new("python:3.12-slim-trixie")
-                    // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader
-                    // the wheel opens. Mesa from backports: 26.0 against trixie's 25.0.
-                    .step(
-                        "echo 'deb http://deb.debian.org/debian trixie-backports main' \
-                        > /etc/apt/sources.list.d/backports.list \
-                        && apt-get update && apt-get install -y --no-install-recommends \
-                        -t trixie-backports mesa-vulkan-drivers \
-                        && apt-get install -y --no-install-recommends libvulkan1 \
-                        && rm -rf /var/lib/apt/lists/*",
-                    )
-                    .step("pip install --no-cache-dir ncnn numpy tokenizers"),
-            )
-            .mount_readonly(project_path.join("data/ncnn"), "/models")
-            .mount_readonly(
-                HostMount::try_new(
-                    Directory::new()
-                        .with_file("SKILL.md", include_str!("../shared/SKILL.md").as_bytes())?
-                        .with_file("run_tts.py", include_str!("../shared/run_tts.py").as_bytes())?,
-                    &project_path.join("skill"),
-                )
-                .with_context(|| "mounting the skill")?,
-                "/skills/tts",
-            )
-            .mount_readonly(context, "/context")
-            .mount(project_path.join("artifacts"), "/artifacts")
-            .gpu(true)
-            .vcpus(2)
-            // The talker is 2.8 GB on the device in fp16, and its cache and the codec's buffers
-            // come on top of it there; the run itself takes under 1 GB of memory.
-            .memory_mib(4096)
-            .gpu_memory_mib(8192)
-            .build()
-            .await
-            .context("starting the console")?,
-    )
+    .sandbox(sandbox)
     .skill("/skills/tts")
     .build()
     .await?;
@@ -165,6 +227,21 @@ async fn main() -> anyhow::Result<()> {
             _ => {}
         }
         std::io::stdout().flush()?;
+    }
+
+    // The artifacts, every file of them, to `artifacts/` here.
+    let mut dirs = vec![String::new()];
+    while let Some(at) = dirs.pop() {
+        std::fs::create_dir_all(project_path.join("artifacts").join(&at))?;
+        for entry in artifacts.read_dir(at.clone()).await? {
+            let from = format!("{at}{}", entry.name);
+            if entry.metadata.is_dir {
+                dirs.push(format!("{from}/"));
+            } else {
+                let bytes = artifacts.read_file(from.clone(), 0, None).await?;
+                std::fs::write(project_path.join("artifacts").join(&from), bytes)?;
+            }
+        }
     }
 
     Ok(())

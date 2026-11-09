@@ -5,19 +5,19 @@ description: Build an AI agent in Python, Node.js or Rust with Ailoy: an agent w
 
 # Ailoy
 
-An agent gets a **console**: a Linux micro-VM booted from an image you name, with only the host folders you mount. A model drives it turn by turn, asking for tools and getting their results back, until it has nothing more to ask. So "an agent that writes code and runs it" is a builder call, not a sandbox you assemble.
+An agent gets a **sandbox**: a Linux micro-VM booted from an image you name, with only the volumes you mount. A model drives it turn by turn, asking for tools and getting their results back, until it has nothing more to ask. So "an agent that writes code and runs it" is a builder call, not a tool loop you assemble.
 
-Work the steps below in order. Step 3 is the one that gets skipped: an agent given tools but no console has nowhere to run them.
+Work the steps below in order. Step 3 is the one that gets skipped: an agent given tools but no sandbox has nowhere to run them.
 
 ## 1. Install, in the user's language
 
-| Language | Install | The console comes from |
+| Language | Install | The sandbox comes from |
 |---|---|---|
-| Python | `pip install ailoy-py` | `from virtx import ConsoleClient, Recipe, ensure_virtx` |
+| Python | `pip install ailoy-py` | `from virtx import Client, Recipe, SandboxVolume` |
 | Node.js | `npm install @brekkylab/ailoy @brekkylab/virtx` | `require('@brekkylab/virtx')` |
-| Rust | `ailoy = "0.3"`, `virtx = "0.1"` in `Cargo.toml` | `virtx::console::ConsoleClient` |
+| Rust | `ailoy = "0.3"`, `virtx = "0.1"` in `Cargo.toml` | `virtx::{Client, SandboxCreateArgs}` |
 
-The console is [virtx](https://github.com/brekkylab/virtx)'s: Ailoy takes a `ConsoleClient` built with virtx's own package and adds no console API of its own. A console runs on virtx's server, which `ensure_virtx()` (`ensureVirtx()` in Node) fetches into virtx's cache the first time and leaves as it is after. Call it before building a console: on a host without the server, building one fails with an error that starts `starting the console server:`.
+The sandbox is [virtx](https://github.com/brekkylab/virtx)'s: Ailoy takes a `Sandbox` made with virtx's own package and adds no sandbox API of its own. A sandbox runs on virtx's server, which `Client.spawn()` (`Client::spawn_virtx` in Rust) starts, fetching it into virtx's cache the first time. The sandboxes a spawned server holds go when its client is closed or the program ends.
 
 ## 2. Name the model, and decide how it runs
 
@@ -43,26 +43,31 @@ Node is `setLangModelProvider('anthropic', 'api')`; Rust is `ailoy::model::set_l
 
 ## 3. Give it a computer
 
-Decide what the agent's machine holds before writing the agent: the image is where its software comes from, and mounts are the only way its work reaches the host.
+Decide what the agent's machine holds before writing the agent: the image is where its software comes from, and volumes are how files go in before a run and come out after.
 
 ```python
-from virtx import ConsoleClient, Recipe, ensure_virtx
+from virtx import Client, ImageJobEnd, Recipe, SandboxVolume
 
-await ensure_virtx()   # fetches the server the first time; a no-op after
-console = await (
-    ConsoleClient.builder()
-    .image(Recipe("python:3.12-slim-trixie").step("pip install matplotlib"))
-    .mount("./artifacts", "/artifacts")   # the one place its output lands on the host
-    .network(False)                        # on unless turned off
-    .build()
+client = Client.spawn()   # starts virtx's server, fetched into its cache the first time
+
+recipe = Recipe("python:3.12-slim-trixie").run("pip install matplotlib")
+async for entry in client.build_image(recipe, "plot:latest"):
+    if isinstance(entry.entry, ImageJobEnd) and entry.entry.error:
+        raise RuntimeError(entry.entry.error)
+
+artifacts = await client.create_volume("plot-artifacts")   # kept on the server; `409` if it is there
+sandbox = await client.create_sandbox(
+    "plot:latest",
+    volumes=[SandboxVolume(volume=artifacts, path="/artifacts")],   # where its output is read back from
+    network=False,                                                   # on unless turned off
 )
 ```
 
-- A `Recipe` is a base image plus steps, as a Dockerfile is. It is built on first use and cached, so put the software the agent needs in steps rather than asking the agent to install it every run.
-- Mount what the agent must read or write, at an absolute guest path, and nothing more. A read-only input goes through `mount_readonly`. Mounting needs FUSE on the host: FUSE-T on macOS, Dokany on Windows.
-- Tell the agent in its instruction where the mounts are; it cannot see the host's paths.
+- A `Recipe` is a base image plus steps, as a Dockerfile is. Build it once under a name and check `client.list_image()` before building again, so the agent does not install its software every run.
+- A volume is a folder on the server. Write the agent's inputs onto one with `write_file`, mount it at an absolute guest path (`readonly=True` for an input), and read what the agent wrote from it with `read_file` and `read_dir` after the run.
+- Tell the agent in its instruction where the volumes are; it cannot see the host's paths.
 
-Node is the same calls in camelCase; Rust takes absolute host paths (`std::path::absolute("./artifacts")?`). [`docs/src/content/docs/guide/building-vm.mdx`](../../docs/src/content/docs/guide/building-vm.mdx) has images, CPUs, memory and the GPU.
+Node is the same calls in camelCase, with the options as an object (`createSandbox('plot:latest', { volumes: [{ volume: artifacts, path: '/artifacts' }] })`); Rust builds `SandboxCreateArgs::new("plot:latest").volume(artifacts.name(), "/artifacts")`. [`docs/src/content/docs/guide/building-vm.mdx`](../../docs/src/content/docs/guide/building-vm.mdx) has images, volumes, CPUs, memory and the GPU.
 
 ## 4. Build the agent
 
@@ -72,8 +77,7 @@ from ailoy import AgentBuilder
 agent = await (
     AgentBuilder("anthropic/claude-haiku-5-5")
     .instruction("Write what you are asked for into /artifacts.")
-    .system_tools()        # shell, file reading and editing, image reading, in the model family's own style
-    .console(console)
+    .sandbox(sandbox)
     .build()
 )
 ```
@@ -82,19 +86,18 @@ What else the builder takes, by what the task needs:
 
 | The agent should | Builder call |
 |---|---|
-| run commands and edit files in its console | `.system_tools()`, or `.shell_tool()` alone |
 | read the web | `.web_fetch_tool()`, `.web_search_tool([...])` |
 | use an MCP server's tools | `tools = await register_mcp_stdio("fetch", "uvx", ["mcp-server-fetch"])`, then `.tools(tools)`; `register_mcp_streamable_http(prefix, url)` for a remote one |
 | call your own function | `desc = register_tool({"name": ..., "description": ..., "parameters": <JSON schema>}, func)`, then `.tool(desc)` |
-| drive a web browser | `.browser()` for the user's own Chrome (remote debugging on), `.browser(isolated=True)` for one of its own; it runs on the host, not in the console |
-| follow a procedure you wrote | `.skill("/skills/<name>")`, a directory holding a `SKILL.md`, mounted into the console |
-| remember across sessions | `.memory("/work/notes.sqlite")`, a store made by `mem init` inside the console |
+| drive a web browser | `.browser()` for the user's own Chrome (remote debugging on), `.browser(isolated=True)` for one of its own; it runs on the host, not in the sandbox |
+| follow a procedure you wrote | `.skill("/skills/<name>")`, a directory holding a `SKILL.md`, on a volume mounted into the sandbox |
+| remember across sessions | `.memory("/work/notes.sqlite")`, a store made by `mem init` inside the sandbox |
 | pick up an earlier conversation | `.history(messages)`, e.g. a previous agent's `agent.history` |
 | keep long runs within the context window | `.context_manager(max_input_tokens=..., preserve_recent_turns=..., max_images=..., preserve_recent_images=...)`, which blanks old tool results past `max_input_tokens` (off unless given) and old screenshots past `max_images` (30, `0` for off) |
 | think harder, or less | `.thinking_effort("low" \| "medium" \| "high")` |
 | answer in a fixed shape | `.output_schema({...})`, a JSON schema |
 
-A stdio MCP server runs on the host, with your program's access, not in the console. Register only servers you trust. [`docs/src/content/docs/guide/using-mcp.mdx`](../../docs/src/content/docs/guide/using-mcp.mdx) has both transports in all three languages. [`docs/src/content/docs/guide/using-browser.mdx`](../../docs/src/content/docs/guide/using-browser.mdx) has the browser's options and what it asks the user before letting the agent in.
+A stdio MCP server runs on the host, with your program's access, not in the sandbox. Register only servers you trust. [`docs/src/content/docs/guide/using-mcp.mdx`](../../docs/src/content/docs/guide/using-mcp.mdx) has both transports in all three languages. [`docs/src/content/docs/guide/using-browser.mdx`](../../docs/src/content/docs/guide/using-browser.mdx) has the browser's options and what it asks the user before letting the agent in.
 
 ## 5. Run it, and read what comes back
 
@@ -107,11 +110,11 @@ async for output in agent.run("Create a bar chart of European populations and sa
 
 `run` yields one complete message per step of the tool loop: the model's text, its tool calls in `tool_calls`, and each tool's result as a `tool` message. `run_stream` (`runStream`) yields deltas instead, for token-by-token output. A message is `{"role", "contents": [parts]}`; a part is `text`, `image`, `function` or `value`. To send an image, pass a whole message rather than a string. [`docs/src/content/docs/guide/message-format.mdx`](../../docs/src/content/docs/guide/message-format.mdx) has every field.
 
-In Node, close the agent in a `finally`; in Python, the console is an async context manager. Closing the agent leaves a console you built open, so one console can serve several agents in turn.
+In Node, close the agent and the client in a `finally`. Closing the agent leaves the sandbox as it is, so one sandbox can serve several agents in turn; `sandbox.remove()` removes it.
 
 ## 6. Check the work where it landed
 
-Look at the mount on the host, not at the model's last sentence: a turn that ends with "saved to /artifacts/population.png" and an empty `./artifacts` is the failure this step exists to catch. If the file is missing, the usual causes are an instruction that named no path, a mount the agent was not told about, or a session built with `network(False)` for a step that needed the network.
+Read the file back from the volume, not the model's last sentence: a turn that ends with "saved to /artifacts/population.png" and no `population.png` on the volume is the failure this step exists to catch. If the file is missing, the usual causes are an instruction that named no path, a volume the agent was not told about, or a sandbox made with `network=False` for a step that needed the network.
 
 ## Examples
 
@@ -119,9 +122,9 @@ Each lives in `examples/<name>/` with a folder per language and a `shared/` fold
 
 | Example | Shows |
 |---|---|
-| [`hello`](../../examples/hello) | one turn, no tools, no console |
-| [`browser-use`](../../examples/browser-use) | the user's own browser, or an isolated one, alongside a console |
-| [`cad`](../../examples/cad) | a skill directory, a mount for artifacts, a model that looks at its own renders |
-| [`offshore_leaks`](../../examples/offshore_leaks) | a large dataset mounted read-only, analysed with SQL and Python the agent writes |
+| [`hello`](../../examples/hello) | one turn, no tools, no sandbox |
+| [`browser-use`](../../examples/browser-use) | the user's own browser, or an isolated one, alongside a sandbox |
+| [`cad`](../../examples/cad) | a skill on a volume, a volume for artifacts, a model that looks at its own renders |
+| [`offshore_leaks`](../../examples/offshore_leaks) | a large dataset on a read-only volume, analysed with SQL and Python the agent writes |
 | [`retail_bench`](../../examples/retail_bench) | a simulator the agent drives one turn at a time |
-| [`gameplay`](../../examples/gameplay), [`sam3`](../../examples/sam3), [`tts`](../../examples/tts), [`laya`](../../examples/laya) | the GPU inside the console: a game over VNC, a vision model, speech, a local LLM |
+| [`gameplay`](../../examples/gameplay), [`sam3`](../../examples/sam3), [`tts`](../../examples/tts), [`laya`](../../examples/laya) | the GPU inside the sandbox: a game over VNC, a vision model, speech, a local LLM |

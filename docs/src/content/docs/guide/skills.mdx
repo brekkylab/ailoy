@@ -38,24 +38,25 @@ Ailoy reads `name` and `description` and nothing else from the frontmatter, each
 
 ## Giving the agent a skill
 
-`skill(dir)` takes the folder's path in the agent's VM, not on your machine, so mount the folder into the VM, with whatever its instructions expect to find there: Laya's reads its model from `/models`, which `examples/laya` mounts too. Call `skill` once for each skill.
+`skill(dir)` takes the folder's path in the agent's sandbox, not on your machine, so put the folder on a volume and mount it into the sandbox, with whatever its instructions expect to find there: Laya's reads its model from `/models`, which `examples/laya` mounts too. Call `skill` once for each skill.
 
 <Tabs syncKey="lang">
 
 <TabItem label="Python">
 
 ```python
-console = await (
-    ConsoleClient.builder()
-    .image(Recipe("python:3.12-slim-trixie"))
-    .mount_readonly("./skills/laya", "/skills/laya")
-    .build()
+skill = await client.create_volume("skill-laya")
+for path in Path("skills/laya").iterdir():
+    await skill.write_file(path.name, path.read_bytes())
+
+sandbox = await client.create_sandbox(
+    "python:3.12-slim-trixie",
+    volumes=[SandboxVolume(volume=skill, path="/skills/laya", readonly=True)],
 )
 
 agent = await (
     AgentBuilder("anthropic/claude-haiku-5-5")
-    .system_tools()
-    .console(console)
+    .sandbox(sandbox)
     .skill("/skills/laya")
     .build()
 )
@@ -65,14 +66,17 @@ agent = await (
 <TabItem label="Node.js">
 
 ```js
-const console_ = await ConsoleClient.builder()
-  .image(new Recipe('python:3.12-slim-trixie'))
-  .mountReadonly('./skills/laya', '/skills/laya')
-  .build()
+const skill = await client.createVolume('skill-laya')
+for (const name of readdirSync('skills/laya')) {
+  await skill.writeFile(name, readFileSync(join('skills/laya', name)))
+}
+
+const sandbox = await client.createSandbox('python:3.12-slim-trixie', {
+  volumes: [{ volume: skill, path: '/skills/laya', readonly: true }],
+})
 
 const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
-  .systemTools()
-  .console(console_)
+  .sandbox(sandbox)
   .skill('/skills/laya')
   .build()
 ```
@@ -81,15 +85,22 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
 <TabItem label="Rust">
 
 ```rust
-let console = ConsoleClient::builder()
-    .image(Recipe::new("python:3.12-slim-trixie"))
-    .mount_readonly(std::path::absolute("./skills/laya")?, "/skills/laya")
-    .build()
+let skill = client.create_volume(Some("skill-laya")).await?;
+for entry in std::fs::read_dir("skills/laya")? {
+    let entry = entry?;
+    skill
+        .write_file(entry.file_name().to_string_lossy(), std::fs::read(entry.path())?, None)
+        .await?;
+}
+
+let sandbox = client
+    .create_sandbox(
+        &SandboxCreateArgs::new("python:3.12-slim-trixie").readonly_volume(skill.name(), "/skills/laya"),
+    )
     .await?;
 
 let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
-    .system_tools()
-    .console(console)
+    .sandbox(sandbox)
     .skill("/skills/laya")
     .build()
     .await?;
@@ -98,7 +109,7 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
 </TabItem>
 </Tabs>
 
-When the agent writes the system message itself, `build()` reads the frontmatter of each `SKILL.md` through the console, and fails if a `SKILL.md` is missing or has no `name` or `description`. The system message gets a list of the skills after the instruction: each one's name, description and location, and a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` stays out of the system message, and the agent reads it with its own tools, so an agent with skills needs a console and a tool that reads files, such as those of `system_tools()`.
+When the agent writes the system message itself, `build()` reads the frontmatter of each `SKILL.md` through the sandbox, and fails if a `SKILL.md` is missing or has no `name` or `description`. The system message gets a list of the skills after the instruction: each one's name, description and location, and a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` stays out of the system message, and the agent reads it with its own tools, so an agent with skills needs a sandbox and a tool that reads files, such as `read`, which a sandbox brings with it.
 
 For `anthropic` models the list is an XML block:
 

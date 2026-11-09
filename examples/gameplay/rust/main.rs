@@ -1,4 +1,4 @@
-//! An agent that plays OpenTTD, running in a console, while you watch it over VNC.
+//! An agent that plays OpenTTD, running in a sandbox, while you watch it over VNC.
 //!
 //! ```sh
 //! cargo run --example gameplay
@@ -7,14 +7,13 @@
 //!
 //! [OpenTTD](https://www.openttd.org) is the open-source game after Transport Tycoon Deluxe,
 //! and with OpenGFX, OpenSFX and OpenMSX, everything it needs is free: there is nothing to
-//! bring. A console installs it all from Debian and runs the game as a dedicated server, in
-//! which the agent runs a company: it looks at towns and industries, builds stations, roads
+//! bring. The sandbox's image installs it all from Debian, and the sandbox runs the game as a
+//! dedicated server, in which the agent runs a company: it looks at towns and industries, builds stations, roads
 //! and airports, buys vehicles and lets time pass, and sees from the company's books what
 //! earns.
 //!
-//! **Two consoles**: the game runs in one of its own, and the agent in another. An agent
-//! stops its console after each batch of tool calls, which would stop the game with it, so
-//! the game's console is this program's and runs until the end.
+//! **One sandbox**: the game and the agent's commands run side by side in it, the game as one
+//! job that runs for as long as it does.
 //!
 //! **How it plays**: the skill's `ttd.py` speaks to the server's admin port, and the
 //! `AiloyBridge` Game Script inside the game takes what it says as commands and carries them
@@ -28,24 +27,24 @@
 //! the date, until the game has run for `OPENTTD_YEARS` years. Older command output drops out
 //! of its context as it goes, and its notes in `artifacts/notes.md` carry what it knows.
 //!
-//! **Ports**: the game's console publishes its admin port and `shot.py`, which takes
-//! screenshots, at the same ports on this machine's loopback, and every console reaches a
-//! published port at `127.0.0.1` as a program here does -- so `ttd.py` finds the game at the
-//! same address from either console. The VNC server is published at `localhost:5901`.
+//! **Ports**: `ttd.py` reaches the game's admin port and `shot.py`, which takes screenshots,
+//! at `127.0.0.1` in the sandbox. Only the VNC server's port is opened, and forwarded to an
+//! address on this machine's loopback, which the program prints.
 //!
-//! **Watching**: open `vnc://localhost:5901`
-//! (Screen Sharing on macOS, or any VNC viewer) with the password `openttd`: a client of the
+//! **Watching**: open that address as `vnc://127.0.0.1:PORT` (Screen Sharing on macOS, or any
+//! VNC viewer) with the password `openttd`: a client of the
 //! game there spectates, and its view follows what the agent builds. You can start a company
 //! of your own from its menu and play against the agent.
 //!
-//! The skill (`SKILL.md`, `ttd.py`, `admin.py`) is mounted from memory at `/skills/openttd`,
-//! in both consoles.
+//! Two volumes on the virtx server are mounted into the sandbox:
 //!
-//! * `../shared/server/` at `/example` in the game's console, read-only — `start.sh`, the Game
-//!   Script, the AI and `shot.py`.
-//! * `artifacts/` at `/artifacts` in both, writable — the agent's notes, the screenshots it
-//!   took, the saved games in `user/openttd/save/` (the last as `ailoy-final.sav`), and the
-//!   logs.
+//! * `ailoy-gameplay` at `/skills/openttd`, read-only — `../shared/`, put there each run: the
+//!   skill (`SKILL.md`, `ttd.py`, `admin.py`) and, in `server/`, `start.sh`, the Game Script,
+//!   the AI and `shot.py`.
+//! * `ailoy-gameplay-artifacts` at `/artifacts`, writable — the agent's notes, the screenshots
+//!   it took, the saved games in `user/openttd/save/` (the last as `ailoy-final.sav`), and the
+//!   logs. It stays on the server between runs, and is copied to `artifacts/` beside this file
+//!   at the end.
 //!
 //! Environment, also read from `.env`:
 //!
@@ -54,41 +53,32 @@
 //!   screenshots when it looks, so it should take images.
 //! * `OPENTTD_YEARS` — how many years of the game the agent plays, `3` by default. A game
 //!   month takes a minute to pass.
-//! * `OPENTTD_SAVE` — a saved game in `artifacts/user/openttd/save/` to go on with, such as
-//!   `ailoy-final.sav`, rather than a new game.
+//! * `OPENTTD_SAVE` — a saved game in `user/openttd/save/` of the artifacts to go on with, such
+//!   as `ailoy-final.sav`, rather than a new game.
 //! * `OPENTTD_SEED`, `OPENTTD_YEAR`, `OPENTTD_MAP_X`, `OPENTTD_MAP_Y` — the new game's random
 //!   seed, its first year (`1950`), and its size as powers of two (`8`, 256 tiles).
 //! * `OPENTTD_SIZE` — the viewer's display, `1280x720` by default.
 //! * `OPENTTD_VNC_PASSWORD` — the viewer's password, `openttd` by default.
 
-use std::{io::Write as _, path::Path, sync::Arc};
+use std::{io::Write as _, path::Path};
 
 use ailoy::{
     agent::{Agent, AgentBuilder, ContextManager},
-    console::ConsoleClient,
     message::{FinishReason, Message, Part, Role},
+    tool::exec,
 };
 use anyhow::{Context as _, bail};
-// One host binding per platform (mounts on `try_new`, unmounts on `Drop`), so the tree
-// below is written once. Three arms, not `not(windows)`: virtx's default `mount` feature
-// compiles only its target's binding, each a distinct guard type.
 use futures::StreamExt as _;
-#[cfg(windows)]
-use virtx::fs::DokanMount as HostMount;
-#[cfg(target_os = "linux")]
-use virtx::fs::FuseMount as HostMount;
-#[cfg(target_os = "macos")]
-use virtx::fs::FuseTMount as HostMount;
-use virtx::{fs::Directory, image::Recipe, protocol::Port};
+use virtx::{
+    Client, Files as _, ImageJobEntry, PortForwarder, Recipe, SandboxCreateArgs, SandboxExecArgs,
+    SandboxJobEntry, SandboxVolume,
+};
 
-/// The port a VNC viewer connects to here, and the VNC server's in the game's console.
-const VIEWER_PORT: u16 = 5901;
+/// The image the sandbox boots, built once on the virtx server and kept under this tag.
+const IMAGE: &str = "ailoy-gameplay:1";
+
+/// The VNC server's port in the sandbox.
 const VNC_PORT: u16 = 5900;
-
-/// The game's admin port and `shot.py`'s, published at the same numbers here so that
-/// `admin.py` names one address for both consoles.
-const ADMIN_PORT: u16 = 3977;
-const SHOT_PORT: u16 = 5902;
 
 /// The goal when none is given.
 const GOAL: &str = "Make Ailoy Transport as valuable as you can: build routes that earn, \
@@ -125,60 +115,82 @@ async fn main() -> anyhow::Result<()> {
     let size = std::env::var("OPENTTD_SIZE").unwrap_or_else(|_| "1280x720".to_string());
     let password = std::env::var("OPENTTD_VNC_PASSWORD").unwrap_or_else(|_| "openttd".to_string());
     let save = std::env::var("OPENTTD_SAVE").unwrap_or_default();
+    let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/gameplay");
 
-    // Absolute, because a mount is named to the server as a `file://` URL.
-    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
-    // What the game's console runs: `start.sh`, the Game Script and the AI.
-    let shared_path = examples.join("gameplay/shared");
-    // What a run reads and writes, beside this file.
-    let project_path = examples.join("gameplay/rust");
-    // `skill` too, which is empty on the host: it is where the skill is mounted from memory.
-    for dir in ["artifacts", "skill"] {
-        let dir = project_path.join(dir);
-        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    // The virtx server, fetched into virtx's cache the first time: a host that installed only
+    // ailoy has none. The sandboxes it holds go when this program does.
+    let client = tokio::task::spawn_blocking(|| Client::spawn_virtx([] as [&str; 0])).await??;
+
+    // The image, built once: the game, and the free graphics, sounds and music it needs, a
+    // display for the viewer, Python for `ttd.py`, and ImageMagick for the agent's screenshots.
+    // The server answers a tag in its full form, as `docker.io/library/ailoy-gameplay:1`.
+    let images = client.list_image().await?;
+    if !images
+        .iter()
+        .any(|i| i.reference.rsplit('/').next() == Some(IMAGE))
+    {
+        println!("Building {IMAGE}, once; it takes a few minutes.");
+        let recipe = Recipe::new("debian:trixie-slim").step(
+            "apt-get update \
+            && apt-get install -y --no-install-recommends \
+                openttd openttd-opengfx openttd-opensfx openttd-openmsx xvfb x11vnc python3 \
+                imagemagick \
+            && rm -rf /var/lib/apt/lists/*",
+        );
+        let mut log = client.build_image(recipe, IMAGE).log();
+        while let Some(entry) = log.next().await {
+            if let ImageJobEntry::End(end) = entry?.entry
+                && let Some(error) = end.error
+            {
+                bail!("building {IMAGE}: {error}");
+            }
+        }
     }
 
-    // The console server, fetched into virtx's cache the first time: a host that installed only
-    // ailoy has none.
-    virtx::ensure_virtx().await?;
-    // One mount, shared: both consoles see the same skill.
-    let skill = Arc::new(
-        HostMount::try_new(
-            Directory::new()
-                .with_file("SKILL.md", include_str!("../shared/SKILL.md").as_bytes())?
-                .with_file("ttd.py", include_str!("../shared/ttd.py").as_bytes())?
-                .with_file("admin.py", include_str!("../shared/admin.py").as_bytes())?,
-            &project_path.join("skill"),
-        )
-        .with_context(|| "mounting the skill")?,
-    );
-    let mut game = ConsoleClient::builder()
-        .image(
-            // All of it in `main`: the game, and the free graphics, sounds and music it needs,
-            // a display for the viewer, and ImageMagick for the agent's screenshots of it.
-            Recipe::new("debian:trixie-slim").step(
-                "apt-get update \
-                && apt-get install -y --no-install-recommends \
-                    openttd openttd-opengfx openttd-opensfx openttd-openmsx xvfb x11vnc python3 \
-                    imagemagick \
-                && rm -rf /var/lib/apt/lists/*",
-            ),
-        )
-        .mount_readonly(shared_path.join("server"), "/example")
-        .mount_readonly(skill.clone(), "/skills/openttd")
-        .mount(project_path.join("artifacts"), "/artifacts")
-        // The build's `apt-get` runs with the session's network. What comes in is the viewer,
-        // and the agent's console at the admin port and `shot.py`.
-        .ports([
-            Port::new(VIEWER_PORT, VNC_PORT)?,
-            Port::new(ADMIN_PORT, ADMIN_PORT)?,
-            Port::new(SHOT_PORT, SHOT_PORT)?,
-        ])
-        .vcpus(2)
-        .memory_mib(2048)
-        .build()
-        .await
-        .with_context(|| "starting the game's console")?;
+    // The volumes, made the first time and kept on the server: `409` says one is there already.
+    let mut volumes = Vec::new();
+    for name in ["ailoy-gameplay", "ailoy-gameplay-artifacts"] {
+        volumes.push(match client.create_volume(Some(name)).await {
+            Err(e) if e.status() == Some(409) => client.get_volume(name).await?,
+            made => made?,
+        });
+    }
+    let [files, artifacts] = <[_; 2]>::try_from(volumes).unwrap();
+
+    // `shared/`, every file of it, onto the first.
+    let mut dirs = vec![(here.join("shared"), String::new())];
+    while let Some((dir, at)) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let to = format!("{at}{}", entry.file_name().to_string_lossy());
+            if entry.file_type()?.is_dir() {
+                files.create_dir_all(to.clone()).await?;
+                dirs.push((entry.path(), format!("{to}/")));
+            } else {
+                files
+                    .write_file(to, std::fs::read(entry.path())?, None)
+                    .await?;
+            }
+        }
+    }
+
+    let mut args = SandboxCreateArgs::new(IMAGE);
+    args.volumes = vec![
+        SandboxVolume {
+            volume: files.name().to_string(),
+            path: "/skills/openttd".to_string(),
+            readonly: true,
+        },
+        SandboxVolume {
+            volume: artifacts.name().to_string(),
+            path: "/artifacts".to_string(),
+            readonly: false,
+        },
+    ];
+    args.ports = vec![VNC_PORT];
+    args.vcpus = Some(2);
+    args.memory_mib = Some(2048);
+    let sandbox = client.create_sandbox(&args).await?;
 
     // An exec takes no environment of its own, so the settings go through `env`.
     let mut start = vec!["env".to_string()];
@@ -189,31 +201,36 @@ async fn main() -> anyhow::Result<()> {
     }
     start.extend([
         "sh".to_string(),
-        "/example/start.sh".to_string(),
+        "/skills/openttd/server/start.sh".to_string(),
         size,
         password.clone(),
         save,
     ]);
-    let out = game.exec(&start, Some(180_000)).await?;
-    print!("{}", String::from_utf8_lossy(&out.stdout));
-    if out.code != 0 {
-        bail!(
-            "starting OpenTTD:\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+    // The game is one job, running for as long as the game does; `start.sh` says `ready` once
+    // it is up. Leaving its log leaves the job running.
+    let mut game = sandbox.exec(&SandboxExecArgs::new(start)).log();
+    while let Some(entry) = game.next().await {
+        match entry?.entry {
+            SandboxJobEntry::Stdout(line) if line == "ready" => break,
+            SandboxJobEntry::Stdout(line) | SandboxJobEntry::Stderr(line) => println!("{line}"),
+            SandboxJobEntry::End(end) => bail!("OpenTTD did not start (exit {})", end.code),
+            SandboxJobEntry::Truncated {} => {}
+        }
     }
+    let viewer = PortForwarder::open(&client, &sandbox.info().ports[0].url)?;
     println!(
-        "OpenTTD is running. Watch it at vnc://localhost:{VIEWER_PORT} (password: {password})."
+        "OpenTTD is running. Watch it at vnc://{} (password: {password}).",
+        viewer.address()
     );
 
-    let mut date = game_date(&mut game).await?;
+    let mut date = game_date(&sandbox).await?;
     let until = year_of(&date)? + years;
 
     let mut agent = AgentBuilder::new(
         std::env::var("AILOY_MODEL").unwrap_or_else(|_| "anthropic/claude-sonnet-5".to_string()),
     )
     .instruction(concat!(
-        "You play OpenTTD: a game is running in the console, and one company in it is yours. ",
+        "You play OpenTTD: a game is running in your sandbox, and one company in it is yours. ",
         "Read the openttd skill before anything else, and play with its `ttd.py`.\n\n",
         "You play in rounds. In each, look at how the company is doing, decide what to build or ",
         "change, do it, and let time pass with `wait`, a month or two at a time, checking the ",
@@ -225,18 +242,7 @@ async fn main() -> anyhow::Result<()> {
         "vehicles, what each earns, and your plan. Update them as you go. Command output from ",
         "earlier rounds drops out of what you remember; the notes do not.",
     ))
-    .system_tools()
-    // Python for `ttd.py`, and a network to reach the ports the game's console published.
-    .console(
-        ConsoleClient::builder()
-            .image(Recipe::new("python:3.12-slim-trixie"))
-            .mount_readonly(skill, "/skills/openttd")
-            .mount(project_path.join("artifacts"), "/artifacts")
-            .network(true)
-            .build()
-            .await
-            .with_context(|| "starting the agent's console")?,
-    )
+    .sandbox(sandbox.clone())
     .skill("/skills/openttd")
     // Many commands a round, each with its output: keep the last two rounds' results whole,
     // and of the screenshots the agent reads, the latest ten once more than thirty have
@@ -258,7 +264,7 @@ async fn main() -> anyhow::Result<()> {
         println!("\n=== Round {round}: {date} ===\n");
         play(&mut agent, &prompt).await?;
 
-        date = game_date(&mut game).await?;
+        date = game_date(&sandbox).await?;
         if year_of(&date)? >= until {
             println!("\n=== The game has reached {date} ===");
             break;
@@ -269,17 +275,30 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let out = game
-        .exec(
-            ["python3", "/skills/openttd/ttd.py", "save", "ailoy-final"],
-            Some(60_000),
-        )
-        .await?;
-    print!("{}", String::from_utf8_lossy(&out.stdout));
+    let out = exec(
+        &sandbox,
+        ["python3", "/skills/openttd/ttd.py", "save", "ailoy-final"],
+        Some(60_000),
+    )
+    .await?;
+    print!("{}", out.stdout);
+
+    // The artifacts, every file of them, to `artifacts/` here.
+    let mut dirs = vec![String::new()];
+    while let Some(at) = dirs.pop() {
+        std::fs::create_dir_all(here.join("rust/artifacts").join(&at))?;
+        for entry in artifacts.read_dir(at.clone()).await? {
+            let from = format!("{at}{}", entry.name);
+            if entry.metadata.is_dir {
+                dirs.push(format!("{from}/"));
+            } else {
+                let bytes = artifacts.read_file(from.clone(), 0, None).await?;
+                std::fs::write(here.join("rust/artifacts").join(&from), bytes)?;
+            }
+        }
+    }
     println!("The game is still there to look at. Press Enter to stop.");
     tokio::task::spawn_blocking(|| std::io::stdin().read_line(&mut String::new())).await??;
-
-    // Dropping the consoles tears them down, game and all.
     Ok(())
 }
 
@@ -327,21 +346,18 @@ async fn play(agent: &mut Agent, prompt: &str) -> anyhow::Result<()> {
 }
 
 /// The game's date, as `YYYY-MM-DD`.
-async fn game_date(console: &mut ConsoleClient) -> anyhow::Result<String> {
-    let out = console
-        .exec(
-            ["python3", "/skills/openttd/ttd.py", "--json", "status"],
-            Some(60_000),
-        )
-        .await?;
+async fn game_date(sandbox: &virtx::Sandbox) -> anyhow::Result<String> {
+    let out = exec(
+        sandbox,
+        ["python3", "/skills/openttd/ttd.py", "--json", "status"],
+        Some(60_000),
+    )
+    .await?;
     if out.code != 0 {
-        bail!(
-            "asking the game its date:\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        bail!("asking the game its date:\n{}", out.stderr);
     }
     let status: serde_json::Value =
-        serde_json::from_slice(&out.stdout).with_context(|| "reading the game's status")?;
+        serde_json::from_str(&out.stdout).with_context(|| "reading the game's status")?;
     status["date"]
         .as_str()
         .map(str::to_string)

@@ -1,6 +1,6 @@
 ---
 title: "Quick start"
-description: "Set up a model, install, and run an agent that draws a chart in its own VM."
+description: "Set up a model, install, and run an agent that draws a chart in its own sandbox."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
@@ -55,7 +55,7 @@ virtx = "0.1"
 
 ## Run an agent
 
-This gives an agent a Python machine with `./artifacts` mounted at `/artifacts`, and asks it to draw a chart there. `system_tools()` gives the agent a shell and file tools in that machine; [Tools](../tools/) lists them.
+This gives an agent a Python sandbox and asks it to draw a chart into `/artifacts` there, then copies the chart out. `sandbox(...)` gives the agent a shell and file tools in that sandbox; [Tools](../tools/) lists them, and [Building VM](../building-vm/) shows how to build the image, size the VM and mount volumes.
 
 <Tabs syncKey="lang">
 
@@ -63,29 +63,24 @@ This gives an agent a Python machine with `./artifacts` mounted at `/artifacts`,
 
 ```python
 import asyncio
+from pathlib import Path
 
 from ailoy import AgentBuilder
-from virtx import ConsoleClient, Recipe, ensure_virtx
+from virtx import Client
 
 
 async def main() -> None:
-    # Fetches virtx's server into its cache the first time; a no-op after.
-    await ensure_virtx()
-
-    console = await (
-        ConsoleClient.builder()
-        .image(Recipe("python:3.12-slim-trixie").step("pip install matplotlib"))
-        .mount("./artifacts", "/artifacts")
-        .network(True)
-        .build()
-    )
+    # Starts virtx's server, fetched into its cache the first time.
+    client = Client.spawn()
+    async for _ in client.pull_image("python:3.12-slim-trixie"):
+        pass
+    sandbox = await client.create_sandbox("python:3.12-slim-trixie")
 
     agent = await (
         # For openai, use "openai/gpt-5.6-luna"
         AgentBuilder("anthropic/claude-haiku-5-5")
         .instruction("Write what you are asked for into /artifacts.")
-        .system_tools()
-        .console(console)
+        .sandbox(sandbox)
         .build()
     )
 
@@ -93,6 +88,8 @@ async def main() -> None:
         for part in output["message"]["contents"]:
             if part["type"] == "text":
                 print(part["text"])
+
+    Path("population.png").write_bytes(await sandbox.read_file("artifacts/population.png"))
 
 asyncio.run(main())
 ```
@@ -102,34 +99,31 @@ asyncio.run(main())
 <TabItem label="Node.js">
 
 ```js
+const { writeFileSync } = require('node:fs')
 const { AgentBuilder } = require('@brekkylab/ailoy')
-const { ConsoleClient, Recipe, ensureVirtx } = require('@brekkylab/virtx')
+const { Client } = require('@brekkylab/virtx')
 
 async function main() {
-  // Fetches virtx's server into its cache the first time; a no-op after.
-  await ensureVirtx()
+  // Starts virtx's server, fetched into its cache the first time.
+  const client = Client.spawn()
+  for await (const _ of client.pullImage('python:3.12-slim-trixie'));
+  const sandbox = await client.createSandbox('python:3.12-slim-trixie')
 
-  const console_ = await ConsoleClient.builder()
-    .image(new Recipe('python:3.12-slim-trixie').step('pip install matplotlib'))
-    .mount('./artifacts', '/artifacts')
-    .network(true)
-    .build()
   // For openai, use "openai/gpt-5.6-luna"
   const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
     .instruction('Write what you are asked for into /artifacts.')
-    .systemTools()
-    .console(console_)
+    .sandbox(sandbox)
     .build()
 
-  try {
-    for await (const { message } of agent.run('Create a bar chart comparing the populations of European countries and save it to /artifacts/population.png.')) {
-      for (const part of message.contents) {
-        if (part.type === 'text') console.log(part.text)
-      }
+  for await (const { message } of agent.run('Create a bar chart comparing the populations of European countries and save it to /artifacts/population.png.')) {
+    for (const part of message.contents) {
+      if (part.type === 'text') console.log(part.text)
     }
-  } finally {
-    await agent.close()
   }
+
+  writeFileSync('population.png', await sandbox.readFile('artifacts/population.png'))
+  await agent.close()
+  await client.close()
 }
 
 main()
@@ -142,29 +136,27 @@ main()
 ```rust
 use ailoy::{
     agent::AgentBuilder,
-    console::ConsoleClient,
     message::{Message, Part, Role},
 };
 use futures::StreamExt as _;
-use virtx::image::Recipe;
+use virtx::{Client, Files as _, SandboxCreateArgs};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Fetches virtx's server into its cache the first time; a no-op after.
-    virtx::ensure_virtx().await?;
-
-    let console = ConsoleClient::builder()
-        .image(Recipe::new("python:3.12-slim-trixie").step("pip install matplotlib"))
-        .mount(std::path::absolute("./artifacts")?, "/artifacts")
-        .network(true)
-        .build()
+    // Starts virtx's server, fetched into its cache the first time.
+    let client = Client::spawn_virtx([] as [&str; 0])?;
+    let mut pull = client.pull_image("python:3.12-slim-trixie", None).log();
+    while let Some(entry) = pull.next().await {
+        entry?;
+    }
+    let sandbox = client
+        .create_sandbox(&SandboxCreateArgs::new("python:3.12-slim-trixie"))
         .await?;
 
     // For openai, use "openai/gpt-5.6-luna"
     let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
         .instruction("Write what you are asked for into /artifacts.")
-        .system_tools()
-        .console(console)
+        .sandbox(sandbox.clone())
         .build()
         .await?;
 
@@ -178,6 +170,9 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
+
+    let png = sandbox.read_file("artifacts/population.png", 0, None).await?;
+    std::fs::write("population.png", png)?;
     Ok(())
 }
 ```

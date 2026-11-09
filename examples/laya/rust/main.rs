@@ -13,12 +13,18 @@
 //! Without a prompt the agent routes a support inbox: it asks Laya which department each ticket in
 //! `shared/tickets/` belongs to and files a copy in that department's folder.
 //!
-//! The skill (`SKILL.md`, `run_laya.py`) is mounted from memory at `/skills/laya`.
+//! Four volumes on the virtx server are mounted into the sandbox:
 //!
-//! * `context/` at `/context`, read-only — what to decide on, when it is not in the prompt.
-//!   `context/inbox/` is a fresh copy of `shared/tickets/` on every run.
-//! * `artifacts/` at `/artifacts`, writable — where what the agent hands back goes: the tickets
-//!   filed under `artifacts/routes/<department>/`, emptied at the start of every run.
+//! * `ailoy-laya-models` at `/models`, read-only — `data/ncnn/`, the converted model, put there
+//!   each run.
+//! * `ailoy-laya-skill` at `/skills/laya`, read-only — the skill, `SKILL.md` and `run_laya.py`
+//!   from `../shared/`, put there each run.
+//! * `ailoy-laya-context` at `/context`, read-only — `context/`, what to decide on, when it is
+//!   not in the prompt, put there each run. `context/inbox/` is a fresh copy of
+//!   `shared/tickets/` on every run.
+//! * `ailoy-laya-artifacts` at `/artifacts`, writable — where what the agent hands back goes: the
+//!   tickets filed under `routes/<department>/`, emptied at the start of every run. It stays on
+//!   the server between runs, and is copied to `artifacts/` beside this file at the end.
 //!
 //! Environment, also read from `.env`:
 //!
@@ -30,21 +36,14 @@ use std::{io::Write as _, path::Path};
 
 use ailoy::{
     agent::AgentBuilder,
-    console::ConsoleClient,
     message::{Message, Part, Role},
 };
-use anyhow::Context as _;
-// One host binding per platform (mounts on `try_new`, unmounts on `Drop`), so the tree
-// below is written once. Three arms, not `not(windows)`: virtx's default `mount` feature
-// compiles only its target's binding, each a distinct guard type.
+use anyhow::{Context as _, bail};
 use futures::StreamExt as _;
-#[cfg(windows)]
-use virtx::fs::DokanMount as HostMount;
-#[cfg(target_os = "linux")]
-use virtx::fs::FuseMount as HostMount;
-#[cfg(target_os = "macos")]
-use virtx::fs::FuseTMount as HostMount;
-use virtx::{fs::Directory, image::Recipe};
+use virtx::{Client, Files as _, ImageJobEntry, Recipe, SandboxCreateArgs, SandboxVolume};
+
+/// The image the sandbox boots, built once on the virtx server and kept under this tag.
+const IMAGE: &str = "ailoy-laya:1";
 
 /// The request when none is given.
 const QUERY: &str = "Route every ticket in /context/inbox to the department that should handle it, \
@@ -69,16 +68,125 @@ async fn main() -> anyhow::Result<()> {
 
     prepare(&shared_path, &project_path).await?;
 
-    for dir in ["context", "artifacts", "skill"] {
+    for dir in ["context", "artifacts"] {
         let dir = project_path.join(dir);
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     }
     fill_inbox(&shared_path, &project_path)?;
     clear_routes(&project_path)?;
 
-    // The console server, fetched into virtx's cache the first time: a host that installed only
-    // ailoy has none.
-    virtx::ensure_virtx().await?;
+    // The virtx server, fetched into virtx's cache the first time: a host that installed only
+    // ailoy has none. The sandboxes it holds go when this program does.
+    let client = tokio::task::spawn_blocking(|| Client::spawn_virtx([] as [&str; 0])).await??;
+
+    // The image, built once. The server answers a tag in its full form, as
+    // `docker.io/library/ailoy-laya:1`.
+    let images = client.list_image().await?;
+    if !images
+        .iter()
+        .any(|i| i.reference.rsplit('/').next() == Some(IMAGE))
+    {
+        println!("Building {IMAGE}, once; it takes a few minutes.");
+        // Debian, not Alpine: PyPI's musllinux ncnn wheel crashes freeing its first `Mat`,
+        // where the manylinux (glibc) one runs laya.
+        let recipe = Recipe::new("python:3.12-slim-trixie")
+            // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader
+            // the wheel opens. Mesa from backports: venus passes VK_KHR_shader_bfloat16
+            // through from 26.0 on, and trixie itself has 25.0.
+            .step(
+                "echo 'deb http://deb.debian.org/debian trixie-backports main' \
+                > /etc/apt/sources.list.d/backports.list \
+                && apt-get update && apt-get install -y --no-install-recommends \
+                -t trixie-backports mesa-vulkan-drivers \
+                && apt-get install -y --no-install-recommends libvulkan1 \
+                && rm -rf /var/lib/apt/lists/*",
+            )
+            .step("pip install --no-cache-dir ncnn numpy tokenizers");
+        let mut log = client.build_image(recipe, IMAGE).log();
+        while let Some(entry) = log.next().await {
+            if let ImageJobEntry::End(end) = entry?.entry
+                && let Some(error) = end.error
+            {
+                bail!("building {IMAGE}: {error}");
+            }
+        }
+    }
+
+    // The volumes, made the first time and kept on the server: `409` says one is there already.
+    let mut volumes = Vec::new();
+    for name in [
+        "ailoy-laya-models",
+        "ailoy-laya-skill",
+        "ailoy-laya-context",
+        "ailoy-laya-artifacts",
+    ] {
+        volumes.push(match client.create_volume(Some(name)).await {
+            Err(e) if e.status() == Some(409) => client.get_volume(name).await?,
+            made => made?,
+        });
+    }
+    let [models, skill, context, artifacts] = <[_; 4]>::try_from(volumes).unwrap();
+
+    // The skill, `SKILL.md` and `run_laya.py` of `shared/`, onto its own.
+    for name in ["SKILL.md", "run_laya.py"] {
+        skill
+            .write_file(name, std::fs::read(shared_path.join(name))?, None)
+            .await?;
+    }
+    // A fresh inbox and no routes, as on this side.
+    context.remove_file("inbox", true).await?;
+    artifacts.remove_file("routes", true).await?;
+    // `data/ncnn/` and `context/`, every file of them, onto theirs.
+    for (volume, root) in [
+        (&models, project_path.join("data/ncnn")),
+        (&context, project_path.join("context")),
+    ] {
+        let mut dirs = vec![(root, String::new())];
+        while let Some((dir, at)) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir)? {
+                let entry = entry?;
+                let to = format!("{at}{}", entry.file_name().to_string_lossy());
+                if entry.file_type()?.is_dir() {
+                    volume.create_dir_all(to.clone()).await?;
+                    dirs.push((entry.path(), format!("{to}/")));
+                } else {
+                    volume
+                        .write_file(to, std::fs::read(entry.path())?, None)
+                        .await?;
+                }
+            }
+        }
+    }
+
+    let mut args = SandboxCreateArgs::new(IMAGE);
+    args.volumes = vec![
+        SandboxVolume {
+            volume: models.name().to_string(),
+            path: "/models".to_string(),
+            readonly: true,
+        },
+        SandboxVolume {
+            volume: skill.name().to_string(),
+            path: "/skills/laya".to_string(),
+            readonly: true,
+        },
+        SandboxVolume {
+            volume: context.name().to_string(),
+            path: "/context".to_string(),
+            readonly: true,
+        },
+        SandboxVolume {
+            volume: artifacts.name().to_string(),
+            path: "/artifacts".to_string(),
+            readonly: false,
+        },
+    ];
+    args.gpu = Some(true);
+    args.vcpus = Some(2);
+    args.memory_mib = Some(4096);
+    args.gpu_memory_mib = Some(12288);
+    let sandbox = client.create_sandbox(&args).await?;
+
     let mut agent = AgentBuilder::new(
         std::env::var("AILOY_MODEL").unwrap_or_else(|_| "anthropic/claude-sonnet-5".to_string()),
     )
@@ -94,49 +202,9 @@ async fn main() -> anyhow::Result<()> {
         "Write every result here, such as a report, a figure, or the file the user came for. ",
         "Everything in this folder is collected and handed back to the user, and a result left anywhere else is not delivered.",
     ))
-    .system_tools()
     .web_fetch_tool()
     .web_search_tool(vec![])
-    .console(
-        ConsoleClient::builder()
-            // Debian, not Alpine: PyPI's musllinux ncnn wheel crashes freeing its first `Mat`,
-            // where the manylinux (glibc) one runs laya.
-            .image(
-                Recipe::new("python:3.12-slim-trixie")
-                    // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader
-                    // the wheel opens. Mesa from backports: venus passes VK_KHR_shader_bfloat16
-                    // through from 26.0 on, and trixie itself has 25.0.
-                    .step(
-                        "echo 'deb http://deb.debian.org/debian trixie-backports main' \
-                        > /etc/apt/sources.list.d/backports.list \
-                        && apt-get update && apt-get install -y --no-install-recommends \
-                        -t trixie-backports mesa-vulkan-drivers \
-                        && apt-get install -y --no-install-recommends libvulkan1 \
-                        && rm -rf /var/lib/apt/lists/*",
-                    )
-                    .step("pip install --no-cache-dir ncnn numpy tokenizers"),
-            )
-            .mount_readonly(project_path.join("data/ncnn"), "/models")
-            .mount_readonly(
-                HostMount::try_new(
-                    Directory::new()
-                        .with_file("SKILL.md", include_str!("../shared/SKILL.md").as_bytes())?
-                        .with_file("run_laya.py", include_str!("../shared/run_laya.py").as_bytes())?,
-                    &project_path.join("skill"),
-                )
-                .with_context(|| "mounting the skill")?,
-                "/skills/laya",
-            )
-            .mount_readonly(project_path.join("context"), "/context")
-            .mount(project_path.join("artifacts"), "/artifacts")
-            .gpu(true)
-            .vcpus(2)
-            .memory_mib(4096)
-            .gpu_memory_mib(12288)
-            .build()
-            .await
-            .context("starting the console")?,
-    )
+    .sandbox(sandbox)
     .skill("/skills/laya")
     .build()
     .await?;
@@ -165,6 +233,21 @@ async fn main() -> anyhow::Result<()> {
             _ => {}
         }
         std::io::stdout().flush()?;
+    }
+
+    // The artifacts, every file of them, to `artifacts/` here.
+    let mut dirs = vec![String::new()];
+    while let Some(at) = dirs.pop() {
+        std::fs::create_dir_all(project_path.join("artifacts").join(&at))?;
+        for entry in artifacts.read_dir(at.clone()).await? {
+            let from = format!("{at}{}", entry.name);
+            if entry.metadata.is_dir {
+                dirs.push(format!("{from}/"));
+            } else {
+                let bytes = artifacts.read_file(from.clone(), 0, None).await?;
+                std::fs::write(project_path.join("artifacts").join(&from), bytes)?;
+            }
+        }
     }
 
     Ok(())

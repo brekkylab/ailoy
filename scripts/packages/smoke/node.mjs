@@ -105,19 +105,27 @@ try {
   }
 
   if (server && want('SMOKE_VM')) {
-    // An agent's shell tool, in a VM session that sees a host directory.
-    const host = fs.mkdtempSync(path.join(os.tmpdir(), 'ailoy-smoke-host-'))
-    fs.writeFileSync(path.join(host, 'from-host.txt'), 'by path')
-    const console_ = await virtx.ConsoleClient.builder().image(new virtx.Recipe('alpine:latest')).mount(host, '/host').build()
-    const agent = await new ailoy.AgentBuilder('fake/model').shellTool().console(console_).build()
+    // An agent's shell tool, in a sandbox that sees a volume.
+    const client = virtx.Client.spawn()
+    if (!(await client.listImage()).some((i) => i.reference.split('/').pop() === 'alpine:latest')) {
+      for await (const entry of client.pullImage('alpine:latest')) {
+        if ('end' in entry && entry.end.error) throw new Error(`pulling alpine:latest: ${entry.end.error}`)
+      }
+    }
+    const volume = await client.createVolume()
+    await volume.writeFile('from-host.txt', 'by volume')
+    const sandbox = await client.createSandbox('alpine:latest', { volumes: [{ volume, path: '/host' }] })
+    const agent = await new ailoy.AgentBuilder('fake/model').sandbox(sandbox).build()
     const cmd = 'uname -m; cat /host/from-host.txt; echo written > /host/from-vm.txt'
     const outputs = await run(agent, `shell ${JSON.stringify({ cmd })}`)
     const said = JSON.stringify(outputs[1]?.message.contents)
     console.log(`  vm: ${said}`)
-    check(said.includes('by path'), "the agent's shell tool reads the session's mount")
-    check(fs.readFileSync(path.join(host, 'from-vm.txt'), 'utf8').trim() === 'written', "the host sees the VM's write")
+    check(said.includes('by volume'), "the agent's shell tool reads the sandbox's volume")
+    check((await volume.readFile('from-vm.txt')).toString('utf8').trim() === 'written', "the volume keeps the sandbox's write")
     await agent.close()
-    await console_.close()
+    await sandbox.remove()
+    await volume.remove()
+    await client.close()
   }
 } finally {
   await model.close()

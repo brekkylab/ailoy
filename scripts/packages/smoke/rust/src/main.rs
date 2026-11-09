@@ -16,7 +16,10 @@ use ailoy::{
 };
 use futures::StreamExt as _;
 use serde_json::{Value, json};
-use virtx::{console::ConsoleClient, image::ImageClient, image::Recipe};
+use virtx::{
+    Client, Files as _, ImageJobEntry, SandboxCreateArgs, SandboxVolume, image::ImageClient,
+    image::Recipe,
+};
 
 fn want(name: &str) -> bool {
     std::env::var(name).as_deref() == Ok("1")
@@ -147,25 +150,39 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if server.is_some() && want("SMOKE_VM") {
-        // An agent's shell tool, in a VM session that sees a host directory.
-        let host = std::env::temp_dir().join(format!("ailoy-smoke-rust-{}", std::process::id()));
-        std::fs::create_dir_all(&host)?;
-        std::fs::write(host.join("from-host.txt"), "by path")?;
-        let console = ConsoleClient::builder()
-            .image(Recipe::new("alpine:latest"))
-            .mount(host.clone(), "/host")
-            .build()
-            .await?;
-        let mut agent = AgentBuilder::new("fake/model").shell_tool().console(console).build().await?;
+        // An agent's shell tool, in a sandbox that sees a volume.
+        let client = tokio::task::spawn_blocking(|| Client::spawn_virtx([] as [&str; 0])).await??;
+        let images = client.list_image().await?;
+        if !images.iter().any(|i| i.reference.rsplit('/').next() == Some("alpine:latest")) {
+            let mut log = client.pull_image("alpine:latest", None).log();
+            while let Some(entry) = log.next().await {
+                if let ImageJobEntry::End(end) = entry?.entry
+                    && let Some(error) = end.error
+                {
+                    anyhow::bail!("pulling alpine:latest: {error}");
+                }
+            }
+        }
+        let volume = client.create_volume(None::<String>).await?;
+        volume.write_file("from-host.txt", "by volume", None).await?;
+        let mut args = SandboxCreateArgs::new("alpine:latest");
+        args.volumes = vec![SandboxVolume {
+            volume: volume.name().to_string(),
+            path: "/host".to_string(),
+            readonly: false,
+        }];
+        let sandbox = client.create_sandbox(&args).await?;
+        let mut agent = AgentBuilder::new("fake/model").sandbox(sandbox.clone()).build().await?;
         let cmd = "uname -m; cat /host/from-host.txt; echo written > /host/from-vm.txt";
         let outputs = run(&mut agent, &format!("shell {}", json!({ "cmd": cmd }))).await?;
         let said = outputs.get(1).map(|o| serde_json::to_string(&o.message.contents)).transpose()?.unwrap_or_default();
         println!("  vm: {said}");
-        check(said.contains("by path"), "the agent's shell tool reads the session's mount");
-        let wrote = std::fs::read_to_string(host.join("from-vm.txt")).unwrap_or_default();
-        check(wrote.trim() == "written", "the host sees the VM's write");
+        check(said.contains("by volume"), "the agent's shell tool reads the sandbox's volume");
+        let wrote = volume.read_file("from-vm.txt", 0, None).await.unwrap_or_default();
+        check(String::from_utf8_lossy(&wrote).trim() == "written", "the volume keeps the sandbox's write");
         drop(agent);
-        let _ = std::fs::remove_dir_all(&host);
+        sandbox.remove().await?;
+        volume.remove().await?;
     }
 
     if failures.is_empty() {
