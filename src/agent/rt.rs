@@ -16,13 +16,7 @@ use crate::{
     datatype::Value,
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
     model::{InferLangModel, LangModelOptions, RequestRefused, create_lang_model},
-    tool::{
-        ToolDesc, ToolFunc, create_tool,
-        r#impl::{
-            get_mem_insert_tool_desc, get_mem_insert_tool_func, get_mem_search_tool_desc,
-            get_mem_search_tool_func, get_web_search_tool_factory,
-        },
-    },
+    tool::{ToolDesc, ToolFunc, create_tool, r#impl::get_web_search_tool_factory},
 };
 
 /// Per-part size limit for tool results, past which the middle is cut out.
@@ -85,21 +79,7 @@ impl Agent {
         }
         let mut tool_descs = spec.tools.clone();
 
-        // The store is this agent's `Memory`, not a registry name, so these are built here.
-        if let Some(memory) = state.memory.clone() {
-            for (desc, func) in [
-                (
-                    get_mem_search_tool_desc(),
-                    get_mem_search_tool_func(memory.clone()),
-                ),
-                (get_mem_insert_tool_desc(), get_mem_insert_tool_func(memory)),
-            ] {
-                tools.insert(desc.name.clone(), func);
-                tool_descs.push(desc);
-            }
-        }
-
-        // Like memory, bound to this agent's own browser rather than resolved by name.
+        // Bound to this agent's own browser rather than resolved by name.
         if let Some(session) = &state.browser {
             for (desc, func) in browser::tools(session, state.sandbox.is_some()) {
                 tools.insert(desc.name.clone(), func);

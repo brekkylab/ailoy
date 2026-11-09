@@ -20,7 +20,6 @@ use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     browser::{Browser, UserBrowser},
     datatype::Value,
-    memory::Memory,
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -266,12 +265,6 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.browser(browser)))
     }
 
-    /// Remember into the memory store at `memfile`, a path in the console.
-    #[napi]
-    pub fn memory<'env>(&mut self, this: This<'env>, memfile: String) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.memory(Memory::new(memfile))))
-    }
-
     #[napi]
     pub fn skill<'env>(&mut self, this: This<'env>, dir: String) -> Result<This<'env>> {
         self.update(this, |b| Ok(b.skill(dir)))
@@ -418,10 +411,9 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<It
 
 #[napi]
 impl JsAgent {
-    /// An agent from a spec (the object an `AgentSpec` serializes to). `options.memory` is the
-    /// file to remember into.
+    /// An agent from a spec (the object an `AgentSpec` serializes to).
     #[napi(
-        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; sandbox?: Sandbox; memory?: string }",
+        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; sandbox?: Sandbox }",
         ts_return_type = "Promise<Agent>"
     )]
     pub fn from_spec<'env>(
@@ -443,9 +435,6 @@ impl JsAgent {
                 }
                 if let Some(sandbox) = options.get::<Object>("sandbox").map_err(get)? {
                     state = state.with_sandbox(console::sandbox(env, &sandbox)?);
-                }
-                if let Some(memfile) = options.get::<String>("memory").map_err(get)? {
-                    state = state.with_memory(Memory::new(memfile));
                 }
             }
             Ok((spec, state))

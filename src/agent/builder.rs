@@ -2,7 +2,6 @@ use crate::{
     agent::{Agent, AgentSpec, AgentState, ContextManager},
     browser::{Browser, BrowserSession},
     datatype::Value,
-    memory::Memory,
     message::Message,
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -36,8 +35,6 @@ pub struct AgentBuilder {
 
     sandbox: Option<virtx::Sandbox>,
 
-    memory: Option<Memory>,
-
     context_manager: Option<ContextManager>,
 
     browser: Option<Browser>,
@@ -51,7 +48,6 @@ impl AgentBuilder {
             spec: AgentSpec::new(model),
             history: Vec::new(),
             sandbox: None,
-            memory: None,
             context_manager: None,
             browser: None,
         }
@@ -113,19 +109,6 @@ impl AgentBuilder {
         self
     }
 
-    /// Let this agent remember into `memory`.
-    ///
-    /// Adds the `mem_search` and `mem_insert` tools; they are not spec tools because the
-    /// store is a per-agent value, not a name with a [`ToolProvider`](crate::tool::ToolProvider).
-    ///
-    /// The store must already exist (`mem init`); a missing file is reported by the first
-    /// memory tool call, not by [`build`](Self::build). Memory tools run on the
-    /// [`sandbox`](Self::sandbox), so one is required too.
-    pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
-        self.memory = Some(memory.into());
-        self
-    }
-
     /// Give this agent the skill in `dir`. See [`AgentSpec::skill`].
     pub fn skill(mut self, dir: impl Into<String>) -> Self {
         self.spec = self.spec.skill(dir);
@@ -157,7 +140,6 @@ impl AgentBuilder {
             spec,
             history,
             sandbox,
-            memory,
             context_manager,
             browser,
         } = self;
@@ -165,9 +147,6 @@ impl AgentBuilder {
         let mut state = AgentState::new().with_history(history);
         if let Some(sandbox) = sandbox {
             state = state.with_sandbox(sandbox);
-        }
-        if let Some(memory) = memory {
-            state = state.with_memory(memory);
         }
         if let Some(browser) = browser {
             browser.check()?;
@@ -353,33 +332,5 @@ mod tests {
 
         assert_eq!(agent.history().len(), 2);
         assert_eq!(system_text(&agent).as_deref(), Some("stored instruction"));
-    }
-
-    /// `memory()` lands on the state, which decides whether the agent gets memory tools.
-    #[tokio::test]
-    async fn test_builder_memory_is_applied() {
-        let agent = builder()
-            .memory(Memory::new("/work/notes.sqlite"))
-            .build()
-            .await
-            .unwrap();
-
-        assert_eq!(
-            agent.state.memory,
-            Some(Memory::new("/work/notes.sqlite")),
-            "the memory the builder was given is the one on the state"
-        );
-    }
-
-    /// A path converts into the equivalent `Memory`.
-    #[tokio::test]
-    async fn test_builder_memory_takes_a_path() {
-        let agent = builder()
-            .memory(std::path::Path::new("/work/notes.sqlite"))
-            .build()
-            .await
-            .unwrap();
-
-        assert_eq!(agent.state.memory, Some(Memory::new("/work/notes.sqlite")));
     }
 }
