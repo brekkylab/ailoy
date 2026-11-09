@@ -24,7 +24,7 @@ use crate::{
 
 /// Runs a model on an OpenAI-compatible server.
 ///
-/// - A [`ThinkingEffort`](crate::model::ThinkingEffort) is sent two ways, since servers read
+/// - A [`ThinkingEffort`] is sent two ways, since servers read
 ///   different ones: as `reasoning_effort` (`low`, `medium` or `high`), and as the chat
 ///   template's `enable_thinking` (read by Qwen's and GLM's) and `thinking` (read by
 ///   DeepSeek's) through `chat_template_kwargs`, which turn thinking on rather than grade it.
