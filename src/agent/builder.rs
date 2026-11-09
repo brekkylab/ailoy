@@ -7,7 +7,7 @@ use crate::{
     agent::{Agent, AgentSpec, AgentState, ContextManager},
     browser::{Browser, BrowserSession},
     datatype::Value,
-    memory::Memory,
+    memory::{Memory, MemoryFile},
     message::Message,
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -43,6 +43,8 @@ pub struct AgentBuilder {
 
     memory: Option<Memory>,
 
+    memory_file: Option<MemoryFile>,
+
     context_manager: Option<ContextManager>,
 
     browser: Option<Browser>,
@@ -57,6 +59,7 @@ impl AgentBuilder {
             history: Vec::new(),
             console: None,
             memory: None,
+            memory_file: None,
             context_manager: None,
             browser: None,
         }
@@ -145,6 +148,19 @@ impl AgentBuilder {
         self
     }
 
+    /// Let this agent keep short notes in the file `memory_file` names, on this host: a path
+    /// such as `/data/agent1/memory.md`, relative to the current directory unless absolute.
+    ///
+    /// Adds the `memory` tool, which writes the notes, and a section of the system message that
+    /// shows them as they were when the agent was made, so a change shows from the next
+    /// session on. [`build`](Self::build) makes the folders on the way to the file, and fails
+    /// if it cannot; the file is made by the first note. The section goes into the system
+    /// message the agent writes, not into one a [`history`](Self::history) brings.
+    pub fn memory_file(mut self, memory_file: impl Into<MemoryFile>) -> Self {
+        self.memory_file = Some(memory_file.into());
+        self
+    }
+
     /// Give this agent the skill in `dir`. See [`AgentSpec::skill`].
     pub fn skill(mut self, dir: impl Into<String>) -> Self {
         self.spec = self.spec.skill(dir);
@@ -177,6 +193,7 @@ impl AgentBuilder {
             history,
             console,
             memory,
+            memory_file,
             context_manager,
             browser,
         } = self;
@@ -187,6 +204,9 @@ impl AgentBuilder {
         }
         if let Some(memory) = memory {
             state = state.with_memory(memory);
+        }
+        if let Some(memory_file) = memory_file {
+            state = state.with_memory_file(memory_file);
         }
         if let Some(browser) = browser {
             browser.check()?;

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -298,6 +298,22 @@ class StreamingEcho extends Echo {
 }
 
 const textOf = (outputs) => outputs.map((o) => o.message.contents[0].text)
+
+test('a memory file shapes the system message', async (t) => {
+  setLangModelProvider('memfile-echo', (_, name) => new Echo(name))
+  t.after(() => removeLangModelProvider('memfile-echo'))
+  const system = (agent) => agent.history[0].contents[0].text
+  const dir = mkdtempSync(join(tmpdir(), 'ailoy-memory-file-'))
+  const path = join(dir, 'agent1', 'agent2', 'memory.md')
+
+  const agent = await new AgentBuilder('memfile-echo/echo').memoryFile(path, { limit: 500 }).build()
+  assert.match(system(agent), /\[0\/500 chars\]\n\(empty\)$/)
+  assert.ok(existsSync(join(dir, 'agent1', 'agent2')) && !existsSync(path))
+
+  writeFileSync(path, 'Name is Minsu\n')
+  const again = await Agent.fromSpec({ model: 'memfile-echo/echo' }, { memoryFile: path })
+  assert.match(system(again), /\[13\/3000 chars\]\nName is Minsu$/)
+})
 
 test('a provider reads back as it was set', () => {
   assert.equal(getLangModelProvider('anthropic'), 'cli')

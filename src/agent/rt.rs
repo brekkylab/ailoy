@@ -21,7 +21,8 @@ use crate::{
         ToolDesc, ToolFunc, create_tool,
         r#impl::{
             get_mem_insert_tool_desc, get_mem_insert_tool_func, get_mem_search_tool_desc,
-            get_mem_search_tool_func, get_web_search_tool_factory,
+            get_mem_search_tool_func, get_memory_tool_desc, get_memory_tool_func,
+            get_web_search_tool_factory,
         },
     },
 };
@@ -65,10 +66,11 @@ impl Agent {
     ///
     /// The model is built from `spec.model` through [`create_lang_model`], and each of
     /// `spec.tools` through [`create_tool`]. Unless `state.history` already has a
-    /// [`Role::System`] message, one built from `spec.instruction` and
-    /// [`AgentSpec::skills`] is put first.
+    /// [`Role::System`] message, one built from `spec.instruction`, [`AgentSpec::skills`] and
+    /// `state.memory_file` is put first.
     ///
-    /// Async because skills are read through the console.
+    /// Errors if the folders on the way to `state.memory_file` cannot be made, or the file
+    /// cannot be read. Async because skills are read through the console.
     pub async fn try_with_state(spec: AgentSpec, mut state: AgentState) -> anyhow::Result<Self> {
         let model = create_lang_model(&spec.model).await?;
 
@@ -100,6 +102,26 @@ impl Agent {
             }
         }
 
+        // The file is read now, for the system message; made absolute first, so a later change
+        // of the current directory still finds it.
+        let memory_file = match state.memory_file.take() {
+            Some(file) => {
+                let file = file
+                    .prepared()
+                    .with_context(|| "making the memory file's folder")?;
+                let entries = file
+                    .read()
+                    .with_context(|| format!("reading {}", file.path().display()))?;
+                let (desc, func) = (get_memory_tool_desc(), get_memory_tool_func(file.clone()));
+                tools.insert(desc.name.clone(), func);
+                tool_descs.push(desc);
+                let section = file.render(&entries);
+                state.memory_file = Some(file);
+                Some(section)
+            }
+            None => None,
+        };
+
         // Like memory, bound to this agent's own browser rather than resolved by name.
         if let Some(session) = &state.browser {
             let console = state.console.lock().await.is_some();
@@ -116,7 +138,8 @@ impl Agent {
                 let org = split_desc(&spec.model).0;
                 Some(render_skills(&spec.skills, &state.console, org).await?)
             };
-            let text = [spec.instruction, skills]
+            // Last, so what comes before it stays a cacheable prefix across sessions.
+            let text = [spec.instruction, skills, memory_file]
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>()
@@ -672,6 +695,7 @@ mod tests {
     use crate::agent::context::IMAGE_PLACEHOLDER;
     use crate::{
         datatype::Bytes,
+        memory::MemoryFile,
         message::{Role, TokenUsage},
         model::{LangModelProvider, set_lang_model_provider},
         suppress_panics, to_value,
@@ -1506,5 +1530,59 @@ mod tests {
         let cut = middle_truncate(&"a".repeat(10), 4);
         assert!(cut.starts_with("aa\n\n... [6 characters omitted]"), "{cut}");
         assert_eq!(middle_truncate("short", 10), "short");
+    }
+
+    /// A memory file adds the `memory` tool and, last in the system message, its notes as they
+    /// were when the agent was made; its folders are made then, and the file by the first note.
+    #[tokio::test]
+    async fn test_a_memory_file_adds_its_tool_and_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent1/agent2/memory.md");
+        let (_, spec) = scripted(
+            "test-agent-memory-file",
+            [
+                Ok(MessageOutput {
+                    message: Message::new(Role::Assistant).with_tool_calls([Part::function(
+                        "c1",
+                        "memory",
+                        to_value!({"action": "add", "content": "Name is Minsu"}),
+                    )]),
+                    finish_reason: FinishReason::ToolCall {},
+                    usage: None,
+                }),
+                answer("Noted."),
+            ],
+        );
+        let state = AgentState::new().with_memory_file(MemoryFile::new(&path));
+        let mut agent = Agent::try_with_state(spec.clone(), state).await.unwrap();
+        assert!(path.parent().unwrap().is_dir() && !path.exists());
+        let system = text_of(&agent.history()[0]);
+        assert!(system.starts_with("Be brief.\n\n# Memory\n"), "{system}");
+        assert!(system.ends_with("[0/3000 chars]\n(empty)"), "{system}");
+        assert!(agent.tool_descs.iter().any(|d| d.name == "memory"));
+
+        let outputs: Vec<_> = agent.run(user("I'm Minsu")).collect().await;
+        assert!(outputs.iter().all(Result::is_ok));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Name is Minsu\n");
+        assert!(
+            text_of(&agent.history()[0]).ends_with("(empty)"),
+            "unchanged this session"
+        );
+
+        let (_, spec) = scripted("test-agent-memory-file-next", []);
+        let state = AgentState::new().with_memory_file(MemoryFile::new(&path));
+        let agent = Agent::try_with_state(spec, state).await.unwrap();
+        assert!(text_of(&agent.history()[0]).ends_with("[13/3000 chars]\nName is Minsu"));
+    }
+
+    /// A memory file whose folder cannot be made fails the agent.
+    #[tokio::test]
+    async fn test_a_memory_file_that_cannot_be_kept_fails_the_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocked = dir.path().join("a-file");
+        std::fs::write(&blocked, "").unwrap();
+        let (_, spec) = scripted("test-agent-memory-file-blocked", []);
+        let state = AgentState::new().with_memory_file(MemoryFile::new(blocked.join("memory.md")));
+        assert!(Agent::try_with_state(spec, state).await.is_err());
     }
 }

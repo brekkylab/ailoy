@@ -21,7 +21,7 @@ use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     browser::{Browser, UserBrowser},
     datatype::Value,
-    memory::Memory,
+    memory::{Memory, MemoryFile},
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -122,6 +122,11 @@ pub struct BrowserOptions {
     pub careful: Option<bool>,
     /// The page the agent's tab opens on.
     pub start_url: Option<String>,
+}
+
+#[napi(object)]
+pub struct MemoryFileOptions {
+    pub limit: Option<u32>,
 }
 
 #[napi(object)]
@@ -284,6 +289,23 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.memory(Memory::new(memfile))))
     }
 
+    /// Keep short notes in the file at `path` on this host, which the system message shows,
+    /// and give the `memory` tool; `options.limit` bounds the file in characters (3,000 by
+    /// default).
+    #[napi(ts_args_type = "path: string, options?: { limit?: number }")]
+    pub fn memory_file<'env>(
+        &mut self,
+        this: This<'env>,
+        path: String,
+        options: Option<MemoryFileOptions>,
+    ) -> Result<This<'env>> {
+        let mut file = MemoryFile::new(path);
+        if let Some(limit) = options.and_then(|o| o.limit) {
+            file = file.with_limit(limit as usize);
+        }
+        self.update(this, |b| Ok(b.memory_file(file)))
+    }
+
     #[napi]
     pub fn skill<'env>(&mut self, this: This<'env>, dir: String) -> Result<This<'env>> {
         self.update(this, |b| Ok(b.skill(dir)))
@@ -431,9 +453,9 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<It
 #[napi]
 impl JsAgent {
     /// An agent from a spec (the object an `AgentSpec` serializes to). `options.memory` is the
-    /// file to remember into.
+    /// file to remember into, and `options.memoryFile` the file to keep notes in.
     #[napi(
-        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; console?: ConsoleClient; memory?: string }",
+        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; console?: ConsoleClient; memory?: string; memoryFile?: string }",
         ts_return_type = "Promise<Agent>"
     )]
     pub fn from_spec<'env>(
@@ -458,6 +480,9 @@ impl JsAgent {
                 }
                 if let Some(memfile) = options.get::<String>("memory").map_err(get)? {
                     state = state.with_memory(Memory::new(memfile));
+                }
+                if let Some(path) = options.get::<String>("memoryFile").map_err(get)? {
+                    state = state.with_memory_file(MemoryFile::new(path));
                 }
             }
             Ok((spec, state))

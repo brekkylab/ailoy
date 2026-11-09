@@ -1,8 +1,14 @@
-//! Memories, as `mem` keeps them.
+//! What an agent remembers: a [`MemoryFile`] it writes notes in on this host, and memories as
+//! `mem` keeps them ([`Memory`]).
 //!
-//! A store is one file made by `mem init`; every read or write is a `mem` command run on a
-//! [`ConsoleClient`], so `mem` must be on the console side's `PATH` and the memory file is a
+//! A `mem` store is one file made by `mem init`; every read or write is a `mem` command run on
+//! a [`ConsoleClient`], so `mem` must be on the console side's `PATH` and the memory file is a
 //! path the console side opens. Nothing here opens the database or knows its schema.
+
+mod file;
+
+pub(crate) use file::used;
+pub use file::{EditError, EditRefusal, MemoryEdit, MemoryFile};
 
 use std::path::{Path, PathBuf};
 
