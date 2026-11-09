@@ -125,19 +125,28 @@ async def main():
         check(bool(version), f"the console server answers (protocol {version})")
 
     if bin_dir and want("SMOKE_VM"):
-        # An agent's shell tool, in a VM session that sees a host directory.
-        host = tempfile.mkdtemp(prefix="ailoy-smoke-host-")
-        open(os.path.join(host, "from-host.txt"), "w").write("by path")
-        console = await virtx.ConsoleClient.builder().image(virtx.Recipe("alpine:latest")).mount(host, "/host").build()
-        agent = await ailoy.AgentBuilder("fake/model").console(console).build()
+        # An agent's shell tool, in a sandbox that sees a volume.
+        client = virtx.Client.spawn()
+        if not any(i.reference.split("/")[-1] == "alpine:latest" for i in await client.list_image()):
+            async for entry in client.pull_image("alpine:latest"):
+                if isinstance(entry.entry, virtx.ImageJobEnd) and entry.entry.error:
+                    raise RuntimeError(f"pulling alpine:latest: {entry.entry.error}")
+        volume = await client.create_volume()
+        await volume.write_file("from-host.txt", "by volume")
+        sandbox = await client.create_sandbox(
+            "alpine:latest", volumes=[virtx.SandboxVolume(volume=volume.name, path="/host")]
+        )
+        agent = await ailoy.AgentBuilder("fake/model").sandbox(sandbox).build()
         cmd = "uname -m; cat /host/from-host.txt; echo written > /host/from-vm.txt"
         outputs = await run(agent, "shell " + json.dumps({"cmd": cmd}))
         said = json.dumps(outputs[1]["message"]["contents"]) if len(outputs) > 1 else ""
         print(f"  vm: {said}")
-        check("by path" in said, "the agent's shell tool reads the session's mount")
-        check(open(os.path.join(host, "from-vm.txt")).read().strip() == "written", "the host sees the VM's write")
+        check("by volume" in said, "the agent's shell tool reads the sandbox's volume")
+        check((await volume.read_file("from-vm.txt")).decode().strip() == "written", "the volume keeps the sandbox's write")
         await agent.close()
-        await console.close()
+        await sandbox.remove()
+        await volume.remove()
+        client.close()
 
     server.shutdown()
     print("FAILED: " + "; ".join(failures) if failures else "ALL PASS", flush=True)

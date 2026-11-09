@@ -182,7 +182,6 @@ async def main(prompt: str) -> None:
             SandboxVolume(volume=context.name, path="/context", readonly=True),
             SandboxVolume(volume=artifacts.name, path="/artifacts"),
         ],
-        network=True,
         gpu=True,
         vcpus=2,
         memory_mib=4096,
