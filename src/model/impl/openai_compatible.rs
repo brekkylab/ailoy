@@ -17,19 +17,20 @@ use crate::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
-    model::{InferLangModel, LangModelOptions, api_error},
+    model::{InferLangModel, LangModelOptions, ThinkingEffort, api_error},
     to_value,
     tool::ToolDesc,
 };
 
 /// Runs a model on an OpenAI-compatible server.
 ///
-/// - Thinking is on or off, not graded: any
-///   [`ThinkingEffort`](crate::model::ThinkingEffort) sets the chat template's
-///   `enable_thinking` (read by Qwen's and GLM's) and `thinking` (read by DeepSeek's) through
-///   `chat_template_kwargs`; a server or template that reads neither keeps its default. The
-///   thinking comes back when the server runs a reasoning parser, as `reasoning` (or
-///   `reasoning_content` on older servers), and is not sent back.
+/// - A [`ThinkingEffort`](crate::model::ThinkingEffort) is sent two ways, since servers read
+///   different ones: as `reasoning_effort` (`low`, `medium` or `high`), and as the chat
+///   template's `enable_thinking` (read by Qwen's and GLM's) and `thinking` (read by
+///   DeepSeek's) through `chat_template_kwargs`, which turn thinking on rather than grade it.
+///   A server or model that reads neither keeps its default. The thinking comes back when the
+///   server runs a reasoning parser, as `reasoning` (or `reasoning_content` on older servers),
+///   and is not sent back.
 /// - An output schema is sent as a `json_schema` `response_format`, which vLLM, llama-server,
 ///   Ollama and LM Studio enforce.
 #[derive(Clone)]
@@ -116,7 +117,13 @@ impl OpenAiCompatibleModel {
             obj.insert("tool_choice".into(), "auto".into());
         }
         // Unset keeps the model's default.
-        if options.thinking_effort.is_some() {
+        if let Some(effort) = options.thinking_effort {
+            let effort = match effort {
+                ThinkingEffort::Low => "low",
+                ThinkingEffort::Medium => "medium",
+                ThinkingEffort::High => "high",
+            };
+            obj.insert("reasoning_effort".into(), effort.into());
             obj.insert(
                 "chat_template_kwargs".into(),
                 to_value!({"enable_thinking": true, "thinking": true}),
@@ -449,5 +456,41 @@ fn value_text(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
         other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(thinking_effort: Option<ThinkingEffort>) -> serde_json::Value {
+        let messages = [Message::new(Role::User).with_contents([Part::text("hi")])];
+        let options = LangModelOptions {
+            thinking_effort,
+            ..Default::default()
+        };
+        OpenAiCompatibleModel::new("m", "http://localhost:8000/v1")
+            .body(&messages, &[], &options)
+            .unwrap()
+    }
+
+    #[test]
+    fn test_a_thinking_effort_is_sent_as_reasoning_effort_and_as_the_template_switch() {
+        for (effort, name) in [
+            (ThinkingEffort::Low, "low"),
+            (ThinkingEffort::Medium, "medium"),
+            (ThinkingEffort::High, "high"),
+        ] {
+            let body = body(Some(effort));
+            assert_eq!(body["reasoning_effort"], name);
+            assert_eq!(
+                body["chat_template_kwargs"],
+                serde_json::json!({"enable_thinking": true, "thinking": true})
+            );
+        }
+
+        let body = body(None);
+        assert!(body.get("reasoning_effort").is_none());
+        assert!(body.get("chat_template_kwargs").is_none());
     }
 }
