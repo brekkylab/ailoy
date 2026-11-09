@@ -14,7 +14,7 @@ cargo build
 (cd bindings/node && npm install && npm run build:debug)   # Node
 ```
 
-An agent's console runs on [virtx](https://github.com/brekkylab/virtx)'s server, which `ensure_virtx()` (and the tests) fetch into `$VIRTX_HOME/bin` on first use. Mounting a host folder into it needs FUSE: FUSE-T on macOS, Dokany on Windows. Tests that drive a provider read its key from the environment or a `.env` file at the repository root (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK`), and skip without it.
+An agent's sandbox runs on [virtx](https://github.com/brekkylab/virtx)'s server, which `Client.spawn()` (and the tests) fetch into virtx's cache on first use. Tests that drive a provider read its key from the environment or a `.env` file at the repository root (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK`), and skip without it.
 
 ## Running tests and lint
 

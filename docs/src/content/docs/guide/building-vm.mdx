@@ -1,6 +1,6 @@
 ---
 title: "Building VM"
-description: "Declare the agent's machine: image, setup steps, mounts and network."
+description: "Declare the agent's machine: its image, its sandbox, and the volumes that carry files in and out."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
@@ -9,21 +9,22 @@ The computer an agent works on is a Linux VM run by [virtx](https://github.com/b
 
 - **Python:** the `virtx` package (`import virtx`), which `pip install ailoy-py` installs too
 - **Node.js:** `@brekkylab/virtx` (`npm install @brekkylab/virtx` beside `@brekkylab/ailoy`)
-- **Rust:** the `virtx` crate (`ailoy::console::ConsoleClient` is the same type as `virtx::console::ConsoleClient`)
+- **Rust:** the `virtx` crate (`ailoy::console::Sandbox` is the same type as `virtx::Sandbox`)
 
-A `ConsoleClient` built with virtx is handed to an `AgentBuilder` as is, and the agent shares its session. The session stays the console's:
+A `Client` reaches virtx's server. `Client.spawn()` (`Client::spawn_virtx` in Rust) starts one on your machine, fetched into virtx's cache the first time. Through the client you build images, make volumes, and make the sandbox the agent works in:
 
-- Closing the agent leaves the console open; closing the console ends the session for the agent too, whose next command then fails.
-- Your own calls on the console and the agent's take turns, one call at a time.
+- An **image** is the VM's disk: a base image plus setup steps, much like a Dockerfile.
+- A **sandbox** is a VM booted from an image. It runs commands and holds files, and it is what the agent gets.
+- A **volume** is a folder kept on the server, mounted into a sandbox. It is how files go in before a run and come out after.
 
-Two clients do the work:
+A `Sandbox` is handed to `AgentBuilder.sandbox` as is, and the agent's tools run in it over the same client. The sandbox stays yours:
 
-- `ImageClient` builds the VM's disk image from a `Recipe` and manages the built images.
-- `ConsoleClient` boots a VM from an image and runs commands in it. This is what the agent gets.
+- Closing the agent leaves the sandbox as it is; `remove()` removes it, and the agent's next command then fails.
+- A sandbox runs many processes at once, so your own commands in it run beside the agent's.
 
 ## Images
 
-A `Recipe` is a base image plus steps, much like a Dockerfile. `ImageClient` builds it and stores it under a name, so a console can boot from it later without building it again.
+A `Recipe` is a base image plus steps. `build_image` builds it and stores it under a name, so a sandbox can boot from it later without building it again; iterating what it returns follows the build's log, and its last entry says whether it failed. `pull_image` stores an image from a registry as it is.
 
 <Tabs syncKey="lang">
 
@@ -32,20 +33,20 @@ A `Recipe` is a base image plus steps, much like a Dockerfile. `ImageClient` bui
 ```python
 import asyncio
 
-from virtx import ImageClient, Recipe, ensure_virtx
+from virtx import Client, ImageJobEnd, Recipe
 
 
 async def main() -> None:
-    # Fetches virtx's server into its cache the first time; a no-op after.
-    await ensure_virtx()
+    # Starts virtx's server, fetched into its cache the first time.
+    client = Client.spawn()
 
-    async with await ImageClient.try_new() as images:
-        recipe = Recipe("python:3.12-slim-trixie").step("pip install matplotlib")
-        built = await images.build(recipe, "plot:latest")
-        print(built.reference, built.digest)
+    recipe = Recipe("python:3.12-slim-trixie").run("pip install matplotlib")
+    async for entry in client.build_image(recipe, "plot:latest"):
+        if isinstance(entry.entry, ImageJobEnd) and entry.entry.error:
+            raise RuntimeError(entry.entry.error)
 
-        for image in await images.list():
-            print(image.digest, image.refs)
+    for image in await client.list_image():
+        print(image.reference)
 
 
 asyncio.run(main())
@@ -56,23 +57,22 @@ asyncio.run(main())
 <TabItem label="Node.js">
 
 ```js
-const { ImageClient, Recipe, ensureVirtx } = require('@brekkylab/virtx')
+const { Client, Recipe } = require('@brekkylab/virtx')
 
 async function main() {
-  // Fetches virtx's server into its cache the first time; a no-op after.
-  await ensureVirtx()
-
-  const images = await ImageClient.tryNew()
+  // Starts virtx's server, fetched into its cache the first time.
+  const client = Client.spawn()
   try {
-    const recipe = new Recipe('python:3.12-slim-trixie').step('pip install matplotlib')
-    const built = await images.build(recipe, 'plot:latest')
-    console.log(built.reference, built.digest)
+    const recipe = new Recipe('python:3.12-slim-trixie').run('pip install matplotlib')
+    for await (const entry of client.buildImage(recipe, 'plot:latest')) {
+      if ('end' in entry && entry.end.error) throw new Error(entry.end.error)
+    }
 
-    for (const image of await images.list()) {
-      console.log(image.digest, image.refs)
+    for (const image of await client.listImage()) {
+      console.log(image.reference)
     }
   } finally {
-    await images.close()
+    await client.close()
   }
 }
 
@@ -84,20 +84,26 @@ main()
 <TabItem label="Rust">
 
 ```rust
-use virtx::image::{ImageClient, Recipe};
+use futures::StreamExt as _;
+use virtx::{Client, ImageJobEntry, Recipe};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Fetches virtx's server into its cache the first time; a no-op after.
-    virtx::ensure_virtx().await?;
+    // Starts virtx's server, fetched into its cache the first time.
+    let client = Client::spawn_virtx([] as [&str; 0])?;
 
-    let mut images = ImageClient::try_new().await?;
     let recipe = Recipe::new("python:3.12-slim-trixie").step("pip install matplotlib");
-    let built = images.build(recipe, Some("plot:latest")).await?;
-    println!("{} {}", built.reference, built.digest);
+    let mut log = client.build_image(recipe, "plot:latest").log();
+    while let Some(entry) = log.next().await {
+        if let ImageJobEntry::End(end) = entry?.entry
+            && let Some(error) = end.error
+        {
+            anyhow::bail!(error);
+        }
+    }
 
-    for image in images.list().await? {
-        println!("{} {:?}", image.digest, image.refs);
+    for image in client.list_image().await? {
+        println!("{}", image.reference);
     }
     Ok(())
 }
@@ -107,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
 </TabItem>
 </Tabs>
 
-You don't have to build ahead of time: passing a `Recipe` straight to a console builds it on first use.
+The server answers a reference in its full form, as `docker.io/library/plot:latest`. Once no sandbox boots from an image, `remove_image("plot:latest")` (`removeImage` in Node.js) removes it.
 
 ### From a shell
 
@@ -134,9 +140,9 @@ virtx save -o plot.tar plot:latest                   # to an OCI archive; `virtx
 
 `virtx <COMMAND> --help` says what each command takes, and each is also an `image` command, as in `docker` (`virtx image ls`, `virtx image rm`, `virtx image prune`). It starts the same server a client does; `--host URL` reaches one over HTTP instead. Ctrl-C during a build or pull cancels it.
 
-## Consoles
+## Sandboxes
 
-`ConsoleClient.builder()` sets up the VM: the image to boot, host directories to mount, network access, CPUs, memory and GPU. `build()` boots it, and `exec` runs a command in it.
+`create_sandbox` (`createSandbox` in Node.js) boots a sandbox from an image. What it takes besides the image is optional: `network` (on unless set to false), `vcpus`, `memory_mib`, `gpu`, `ports` to open, and `volumes` to mount. `exec` runs a command in it, and iterating what it returns follows the command's output, line by line, to how it ended. The sandbox's own files are read and written by path from its root, as `artifacts/population.png`.
 
 <Tabs syncKey="lang">
 
@@ -145,22 +151,19 @@ virtx save -o plot.tar plot:latest                   # to an OCI archive; `virtx
 ```python
 import asyncio
 
-from virtx import ConsoleClient, ImageSource
+from virtx import Client, Stdout
 
 
 async def main() -> None:
-    console = await (
-        ConsoleClient.builder()
-        .image(ImageSource.reference("plot:latest"))
-        .mount("./artifacts", "/artifacts")
-        .network(True)
-        .build()
-    )
+    client = Client.spawn()
+    sandbox = await client.create_sandbox("plot:latest", vcpus=2, memory_mib=2048)
 
-    async with console:
-        result = await console.exec(["python", "-c", "import matplotlib; print(matplotlib.__version__)"])
+    async for entry in sandbox.exec(["python", "-c", "import matplotlib; print(matplotlib.__version__)"]):
+        if isinstance(entry.entry, Stdout):
+            print(entry.entry.line)
 
-    print(result.stdout.decode(), end="")
+    print(await sandbox.read_text("etc/hostname"), end="")
+    await sandbox.remove()
 
 
 asyncio.run(main())
@@ -171,20 +174,21 @@ asyncio.run(main())
 <TabItem label="Node.js">
 
 ```js
-const { ConsoleClient, ImageSource } = require('@brekkylab/virtx')
+const { Client } = require('@brekkylab/virtx')
 
 async function main() {
-  const console_ = await ConsoleClient.builder()
-    .image(ImageSource.reference('plot:latest'))
-    .mount('./artifacts', '/artifacts')
-    .network(true)
-    .build()
-
+  const client = Client.spawn()
   try {
-    const result = await console_.exec(['python', '-c', 'import matplotlib; print(matplotlib.__version__)'])
-    process.stdout.write(result.stdout)
+    const sandbox = await client.createSandbox('plot:latest', { vcpus: 2, memoryMib: 2048 })
+
+    for await (const entry of sandbox.exec(['python', '-c', 'import matplotlib; print(matplotlib.__version__)'])) {
+      if ('stdout' in entry) console.log(entry.stdout)
+    }
+
+    process.stdout.write(await sandbox.readText('etc/hostname'))
+    await sandbox.remove()
   } finally {
-    await console_.close()
+    await client.close()
   }
 }
 
@@ -196,21 +200,26 @@ main()
 <TabItem label="Rust">
 
 ```rust
-use virtx::{console::ConsoleClient, image::ImageSource};
+use futures::StreamExt as _;
+use virtx::{Client, Files as _, SandboxCreateArgs, SandboxExecArgs, SandboxJobEntry};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let mut console = ConsoleClient::builder()
-        .image(ImageSource::reference("plot:latest"))
-        .mount(std::path::absolute("./artifacts")?, "/artifacts")
-        .network(true)
-        .build()
+    let client = Client::spawn_virtx([] as [&str; 0])?;
+    let sandbox = client
+        .create_sandbox(&SandboxCreateArgs::new("plot:latest").vcpus(2).memory_mib(2048))
         .await?;
 
-    let result = console
-        .exec(["python", "-c", "import matplotlib; print(matplotlib.__version__)"], None)
-        .await?;
-    print!("{}", String::from_utf8_lossy(&result.stdout));
+    let cmd = ["python", "-c", "import matplotlib; print(matplotlib.__version__)"];
+    let mut log = sandbox.exec(&SandboxExecArgs::new(cmd)).log();
+    while let Some(entry) = log.next().await {
+        if let SandboxJobEntry::Stdout(line) = entry?.entry {
+            println!("{line}");
+        }
+    }
+
+    print!("{}", sandbox.read_text("etc/hostname").await?);
+    sandbox.remove().await?;
     Ok(())
 }
 ```
@@ -219,17 +228,37 @@ async fn main() -> anyhow::Result<()> {
 </TabItem>
 </Tabs>
 
-Once nothing boots from a stored image, remove it by its reference, or by `ImageSource.digest(...)` (`ImageSource::digest(..)` in Rust) for its digest:
+The sandboxes a spawned server holds go with it, when its client is closed or your program ends.
+
+## Volumes
+
+A volume is made once and kept on the server, across sandboxes and runs; making one by a name already there is refused with a `409`, and `get_volume` (`getVolume`) answers the one there. Write files onto it, mount it into a sandbox, read-only or not, and read what the sandbox wrote back from it after.
 
 <Tabs syncKey="lang">
 
 <TabItem label="Python">
 
 ```python
-from virtx import ImageClient, ImageSource
+from pathlib import Path
 
-async with await ImageClient.try_new() as images:
-    await images.remove(ImageSource.reference("plot:latest"))
+from virtx import SandboxVolume
+
+data = await client.create_volume("plot-data")
+await data.write_file("populations.csv", Path("populations.csv").read_bytes())
+artifacts = await client.create_volume("plot-artifacts")
+
+sandbox = await client.create_sandbox(
+    "plot:latest",
+    volumes=[
+        SandboxVolume(volume=data, path="/data", readonly=True),
+        SandboxVolume(volume=artifacts, path="/artifacts"),
+    ],
+    network=False,
+)
+
+# ... the agent works in the sandbox ...
+
+Path("population.png").write_bytes(await artifacts.read_file("population.png"))
 ```
 
 
@@ -237,14 +266,23 @@ async with await ImageClient.try_new() as images:
 <TabItem label="Node.js">
 
 ```js
-const { ImageClient, ImageSource } = require('@brekkylab/virtx')
+const { readFileSync, writeFileSync } = require('node:fs')
 
-const images = await ImageClient.tryNew()
-try {
-  await images.remove(ImageSource.reference('plot:latest'))
-} finally {
-  await images.close()
-}
+const data = await client.createVolume('plot-data')
+await data.writeFile('populations.csv', readFileSync('populations.csv'))
+const artifacts = await client.createVolume('plot-artifacts')
+
+const sandbox = await client.createSandbox('plot:latest', {
+  volumes: [
+    { volume: data, path: '/data', readonly: true },
+    { volume: artifacts, path: '/artifacts' },
+  ],
+  network: false,
+})
+
+// ... the agent works in the sandbox ...
+
+writeFileSync('population.png', await artifacts.readFile('population.png'))
 ```
 
 
@@ -252,20 +290,27 @@ try {
 <TabItem label="Rust">
 
 ```rust
-use virtx::image::{ImageClient, ImageSource};
+use virtx::{Files as _, SandboxCreateArgs};
 
-let mut images = ImageClient::try_new().await?;
-images.remove(ImageSource::reference("plot:latest")).await?;
+let data = client.create_volume(Some("plot-data")).await?;
+data.write_file("populations.csv", std::fs::read("populations.csv")?, None).await?;
+let artifacts = client.create_volume(Some("plot-artifacts")).await?;
+
+let args = SandboxCreateArgs::new("plot:latest")
+    .readonly_volume(data.name(), "/data")
+    .volume(artifacts.name(), "/artifacts")
+    .network(false);
+let sandbox = client.create_sandbox(&args).await?;
+
+// ... the agent works in the sandbox ...
+
+std::fs::write("population.png", artifacts.read_file("population.png", 0, None).await?)?;
 ```
 
 
 </TabItem>
 </Tabs>
 
-:::tip
-An image built from a `Recipe` passed straight to `.image(...)` is removed when the console closes.
-:::
-
-Besides `exec`, a console can `read` and `write` files in the VM.
+Besides `read_file` and `write_file`, a volume, a sandbox and a snapshot each have `read_dir`, `create_dir_all`, `remove_file` and the rest of a file system's calls (`readDir`, `createDirAll`, `removeFile` in Node.js). The examples under [`examples/`](https://github.com/brekkylab/ailoy/tree/main/examples) copy a whole folder onto a volume before a run and back after it.
 
 For more information, see the [virtx README](https://github.com/brekkylab/virtx).

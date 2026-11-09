@@ -1,11 +1,11 @@
 # AGENTS.md
 
-Ailoy is a library for building AI agents that each own a virtual machine (a [virtx](https://github.com/brekkylab/virtx) console) to work in; a language model drives the agent through tool-augmented turns. One Rust crate carries the behaviour; the Python and Node packages are bindings over it and expose the same API in their own idiom. Read this before changing anything.
+Ailoy is a library for building AI agents that each own a virtual machine (a [virtx](https://github.com/brekkylab/virtx) sandbox) to work in; a language model drives the agent through tool-augmented turns. One Rust crate carries the behaviour; the Python and Node packages are bindings over it and expose the same API in their own idiom. Read this before changing anything.
 
 ## One behaviour, three surfaces
 
 - The library is `src/`. A feature goes into the crate first and the bindings connect to it; `bindings/python/` and `bindings/node/` carry only what one language needs of its own.
-- The console is virtx's: an agent takes a `ConsoleClient` built with virtx's own package (`virtx` on crates.io and PyPI, `@brekkylab/virtx` on npm). Ailoy adds no console API of its own.
+- The sandbox is virtx's: an agent takes a `Sandbox` made with virtx's own package (`virtx` on crates.io and PyPI, `@brekkylab/virtx` on npm). Ailoy adds no sandbox API of its own. The bindings take the caller's sandbox over the one `libvirtx_core` both packages open (`bindings/*/src/console.rs`).
 - A change to what the library does moves the bindings with it, and, when a public API they show changes, the three Quickstart blocks in `README.md` and the examples under `examples/`.
 - That is the standard for a change you make: the crate first, every binding connected, before the work is done. It is not the gate for a person's pull request: `CONTRIBUTING.md` accepts a crate change that reaches only one binding, or a change made in one binding without the crate, and a review holds a PR to that, with the crate-first shape as a suggestion or a follow-up. Code you write for a person who then opens the PR is held to the first; their PR is held to the second.
 - Names follow each language's convention and nothing else: `run_stream` in Rust and Python, `runStream` in Node. The thing they name is the same.
@@ -16,7 +16,7 @@ Ailoy is a library for building AI agents that each own a virtual machine (a [vi
 - `src/model/` — the model traits, one module per backend under `impl/` (a vendor API, a CLI, Bedrock, OpenRouter, vLLM) and the provider registry with its catalogs under `provider/`.
 - `src/tool/impl/` — built-in tools in `builtins/`, plus the MCP and memory tool providers.
 - `src/message/` — the message, part and delta types every surface marshals.
-- `src/console.rs` — the virtx console an agent is given.
+- `src/console.rs` — the virtx sandbox an agent is given, and what the built-in tools do with it.
 - `bindings/python/src/` and `bindings/node/src/` — the wrappers, in Rust. The Python package itself is `bindings/python/python/ailoy/`; the Node package is `bindings/node/index.js` and its `.d.ts` files.
 - `examples/<name>/` — one folder per language (`rust`, `python`, `node`) and a `shared/` folder for what the three have in common. The Rust example is also registered in `Cargo.toml`.
 - `docs/` — the Starlight docs site, served at ailoy.co/docs; the guides are in `docs/src/content/docs/guide/`. Anything longer than a README section goes there. `README.md` stays short: the pitch, the install lines and one example per language.
@@ -35,7 +35,8 @@ cargo test
 
 - `git config core.hooksPath .githooks` installs the hooks in `.githooks/`: the format check on every commit, and clippy plus the library's tests on every push. `SKIP_HOOKS=1 git push` skips the hook for that one command.
 - Tests that need a provider read its key from the environment or a `.env` file (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK`) and skip without it. A run without keys is quietly narrower than the suite; say which keys were set when you report a run.
-- Tests that need a console start one on virtx's default server (`test_console` in `src/lib.rs`) and fail loudly when it is missing.
+- Tests that need a sandbox make one on virtx's default server (`test_sandbox` in `src/lib.rs`) and fail loudly when it is missing.
+- Against a virtx checkout that is not released (the path dependencies on `../virtx`), build it with `cargo xtask build client server-stdio` there, which also signs the server with the hypervisor entitlement on macOS, and point the tests at it: `VIRTX_STDIO=../virtx/target/release/virtx-stdio` for the server and `VIRTX_CORE_LIB=../virtx/target/release/libvirtx_core.dylib` for the library the Python and Node packages load. Without `VIRTX_STDIO`, the server of the client's version is fetched from virtx's GitHub release, which an unreleased version does not have.
 - A bug fix brings a test that fails without it. A behaviour change brings the test that pins the new behaviour, in the same surface the behaviour lives in: the library's tests are in-module under `#[cfg(test)]`, the bindings' are `bindings/python/tests/` and `bindings/node/__test__/`.
 - Examples are self-contained: a reader runs one with the command in `README.md` and nothing else set up beyond the provider key.
 
