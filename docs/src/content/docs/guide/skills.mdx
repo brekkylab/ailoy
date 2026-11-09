@@ -38,23 +38,25 @@ Ailoy reads `name` and `description` and nothing else from the frontmatter, each
 
 ## Giving the agent a skill
 
-`skill(dir)` takes the folder's path in the agent's VM, not on your machine, so mount the folder into the VM, with whatever its instructions expect to find there: Laya's reads its model from `/models`, which `examples/laya` mounts too. Call `skill` once for each skill.
+`skill(dir)` takes the folder's path in the agent's sandbox, not on your machine, so put the folder in the sandbox, with whatever its instructions expect to find there: Laya's reads its model from `/models`, which `examples/laya` puts on a volume of its own. A volume, as below, keeps the skill on the virtx server between runs; baking it into the image works too ([Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/), [Images](https://virtx.sh/docs/guides/images/)). Call `skill` once for each skill.
 
 <Tabs syncKey="lang">
 
 <TabItem label="Python">
 
 ```python
-console = await (
-    ConsoleClient.builder()
-    .image(Recipe("python:3.12-slim-trixie"))
-    .mount_readonly("./skills/laya", "/skills/laya")
-    .build()
+skill = await client.create_volume("laya-skill")
+for name in ["SKILL.md", "run_laya.py"]:
+    await skill.write_file(name, Path("skills/laya", name).read_bytes())
+
+sandbox = await client.create_sandbox(
+    "python:3.12-slim-trixie",
+    volumes=[SandboxVolume(volume=skill.name, path="/skills/laya", readonly=True)],
 )
 
 agent = await (
     AgentBuilder("anthropic/claude-haiku-5-5")
-    .console(console)
+    .sandbox(sandbox)
     .skill("/skills/laya")
     .build()
 )
@@ -64,13 +66,17 @@ agent = await (
 <TabItem label="Node.js">
 
 ```js
-const console_ = await ConsoleClient.builder()
-  .image(new Recipe('python:3.12-slim-trixie'))
-  .mountReadonly('./skills/laya', '/skills/laya')
-  .build()
+const skill = await client.createVolume('laya-skill')
+for (const name of ['SKILL.md', 'run_laya.py']) {
+  await skill.writeFile(name, readFileSync(join('skills/laya', name)))
+}
+
+const sandbox = await client.createSandbox('python:3.12-slim-trixie', {
+  volumes: [{ volume: skill, path: '/skills/laya', readonly: true }],
+})
 
 const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
-  .console(console_)
+  .sandbox(sandbox)
   .skill('/skills/laya')
   .build()
 ```
@@ -79,14 +85,22 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
 <TabItem label="Rust">
 
 ```rust
-let console = ConsoleClient::builder()
-    .image(Recipe::new("python:3.12-slim-trixie"))
-    .mount_readonly(std::path::absolute("./skills/laya")?, "/skills/laya")
-    .build()
-    .await?;
+let skill = client.create_volume(Some("laya-skill")).await?;
+for name in ["SKILL.md", "run_laya.py"] {
+    let content = std::fs::read(format!("skills/laya/{name}"))?;
+    skill.write_file(name, content, None).await?;
+}
+
+let mut args = SandboxCreateArgs::new("python:3.12-slim-trixie");
+args.volumes = vec![SandboxVolume {
+    volume: skill.name().to_string(),
+    path: "/skills/laya".to_string(),
+    readonly: true,
+}];
+let sandbox = client.create_sandbox(&args).await?;
 
 let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
-    .console(console)
+    .sandbox(sandbox)
     .skill("/skills/laya")
     .build()
     .await?;
@@ -95,7 +109,7 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
 </TabItem>
 </Tabs>
 
-When the agent writes the system message itself, `build()` reads the frontmatter of each `SKILL.md` through the console, and fails if a `SKILL.md` is missing or has no `name` or `description`. The system message gets a list of the skills after the instruction: each one's name, description and location, and a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` stays out of the system message, and the agent reads it with its own tools, so an agent with skills needs a console and a tool that reads files, such as `read`, which a sandbox brings with it.
+When the agent writes the system message itself, `build()` reads the frontmatter of each `SKILL.md` through the sandbox, and fails if a `SKILL.md` is missing or has no `name` or `description`. The system message gets a list of the skills after the instruction: each one's name, description and location, and a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` stays out of the system message, and the agent reads it with its own tools, so an agent with skills needs a sandbox, which brings a tool that reads files, such as `read`.
 
 For `anthropic` models the list is an XML block:
 
@@ -119,4 +133,4 @@ For any other org, the same preamble is followed by a Markdown list, one line pe
 - `laya` at /skills/laya/SKILL.md. Answer typed questions about a text with Laya, a machine learning model for decisions. Use it to classify, score or answer yes or no about a message, an email or a ticket, with calibrated probabilities.
 ```
 
-Skills are added only to the system message the agent writes itself. A `history(...)` that brings a system message keeps it: the skills are not read or added, though the `# Mounts` section is, as [Message format](../message-format/) describes.
+Skills are added only to the system message the agent writes itself. A `history(...)` that brings a system message keeps it: the skills are not read or added.

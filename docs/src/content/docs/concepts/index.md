@@ -1,6 +1,6 @@
 ---
 title: Concepts
-description: "Agent machines, consoles, tools and messages: the ideas Ailoy is built on."
+description: "Agent sandboxes, tools and messages: the ideas Ailoy is built on."
 head:
   - tag: meta
     attrs:

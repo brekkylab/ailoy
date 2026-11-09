@@ -32,11 +32,11 @@ An agent given a sandbox with `sandbox(...)` gets a shell and tools to read and 
 
 `imgread` is left out for `deepseek-ai`, `moonshotai`, `zai-org` and `Qwen` because their backends pass a tool result to the model as text, so the model would get a label in place of the image.
 
-The seven tools in the table run in the sandbox, as in [Building VM](../building-vm/); an agent without one does not get them. The VM is started for each batch of tool calls that has one of these tools in it, and stopped after; stopping keeps its session, so the next batch finds the files as the last one left them.
+The seven tools in the table come with `sandbox(...)` and run in that sandbox, as in [Giving an agent a sandbox](../building-vm/); an agent without one does not get them. The agent does not start, stop or remove its sandbox, so the files one call leaves are there for the next.
 
 ### The web
 
-`web_search_tool` and `web_fetch_tool` (`webSearchTool`, `webFetchTool`) do not come with the sandbox. The two tools run in your program's process, not in the VM, so they work without a console.
+`web_search_tool` and `web_fetch_tool` (`webSearchTool`, `webFetchTool`) do not come with the sandbox. The two tools run in your program's process, not in the sandbox, so they work without one.
 
 - `web_search` sends the query to several search engines at once and merges what they find, one result per URL, best first. It answers with up to 10 results, or up to 30 when the model asks for more. `web_search_tool` takes the engines to use: `Bing`, `Brave`, `DuckDuckGo`, `Google`, `Mojeek`, `Naver`, `Startpage`, `Yahoo` and `Yandex`. None, or an empty list, uses them all.
 - `web_fetch` fetches one URL. An HTML page comes back as its visible text (the default), as Markdown, or as the HTML itself; any other body, such as JSON, comes back as it is. A long body comes in pieces, the model asking for the next one with `offset`, and only its first 2 MiB are read. It makes at most one request a second to a host, and only to addresses on the public internet: loopback, the local network and cloud metadata addresses are refused.
@@ -240,9 +240,9 @@ How the function is called:
 
 The function returns what a message can hold: null, a boolean, a number, a string, or a list or object of those. In Python and Node.js an exception, or a rejected promise, does not end the run: the model gets it as the result, such as `error: KeyError: 'no order B-9'` from the Python function above, and can try something else.
 
-Tool calls the model makes in one step run at the same time, except those that use the console, the seven built-in tools above among them, which take turns on it. A function of yours may be called again before its last call has returned.
+Tool calls the model makes in one step run at the same time, the seven built-in tools above among them. A function of yours may be called again before its last call has returned.
 
-A Python or Node.js function runs in your program, not in the VM. To run a command in the VM, it holds a `ConsoleClient` of its own. In Rust, a closure that also takes `console: &mut ConsoleClient` runs on the agent's console, as the built-in tools do.
+A Python or Node.js function runs in your program, not in the sandbox. To run a command or read a file there, it calls the virtx `Sandbox` you made, such as `sandbox.exec(...)` or `sandbox.read_file(...)`. In Rust, a closure that also takes `sandbox: &Sandbox` gets the agent's sandbox, as the built-in tools do, and `ailoy::tool::{exec, read, write}` run a command and read and write a file in it.
 
 Tools are registered by name for the whole process, the built-in ones included, so registering a name again, `shell` among them, replaces the function every agent built after that gets. The exception is `web_search` in an agent given a non-empty list of engines, which builds its own. `remove_tool_provider` (`removeToolProvider`) takes a name out.
 
