@@ -228,12 +228,12 @@ Tools, if you pass them, are only described to the model: its tool calls come ba
 
 ## Bringing your own model
 
-An org can also be served by your own code. Instead of a backend name, give `set_lang_model_provider` a **factory**: it's called with the org and the name after it (`None`/`null` for the org alone) and returns the model. The model has
+An org can also be served by your own code. Instead of a backend name, give `set_lang_model_provider` a **factory**: it's called with the org and the name after the slash (`None`/`null` when the model is named by the org alone) and returns the model. The model has
 
 - `infer(messages, tools, options)`, returning a `MessageOutput` (or, in Python and Node.js, an awaitable or promise of one), and optionally
 - `infer_stream(messages, tools, options)` (`inferStream`), yielding `MessageDeltaOutput`s. Without it, streaming gives `infer`'s reply as one delta.
 
-The factory may also return a `LangModel`, to serve the org with a model from another one.
+The factory may also return a `LangModel`, to serve the org with a model from another org.
 
 <Tabs syncKey="lang">
 

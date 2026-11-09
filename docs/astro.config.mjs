@@ -6,8 +6,8 @@ import starlightLinksValidator from 'starlight-links-validator';
 // Keep this in step with ailoy.co's astro.config.mjs. The differences: the site is served under
 // base /docs/ (ailoy.co has src/content/docs/docs/ instead, since its root is the product site),
 // so the sidebar slugs have no docs/ prefix; the header's Ailoy name is not a link (the site root
-// lives on ailoy.co); the sidebar has Tools, Skills and Context manager, which ailoy.co gets at
-// the next release, and no Tutorials or Examples entry.
+// lives on ailoy.co); the sidebar is the one of the sandbox release, which ailoy.co gets with
+// that release, and has no Tutorials or Examples entry.
 
 const FONTS =
   'https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap';
@@ -31,6 +31,8 @@ function redirectRoot(req, res, next) {
 export default defineConfig({
   site: 'https://ailoy.co',
   trailingSlash: 'always',
+  // Building VM became Giving an agent a sandbox.
+  redirects: { '/guide/building-vm/': '/docs/guide/sandbox/' },
   build: { format: 'directory' },
   base: '/docs',
   integrations: [
@@ -63,24 +65,34 @@ export default defineConfig({
           label: 'Getting started',
           items: [
             { label: 'Overview', link: '/' },
+            { slug: 'guide/installation' },
             { slug: 'guide/quick-start' }
           ]
         },
+        { slug: 'concepts' },
         {
-          label: 'Guides',
+          label: 'Building an agent',
           items: [
+            { slug: 'guide/agents' },
+            { slug: 'guide/sandbox' },
+            { slug: 'guide/running' },
             { slug: 'guide/model-providers' },
-            { slug: 'guide/building-vm' },
-            { slug: 'guide/message-format' },
-            { slug: 'guide/tools' },
-            { slug: 'guide/skills' },
-            { slug: 'guide/context-manager' },
-            { slug: 'guide/using-mcp' },
-            { slug: 'guide/using-browser' }
+            { slug: 'guide/message-format' }
           ]
         },
-        // one page each for now: a plain link, not a group holding one item of the same name
-        { slug: 'concepts' },
+        {
+          label: 'Tools',
+          items: [
+            { slug: 'guide/tools' },
+            { slug: 'guide/using-mcp' },
+            { slug: 'guide/using-browser' },
+            { slug: 'guide/skills' }
+          ]
+        },
+        {
+          label: 'State over time',
+          items: [{ slug: 'guide/context-manager' }]
+        },
         { slug: 'reference' }
       ]
     })

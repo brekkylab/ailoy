@@ -1,0 +1,201 @@
+---
+title: "Giving an agent a sandbox"
+description: "Hand an agent a virtx sandbox: what it brings, what lives where, and where virtx's docs take over."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+The computer an agent works on is a sandbox: a Linux microVM on a [virtx](https://virtx.sh/docs/) server. Your code makes the sandbox with virtx's own package and hands it to the agent:
+
+- **Python:** the `virtx` package (`import virtx`), which `pip install ailoy-py` installs too
+- **Node.js:** `@brekkylab/virtx`, which `npm install @brekkylab/ailoy` installs too
+- **Rust:** the `virtx` crate, added beside `ailoy` (`ailoy::console::Sandbox` is `virtx::Sandbox`)
+
+This page covers what an agent needs from a sandbox. [virtx's docs](https://virtx.sh/docs/) cover the sandbox itself: servers, images, volumes, snapshots and GPUs.
+
+## Handing over a sandbox
+
+`sandbox(...)` on the `AgentBuilder` gives the agent a sandbox, and with it a shell and file tools that run there; [Tools](../tools/#a-shell-and-files) lists them. Here an image with matplotlib is built on the server, and an agent gets a sandbox booted from it:
+
+<Tabs syncKey="lang">
+
+<TabItem label="Python">
+
+```python
+import asyncio
+from pathlib import Path
+
+from ailoy import AgentBuilder
+from virtx import Client, ImageJobEnd, Recipe
+
+
+async def main() -> None:
+    client = Client.spawn()
+
+    # Kept on the server under its tag: later sandboxes boot it without building again.
+    recipe = Recipe("python:3.12-slim-trixie").run("pip install --no-cache-dir matplotlib")
+    async for entry in client.build_image(recipe, "plot:latest"):
+        if isinstance(entry.entry, ImageJobEnd) and entry.entry.error:
+            raise RuntimeError(entry.entry.error)
+
+    sandbox = await client.create_sandbox("plot:latest")
+
+    agent = await (
+        AgentBuilder("anthropic/claude-haiku-5-5")
+        .instruction("Write what you are asked for into /artifacts.")
+        .sandbox(sandbox)
+        .build()
+    )
+    async for _ in agent.run("Plot y = x^2 for x from -5 to 5 into /artifacts/square.png."):
+        pass
+
+    Path("square.png").write_bytes(await sandbox.read_file("artifacts/square.png"))
+    await agent.close()
+    await sandbox.remove()
+
+
+asyncio.run(main())
+```
+
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
+const { writeFileSync } = require('node:fs')
+const { AgentBuilder } = require('@brekkylab/ailoy')
+const { Client, Recipe } = require('@brekkylab/virtx')
+
+async function main() {
+  const client = Client.spawn()
+
+  // Kept on the server under its tag: later sandboxes boot it without building again.
+  const recipe = new Recipe('python:3.12-slim-trixie').run('pip install --no-cache-dir matplotlib')
+  for await (const entry of client.buildImage(recipe, 'plot:latest')) {
+    if ('end' in entry && entry.end.error) throw new Error(entry.end.error)
+  }
+
+  const sandbox = await client.createSandbox('plot:latest')
+
+  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
+    .instruction('Write what you are asked for into /artifacts.')
+    .sandbox(sandbox)
+    .build()
+  for await (const _ of agent.run('Plot y = x^2 for x from -5 to 5 into /artifacts/square.png.'));
+
+  writeFileSync('square.png', await sandbox.readFile('artifacts/square.png'))
+  await agent.close()
+  await sandbox.remove()
+  await client.close()
+}
+
+main()
+```
+
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ailoy::{
+    agent::AgentBuilder,
+    message::{Message, Part, Role},
+};
+use futures::StreamExt as _;
+use virtx::{Client, Files as _, ImageJobEntry, Recipe, SandboxCreateArgs};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let client = Client::spawn_virtx([] as [&str; 0])?;
+
+    // Kept on the server under its tag: later sandboxes boot it without building again.
+    let recipe = Recipe::new("python:3.12-slim-trixie").step("pip install --no-cache-dir matplotlib");
+    let mut log = client.build_image(recipe, "plot:latest").log();
+    while let Some(entry) = log.next().await {
+        if let ImageJobEntry::End(end) = entry?.entry
+            && let Some(error) = end.error
+        {
+            anyhow::bail!(error);
+        }
+    }
+
+    let sandbox = client
+        .create_sandbox(&SandboxCreateArgs::new("plot:latest"))
+        .await?;
+
+    let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
+        .instruction("Write what you are asked for into /artifacts.")
+        .sandbox(sandbox.clone())
+        .build()
+        .await?;
+    let query = Message::new(Role::User)
+        .with_contents([Part::text("Plot y = x^2 for x from -5 to 5 into /artifacts/square.png.")]);
+    let mut stream = agent.run(query);
+    while let Some(output) = stream.next().await {
+        output?;
+    }
+    drop(stream);
+
+    std::fs::write("square.png", sandbox.read_file("artifacts/square.png", 0, None).await?)?;
+    sandbox.remove().await?;
+    Ok(())
+}
+```
+
+
+</TabItem>
+</Tabs>
+
+The sandbox stays yours:
+
+- The agent does not start, stop or remove it, and closing the agent leaves it as it is. Remove it yourself, as above. With a server that `Client.spawn()` started, the sandboxes also go when your program does.
+- Your own calls on the sandbox and the agent's tool calls run side by side, and the agent's tool calls in one step run at the same time.
+- A failed call to the sandbox reaches you as virtx's `VirtxError`.
+
+An agent without a sandbox still runs, with the tools that need none: your own functions, `web_search`, `web_fetch`, MCP servers and a browser. It has no shell or file tools, and it cannot have [skills](../skills/), which it reads from the sandbox.
+
+## What lives where
+
+A sandbox's files come from three places, and they last differently:
+
+| Where | What it holds for the agent | How long it lasts | virtx docs |
+| --- | --- | --- | --- |
+| The image | The programs and packages its commands find | Until you remove the image; every sandbox booted from it starts with it | [Images](https://virtx.sh/docs/guides/images/) |
+| A volume | Inputs, skills, results you want back | Until you remove the volume; several sandboxes can mount it, and your code reads and writes it while they do | [Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/) |
+| The sandbox's own files | What the agent writes anywhere else, such as packages it installs | Until the sandbox is removed, or kept in a snapshot | [Keeping work in snapshots](https://virtx.sh/docs/guides/keeping-snapshots/) |
+
+So a package every run needs goes in the image, not in a step the agent repeats, and the files you hand the agent or want back go on a volume. The examples in `examples/` all work this way: they build their image once, put their skill and inputs on named volumes, and copy the results back at the end.
+
+### Building an image from a shell
+
+The `virtx` command builds the same images from a Dockerfile, with `docker`'s spelling. The virtx packages install it: `pip install ailoy-py` puts it in the environment's `bin/`, and `@brekkylab/virtx` in `node_modules/.bin`. Without either, run it with `uvx virtx` or `npx @brekkylab/virtx`.
+
+```sh
+virtx build -t plot:latest .    # from ./Dockerfile
+virtx images                    # the images on the server
+```
+
+A sandbox then boots from `plot:latest`. virtx's [Images](https://virtx.sh/docs/guides/images/) covers the rest of the command.
+
+## Inputs and results
+
+Before a turn, write what the agent should read onto a volume mounted in its sandbox, read-only if it should not change it. After the turn, read what it wrote, from the volume or from the sandbox. Say where in the instruction, so the agent knows where to look and where to write. virtx's [Reading and writing files](https://virtx.sh/docs/guides/reading-writing-files/) covers doing this from your code.
+
+## Picking up later
+
+An agent's work is in two places: its history, and its sandbox's files. To carry on where a run stopped, build an agent with the same history (`history(...)` on the `AgentBuilder`). Hand it either the same sandbox, found again with `get_sandbox`, or a new sandbox on a snapshot of the old one's files.
+
+## Sandbox options
+
+`create_sandbox` takes these options, among others. What each means for an agent:
+
+| Option | For the agent | virtx docs |
+| --- | --- | --- |
+| `volumes` | Where it reads your files and leaves its results. | [Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/) |
+| `network` | Whether its commands reach the internet. On unless turned off. `web_search` and `web_fetch` run in your program, not the sandbox, so they work either way. | [Networks and ports](https://virtx.sh/docs/guides/networks-ports/) |
+| `ports` | A server it starts in the sandbox, reached from outside. | [Networks and ports](https://virtx.sh/docs/guides/networks-ports/) |
+| `vcpus`, `memory_mib` | Room for heavy commands. | [Setting up sandboxes](https://virtx.sh/docs/guides/setting-sandboxes/) |
+| `snapshot` | Files from earlier work to start on. | [Keeping work in snapshots](https://virtx.sh/docs/guides/keeping-snapshots/) |
+| `gpu`, `gpu_memory_mib` | A GPU through Vulkan, for work such as deep learning. | [Using GPUs](https://virtx.sh/docs/guides/using-gpus/) |
+
+Node.js spells them in camelCase (`memoryMib`, `gpuMemoryMib`), and Rust sets them on `SandboxCreateArgs`. virtx's [Hello world](https://virtx.sh/docs/hello-world/) covers which server to run, on your machine or elsewhere.
