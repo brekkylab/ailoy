@@ -64,8 +64,8 @@ impl Agent {
     ///
     /// The model is built from `spec.model` through [`create_lang_model`], and each of
     /// `spec.tools` through [`create_tool`]. Unless `state.history` already has a
-    /// [`Role::System`] message, one built from `spec.instruction` and
-    /// [`AgentSpec::skills`] is put first.
+    /// [`Role::System`] message, one built from `spec.instruction`, [`AgentSpec::skills`]
+    /// and the skills of the sandbox's abins is put first.
     ///
     /// Async because skills are read through the sandbox.
     pub async fn try_with_state(spec: AgentSpec, mut state: AgentState) -> anyhow::Result<Self> {
@@ -108,12 +108,8 @@ impl Agent {
         }
 
         if !state.history.iter().any(|m| m.role == Role::System) {
-            let skills = if spec.skills.is_empty() {
-                None
-            } else {
-                let org = split_desc(&spec.model).0;
-                Some(render_skills(&spec.skills, state.sandbox.as_ref(), org).await?)
-            };
+            let org = split_desc(&spec.model).0;
+            let skills = render_skills(&spec.skills, state.sandbox.as_ref(), org).await?;
             let text = [spec.instruction, skills]
                 .into_iter()
                 .flatten()

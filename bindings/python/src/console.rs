@@ -39,6 +39,7 @@ pub fn sandbox(sandbox: &Bound<'_, PyAny>) -> PyResult<virtx::Sandbox> {
         snapshot: sandbox.getattr("snapshot")?.extract()?,
         running: sandbox.getattr("running")?.extract()?,
         ports: Vec::new(),
+        abins: sandbox.getattr("abins")?.extract()?,
     };
     Ok((*borrowed).sandbox(info))
 }

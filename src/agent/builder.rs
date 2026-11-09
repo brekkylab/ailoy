@@ -94,7 +94,8 @@ impl AgentBuilder {
     /// Run this agent's sandbox tools in `sandbox`, with whatever volumes it was made with.
     ///
     /// Also adds [`AgentSpec::sandbox_tools`] to the spec: a shell and file tools there, in
-    /// the style of the model's org.
+    /// the style of the model's org. The sandbox's abins are listed in the system message as
+    /// skills, like [`skill`](Self::skill)'s.
     ///
     /// Nothing makes a sandbox implicitly, since that means choosing a virtx server.
     /// Without one, pure tools still run and sandbox tools fail with an error.
@@ -280,6 +281,32 @@ mod tests {
             .await
             .expect("exec failed");
         assert_eq!(result.stdout, "ok\n");
+    }
+
+    /// A sandbox's abins are listed as skills, at the `SKILL.md` virtx puts beside them.
+    #[tokio::test]
+    async fn test_builder_lists_the_sandbox_abins_as_skills() {
+        let sandbox = test_sandbox().await;
+        let with_abin = sandbox
+            .client()
+            .create_sandbox(&virtx::SandboxCreateArgs::new("python:3.12-slim").abin("index"))
+            .await
+            .expect("making a sandbox with the index abin");
+        let agent = builder()
+            .instruction("You are a test agent.")
+            .sandbox(with_abin.clone())
+            .build()
+            .await
+            .unwrap();
+        with_abin.remove().await.ok();
+        sandbox.remove().await.ok();
+
+        let text = system_text(&agent).expect("a system message");
+        assert!(text.starts_with("You are a test agent."), "{text}");
+        assert!(
+            text.contains("- `index` at /abin/skills/index/SKILL.md."),
+            "{text}"
+        );
     }
 
     #[tokio::test]
