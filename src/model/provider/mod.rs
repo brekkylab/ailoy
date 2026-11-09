@@ -1,8 +1,8 @@
 //! Builds language models from a desc, choosing how each one runs.
 //!
 //! A desc is `<org>/<name>`, or `<org>` alone for a CLI's default model. The provider set
-//! for the org decides how it runs: its CLI, its own API, Bedrock, OpenRouter, vLLM or any
-//! other OpenAI-compatible server.
+//! for the org decides how it runs: its CLI, its own API, Bedrock, OpenRouter or an
+//! OpenAI-compatible server.
 //!
 //! ```ignore
 //! use ailoy::model::*;
@@ -19,10 +19,10 @@
 //! set_lang_model_provider("anthropic", Backend::Bedrock);
 //! let model = create_lang_model("anthropic/claude-sonnet-5-5").await?;
 //!
-//! // Or on a server of your own, one per org: Ollama serves `llama3.3:70b` under the org
-//! // `ollama`, named after the server.
-//! set_lang_model_provider("ollama", LangModelServer::new(Backend::OpenAiCompatible, "http://localhost:11434/v1")?);
-//! let model = create_lang_model("ollama/llama3.3:70b").await?;
+//! // Or on a server of your own, one per org: here Ollama, which serves Llama 3.3 as
+//! // `llama3.3:70b`.
+//! set_lang_model_provider("meta-llama", LangModelServer::new("http://localhost:11434/v1")?.with_model("Llama-3.3-70B-Instruct", "llama3.3:70b"));
+//! let model = create_lang_model("meta-llama/Llama-3.3-70B-Instruct").await?;
 //!
 //! // A model of your own.
 //! set_lang_model_provider("mine", LangModelProvider::custom(|_, name| Ok(Arc::new(MyModel::new(name)))));
@@ -47,27 +47,25 @@
 //!
 //! # Backends
 //!
-//! | Org           | CLI                | APIs                                                                             |
-//! |---------------|--------------------|----------------------------------------------------------------------------------|
-//! | `anthropic`   | [`ClaudeCliModel`] | [`ClaudeApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`]                  |
-//! | `openai`      | [`CodexCliModel`]  | [`GptApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`]                     |
-//! | `google`      | [`GeminiCliModel`] | [`GeminiApiModel`], [`OpenRouterApiModel`]                                       |
+//! | Org           | CLI                | APIs                                                                                         |
+//! |---------------|--------------------|----------------------------------------------------------------------------------------------|
+//! | `anthropic`   | [`ClaudeCliModel`] | [`ClaudeApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`OpenAiCompatibleModel`]   |
+//! | `openai`      | [`CodexCliModel`]  | [`GptApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`OpenAiCompatibleModel`]      |
+//! | `google`      | [`GeminiCliModel`] | [`GeminiApiModel`], [`OpenRouterApiModel`], [`OpenAiCompatibleModel`]                        |
 //! | `deepseek-ai` | —                  | [`DeepSeekApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`OpenAiCompatibleModel`] |
 //! | `moonshotai`  | —                  | [`KimiApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`OpenAiCompatibleModel`]     |
 //! | `zai-org`     | —                  | [`GlmApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`OpenAiCompatibleModel`]      |
 //! | `Qwen`        | —                  | [`QwenApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`OpenAiCompatibleModel`]     |
 //! | any other     | —                  | [`BedrockApiModel`], [`OpenRouterApiModel`], [`OpenAiCompatibleModel`]                       |
 //!
-//! `cli` and `api` know the orgs in the table; `bedrock`, `openrouter`, `vllm` and
+//! `cli` and `api` know the orgs in the table; `bedrock`, `openrouter` and
 //! `openai-compatible` build a model for any org. The default is the CLI where there is
 //! one, otherwise the org's own API. The own APIs read their key from `ANTHROPIC_API_KEY`,
 //! `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`, `ZAI_API_KEY` and
 //! `DASHSCOPE_API_KEY`; Bedrock from `AWS_BEARER_TOKEN_BEDROCK` (and `AWS_REGION`); OpenRouter
-//! from `OPENROUTER_API_KEY`; vLLM from the server at `VLLM_BASE_URL` (by default
-//! `http://localhost:8000/v1`), with `VLLM_API_KEY` if it is set; any other OpenAI-compatible
-//! server from `OPENAI_COMPATIBLE_BASE_URL`, with `OPENAI_COMPATIBLE_API_KEY` if it is set. A
-//! [`LangModelServer`] names the server instead, one per org. All but the CLIs need a name in
-//! the desc.
+//! from `OPENROUTER_API_KEY`; an OpenAI-compatible server from `OPENAI_COMPATIBLE_BASE_URL`,
+//! with `OPENAI_COMPATIBLE_API_KEY` if it is set. A [`LangModelServer`] names the server
+//! instead, one per org. All but the CLIs need a name in the desc.
 
 mod catalog;
 
@@ -84,7 +82,7 @@ use super::{
     OpenAiCompatibleModel, OpenRouterApiModel, QwenApiModel, r#impl::env_key_and_region,
 };
 
-/// How a model is run, spelled `"cli"`, `"api"`, `"bedrock"`, `"openrouter"`, `"vllm"` or
+/// How a model is run, spelled `"cli"`, `"api"`, `"bedrock"`, `"openrouter"` or
 /// `"openai-compatible"` in its serde form.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, strum::Display,
@@ -98,11 +96,9 @@ pub enum Backend {
     Api,
     Bedrock,
     OpenRouter,
-    /// A vLLM server, which serves a model as its Hugging Face repo id: the desc as it is.
-    Vllm,
-    /// Any server speaking the OpenAI-compatible Chat Completions API (llama-server, Ollama,
-    /// LM Studio, SGLang, vLLM too). The org is your name for the server, and the name after
-    /// it is the id the server serves the model as: `ollama/llama3.3:70b`.
+    /// A server speaking the OpenAI-compatible Chat Completions API: vLLM, llama-server,
+    /// Ollama, LM Studio, SGLang, or a hosted API such as EXAONE's. The desc stays the
+    /// model's name; [`LangModelServer`] finds the id the server serves it as.
     #[serde(rename = "openai-compatible")]
     #[strum(serialize = "openai-compatible")]
     OpenAiCompatible,
@@ -123,16 +119,24 @@ pub enum LangModelProvider {
     Custom(CustomLangModelProvider),
 }
 
-/// [`Backend::Vllm`] or [`Backend::OpenAiCompatible`] on a server you name, instead of the
-/// one in the environment, so each org can run on its own server. In serde form,
-/// `{"backend": "openai-compatible", "base_url": "http://localhost:11434/v1"}`, with an
-/// `api_key` if the server wants one.
+/// [`Backend::OpenAiCompatible`] on a server you name, instead of the one in the environment,
+/// so each org can run on its own server. In serde form, `{"backend": "openai-compatible",
+/// "base_url": "http://localhost:11434/v1"}`, with an `api_key` if the server wants one and
+/// `models`, a map from a name to the id the server serves it as.
+///
+/// A desc names the model as its maker does, whatever the server calls it. The id sent is
+/// the one `models` maps the name to; else, among the ids the server lists at `/models`, the
+/// one equal to `<org>/<name>` or to `<name>` alone, ignoring case; else `<org>/<name>` as it
+/// is, the Hugging Face repo id vLLM serves. So `Qwen/Qwen3-0.6B` runs as LM Studio's
+/// `qwen/qwen3-0.6b` and `LGAI-EXAONE/k-exaone_v2.5` as EXAONE's `k-exaone_v2.5` with nothing
+/// mapped, while Ollama's `llama3.3:70b` takes
+/// `with_model("Llama-3.3-70B-Instruct", "llama3.3:70b")`.
 #[derive(Clone, serde::Deserialize)]
 #[serde(try_from = "LangModelServerFields")]
 pub struct LangModelServer {
-    backend: Backend,
     base_url: String,
     api_key: Option<String>,
+    models: HashMap<String, String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -142,17 +146,24 @@ struct LangModelServerFields {
     base_url: String,
     #[serde(default)]
     api_key: Option<String>,
+    #[serde(default)]
+    models: HashMap<String, String>,
 }
 
 impl TryFrom<LangModelServerFields> for LangModelServer {
     type Error = anyhow::Error;
 
     fn try_from(fields: LangModelServerFields) -> anyhow::Result<Self> {
-        let server = Self::new(fields.backend, fields.base_url)?;
-        Ok(match fields.api_key {
-            Some(api_key) => server.with_api_key(api_key),
-            None => server,
-        })
+        if fields.backend != Backend::OpenAiCompatible {
+            bail!(
+                "a server runs the 'openai-compatible' backend, not '{}'",
+                fields.backend
+            );
+        }
+        let mut server = Self::new(fields.base_url)?;
+        server.api_key = fields.api_key;
+        server.models = fields.models;
+        Ok(server)
     }
 }
 
@@ -160,62 +171,36 @@ impl TryFrom<LangModelServerFields> for LangModelServer {
 impl std::fmt::Debug for LangModelServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LangModelServer")
-            .field("backend", &self.backend)
             .field("base_url", &self.base_url)
             .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("models", &self.models)
             .finish()
     }
 }
 
 impl LangModelServer {
-    /// `backend`, [`Backend::Vllm`] or [`Backend::OpenAiCompatible`], on the server at
-    /// `base_url` (`"http://localhost:8000/v1"`); any other backend, or a blank URL, is an
-    /// error.
-    pub fn new(backend: Backend, base_url: impl Into<String>) -> anyhow::Result<Self> {
-        Self::check(backend)?;
+    /// The server at `base_url` (`"http://localhost:8000/v1"`); a blank URL is an error.
+    pub fn new(base_url: impl Into<String>) -> anyhow::Result<Self> {
         let base_url = base_url.into();
         if base_url.trim().is_empty() {
             bail!("a server needs a base_url");
         }
         Ok(Self {
-            backend,
             base_url,
             api_key: None,
+            models: HashMap::new(),
         })
     }
 
-    fn check(backend: Backend) -> anyhow::Result<()> {
-        if matches!(backend, Backend::Vllm | Backend::OpenAiCompatible) {
-            Ok(())
-        } else {
-            bail!("a server runs the 'vllm' or 'openai-compatible' backend, not '{backend}'")
-        }
-    }
-
-    /// `backend` on the server the environment names: `VLLM_BASE_URL` (by default
-    /// `http://localhost:8000/v1`) and `VLLM_API_KEY` for [`Backend::Vllm`],
-    /// `OPENAI_COMPATIBLE_BASE_URL` and `OPENAI_COMPATIBLE_API_KEY` for
-    /// [`Backend::OpenAiCompatible`]. A blank variable is unset.
-    pub fn from_env(backend: Backend) -> anyhow::Result<Self> {
-        Self::check(backend)?;
+    /// The server the environment names: `OPENAI_COMPATIBLE_BASE_URL`, with
+    /// `OPENAI_COMPATIBLE_API_KEY` if it is set. A blank variable is unset.
+    pub fn from_env() -> anyhow::Result<Self> {
         let var = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
-        let (base_url, api_key) = if backend == Backend::Vllm {
-            (
-                var("VLLM_BASE_URL").unwrap_or_else(|| "http://localhost:8000/v1".to_owned()),
-                var("VLLM_API_KEY"),
-            )
-        } else {
-            (
-                var("OPENAI_COMPATIBLE_BASE_URL")
-                    .context("OPENAI_COMPATIBLE_BASE_URL is not set")?,
-                var("OPENAI_COMPATIBLE_API_KEY"),
-            )
-        };
-        let server = Self::new(backend, base_url)?;
-        Ok(match api_key {
-            Some(api_key) => server.with_api_key(api_key),
-            None => server,
-        })
+        let mut server = Self::new(
+            var("OPENAI_COMPATIBLE_BASE_URL").context("OPENAI_COMPATIBLE_BASE_URL is not set")?,
+        )?;
+        server.api_key = var("OPENAI_COMPATIBLE_API_KEY");
+        Ok(server)
     }
 
     /// Sends `api_key` as a bearer token.
@@ -224,33 +209,51 @@ impl LangModelServer {
         self
     }
 
-    pub fn backend(&self) -> Backend {
-        self.backend
+    /// Runs `name`, the part of a desc after the org, as `id`, the id this server serves it
+    /// as.
+    pub fn with_model(mut self, name: impl Into<String>, id: impl Into<String>) -> Self {
+        self.models.insert(name.into(), id.into());
+        self
     }
 
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
 
-    /// The id this server knows `name` of `org` by: `<org>/<name>` on vLLM, which serves
-    /// Hugging Face repo ids, and `<name>` as it is on any other server, whose org names the
-    /// server.
-    fn model_id(&self, org: &str, name: Option<&str>) -> anyhow::Result<String> {
-        let name = required(name)?;
-        Ok(match self.backend {
-            Backend::Vllm => format!("{org}/{name}"),
-            _ => name.to_owned(),
-        })
+    /// The id this server serves `name` of `org` as, found as the type's doc says. A name
+    /// `models` maps is not looked up on the server.
+    async fn model_id(&self, org: &str, name: &str) -> String {
+        if let Some(id) = self.models.get(name) {
+            return id.clone();
+        }
+        let listed = catalog::server_models(&self.base_url, self.api_key.as_deref()).await;
+        listed_id(&listed, org, name)
     }
 
     /// Builds `name` of `org` on this server, as [`model_id`](Self::model_id) names it.
-    fn build(&self, org: &str, name: Option<&str>) -> anyhow::Result<Arc<dyn InferLangModel>> {
-        let model = OpenAiCompatibleModel::new(self.model_id(org, name)?, &self.base_url);
+    async fn build(
+        &self,
+        org: &str,
+        name: Option<&str>,
+    ) -> anyhow::Result<Arc<dyn InferLangModel>> {
+        let id = self.model_id(org, required(name)?).await;
+        let model = OpenAiCompatibleModel::new(id, &self.base_url);
         Ok(Arc::new(match &self.api_key {
             Some(api_key) => model.with_api_key(api_key),
             None => model,
         }))
     }
+}
+
+/// The id a server listing `ids` serves `name` of `org` as: the one equal to `<org>/<name>`,
+/// else the one equal to `name` alone, both ignoring case; else `<org>/<name>` as it is.
+fn listed_id(ids: &[String], org: &str, name: &str) -> String {
+    let desc = format!("{org}/{name}");
+    ids.iter()
+        .find(|id| id.eq_ignore_ascii_case(&desc))
+        .or_else(|| ids.iter().find(|id| id.eq_ignore_ascii_case(name)))
+        .cloned()
+        .unwrap_or(desc)
 }
 
 impl From<LangModelServer> for LangModelProvider {
@@ -340,8 +343,8 @@ fn required(name: Option<&str>) -> anyhow::Result<&str> {
 /// - OpenRouter: looked up in OpenRouter's catalog (see
 ///   [`catalog::OpenRouterCatalog::find`]), else [`openrouter_rule`]: `claude-sonnet-5-5`
 ///   runs `anthropic/claude-sonnet-5.5`.
-/// - vLLM and any other OpenAI-compatible server: as [`LangModelServer::build`] says, on the
-///   server [`LangModelServer::from_env`] reads.
+/// - An OpenAI-compatible server: as [`LangModelServer`] says, on the server
+///   [`LangModelServer::from_env`] reads.
 ///
 /// The catalogs are fetched once per process; to run an id as is, build the model directly
 /// (`BedrockApiModel::from_env("arn:…")`).
@@ -406,9 +409,7 @@ async fn build(
                 .unwrap_or_else(|| openrouter_rule(org, name));
             Arc::new(OpenRouterApiModel::from_env(id)?)
         }
-        (Backend::Vllm | Backend::OpenAiCompatible, _) => {
-            LangModelServer::from_env(backend)?.build(org, name)?
-        }
+        (Backend::OpenAiCompatible, _) => LangModelServer::from_env()?.build(org, name).await?,
     })
 }
 
@@ -469,7 +470,7 @@ pub async fn create_lang_model(desc: &str) -> anyhow::Result<Arc<dyn InferLangMo
         .ok_or_else(|| anyhow::anyhow!("no provider set for lang model org '{org}'"))?;
     match provider {
         LangModelProvider::Backend(backend) => build(backend, org, name).await,
-        LangModelProvider::Server(server) => server.build(org, name),
+        LangModelProvider::Server(server) => server.build(org, name).await,
         LangModelProvider::Custom(f) => f(org, name),
     }
 }
@@ -516,7 +517,6 @@ mod tests {
             Backend::Api,
             Backend::Bedrock,
             Backend::OpenRouter,
-            Backend::Vllm,
             Backend::OpenAiCompatible,
         ] {
             assert_eq!(serde_json::to_value(backend).unwrap(), backend.to_string());
@@ -529,37 +529,38 @@ mod tests {
     }
 
     #[test]
-    fn test_a_server_runs_the_two_server_backends() {
-        for backend in [Backend::Vllm, Backend::OpenAiCompatible] {
-            let server = LangModelServer::new(backend, "http://localhost:1/v1").unwrap();
-            assert_eq!(server.backend(), backend);
-            assert_eq!(server.base_url(), "http://localhost:1/v1");
-        }
-        for backend in [
-            Backend::Cli,
-            Backend::Api,
-            Backend::Bedrock,
-            Backend::OpenRouter,
-        ] {
-            let err = LangModelServer::new(backend, "http://localhost:1/v1")
-                .err()
-                .unwrap();
-            assert!(err.to_string().contains(&backend.to_string()), "{err}");
-        }
+    fn test_a_server_is_the_openai_compatible_backend_on_a_url() {
+        let server = LangModelServer::new("http://localhost:1/v1").unwrap();
+        assert_eq!(server.base_url(), "http://localhost:1/v1");
+        assert!(LangModelServer::new(" ").is_err());
 
         let server: LangModelServer = serde_json::from_value(serde_json::json!({
             "backend": "openai-compatible",
             "base_url": "http://localhost:11434/v1",
             "api_key": "k",
+            "models": {"Llama-3.3-70B-Instruct": "llama3.3:70b"},
         }))
         .unwrap();
-        assert_eq!(server.backend(), Backend::OpenAiCompatible);
         assert_eq!(server.api_key.as_deref(), Some("k"));
-        for fields in [
+        assert_eq!(
+            server
+                .models
+                .get("Llama-3.3-70B-Instruct")
+                .map(String::as_str),
+            Some("llama3.3:70b")
+        );
+        let err = serde_json::from_value::<LangModelServer>(
             serde_json::json!({"backend": "cli", "base_url": "http://localhost:1/v1"}),
-            serde_json::json!({"backend": "vllm"}),
-            serde_json::json!({"backend": "vllm", "base_url": " "}),
-            serde_json::json!({"backend": "vllm", "base_url": "http://localhost:1/v1", "key": "k"}),
+        )
+        .err()
+        .unwrap();
+        assert!(err.to_string().contains("openai-compatible"), "{err}");
+        for fields in [
+            serde_json::json!({"backend": "vllm", "base_url": "http://localhost:1/v1"}),
+            serde_json::json!({"backend": "openai-compatible"}),
+            serde_json::json!({"backend": "openai-compatible", "base_url": " "}),
+            serde_json::json!({"backend": "openai-compatible", "base_url": "http://localhost:1/v1", "key": "k"}),
+            serde_json::json!({"backend": "openai-compatible", "base_url": "http://localhost:1/v1", "models": ["a"]}),
         ] {
             assert!(
                 serde_json::from_value::<LangModelServer>(fields.clone()).is_err(),
@@ -569,42 +570,65 @@ mod tests {
     }
 
     #[test]
-    fn test_a_server_names_the_model_as_the_server_does() {
-        let id = |backend, org, name| {
-            LangModelServer::new(backend, "http://localhost:1/v1")
-                .unwrap()
-                .model_id(org, name)
-                .unwrap()
+    fn test_a_listed_id_is_the_desc_or_the_name_ignoring_case() {
+        let listed = |ids: &[&str], org, name| {
+            let ids: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+            listed_id(&ids, org, name)
         };
-        // vLLM serves Hugging Face repo ids, so the desc is the id.
+        // vLLM lists Hugging Face repo ids: the desc as it is.
         assert_eq!(
-            id(Backend::Vllm, "zai-org", Some("GLM-4.6")),
+            listed(&["zai-org/GLM-4.6"], "zai-org", "GLM-4.6"),
             "zai-org/GLM-4.6"
         );
-        // On any other server the org names the server, and the name is the server's id,
-        // slashes and all.
+        // LM Studio lists the repo id in lower case.
         assert_eq!(
-            id(Backend::OpenAiCompatible, "ollama", Some("llama3.3:70b")),
-            "llama3.3:70b"
-        );
-        assert_eq!(
-            id(Backend::OpenAiCompatible, "lmstudio", Some("qwen/qwen3-8b")),
+            listed(&["qwen3.5-27b", "qwen/qwen3-8b"], "Qwen", "Qwen3-8B"),
             "qwen/qwen3-8b"
         );
-        let err = LangModelServer::new(Backend::OpenAiCompatible, "http://localhost:1/v1")
+        // EXAONE's API lists the name alone.
+        assert_eq!(
+            listed(&["k-exaone_v2.5"], "LGAI-EXAONE", "k-exaone_v2.5"),
+            "k-exaone_v2.5"
+        );
+        // The whole desc wins over the name alone.
+        assert_eq!(
+            listed(&["qwen3-8b", "qwen/qwen3-8b"], "Qwen", "Qwen3-8B"),
+            "qwen/qwen3-8b"
+        );
+        // Nothing listed, or nothing like it: the desc as it is.
+        assert_eq!(
+            listed(&[], "meta-llama", "Llama-3.3-70B-Instruct"),
+            "meta-llama/Llama-3.3-70B-Instruct"
+        );
+        assert_eq!(
+            listed(&["llama3.3:70b"], "meta-llama", "Llama-3.3-70B-Instruct"),
+            "meta-llama/Llama-3.3-70B-Instruct"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_a_server_maps_a_name_and_asks_for_the_rest() {
+        // Nothing listens on port 1, so the server lists nothing.
+        let server = LangModelServer::new("http://127.0.0.1:1/v1")
             .unwrap()
-            .build("ollama", None)
-            .err()
-            .unwrap();
+            .with_model("Llama-3.3-70B-Instruct", "llama3.3:70b");
+        assert_eq!(
+            server
+                .model_id("meta-llama", "Llama-3.3-70B-Instruct")
+                .await,
+            "llama3.3:70b"
+        );
+        assert_eq!(server.model_id("Qwen", "Qwen3-8B").await, "Qwen/Qwen3-8B");
+        let err = server.build("meta-llama", None).await.err().unwrap();
         assert!(err.to_string().contains("needs a model name"), "{err}");
 
         set_lang_model_provider(
             "server-read-back",
-            LangModelServer::new(Backend::OpenAiCompatible, "http://localhost:1/v1").unwrap(),
+            LangModelServer::new("http://localhost:1/v1").unwrap(),
         );
         assert!(matches!(
             get_lang_model_provider("server-read-back/x"),
-            Some(LangModelProvider::Server(server)) if server.backend() == Backend::OpenAiCompatible
+            Some(LangModelProvider::Server(server)) if server.base_url() == "http://localhost:1/v1"
         ));
         remove_lang_model_provider("server-read-back");
     }

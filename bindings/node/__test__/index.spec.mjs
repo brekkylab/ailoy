@@ -67,8 +67,17 @@ test('an object that does not fit says what was expected', () => {
   })
 })
 
+/**
+ * Run the models of `org` on the openai-compatible backend, against a port nothing listens
+ * on, for an agent that is built but never asked.
+ */
+const serveNowhere = (org) => {
+  process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1'
+  setLangModelProvider(org, 'openai-compatible')
+}
+
 test('a browser connects only when used, and needs no console', async () => {
-  setLangModelProvider('fake-browser', 'vllm')
+  serveNowhere('fake-browser')
   const agent = await new AgentBuilder('fake-browser/model').browser({ startUrl: 'https://example.com' }).build()
   await agent.close()
 })
@@ -85,7 +94,7 @@ test('a browser can be less careful', () => {
 })
 
 test('an isolated browser has options of its own', async () => {
-  setLangModelProvider('fake-browser', 'vllm')
+  serveNowhere('fake-browser')
   const agent = await new AgentBuilder('fake-browser/model')
     .browser({ isolated: true, headless: true, executable: '/nonexistent/chrome', profile: '/nonexistent/profile' })
     .build()
@@ -96,7 +105,7 @@ test('an isolated browser has options of its own', async () => {
 })
 
 test('an agent without a browser cannot start one', async () => {
-  setLangModelProvider('fake-browser', 'vllm')
+  serveNowhere('fake-browser')
   const agent = await new AgentBuilder('fake-browser/model').build()
   await assert.rejects(agent.startBrowser(), { code: 'AILOY_ERROR', message: /no browser/ })
   await agent.close()
@@ -119,6 +128,11 @@ const lastContent = (messages) => {
 const fakeModel = (call = { name: 'add', arguments: { a: 2, b: 3 } }) =>
   new Promise((resolve) => {
     const server = createServer((req, res) => {
+      if (req.method === 'GET') {
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ data: server.listed.map((id) => ({ id })) }))
+        return
+      }
       let body = ''
       req.on('data', (chunk) => (body += chunk))
       req.on('end', () => {
@@ -157,16 +171,19 @@ const fakeModel = (call = { name: 'add', arguments: { a: 2, b: 3 } }) =>
     })
     // Every request's model id and `authorization` header, as sent.
     server.seen = []
+    // The ids `GET /v1/models` lists.
+    server.listed = []
     server.listen(0, '127.0.0.1', () => resolve(server))
   })
 
 /**
- * Run the models of `org` on the vLLM backend, against `server`. vLLM reads its server from
- * the environment when a model is built, so the agent or model is built right after.
+ * Run the models of `org` on the openai-compatible backend, against `server`. The backend
+ * reads its server from the environment when a model is built, so the agent or model is built
+ * right after.
  */
 const serve = (org, server) => {
-  process.env.VLLM_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
-  setLangModelProvider(org, 'vllm')
+  process.env.OPENAI_COMPATIBLE_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
+  setLangModelProvider(org, 'openai-compatible')
 }
 
 const ADD = {
@@ -252,39 +269,60 @@ test('breaking out of a turn ends it where it stands', async (t) => {
   assert.ok(Array.isArray(agent.history))
 })
 
-test('a server of your own names the model as the server does', async (t) => {
+test('a server of your own keeps the desc', async (t) => {
   const server = await fakeModel()
   t.after(() => server.close())
   const base_url = `http://127.0.0.1:${server.address().port}/v1`
-  setLangModelProvider('ollama', { backend: 'openai-compatible', base_url })
-  setLangModelProvider('meta-llama', { backend: 'vllm', base_url, api_key: 'k' })
+  setLangModelProvider('meta-llama', {
+    backend: 'openai-compatible',
+    base_url,
+    api_key: 'k',
+    models: { 'Llama-3.3-70B-Instruct': 'llama3.3:70b' },
+  })
+  setLangModelProvider('Qwen', { backend: 'openai-compatible', base_url })
+  setLangModelProvider('LGAI-EXAONE', { backend: 'openai-compatible', base_url })
   try {
-    assert.equal(getLangModelProvider('ollama/llama3.3:70b'), 'openai-compatible')
-    assert.equal(getLangModelProvider('meta-llama/Llama-3.3-70B-Instruct'), 'vllm')
+    assert.equal(getLangModelProvider('meta-llama/Llama-3.3-70B-Instruct'), 'openai-compatible')
+    server.listed = ['qwen/qwen3-8b', 'k-exaone_v2.5']
     const messages = [{ role: 'user', contents: [{ type: 'text', text: 'hi' }] }]
-    await (await LangModel.create('ollama/llama3.3:70b')).infer(messages)
-    await (await LangModel.create('meta-llama/Llama-3.3-70B-Instruct')).infer(messages)
-    // vLLM serves Hugging Face repo ids, so its org is the model's maker; any other server is
-    // named by its org and serves the name as it is.
+    for (const desc of [
+      'meta-llama/Llama-3.3-70B-Instruct',
+      'meta-llama/Llama-3.1-8B-Instruct',
+      'Qwen/Qwen3-8B',
+      'LGAI-EXAONE/k-exaone_v2.5',
+    ]) {
+      await (await LangModel.create(desc)).infer(messages)
+    }
+    // The server is sent its own id for the model: mapped by `models`, listed by the server
+    // for the desc or the name alone, or the desc as it is.
     assert.deepEqual(server.seen, [
-      ['llama3.3:70b', null],
-      ['meta-llama/Llama-3.3-70B-Instruct', 'Bearer k'],
+      ['llama3.3:70b', 'Bearer k'],
+      ['meta-llama/Llama-3.1-8B-Instruct', 'Bearer k'],
+      ['qwen/qwen3-8b', null],
+      ['k-exaone_v2.5', null],
     ])
   } finally {
-    removeLangModelProvider('ollama')
     removeLangModelProvider('meta-llama')
+    setLangModelProvider('Qwen', 'api')
+    removeLangModelProvider('LGAI-EXAONE')
   }
 
   assert.throws(() => setLangModelProvider('x', { backend: 'cli', base_url }), {
     code: 'INVALID_ARG',
     message: /openai-compatible/,
   })
-  assert.throws(() => setLangModelProvider('x', { backend: 'vllm' }), { code: 'INVALID_ARG', message: /base_url/ })
-  assert.throws(() => setLangModelProvider('x', { backend: 'vllm', baseUrl: base_url }), {
+  assert.throws(() => setLangModelProvider('x', { backend: 'openai-compatible' }), { code: 'INVALID_ARG', message: /base_url/ })
+  assert.throws(() => setLangModelProvider('x', { backend: 'openai-compatible', baseUrl: base_url }), {
     code: 'INVALID_ARG',
     message: /baseUrl/,
   })
-  assert.throws(() => setLangModelProvider('x', { backend: 'vllm', base_url: '' }), { code: 'INVALID_ARG', message: /base_url/ })
+  assert.throws(() => setLangModelProvider('x', { backend: 'openai-compatible', base_url: '' }), {
+    code: 'INVALID_ARG',
+    message: /base_url/,
+  })
+  assert.throws(() => setLangModelProvider('x', { backend: 'openai-compatible', base_url, models: ['a'] }), {
+    code: 'INVALID_ARG',
+  })
   assert.equal(getLangModelProvider('x'), null)
 })
 
@@ -295,11 +333,11 @@ test('the openai-compatible backend reads its server from the environment', asyn
   const messages = [{ role: 'user', contents: [{ type: 'text', text: 'hi' }] }]
   try {
     delete process.env.OPENAI_COMPATIBLE_BASE_URL
-    await assert.rejects(LangModel.create('env-served/llama3.3:70b'), { message: /OPENAI_COMPATIBLE_BASE_URL/ })
+    await assert.rejects(LangModel.create('env-served/model'), { message: /OPENAI_COMPATIBLE_BASE_URL/ })
 
     process.env.OPENAI_COMPATIBLE_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
-    await (await LangModel.create('env-served/llama3.3:70b')).infer(messages)
-    assert.deepEqual(server.seen, [['llama3.3:70b', null]])
+    await (await LangModel.create('env-served/model')).infer(messages)
+    assert.deepEqual(server.seen, [['env-served/model', null]])
   } finally {
     delete process.env.OPENAI_COMPATIBLE_BASE_URL
     removeLangModelProvider('env-served')
@@ -441,8 +479,7 @@ test('an agent shares its console, and closing the agent leaves it open', async 
     .build()
   try {
     // Never asked anything, so the model only has to be built.
-    process.env.VLLM_BASE_URL = 'http://127.0.0.1:9/v1'
-    setLangModelProvider('fake-console', 'vllm')
+    serveNowhere('fake-console')
     const agent = await new AgentBuilder('fake-console/model').shellTool().console(console_).build()
     await agent.close()
     const result = await console_.exec(['echo', 'still here'])

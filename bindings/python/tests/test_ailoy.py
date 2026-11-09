@@ -25,6 +25,14 @@ def content_text(content):
 class FakeModel(BaseHTTPRequestHandler):
     # Every request's model id and `Authorization` header, as sent.
     seen = []
+    # The ids `GET /v1/models` lists.
+    listed = []
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"data": [{"id": id} for id in self.listed]}).encode())
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -67,9 +75,9 @@ def fake_model():
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeModel)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
-    # The `fake` org runs on vLLM, which reads the server from the environment.
-    os.environ["VLLM_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
-    ailoy.set_lang_model_provider("fake", "vllm")
+    # `fake` runs here, on the backend that reads its server from the environment.
+    os.environ["OPENAI_COMPATIBLE_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
+    ailoy.set_lang_model_provider("fake", "openai-compatible")
     yield
     ailoy.remove_lang_model_provider("fake")
     server.shutdown()
@@ -127,16 +135,18 @@ def test_set_lang_model_provider_refuses_an_unknown_backend():
         ailoy.set_lang_model_provider("x", "smoke-signals")
 
 
-def test_a_server_of_your_own_runs_a_server_backend():
-    base_url = os.environ["VLLM_BASE_URL"]
+def test_a_server_of_your_own_runs_the_openai_compatible_backend():
+    base_url = os.environ["OPENAI_COMPATIBLE_BASE_URL"]
     with pytest.raises(ValueError, match="openai-compatible"):
         ailoy.set_lang_model_provider("x", {"backend": "cli", "base_url": base_url})
     with pytest.raises(ValueError, match="base_url"):
-        ailoy.set_lang_model_provider("x", {"backend": "vllm"})
+        ailoy.set_lang_model_provider("x", {"backend": "openai-compatible"})
     with pytest.raises(ValueError, match="baseUrl"):
-        ailoy.set_lang_model_provider("x", {"backend": "vllm", "baseUrl": base_url})
+        ailoy.set_lang_model_provider("x", {"backend": "openai-compatible", "baseUrl": base_url})
     with pytest.raises(ValueError, match="base_url"):
-        ailoy.set_lang_model_provider("x", {"backend": "vllm", "base_url": ""})
+        ailoy.set_lang_model_provider("x", {"backend": "openai-compatible", "base_url": ""})
+    with pytest.raises(ValueError):
+        ailoy.set_lang_model_provider("x", {"backend": "openai-compatible", "base_url": base_url, "models": ["a"]})
     assert ailoy.get_lang_model_provider("x") is None
 
 
@@ -223,40 +233,51 @@ async def test_a_turn_without_tools():
     assert [m["role"] for m in history] == ["system", "user", "assistant"]
 
 
-async def test_a_server_of_your_own_names_the_model_as_the_server_does():
-    base_url = os.environ["VLLM_BASE_URL"]
-    ailoy.set_lang_model_provider("ollama", {"backend": "openai-compatible", "base_url": base_url})
-    ailoy.set_lang_model_provider("meta-llama", {"backend": "vllm", "base_url": base_url, "api_key": "k"})
+async def test_a_server_of_your_own_keeps_the_desc():
+    base_url = os.environ["OPENAI_COMPATIBLE_BASE_URL"]
+    server = {"backend": "openai-compatible", "base_url": base_url}
+    ailoy.set_lang_model_provider("meta-llama", {**server, "api_key": "k", "models": {"Llama-3.3-70B-Instruct": "llama3.3:70b"}})
+    ailoy.set_lang_model_provider("Qwen", server)
+    ailoy.set_lang_model_provider("LGAI-EXAONE", server)
     try:
-        assert ailoy.get_lang_model_provider("ollama/llama3.3:70b") == "openai-compatible"
-        assert ailoy.get_lang_model_provider("meta-llama/Llama-3.3-70B-Instruct") == "vllm"
+        assert ailoy.get_lang_model_provider("meta-llama/Llama-3.3-70B-Instruct") == "openai-compatible"
         FakeModel.seen.clear()
+        FakeModel.listed = ["qwen/qwen3-8b", "k-exaone_v2.5"]
         messages = [{"role": "user", "contents": [{"type": "text", "text": "hi"}]}]
-        output = await (await LangModel.create("ollama/llama3.3:70b")).infer(messages)
+        output = await (await LangModel.create("meta-llama/Llama-3.3-70B-Instruct")).infer(messages)
         assert texts([output]) == ["hello"]
-        await (await LangModel.create("meta-llama/Llama-3.3-70B-Instruct")).infer(messages)
-        # vLLM serves Hugging Face repo ids, so its org is the model's maker; any other server
-        # is named by its org and serves the name as it is.
-        assert FakeModel.seen == [("llama3.3:70b", None), ("meta-llama/Llama-3.3-70B-Instruct", "Bearer k")]
+        for desc in ["meta-llama/Llama-3.1-8B-Instruct", "Qwen/Qwen3-8B", "LGAI-EXAONE/k-exaone_v2.5"]:
+            await (await LangModel.create(desc)).infer(messages)
+        # The server is sent its own id for the model: mapped by `models`, listed by the server
+        # for the desc or the name alone, or the desc as it is.
+        assert FakeModel.seen == [
+            ("llama3.3:70b", "Bearer k"),
+            ("meta-llama/Llama-3.1-8B-Instruct", "Bearer k"),
+            ("qwen/qwen3-8b", None),
+            ("k-exaone_v2.5", None),
+        ]
     finally:
-        ailoy.remove_lang_model_provider("ollama")
+        FakeModel.listed = []
         ailoy.remove_lang_model_provider("meta-llama")
+        ailoy.set_lang_model_provider("Qwen", "api")
+        ailoy.remove_lang_model_provider("LGAI-EXAONE")
 
 
 async def test_the_openai_compatible_backend_reads_its_server_from_the_environment():
+    base_url = os.environ["OPENAI_COMPATIBLE_BASE_URL"]
     ailoy.set_lang_model_provider("env-served", "openai-compatible")
     messages = [{"role": "user", "contents": [{"type": "text", "text": "hi"}]}]
     try:
-        os.environ.pop("OPENAI_COMPATIBLE_BASE_URL", None)
+        del os.environ["OPENAI_COMPATIBLE_BASE_URL"]
         with pytest.raises(AiloyError, match="OPENAI_COMPATIBLE_BASE_URL"):
-            await LangModel.create("env-served/llama3.3:70b")
+            await LangModel.create("env-served/model")
 
-        os.environ["OPENAI_COMPATIBLE_BASE_URL"] = os.environ["VLLM_BASE_URL"]
+        os.environ["OPENAI_COMPATIBLE_BASE_URL"] = base_url
         FakeModel.seen.clear()
-        await (await LangModel.create("env-served/llama3.3:70b")).infer(messages)
-        assert FakeModel.seen == [("llama3.3:70b", None)]
+        await (await LangModel.create("env-served/model")).infer(messages)
+        assert FakeModel.seen == [("env-served/model", None)]
     finally:
-        os.environ.pop("OPENAI_COMPATIBLE_BASE_URL", None)
+        os.environ["OPENAI_COMPATIBLE_BASE_URL"] = base_url
         ailoy.remove_lang_model_provider("env-served")
 
 

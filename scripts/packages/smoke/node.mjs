@@ -42,9 +42,10 @@ check(new virtx.Recipe('alpine:latest').step('echo hi').toString().includes('ech
 
 const model = await fakeModel()
 try {
-  // The `fake` org runs on vLLM, which reads its server from the environment.
-  process.env.VLLM_BASE_URL = model.url
-  ailoy.setLangModelProvider('fake', 'vllm')
+  // The `fake` org runs on the openai-compatible backend, which reads its server from the
+  // environment.
+  process.env.OPENAI_COMPATIBLE_BASE_URL = model.url
+  ailoy.setLangModelProvider('fake', 'openai-compatible')
 
   // A whole turn -- model, tool, model -- through the addon's async bridge both ways.
   const calls = []
