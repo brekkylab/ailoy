@@ -169,6 +169,8 @@ let coder = AgentBuilder::new("Qwen/Qwen3-Coder-30B-A3B-Instruct").build().await
 
 The backend is `vllm` or `openai-compatible`; the names are read as [Backends](#backends) says, so a vLLM server is set for the org that makes the model, and any other server for the org you name it by. `get_lang_model_provider` answers with the backend's name.
 
+A hosted API that speaks the same protocol is a server too. For LG's EXAONE API, set an org such as `lgai` to `{"backend": "openai-compatible", "base_url": "https://api.exaone.ai/v1", "api_key": "..."}` and build `lgai/k-exaone_v2.5`.
+
 ## Model options
 
 Two options go to every backend:
@@ -220,15 +222,16 @@ let agent = AgentBuilder::new("openai/gpt-5.6-luna")
 </TabItem>
 </Tabs>
 
-On `vllm` and `openai-compatible`, `thinking_effort` is sent two ways, since servers read different ones: as `reasoning_effort` (`low`, `medium` or `high`), the field OpenAI's Chat Completions grades thinking by, and as the chat template's `enable_thinking` (and `thinking`) in `chat_template_kwargs`, which turns thinking on rather than grading it. `output_schema` is sent as a `json_schema` `response_format`. vLLM reads `chat_template_kwargs` and `response_format`, and its documentation says it hands `reasoning_effort` to the chat template, turning `enable_thinking` on with it. What the other servers do with them, measured on 2026-11-09 with Qwen3-0.6B on each, a schema with `additionalProperties: false` telling enforcement from obedience:
+On `vllm` and `openai-compatible`, `thinking_effort` is sent two ways, since servers read different ones: as `reasoning_effort` (`low`, `medium` or `high`), the field OpenAI's Chat Completions grades thinking by, and as the chat template's `enable_thinking` (and `thinking`) in `chat_template_kwargs`, which turns thinking on rather than grading it. `output_schema` is sent as a `json_schema` `response_format`. vLLM reads `chat_template_kwargs` and `response_format`, and its documentation says it hands `reasoning_effort` to the chat template, turning `enable_thinking` on with it. What the other servers do with them, measured on 2026-11-09 with Qwen3-0.6B on each local server and `k-exaone_v2.5` on EXAONE's API, a schema with `additionalProperties: false` telling enforcement from obedience:
 
 | Server | `reasoning_effort` | `chat_template_kwargs` | `response_format` | Thinking comes back as |
 | --- | --- | --- | --- | --- |
 | llama-server (llama.cpp build 11146) | Not read: `"bogus"` is accepted too | Read: `enable_thinking: false` switched the thinking off | Enforced | `reasoning_content` |
 | Ollama 0.40.12 | Read, as `"bogus"` is refused, but `low`, `medium` and `high` left Qwen3's thinking as it was | Ignored | Enforced | `reasoning` |
 | LM Studio 0.4.26 | Read, as `"bogus"` is refused, but `low`, `medium` and `high` left Qwen3's thinking as it was | Ignored | Enforced, with no thinking while the reply is structured | `reasoning_content` |
+| EXAONE API (`k-exaone_v2.5`) | Read, as `"bogus"` is refused, `medium` included; on one counting problem the thinking did not follow it, `low` taking 991 to 1728 reasoning tokens over six runs and `high` 1054 to 2131 over four | `enable_thinking: false` left the model thinking, with the thinking and its `</think>` in the reply | Enforced | `reasoning_content` |
 
-So with Qwen3, `thinking_effort` changes nothing on these three: the model thinks as its template defaults. SGLang has not been measured.
+So with Qwen3, `thinking_effort` changes nothing on llama-server, Ollama or LM Studio: the model thinks as its template defaults. EXAONE always thinks, and with `thinking_effort` unset it runs at its own default effort, which its documentation gives as `max`. SGLang has not been measured.
 
 ## Running a model without an agent
 
