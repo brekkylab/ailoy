@@ -280,16 +280,15 @@ test('a server of your own keeps the desc', async (t) => {
     models: { 'Llama-3.3-70B-Instruct': 'llama3.3:70b' },
   })
   setLangModelProvider('Qwen', { backend: 'openai-compatible', base_url })
-  setLangModelProvider('LGAI-EXAONE', { backend: 'openai-compatible', base_url })
   try {
     assert.equal(getLangModelProvider('meta-llama/Llama-3.3-70B-Instruct'), 'openai-compatible')
-    server.listed = ['qwen/qwen3-8b', 'k-exaone_v2.5']
+    server.listed = ['qwen/qwen3-8b', 'qwen3.5-27b']
     const messages = [{ role: 'user', contents: [{ type: 'text', text: 'hi' }] }]
     for (const desc of [
       'meta-llama/Llama-3.3-70B-Instruct',
       'meta-llama/Llama-3.1-8B-Instruct',
       'Qwen/Qwen3-8B',
-      'LGAI-EXAONE/k-exaone_v2.5',
+      'Qwen/Qwen3.5-27B',
     ]) {
       await (await LangModel.create(desc)).infer(messages)
     }
@@ -299,12 +298,11 @@ test('a server of your own keeps the desc', async (t) => {
       ['llama3.3:70b', 'Bearer k'],
       ['meta-llama/Llama-3.1-8B-Instruct', 'Bearer k'],
       ['qwen/qwen3-8b', null],
-      ['k-exaone_v2.5', null],
+      ['qwen3.5-27b', null],
     ])
   } finally {
     removeLangModelProvider('meta-llama')
     setLangModelProvider('Qwen', 'api')
-    removeLangModelProvider('LGAI-EXAONE')
   }
 
   assert.throws(() => setLangModelProvider('x', { backend: 'cli', base_url }), {

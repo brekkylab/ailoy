@@ -42,6 +42,7 @@
 //! | Kimi                 | Hugging Face repo id            | `moonshotai/Kimi-K2-Thinking`        |
 //! | GLM                  | Hugging Face repo id            | `zai-org/GLM-4.6`                    |
 //! | Qwen                 | Hugging Face repo id            | `Qwen/Qwen3-235B-A22B-Instruct-2507` |
+//! | EXAONE's API         | `LGAI-EXAONE/<official API id>` | `LGAI-EXAONE/k-exaone_v2.5`          |
 //!
 //! `<org>` alone runs the CLI's default model.
 //!
@@ -56,16 +57,19 @@
 //! | `moonshotai`  | —                  | [`KimiApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`OpenAiCompatibleModel`]     |
 //! | `zai-org`     | —                  | [`GlmApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`OpenAiCompatibleModel`]      |
 //! | `Qwen`        | —                  | [`QwenApiModel`], [`BedrockApiModel`], [`OpenRouterApiModel`], [`OpenAiCompatibleModel`]     |
+//! | `LGAI-EXAONE` | —                  | [`OpenAiCompatibleModel`], [`BedrockApiModel`], [`OpenRouterApiModel`]                       |
 //! | any other     | —                  | [`BedrockApiModel`], [`OpenRouterApiModel`], [`OpenAiCompatibleModel`]                       |
 //!
 //! `cli` and `api` know the orgs in the table; `bedrock`, `openrouter` and
 //! `openai-compatible` build a model for any org. The default is the CLI where there is
 //! one, otherwise the org's own API. The own APIs read their key from `ANTHROPIC_API_KEY`,
-//! `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`, `ZAI_API_KEY` and
-//! `DASHSCOPE_API_KEY`; Bedrock from `AWS_BEARER_TOKEN_BEDROCK` (and `AWS_REGION`); OpenRouter
-//! from `OPENROUTER_API_KEY`; an OpenAI-compatible server from `OPENAI_COMPATIBLE_BASE_URL`,
-//! with `OPENAI_COMPATIBLE_API_KEY` if it is set. A [`LangModelServer`] names the server
-//! instead, one per org. All but the CLIs need a name in the desc.
+//! `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`, `ZAI_API_KEY`,
+//! `DASHSCOPE_API_KEY` and `EXAONE_API_KEY`; Bedrock from `AWS_BEARER_TOKEN_BEDROCK` (and
+//! `AWS_REGION`); OpenRouter from `OPENROUTER_API_KEY`; an OpenAI-compatible server from
+//! `OPENAI_COMPATIBLE_BASE_URL`, with `OPENAI_COMPATIBLE_API_KEY` if it is set. A
+//! [`LangModelServer`] names the server instead, one per org. EXAONE's API speaks the
+//! OpenAI-compatible Chat Completions API too, so its models are [`OpenAiCompatibleModel`]s
+//! as well. All but the CLIs need a name in the desc.
 
 mod catalog;
 
@@ -97,8 +101,8 @@ pub enum Backend {
     Bedrock,
     OpenRouter,
     /// A server speaking the OpenAI-compatible Chat Completions API: vLLM, llama-server,
-    /// Ollama, LM Studio, SGLang, or a hosted API such as EXAONE's. The desc stays the
-    /// model's name; [`LangModelServer`] finds the id the server serves it as.
+    /// Ollama, LM Studio or SGLang. The desc stays the model's name; [`LangModelServer`]
+    /// finds the id the server serves it as.
     #[serde(rename = "openai-compatible")]
     #[strum(serialize = "openai-compatible")]
     OpenAiCompatible,
@@ -128,8 +132,7 @@ pub enum LangModelProvider {
 /// the one `models` maps the name to; else, among the ids the server lists at `/models`, the
 /// one equal to `<org>/<name>` or to `<name>` alone, ignoring case; else `<org>/<name>` as it
 /// is, the Hugging Face repo id vLLM serves. So `Qwen/Qwen3-0.6B` runs as LM Studio's
-/// `qwen/qwen3-0.6b` and `LGAI-EXAONE/k-exaone_v2.5` as EXAONE's `k-exaone_v2.5` with nothing
-/// mapped, while Ollama's `llama3.3:70b` takes
+/// `qwen/qwen3-0.6b` with nothing mapped, while Ollama's `llama3.3:70b` takes
 /// `with_model("Llama-3.3-70B-Instruct", "llama3.3:70b")`.
 #[derive(Clone, serde::Deserialize)]
 #[serde(try_from = "LangModelServerFields")]
@@ -195,11 +198,11 @@ impl LangModelServer {
     /// The server the environment names: `OPENAI_COMPATIBLE_BASE_URL`, with
     /// `OPENAI_COMPATIBLE_API_KEY` if it is set. A blank variable is unset.
     pub fn from_env() -> anyhow::Result<Self> {
-        let var = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
         let mut server = Self::new(
-            var("OPENAI_COMPATIBLE_BASE_URL").context("OPENAI_COMPATIBLE_BASE_URL is not set")?,
+            env_var("OPENAI_COMPATIBLE_BASE_URL")
+                .context("OPENAI_COMPATIBLE_BASE_URL is not set")?,
         )?;
-        server.api_key = var("OPENAI_COMPATIBLE_API_KEY");
+        server.api_key = env_var("OPENAI_COMPATIBLE_API_KEY");
         Ok(server)
     }
 
@@ -256,6 +259,14 @@ fn listed_id(ids: &[String], org: &str, name: &str) -> String {
         .unwrap_or(desc)
 }
 
+/// The environment variable `name`, `None` when it is unset or blank.
+fn env_var(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.trim().is_empty())
+}
+
+/// EXAONE's API, which serves the OpenAI-compatible Chat Completions API.
+const EXAONE_API_URL: &str = "https://api.exaone.ai/v1";
+
 impl From<LangModelServer> for LangModelProvider {
     fn from(server: LangModelServer) -> Self {
         Self::Server(server)
@@ -280,7 +291,7 @@ impl From<Backend> for LangModelProvider {
 }
 
 /// Whether the org's models are closed, named by their official API id; the rest are
-/// open-weight, named by their Hugging Face repo id.
+/// open-weight, named by their Hugging Face repo id, or by their API id where there is none.
 fn is_closed(org: &str) -> bool {
     matches!(org, "anthropic" | "openai" | "google")
 }
@@ -336,6 +347,7 @@ fn required(name: Option<&str>) -> anyhow::Result<&str> {
 /// - CLI: `name`, as `--model`.
 /// - Own API: `name`, lowercased for open-weight models (`glm-4.6`). DeepSeek's names no
 ///   version, so it takes its own names (`deepseek-ai/deepseek-chat`), not Hugging Face's.
+///   EXAONE's is an [`OpenAiCompatibleModel`] on [`EXAONE_API_URL`], sent `name` as it is.
 /// - Bedrock: looked up in the region's catalog (see [`catalog::BedrockCatalog::find`]),
 ///   else [`bedrock_rule`]: `claude-sonnet-5-5` runs `global.anthropic.claude-sonnet-5-5`,
 ///   and with the catalog `claude-sonnet-4-5` runs
@@ -390,6 +402,11 @@ async fn build(
             Arc::new(GlmApiModel::from_env(required(name)?.to_lowercase())?)
         }
         (Backend::Api, "Qwen") => Arc::new(QwenApiModel::from_env(required(name)?.to_lowercase())?),
+        (Backend::Api, "LGAI-EXAONE") => {
+            let name = required(name)?;
+            let api_key = env_var("EXAONE_API_KEY").context("EXAONE_API_KEY is not set")?;
+            Arc::new(OpenAiCompatibleModel::new(name, EXAONE_API_URL).with_api_key(api_key))
+        }
         (Backend::Api, _) => bail!("'{org}' has no API of its own"),
 
         (Backend::Bedrock, _) => {
@@ -426,6 +443,7 @@ static LANG_MODEL_PROVIDERS: LazyLock<RwLock<HashMap<String, LangModelProvider>>
                 ("moonshotai", Backend::Api),
                 ("zai-org", Backend::Api),
                 ("Qwen", Backend::Api),
+                ("LGAI-EXAONE", Backend::Api),
             ]
             .into_iter()
             .map(|(org, backend)| (org.to_owned(), backend.into()))
@@ -455,7 +473,8 @@ pub fn remove_lang_model_provider(org: &str) -> Option<LangModelProvider> {
 
 /// Builds a model from a desc of the form `<org>` or `<org>/<name>`, e.g. `"anthropic"` or
 /// `"openai/gpt-6.1-sol"`, through the provider set for `<org>`. Claude, GPT and Gemini
-/// are named by their official API id, open-weight models by their Hugging Face repo id.
+/// are named by their official API id, open-weight models by their Hugging Face repo id, and
+/// a model with no repo, such as EXAONE's `k-exaone_v2.5`, by its API id.
 pub async fn create_lang_model(desc: &str) -> anyhow::Result<Arc<dyn InferLangModel>> {
     let (org, name) = match desc.split_once('/') {
         Some((org, name)) => (org, Some(name)),
@@ -512,6 +531,7 @@ mod tests {
         };
         assert_eq!(is("anthropic"), Some(Backend::Cli));
         assert_eq!(is("anthropic/claude-sonnet-5-5"), Some(Backend::Cli));
+        assert_eq!(is("LGAI-EXAONE/k-exaone_v2.5"), Some(Backend::Api));
         for backend in [
             Backend::Cli,
             Backend::Api,
@@ -585,10 +605,10 @@ mod tests {
             listed(&["qwen3.5-27b", "qwen/qwen3-8b"], "Qwen", "Qwen3-8B"),
             "qwen/qwen3-8b"
         );
-        // EXAONE's API lists the name alone.
+        // A server that lists the name without its org.
         assert_eq!(
-            listed(&["k-exaone_v2.5"], "LGAI-EXAONE", "k-exaone_v2.5"),
-            "k-exaone_v2.5"
+            listed(&["qwen3.5-27b"], "Qwen", "Qwen3.5-27B"),
+            "qwen3.5-27b"
         );
         // The whole desc wins over the name alone.
         assert_eq!(
@@ -631,6 +651,20 @@ mod tests {
             Some(LangModelProvider::Server(server)) if server.base_url() == "http://localhost:1/v1"
         ));
         remove_lang_model_provider("server-read-back");
+    }
+
+    #[tokio::test]
+    async fn test_exaone_runs_on_its_own_api() {
+        let err = build(Backend::Api, "LGAI-EXAONE", None)
+            .await
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("needs a model name"), "{err}");
+        // Built when the key is set; otherwise the key is what is missing.
+        if let Err(err) = build(Backend::Api, "LGAI-EXAONE", Some("k-exaone_v2.5")).await {
+            assert!(env_var("EXAONE_API_KEY").is_none());
+            assert!(err.to_string().contains("EXAONE_API_KEY"), "{err}");
+        }
     }
 
     #[tokio::test]

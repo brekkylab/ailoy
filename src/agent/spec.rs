@@ -115,7 +115,10 @@ impl AgentSpec {
 
         // `imgread` only where the image reaches the model: the backends of these take tool
         // results as text alone (an image becomes a label), even for vision models.
-        if !matches!(org, "deepseek-ai" | "moonshotai" | "zai-org" | "Qwen") {
+        if !matches!(
+            org,
+            "deepseek-ai" | "moonshotai" | "zai-org" | "Qwen" | "LGAI-EXAONE"
+        ) {
             self.tools.push(get_imgread_tool_desc());
         }
 
@@ -191,6 +194,9 @@ mod tests {
 
         let kimi = AgentSpec::new("moonshotai/Kimi-K2-Thinking").system_tools();
         assert!(!names(&kimi).contains(&"imgread"));
+
+        let exaone = AgentSpec::new("LGAI-EXAONE/k-exaone_v2.5").system_tools();
+        assert!(!names(&exaone).contains(&"imgread"));
     }
 
     #[test]

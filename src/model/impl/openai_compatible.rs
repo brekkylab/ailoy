@@ -1,8 +1,8 @@
 //! A language model served over the OpenAI-compatible Chat Completions API, called over HTTP.
 //!
-//! vLLM, llama-server, Ollama, LM Studio and SGLang all serve it. Every call is streamed
-//! (`"stream": true`) and read as server-sent events; [`infer`](InferLangModel::infer)
-//! accumulates the same stream.
+//! vLLM, llama-server, Ollama, LM Studio and SGLang all serve it, and so does EXAONE's API.
+//! Every call is streamed (`"stream": true`) and read as server-sent events;
+//! [`infer`](InferLangModel::infer) accumulates the same stream.
 
 use anyhow::{Context as _, bail};
 use futures::{
@@ -22,7 +22,7 @@ use crate::{
     tool::ToolDesc,
 };
 
-/// Runs a model on an OpenAI-compatible server.
+/// Runs a model on a server of the OpenAI-compatible Chat Completions API.
 ///
 /// - A [`ThinkingEffort`] is sent two ways, since servers read
 ///   different ones: as `reasoning_effort` (`low`, `medium` or `high`), and as the chat
@@ -32,7 +32,7 @@ use crate::{
 ///   server runs a reasoning parser, as `reasoning` (or `reasoning_content` on older servers),
 ///   and is not sent back.
 /// - An output schema is sent as a `json_schema` `response_format`, which vLLM, llama-server,
-///   Ollama and LM Studio enforce.
+///   Ollama, LM Studio and EXAONE's API enforce.
 #[derive(Clone)]
 pub struct OpenAiCompatibleModel {
     model: String,

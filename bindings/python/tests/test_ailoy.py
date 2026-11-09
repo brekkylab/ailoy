@@ -238,15 +238,14 @@ async def test_a_server_of_your_own_keeps_the_desc():
     server = {"backend": "openai-compatible", "base_url": base_url}
     ailoy.set_lang_model_provider("meta-llama", {**server, "api_key": "k", "models": {"Llama-3.3-70B-Instruct": "llama3.3:70b"}})
     ailoy.set_lang_model_provider("Qwen", server)
-    ailoy.set_lang_model_provider("LGAI-EXAONE", server)
     try:
         assert ailoy.get_lang_model_provider("meta-llama/Llama-3.3-70B-Instruct") == "openai-compatible"
         FakeModel.seen.clear()
-        FakeModel.listed = ["qwen/qwen3-8b", "k-exaone_v2.5"]
+        FakeModel.listed = ["qwen/qwen3-8b", "qwen3.5-27b"]
         messages = [{"role": "user", "contents": [{"type": "text", "text": "hi"}]}]
         output = await (await LangModel.create("meta-llama/Llama-3.3-70B-Instruct")).infer(messages)
         assert texts([output]) == ["hello"]
-        for desc in ["meta-llama/Llama-3.1-8B-Instruct", "Qwen/Qwen3-8B", "LGAI-EXAONE/k-exaone_v2.5"]:
+        for desc in ["meta-llama/Llama-3.1-8B-Instruct", "Qwen/Qwen3-8B", "Qwen/Qwen3.5-27B"]:
             await (await LangModel.create(desc)).infer(messages)
         # The server is sent its own id for the model: mapped by `models`, listed by the server
         # for the desc or the name alone, or the desc as it is.
@@ -254,13 +253,12 @@ async def test_a_server_of_your_own_keeps_the_desc():
             ("llama3.3:70b", "Bearer k"),
             ("meta-llama/Llama-3.1-8B-Instruct", "Bearer k"),
             ("qwen/qwen3-8b", None),
-            ("k-exaone_v2.5", None),
+            ("qwen3.5-27b", None),
         ]
     finally:
         FakeModel.listed = []
         ailoy.remove_lang_model_provider("meta-llama")
         ailoy.set_lang_model_provider("Qwen", "api")
-        ailoy.remove_lang_model_provider("LGAI-EXAONE")
 
 
 async def test_the_openai_compatible_backend_reads_its_server_from_the_environment():
