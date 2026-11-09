@@ -1,7 +1,7 @@
 //! `LangModel`, and the per-org providers models are built through.
 //!
 //! An org's provider is a backend (`'cli'`, `'api'`, `'bedrock'`, `'openrouter'` or
-//! `'openai-compatible'`), a server of your own as an object (`{ backend: 'openai-compatible',
+//! `'self-hosted'`), a server of your own as an object (`{ backend: 'self-hosted',
 //! base_url: 'http://localhost:11434/v1' }`, with an `api_key` if the server wants one and
 //! `models` mapping a name to the id the server serves it as, as [`LangModelServer`] is in
 //! Rust), or a factory of JavaScript's own, as
@@ -371,13 +371,13 @@ pub fn set_lang_model_provider(
 }
 
 /// How the model `desc` names (`'<org>/<name>'`, or `'<org>'`) is built: a backend's name
-/// (`'openai-compatible'` for a server of your own), `'custom'` for a factory, or
+/// (`'self-hosted'` for a server of your own), `'custom'` for a factory, or
 /// `null` when its org has no provider.
 #[napi(ts_return_type = "Backend | 'custom' | null")]
 pub fn get_lang_model_provider(desc: String) -> Option<String> {
     get_lang_model_provider_rs(&desc).map(|provider| match provider {
         LangModelProvider::Backend(backend) => backend.to_string(),
-        LangModelProvider::Server(_) => Backend::OpenAiCompatible.to_string(),
+        LangModelProvider::Server(_) => Backend::SelfHosted.to_string(),
         LangModelProvider::Custom(_) => "custom".to_string(),
     })
 }

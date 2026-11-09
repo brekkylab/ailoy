@@ -1,7 +1,7 @@
 //! `LangModel`, and the per-org providers models are built through.
 //!
 //! An org's provider is a backend (`"cli"`, `"api"`, `"bedrock"`, `"openrouter"` or
-//! `"openai-compatible"`), a server of your own as a dict (`{"backend": "openai-compatible",
+//! `"self-hosted"`), a server of your own as a dict (`{"backend": "self-hosted",
 //! "base_url": "http://localhost:11434/v1"}`, with an `api_key` if the server wants one and
 //! `models` mapping a name to the id the server serves it as, as [`LangModelServer`] is in
 //! Rust), or a factory of Python's own, as
@@ -227,7 +227,7 @@ fn custom(factory: Py<PyAny>) -> LangModelProvider {
 
 /// Build the models of `org` (`"anthropic"`, `"openai"`, `"google"`, `"deepseek-ai"`, …)
 /// through `provider`: a backend — `"cli"`, `"api"`, `"bedrock"`, `"openrouter"` or
-/// `"openai-compatible"` — a server dict, or a factory, as the module says. Replaces the
+/// `"self-hosted"` — a server dict, or a factory, as the module says. Replaces the
 /// provider the org had.
 #[pyfunction]
 fn set_lang_model_provider(org: String, provider: Bound<'_, PyAny>) -> PyResult<()> {
@@ -250,7 +250,7 @@ fn set_lang_model_provider(org: String, provider: Bound<'_, PyAny>) -> PyResult<
 }
 
 /// How the model `desc` names (`"<org>/<name>"`, or `"<org>"`) is built: a backend's name
-/// (`"openai-compatible"` for a server of your own), `"custom"` for a factory, or
+/// (`"self-hosted"` for a server of your own), `"custom"` for a factory, or
 /// `None` when its org has no provider.
 #[pyfunction]
 fn get_lang_model_provider(desc: String) -> Option<String> {
@@ -261,7 +261,7 @@ fn get_lang_model_provider(desc: String) -> Option<String> {
 fn provider_name(provider: &LangModelProvider) -> String {
     match provider {
         LangModelProvider::Backend(backend) => backend.to_string(),
-        LangModelProvider::Server(_) => Backend::OpenAiCompatible.to_string(),
+        LangModelProvider::Server(_) => Backend::SelfHosted.to_string(),
         LangModelProvider::Custom(_) => "custom".to_string(),
     }
 }

@@ -146,17 +146,17 @@ class AgentSpec(TypedDict):
     skills: NotRequired[list[str]]
 
 
-Backend = Literal["cli", "api", "bedrock", "openrouter", "openai-compatible"]
+Backend = Literal["cli", "api", "bedrock", "openrouter", "self-hosted"]
 
 
 class LangModelServer(TypedDict):
-    """The ``openai-compatible`` backend on a server of your own, given to
+    """The ``self-hosted`` backend on a server of your own, given to
     ``set_lang_model_provider`` in place of a backend's name. A model keeps its name; the id
     the server is sent is the one ``models`` maps the name to, else the one the server lists
     that equals ``<org>/<name>`` or ``<name>`` alone, ignoring case, else ``<org>/<name>`` as
     it is."""
 
-    backend: Literal["openai-compatible"]
+    backend: Literal["self-hosted"]
     base_url: str
     api_key: NotRequired[str]
     models: NotRequired[dict[str, str]]

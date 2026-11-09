@@ -6,7 +6,7 @@
 //!   SMOKE_VM      1 if this machine can boot one (KVM or HVF), else 0
 //!
 //! A turn's model is served from this process, as `fake.mjs` serves it: no network, and no
-//! API key. It streams, as vLLM does, and the `fake` org runs on the openai-compatible backend.
+//! API key. It streams, as vLLM does, and the `fake` org runs on the self-hosted backend.
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 
 use ailoy::{
@@ -52,7 +52,7 @@ fn answer(body: &Value) -> Vec<Value> {
 }
 
 /// Serve the fake model on localhost, one request per connection, and return its base URL, as
-/// `OPENAI_COMPATIBLE_BASE_URL` takes it.
+/// `SELF_HOSTED_BASE_URL` takes it.
 fn fake_model() -> anyhow::Result<String> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let url = format!("http://{}/v1", listener.local_addr()?);
@@ -122,8 +122,8 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // SAFETY: set before any other thread reads the environment.
-    unsafe { std::env::set_var("OPENAI_COMPATIBLE_BASE_URL", fake_model()?) };
-    set_lang_model_provider("fake", Backend::OpenAiCompatible);
+    unsafe { std::env::set_var("SELF_HOSTED_BASE_URL", fake_model()?) };
+    set_lang_model_provider("fake", Backend::SelfHosted);
 
     let mut agent = AgentBuilder::new("fake/model").build().await?;
     let outputs = run(&mut agent, "hi").await?;

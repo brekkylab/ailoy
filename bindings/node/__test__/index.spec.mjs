@@ -68,12 +68,12 @@ test('an object that does not fit says what was expected', () => {
 })
 
 /**
- * Run the models of `org` on the openai-compatible backend, against a port nothing listens
+ * Run the models of `org` on the self-hosted backend, against a port nothing listens
  * on, for an agent that is built but never asked.
  */
 const serveNowhere = (org) => {
-  process.env.OPENAI_COMPATIBLE_BASE_URL = 'http://127.0.0.1:9/v1'
-  setLangModelProvider(org, 'openai-compatible')
+  process.env.SELF_HOSTED_BASE_URL = 'http://127.0.0.1:9/v1'
+  setLangModelProvider(org, 'self-hosted')
 }
 
 test('a browser connects only when used, and needs no console', async () => {
@@ -177,13 +177,13 @@ const fakeModel = (call = { name: 'add', arguments: { a: 2, b: 3 } }) =>
   })
 
 /**
- * Run the models of `org` on the openai-compatible backend, against `server`. The backend
+ * Run the models of `org` on the self-hosted backend, against `server`. The backend
  * reads its server from the environment when a model is built, so the agent or model is built
  * right after.
  */
 const serve = (org, server) => {
-  process.env.OPENAI_COMPATIBLE_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
-  setLangModelProvider(org, 'openai-compatible')
+  process.env.SELF_HOSTED_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
+  setLangModelProvider(org, 'self-hosted')
 }
 
 const ADD = {
@@ -274,14 +274,14 @@ test('a server of your own keeps the desc', async (t) => {
   t.after(() => server.close())
   const base_url = `http://127.0.0.1:${server.address().port}/v1`
   setLangModelProvider('meta-llama', {
-    backend: 'openai-compatible',
+    backend: 'self-hosted',
     base_url,
     api_key: 'k',
     models: { 'Llama-3.3-70B-Instruct': 'llama3.3:70b' },
   })
-  setLangModelProvider('Qwen', { backend: 'openai-compatible', base_url })
+  setLangModelProvider('Qwen', { backend: 'self-hosted', base_url })
   try {
-    assert.equal(getLangModelProvider('meta-llama/Llama-3.3-70B-Instruct'), 'openai-compatible')
+    assert.equal(getLangModelProvider('meta-llama/Llama-3.3-70B-Instruct'), 'self-hosted')
     server.listed = ['qwen/qwen3-8b', 'qwen3.5-27b']
     const messages = [{ role: 'user', contents: [{ type: 'text', text: 'hi' }] }]
     for (const desc of [
@@ -307,37 +307,37 @@ test('a server of your own keeps the desc', async (t) => {
 
   assert.throws(() => setLangModelProvider('x', { backend: 'cli', base_url }), {
     code: 'INVALID_ARG',
-    message: /openai-compatible/,
+    message: /self-hosted/,
   })
-  assert.throws(() => setLangModelProvider('x', { backend: 'openai-compatible' }), { code: 'INVALID_ARG', message: /base_url/ })
-  assert.throws(() => setLangModelProvider('x', { backend: 'openai-compatible', baseUrl: base_url }), {
+  assert.throws(() => setLangModelProvider('x', { backend: 'self-hosted' }), { code: 'INVALID_ARG', message: /base_url/ })
+  assert.throws(() => setLangModelProvider('x', { backend: 'self-hosted', baseUrl: base_url }), {
     code: 'INVALID_ARG',
     message: /baseUrl/,
   })
-  assert.throws(() => setLangModelProvider('x', { backend: 'openai-compatible', base_url: '' }), {
+  assert.throws(() => setLangModelProvider('x', { backend: 'self-hosted', base_url: '' }), {
     code: 'INVALID_ARG',
     message: /base_url/,
   })
-  assert.throws(() => setLangModelProvider('x', { backend: 'openai-compatible', base_url, models: ['a'] }), {
+  assert.throws(() => setLangModelProvider('x', { backend: 'self-hosted', base_url, models: ['a'] }), {
     code: 'INVALID_ARG',
   })
   assert.equal(getLangModelProvider('x'), null)
 })
 
-test('the openai-compatible backend reads its server from the environment', async (t) => {
+test('the self-hosted backend reads its server from the environment', async (t) => {
   const server = await fakeModel()
   t.after(() => server.close())
-  setLangModelProvider('env-served', 'openai-compatible')
+  setLangModelProvider('env-served', 'self-hosted')
   const messages = [{ role: 'user', contents: [{ type: 'text', text: 'hi' }] }]
   try {
-    delete process.env.OPENAI_COMPATIBLE_BASE_URL
-    await assert.rejects(LangModel.create('env-served/model'), { message: /OPENAI_COMPATIBLE_BASE_URL/ })
+    delete process.env.SELF_HOSTED_BASE_URL
+    await assert.rejects(LangModel.create('env-served/model'), { message: /SELF_HOSTED_BASE_URL/ })
 
-    process.env.OPENAI_COMPATIBLE_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
+    process.env.SELF_HOSTED_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
     await (await LangModel.create('env-served/model')).infer(messages)
     assert.deepEqual(server.seen, [['env-served/model', null]])
   } finally {
-    delete process.env.OPENAI_COMPATIBLE_BASE_URL
+    delete process.env.SELF_HOSTED_BASE_URL
     removeLangModelProvider('env-served')
   }
 })

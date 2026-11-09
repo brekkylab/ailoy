@@ -1,6 +1,6 @@
 // An OpenAI-compatible chat-completions endpoint on localhost, streamed as vLLM serves one,
 // enough to drive a whole turn -- model, tool, model -- without a network or a key. `python.py`
-// serves the same one. `url` is the server's base, as `OPENAI_COMPATIBLE_BASE_URL` takes it.
+// serves the same one. `url` is the server's base, as `SELF_HOSTED_BASE_URL` takes it.
 //
 // Given tools, it calls the one the user's message names, with the arguments after the name
 // (`add {"a": 2, "b": 3}`); given a tool's result, it says what the tool said; otherwise it

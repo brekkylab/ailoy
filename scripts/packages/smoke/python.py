@@ -71,10 +71,10 @@ async def main():
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeModel)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    # The `fake` org runs on the openai-compatible backend, which reads its server from the
+    # The `fake` org runs on the self-hosted backend, which reads its server from the
     # environment.
-    os.environ["OPENAI_COMPATIBLE_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
-    ailoy.set_lang_model_provider("fake", "openai-compatible")
+    os.environ["SELF_HOSTED_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
+    ailoy.set_lang_model_provider("fake", "self-hosted")
 
     # A whole turn -- model, tool, model -- through the extension's bridge to asyncio both ways.
     calls = []

@@ -129,16 +129,16 @@ export interface AgentSpec {
   skills?: Array<string>
 }
 
-export type Backend = 'cli' | 'api' | 'bedrock' | 'openrouter' | 'openai-compatible'
+export type Backend = 'cli' | 'api' | 'bedrock' | 'openrouter' | 'self-hosted'
 
 /**
- * The `openai-compatible` backend on a server of your own, given to `setLangModelProvider` in
+ * The `self-hosted` backend on a server of your own, given to `setLangModelProvider` in
  * place of a backend's name. A model keeps its name; the id the server is sent is the one
  * `models` maps the name to, else the one the server lists that equals `<org>/<name>` or
  * `<name>` alone, ignoring case, else `<org>/<name>` as it is.
  */
 export interface LangModelServer {
-  backend: 'openai-compatible'
+  backend: 'self-hosted'
   base_url: string
   api_key?: string
   models?: Record<string, string>

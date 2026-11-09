@@ -1,8 +1,8 @@
 //! Builds language models from a desc, choosing how each one runs.
 //!
 //! A desc is `<org>/<name>`, or `<org>` alone for a CLI's default model. The provider set
-//! for the org decides how it runs: its CLI, its own API, Bedrock, OpenRouter or an
-//! OpenAI-compatible server.
+//! for the org decides how it runs: its CLI, its own API, Bedrock, OpenRouter or a server
+//! you run yourself.
 //!
 //! ```ignore
 //! use ailoy::model::*;
@@ -60,16 +60,16 @@
 //! | `LGAI-EXAONE` | —                  | [`OpenAiCompatibleModel`], [`BedrockApiModel`], [`OpenRouterApiModel`]                       |
 //! | any other     | —                  | [`BedrockApiModel`], [`OpenRouterApiModel`], [`OpenAiCompatibleModel`]                       |
 //!
-//! `cli` and `api` know the orgs in the table; `bedrock`, `openrouter` and
-//! `openai-compatible` build a model for any org. The default is the CLI where there is
-//! one, otherwise the org's own API. The own APIs read their key from `ANTHROPIC_API_KEY`,
-//! `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`, `ZAI_API_KEY`,
-//! `DASHSCOPE_API_KEY` and `EXAONE_API_KEY`; Bedrock from `AWS_BEARER_TOKEN_BEDROCK` (and
-//! `AWS_REGION`); OpenRouter from `OPENROUTER_API_KEY`; an OpenAI-compatible server from
-//! `OPENAI_COMPATIBLE_BASE_URL`, with `OPENAI_COMPATIBLE_API_KEY` if it is set. A
-//! [`LangModelServer`] names the server instead, one per org. EXAONE's API speaks the
-//! OpenAI-compatible Chat Completions API too, so its models are [`OpenAiCompatibleModel`]s
-//! as well. All but the CLIs need a name in the desc.
+//! `cli` and `api` know the orgs in the table; `bedrock`, `openrouter` and `self-hosted` build
+//! a model for any org. The default is the CLI where there is one, otherwise the org's own
+//! API. The own APIs read their key from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+//! `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`, `ZAI_API_KEY`, `DASHSCOPE_API_KEY`
+//! and `EXAONE_API_KEY`; Bedrock from `AWS_BEARER_TOKEN_BEDROCK` (and `AWS_REGION`);
+//! OpenRouter from `OPENROUTER_API_KEY`; a server you run yourself from
+//! `SELF_HOSTED_BASE_URL`, with `SELF_HOSTED_API_KEY` if it is set. A [`LangModelServer`]
+//! names the server instead, one per org. EXAONE's API speaks the OpenAI-compatible Chat
+//! Completions API those servers do, so its models are [`OpenAiCompatibleModel`]s too. All
+//! but the CLIs need a name in the desc.
 
 mod catalog;
 
@@ -87,7 +87,7 @@ use super::{
 };
 
 /// How a model is run, spelled `"cli"`, `"api"`, `"bedrock"`, `"openrouter"` or
-/// `"openai-compatible"` in its serde form.
+/// `"self-hosted"` in its serde form.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, strum::Display,
 )]
@@ -100,12 +100,13 @@ pub enum Backend {
     Api,
     Bedrock,
     OpenRouter,
-    /// A server speaking the OpenAI-compatible Chat Completions API: vLLM, llama-server,
-    /// Ollama, LM Studio or SGLang. The desc stays the model's name; [`LangModelServer`]
-    /// finds the id the server serves it as.
-    #[serde(rename = "openai-compatible")]
-    #[strum(serialize = "openai-compatible")]
-    OpenAiCompatible,
+    /// A server you run yourself: vLLM, llama-server, Ollama, LM Studio or SGLang, through
+    /// the OpenAI-compatible Chat Completions API they serve. Another endpoint serving that
+    /// API, such as a LiteLLM gateway, runs here too. The desc stays the model's name;
+    /// [`LangModelServer`] finds the id the server serves it as.
+    #[serde(rename = "self-hosted")]
+    #[strum(serialize = "self-hosted")]
+    SelfHosted,
 }
 
 /// Builds a model of your own from the desc's org and the name after it, `None` when the
@@ -123,8 +124,8 @@ pub enum LangModelProvider {
     Custom(CustomLangModelProvider),
 }
 
-/// [`Backend::OpenAiCompatible`] on a server you name, instead of the one in the environment,
-/// so each org can run on its own server. In serde form, `{"backend": "openai-compatible",
+/// [`Backend::SelfHosted`] on a server you name, instead of the one in the environment, so
+/// each org can run on its own server. In serde form, `{"backend": "self-hosted",
 /// "base_url": "http://localhost:11434/v1"}`, with an `api_key` if the server wants one and
 /// `models`, a map from a name to the id the server serves it as.
 ///
@@ -157,9 +158,9 @@ impl TryFrom<LangModelServerFields> for LangModelServer {
     type Error = anyhow::Error;
 
     fn try_from(fields: LangModelServerFields) -> anyhow::Result<Self> {
-        if fields.backend != Backend::OpenAiCompatible {
+        if fields.backend != Backend::SelfHosted {
             bail!(
-                "a server runs the 'openai-compatible' backend, not '{}'",
+                "a server runs the 'self-hosted' backend, not '{}'",
                 fields.backend
             );
         }
@@ -195,14 +196,12 @@ impl LangModelServer {
         })
     }
 
-    /// The server the environment names: `OPENAI_COMPATIBLE_BASE_URL`, with
-    /// `OPENAI_COMPATIBLE_API_KEY` if it is set. A blank variable is unset.
+    /// The server the environment names: `SELF_HOSTED_BASE_URL`, with `SELF_HOSTED_API_KEY`
+    /// if it is set. A blank variable is unset.
     pub fn from_env() -> anyhow::Result<Self> {
-        let mut server = Self::new(
-            env_var("OPENAI_COMPATIBLE_BASE_URL")
-                .context("OPENAI_COMPATIBLE_BASE_URL is not set")?,
-        )?;
-        server.api_key = env_var("OPENAI_COMPATIBLE_API_KEY");
+        let mut server =
+            Self::new(env_var("SELF_HOSTED_BASE_URL").context("SELF_HOSTED_BASE_URL is not set")?)?;
+        server.api_key = env_var("SELF_HOSTED_API_KEY");
         Ok(server)
     }
 
@@ -355,8 +354,8 @@ fn required(name: Option<&str>) -> anyhow::Result<&str> {
 /// - OpenRouter: looked up in OpenRouter's catalog (see
 ///   [`catalog::OpenRouterCatalog::find`]), else [`openrouter_rule`]: `claude-sonnet-5-5`
 ///   runs `anthropic/claude-sonnet-5.5`.
-/// - An OpenAI-compatible server: as [`LangModelServer`] says, on the server
-///   [`LangModelServer::from_env`] reads.
+/// - Self-hosted: as [`LangModelServer`] says, on the server [`LangModelServer::from_env`]
+///   reads.
 ///
 /// The catalogs are fetched once per process; to run an id as is, build the model directly
 /// (`BedrockApiModel::from_env("arn:…")`).
@@ -426,7 +425,7 @@ async fn build(
                 .unwrap_or_else(|| openrouter_rule(org, name));
             Arc::new(OpenRouterApiModel::from_env(id)?)
         }
-        (Backend::OpenAiCompatible, _) => LangModelServer::from_env()?.build(org, name).await?,
+        (Backend::SelfHosted, _) => LangModelServer::from_env()?.build(org, name).await?,
     })
 }
 
@@ -537,11 +536,11 @@ mod tests {
             Backend::Api,
             Backend::Bedrock,
             Backend::OpenRouter,
-            Backend::OpenAiCompatible,
+            Backend::SelfHosted,
         ] {
             assert_eq!(serde_json::to_value(backend).unwrap(), backend.to_string());
         }
-        assert_eq!(Backend::OpenAiCompatible.to_string(), "openai-compatible");
+        assert_eq!(Backend::SelfHosted.to_string(), "self-hosted");
         set_lang_model_provider("provider-read-back", Backend::Bedrock);
         assert_eq!(is("provider-read-back/some-model"), Some(Backend::Bedrock));
         remove_lang_model_provider("provider-read-back");
@@ -549,13 +548,13 @@ mod tests {
     }
 
     #[test]
-    fn test_a_server_is_the_openai_compatible_backend_on_a_url() {
+    fn test_a_server_is_the_self_hosted_backend_on_a_url() {
         let server = LangModelServer::new("http://localhost:1/v1").unwrap();
         assert_eq!(server.base_url(), "http://localhost:1/v1");
         assert!(LangModelServer::new(" ").is_err());
 
         let server: LangModelServer = serde_json::from_value(serde_json::json!({
-            "backend": "openai-compatible",
+            "backend": "self-hosted",
             "base_url": "http://localhost:11434/v1",
             "api_key": "k",
             "models": {"Llama-3.3-70B-Instruct": "llama3.3:70b"},
@@ -574,13 +573,14 @@ mod tests {
         )
         .err()
         .unwrap();
-        assert!(err.to_string().contains("openai-compatible"), "{err}");
+        assert!(err.to_string().contains("self-hosted"), "{err}");
         for fields in [
             serde_json::json!({"backend": "vllm", "base_url": "http://localhost:1/v1"}),
-            serde_json::json!({"backend": "openai-compatible"}),
-            serde_json::json!({"backend": "openai-compatible", "base_url": " "}),
-            serde_json::json!({"backend": "openai-compatible", "base_url": "http://localhost:1/v1", "key": "k"}),
-            serde_json::json!({"backend": "openai-compatible", "base_url": "http://localhost:1/v1", "models": ["a"]}),
+            serde_json::json!({"backend": "openai-compatible", "base_url": "http://localhost:1/v1"}),
+            serde_json::json!({"backend": "self-hosted"}),
+            serde_json::json!({"backend": "self-hosted", "base_url": " "}),
+            serde_json::json!({"backend": "self-hosted", "base_url": "http://localhost:1/v1", "key": "k"}),
+            serde_json::json!({"backend": "self-hosted", "base_url": "http://localhost:1/v1", "models": ["a"]}),
         ] {
             assert!(
                 serde_json::from_value::<LangModelServer>(fields.clone()).is_err(),

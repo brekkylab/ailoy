@@ -76,8 +76,8 @@ def fake_model():
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     # `fake` runs here, on the backend that reads its server from the environment.
-    os.environ["OPENAI_COMPATIBLE_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
-    ailoy.set_lang_model_provider("fake", "openai-compatible")
+    os.environ["SELF_HOSTED_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
+    ailoy.set_lang_model_provider("fake", "self-hosted")
     yield
     ailoy.remove_lang_model_provider("fake")
     server.shutdown()
@@ -135,18 +135,18 @@ def test_set_lang_model_provider_refuses_an_unknown_backend():
         ailoy.set_lang_model_provider("x", "smoke-signals")
 
 
-def test_a_server_of_your_own_runs_the_openai_compatible_backend():
-    base_url = os.environ["OPENAI_COMPATIBLE_BASE_URL"]
-    with pytest.raises(ValueError, match="openai-compatible"):
+def test_a_server_of_your_own_runs_the_self_hosted_backend():
+    base_url = os.environ["SELF_HOSTED_BASE_URL"]
+    with pytest.raises(ValueError, match="self-hosted"):
         ailoy.set_lang_model_provider("x", {"backend": "cli", "base_url": base_url})
     with pytest.raises(ValueError, match="base_url"):
-        ailoy.set_lang_model_provider("x", {"backend": "openai-compatible"})
+        ailoy.set_lang_model_provider("x", {"backend": "self-hosted"})
     with pytest.raises(ValueError, match="baseUrl"):
-        ailoy.set_lang_model_provider("x", {"backend": "openai-compatible", "baseUrl": base_url})
+        ailoy.set_lang_model_provider("x", {"backend": "self-hosted", "baseUrl": base_url})
     with pytest.raises(ValueError, match="base_url"):
-        ailoy.set_lang_model_provider("x", {"backend": "openai-compatible", "base_url": ""})
+        ailoy.set_lang_model_provider("x", {"backend": "self-hosted", "base_url": ""})
     with pytest.raises(ValueError):
-        ailoy.set_lang_model_provider("x", {"backend": "openai-compatible", "base_url": base_url, "models": ["a"]})
+        ailoy.set_lang_model_provider("x", {"backend": "self-hosted", "base_url": base_url, "models": ["a"]})
     assert ailoy.get_lang_model_provider("x") is None
 
 
@@ -234,12 +234,12 @@ async def test_a_turn_without_tools():
 
 
 async def test_a_server_of_your_own_keeps_the_desc():
-    base_url = os.environ["OPENAI_COMPATIBLE_BASE_URL"]
-    server = {"backend": "openai-compatible", "base_url": base_url}
+    base_url = os.environ["SELF_HOSTED_BASE_URL"]
+    server = {"backend": "self-hosted", "base_url": base_url}
     ailoy.set_lang_model_provider("meta-llama", {**server, "api_key": "k", "models": {"Llama-3.3-70B-Instruct": "llama3.3:70b"}})
     ailoy.set_lang_model_provider("Qwen", server)
     try:
-        assert ailoy.get_lang_model_provider("meta-llama/Llama-3.3-70B-Instruct") == "openai-compatible"
+        assert ailoy.get_lang_model_provider("meta-llama/Llama-3.3-70B-Instruct") == "self-hosted"
         FakeModel.seen.clear()
         FakeModel.listed = ["qwen/qwen3-8b", "qwen3.5-27b"]
         messages = [{"role": "user", "contents": [{"type": "text", "text": "hi"}]}]
@@ -261,21 +261,21 @@ async def test_a_server_of_your_own_keeps_the_desc():
         ailoy.set_lang_model_provider("Qwen", "api")
 
 
-async def test_the_openai_compatible_backend_reads_its_server_from_the_environment():
-    base_url = os.environ["OPENAI_COMPATIBLE_BASE_URL"]
-    ailoy.set_lang_model_provider("env-served", "openai-compatible")
+async def test_the_self_hosted_backend_reads_its_server_from_the_environment():
+    base_url = os.environ["SELF_HOSTED_BASE_URL"]
+    ailoy.set_lang_model_provider("env-served", "self-hosted")
     messages = [{"role": "user", "contents": [{"type": "text", "text": "hi"}]}]
     try:
-        del os.environ["OPENAI_COMPATIBLE_BASE_URL"]
-        with pytest.raises(AiloyError, match="OPENAI_COMPATIBLE_BASE_URL"):
+        del os.environ["SELF_HOSTED_BASE_URL"]
+        with pytest.raises(AiloyError, match="SELF_HOSTED_BASE_URL"):
             await LangModel.create("env-served/model")
 
-        os.environ["OPENAI_COMPATIBLE_BASE_URL"] = base_url
+        os.environ["SELF_HOSTED_BASE_URL"] = base_url
         FakeModel.seen.clear()
         await (await LangModel.create("env-served/model")).infer(messages)
         assert FakeModel.seen == [("env-served/model", None)]
     finally:
-        os.environ["OPENAI_COMPATIBLE_BASE_URL"] = base_url
+        os.environ["SELF_HOSTED_BASE_URL"] = base_url
         ailoy.remove_lang_model_provider("env-served")
 
 
