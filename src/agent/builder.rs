@@ -2,7 +2,6 @@ use crate::{
     agent::{Agent, AgentSpec, AgentState, ContextManager},
     browser::{Browser, BrowserSession},
     datatype::Value,
-    memory::Memory,
     message::Message,
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -36,8 +35,6 @@ pub struct AgentBuilder {
 
     sandbox: Option<virtx::Sandbox>,
 
-    memory: Option<Memory>,
-
     context_manager: Option<ContextManager>,
 
     browser: Option<Browser>,
@@ -51,7 +48,6 @@ impl AgentBuilder {
             spec: AgentSpec::new(model),
             history: Vec::new(),
             sandbox: None,
-            memory: None,
             context_manager: None,
             browser: None,
         }
@@ -94,7 +90,8 @@ impl AgentBuilder {
     /// Run this agent's sandbox tools in `sandbox`, with whatever volumes it was made with.
     ///
     /// Also adds [`AgentSpec::sandbox_tools`] to the spec: a shell and file tools there, in
-    /// the style of the model's org.
+    /// the style of the model's org. The sandbox's abins are listed in the system message as
+    /// skills, like [`skill`](Self::skill)'s.
     ///
     /// Nothing makes a sandbox implicitly, since that means choosing a virtx server.
     /// Without one, pure tools still run and sandbox tools fail with an error.
@@ -109,19 +106,6 @@ impl AgentBuilder {
     /// the agent first uses it, or [`Agent::start_browser`].
     pub fn browser(mut self, browser: Browser) -> Self {
         self.browser = Some(browser);
-        self
-    }
-
-    /// Let this agent remember into `memory`.
-    ///
-    /// Adds the `mem_search` and `mem_insert` tools; they are not spec tools because the
-    /// store is a per-agent value, not a name with a [`ToolProvider`](crate::tool::ToolProvider).
-    ///
-    /// The store must already exist (`mem init`); a missing file is reported by the first
-    /// memory tool call, not by [`build`](Self::build). Memory tools run on the
-    /// [`sandbox`](Self::sandbox), so one is required too.
-    pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
-        self.memory = Some(memory.into());
         self
     }
 
@@ -156,7 +140,6 @@ impl AgentBuilder {
             spec,
             history,
             sandbox,
-            memory,
             context_manager,
             browser,
         } = self;
@@ -164,9 +147,6 @@ impl AgentBuilder {
         let mut state = AgentState::new().with_history(history);
         if let Some(sandbox) = sandbox {
             state = state.with_sandbox(sandbox);
-        }
-        if let Some(memory) = memory {
-            state = state.with_memory(memory);
         }
         if let Some(browser) = browser {
             browser.check()?;
@@ -282,6 +262,32 @@ mod tests {
         assert_eq!(result.stdout, "ok\n");
     }
 
+    /// A sandbox's abins are listed as skills, at the `SKILL.md` virtx puts beside them.
+    #[tokio::test]
+    async fn test_builder_lists_the_sandbox_abins_as_skills() {
+        let sandbox = test_sandbox().await;
+        let with_abin = sandbox
+            .client()
+            .create_sandbox(&virtx::SandboxCreateArgs::new("python:3.12-slim").abin("index"))
+            .await
+            .expect("making a sandbox with the index abin");
+        let agent = builder()
+            .instruction("You are a test agent.")
+            .sandbox(with_abin.clone())
+            .build()
+            .await
+            .unwrap();
+        with_abin.remove().await.ok();
+        sandbox.remove().await.ok();
+
+        let text = system_text(&agent).expect("a system message");
+        assert!(text.starts_with("You are a test agent."), "{text}");
+        assert!(
+            text.contains("- `index` at /abin/skills/index/SKILL.md."),
+            "{text}"
+        );
+    }
+
     #[tokio::test]
     async fn test_builder_context_manager_is_applied() {
         let cm = ContextManager {
@@ -326,33 +332,5 @@ mod tests {
 
         assert_eq!(agent.history().len(), 2);
         assert_eq!(system_text(&agent).as_deref(), Some("stored instruction"));
-    }
-
-    /// `memory()` lands on the state, which decides whether the agent gets memory tools.
-    #[tokio::test]
-    async fn test_builder_memory_is_applied() {
-        let agent = builder()
-            .memory(Memory::new("/work/notes.sqlite"))
-            .build()
-            .await
-            .unwrap();
-
-        assert_eq!(
-            agent.state.memory,
-            Some(Memory::new("/work/notes.sqlite")),
-            "the memory the builder was given is the one on the state"
-        );
-    }
-
-    /// A path converts into the equivalent `Memory`.
-    #[tokio::test]
-    async fn test_builder_memory_takes_a_path() {
-        let agent = builder()
-            .memory(std::path::Path::new("/work/notes.sqlite"))
-            .build()
-            .await
-            .unwrap();
-
-        assert_eq!(agent.state.memory, Some(Memory::new("/work/notes.sqlite")));
     }
 }

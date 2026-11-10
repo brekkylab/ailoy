@@ -4,11 +4,14 @@ use anyhow::Context as _;
 
 use crate::console::Sandbox;
 
-/// The skills in `dirs`, as the section of the system message that lists them.
+/// The skills in `dirs` and those of the sandbox's abins, as the section of the system message
+/// that lists them; `None` when there are none.
 ///
 /// Per the Agent Skills integration guide: a short preamble, then each skill's `name`,
 /// `description` and `location` (its `SKILL.md`). Only frontmatter is included; the agent
 /// reads the body when it uses the skill.
+///
+/// An abin's `SKILL.md` is at `/abin/skills/{name}/`; an abin without one is left out.
 ///
 /// An `<available_skills>` XML block for Claude (trained on XML-tagged prompts), a
 /// Markdown list otherwise; `org` is the spec's model org, e.g. `"anthropic"`.
@@ -16,15 +19,33 @@ pub(super) async fn render_skills(
     dirs: &[String],
     sandbox: Option<&Sandbox>,
     org: &str,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Option<String>> {
+    let abins = sandbox.map_or(&[][..], |sandbox| sandbox.info().abins.as_slice());
+    if dirs.is_empty() && abins.is_empty() {
+        return Ok(None);
+    }
     let sandbox = sandbox.context("an agent with skills needs a sandbox to read them from")?;
 
-    let mut skills = Vec::with_capacity(dirs.len());
-    for dir in dirs {
-        let location = format!("{}/SKILL.md", dir.trim_end_matches('/'));
-        let text = read_to_string(sandbox, &location)
-            .await
-            .with_context(|| format!("reading the skill {location}"))?;
+    let mut locations: Vec<(String, bool)> = dirs
+        .iter()
+        .map(|dir| (format!("{}/SKILL.md", dir.trim_end_matches('/')), true))
+        .collect();
+    for abin in abins {
+        let location = abin_skill(abin);
+        if !locations.iter().any(|(l, _)| *l == location) {
+            locations.push((location, false));
+        }
+    }
+
+    let mut skills = Vec::with_capacity(locations.len());
+    for (location, required) in locations {
+        let text = match crate::console::read(sandbox, &location).await {
+            Err(e) if !required && e.status() == Some(404) => continue,
+            read => read
+                .map_err(anyhow::Error::from)
+                .and_then(|data| String::from_utf8(data).context("the file is not UTF-8"))
+                .with_context(|| format!("reading the skill {location}"))?,
+        };
         let (name, description) =
             frontmatter(&text).with_context(|| format!("reading the frontmatter of {location}"))?;
         skills.push(Skill {
@@ -33,11 +54,19 @@ pub(super) async fn render_skills(
             location,
         });
     }
-    Ok(if org == "anthropic" {
+    if skills.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(if org == "anthropic" {
         render_xml(&skills)
     } else {
         render_markdown(&skills)
-    })
+    }))
+}
+
+/// Where virtx puts the `SKILL.md` of the abin `name`.
+fn abin_skill(name: &str) -> String {
+    format!("/abin/skills/{name}/SKILL.md")
 }
 
 /// What the catalog says about one skill.
@@ -86,12 +115,6 @@ fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-}
-
-/// The whole file at `path`, as text.
-async fn read_to_string(sandbox: &Sandbox, path: &str) -> anyhow::Result<String> {
-    let data = crate::console::read(sandbox, path).await?;
-    String::from_utf8(data).context("the file is not UTF-8")
 }
 
 /// The `name` and `description` in the YAML frontmatter that opens a `SKILL.md`.

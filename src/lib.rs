@@ -6,7 +6,6 @@ pub mod browser;
 pub mod console;
 pub mod datatype;
 mod macros;
-pub mod memory;
 pub mod message;
 pub mod model;
 pub mod tool;
