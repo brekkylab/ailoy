@@ -12,7 +12,7 @@ Name the model as `<org>/<name>` when you build the agent. The name is the one i
 | Models | Org | Example |
 | --- | --- | --- |
 | Claude | `anthropic` | `anthropic/claude-haiku-5-5` |
-| GPT | `openai` | `openai/gpt-5.6-luna` |
+| GPT | `openai` | `openai/gpt-6-luna` |
 | Gemini | `google` | `google/gemini-3.1-pro` |
 | DeepSeek | `deepseek-ai` | `deepseek-ai/DeepSeek-V3.2` |
 | Kimi | `moonshotai` | `moonshotai/Kimi-K2-Thinking` |
@@ -132,7 +132,7 @@ Two options work on every backend:
 
 ```python
 agent = await (
-    AgentBuilder("openai/gpt-5.6-luna")
+    AgentBuilder("openai/gpt-6-luna")
     .thinking_effort("high")
     .output_schema({"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]})
     .build()
@@ -144,7 +144,7 @@ agent = await (
 <TabItem label="Node.js">
 
 ```js
-const agent = await new AgentBuilder('openai/gpt-5.6-luna')
+const agent = await new AgentBuilder('openai/gpt-6-luna')
   .thinkingEffort('high')
   .outputSchema({ type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] })
   .build()
@@ -157,7 +157,7 @@ const agent = await new AgentBuilder('openai/gpt-5.6-luna')
 ```rust
 use ailoy::{model::ThinkingEffort, to_value};
 
-let agent = AgentBuilder::new("openai/gpt-5.6-luna")
+let agent = AgentBuilder::new("openai/gpt-6-luna")
     .thinking_effort(ThinkingEffort::High)
     .output_schema(to_value!({"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}))
     .build()

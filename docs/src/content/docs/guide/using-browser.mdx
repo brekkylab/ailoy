@@ -20,7 +20,7 @@ from ailoy import AgentBuilder
 
 
 async def main() -> None:
-    agent = await AgentBuilder("anthropic/claude-sonnet-5").browser().build()
+    agent = await AgentBuilder("anthropic/claude-sonnet-5-5").browser().build()
 
     async for output in agent.run("Open https://example.com and tell me its title."):
         for part in output["message"]["contents"]:
@@ -41,7 +41,7 @@ asyncio.run(main())
 const { AgentBuilder } = require('@brekkylab/ailoy')
 
 async function main() {
-  const agent = await new AgentBuilder('anthropic/claude-sonnet-5').browser().build()
+  const agent = await new AgentBuilder('anthropic/claude-sonnet-5-5').browser().build()
 
   try {
     for await (const { message } of agent.run('Open https://example.com and tell me its title.')) {
@@ -64,7 +64,7 @@ main()
 ```rust
 use ailoy::{agent::AgentBuilder, browser::Browser};
 
-let mut agent = AgentBuilder::new("anthropic/claude-sonnet-5")
+let mut agent = AgentBuilder::new("anthropic/claude-sonnet-5-5")
     .browser(Browser::user())
     .build()
     .await?;
@@ -93,7 +93,7 @@ The agent uses your real browser, signed in wherever you are. Its tools cannot r
 With `isolated` (`isolated: true` in Node, `Browser::isolated()` in Rust), the agent gets a browser apart from yours: Ailoy starts it on first use and closes it when the agent closes. It needs no remote debugging turned on and asks you nothing.
 
 ```python
-agent = await AgentBuilder("anthropic/claude-sonnet-5").browser(isolated=True).build()
+agent = await AgentBuilder("anthropic/claude-sonnet-5-5").browser(isolated=True).build()
 ```
 
 - It is `executable` if you name one, else a Chromium-based browser installed here: Chrome, Chromium, Edge or Brave, the first found. With none, starting it fails.
