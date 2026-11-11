@@ -157,7 +157,7 @@ main()
 ```toml
 [dependencies]
 ailoy = "0.3"
-virtx = { package = "virtx-rs", version = "0.1" }
+virtx = "0.1"
 ```
 
 ```rust

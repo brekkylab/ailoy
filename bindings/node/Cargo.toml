@@ -13,7 +13,8 @@ crate-type = ["cdylib"]
 napi-build = "2"
 
 [dependencies]
-ailoy = { path = "../.." }
+# Without `embedded`: the library is the one the virtx package of this language opened.
+ailoy = { path = "../..", default-features = false }
 virtx = { workspace = true }
 # `serde-json` for `Env::to_js_value`/`from_js_value`: messages, specs and tool arguments cross
 # as their serde objects, not per-type mirrors — ailoy's JSON shape *is* its interface.

@@ -16,7 +16,8 @@ license = "Apache-2.0"
 repository = "https://github.com/brekkylab/ailoy"
 
 [workspace.dependencies]
-virtx = { package = "virtx-rs", path = "../virtx/virtx-rs" }
+# The client. Its library is `ailoy`'s `embedded` feature, or the one a binding opens.
+virtx = { path = "../virtx/virtx-rs", default-features = false }
 
 [package]
 name = "ailoy"
@@ -45,7 +46,11 @@ path = "src/lib.rs"
 
 
 [features]
-default = []
+# The virtx library linked in, for a Rust program over `ailoy` alone. The bindings leave it out:
+# each opens the library the virtx package of its language opened, so that the caller's sandbox
+# and the agent's are over one.
+default = ["embedded"]
+embedded = ["virtx/embedded"]
 
 [dependencies]
 anyhow = "1"
