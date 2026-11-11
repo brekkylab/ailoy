@@ -3,7 +3,7 @@ title: How an agent works
 description: "Where each part of an agent runs, what happens in a turn, and how an agent's spec and state divide it."
 ---
 
-import HowDiagram from '../../../components/HowDiagram.astro';
+import HowDiagram from '../../preview/components/HowDiagram.astro';
 
 <HowDiagram />
 
@@ -19,7 +19,7 @@ A turn is one query and everything the agent does to answer it, going back and f
 4. Each call gives exactly one result, a failure included, so the model can see what went wrong and try something else. The results are added to the history, and the model is called again, back at step 2.
 5. Every message, the model's and the tools', is yielded as it completes and stays in the history, so the next turn continues the same conversation.
 
-[Running an agent](/docs/guide/running/) covers iterating a turn, streaming it, and what happens when it fails.
+[Running an agent](/docs/guides/running/) covers iterating a turn, streaming it, and what happens when it fails.
 
 ## The agent's sandbox
 
@@ -32,7 +32,7 @@ What is in the sandbox comes from two places:
 
 What the agent writes anywhere else, such as a package it installs, lasts as long as the sandbox does. A sandbox can also be given the host's GPU, through Vulkan ([Using GPUs](https://virtx.sh/docs/guides/using-gpus/)).
 
-The sandbox is yours, not the agent's. The agent never starts, stops or removes it: your code makes it, can read and write its files while the agent works, and removes it when it is done. So a sandbox can outlive the agent, for another agent to pick up its work. [Giving an agent a sandbox](/docs/guide/sandbox/) covers handing one over.
+The sandbox is yours, not the agent's. The agent never starts, stops or removes it: your code makes it, can read and write its files while the agent works, and removes it when it is done. So a sandbox can outlive the agent, for another agent to pick up its work. [Giving an agent a sandbox](/docs/guides/sandbox/) covers handing one over.
 
 Not everything an agent does happens in the sandbox:
 
@@ -51,8 +51,8 @@ An Ailoy agent is two things:
 - **Spec**: the model, the instruction, the tools, the skills and the model options. It is plain JSON that says what the agent is, so it can be saved and an agent built from it again.
 - **State**: the history, the sandbox and the memory. It is what the agent has done and where.
 
-The label in the drawing's agent box, model · tools · skill, is part of its spec. `AgentBuilder` fills in both. [Defining an agent](/docs/guide/agents/) lists every call, and builds an agent from a saved spec.
+The label in the drawing's agent box, model · tools · skill, is part of its spec. `AgentBuilder` fills in both. [Defining an agent](/docs/guides/agents/) lists every call, and builds an agent from a saved spec.
 
 ## Messages
 
-Ailoy speaks one message format to every model. A message has a role (`system`, `user`, `assistant` or `tool`) and parts: text, images, tool calls and values. Streaming yields deltas, pieces of a message that add up to it. [Message format](/docs/guide/message-format/) covers the fields.
+Ailoy speaks one message format to every model. A message has a role (`system`, `user`, `assistant` or `tool`) and parts: text, images, tool calls and values. Streaming yields deltas, pieces of a message that add up to it. [Message format](/docs/guides/message-format/) covers the fields.

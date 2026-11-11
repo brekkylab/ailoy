@@ -5,7 +5,7 @@ description: "The built-in tools, functions of your own, and the tools of MCP se
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-An agent calls the tools you give it on the `AgentBuilder`: the built-in ones on this page, functions of your own, the tools of an [MCP server](../using-mcp/) or of the [browser](../using-browser/), and those `memory(...)` adds.
+An agent calls the tools you give it on the `AgentBuilder`: the built-in ones on this page, functions of your own, the tools of an [MCP server](/docs/guides/using-mcp/) or of the [browser](/docs/guides/using-browser/), and those `memory(...)` adds.
 
 ## Built-in tools
 
@@ -32,7 +32,7 @@ An agent given a sandbox with `sandbox(...)` gets a shell and tools to read and 
 
 `imgread` is left out for `deepseek-ai`, `moonshotai`, `zai-org` and `Qwen` because their backends pass a tool result to the model as text, so the model would get a label in place of the image.
 
-The seven tools in the table come with `sandbox(...)` and run in that sandbox, as in [Giving an agent a sandbox](../sandbox/); an agent without one does not get them. The agent does not start, stop or remove its sandbox. virtx stops an idle sandbox's VM and boots it again over what it wrote when it is next needed, so a later call finds the files as the last one left them.
+The seven tools in the table come with `sandbox(...)` and run in that sandbox, as in [Giving an agent a sandbox](/docs/guides/sandbox/); an agent without one does not get them. The agent does not start, stop or remove its sandbox. virtx stops an idle sandbox's VM and boots it again over what it wrote when it is next needed, so a later call finds the files as the last one left them.
 
 ### The web
 

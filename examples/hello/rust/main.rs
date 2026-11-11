@@ -5,7 +5,7 @@
 //! ```
 //!
 //! `model` defaults to `openai/gpt-5.6-luna`; its org's backend has to be set up as
-//! `docs/src/content/docs/guide/model-providers.mdx` says, any key in the
+//! `docs/content/guides/model-providers.mdx` says, any key in the
 //! environment or in `.env`.
 
 use std::io::Write as _;

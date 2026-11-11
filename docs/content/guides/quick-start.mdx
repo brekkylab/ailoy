@@ -6,7 +6,7 @@ description: "Run an agent for one turn, then give it a sandbox and let it make 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 :::note
-This page assumes Ailoy is installed and the model has a way to run: a CLI you are logged in to, or an API key. [Installation](../installation/) covers both.
+This page assumes Ailoy is installed and the model has a way to run: a CLI you are logged in to, or an API key. [Installation](/docs/guides/installation/) covers both.
 :::
 
 ## Run an agent
@@ -97,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
 </TabItem>
 </Tabs>
 
-`agent.run` yields each message of the turn as it completes; [Running an agent](../running/) covers what it yields and how to stream it instead.
+`agent.run` yields each message of the turn as it completes; [Running an agent](/docs/guides/running/) covers what it yields and how to stream it instead.
 
 ## Give it a sandbox
 
@@ -224,10 +224,10 @@ async fn main() -> anyhow::Result<()> {
 </TabItem>
 </Tabs>
 
-The image has no matplotlib, so the agent installs it with the shell that `sandbox(...)` gives it, along with file tools ([Tools](../tools/)).
+The image has no matplotlib, so the agent installs it with the shell that `sandbox(...)` gives it, along with file tools ([Tools](/docs/guides/tools/)).
 
 ## What happened
 
 - [How an agent works](/docs/concepts/) walks through the turn: the model asks for tools, they run, and their results go back to it until it answers.
-- [Giving an agent a sandbox](../sandbox/) covers images, volumes for inputs and results, and picking up later.
-- [Defining an agent](../agents/) lists everything else an agent can be given.
+- [Giving an agent a sandbox](/docs/guides/sandbox/) covers images, volumes for inputs and results, and picking up later.
+- [Defining an agent](/docs/guides/agents/) lists everything else an agent can be given.

@@ -15,7 +15,7 @@ This page covers what an agent needs from a sandbox. [virtx's docs](https://virt
 
 ## Handing over a sandbox
 
-`sandbox(...)` on the `AgentBuilder` gives the agent a sandbox, and with it a shell and file tools that run there; [Tools](../tools/#a-shell-and-files) lists them. Here an image with matplotlib is built on the server, and an agent gets a sandbox booted from it:
+`sandbox(...)` on the `AgentBuilder` gives the agent a sandbox, and with it a shell and file tools that run there; [Tools](/docs/guides/tools/#a-shell-and-files) lists them. Here an image with matplotlib is built on the server, and an agent gets a sandbox booted from it:
 
 <Tabs syncKey="lang">
 
@@ -152,7 +152,7 @@ The sandbox stays yours:
 - Your own calls on the sandbox and the agent's tool calls run side by side, and the agent's tool calls in one step run at the same time.
 - A failed call to the sandbox reaches you as virtx's `VirtxError`.
 
-An agent without a sandbox still runs, with the tools that need none: your own functions, `web_search`, `web_fetch`, MCP servers and a browser. It has no shell or file tools, and it cannot have [skills](../skills/), which it reads from the sandbox.
+An agent without a sandbox still runs, with the tools that need none: your own functions, `web_search`, `web_fetch`, MCP servers and a browser. It has no shell or file tools, and it cannot have [skills](/docs/guides/skills/), which it reads from the sandbox.
 
 ## What lives where
 

@@ -9,7 +9,7 @@ A turn starts with your query and ends when the model answers without asking for
 
 ## run and run_stream
 
-`agent.run(query)` yields one `MessageOutput` for each message of the turn as it completes: the assistant's tool calls, each tool result, and the final answer. The query is a string or a [message](../message-format/#sending-a-message).
+`agent.run(query)` yields one `MessageOutput` for each message of the turn as it completes: the assistant's tool calls, each tool result, and the final answer. The query is a string or a [message](/docs/guides/message-format/#sending-a-message).
 
 | Field | Description |
 | --- | --- |
@@ -105,7 +105,7 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
 </TabItem>
 </Tabs>
 
-Messages are plain JSON, so you can store them wherever you like and load them back unchanged. An agent that worked in a sandbox also needs its files to carry on: [Picking up later](../sandbox/#picking-up-later).
+Messages are plain JSON, so you can store them wherever you like and load them back unchanged. An agent that worked in a sandbox also needs its files to carry on: [Picking up later](/docs/guides/sandbox/#picking-up-later).
 
 ## When a turn fails
 
@@ -121,4 +121,4 @@ In Python, ailoy's own errors are `AiloyError`, and a sandbox's failures are vir
 
 ## Usage
 
-Each `MessageOutput` from the model carries `usage`, its input and output token counts, when the provider reports them. A long run's input grows with every tool result; [Context manager](../context-manager/) keeps it under a limit.
+Each `MessageOutput` from the model carries `usage`, its input and output token counts, when the provider reports them. A long run's input grows with every tool result; [Context manager](/docs/guides/context-manager/) keeps it under a limit.

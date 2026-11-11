@@ -13,8 +13,8 @@ With a computer, an agent can do work you didn't write a function for. Each exam
 
 | | |
 | --- | --- |
-| ![An agent designing a part in CadQuery](../../../images/ailoy-cad.gif) **[CAD modeling](https://github.com/brekkylab/ailoy/tree/main/examples/cad)**: writes CadQuery, renders the part from four sides, looks at the renders and fixes it. | ![An agent segmenting a video](../../../images/ailoy-sam3-video.gif) **[Image editing](https://github.com/brekkylab/ailoy/tree/main/examples/sam3)**: segments images and video with SAM3, on the sandbox's GPU. |
-| ![An agent playing OpenTTD](../../../images/ailoy-openttd.gif) **[Gameplay](https://github.com/brekkylab/ailoy/tree/main/examples/gameplay)**: plays OpenTTD in its sandbox while you watch over VNC. | ![An agent answering with Laya](../../../images/ailoy-laya.gif) **[Decisions with a local model](https://github.com/brekkylab/ailoy/tree/main/examples/laya)**: answers typed questions about tickets with a model it runs on the GPU. |
+| ![An agent designing a part in CadQuery](../images/ailoy-cad.gif) **[CAD modeling](https://github.com/brekkylab/ailoy/tree/main/examples/cad)**: writes CadQuery, renders the part from four sides, looks at the renders and fixes it. | ![An agent segmenting a video](../images/ailoy-sam3-video.gif) **[Image editing](https://github.com/brekkylab/ailoy/tree/main/examples/sam3)**: segments images and video with SAM3, on the sandbox's GPU. |
+| ![An agent playing OpenTTD](../images/ailoy-openttd.gif) **[Gameplay](https://github.com/brekkylab/ailoy/tree/main/examples/gameplay)**: plays OpenTTD in its sandbox while you watch over VNC. | ![An agent answering with Laya](../images/ailoy-laya.gif) **[Decisions with a local model](https://github.com/brekkylab/ailoy/tree/main/examples/laya)**: answers typed questions about tickets with a model it runs on the GPU. |
 
 ## What Ailoy gives you
 
@@ -50,7 +50,7 @@ cargo add ailoy virtx
 </TabItem>
 </Tabs>
 
-The model needs a way to run: a CLI you are logged in to, or an API key. [Installation](/docs/guide/installation/) covers both.
+The model needs a way to run: a CLI you are logged in to, or an API key. [Installation](/docs/guides/installation/) covers both.
 
 ## Hello world
 
@@ -138,13 +138,13 @@ async fn main() -> anyhow::Result<()> {
 </TabItem>
 </Tabs>
 
-[Quick start](/docs/guide/quick-start/) goes on from here and gives the same agent a sandbox.
+[Quick start](/docs/guides/quick-start/) goes on from here and gives the same agent a sandbox.
 
 ## Start here
 
-- **New to Ailoy:** [Installation](/docs/guide/installation/) sets up the packages and a way for the model to run.
-- **Ready to build your first agent:** [Quick start](/docs/guide/quick-start/) runs one turn, then gives the agent a sandbox to draw a chart in.
-- **Here for agents that work in a sandbox:** [Giving an agent a sandbox](/docs/guide/sandbox/) covers what a sandbox brings an agent, where its programs, inputs and results live, and how work carries over.
+- **New to Ailoy:** [Installation](/docs/guides/installation/) sets up the packages and a way for the model to run.
+- **Ready to build your first agent:** [Quick start](/docs/guides/quick-start/) runs one turn, then gives the agent a sandbox to draw a chart in.
+- **Here for agents that work in a sandbox:** [Giving an agent a sandbox](/docs/guides/sandbox/) covers what a sandbox brings an agent, where its programs, inputs and results live, and how work carries over.
 
 ## Choose your path
 
@@ -152,16 +152,16 @@ If you know what you want to do but not where it is covered:
 
 | If you want to... | Go to |
 | --- | --- |
-| Give an agent a computer to work in | [Giving an agent a sandbox](/docs/guide/sandbox/) |
-| Pick a model, or how it runs: CLI, API, Bedrock, OpenRouter, vLLM | [Model providers](/docs/guide/model-providers/) |
-| Let the agent call functions of your own | [Tools](/docs/guide/tools/#your-own-functions) |
-| Give it the tools of an MCP server | [Using MCP](/docs/guide/using-mcp/) |
-| Let it drive a browser | [Using a browser](/docs/guide/using-browser/) |
-| Give it instructions for one kind of task | [Skills](/docs/guide/skills/) |
-| Show its reply as the model writes it | [Running an agent](/docs/guide/running/#run-and-run_stream) |
-| Carry a conversation over turns, or pick it up later | [Running an agent](/docs/guide/running/#many-turns) |
-| Keep a long run under the model's context limit | [Context manager](/docs/guide/context-manager/) |
-| Save an agent's definition and build it again | [Defining an agent](/docs/guide/agents/#from-a-spec) |
+| Give an agent a computer to work in | [Giving an agent a sandbox](/docs/guides/sandbox/) |
+| Pick a model, or how it runs: CLI, API, Bedrock, OpenRouter, vLLM | [Model providers](/docs/guides/model-providers/) |
+| Let the agent call functions of your own | [Tools](/docs/guides/tools/#your-own-functions) |
+| Give it the tools of an MCP server | [Using MCP](/docs/guides/using-mcp/) |
+| Let it drive a browser | [Using a browser](/docs/guides/using-browser/) |
+| Give it instructions for one kind of task | [Skills](/docs/guides/skills/) |
+| Show its reply as the model writes it | [Running an agent](/docs/guides/running/#run-and-run_stream) |
+| Carry a conversation over turns, or pick it up later | [Running an agent](/docs/guides/running/#many-turns) |
+| Keep a long run under the model's context limit | [Context manager](/docs/guides/context-manager/) |
+| Save an agent's definition and build it again | [Defining an agent](/docs/guides/agents/#from-a-spec) |
 
 ## More
 

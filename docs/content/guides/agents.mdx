@@ -14,19 +14,19 @@ Every call returns the builder, so they chain. Node.js spells them in camelCase 
 | Call | What the agent gets | Where it is covered |
 | --- | --- | --- |
 | `instruction(text)` | The system message's text. | [Below](#instruction) |
-| `sandbox(sandbox)` | A virtx sandbox to work in, and a shell and file tools there. | [Giving an agent a sandbox](../sandbox/) |
-| `tool(desc)`, `tools(descs)` | Tools by name: your own functions, or a registered MCP server's. | [Tools](../tools/#your-own-functions), [Using MCP](../using-mcp/) |
-| `web_search_tool(engines)`, `web_fetch_tool()` | Searching the web and reading a page, from your program. | [Tools](../tools/#the-web) |
-| `browser(...)` | A browser it drives with `browser_*` tools. | [Using a browser](../using-browser/) |
-| `skill(dir)` | A folder of instructions in its sandbox, for one kind of task. | [Skills](../skills/) |
+| `sandbox(sandbox)` | A virtx sandbox to work in, and a shell and file tools there. | [Giving an agent a sandbox](/docs/guides/sandbox/) |
+| `tool(desc)`, `tools(descs)` | Tools by name: your own functions, or a registered MCP server's. | [Tools](/docs/guides/tools/#your-own-functions), [Using MCP](/docs/guides/using-mcp/) |
+| `web_search_tool(engines)`, `web_fetch_tool()` | Searching the web and reading a page, from your program. | [Tools](/docs/guides/tools/#the-web) |
+| `browser(...)` | A browser it drives with `browser_*` tools. | [Using a browser](/docs/guides/using-browser/) |
+| `skill(dir)` | A folder of instructions in its sandbox, for one kind of task. | [Skills](/docs/guides/skills/) |
 | `memory(memfile)` | `mem_search` and `mem_insert`, on a store in its sandbox. | |
-| `context_manager(...)` | Old tool results and images cut once a run's input grows past a limit. | [Context manager](../context-manager/) |
-| `thinking_effort(effort)`, `output_schema(schema)` | How much the model thinks, and a JSON schema its answers must match. | [Model providers](../model-providers/#model-options) |
-| `history(messages)` | An earlier conversation to continue. | [Running an agent](../running/#many-turns) |
+| `context_manager(...)` | Old tool results and images cut once a run's input grows past a limit. | [Context manager](/docs/guides/context-manager/) |
+| `thinking_effort(effort)`, `output_schema(schema)` | How much the model thinks, and a JSON schema its answers must match. | [Model providers](/docs/guides/model-providers/#model-options) |
+| `history(messages)` | An earlier conversation to continue. | [Running an agent](/docs/guides/running/#many-turns) |
 
 ## Instruction
 
-`instruction(...)` is the system message's text: who the agent is, what it is for, and where in its sandbox to find inputs and leave results. The agent writes the system message from this text and the list of its [skills](../skills/), and puts that message at the front of its history, unless the history you give it already has one.
+`instruction(...)` is the system message's text: who the agent is, what it is for, and where in its sandbox to find inputs and leave results. The agent writes the system message from this text and the list of its [skills](/docs/guides/skills/), and puts that message at the front of its history, unless the history you give it already has one.
 
 ## From a spec
 

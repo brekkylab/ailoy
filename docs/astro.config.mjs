@@ -1,13 +1,20 @@
+import { readdirSync, readFileSync } from 'node:fs';
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
-import starlightLinksValidator from 'starlight-links-validator';
 
-// The docs as ailoy.co/docs serves them: same Starlight setup, styles and header.
-// Keep this in step with ailoy.co's astro.config.mjs. The differences: the site is served under
-// base /docs/ (ailoy.co has src/content/docs/docs/ instead, since its root is the product site),
-// so the sidebar slugs have no docs/ prefix; the header's Ailoy name is not a link (the site root
-// lives on ailoy.co); the sidebar is the one of the sandbox release, which ailoy.co gets with
-// that release, and has no Tutorials or Examples entry.
+// A preview of the docs, with ailoy.co's styles and header. ailoy.co serves them at
+// ailoy.co/docs/ from this same folder: what both read is content/ (the pages) and sidebar.json
+// (the sidebar's groups and order); see README.md for what a page may use.
+
+const sidebar = JSON.parse(readFileSync(new URL('./sidebar.json', import.meta.url), 'utf8'));
+
+// The guides were under guide/ before they moved to guides/; the old addresses still lead there.
+// Building VM became Giving an agent a sandbox.
+const guides = readdirSync(new URL('./content/guides/', import.meta.url)).map((f) => f.replace(/\.mdx?$/, ''));
+const redirects = Object.fromEntries([
+  ...guides.map((g) => [`/guide/${g}/`, `/docs/guides/${g}/`]),
+  ['/guide/building-vm/', '/docs/guides/sandbox/']
+]);
 
 const FONTS =
   'https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap';
@@ -31,10 +38,11 @@ function redirectRoot(req, res, next) {
 export default defineConfig({
   site: 'https://ailoy.co',
   trailingSlash: 'always',
-  // Building VM became Giving an agent a sandbox.
-  redirects: { '/guide/building-vm/': '/docs/guide/sandbox/' },
+  redirects,
   build: { format: 'directory' },
   base: '/docs',
+  // the preview's own code (content config, components, styles) is kept apart from the pages
+  srcDir: './preview',
   integrations: [
     starlight({
       title: 'Ailoy Docs',
@@ -44,57 +52,19 @@ export default defineConfig({
         { tag: 'link', attrs: { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: true } },
         { tag: 'link', attrs: { rel: 'stylesheet', href: FONTS } }
       ],
-      customCss: ['./src/styles/starlight.css'],
+      customCss: ['./preview/styles/starlight.css'],
       components: {
-        SiteTitle: './src/components/docs/SiteTitle.astro',
-        ThemeSelect: './src/components/docs/ThemeSelect.astro',
-        ThemeProvider: './src/components/docs/ThemeProvider.astro'
+        SiteTitle: './preview/components/docs/SiteTitle.astro',
+        ThemeSelect: './preview/components/docs/ThemeSelect.astro',
+        ThemeProvider: './preview/components/docs/ThemeProvider.astro'
       },
-      // Fails the build on a broken absolute link or heading anchor, such as a path without
-      // /docs/, which would otherwise build and break only once served. Relative links
-      // (../tools/) are allowed and not checked: they resolve the same here and on ailoy.co.
-      plugins: [starlightLinksValidator({ errorOnRelativeLinks: false })],
       // Plain code frames everywhere: shell blocks lose the terminal window dots.
       expressiveCode: { defaultProps: { frame: 'code' } },
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/brekkylab/ailoy' },
         { icon: 'discord', label: 'Discord', href: 'https://discord.gg/27rx3EJy3P' }
       ],
-      sidebar: [
-        {
-          label: 'Getting started',
-          items: [
-            { label: 'Overview', link: '/' },
-            { slug: 'guide/installation' },
-            { slug: 'guide/quick-start' }
-          ]
-        },
-        { slug: 'concepts' },
-        {
-          label: 'Building an agent',
-          items: [
-            { slug: 'guide/agents' },
-            { slug: 'guide/sandbox' },
-            { slug: 'guide/running' },
-            { slug: 'guide/model-providers' },
-            { slug: 'guide/message-format' }
-          ]
-        },
-        {
-          label: 'Tools',
-          items: [
-            { slug: 'guide/tools' },
-            { slug: 'guide/using-mcp' },
-            { slug: 'guide/using-browser' },
-            { slug: 'guide/skills' }
-          ]
-        },
-        {
-          label: 'State over time',
-          items: [{ slug: 'guide/context-manager' }]
-        },
-        { slug: 'reference' }
-      ]
+      sidebar
     })
   ],
   vite: { plugins: [rootToDocs] }

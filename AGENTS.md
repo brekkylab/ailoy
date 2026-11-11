@@ -19,7 +19,7 @@ Ailoy is a library for building AI agents that each own a virtual machine (a [vi
 - `src/console.rs` — the virtx sandbox an agent is given, and what the built-in tools do with it.
 - `bindings/python/src/` and `bindings/node/src/` — the wrappers, in Rust. The Python package itself is `bindings/python/python/ailoy/`; the Node package is `bindings/node/index.js` and its `.d.ts` files.
 - `examples/<name>/` — one folder per language (`rust`, `python`, `node`) and a `shared/` folder for what the three have in common. The Rust example is also registered in `Cargo.toml`.
-- `docs/` — the Starlight docs site, served at ailoy.co/docs; the guides are in `docs/src/content/docs/guide/`. Anything longer than a README section goes there. `README.md` stays short: the pitch, the install lines and one example per language.
+- `docs/` — the Starlight docs site, served at ailoy.co/docs; the pages are in `docs/content/` and `docs/README.md` says what a page may use. Anything longer than a README section goes there. `README.md` stays short: the pitch, the install lines and one example per language.
 
 ## Tests and lint
 
@@ -43,13 +43,13 @@ cargo test
 ## Docs
 
 - Run the site with `cd docs && npm ci && npm run dev` and open the address it prints, which ends in `/docs/`. `npm run build` is the pull-request check, and a page can render wrong while the build passes, so look at the pages you touched.
-- A guide is one `.mdx` file in `docs/src/content/docs/guide/`, served at `/docs/guide/<file name>/`. Its frontmatter has a `title` and a one-sentence `description`; the body starts at `##`, since the title is the page's `#`.
-- A new page is listed by hand in two places: the `sidebar` in `docs/astro.config.mjs` and a card in the overview, `docs/src/content/docs/index.mdx`. A page missing from the sidebar still builds, but nothing leads to it.
-- ailoy.co serves these files with its own copy of the sidebar, styles and header (`docs/astro.config.mjs`, `docs/src/styles/`, `docs/src/components/` mirror it). A page added, renamed or moved here, or a change to those files, needs the same change in ailoy.co. The same goes for the `astro` and `@astrojs/starlight` versions in `docs/package.json`: raise them with ailoy.co's, by hand (Dependabot opens only security updates for `docs/`).
+- A guide is one `.mdx` file in `docs/content/guides/`, served at `/docs/guides/<file name>/`. Its frontmatter has a `title` and a one-sentence `description`; the body starts at `##`, since the title is the page's `#`.
+- A new page is listed by hand in two places: `docs/sidebar.json` and a card in the overview, `docs/content/index.mdx`. A page missing from the sidebar still builds, but nothing leads to it.
+- ailoy.co reads `docs/content/` and `docs/sidebar.json` as they are. The header and styles in `docs/preview/` mirror ailoy.co's, so a change to those needs the same change in ailoy.co. The same goes for the `astro` and `@astrojs/starlight` versions in `docs/package.json`: raise them with ailoy.co's, by hand (Dependabot opens only security updates for `docs/`).
 - Code that differs by language goes in `<Tabs syncKey="lang">` with one `<TabItem label="...">` per language, labelled exactly `Python`, `Node.js` and `Rust` so a reader's choice carries across pages; import both from `@astrojs/starlight/components` at the top. A file name goes on the fence as `title="Cargo.toml"`.
 - Notes are Starlight asides, `:::note`, `:::tip`, `:::caution` or `:::danger`, closed by `:::`. VitePress syntax does not work here and the build does not catch it: `::: code-group` and `::: warning` are printed as text, `:::warning` renders as a plain paragraph, and a `[label]` after a fence is dropped.
 - MDX reads `{`, `}` and `<` in prose as code: put them in backticks or escape them (`\{`, `&lt;`).
-- Link to another guide relatively with a trailing slash (`../tools/`, `../tools/#a-heading`), or by its full path (`/docs/guide/tools/`). A path without `/docs/` breaks on ailoy.co; the build checks absolute links and anchors, not relative ones.
+- Link to another page by its full path with a trailing slash (`/docs/guides/tools/`, `/docs/guides/tools/#a-heading`). A path without `/docs/` breaks on ailoy.co; `npm run build` checks every such link and anchor.
 
 ## Comments and docs
 
