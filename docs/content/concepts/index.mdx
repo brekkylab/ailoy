@@ -1,0 +1,58 @@
+---
+title: How an agent works
+description: "Where each part of an agent runs, what happens in a turn, and how an agent's spec and state divide it."
+---
+
+import HowDiagram from '../../preview/components/HowDiagram.astro';
+
+<HowDiagram />
+
+In this example, the agent is an object in your program, on your computer. It calls its model along the arrow up, and when the model asks for tools, the calls go down into the [sandbox](#the-agents-sandbox), a microVM with its own Linux kernel. The sandbox starts from an image, mounts folders for the agent's inputs, skills and results (here `/models`, `/skills` and `/artifacts`), and can be given a GPU. What the agent leaves in `/artifacts` reaches your disk when your code copies it out.
+
+## A turn
+
+A turn is one query and everything the agent does to answer it, going back and forth along the two arrows:
+
+1. Your query is added to the agent's history.
+2. The model gets the history and the descriptions of the agent's tools, and writes a message.
+3. If the message answers, the turn ends there. If it asks for tools, every call runs at the same time: the sandbox tools in the sandbox, the rest in your program.
+4. Each call gives exactly one result, a failure included, so the model can see what went wrong and try something else. The results are added to the history, and the model is called again, back at step 2.
+5. Every message, the model's and the tools', is yielded as it completes and stays in the history, so the next turn continues the same conversation.
+
+[Running an agent](/docs/guides/running/) covers iterating a turn, streaming it, and what happens when it fails.
+
+## The agent's sandbox
+
+An Ailoy agent can be given a sandbox, a Linux microVM from [virtx](https://virtx.sh/docs/). virtx is an open-source runtime developed alongside Ailoy. In the sandbox, the agent installs software, writes and runs code, and keeps files without touching your machine. Your code makes the sandbox with virtx's package and hands it to the agent, which then gets a shell and file tools that run inside it.
+
+What is in the sandbox comes from two places:
+
+- **The image and its packages.** Every sandbox booted from the image starts with them, so a package every run needs goes here.
+- **Folders mounted from volumes**, for inputs, skills and results. A volume stays on the virtx server between runs, and your code reads and writes it while the agent works.
+
+What the agent writes anywhere else, such as a package it installs, lasts as long as the sandbox does. A sandbox can also be given the host's GPU, through Vulkan ([Using GPUs](https://virtx.sh/docs/guides/using-gpus/)).
+
+The sandbox is yours, not the agent's. The agent never starts, stops or removes it: your code makes it, can read and write its files while the agent works, and removes it when it is done. So a sandbox can outlive the agent, for another agent to pick up its work. [Giving an agent a sandbox](/docs/guides/sandbox/) covers handing one over.
+
+Not everything an agent does happens in the sandbox:
+
+| Part | Where it runs |
+| --- | --- |
+| The model | The provider's servers, through its CLI on your machine or its API; or a vLLM server of your own |
+| The sandbox | A virtx server: your machine with `Client.spawn()`, or another one |
+| Your own functions, `web_search`, `web_fetch` | Your program |
+| MCP servers | A stdio server is a process on your machine; an HTTP server runs wherever it is hosted |
+| The browser | Your machine: your own browser or one the agent starts, driven from your program |
+
+## Spec and state
+
+An Ailoy agent is two things:
+
+- **Spec**: the model, the instruction, the tools, the skills and the model options. It is plain JSON that says what the agent is, so it can be saved and an agent built from it again.
+- **State**: the history, the sandbox and the memory. It is what the agent has done and where.
+
+The label in the drawing's agent box, model · tools · skill, is part of its spec. `AgentBuilder` fills in both. [Defining an agent](/docs/guides/agents/) lists every call, and builds an agent from a saved spec.
+
+## Messages
+
+Ailoy speaks one message format to every model. A message has a role (`system`, `user`, `assistant` or `tool`) and parts: text, images, tool calls and values. Streaming yields deltas, pieces of a message that add up to it. [Message format](/docs/guides/message-format/) covers the fields.

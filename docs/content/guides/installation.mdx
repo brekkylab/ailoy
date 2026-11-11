@@ -1,0 +1,119 @@
+---
+title: "Installation"
+description: "Install Ailoy and virtx, and set up a way for the agent's model to run."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+An agent needs Ailoy and virtx's packages, a way for its model to run, and a machine that can run its sandbox.
+
+## Requirements
+
+- Python 3.10 or later, Node.js 18 or later, or Rust 1.95 or later.
+- For the machine that runs the sandbox, which is yours unless the virtx server runs elsewhere, depending on its OS:
+  - **Linux:** KVM, with `/dev/kvm` open to your user and virtualization enabled in the firmware, and FUSE. Most kernels have KVM built in.
+  - **macOS:** Apple silicon.
+  - **Windows:** Windows 11 or later, with the Windows Hypervisor Platform turned on (below).
+
+### Windows
+
+The Windows Hypervisor Platform is off by default. With virtualization enabled in the firmware, turn it on from an administrator PowerShell, then restart:
+
+```powershell
+Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform
+```
+
+## Packages
+
+<Tabs syncKey="lang">
+
+<TabItem label="Python">
+
+```sh
+pip install ailoy-py
+```
+
+This installs `virtx` too, the package your code makes sandboxes with.
+
+</TabItem>
+<TabItem label="Node.js">
+
+```sh
+npm install @brekkylab/ailoy
+```
+
+This installs `@brekkylab/virtx` too, the package your code makes sandboxes with. With pnpm, which keeps a package from importing what it did not list, add `@brekkylab/virtx` yourself.
+
+</TabItem>
+<TabItem label="Rust">
+
+```sh
+cargo add ailoy virtx
+```
+
+`virtx` is the crate your code makes sandboxes with. Cargo lets your code use only the crates it lists, so add it beside `ailoy`.
+
+</TabItem>
+</Tabs>
+
+You don't install virtx's server separately: the first `Client.spawn()` (`Client::spawn_virtx` in Rust) downloads it into virtx's cache.
+
+## A model to run
+
+### With a CLI login (default)
+
+Claude, GPT and Gemini run through their CLIs by default, so the examples need no key. Install the one for your model and log in:
+
+| CLI | Log in | Check |
+| --- | --- | --- |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `claude auth login` | `claude auth status` |
+| [Codex](https://github.com/openai/codex) | `codex login` | `codex login status` |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Run `gemini` and sign in | |
+
+Without a login, the first turn fails with the CLI's own message, such as Claude Code's "Not logged in".
+
+### With an API key
+
+Set the key, and switch the org to the `api` backend before building the agent:
+
+```sh
+export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY
+```
+
+<Tabs syncKey="lang">
+
+<TabItem label="Python">
+
+```python
+import ailoy
+
+ailoy.set_lang_model_provider("anthropic", "api")
+```
+
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
+const { setLangModelProvider } = require('@brekkylab/ailoy')
+
+setLangModelProvider('anthropic', 'api')
+```
+
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+ailoy::model::set_lang_model_provider("anthropic", "api");
+```
+
+
+</TabItem>
+</Tabs>
+
+[Model providers](/docs/guides/model-providers/) lists every backend: the CLIs, each org's own API, Amazon Bedrock, OpenRouter and vLLM.
+
+## Next
+
+[Quick start](/docs/guides/quick-start/) runs an agent for one turn, then gives it a sandbox.

@@ -12,7 +12,7 @@ Name the model as `<org>/<name>` when you build the agent. The name is the one i
 | Models | Org | Example |
 | --- | --- | --- |
 | Claude | `anthropic` | `anthropic/claude-haiku-5-5` |
-| GPT | `openai` | `openai/gpt-5.6-luna` |
+| GPT | `openai` | `openai/gpt-6-luna` |
 | Gemini | `google` | `google/gemini-3.1-pro` |
 | DeepSeek | `deepseek-ai` | `deepseek-ai/DeepSeek-V3.2` |
 | Kimi | `moonshotai` | `moonshotai/Kimi-K2-Thinking` |
@@ -132,7 +132,7 @@ Two options work on every backend:
 
 ```python
 agent = await (
-    AgentBuilder("openai/gpt-5.6-luna")
+    AgentBuilder("openai/gpt-6-luna")
     .thinking_effort("high")
     .output_schema({"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]})
     .build()
@@ -144,7 +144,7 @@ agent = await (
 <TabItem label="Node.js">
 
 ```js
-const agent = await new AgentBuilder('openai/gpt-5.6-luna')
+const agent = await new AgentBuilder('openai/gpt-6-luna')
   .thinkingEffort('high')
   .outputSchema({ type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] })
   .build()
@@ -157,7 +157,7 @@ const agent = await new AgentBuilder('openai/gpt-5.6-luna')
 ```rust
 use ailoy::{model::ThinkingEffort, to_value};
 
-let agent = AgentBuilder::new("openai/gpt-5.6-luna")
+let agent = AgentBuilder::new("openai/gpt-6-luna")
     .thinking_effort(ThinkingEffort::High)
     .output_schema(to_value!({"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}))
     .build()
@@ -228,12 +228,12 @@ Tools, if you pass them, are only described to the model: its tool calls come ba
 
 ## Bringing your own model
 
-An org can also be served by your own code. Instead of a backend name, give `set_lang_model_provider` a **factory**: it's called with the org and the name after it (`None`/`null` for the org alone) and returns the model. The model has
+An org can also be served by your own code. Instead of a backend name, give `set_lang_model_provider` a **factory**: it's called with the org and the name after the slash (`None`/`null` when the model is named by the org alone) and returns the model. The model has
 
 - `infer(messages, tools, options)`, returning a `MessageOutput` (or, in Python and Node.js, an awaitable or promise of one), and optionally
 - `infer_stream(messages, tools, options)` (`inferStream`), yielding `MessageDeltaOutput`s. Without it, streaming gives `infer`'s reply as one delta.
 
-The factory may also return a `LangModel`, to serve the org with a model from another one.
+The factory may also return a `LangModel`, to serve the org with a model from another org.
 
 <Tabs syncKey="lang">
 
@@ -329,4 +329,4 @@ let agent = AgentBuilder::new("mine/echo").build().await?;
 </TabItem>
 </Tabs>
 
-In Python and Node.js the factory itself must return the model directly, not an awaitable or promise of it. The model's methods are called with the messages, tools and options as dicts or objects, the same shapes the [message format](../message-format/) describes.
+In Python and Node.js the factory itself must return the model directly, not an awaitable or promise of it. The model's methods are called with the messages, tools and options as dicts or objects, the same shapes the [message format](/docs/guides/message-format/) describes.

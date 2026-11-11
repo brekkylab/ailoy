@@ -5,11 +5,11 @@ description: "Replace old tool results past a token limit, and old screenshots p
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-The agent sends its whole history to the model on every call, so a long run sends more with each step: every tool call adds its result, a file read, a page fetched or a command's output. The context manager keeps it down in two ways: it replaces old tool results with a placeholder once the model's input grows past a limit, and it replaces old screenshots once the history holds too many.
+The agent sends its whole history to the model on every call, so a long run sends more with each step: every tool call adds its result: a file it read, a page it fetched or a command's output. The context manager keeps it down in two ways: it replaces old tool results with a placeholder once the model's input grows past a limit, and it replaces old screenshots once the history holds too many.
 
 ## Turning it on
 
-Every setting has a default, and an agent without a context manager acts as one with them all: the image cap is on and the token limit is off.
+Every setting has a default, and an agent without a context manager behaves as if it had one with every default: the image cap is on and the token limit is off.
 
 | Setting | Default | What it is |
 | --- | --- | --- |
@@ -68,13 +68,13 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
 
 As each turn begins, once the user's message is in the history, the agent looks at the last input token count the model reported. When that is more than `max_input_tokens`, it truncates the history:
 
-- A turn is a user message and everything after it up to the next user message. The last `preserve_recent_turns` turns, the one just begun among them, are left as they are, and with fewer turns than that in the history nothing changes. At `1` only the turn just begun is left, and `0` does the same.
+- A turn is a user message and everything after it up to the next user message. The last `preserve_recent_turns` turns, including the one just begun, are left as they are. If the history has fewer turns than that, nothing changes. `1` and `0` both leave only the turn just begun.
 - In the turns before those, each tool result's contents become the text `[context truncated]`. The result keeps the id of the call it answers, since APIs such as Anthropic's refuse a tool call that has no result.
 - The system message, the user's messages and the model's own messages, tool calls included, stay whole. No message is removed.
 
 The placeholders replace the results in the agent's history, so `agent.history` shows them too, and they stay in it.
 
-Because the count comes from a call already made, and the history is truncated only as a turn begins, a turn that goes past the limit runs to its end with the history unchanged, and the next turn begins truncated. The requests of a turn send back the thinking the model has produced in it, and from Claude 5.1 on, the API can refuse a thinking block once anything before it has changed ([Keeping the prefix unchanged](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking#prefix-check)), so the history stays as it is until the turn ends. A reply without `usage` leaves the last count in place, so a model that never reports usage, such as a model of your own whose replies leave it out, never triggers it. And since only tool results are replaced, a history whose messages alone are past the limit keeps growing.
+The count comes from a call already made, and the history is truncated only as a turn begins. A turn that goes past the limit runs to its end with the history unchanged, and the next turn begins truncated. The requests of a turn send back the thinking the model has produced in it. From Claude 5.1 on, the API can refuse a thinking block once anything before it has changed ([Keeping the prefix unchanged](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking#prefix-check)), so the history stays as it is until the turn ends. A reply without `usage` leaves the last count in place, so a model that never reports usage, such as a model of your own whose replies leave it out, never triggers truncation. And since only tool results are replaced, a history whose messages alone are past the limit keeps growing.
 
 ## Images past the cap
 
@@ -86,4 +86,4 @@ At the start of each turn, when the tool results hold more than `max_images` ima
 
 As with the token limit, the placeholders stay in `agent.history`.
 
-Apart from the cap, and for every model, an embedded image past 2576 pixels on its longer edge, attached or returned by a tool, is shrunk to that edge before it enters the history. The shrunk image is turned upright by its EXIF orientation and keeps its color profile. A WebP comes back as PNG when it has transparent pixels or was lossless, and as JPEG otherwise or when an opaque one's PNG would pass 5 MB in base64. An image that would still come out past 5 MB in base64, or that is animated, is left as it is.
+Apart from the cap, and for every model, an embedded image past 2576 pixels on its longer edge, attached or returned by a tool, is shrunk to that edge before it enters the history. The shrunk image is turned upright by its EXIF orientation and keeps its color profile. A WebP with transparent pixels comes back as PNG. An opaque lossless WebP also comes back as PNG, unless that PNG would pass 5 MB in base64, in which case it comes back as JPEG. Any other WebP comes back as JPEG. An image that would still come out past 5 MB in base64, or that is animated, is left as it is.

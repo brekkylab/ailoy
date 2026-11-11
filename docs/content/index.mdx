@@ -1,0 +1,169 @@
+---
+title: Ailoy
+description: Build agents that each get a Linux microVM of their own, with a GPU within reach, from Python, Node.js or Rust.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Ailoy is an open-source SDK for building AI agents in your own code, in Python, Node.js or Rust. Each agent gets its own Linux microVM as a sandbox, where it can install software, write and run code, and keep files without touching your machine. You set up the sandbox as part of building the agent.
+
+## What agents do with it
+
+With a computer, an agent can do work you didn't write a function for. Each example below is in the repository, in all three languages:
+
+| | |
+| --- | --- |
+| ![An agent designing a part in CadQuery](../images/ailoy-cad.gif) **[CAD modeling](https://github.com/brekkylab/ailoy/tree/main/examples/cad)**: writes CadQuery, renders the part from four sides, looks at the renders and fixes it. | ![An agent segmenting a video](../images/ailoy-sam3-video.gif) **[Image editing](https://github.com/brekkylab/ailoy/tree/main/examples/sam3)**: segments images and video with SAM3, on the sandbox's GPU. |
+| ![An agent playing OpenTTD](../images/ailoy-openttd.gif) **[Gameplay](https://github.com/brekkylab/ailoy/tree/main/examples/gameplay)**: plays OpenTTD in its sandbox while you watch over VNC. | ![An agent answering with Laya](../images/ailoy-laya.gif) **[Decisions with a local model](https://github.com/brekkylab/ailoy/tree/main/examples/laya)**: answers typed questions about tickets with a model it runs on the GPU. |
+
+## What Ailoy gives you
+
+- **A sandbox that's already connected**: make one with [virtx](https://virtx.sh/docs/), built by the same team, and pass it to `sandbox(...)`, with no separate account or glue code.
+- **Any machine, GPU included**: your own machine, your own server or virtx's cloud, with that machine's GPU usable inside the sandbox.
+- **One string to change models**: every model gets the same message format and tools in the style it expects.
+- **The CLI you already use**: Claude, GPT and Gemini run on your Claude Code, Codex or Gemini CLI login by default.
+- **One library, three languages**: Python and Node.js bind to one Rust core, with the same API.
+
+## Installation
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```sh
+pip install ailoy-py
+```
+
+</TabItem>
+<TabItem label="Node.js">
+
+```sh
+npm install @brekkylab/ailoy
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```sh
+cargo add ailoy virtx
+```
+
+</TabItem>
+</Tabs>
+
+The model needs a way to run: a CLI you are logged in to, or an API key. [Installation](/docs/guides/installation/) covers both.
+
+## Hello world
+
+<Tabs syncKey="lang">
+
+<TabItem label="Python">
+
+```python
+import asyncio
+
+from ailoy import AgentBuilder
+
+
+async def main() -> None:
+    agent = await (
+        # For openai, use "openai/gpt-6-luna"
+        AgentBuilder("anthropic/claude-haiku-5-5")
+        .build()
+    )
+
+    async for output in agent.run("What is the meaning of hello world?"):
+        for part in output["message"]["contents"]:
+            if part["type"] == "text":
+                print(part["text"])
+
+
+asyncio.run(main())
+```
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
+const { AgentBuilder } = require('@brekkylab/ailoy')
+
+async function main() {
+  // For openai, use "openai/gpt-6-luna"
+  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
+    .build()
+
+  for await (const { message } of agent.run('What is the meaning of hello world?')) {
+    for (const part of message.contents) {
+      if (part.type === 'text') console.log(part.text)
+    }
+  }
+
+  await agent.close()
+}
+
+main()
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ailoy::{
+    agent::AgentBuilder,
+    message::{Message, Part, Role},
+};
+use futures::StreamExt as _;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // For openai, use "openai/gpt-6-luna"
+    let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
+        .build()
+        .await?;
+
+    let query = Message::new(Role::User).with_contents([Part::text("What is the meaning of hello world?")]);
+    let mut stream = agent.run(query);
+    while let Some(output) = stream.next().await {
+        let message = output?.message;
+        if message.role == Role::Assistant {
+            for text in message.contents.iter().filter_map(Part::as_text) {
+                println!("{text}");
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
+[Quick start](/docs/guides/quick-start/) goes on from here and gives the same agent a sandbox.
+
+## Start here
+
+- **New to Ailoy:** [Installation](/docs/guides/installation/) sets up the packages and a way for the model to run.
+- **Ready to build your first agent:** [Quick start](/docs/guides/quick-start/) runs one turn, then gives the agent a sandbox to draw a chart in.
+- **Here for agents that work in a sandbox:** [Giving an agent a sandbox](/docs/guides/sandbox/) covers what a sandbox brings an agent, where its programs, inputs and results live, and how work carries over.
+
+## Choose your path
+
+If you know what you want to do but not where it is covered:
+
+| If you want to... | Go to |
+| --- | --- |
+| Give an agent a computer to work in | [Giving an agent a sandbox](/docs/guides/sandbox/) |
+| Pick a model, or how it runs: CLI, API, Bedrock, OpenRouter, vLLM | [Model providers](/docs/guides/model-providers/) |
+| Let the agent call functions of your own | [Tools](/docs/guides/tools/#your-own-functions) |
+| Give it the tools of an MCP server | [Using MCP](/docs/guides/using-mcp/) |
+| Let it drive a browser | [Using a browser](/docs/guides/using-browser/) |
+| Give it instructions for one kind of task | [Skills](/docs/guides/skills/) |
+| Show its reply as the model writes it | [Running an agent](/docs/guides/running/#run-and-run_stream) |
+| Carry a conversation over turns, or pick it up later | [Running an agent](/docs/guides/running/#many-turns) |
+| Keep a long run under the model's context limit | [Context manager](/docs/guides/context-manager/) |
+| Save an agent's definition and build it again | [Defining an agent](/docs/guides/agents/#from-a-spec) |
+
+## More
+
+- [For AI coding assistants](https://github.com/brekkylab/ailoy/blob/main/skills/ailoy/SKILL.md): SKILL.md, the steps an agent should follow to build with Ailoy
+- [Discord](https://discord.gg/27rx3EJy3P): questions and help

@@ -1,0 +1,297 @@
+---
+// Where each part of an agent runs, the drawing from the "How it works" section of ailoy.co
+// (src/components/HowDiagram.astro there), shown here as one example of the whole. Keep the two
+// in step. The landing page's hover link to the code beside it is left out, as no code is
+// beside it here. Colours come from Starlight's theme, so it follows light and dark.
+// Below 600px a narrow drawing stacks the same parts, as on the landing page.
+---
+
+<figure class="howd-card">
+<svg class="howd wide" viewBox="0 0 600 550" role="img"
+  aria-label="The agent runs on your computer and calls the model API; its work runs in a microVM with its own Linux kernel; only /artifacts comes back to your disk.">
+  <defs>
+    <marker id="howd-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" class="fill-line"></path>
+    </marker>
+    <marker id="howd-ar-out" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" class="fill-out"></path>
+    </marker>
+  </defs>
+
+  <g data-part="2">
+    <rect x="390" y="10" width="200" height="48" rx="var(--d-r)" class="box"></rect>
+    <text x="408" y="39" class="t">model API</text>
+  </g>
+
+  <rect x="10" y="80" width="580" height="460" rx="var(--d-r)" class="host"></rect>
+  <text x="30" y="108" class="s">your computer</text>
+
+  <g data-part="2">
+    <rect x="40" y="126" width="250" height="72" rx="var(--d-r)" class="agent"></rect>
+    <text x="58" y="154" class="t c-agent">agent</text>
+    <text x="58" y="180" class="t sm">model · tools · skill</text>
+  </g>
+  <g data-part="2">
+    <path d="M290 150 C 360 150 380 90 440 62" class="link" marker-end="url(#howd-ar)"></path>
+  </g>
+  <g data-part="2">
+    <path d="M165 198 V 250" class="link" marker-end="url(#howd-ar)"></path>
+    <text x="178" y="229" class="s">tools</text>
+  </g>
+
+  <g data-part="1">
+    <rect x="40" y="254" width="520" height="170" rx="var(--d-r)" class="vm"></rect>
+    <text x="60" y="284" class="t c-vm">μVM</text>
+    <text x="540" y="284" text-anchor="end" class="s">own Linux kernel</text>
+  </g>
+  <g data-part="1">
+    <rect x="60" y="302" width="230" height="30" rx="var(--d-r2)" class="chip"></rect>
+    <text x="72" y="322" class="t sm">base image</text>
+  </g>
+  <g data-part="1">
+    <rect x="60" y="338" width="230" height="30" rx="var(--d-r2)" class="chip"></rect>
+    <text x="72" y="358" class="t sm">packages</text>
+  </g>
+  <g data-part="1">
+    <rect x="310" y="302" width="230" height="30" rx="var(--d-r2)" class="slot"></rect>
+    <text x="322" y="322" class="t sm">/models (parameters)</text>
+  </g>
+  <g data-part="1">
+    <rect x="310" y="338" width="230" height="30" rx="var(--d-r2)" class="slot"></rect>
+    <text x="322" y="358" class="t sm">/skills</text>
+  </g>
+  <g data-part="1">
+    <rect x="310" y="374" width="230" height="30" rx="var(--d-r2)" class="slot-out"></rect>
+    <text x="322" y="394" class="t sm c-out">/artifacts</text>
+  </g>
+
+  <g data-part="3">
+    <path d="M425 404 V 470" class="link-out" marker-end="url(#howd-ar-out)"></path>
+    <rect x="300" y="474" width="260" height="44" rx="var(--d-r)" class="out"></rect>
+    <text x="316" y="501" class="t c-out">./artifacts on your disk</text>
+  </g>
+
+  <g data-part="1">
+    <path d="M130 474 V 428" class="link" marker-end="url(#howd-ar)"></path>
+    <text x="142" y="455" class="s">pass-through</text>
+    <rect x="40" y="474" width="180" height="44" rx="var(--d-r)" class="gpu"></rect>
+    <text x="58" y="501" class="t c-vm">GPU</text>
+  </g>
+</svg>
+
+<svg class="howd narrow" viewBox="0 0 400 592" role="img"
+  aria-label="The agent runs on your computer and calls the model API; its work runs in a microVM with its own Linux kernel; only /artifacts comes back to your disk.">
+  <defs>
+    <marker id="howd-arn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" class="fill-line"></path>
+    </marker>
+    <marker id="howd-arn-out" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" class="fill-out"></path>
+    </marker>
+  </defs>
+
+  <g data-part="2">
+    <rect x="200" y="10" width="190" height="48" rx="var(--d-r)" class="box"></rect>
+    <text x="216" y="39" class="t">model API</text>
+  </g>
+
+  <rect x="6" y="78" width="388" height="504" rx="var(--d-r)" class="host"></rect>
+  <text x="22" y="104" class="s">your computer</text>
+
+  <g data-part="2">
+    <rect x="22" y="122" width="270" height="72" rx="var(--d-r)" class="agent"></rect>
+    <text x="38" y="150" class="t c-agent">agent</text>
+    <text x="38" y="176" class="t sm">model · tools · skill</text>
+  </g>
+  <g data-part="2">
+    <path d="M240 122 V 64" class="link" marker-end="url(#howd-arn)"></path>
+  </g>
+  <g data-part="2">
+    <path d="M120 194 V 246" class="link" marker-end="url(#howd-arn)"></path>
+    <text x="132" y="225" class="s">tools</text>
+  </g>
+
+  <g data-part="1">
+    <rect x="22" y="250" width="356" height="232" rx="var(--d-r)" class="vm"></rect>
+    <text x="38" y="278" class="t c-vm">μVM</text>
+    <text x="362" y="278" text-anchor="end" class="s">own Linux kernel</text>
+  </g>
+  <g data-part="1">
+    <rect x="38" y="294" width="324" height="28" rx="var(--d-r2)" class="chip"></rect>
+    <text x="50" y="313" class="t sm">base image</text>
+  </g>
+  <g data-part="1">
+    <rect x="38" y="330" width="324" height="28" rx="var(--d-r2)" class="chip"></rect>
+    <text x="50" y="349" class="t sm">packages</text>
+  </g>
+  <g data-part="1">
+    <rect x="38" y="366" width="324" height="28" rx="var(--d-r2)" class="slot"></rect>
+    <text x="50" y="385" class="t sm">/models (parameters)</text>
+  </g>
+  <g data-part="1">
+    <rect x="38" y="402" width="324" height="28" rx="var(--d-r2)" class="slot"></rect>
+    <text x="50" y="421" class="t sm">/skills</text>
+  </g>
+  <g data-part="1">
+    <rect x="38" y="438" width="324" height="28" rx="var(--d-r2)" class="slot-out"></rect>
+    <text x="50" y="457" class="t sm c-out">/artifacts</text>
+  </g>
+
+  <g data-part="3">
+    <path d="M330 466 V 518" class="link-out" marker-end="url(#howd-arn-out)"></path>
+    <rect x="110" y="522" width="268" height="44" rx="var(--d-r)" class="out"></rect>
+    <text x="126" y="549" class="t c-out">./artifacts on your disk</text>
+  </g>
+
+  <g data-part="1">
+    <path d="M62 522 V 486" class="link" marker-end="url(#howd-arn)"></path>
+    <text x="72" y="508" class="s">pass-through</text>
+    <rect x="22" y="522" width="80" height="44" rx="var(--d-r)" class="gpu"></rect>
+    <text x="44" y="549" class="t c-vm">GPU</text>
+  </g>
+</svg>
+
+</figure>
+
+<style>
+  .howd-card {
+    --d-text: var(--sl-color-white);
+    --d-dim: var(--sl-color-gray-3);
+    --d-line: var(--sl-color-gray-4);
+    --d-arrow: var(--sl-color-gray-3);
+    --d-panel: var(--sl-color-gray-6);
+    --d-chip: var(--sl-color-gray-5);
+    --d-agent: var(--sl-color-gray-3);
+    --d-vm: var(--sl-color-accent);
+    --d-out: #5bd08a;
+    --d-gpu: color-mix(in srgb, var(--sl-color-accent) 14%, transparent);
+    --d-gpu-line: color-mix(in srgb, var(--sl-color-accent) 45%, transparent);
+    --d-r: 8px;
+    --d-r2: 4px;
+    margin: 1.5rem 0;
+    padding: 1.25rem;
+    border: 1px solid var(--sl-color-gray-5);
+    background: var(--sl-color-black);
+  }
+  :global([data-theme='light']) .howd-card {
+    --d-out: #1f8a4c;
+  }
+  .howd {
+    display: block;
+    width: 100%;
+    height: auto;
+    font-family: var(--sl-font);
+  }
+  .howd.narrow {
+    display: none;
+  }
+  @media (max-width: 600px) {
+    .howd.wide {
+      display: none;
+    }
+    .howd.narrow {
+      display: block;
+    }
+  }
+  .t {
+    fill: var(--d-text);
+    font-size: 14px;
+  }
+  .t.sm {
+    font-size: 12.5px;
+  }
+  .s {
+    fill: var(--d-dim);
+    font-size: 12.5px;
+  }
+  .c-agent {
+    fill: var(--d-text);
+  }
+  .c-vm {
+    fill: var(--d-vm);
+  }
+  .c-out {
+    fill: var(--d-out);
+  }
+  .box {
+    fill: none;
+    stroke: var(--d-line);
+  }
+  .host {
+    fill: none;
+    stroke: var(--d-line);
+    stroke-dasharray: 6 6;
+  }
+  .agent {
+    fill: var(--d-panel);
+    stroke: var(--d-agent);
+  }
+  .vm {
+    fill: color-mix(in srgb, var(--d-vm) 5%, var(--d-panel));
+    stroke: var(--d-vm);
+    stroke-width: 1.5;
+  }
+  .chip {
+    fill: var(--d-chip);
+    stroke: var(--d-line);
+  }
+  .slot {
+    fill: none;
+    stroke: var(--d-line);
+  }
+  .slot-out {
+    fill: none;
+    stroke: var(--d-out);
+  }
+  .gpu {
+    fill: var(--d-gpu);
+    stroke: var(--d-gpu-line);
+  }
+  .out {
+    fill: var(--d-panel);
+    stroke: var(--d-out);
+  }
+  .link {
+    fill: none;
+    stroke: var(--d-arrow);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+  }
+  .link-out {
+    fill: none;
+    stroke: var(--d-out);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+  }
+  .fill-line {
+    fill: var(--d-arrow);
+  }
+  .fill-out {
+    fill: var(--d-out);
+  }
+  /* Work flows along the arrows and the GPU glows, as on the landing page; the microVM's
+     pulsing dot is left out. Off with reduced motion. */
+  @media (prefers-reduced-motion: no-preference) {
+    .link,
+    .link-out {
+      stroke-dasharray: 5 5;
+      animation: howd-flow 0.9s linear infinite;
+    }
+    .gpu {
+      animation: howd-glow 2.4s ease-in-out infinite alternate;
+    }
+  }
+  @keyframes howd-flow {
+    to {
+      stroke-dashoffset: -10;
+    }
+  }
+  @keyframes howd-glow {
+    from {
+      fill-opacity: 0.5;
+    }
+    to {
+      fill-opacity: 1;
+    }
+  }
+</style>

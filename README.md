@@ -61,7 +61,7 @@ To call the provider's API instead, set its key and switch the org to the `api` 
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY
 ```
 
-Amazon Bedrock, OpenRouter and vLLM are backends too; see the [model providers guide](https://ailoy.co/docs/guide/model-providers/).
+Amazon Bedrock, OpenRouter and vLLM are backends too; see the [model providers guide](https://ailoy.co/docs/guides/model-providers/).
 
 Then build your agent with this simple API in your preferred language:
 
@@ -88,7 +88,7 @@ async def main() -> None:
     sandbox = await client.create_sandbox("python:3.12-slim-trixie")
 
     agent = await (
-        # For openai, use "openai/gpt-5.6-luna"
+        # For openai, use "openai/gpt-6-luna"
         AgentBuilder("anthropic/claude-haiku-5-5")
         .instruction("Write what you are asked for into /artifacts.")
         .sandbox(sandbox)
@@ -127,7 +127,7 @@ async function main() {
   for await (const _ of client.pullImage('python:3.12-slim-trixie'));
   const sandbox = await client.createSandbox('python:3.12-slim-trixie')
 
-  // For openai, use "openai/gpt-5.6-luna"
+  // For openai, use "openai/gpt-6-luna"
   const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
     .instruction('Write what you are asked for into /artifacts.')
     .sandbox(sandbox)
@@ -180,7 +180,7 @@ async fn main() -> anyhow::Result<()> {
         .create_sandbox(&SandboxCreateArgs::new("python:3.12-slim-trixie"))
         .await?;
 
-    // For openai, use "openai/gpt-5.6-luna"
+    // For openai, use "openai/gpt-6-luna"
     let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
         .instruction("Write what you are asked for into /artifacts.")
         .sandbox(sandbox.clone())

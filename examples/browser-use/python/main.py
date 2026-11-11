@@ -15,7 +15,7 @@ sign in say, the agent says so and ends its turn: do it in its window, then tell
 Environment:
 
 * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend has
-  to be set up as `docs/src/content/docs/guide/model-providers.mdx` says, any key in the
+  to be set up as `docs/content/guides/model-providers.mdx` says, any key in the
   environment or in `.env`.
 
 This folder is a uv project of its own (`pyproject.toml`), which `uv run` sets up with ailoy

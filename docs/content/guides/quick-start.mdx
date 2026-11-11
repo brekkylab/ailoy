@@ -1,67 +1,113 @@
 ---
 title: "Quick start"
-description: "Set up a model, install, and run an agent that draws a chart in its own sandbox."
+description: "Run an agent for one turn, then give it a sandbox and let it make a chart."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-## Set up a model
+:::note
+This page assumes Ailoy is installed and the model has a way to run: a CLI you are logged in to, or an API key. [Installation](/docs/guides/installation/) covers both.
+:::
 
-By default, Claude, GPT and Gemini run through their CLIs, so install and log in to the one for your model: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`), [Codex](https://github.com/openai/codex) (`codex`) or [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`).
+## Run an agent
 
-To call the provider's API instead, set its key in the environment and switch the org to the `api` backend before building the agent (`setLangModelProvider` in Node.js):
-
-```sh
-export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY
-```
-
-```python
-ailoy.set_lang_model_provider("anthropic", "api")
-```
-
-[Model providers](../model-providers/) lists every backend: the CLIs, each org's own API, Amazon Bedrock, OpenRouter and vLLM.
-
-## Install
+An agent needs only a model. This one has no tools and no sandbox, so it answers from what the model knows:
 
 <Tabs syncKey="lang">
 
 <TabItem label="Python">
 
-```sh
-pip install ailoy-py
-```
+```python
+import asyncio
 
+from ailoy import AgentBuilder
+
+
+async def main() -> None:
+    agent = await (
+        # For openai, use "openai/gpt-6-luna"
+        AgentBuilder("anthropic/claude-haiku-5-5")
+        .build()
+    )
+
+    async for output in agent.run("What is the meaning of hello world?"):
+        for part in output["message"]["contents"]:
+            if part["type"] == "text":
+                print(part["text"])
+
+
+asyncio.run(main())
+```
 
 </TabItem>
 <TabItem label="Node.js">
 
-```sh
-npm install @brekkylab/ailoy @brekkylab/virtx
-```
+```js
+const { AgentBuilder } = require('@brekkylab/ailoy')
 
+async function main() {
+  // For openai, use "openai/gpt-6-luna"
+  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
+    .build()
+
+  for await (const { message } of agent.run('What is the meaning of hello world?')) {
+    for (const part of message.contents) {
+      if (part.type === 'text') console.log(part.text)
+    }
+  }
+
+  await agent.close()
+}
+
+main()
+```
 
 </TabItem>
 <TabItem label="Rust">
 
-```toml title="Cargo.toml"
-[dependencies]
-ailoy = "0.3"
-virtx = "0.1"
-```
+```rust
+use ailoy::{
+    agent::AgentBuilder,
+    message::{Message, Part, Role},
+};
+use futures::StreamExt as _;
 
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // For openai, use "openai/gpt-6-luna"
+    let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
+        .build()
+        .await?;
+
+    let query = Message::new(Role::User).with_contents([Part::text("What is the meaning of hello world?")]);
+    let mut stream = agent.run(query);
+    while let Some(output) = stream.next().await {
+        let message = output?.message;
+        if message.role == Role::Assistant {
+            for text in message.contents.iter().filter_map(Part::as_text) {
+                println!("{text}");
+            }
+        }
+    }
+
+    Ok(())
+}
+```
 
 </TabItem>
 </Tabs>
 
-## Run an agent
+`agent.run` yields each message of the turn as it completes; [Running an agent](/docs/guides/running/) covers what it yields and how to stream it instead.
 
-This gives an agent a Python sandbox and asks it to draw a chart into `/artifacts` there, then copies the chart out. `sandbox(...)` gives the agent a shell and file tools in that sandbox; [Tools](../tools/) lists them, and [Building VM](../building-vm/) shows how to build the image, size the VM and mount volumes.
+## Give it a sandbox
+
+The same agent with a sandbox can install software, write and run code, and keep files, in a Linux microVM of its own rather than on your machine. The added lines start virtx's server, make a sandbox from a Python image, hand it to the agent, and copy the chart the agent draws out to `population.png`:
 
 <Tabs syncKey="lang">
 
 <TabItem label="Python">
 
-```python
+```python ins={2,5,9-13,18-19,28} mark={23}
 import asyncio
 from pathlib import Path
 
@@ -77,7 +123,7 @@ async def main() -> None:
     sandbox = await client.create_sandbox("python:3.12-slim-trixie")
 
     agent = await (
-        # For openai, use "openai/gpt-5.6-luna"
+        # For openai, use "openai/gpt-6-luna"
         AgentBuilder("anthropic/claude-haiku-5-5")
         .instruction("Write what you are asked for into /artifacts.")
         .sandbox(sandbox)
@@ -94,11 +140,10 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-
 </TabItem>
 <TabItem label="Node.js">
 
-```js
+```js ins={1,3,6-9,13-14,23,25} mark={17}
 const { writeFileSync } = require('node:fs')
 const { AgentBuilder } = require('@brekkylab/ailoy')
 const { Client } = require('@brekkylab/virtx')
@@ -109,7 +154,7 @@ async function main() {
   for await (const _ of client.pullImage('python:3.12-slim-trixie'));
   const sandbox = await client.createSandbox('python:3.12-slim-trixie')
 
-  // For openai, use "openai/gpt-5.6-luna"
+  // For openai, use "openai/gpt-6-luna"
   const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
     .instruction('Write what you are asked for into /artifacts.')
     .sandbox(sandbox)
@@ -129,11 +174,10 @@ async function main() {
 main()
 ```
 
-
 </TabItem>
 <TabItem label="Rust">
 
-```rust
+```rust ins={6,10-18,22-23,38-39} mark={27}
 use ailoy::{
     agent::AgentBuilder,
     message::{Message, Part, Role},
@@ -153,7 +197,7 @@ async fn main() -> anyhow::Result<()> {
         .create_sandbox(&SandboxCreateArgs::new("python:3.12-slim-trixie"))
         .await?;
 
-    // For openai, use "openai/gpt-5.6-luna"
+    // For openai, use "openai/gpt-6-luna"
     let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
         .instruction("Write what you are asked for into /artifacts.")
         .sandbox(sandbox.clone())
@@ -177,9 +221,13 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-
 </TabItem>
 </Tabs>
 
-`agent.run` yields one complete message for each step of the tool loop, and `run_stream` yields token deltas as the model writes them.
+The image has no matplotlib, so the agent installs it with the shell that `sandbox(...)` gives it, along with file tools ([Tools](/docs/guides/tools/)).
 
+## What happened
+
+- [How an agent works](/docs/concepts/) walks through the turn: the model asks for tools, they run, and their results go back to it until it answers.
+- [Giving an agent a sandbox](/docs/guides/sandbox/) covers images, volumes for inputs and results, and picking up later.
+- [Defining an agent](/docs/guides/agents/) lists everything else an agent can be given.

@@ -23,7 +23,7 @@ from this checkout; run it from here.
 Environment:
 
 * `AILOY_MODEL` — the agent's model, `openai/gpt-6-astra` by default; its org's backend has to be
-  set up as `docs/src/content/docs/guide/model-providers.mdx` says. It has to take images,
+  set up as `docs/content/guides/model-providers.mdx` says. It has to take images,
   or it cannot see what it built.
 
 Read from `.env` as well.

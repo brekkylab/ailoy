@@ -4,7 +4,7 @@ An agent with your own browser and no task of its own: it waits for what you ask
 
 When a site needs something only you can do, such as signing in, the agent says so and ends its turn. Do it in its window, then tell the agent to go on.
 
-See [Using a browser](https://ailoy.co/docs/guide/using-browser/) for what this lends the agent.
+See [Using a browser](https://ailoy.co/docs/guides/using-browser/) for what this lends the agent.
 
 ## Requirements
 
