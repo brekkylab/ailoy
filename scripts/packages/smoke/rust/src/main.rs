@@ -6,7 +6,7 @@
 //!   SMOKE_VM      1 if this machine can boot one (KVM or HVF), else 0
 //!
 //! A turn's model is served from this process, as `fake.mjs` serves it: no network, and no
-//! API key. It streams, as vLLM does, and the `fake` org runs on the vLLM backend.
+//! API key. It streams, as vLLM does, and the `fake` org runs on the self-hosted backend.
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 
 use ailoy::{
@@ -52,7 +52,7 @@ fn answer(body: &Value) -> Vec<Value> {
 }
 
 /// Serve the fake model on localhost, one request per connection, and return its base URL, as
-/// `VLLM_BASE_URL` takes it.
+/// `SELF_HOSTED_BASE_URL` takes it.
 fn fake_model() -> anyhow::Result<String> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let url = format!("http://{}/v1", listener.local_addr()?);
@@ -60,6 +60,8 @@ fn fake_model() -> anyhow::Result<String> {
         for stream in listener.incoming().flatten() {
             let _ = (|| -> anyhow::Result<()> {
                 let mut reader = BufReader::new(stream.try_clone()?);
+                let mut request_line = String::new();
+                reader.read_line(&mut request_line)?;
                 let mut length = 0;
                 loop {
                     let mut line = String::new();
@@ -73,6 +75,14 @@ fn fake_model() -> anyhow::Result<String> {
                     {
                         length = v.trim().parse()?;
                     }
+                }
+                // `GET /v1/models`: nothing listed, so a model is asked for by its desc.
+                if request_line.starts_with("GET ") {
+                    write!(
+                        &stream,
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nconnection: close\r\n\r\n{{\"data\": []}}"
+                    )?;
+                    return Ok(());
                 }
                 let mut body = vec![0; length];
                 reader.read_exact(&mut body)?;
@@ -112,8 +122,8 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // SAFETY: set before any other thread reads the environment.
-    unsafe { std::env::set_var("VLLM_BASE_URL", fake_model()?) };
-    set_lang_model_provider("fake", Backend::Vllm);
+    unsafe { std::env::set_var("SELF_HOSTED_BASE_URL", fake_model()?) };
+    set_lang_model_provider("fake", Backend::SelfHosted);
 
     let mut agent = AgentBuilder::new("fake/model").build().await?;
     let outputs = run(&mut agent, "hi").await?;

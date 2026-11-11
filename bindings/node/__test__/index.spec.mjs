@@ -67,8 +67,17 @@ test('an object that does not fit says what was expected', () => {
   })
 })
 
+/**
+ * Run the models of `org` on the self-hosted backend, against a port nothing listens
+ * on, for an agent that is built but never asked.
+ */
+const serveNowhere = (org) => {
+  process.env.SELF_HOSTED_BASE_URL = 'http://127.0.0.1:9/v1'
+  setLangModelProvider(org, 'self-hosted')
+}
+
 test('a browser connects only when used, and needs no console', async () => {
-  setLangModelProvider('fake-browser', 'vllm')
+  serveNowhere('fake-browser')
   const agent = await new AgentBuilder('fake-browser/model').browser({ startUrl: 'https://example.com' }).build()
   await agent.close()
 })
@@ -85,7 +94,7 @@ test('a browser can be less careful', () => {
 })
 
 test('an isolated browser has options of its own', async () => {
-  setLangModelProvider('fake-browser', 'vllm')
+  serveNowhere('fake-browser')
   const agent = await new AgentBuilder('fake-browser/model')
     .browser({ isolated: true, headless: true, executable: '/nonexistent/chrome', profile: '/nonexistent/profile' })
     .build()
@@ -96,7 +105,7 @@ test('an isolated browser has options of its own', async () => {
 })
 
 test('an agent without a browser cannot start one', async () => {
-  setLangModelProvider('fake-browser', 'vllm')
+  serveNowhere('fake-browser')
   const agent = await new AgentBuilder('fake-browser/model').build()
   await assert.rejects(agent.startBrowser(), { code: 'AILOY_ERROR', message: /no browser/ })
   await agent.close()
@@ -119,10 +128,16 @@ const lastContent = (messages) => {
 const fakeModel = (call = { name: 'add', arguments: { a: 2, b: 3 } }) =>
   new Promise((resolve) => {
     const server = createServer((req, res) => {
+      if (req.method === 'GET') {
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ data: server.listed.map((id) => ({ id })) }))
+        return
+      }
       let body = ''
       req.on('data', (chunk) => (body += chunk))
       req.on('end', () => {
-        const { messages, stream } = JSON.parse(body)
+        const { model, messages, stream } = JSON.parse(body)
+        server.seen.push([model, req.headers.authorization ?? null])
         const answered = messages[messages.length - 1].role === 'tool'
         const message = answered
           ? { role: 'assistant', content: `the tool said ${lastContent(messages)}` }
@@ -154,16 +169,21 @@ const fakeModel = (call = { name: 'add', arguments: { a: 2, b: 3 } }) =>
         res.end('data: [DONE]\n\n')
       })
     })
+    // Every request's model id and `authorization` header, as sent.
+    server.seen = []
+    // The ids `GET /v1/models` lists.
+    server.listed = []
     server.listen(0, '127.0.0.1', () => resolve(server))
   })
 
 /**
- * Run the models of `org` on the vLLM backend, against `server`. vLLM reads its server from
- * the environment when a model is built, so the agent or model is built right after.
+ * Run the models of `org` on the self-hosted backend, against `server`. The backend
+ * reads its server from the environment when a model is built, so the agent or model is built
+ * right after.
  */
 const serve = (org, server) => {
-  process.env.VLLM_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
-  setLangModelProvider(org, 'vllm')
+  process.env.SELF_HOSTED_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
+  setLangModelProvider(org, 'self-hosted')
 }
 
 const ADD = {
@@ -247,6 +267,79 @@ test('breaking out of a turn ends it where it stands', async (t) => {
   assert.deepEqual(calls, [])
   // The agent is free again for the next turn.
   assert.ok(Array.isArray(agent.history))
+})
+
+test('a server of your own keeps the desc', async (t) => {
+  const server = await fakeModel()
+  t.after(() => server.close())
+  const base_url = `http://127.0.0.1:${server.address().port}/v1`
+  setLangModelProvider('meta-llama', {
+    backend: 'self-hosted',
+    base_url,
+    api_key: 'k',
+    models: { 'Llama-3.3-70B-Instruct': 'llama3.3:70b' },
+  })
+  setLangModelProvider('Qwen', { backend: 'self-hosted', base_url })
+  try {
+    assert.equal(getLangModelProvider('meta-llama/Llama-3.3-70B-Instruct'), 'self-hosted')
+    server.listed = ['qwen/qwen3-8b', 'qwen3.5-27b']
+    const messages = [{ role: 'user', contents: [{ type: 'text', text: 'hi' }] }]
+    for (const desc of [
+      'meta-llama/Llama-3.3-70B-Instruct',
+      'meta-llama/Llama-3.1-8B-Instruct',
+      'Qwen/Qwen3-8B',
+      'Qwen/Qwen3.5-27B',
+    ]) {
+      await (await LangModel.create(desc)).infer(messages)
+    }
+    // The server is sent its own id for the model: mapped by `models`, listed by the server
+    // for the desc or the name alone, or the desc as it is.
+    assert.deepEqual(server.seen, [
+      ['llama3.3:70b', 'Bearer k'],
+      ['meta-llama/Llama-3.1-8B-Instruct', 'Bearer k'],
+      ['qwen/qwen3-8b', null],
+      ['qwen3.5-27b', null],
+    ])
+  } finally {
+    removeLangModelProvider('meta-llama')
+    setLangModelProvider('Qwen', 'api')
+  }
+
+  assert.throws(() => setLangModelProvider('x', { backend: 'cli', base_url }), {
+    code: 'INVALID_ARG',
+    message: /self-hosted/,
+  })
+  assert.throws(() => setLangModelProvider('x', { backend: 'self-hosted' }), { code: 'INVALID_ARG', message: /base_url/ })
+  assert.throws(() => setLangModelProvider('x', { backend: 'self-hosted', baseUrl: base_url }), {
+    code: 'INVALID_ARG',
+    message: /baseUrl/,
+  })
+  assert.throws(() => setLangModelProvider('x', { backend: 'self-hosted', base_url: '' }), {
+    code: 'INVALID_ARG',
+    message: /base_url/,
+  })
+  assert.throws(() => setLangModelProvider('x', { backend: 'self-hosted', base_url, models: ['a'] }), {
+    code: 'INVALID_ARG',
+  })
+  assert.equal(getLangModelProvider('x'), null)
+})
+
+test('the self-hosted backend reads its server from the environment', async (t) => {
+  const server = await fakeModel()
+  t.after(() => server.close())
+  setLangModelProvider('env-served', 'self-hosted')
+  const messages = [{ role: 'user', contents: [{ type: 'text', text: 'hi' }] }]
+  try {
+    delete process.env.SELF_HOSTED_BASE_URL
+    await assert.rejects(LangModel.create('env-served/model'), { message: /SELF_HOSTED_BASE_URL/ })
+
+    process.env.SELF_HOSTED_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
+    await (await LangModel.create('env-served/model')).infer(messages)
+    assert.deepEqual(server.seen, [['env-served/model', null]])
+  } finally {
+    delete process.env.SELF_HOSTED_BASE_URL
+    removeLangModelProvider('env-served')
+  }
 })
 
 test('a model runs without an agent', async (t) => {
@@ -384,8 +477,7 @@ test('an agent shares its console, and closing the agent leaves it open', async 
     .build()
   try {
     // Never asked anything, so the model only has to be built.
-    process.env.VLLM_BASE_URL = 'http://127.0.0.1:9/v1'
-    setLangModelProvider('fake-console', 'vllm')
+    serveNowhere('fake-console')
     const agent = await new AgentBuilder('fake-console/model').shellTool().console(console_).build()
     await agent.close()
     const result = await console_.exec(['echo', 'still here'])

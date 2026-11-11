@@ -13,7 +13,7 @@ Ailoy is a library for building AI agents that each own a virtual machine (a [vi
 ## Where a change goes
 
 - `src/agent/` — the builder, the run loop (`rt.rs`), the context manager, skills, and the spec an agent is described by.
-- `src/model/` — the model traits, one module per backend under `impl/` (a vendor API, a CLI, Bedrock, OpenRouter, vLLM) and the provider registry with its catalogs under `provider/`.
+- `src/model/` — the model traits, one module per backend under `impl/` (a vendor API, a CLI, Bedrock, OpenRouter, an OpenAI-compatible server such as vLLM) and the provider registry with its catalogs under `provider/`.
 - `src/tool/impl/` — built-in tools in `builtins/`, plus the MCP and memory tool providers.
 - `src/message/` — the message, part and delta types every surface marshals.
 - `src/console.rs` — the virtx console an agent is given.

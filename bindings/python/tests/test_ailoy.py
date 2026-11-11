@@ -9,7 +9,7 @@ import virtx
 from virtx import ConsoleBroken, ConsoleClient, Recipe
 
 import ailoy
-from ailoy import AgentBuilder, AiloyError
+from ailoy import AgentBuilder, AiloyError, LangModel
 
 
 def content_text(content):
@@ -23,8 +23,20 @@ def content_text(content):
 # first user message, and then answers with whatever that tool returned. Enough to drive a
 # whole turn — model, tool, model — without a network or a key.
 class FakeModel(BaseHTTPRequestHandler):
+    # Every request's model id and `Authorization` header, as sent.
+    seen = []
+    # The ids `GET /v1/models` lists.
+    listed = []
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"data": [{"id": id} for id in self.listed]}).encode())
+
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        self.seen.append((body["model"], self.headers.get("Authorization")))
         messages = body["messages"]
         tool_results = [m for m in messages if m["role"] == "tool"]
         if tool_results:
@@ -63,9 +75,9 @@ def fake_model():
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeModel)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
-    # The `fake` org runs on vLLM, which reads the server from the environment.
-    os.environ["VLLM_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
-    ailoy.set_lang_model_provider("fake", "vllm")
+    # `fake` runs here, on the backend that reads its server from the environment.
+    os.environ["SELF_HOSTED_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
+    ailoy.set_lang_model_provider("fake", "self-hosted")
     yield
     ailoy.remove_lang_model_provider("fake")
     server.shutdown()
@@ -121,6 +133,21 @@ def test_register_tool_refuses_what_it_cannot_use():
 def test_set_lang_model_provider_refuses_an_unknown_backend():
     with pytest.raises(ValueError):
         ailoy.set_lang_model_provider("x", "smoke-signals")
+
+
+def test_a_server_of_your_own_runs_the_self_hosted_backend():
+    base_url = os.environ["SELF_HOSTED_BASE_URL"]
+    with pytest.raises(ValueError, match="self-hosted"):
+        ailoy.set_lang_model_provider("x", {"backend": "cli", "base_url": base_url})
+    with pytest.raises(ValueError, match="base_url"):
+        ailoy.set_lang_model_provider("x", {"backend": "self-hosted"})
+    with pytest.raises(ValueError, match="baseUrl"):
+        ailoy.set_lang_model_provider("x", {"backend": "self-hosted", "baseUrl": base_url})
+    with pytest.raises(ValueError, match="base_url"):
+        ailoy.set_lang_model_provider("x", {"backend": "self-hosted", "base_url": ""})
+    with pytest.raises(ValueError):
+        ailoy.set_lang_model_provider("x", {"backend": "self-hosted", "base_url": base_url, "models": ["a"]})
+    assert ailoy.get_lang_model_provider("x") is None
 
 
 def test_thinking_effort_is_checked():
@@ -204,6 +231,52 @@ async def test_a_turn_without_tools():
 
     history = agent.history
     assert [m["role"] for m in history] == ["system", "user", "assistant"]
+
+
+async def test_a_server_of_your_own_keeps_the_desc():
+    base_url = os.environ["SELF_HOSTED_BASE_URL"]
+    server = {"backend": "self-hosted", "base_url": base_url}
+    ailoy.set_lang_model_provider("meta-llama", {**server, "api_key": "k", "models": {"Llama-3.3-70B-Instruct": "llama3.3:70b"}})
+    ailoy.set_lang_model_provider("Qwen", server)
+    try:
+        assert ailoy.get_lang_model_provider("meta-llama/Llama-3.3-70B-Instruct") == "self-hosted"
+        FakeModel.seen.clear()
+        FakeModel.listed = ["qwen/qwen3-8b", "qwen3.5-27b"]
+        messages = [{"role": "user", "contents": [{"type": "text", "text": "hi"}]}]
+        output = await (await LangModel.create("meta-llama/Llama-3.3-70B-Instruct")).infer(messages)
+        assert texts([output]) == ["hello"]
+        for desc in ["meta-llama/Llama-3.1-8B-Instruct", "Qwen/Qwen3-8B", "Qwen/Qwen3.5-27B"]:
+            await (await LangModel.create(desc)).infer(messages)
+        # The server is sent its own id for the model: mapped by `models`, listed by the server
+        # for the desc or the name alone, or the desc as it is.
+        assert FakeModel.seen == [
+            ("llama3.3:70b", "Bearer k"),
+            ("meta-llama/Llama-3.1-8B-Instruct", "Bearer k"),
+            ("qwen/qwen3-8b", None),
+            ("qwen3.5-27b", None),
+        ]
+    finally:
+        FakeModel.listed = []
+        ailoy.remove_lang_model_provider("meta-llama")
+        ailoy.set_lang_model_provider("Qwen", "api")
+
+
+async def test_the_self_hosted_backend_reads_its_server_from_the_environment():
+    base_url = os.environ["SELF_HOSTED_BASE_URL"]
+    ailoy.set_lang_model_provider("env-served", "self-hosted")
+    messages = [{"role": "user", "contents": [{"type": "text", "text": "hi"}]}]
+    try:
+        del os.environ["SELF_HOSTED_BASE_URL"]
+        with pytest.raises(AiloyError, match="SELF_HOSTED_BASE_URL"):
+            await LangModel.create("env-served/model")
+
+        os.environ["SELF_HOSTED_BASE_URL"] = base_url
+        FakeModel.seen.clear()
+        await (await LangModel.create("env-served/model")).infer(messages)
+        assert FakeModel.seen == [("env-served/model", None)]
+    finally:
+        os.environ["SELF_HOSTED_BASE_URL"] = base_url
+        ailoy.remove_lang_model_provider("env-served")
 
 
 async def test_a_query_may_be_a_message():

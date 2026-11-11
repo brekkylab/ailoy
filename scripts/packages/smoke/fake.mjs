@@ -1,6 +1,6 @@
 // An OpenAI-compatible chat-completions endpoint on localhost, streamed as vLLM serves one,
 // enough to drive a whole turn -- model, tool, model -- without a network or a key. `python.py`
-// serves the same one. `url` is the server's base, as `VLLM_BASE_URL` takes it.
+// serves the same one. `url` is the server's base, as `SELF_HOSTED_BASE_URL` takes it.
 //
 // Given tools, it calls the one the user's message names, with the arguments after the name
 // (`add {"a": 2, "b": 3}`); given a tool's result, it says what the tool said; otherwise it
@@ -12,6 +12,12 @@ const text = (content) => (typeof content === 'string' ? content : (content ?? [
 export const fakeModel = () =>
   new Promise((resolve) => {
     const server = createServer((req, res) => {
+      if (req.method === 'GET') {
+        // `GET /v1/models`: nothing listed, so a model is asked for by its desc.
+        res.setHeader('content-type', 'application/json')
+        res.end('{"data": []}')
+        return
+      }
       let body = ''
       req.on('data', (chunk) => (body += chunk))
       req.on('end', () => {

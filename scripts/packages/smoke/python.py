@@ -25,6 +25,13 @@ def text(content):
 
 
 class FakeModel(BaseHTTPRequestHandler):
+    def do_GET(self):
+        # `GET /v1/models`: nothing listed, so a model is asked for by its desc.
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"data": []}')
+
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         messages = body["messages"]
@@ -64,9 +71,10 @@ async def main():
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeModel)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    # The `fake` org runs on vLLM, which reads its server from the environment.
-    os.environ["VLLM_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
-    ailoy.set_lang_model_provider("fake", "vllm")
+    # The `fake` org runs on the self-hosted backend, which reads its server from the
+    # environment.
+    os.environ["SELF_HOSTED_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
+    ailoy.set_lang_model_provider("fake", "self-hosted")
 
     # A whole turn -- model, tool, model -- through the extension's bridge to asyncio both ways.
     calls = []

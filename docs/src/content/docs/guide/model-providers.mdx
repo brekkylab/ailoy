@@ -1,13 +1,13 @@
 ---
 title: "Model providers"
-description: "Name a model and choose how it runs: a CLI login, the maker's API, Bedrock, OpenRouter or vLLM."
+description: "Name a model and choose how it runs: a CLI login, the maker's API, Bedrock, OpenRouter or a server you run yourself."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 ## Naming a model
 
-Name the model as `<org>/<name>` when you build the agent. The name is the one its maker gives it: the official API id for Claude, GPT and Gemini, and the Hugging Face repo id for open-weight models. The same name works whichever way the model runs.
+Name the model as `<org>/<name>` when you build the agent. The name is the one its maker gives it: the official API id for Claude, GPT and Gemini, the Hugging Face repo id for open-weight models, and the API id for a model with no repo, such as EXAONE's `k-exaone_v2.5`. The same name works whichever way the model runs.
 
 | Models | Org | Example |
 | --- | --- | --- |
@@ -18,6 +18,7 @@ Name the model as `<org>/<name>` when you build the agent. The name is the one i
 | Kimi | `moonshotai` | `moonshotai/Kimi-K2-Thinking` |
 | GLM | `zai-org` | `zai-org/GLM-4.6` |
 | Qwen | `Qwen` | `Qwen/Qwen3-235B-A22B-Instruct-2507` |
+| EXAONE | `LGAI-EXAONE` | `LGAI-EXAONE/k-exaone_v2.5` |
 
 <Tabs syncKey="lang">
 
@@ -56,23 +57,24 @@ Each org's models run on one **backend**:
 | Backend | Runs the model through | Needs |
 | --- | --- | --- |
 | `cli` | The org's CLI: Claude Code (`claude`), Codex (`codex`) or Gemini CLI (`gemini`) | The CLI on `PATH`, logged in |
-| `api` | The org's own API | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY` (or `MOONSHOT_API_KEY`), `ZAI_API_KEY` or `DASHSCOPE_API_KEY` (Qwen) |
+| `api` | The org's own API | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY` (or `MOONSHOT_API_KEY`), `ZAI_API_KEY`, `DASHSCOPE_API_KEY` (Qwen) or `EXAONE_API_KEY` |
 | `bedrock` | Amazon Bedrock | `AWS_BEARER_TOKEN_BEDROCK`; the region from `AWS_REGION`, then `AWS_DEFAULT_REGION`, else `us-east-1` |
 | `openrouter` | OpenRouter | `OPENROUTER_API_KEY` |
-| `vllm` | A vLLM server | `VLLM_BASE_URL` (default `http://localhost:8000/v1`), and `VLLM_API_KEY` if the server wants one |
+| `self-hosted` | A server you run yourself, through the OpenAI-compatible Chat Completions API it serves: vLLM, llama-server, Ollama, LM Studio or SGLang | `SELF_HOSTED_BASE_URL`, and `SELF_HOSTED_API_KEY` if the server wants one |
 
 By default, Claude, GPT and Gemini run through their CLIs, and the other orgs through their own APIs. Keys are read from the environment when a model is built, so set them before that.
 
-Not every org runs everywhere:
+`cli` and `api` know the orgs in [Naming a model](#naming-a-model). The other backends build a model for any org, `meta-llama` or `mistralai` as well:
 
-| Org | `cli` | `api` | `bedrock` | `openrouter` | `vllm` |
+| Org | `cli` | `api` | `bedrock` | `openrouter` | `self-hosted` |
 | --- | :-: | :-: | :-: | :-: | :-: |
-| `anthropic` | ✓ | ✓ | ✓ | ✓ | |
-| `openai` | ✓ | ✓ | ✓ | ✓ | |
-| `google` | ✓ | ✓ | | ✓ | |
-| `deepseek-ai`, `moonshotai`, `zai-org`, `Qwen` | | ✓ | ✓ | ✓ | ✓ |
+| `anthropic` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `openai` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `google` | ✓ | ✓ | | ✓ | ✓ |
+| `deepseek-ai`, `moonshotai`, `zai-org`, `Qwen`, `LGAI-EXAONE` | | ✓ | ✓ | ✓ | ✓ |
+| any other org | | | ✓ | ✓ | ✓ |
 
-Bedrock and OpenRouter name models their own way. Ailoy looks your model up in their catalogs, so you still write `anthropic/claude-haiku-5-5`, and the catalog decides which Bedrock or OpenRouter id it runs as.
+Bedrock and OpenRouter name models their own way. Ailoy looks your model up in their catalogs, so you still write `anthropic/claude-haiku-5-5`, and the catalog decides which Bedrock or OpenRouter id it runs as. A server you run yourself is asked what it serves too; [A server of your own](#a-server-of-your-own) says how the id is found, and how to name it yourself when the server calls the model something else.
 
 ## Choosing a backend
 
@@ -117,9 +119,59 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5").build().await?;
 
 `remove_lang_model_provider` (`removeLangModelProvider`) takes the org's provider away, after which its models can't be built.
 
+## A server of your own
+
+`self-hosted` reads its server from the environment, one for the whole process. To name the server per org, give `set_lang_model_provider` the backend together with the server's URL, and an API key if the server wants one. Two servers, say vLLM for code and Ollama for chat, are two orgs:
+
+<Tabs syncKey="lang">
+
+<TabItem label="Python">
+
+```python
+ailoy.set_lang_model_provider("Qwen", {"backend": "self-hosted", "base_url": "http://gpu-box:8000/v1", "api_key": "..."})
+ailoy.set_lang_model_provider("meta-llama", {"backend": "self-hosted", "base_url": "http://localhost:11434/v1", "models": {"Llama-3.3-70B-Instruct": "llama3.3:70b"}})
+
+coder = await AgentBuilder("Qwen/Qwen3-Coder-30B-A3B-Instruct").build()
+chat = await AgentBuilder("meta-llama/Llama-3.3-70B-Instruct").build()
+```
+
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
+setLangModelProvider('Qwen', { backend: 'self-hosted', base_url: 'http://gpu-box:8000/v1', api_key: '...' })
+setLangModelProvider('meta-llama', { backend: 'self-hosted', base_url: 'http://localhost:11434/v1', models: { 'Llama-3.3-70B-Instruct': 'llama3.3:70b' } })
+
+const coder = await new AgentBuilder('Qwen/Qwen3-Coder-30B-A3B-Instruct').build()
+const chat = await new AgentBuilder('meta-llama/Llama-3.3-70B-Instruct').build()
+```
+
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ailoy::model::{LangModelServer, set_lang_model_provider};
+
+set_lang_model_provider("Qwen", LangModelServer::new("http://gpu-box:8000/v1")?.with_api_key("..."));
+set_lang_model_provider("meta-llama", LangModelServer::new("http://localhost:11434/v1")?.with_model("Llama-3.3-70B-Instruct", "llama3.3:70b"));
+
+let coder = AgentBuilder::new("Qwen/Qwen3-Coder-30B-A3B-Instruct").build().await?;
+let chat = AgentBuilder::new("meta-llama/Llama-3.3-70B-Instruct").build().await?;
+```
+
+
+</TabItem>
+</Tabs>
+
+The model keeps its name whatever the server calls it. When a model is built, Ailoy finds the id to send in three steps and takes the first that gives one: `models` (`with_model` in Rust), which maps a name to the id the server serves it as; the server's own list at `/v1/models`, where an id equal to `<org>/<name>` or to `<name>` alone counts, ignoring case; and the desc as you wrote it. So vLLM, which serves Hugging Face repo ids, needs nothing; LM Studio lists `qwen/qwen3-0.6b` and is sent that for `Qwen/Qwen3-0.6B`; and Ollama's `llama3.3:70b` is nothing like `Llama-3.3-70B-Instruct`, so it is mapped, as above. `get_lang_model_provider` answers `self-hosted`.
+
+Another endpoint that serves the OpenAI-compatible Chat Completions API, such as a LiteLLM gateway or Together's API, runs on `self-hosted` the same way: its URL as `base_url` and its key as `api_key`.
+
 ## Model options
 
-Two options work on every backend:
+Two options go to every backend:
 
 | Option | Builder method | Description |
 | --- | --- | --- |
@@ -167,6 +219,17 @@ let agent = AgentBuilder::new("openai/gpt-5.6-luna")
 
 </TabItem>
 </Tabs>
+
+On `self-hosted`, and for EXAONE on `api`, `thinking_effort` is sent two ways, since servers read different ones: as `reasoning_effort` (`low`, `medium` or `high`), the field OpenAI's Chat Completions grades thinking by, and as the chat template's `enable_thinking` (and `thinking`) in `chat_template_kwargs`, which turns thinking on rather than grading it. `output_schema` is sent as a `json_schema` `response_format`. vLLM reads `chat_template_kwargs` and `response_format`, and its documentation says it hands `reasoning_effort` to the chat template, turning `enable_thinking` on with it. What the other servers do with them, measured on 2026-11-09 with Qwen3-0.6B on each local server and `k-exaone_v2.5` on EXAONE's API, a schema with `additionalProperties: false` telling enforcement from obedience:
+
+| Server | `reasoning_effort` | `chat_template_kwargs` | `response_format` | Thinking comes back as |
+| --- | --- | --- | --- | --- |
+| llama-server (llama.cpp build 11146) | Not read: `"bogus"` is accepted too | Read: `enable_thinking: false` switched the thinking off | Enforced | `reasoning_content` |
+| Ollama 0.40.12 | Read, as `"bogus"` is refused, but `low`, `medium` and `high` left Qwen3's thinking as it was | Ignored | Enforced | `reasoning` |
+| LM Studio 0.4.26 | Read, as `"bogus"` is refused, but `low`, `medium` and `high` left Qwen3's thinking as it was | Ignored | Enforced, with no thinking while the reply is structured | `reasoning_content` |
+| EXAONE API (`k-exaone_v2.5`) | Read, as `"bogus"` is refused, `medium` included; on one counting problem the thinking did not follow it, `low` taking 991 to 1728 reasoning tokens over six runs and `high` 1054 to 2131 over four | `enable_thinking: false` left the model thinking, with the thinking and its `</think>` in the reply | Enforced | `reasoning_content` |
+
+So with Qwen3, `thinking_effort` changes nothing on llama-server, Ollama or LM Studio: the model thinks as its template defaults. EXAONE always thinks, and with `thinking_effort` unset it runs at its own default effort, which its documentation gives as `max`. SGLang has not been measured.
 
 ## Running a model without an agent
 
