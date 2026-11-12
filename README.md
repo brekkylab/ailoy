@@ -171,7 +171,7 @@ use virtx::{Client, Files as _, SandboxCreateArgs};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Starts virtx's server, fetched into its cache the first time.
-    let client = Client::spawn_virtx([] as [&str; 0])?;
+    let client = Client::spawn_virtx([] as [&str; 0]).await?;
     let mut pull = client.pull_image("python:3.12-slim-trixie", None).log();
     while let Some(entry) = pull.next().await {
         entry?;

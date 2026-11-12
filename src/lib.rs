@@ -30,11 +30,9 @@ pub(crate) async fn test_sandbox() -> virtx::Sandbox {
     let client = CLIENT
         .get_or_init(|| async {
             dotenvy::dotenv().ok();
-            let client =
-                tokio::task::spawn_blocking(|| virtx::Client::spawn_virtx([] as [&str; 0]))
-                    .await
-                    .unwrap()
-                    .unwrap_or_else(|e| panic!("starting the virtx server: {e}"));
+            let client = virtx::Client::spawn_virtx([] as [&str; 0])
+                .await
+                .unwrap_or_else(|e| panic!("starting the virtx server: {e}"));
             let mut log = client.pull_image(IMAGE, None).log();
             while let Some(entry) = log.next().await {
                 let entry = entry.unwrap_or_else(|e| panic!("pulling {IMAGE}: {e}"));
