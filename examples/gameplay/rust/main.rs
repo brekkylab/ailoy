@@ -119,7 +119,7 @@ async fn main() -> anyhow::Result<()> {
 
     // The virtx server, fetched into virtx's cache the first time: a host that installed only
     // ailoy has none. The sandboxes it holds go when this program does.
-    let client = tokio::task::spawn_blocking(|| Client::spawn_virtx([] as [&str; 0])).await??;
+    let client = Client::spawn_virtx([] as [&str; 0]).await?;
 
     // The image, built once: the game, and the free graphics, sounds and music it needs, a
     // display for the viewer, Python for `ttd.py`, and ImageMagick for the agent's screenshots.

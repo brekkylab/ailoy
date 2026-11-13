@@ -151,7 +151,7 @@ async fn main() -> anyhow::Result<()> {
 
     if server.is_some() && want("SMOKE_VM") {
         // An agent's shell tool, in a sandbox that sees a volume.
-        let client = tokio::task::spawn_blocking(|| Client::spawn_virtx([] as [&str; 0])).await??;
+        let client = Client::spawn_virtx([] as [&str; 0]).await?;
         let images = client.list_image().await?;
         if !images.iter().any(|i| i.reference.rsplit('/').next() == Some("alpine:latest")) {
             let mut log = client.pull_image("alpine:latest", None).log();
