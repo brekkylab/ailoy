@@ -73,7 +73,10 @@ fn sandbox_tool_descs(org: &str) -> Vec<ToolDesc> {
 
     // `imgread` only where the image reaches the model: the backends of these take tool
     // results as text alone (an image becomes a label), even for vision models.
-    if !matches!(org, "deepseek-ai" | "moonshotai" | "zai-org" | "Qwen") {
+    if !matches!(
+        org,
+        "deepseek-ai" | "moonshotai" | "zai-org" | "Qwen" | "LGAI-EXAONE"
+    ) {
         descs.push(get_imgread_tool_desc());
     }
     descs
@@ -191,6 +194,7 @@ mod tests {
 
         assert!(!system_names("deepseek-ai").contains(&"imgread".into()));
         assert!(!system_names("moonshotai").contains(&"imgread".into()));
+        assert!(!system_names("LGAI-EXAONE").contains(&"imgread".into()));
     }
 
     #[test]

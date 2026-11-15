@@ -1,8 +1,8 @@
-//! A language model served by vLLM, called over HTTP.
+//! A language model served over the OpenAI-compatible Chat Completions API, called over HTTP.
 //!
-//! vLLM serves an OpenAI-compatible Chat Completions API. Every call is streamed
-//! (`"stream": true`) and read as server-sent events; [`infer`](InferLangModel::infer)
-//! accumulates the same stream.
+//! vLLM, llama-server, Ollama, LM Studio and SGLang all serve it, and so does EXAONE's API.
+//! Every call is streamed (`"stream": true`) and read as server-sent events;
+//! [`infer`](InferLangModel::infer) accumulates the same stream.
 
 use anyhow::{Context as _, bail};
 use futures::{
@@ -17,34 +17,33 @@ use crate::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
-    model::{InferLangModel, LangModelOptions, api_error},
+    model::{InferLangModel, LangModelOptions, ThinkingEffort, api_error},
     to_value,
     tool::ToolDesc,
 };
 
-/// The server `from_env` uses when `VLLM_BASE_URL` is unset: `vllm serve`'s default.
-const DEFAULT_BASE_URL: &str = "http://localhost:8000/v1";
-
-/// Runs open-weight models served by vLLM.
+/// Runs a model on a server of the OpenAI-compatible Chat Completions API.
 ///
-/// - Thinking is on or off, not graded: any
-///   [`ThinkingEffort`](crate::model::ThinkingEffort) sets the chat
-///   template's `enable_thinking` (read by Qwen's and GLM's) and `thinking` (read by DeepSeek's);
-///   a template that reads neither keeps its default. The thinking comes
-///   back when the server runs a reasoning parser, as `reasoning` (or `reasoning_content`
-///   on older servers), and is not sent back.
-/// - An output schema is enforced by vLLM's guided decoding.
+/// - A [`ThinkingEffort`] is sent two ways, since servers read
+///   different ones: as `reasoning_effort` (`low`, `medium` or `high`), and as the chat
+///   template's `enable_thinking` (read by Qwen's and GLM's) and `thinking` (read by
+///   DeepSeek's) through `chat_template_kwargs`, which turn thinking on rather than grade it.
+///   A server or model that reads neither keeps its default. The thinking comes back when the
+///   server runs a reasoning parser, as `reasoning` (or `reasoning_content` on older servers),
+///   and is not sent back.
+/// - An output schema is sent as a `json_schema` `response_format`, which vLLM, llama-server,
+///   Ollama, LM Studio and EXAONE's API enforce.
 #[derive(Clone)]
-pub struct VllmModel {
+pub struct OpenAiCompatibleModel {
     model: String,
     base_url: String,
     api_key: Option<String>,
 }
 
 // Hand-written so the key stays out of logs.
-impl std::fmt::Debug for VllmModel {
+impl std::fmt::Debug for OpenAiCompatibleModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("VllmModel")
+        f.debug_struct("OpenAiCompatibleModel")
             .field("model", &self.model)
             .field("base_url", &self.base_url)
             .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
@@ -52,9 +51,10 @@ impl std::fmt::Debug for VllmModel {
     }
 }
 
-impl VllmModel {
-    /// Runs `model`, the name the server serves it as (e.g. `"zai-org/GLM-4.6"`), on the
-    /// server at `base_url` (e.g. `"http://localhost:8000/v1"`).
+impl OpenAiCompatibleModel {
+    /// Runs `model`, the id the server serves it as (`"zai-org/GLM-4.6"` on vLLM,
+    /// `"llama3.3:70b"` on Ollama), on the server at `base_url` (e.g.
+    /// `"http://localhost:8000/v1"`).
     pub fn new(model: impl Into<String>, base_url: impl Into<String>) -> Self {
         Self {
             model: model.into(),
@@ -63,22 +63,11 @@ impl VllmModel {
         }
     }
 
-    /// Sends `api_key` as a bearer token, for a server started with `--api-key`.
+    /// Sends `api_key` as a bearer token, for a server that wants one (`vllm serve
+    /// --api-key`, `llama-server --api-key`).
     pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());
         self
-    }
-
-    /// Runs `model` on the server at `VLLM_BASE_URL` (by default
-    /// `http://localhost:8000/v1`), with the key from `VLLM_API_KEY` if it is set.
-    pub fn from_env(model: impl Into<String>) -> anyhow::Result<Self> {
-        let var = |name| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
-        let base_url = var("VLLM_BASE_URL").unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
-        let model = Self::new(model, base_url);
-        Ok(match var("VLLM_API_KEY") {
-            Some(key) => model.with_api_key(key),
-            None => model,
-        })
     }
 
     /// The streamed request body for one call.
@@ -128,7 +117,13 @@ impl VllmModel {
             obj.insert("tool_choice".into(), "auto".into());
         }
         // Unset keeps the model's default.
-        if options.thinking_effort.is_some() {
+        if let Some(effort) = options.thinking_effort {
+            let effort = match effort {
+                ThinkingEffort::Low => "low",
+                ThinkingEffort::Medium => "medium",
+                ThinkingEffort::High => "high",
+            };
+            obj.insert("reasoning_effort".into(), effort.into());
             obj.insert(
                 "chat_template_kwargs".into(),
                 to_value!({"enable_thinking": true, "thinking": true}),
@@ -148,7 +143,7 @@ impl VllmModel {
     }
 }
 
-impl InferLangModel for VllmModel {
+impl InferLangModel for OpenAiCompatibleModel {
     fn infer(
         &self,
         messages: &[Message],
@@ -204,7 +199,7 @@ impl InferLangModel for VllmModel {
                 }
             }
             if !saw_finish {
-                Err(anyhow::anyhow!("the vLLM stream ended before the reply finished"))?;
+                Err(anyhow::anyhow!("the stream ended before the reply finished"))?;
             }
         })
     }
@@ -255,7 +250,7 @@ async fn send(
         let text = response.text().await.unwrap_or_default();
         return Err(api_error(
             status.as_u16(),
-            format!("vLLM request failed with status {status}: {text}"),
+            format!("chat completions request failed with status {status}: {text}"),
         ));
     }
     unreachable!("retry loop returns or bails on every path")
@@ -293,7 +288,7 @@ fn parse_chunk(data: &str) -> anyhow::Result<Option<MessageDeltaOutput>> {
     let val: serde_json::Value = serde_json::from_str(data)?;
     if let Some(error) = val.get("error") {
         bail!(
-            "vLLM stream error: {}",
+            "chat completions stream error: {}",
             error["message"].as_str().unwrap_or("(no message)")
         );
     }
@@ -461,5 +456,41 @@ fn value_text(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
         other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(thinking_effort: Option<ThinkingEffort>) -> serde_json::Value {
+        let messages = [Message::new(Role::User).with_contents([Part::text("hi")])];
+        let options = LangModelOptions {
+            thinking_effort,
+            ..Default::default()
+        };
+        OpenAiCompatibleModel::new("m", "http://localhost:8000/v1")
+            .body(&messages, &[], &options)
+            .unwrap()
+    }
+
+    #[test]
+    fn test_a_thinking_effort_is_sent_as_reasoning_effort_and_as_the_template_switch() {
+        for (effort, name) in [
+            (ThinkingEffort::Low, "low"),
+            (ThinkingEffort::Medium, "medium"),
+            (ThinkingEffort::High, "high"),
+        ] {
+            let body = body(Some(effort));
+            assert_eq!(body["reasoning_effort"], name);
+            assert_eq!(
+                body["chat_template_kwargs"],
+                serde_json::json!({"enable_thinking": true, "thinking": true})
+            );
+        }
+
+        let body = body(None);
+        assert!(body.get("reasoning_effort").is_none());
+        assert!(body.get("chat_template_kwargs").is_none());
     }
 }
