@@ -65,7 +65,6 @@ if (
 import ailoy  # noqa: E402
 from virtx import (  # noqa: E402
     Client,
-    ImageJobEnd,
     PortForwarder,
     Recipe,
     Sandbox,
@@ -138,9 +137,7 @@ async def main(goal: str) -> None:
             "openttd openttd-opengfx openttd-opensfx openttd-openmsx python3 "
             "&& rm -rf /var/lib/apt/lists/*"
         )
-        async for entry in client.build_image(recipe, IMAGE):
-            if isinstance(entry.entry, ImageJobEnd) and entry.entry.error:
-                raise RuntimeError(f"building {IMAGE}: {entry.entry.error}")
+        await client.build_image(recipe, IMAGE).complete()
 
     # The volumes, made the first time and kept on the server: `409` says one is there already.
     volumes = []

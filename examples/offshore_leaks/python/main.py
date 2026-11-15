@@ -60,7 +60,7 @@ if (
     )
 
 import ailoy  # noqa: E402
-from virtx import Client, ImageJobEnd, Recipe, SandboxVolume, VirtxError  # noqa: E402
+from virtx import Client, Recipe, SandboxVolume, VirtxError  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
 # The image the sandbox boots, built once on the virtx server and kept under this tag.
@@ -126,9 +126,7 @@ async def main(prompt: str) -> None:
             # an older one may not read it.
             "pip install --no-cache-dir duckdb==1.5.5 pandas matplotlib networkx"
         )
-        async for entry in client.build_image(recipe, IMAGE):
-            if isinstance(entry.entry, ImageJobEnd) and entry.entry.error:
-                raise RuntimeError(f"building {IMAGE}: {entry.entry.error}")
+        await client.build_image(recipe, IMAGE).complete()
 
     # The volumes, made the first time and kept on the server: `409` says one is there already.
     volumes = []

@@ -5,7 +5,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
-from virtx import Client, ImageJobEnd
+from virtx import Client
 
 import ailoy
 from ailoy import AgentBuilder, AiloyError, LangModel
@@ -475,9 +475,7 @@ async def test_an_unknown_org_cannot_make_a_lang_model():
 
 async def test_the_agent_runs_in_the_callers_sandbox():
     with Client.spawn() as client:
-        async for entry in client.pull_image("python:3.12-slim"):
-            if isinstance(entry.entry, ImageJobEnd):
-                assert entry.entry.error is None, entry.entry.error
+        await client.pull_image("python:3.12-slim").complete()
         sandbox = await client.create_sandbox("python:3.12-slim", network=False, memory_mib=1024)
         agent = await AgentBuilder(MODEL).sandbox(sandbox).build()
         outputs = await run(agent, 'shell {"cmd": "echo shared > /root/out.txt"}')

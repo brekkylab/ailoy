@@ -70,8 +70,8 @@ use ailoy::{
 use anyhow::{Context as _, bail};
 use futures::StreamExt as _;
 use virtx::{
-    Client, Files as _, ImageJobEntry, PortForwarder, Recipe, SandboxCreateArgs, SandboxExecArgs,
-    SandboxJobEntry, SandboxVolume,
+    Client, Files as _, PortForwarder, Recipe, SandboxCreateArgs, SandboxExecArgs, SandboxJobEntry,
+    SandboxVolume,
 };
 
 /// The image the sandbox boots, built once on the virtx server and kept under this tag.
@@ -136,14 +136,7 @@ async fn main() -> anyhow::Result<()> {
                 openttd openttd-opengfx openttd-opensfx openttd-openmsx python3 \
             && rm -rf /var/lib/apt/lists/*",
         );
-        let mut log = client.build_image(recipe, IMAGE).log();
-        while let Some(entry) = log.next().await {
-            if let ImageJobEntry::End(end) = entry?.entry
-                && let Some(error) = end.error
-            {
-                bail!("building {IMAGE}: {error}");
-            }
-        }
+        client.build_image(recipe, IMAGE).complete(false).await?;
     }
 
     // The volumes, made the first time and kept on the server: `409` says one is there already.

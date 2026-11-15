@@ -454,9 +454,7 @@ test('an agent runs its console tools in the caller’s sandbox, until it is rem
   t.after(() => server.close())
   const client = Client.spawn()
   t.after(() => client.close())
-  for await (const entry of client.pullImage('python:3.12-slim')) {
-    if ('end' in entry) assert.equal(entry.end.error, undefined)
-  }
+  await client.pullImage('python:3.12-slim').complete()
   const sandbox = await client.createSandbox('python:3.12-slim', { network: false, memoryMib: 1024 })
 
   serve('fake-shell', server)

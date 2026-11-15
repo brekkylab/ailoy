@@ -72,7 +72,7 @@ use ailoy::{
 use anyhow::{Context as _, bail};
 use futures::StreamExt as _;
 use serde_json::{Value as Json, json};
-use virtx::{Client, Files as _, ImageJobEntry, SandboxCreateArgs, SandboxVolume, Volume};
+use virtx::{Client, Files as _, SandboxCreateArgs, SandboxVolume, Volume};
 
 /// The image the sandbox boots, pulled once onto the virtx server: Python, and nothing else.
 const IMAGE: &str = "python:3.12-slim-trixie";
@@ -171,14 +171,7 @@ async fn main() -> anyhow::Result<()> {
         .any(|i| i.reference.rsplit('/').next() == Some(IMAGE))
     {
         println!("Pulling {IMAGE}, once.");
-        let mut log = client.pull_image(IMAGE, None).log();
-        while let Some(entry) = log.next().await {
-            if let ImageJobEntry::End(end) = entry?.entry
-                && let Some(error) = end.error
-            {
-                bail!("pulling {IMAGE}: {error}");
-            }
-        }
+        client.pull_image(IMAGE, None).complete(false).await?;
     }
 
     // The volumes, made the first time and kept on the server: `409` says one is there already.
