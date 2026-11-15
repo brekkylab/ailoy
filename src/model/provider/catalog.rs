@@ -1,8 +1,10 @@
-//! Finds the id Bedrock and OpenRouter serve a model as, by matching a desc's name against
-//! the catalogs they list.
+//! Finds the id Bedrock, OpenRouter and a server of your own serve a model as, by matching a
+//! desc's name against what they list.
 //!
-//! Each catalog is fetched once per process (per region, for Bedrock) and kept, a failed
-//! fetch included, so building a model costs at most one round of requests.
+//! Bedrock's and OpenRouter's catalogs are fetched once per process (per region, for Bedrock)
+//! and kept, a failed fetch included, so building a model costs at most one round of
+//! requests. A server of your own is asked each time a model is built, since what it serves
+//! changes.
 
 use std::{
     collections::HashMap,
@@ -292,6 +294,29 @@ pub(super) async fn openrouter_catalog() -> Option<Arc<OpenRouterCatalog>> {
         .map(Arc::new);
     *cache = Some(catalog.clone());
     catalog
+}
+
+/// The ids the OpenAI-compatible server at `base_url` lists at `/models`, or none when it
+/// could not be listed.
+pub(super) async fn server_models(base_url: &str, api_key: Option<&str>) -> Vec<String> {
+    #[derive(Deserialize)]
+    struct Models {
+        #[serde(default)]
+        data: Vec<Entry>,
+    }
+    #[derive(Deserialize)]
+    struct Entry {
+        id: String,
+    }
+
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    match get_json::<Models>(&url, api_key).await {
+        Ok(models) => models.data.into_iter().map(|e| e.id).collect(),
+        Err(e) => {
+            log::warn!("listing the models at {url} failed, the desc is sent as it is: {e:#}");
+            Vec::new()
+        }
+    }
 }
 
 #[cfg(test)]

@@ -25,7 +25,7 @@
 //
 // * `UV` — the `uv` binary `prepare_model.py` runs with; `uv` on `PATH` by default.
 // * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend
-//   has to be set up as `docs/src/content/docs/guide/model-providers.mdx` says.
+//   has to be set up as `docs/content/guides/model-providers.mdx` says.
 //
 // `npm install` here first, after building the addon (`npm run build` in `bindings/node`).
 

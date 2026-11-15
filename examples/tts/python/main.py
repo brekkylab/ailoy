@@ -24,7 +24,7 @@ Qwen3-TTS and its weights are the Qwen team's, under Apache-2.0.
 Environment:
 
 * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend has
-  to be set up as `docs/src/content/docs/guide/model-providers.mdx` says.
+  to be set up as `docs/content/guides/model-providers.mdx` says.
 
 Read from `.env` as well.
 """

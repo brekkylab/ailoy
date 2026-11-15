@@ -38,7 +38,7 @@ Ailoy reads `name` and `description` and nothing else from the frontmatter, each
 
 ## Giving the agent a skill
 
-`skill(dir)` takes the folder's path in the agent's sandbox, not on your machine, so put the folder on a volume and mount it into the sandbox, with whatever its instructions expect to find there: Laya's reads its model from `/models`, which `examples/laya` mounts too. Call `skill` once for each skill.
+`skill(dir)` takes the folder's path in the agent's sandbox, not on your machine. Put the folder in the sandbox, with whatever its instructions expect to find there: Laya's instructions read its model from `/models`, which `examples/laya` puts on a volume of its own. A volume, as below, keeps the skill on the virtx server between runs; baking it into the image works too ([Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/), [Images](https://virtx.sh/docs/guides/images/)). Call `skill` once for each skill.
 
 <Tabs syncKey="lang">
 
@@ -109,7 +109,7 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
 </TabItem>
 </Tabs>
 
-When the agent writes the system message itself, `build()` reads the frontmatter of each `SKILL.md` through the sandbox, and fails if a `SKILL.md` is missing or has no `name` or `description`. The system message gets a list of the skills after the instruction: each one's name, description and location, and a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` stays out of the system message, and the agent reads it with its own tools, so an agent with skills needs a sandbox and a tool that reads files, such as `read`, which a sandbox brings with it.
+When the agent writes the system message itself, `build()` reads the frontmatter of each `SKILL.md` through the sandbox, and fails if a `SKILL.md` is missing or has no `name` or `description`. The system message gets a list of the skills after the instruction: each one's name, description and location, and a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` stays out of the system message; the agent reads it with its own tools. So an agent with skills needs a sandbox, which brings a tool that reads files, such as `read`.
 
 For `anthropic` models the list is an XML block:
 
@@ -133,4 +133,4 @@ For any other org, the same preamble is followed by a Markdown list, one line pe
 - `laya` at /skills/laya/SKILL.md. Answer typed questions about a text with Laya, a machine learning model for decisions. Use it to classify, score or answer yes or no about a message, an email or a ticket, with calibrated probabilities.
 ```
 
-Skills are added only to the system message the agent writes itself. A `history(...)` that brings a system message keeps it: the skills are not read or added, though the `# Mounts` section is, as [Message format](../message-format/) describes.
+Skills are added only to the system message the agent writes itself. A `history(...)` that brings a system message keeps it: the skills are not read or added.
