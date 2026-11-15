@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use ailoy::{
-    agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
+    agent::{Agent, AgentBuilder, AgentSpec, AgentState, TruncationPolicy},
     browser::{Browser, UserBrowser},
     datatype::Value,
     message::{Message, MessageDeltaOutput, MessageOutput},
@@ -121,7 +121,7 @@ pub struct BrowserOptions {
 }
 
 #[napi(object)]
-pub struct ContextManagerOptions {
+pub struct TruncationOptions {
     pub max_input_tokens: Option<i64>,
     pub preserve_recent_turns: Option<i64>,
     pub max_images: Option<i64>,
@@ -271,19 +271,19 @@ impl JsAgentBuilder {
     }
 
     #[napi]
-    pub fn context_manager<'env>(
+    pub fn truncation<'env>(
         &mut self,
         this: This<'env>,
-        options: Option<ContextManagerOptions>,
+        options: Option<TruncationOptions>,
     ) -> Result<This<'env>> {
-        let default = ContextManager::default();
-        let options = options.unwrap_or(ContextManagerOptions {
+        let default = TruncationPolicy::default();
+        let options = options.unwrap_or(TruncationOptions {
             max_input_tokens: None,
             preserve_recent_turns: None,
             max_images: None,
             preserve_recent_images: None,
         });
-        let cm = ContextManager {
+        let policy = TruncationPolicy {
             max_input_tokens: unsigned(options.max_input_tokens, "maxInputTokens")?
                 .unwrap_or(default.max_input_tokens),
             preserve_recent_turns: unsigned(options.preserve_recent_turns, "preserveRecentTurns")?
@@ -296,7 +296,7 @@ impl JsAgentBuilder {
             )?
             .map_or(default.preserve_recent_images, |n| n as usize),
         };
-        self.update(this, |b| Ok(b.context_manager(cm)))
+        self.update(this, |b| Ok(b.truncation(policy)))
     }
 
     /// How much the model thinks before it answers.

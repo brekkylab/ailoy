@@ -11,7 +11,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use ailoy::{
-    agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
+    agent::{Agent, AgentBuilder, AgentSpec, AgentState, TruncationPolicy},
     browser::{Browser, UserBrowser},
     datatype::Value,
     message::Message,
@@ -199,22 +199,22 @@ impl PyAgentBuilder {
     }
 
     #[pyo3(signature = (max_input_tokens = None, preserve_recent_turns = None, max_images = None, preserve_recent_images = None))]
-    fn context_manager(
+    fn truncation(
         slf: PyRef<'_, Self>,
         max_input_tokens: Option<u64>,
         preserve_recent_turns: Option<usize>,
         max_images: Option<usize>,
         preserve_recent_images: Option<usize>,
     ) -> PyResult<PyRef<'_, Self>> {
-        let default = ContextManager::default();
-        let cm = ContextManager {
+        let default = TruncationPolicy::default();
+        let policy = TruncationPolicy {
             max_input_tokens: max_input_tokens.unwrap_or(default.max_input_tokens),
             preserve_recent_turns: preserve_recent_turns.unwrap_or(default.preserve_recent_turns),
             max_images: max_images.unwrap_or(default.max_images),
             preserve_recent_images: preserve_recent_images
                 .unwrap_or(default.preserve_recent_images),
         };
-        Self::update(slf, |b| Ok(b.context_manager(cm)))
+        Self::update(slf, |b| Ok(b.truncation(policy)))
     }
 
     /// How much the model thinks before it answers: `"low"`, `"medium"` or `"high"`.

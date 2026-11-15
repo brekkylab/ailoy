@@ -29,7 +29,7 @@
   },
   {
     "label": "State over time",
-    "items": [{ "slug": "guides/context-manager" }]
+    "items": [{ "slug": "guides/truncation" }]
   },
   { "slug": "reference" }
 ]

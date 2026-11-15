@@ -63,7 +63,7 @@
 use std::{io::Write as _, path::Path};
 
 use ailoy::{
-    agent::{Agent, AgentBuilder, ContextManager},
+    agent::{Agent, AgentBuilder, TruncationPolicy},
     message::{FinishReason, Message, Part, Role},
     tool::exec,
 };
@@ -240,7 +240,7 @@ async fn main() -> anyhow::Result<()> {
     // Many commands a round, each with its output: keep the last two rounds' results whole,
     // and of the screenshots the agent reads, the latest ten once more than thirty have
     // built up.
-    .context_manager(ContextManager {
+    .truncation(TruncationPolicy {
         max_input_tokens: 80_000,
         preserve_recent_turns: 2,
         ..Default::default()

@@ -9,7 +9,7 @@ An agent is a model plus what you give it. `AgentBuilder` takes the model's name
 
 ## AgentBuilder at a glance
 
-Every call returns the builder, so they chain. Node.js spells them in camelCase (`webSearchTool`, `contextManager`).
+Every call returns the builder, so they chain. Node.js spells them in camelCase (`webSearchTool`, `thinkingEffort`).
 
 | Call | What the agent gets | Where it is covered |
 | --- | --- | --- |
@@ -19,7 +19,7 @@ Every call returns the builder, so they chain. Node.js spells them in camelCase 
 | `web_search_tool(engines)`, `web_fetch_tool()` | Searching the web and reading a page, from your program. | [Tools](/docs/guides/tools/#the-web) |
 | `browser(...)` | A browser it drives with `browser_*` tools. | [Using a browser](/docs/guides/using-browser/) |
 | `skill(dir)` | A folder of instructions in its sandbox, for one kind of task. | [Skills](/docs/guides/skills/) |
-| `context_manager(...)` | Old tool results and images cut once a run's input grows past a limit. | [Context manager](/docs/guides/context-manager/) |
+| `truncation(...)` | Old tool results and images cut once a run's input grows past a limit. | [Truncation](/docs/guides/truncation/) |
 | `thinking_effort(effort)`, `output_schema(schema)` | How much the model thinks, and a JSON schema its answers must match. | [Model providers](/docs/guides/model-providers/#model-options) |
 | `history(messages)` | An earlier conversation to continue. | [Running an agent](/docs/guides/running/#many-turns) |
 

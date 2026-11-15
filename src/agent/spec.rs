@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     datatype::Value,
+    message::{Message, Part, Role},
     model::{LangModelOptions, ThinkingEffort},
     tool::{
         ToolDesc, WebSearchEngineKind,
@@ -46,6 +47,10 @@ pub struct AgentSpec {
     /// [`skill`](Self::skill).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
+
+    /// How old tool results are truncated in the history as each turn begins.
+    #[serde(default)]
+    pub truncation: TruncationPolicy,
 }
 
 /// The org a desc names (`"anthropic"` of `"anthropic/claude-sonnet-5-5"`) and the name
@@ -91,6 +96,7 @@ impl AgentSpec {
             model_options: None,
             web_search_engines: None,
             skills: Vec::new(),
+            truncation: TruncationPolicy::default(),
         }
     }
 
@@ -109,6 +115,12 @@ impl AgentSpec {
     /// in the history.
     pub fn skill(mut self, dir: impl Into<String>) -> Self {
         self.skills.push(dir.into());
+        self
+    }
+
+    /// Truncate old tool results in the history by `policy`. See [`TruncationPolicy`].
+    pub fn truncation(mut self, policy: TruncationPolicy) -> Self {
+        self.truncation = policy;
         self
     }
 
@@ -168,9 +180,240 @@ impl AgentSpec {
     }
 }
 
+/// How old tool results in an agent's history are replaced by placeholders as each turn
+/// begins, so a long run stays within the model's context window.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TruncationPolicy {
+    /// The input tokens of the last model call past which old tool results are replaced.
+    /// `0`, the default, turns this off.
+    pub max_input_tokens: u64,
+    /// The latest user turns whose tool results are left as they are. The turn just begun
+    /// is always one of them, so `0` acts as `1`.
+    pub preserve_recent_turns: usize,
+    /// Images in tool results the history may hold; past it, the oldest are replaced.
+    /// `0` turns this off.
+    pub max_images: usize,
+    /// Images in tool results left once `max_images` is passed.
+    pub preserve_recent_images: usize,
+}
+
+impl Default for TruncationPolicy {
+    fn default() -> Self {
+        Self {
+            max_input_tokens: 0,
+            preserve_recent_turns: 3,
+            max_images: 30,
+            preserve_recent_images: 10,
+        }
+    }
+}
+
+/// What stands in for an image [`TruncationPolicy::apply`] replaced.
+pub(super) const IMAGE_PLACEHOLDER: &str = "[image from an earlier turn removed]";
+
+/// What stands in for a tool result's contents [`TruncationPolicy::apply`] replaced.
+pub(super) const TOOL_RESULT_PLACEHOLDER: &str = "[context truncated]";
+
+impl TruncationPolicy {
+    /// Replace old images and tool results in `history` by placeholders. No message is
+    /// removed, and a tool result keeps its id, since APIs such as Claude's refuse a call
+    /// without its result. Images a person attached are left alone.
+    ///
+    /// Only for the start of a turn, with the query already in `history`: Claude refuses a
+    /// thinking block handed back once anything before it has changed, and at turn start
+    /// none follows, since the backends replay thinking only after the last user message.
+    pub(super) fn apply(&self, history: &mut [Message], last_input_tokens: Option<u64>) {
+        // Past `max_images` images in tool results, the oldest go until
+        // `preserve_recent_images` remain: many at once, so the prompt cache breaks once in
+        // several turns rather than every turn.
+        if self.max_images > 0 {
+            let images: Vec<(usize, usize)> = history
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.role == Role::Tool)
+                .flat_map(|(i, m)| {
+                    let parts = m.contents.iter().enumerate();
+                    parts
+                        .filter(|(_, p)| p.is_image())
+                        .map(move |(j, _)| (i, j))
+                })
+                .collect();
+            if images.len() > self.max_images {
+                let replaced = images.len().saturating_sub(self.preserve_recent_images);
+                for (i, j) in images.into_iter().take(replaced) {
+                    history[i].contents[j] = Part::text(IMAGE_PLACEHOLDER);
+                }
+            }
+        }
+
+        // Once the last call read past `max_input_tokens`, the tool results before the
+        // latest `preserve_recent_turns` user turns lose their contents. A turn counts from
+        // its user message, since one turn may hold many assistant messages; with fewer turns
+        // than that, nothing changes.
+        if self.max_input_tokens == 0 || last_input_tokens.unwrap_or(0) <= self.max_input_tokens {
+            return;
+        }
+        let users = history
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == Role::User);
+        let Some((preserve_from, _)) = users.rev().nth(self.preserve_recent_turns.max(1) - 1)
+        else {
+            return;
+        };
+        for message in &mut history[..preserve_from] {
+            if message.role == Role::Tool {
+                message.contents = vec![Part::text(TOOL_RESULT_PLACEHOLDER)];
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sys() -> Message {
+        Message::new(Role::System).with_contents([Part::text("system")])
+    }
+
+    fn user(text: &str) -> Message {
+        Message::new(Role::User).with_contents([Part::text(text)])
+    }
+
+    fn asst(text: &str) -> Message {
+        Message::new(Role::Assistant).with_contents([Part::text(text)])
+    }
+
+    fn call(id: &str) -> Message {
+        Message::new(Role::Assistant).with_tool_calls([Part::function(id, "echo", Value::null())])
+    }
+
+    fn result(id: &str) -> Message {
+        Message::new(Role::Tool)
+            .with_id(id)
+            .with_contents([Part::text("ok")])
+    }
+
+    fn image() -> Part {
+        Part::image_embedded("image/png", vec![0u8; 4].into()).unwrap()
+    }
+
+    fn shot(id: &str) -> Message {
+        Message::new(Role::Tool)
+            .with_id(id)
+            .with_contents([Part::text("the page"), image()])
+    }
+
+    fn images_in(history: &[Message]) -> usize {
+        history
+            .iter()
+            .flat_map(|m| &m.contents)
+            .filter(|p| p.is_image())
+            .count()
+    }
+
+    /// Whether each tool result in `history` lost its contents.
+    fn truncated(history: &[Message]) -> Vec<bool> {
+        history
+            .iter()
+            .filter(|m| m.role == Role::Tool)
+            .map(|m| m.contents[0].as_text() == Some(TOOL_RESULT_PLACEHOLDER))
+            .collect()
+    }
+
+    /// The tool results of the turns before the latest `preserve_recent_turns` lose their
+    /// contents and keep their ids; no message goes. Turns count from user messages, so a
+    /// turn of several assistant messages is one.
+    #[test]
+    fn test_old_tool_results_are_truncated_past_the_token_limit() {
+        let history = vec![
+            sys(),
+            user("u1"),
+            call("c1"),
+            result("c1"),
+            asst("a1"),
+            user("u2"),
+            call("c2"),
+            result("c2"),
+            asst("a2"),
+            user("u3"),
+        ];
+        let policy = |preserve_recent_turns| TruncationPolicy {
+            max_input_tokens: 100,
+            preserve_recent_turns,
+            ..Default::default()
+        };
+
+        let mut cut = history.clone();
+        policy(2).apply(&mut cut, Some(200));
+        assert_eq!(truncated(&cut), [true, false]);
+        assert_eq!(cut.len(), history.len());
+        assert_eq!(cut[0].role, Role::System);
+        assert_eq!(cut[3].id.as_deref(), Some("c1"));
+
+        // The turn just begun is always kept, so `0` acts as `1`.
+        for preserve in [0, 1] {
+            let mut cut = history.clone();
+            policy(preserve).apply(&mut cut, Some(200));
+            assert_eq!(truncated(&cut), [true, true], "preserve: {preserve}");
+        }
+
+        // Fewer turns than preserved, at the limit, or without a limit: nothing changes.
+        for (preserve, max_input_tokens, read) in [(3, 100, 200), (1, 100, 100), (1, 0, 200)] {
+            let mut cut = history.clone();
+            TruncationPolicy {
+                max_input_tokens,
+                preserve_recent_turns: preserve,
+                ..Default::default()
+            }
+            .apply(&mut cut, Some(read));
+            assert_eq!(
+                truncated(&cut),
+                [false, false],
+                "{preserve} {max_input_tokens} {read}"
+            );
+        }
+    }
+
+    /// Past the cap the oldest images in tool results go until the preserved remain; at it,
+    /// none does. The text beside each and a person's images stay.
+    #[test]
+    fn test_images_past_the_cap_are_replaced_oldest_first() {
+        let images = |max_images, preserve_recent_images| TruncationPolicy {
+            max_images,
+            preserve_recent_images,
+            ..Default::default()
+        };
+        let mut history = vec![
+            sys(),
+            Message::new(Role::User).with_contents([Part::text("u1"), image()]),
+        ];
+        history.extend((1..=4).map(|n| shot(&format!("c{n}"))));
+
+        images(4, 2).apply(&mut history, None);
+        assert_eq!(images_in(&history), 5);
+
+        history.push(shot("c5"));
+        images(4, 2).apply(&mut history, None);
+        assert_eq!(images_in(&history), 3);
+        assert!(history[1].contents[1].is_image());
+        assert!(
+            history[2..=4]
+                .iter()
+                .all(|m| m.contents[1].as_text() == Some(IMAGE_PLACEHOLDER))
+        );
+        assert!(history[5..=6].iter().all(|m| m.contents[1].is_image()));
+        assert_eq!(history[2].contents[0].as_text(), Some("the page"));
+        assert_eq!(history[2].id.as_deref(), Some("c1"));
+
+        // A cap of `0` is off; preserving none clears them all.
+        images(0, 0).apply(&mut history, None);
+        assert_eq!(images_in(&history), 3);
+        images(1, 0).apply(&mut history, None);
+        assert_eq!(images_in(&history), 1);
+    }
 
     fn names(spec: &AgentSpec) -> Vec<&str> {
         spec.tools.iter().map(|t| t.name.as_str()).collect()
@@ -217,7 +460,11 @@ mod tests {
         let spec = AgentSpec::new("anthropic/claude-sonnet-5-5")
             .instruction("Be brief.")
             .thinking_effort(ThinkingEffort::Low)
-            .web_search_tool(vec![WebSearchEngineKind::Google]);
+            .web_search_tool(vec![WebSearchEngineKind::Google])
+            .truncation(TruncationPolicy {
+                max_input_tokens: 50_000,
+                ..Default::default()
+            });
         let json = serde_json::to_string(&spec).unwrap();
         let back: AgentSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(back.model, "anthropic/claude-sonnet-5-5");
@@ -229,5 +476,13 @@ mod tests {
             back.web_search_engines.as_deref(),
             Some([WebSearchEngineKind::Google].as_slice())
         );
+        assert_eq!(back.truncation.max_input_tokens, 50_000);
+    }
+
+    /// A spec saved without `truncation` loads with the default policy.
+    #[test]
+    fn test_spec_without_truncation_takes_the_default() {
+        let spec: AgentSpec = serde_json::from_str(r#"{"model": "anthropic"}"#).unwrap();
+        assert_eq!(spec.truncation, TruncationPolicy::default());
     }
 }

@@ -92,7 +92,7 @@ What else the builder takes, by what the task needs:
 | drive a web browser | `.browser()` for the user's own Chrome (remote debugging on), `.browser(isolated=True)` for one of its own; it runs on the host, not in the sandbox |
 | follow a procedure you wrote | `.skill("/skills/<name>")`, a directory holding a `SKILL.md`, on a volume mounted into the sandbox |
 | pick up an earlier conversation | `.history(messages)`, e.g. a previous agent's `agent.history` |
-| keep long runs within the context window | `.context_manager(max_input_tokens=..., preserve_recent_turns=..., max_images=..., preserve_recent_images=...)`, which blanks old tool results past `max_input_tokens` (off unless given) and old screenshots past `max_images` (30, `0` for off) |
+| keep long runs within the context window | `.truncation(max_input_tokens=..., preserve_recent_turns=..., max_images=..., preserve_recent_images=...)`, which blanks old tool results past `max_input_tokens` (off unless given) and old screenshots past `max_images` (30, `0` for off) |
 | think harder, or less | `.thinking_effort("low" \| "medium" \| "high")` |
 | answer in a fixed shape | `.output_schema({...})`, a JSON schema |
 

@@ -68,7 +68,7 @@ class AgentBuilder:
         """
         ...
     def skill(self, dir: str) -> Self: ...
-    def context_manager(
+    def truncation(
         self,
         max_input_tokens: int | None = None,
         preserve_recent_turns: int | None = None,

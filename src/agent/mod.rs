@@ -11,7 +11,6 @@
 //! ```
 
 mod builder;
-mod context;
 mod image;
 mod rt;
 mod skill;
@@ -19,7 +18,6 @@ mod spec;
 mod state;
 
 pub use builder::AgentBuilder;
-pub use context::ContextManager;
 pub use rt::*;
 pub use spec::*;
 pub use state::*;

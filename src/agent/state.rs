@@ -14,7 +14,7 @@ pub struct AgentState {
     pub sandbox: Option<Sandbox>,
 
     /// Input tokens of the last model call, which a
-    /// [`ContextManager`](super::ContextManager) checks against its limit as a turn begins.
+    /// [`TruncationPolicy`](super::TruncationPolicy) checks against its limit as a turn begins.
     pub last_input_tokens: Option<u64>,
 
     /// The browser this agent drives; `None` means no browser tools.

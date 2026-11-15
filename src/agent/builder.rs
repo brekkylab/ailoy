@@ -1,5 +1,5 @@
 use crate::{
-    agent::{Agent, AgentSpec, AgentState, ContextManager},
+    agent::{Agent, AgentSpec, AgentState, TruncationPolicy},
     browser::{Browser, BrowserSession},
     datatype::Value,
     message::Message,
@@ -35,8 +35,6 @@ pub struct AgentBuilder {
 
     sandbox: Option<virtx::Sandbox>,
 
-    context_manager: Option<ContextManager>,
-
     browser: Option<Browser>,
 }
 
@@ -48,7 +46,6 @@ impl AgentBuilder {
             spec: AgentSpec::new(model),
             history: Vec::new(),
             sandbox: None,
-            context_manager: None,
             browser: None,
         }
     }
@@ -115,9 +112,9 @@ impl AgentBuilder {
         self
     }
 
-    /// Set the context window management spec.
-    pub fn context_manager(mut self, spec: ContextManager) -> Self {
-        self.context_manager = Some(spec);
+    /// How old tool results are truncated in the history. See [`AgentSpec::truncation`].
+    pub fn truncation(mut self, policy: TruncationPolicy) -> Self {
+        self.spec = self.spec.truncation(policy);
         self
     }
 
@@ -140,7 +137,6 @@ impl AgentBuilder {
             spec,
             history,
             sandbox,
-            context_manager,
             browser,
         } = self;
 
@@ -153,9 +149,7 @@ impl AgentBuilder {
             state = state.with_browser(BrowserSession::new(browser));
         }
 
-        let mut agent = Agent::try_with_state(spec, state).await?;
-        agent.set_context_manager(context_manager);
-        Ok(agent)
+        Agent::try_with_state(spec, state).await
     }
 }
 
@@ -289,14 +283,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_builder_context_manager_is_applied() {
-        let cm = ContextManager {
+    async fn test_builder_truncation_is_applied() {
+        let policy = TruncationPolicy {
             max_input_tokens: 10_000,
             preserve_recent_turns: 2,
             ..Default::default()
         };
-        let agent = builder().context_manager(cm).build().await.unwrap();
-        assert!(agent.context_manager().is_some());
+        let agent = builder().truncation(policy.clone()).build().await.unwrap();
+        assert_eq!(agent.spec().truncation, policy);
     }
 
     #[tokio::test]

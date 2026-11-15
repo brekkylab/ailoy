@@ -8,8 +8,7 @@ use futures::{
 };
 
 use super::{
-    AgentSpec, AgentState, ContextManager, image::fit_images_off_runtime, skill::render_skills,
-    spec::split_desc,
+    AgentSpec, AgentState, image::fit_images_off_runtime, skill::render_skills, spec::split_desc,
 };
 use crate::{
     browser,
@@ -30,9 +29,11 @@ const CUT_OFF: &str = "the model's reply was cut off at its output limit";
 /// conversations.
 ///
 /// Pairs an [`AgentSpec`] (model + instruction + tools) with an [`AgentState`]
-/// (history + sandbox). [`run`](Self::run) streams one turn, calling tools until the model
+/// (history + sandbox), holding the model and tools built from the spec. [`run`](Self::run) streams one turn, calling tools until the model
 /// answers, and appends every message to the history.
 pub struct Agent {
+    spec: AgentSpec,
+
     model: Arc<dyn InferLangModel>,
 
     options: LangModelOptions,
@@ -42,10 +43,6 @@ pub struct Agent {
     tools: HashMap<String, ToolFunc>,
 
     pub state: AgentState,
-
-    /// Cuts old tool results out of the history as a turn begins, once a call's input has
-    /// grown past its limit.
-    context_manager: Option<ContextManager>,
 }
 
 impl Agent {
@@ -90,7 +87,7 @@ impl Agent {
         if !state.history.iter().any(|m| m.role == Role::System) {
             let org = split_desc(&spec.model).0;
             let skills = render_skills(&spec.skills, state.sandbox.as_ref(), org).await?;
-            let text = [spec.instruction, skills]
+            let text = [spec.instruction.clone(), skills]
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>()
@@ -105,11 +102,11 @@ impl Agent {
 
         Ok(Self {
             model,
-            options: spec.model_options.unwrap_or_default(),
+            options: spec.model_options.clone().unwrap_or_default(),
             tool_descs,
             tools,
             state,
-            context_manager: None,
+            spec,
         })
     }
 
@@ -118,30 +115,13 @@ impl Agent {
         &self.state.history
     }
 
-    pub fn context_manager(&self) -> Option<&ContextManager> {
-        self.context_manager.as_ref()
+    /// The spec this agent was made from.
+    pub fn spec(&self) -> &AgentSpec {
+        &self.spec
     }
 
-    pub fn set_context_manager(&mut self, context_manager: Option<ContextManager>) {
-        self.context_manager = context_manager;
-    }
-
-    /// Truncate the history if the last call's input went past the context manager's limit.
-    ///
-    /// Run only as a turn begins. A turn's requests send back the thinking the model has produced
-    /// in it, and the Claude API can refuse a thinking block once anything before it has changed,
-    /// so a turn's input may grow past the limit until the next turn begins.
-    fn manage_context(&mut self) {
-        if let Some(cm) = &self.context_manager
-            && cm.max_input_tokens > 0
-            && self.state.last_input_tokens.unwrap_or(0) > cm.max_input_tokens
-        {
-            cm.truncate_history(&mut self.state.history);
-        }
-    }
-
-    /// Commit the model's `output` to the history, noting its input size for
-    /// [`manage_context`](Self::manage_context).
+    /// Commit the model's `output` to the history, noting its input size for the next turn's
+    /// [`TruncationPolicy`](super::TruncationPolicy).
     fn commit(&mut self, output: &MessageOutput) {
         if let Some(usage) = &output.usage {
             self.state.last_input_tokens = Some(usage.input_tokens);
@@ -276,19 +256,21 @@ impl Agent {
     }
 
     /// Add `query` to the history, led by a browser reconnection the agent has not heard of,
-    /// and truncate the history if it has grown past the context manager's limit.
+    /// and truncate the history by the spec's [`TruncationPolicy`](super::TruncationPolicy).
+    ///
+    /// Truncation runs only here: a turn's requests send back the thinking the model has
+    /// produced in it, which the Claude API can refuse once anything before it has changed, so a
+    /// turn's input may grow past the limit until the next turn begins.
     async fn begin_turn(&mut self, mut query: Message) {
         close_dangling_calls(&mut self.state.history);
-        // No context manager acts as one with every setting left out.
-        let default = ContextManager::default();
-        let cm = self.context_manager.as_ref().unwrap_or(&default);
-        cm.cap_images(&mut self.state.history);
         if let Some(note) = self.state.browser.as_ref().and_then(|b| b.catch_up()) {
             query.contents.insert(0, Part::text(note));
         }
         let query = fit_images_off_runtime(query).await;
         self.state.history.push(query);
-        self.manage_context();
+        self.spec
+            .truncation
+            .apply(&mut self.state.history, self.state.last_input_tokens);
     }
 
     /// Connects this agent's browser now rather than on its first use. This is when the browser
@@ -385,7 +367,7 @@ enum Refused {
     #[allow(dead_code)]
     OlderImages,
     /// The whole history, over the model's context limit. Mend: truncate it as
-    /// [`ContextManager`] does, without waiting for the usage that triggers it. Past a turn's
+    /// [`TruncationPolicy`](super::TruncationPolicy) does, without waiting for the usage that triggers it. Past a turn's
     /// first request this changes what comes before the turn's thinking, so the requests after
     /// must leave that thinking out (see [`Agent::manage_context`]).
     #[allow(dead_code)]
@@ -571,7 +553,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::agent::context::IMAGE_PLACEHOLDER;
+    use crate::agent::{TruncationPolicy, spec::IMAGE_PLACEHOLDER};
     use crate::{
         datatype::Bytes,
         message::{Role, TokenUsage},
@@ -1055,7 +1037,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_context_manager_truncates_once_input_grows_past_its_limit() {
+    async fn test_truncation_truncates_once_input_grows_past_its_limit() {
         let name = "test-agent-context";
         let (model, spec) = scripted(
             name,
@@ -1065,12 +1047,12 @@ mod tests {
                 with_input(answer("two"), 10),
             ],
         );
-        let mut agent = Agent::try_new(spec).await.unwrap();
-        agent.set_context_manager(Some(ContextManager {
+        let spec = spec.truncation(TruncationPolicy {
             max_input_tokens: 100,
             preserve_recent_turns: 1,
             ..Default::default()
-        }));
+        });
+        let mut agent = Agent::try_new(spec).await.unwrap();
 
         agent.run(user("first")).for_each(|_| async {}).await;
         // The last call read 200 tokens, so the next turn's first call cuts the old result.
@@ -1096,12 +1078,12 @@ mod tests {
                 with_input(answer("two"), 10),
             ],
         );
-        let mut agent = Agent::try_new(spec).await.unwrap();
-        agent.set_context_manager(Some(ContextManager {
+        let spec = spec.truncation(TruncationPolicy {
             max_input_tokens: 0,
             preserve_recent_turns: 1,
             ..Default::default()
-        }));
+        });
+        let mut agent = Agent::try_new(spec).await.unwrap();
 
         agent.run(user("first")).for_each(|_| async {}).await;
         agent.run(user("second")).for_each(|_| async {}).await;
@@ -1129,12 +1111,12 @@ mod tests {
                     with_input(answer("three"), 10),
                 ],
             );
-            let mut agent = Agent::try_new(spec).await.unwrap();
-            agent.set_context_manager(Some(ContextManager {
+            let spec = spec.truncation(TruncationPolicy {
                 max_input_tokens: 100,
                 preserve_recent_turns: preserve,
                 ..Default::default()
-            }));
+            });
+            let mut agent = Agent::try_new(spec).await.unwrap();
             for query in ["first", "second", "third"] {
                 if stream {
                     agent.run_stream(user(query)).for_each(|_| async {}).await;
@@ -1160,7 +1142,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_context_manager_replaces_old_images_at_the_start_of_a_turn() {
+    async fn test_truncation_replaces_old_images_at_the_start_of_a_turn() {
         let name = "test-agent-images";
         let (model, spec) = scripted(
             name,
@@ -1172,12 +1154,12 @@ mod tests {
                 answer("two"),
             ],
         );
-        let mut agent = Agent::try_new(spec).await.unwrap();
-        agent.set_context_manager(Some(ContextManager {
+        let spec = spec.truncation(TruncationPolicy {
             max_images: 2,
             preserve_recent_images: 1,
             ..Default::default()
-        }));
+        });
+        let mut agent = Agent::try_new(spec).await.unwrap();
 
         agent.run(user("first")).for_each(|_| async {}).await;
         // Within a turn every screenshot stays, over the cap or not.
@@ -1195,9 +1177,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_images_are_capped_at_the_default_without_a_context_manager() {
+    async fn test_images_are_capped_at_the_default_policy() {
         let name = "test-agent-images-default";
-        let default = ContextManager::default();
+        let default = TruncationPolicy::default();
         let shots: Vec<_> = (0..=default.max_images)
             .map(|n| calls(&[(&format!("c{n}"), "shot")]))
             .collect();
@@ -1206,7 +1188,7 @@ mod tests {
             shots.into_iter().chain([answer("one"), answer("two")]),
         );
         let mut agent = Agent::try_new(spec).await.unwrap();
-        assert!(agent.context_manager().is_none());
+        assert_eq!(&agent.spec().truncation, &default);
 
         agent.run(user("first")).for_each(|_| async {}).await;
         agent.run(user("second")).for_each(|_| async {}).await;
@@ -1232,12 +1214,12 @@ mod tests {
                 answer("two"),
             ],
         );
-        let mut agent = Agent::try_new(spec).await.unwrap();
-        agent.set_context_manager(Some(ContextManager {
+        let spec = spec.truncation(TruncationPolicy {
             max_images: 1,
             preserve_recent_images: 0,
             ..Default::default()
-        }));
+        });
+        let mut agent = Agent::try_new(spec).await.unwrap();
         let query = |text: &str| {
             let image = Part::image_embedded("image/png", Bytes::from(vec![0u8; 4])).unwrap();
             Message::new(Role::User).with_contents([Part::text(text), image.clone(), image])
@@ -1325,13 +1307,13 @@ mod tests {
                     Err(anyhow::anyhow!("overloaded")),
                 ],
             );
-            let mut agent = Agent::try_new(spec).await.unwrap();
-            agent.set_context_manager(Some(ContextManager {
+            let spec = spec.truncation(TruncationPolicy {
                 max_input_tokens: 100,
                 preserve_recent_turns: 1,
                 max_images: 1,
                 preserve_recent_images: 0,
-            }));
+            });
+            let mut agent = Agent::try_new(spec).await.unwrap();
 
             agent.run(user("first")).for_each(|_| async {}).await;
             let turns = agent.history().len();
