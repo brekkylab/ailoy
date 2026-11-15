@@ -1,6 +1,6 @@
 use crate::{
     agent::{Agent, AgentSpec, AgentState, TruncationPolicy},
-    browser::{Browser, BrowserSession},
+    browser::Browser,
     datatype::Value,
     message::Message,
     model::ThinkingEffort,
@@ -142,16 +142,8 @@ impl AgentBuilder {
             browser,
         } = self;
 
-        let mut state = AgentState::new().with_history(history);
-        if let Some(sandbox) = sandbox {
-            state = state.with_sandbox(sandbox);
-        }
-        if let Some(browser) = browser {
-            browser.check()?;
-            state = state.with_browser(BrowserSession::new(browser));
-        }
-
-        Agent::try_with_state(spec, state).await
+        let state = AgentState::new().with_history(history);
+        Agent::try_with_state(spec, state, sandbox, browser).await
     }
 }
 
@@ -237,7 +229,7 @@ mod tests {
         assert!(agent.tool_descs.is_empty(), "no sandbox, no system tools");
     }
 
-    /// `sandbox()` puts the supplied sandbox into `state.sandbox`.
+    /// `sandbox()` hands the supplied sandbox to the agent, which runs its tools there.
     #[tokio::test]
     async fn test_builder_sandbox_is_applied() {
         let agent = builder()
@@ -253,7 +245,6 @@ mod tests {
         );
 
         let sandbox = agent
-            .state
             .sandbox
             .as_ref()
             .expect("the supplied sandbox is held");

@@ -74,10 +74,8 @@ let spec: AgentSpec = serde_json::from_value(json!({
     "instruction": "Answer in one sentence.",
     "use_sandbox": true,
 }))?;
-let state = AgentState::new()
-    .with_history(saved_messages)
-    .with_sandbox(sandbox);
-let agent = Agent::try_with_state(spec, state).await?;
+let state = AgentState::new().with_history(saved_messages);
+let agent = Agent::try_with_state(spec, state, Some(sandbox), None).await?;
 ```
 
 

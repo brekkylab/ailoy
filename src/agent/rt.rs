@@ -31,9 +31,10 @@ const CUT_OFF: &str = "the model's reply was cut off at its output limit";
 /// An agent that drives an [`InferLangModel`] through multi-turn, tool-augmented
 /// conversations.
 ///
-/// Pairs an [`AgentSpec`] (model + instruction + tools) with an [`AgentState`]
-/// (history + sandbox), holding the model and tools built from the spec. [`run`](Self::run) streams one turn, calling tools until the model
-/// answers, and appends every message to the history.
+/// Pairs an [`AgentSpec`] (model + instruction + tools) with an [`AgentState`] (history),
+/// holding the model and tools built from the spec and the sandbox and browser it works with.
+/// [`run`](Self::run) streams one turn, calling tools until the model answers, and appends
+/// every message to the history.
 pub struct Agent {
     spec: AgentSpec,
 
@@ -46,37 +47,56 @@ pub struct Agent {
     tools: HashMap<String, ToolFunc>,
 
     pub state: AgentState,
+
+    /// The sandbox its sandbox tools run in.
+    pub(super) sandbox: Option<Sandbox>,
+
+    /// The browser its `browser_*` tools drive.
+    pub(crate) browser: Option<Arc<browser::BrowserSession>>,
 }
 
 impl Agent {
-    /// Create an agent with a fresh [`AgentState`].
+    /// Create an agent with a fresh [`AgentState`], and no sandbox or browser.
     pub async fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
-        Self::try_with_state(spec, AgentState::new()).await
+        Self::try_with_state(spec, AgentState::new(), None, None).await
     }
 
-    /// Create an agent with `state`.
+    /// Create an agent with `state`, working in `sandbox` and driving `browser`.
     ///
     /// The model is built from `spec.model` through [`create_lang_model`], and each of
     /// `spec.tools` through [`create_tool`]; [`AgentSpec::use_sandbox`] and
-    /// [`AgentSpec::use_browser`] bring their tools too, and `state` has to hold a sandbox and a
-    /// browser exactly when the spec uses them. Unless `state.history` already has a
+    /// [`AgentSpec::use_browser`] bring their tools too, and a sandbox and a browser have to be
+    /// given exactly when the spec uses them. Nothing makes a sandbox here, since that means
+    /// choosing a virtx server. Unless `state.history` already has a
     /// [`Role::System`] message, one built from `spec.instruction`, [`AgentSpec::skills`]
     /// and the skills of the sandbox's abins is put first.
     ///
     /// Async because skills are read through the sandbox.
-    pub async fn try_with_state(spec: AgentSpec, mut state: AgentState) -> anyhow::Result<Self> {
+    pub async fn try_with_state(
+        spec: AgentSpec,
+        mut state: AgentState,
+        sandbox: Option<Sandbox>,
+        browser: Option<browser::Browser>,
+    ) -> anyhow::Result<Self> {
         let model = create_lang_model(&spec.model).await?;
 
-        match (spec.use_sandbox, state.sandbox.is_some()) {
-            (true, false) => bail!("the spec uses a sandbox, and the state has none"),
-            (false, true) => bail!("the state has a sandbox, and the spec does not use one"),
+        match (spec.use_sandbox, sandbox.is_some()) {
+            (true, false) => bail!("the spec uses a sandbox, and none was given"),
+            (false, true) => bail!("a sandbox was given, and the spec does not use one"),
             _ => {}
         }
-        match (spec.use_browser, state.browser.is_some()) {
-            (true, false) => bail!("the spec uses a browser, and the state has none"),
-            (false, true) => bail!("the state has a browser, and the spec does not use one"),
+        match (spec.use_browser, browser.is_some()) {
+            (true, false) => bail!("the spec uses a browser, and none was given"),
+            (false, true) => bail!("a browser was given, and the spec does not use one"),
             _ => {}
         }
+        let browser = match browser {
+            Some(browser) => {
+                browser.check()?;
+                Some(browser::BrowserSession::new(browser))
+            }
+            None => None,
+        };
 
         // Errors if any spec tool is missing.
         let mut tools = HashMap::with_capacity(spec.tools.len());
@@ -95,7 +115,7 @@ impl Agent {
         }
 
         // Bound to this agent's own browser rather than resolved by name.
-        if let Some(session) = &state.browser {
+        if let Some(session) = &browser {
             for (desc, func) in browser::tools(session, spec.use_sandbox) {
                 tools.insert(desc.name.clone(), func);
                 tool_descs.push(desc);
@@ -104,7 +124,7 @@ impl Agent {
 
         if !state.history.iter().any(|m| m.role == Role::System) {
             let org = split_desc(&spec.model).0;
-            let skills = render_skills(&spec.skills, state.sandbox.as_ref(), org).await?;
+            let skills = render_skills(&spec.skills, sandbox.as_ref(), org).await?;
             let text = [spec.instruction.clone(), skills]
                 .into_iter()
                 .flatten()
@@ -124,6 +144,8 @@ impl Agent {
             tool_descs,
             tools,
             state,
+            sandbox,
+            browser,
             spec,
         })
     }
@@ -142,7 +164,7 @@ impl Agent {
     /// [`TruncationPolicy`](super::TruncationPolicy).
     fn commit(&mut self, output: &MessageOutput) {
         if let Some(usage) = &output.usage {
-            self.state.last_input_tokens = Some(usage.input_tokens);
+            self.state.context_tokens = Some(usage.input_tokens);
         }
         self.state.history.push(output.message.clone());
     }
@@ -281,21 +303,20 @@ impl Agent {
     /// turn's input may grow past the limit until the next turn begins.
     async fn begin_turn(&mut self, mut query: Message) {
         close_dangling_calls(&mut self.state.history);
-        if let Some(note) = self.state.browser.as_ref().and_then(|b| b.catch_up()) {
+        if let Some(note) = self.browser.as_ref().and_then(|b| b.catch_up()) {
             query.contents.insert(0, Part::text(note));
         }
         let query = fit_images_off_runtime(query).await;
         self.state.history.push(query);
         self.spec
             .truncation
-            .apply(&mut self.state.history, self.state.last_input_tokens);
+            .apply(&mut self.state.history, self.state.context_tokens);
     }
 
     /// Connects this agent's browser now rather than on its first use. This is when the browser
     /// asks the person, so call it while they are at their screen. A no-op once connected.
     pub async fn start_browser(&mut self) -> anyhow::Result<()> {
-        self.state
-            .browser
+        self.browser
             .clone()
             .context("this agent has no browser")?
             .start()
@@ -305,7 +326,7 @@ impl Agent {
     /// Run `calls` concurrently, yielding each result as a [`Role::Tool`] message as it
     /// finishes, one per call.
     fn call_tools(&self, calls: Vec<Part>) -> BoxStream<'static, anyhow::Result<Message>> {
-        let sandbox = self.state.sandbox.clone();
+        let sandbox = self.sandbox.clone();
         calls
             .iter()
             .filter_map(Part::as_function)
@@ -1014,7 +1035,9 @@ mod tests {
         let (_, spec) = scripted(name, []);
         let state = AgentState::new()
             .with_history([Message::new(Role::System).with_contents([Part::text("Mine.")])]);
-        let agent = Agent::try_with_state(spec, state).await.unwrap();
+        let agent = Agent::try_with_state(spec, state, None, None)
+            .await
+            .unwrap();
         assert_eq!(agent.history().len(), 1);
         assert_eq!(text_of(&agent.history()[0]), "Mine.");
     }
