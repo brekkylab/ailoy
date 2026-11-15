@@ -18,8 +18,8 @@ use crate::{
 /// What makes an agent distinct: its model, instruction and tools.
 ///
 /// Tools are built through the providers set with
-/// [`set_tool_provider`](crate::tool::set_tool_provider); the console lives on
-/// [`AgentState`](super::AgentState).
+/// [`set_tool_provider`](crate::tool::set_tool_provider). The sandbox and the browser live on
+/// [`AgentState`](super::AgentState); the spec says whether the agent uses them.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSpec {
     /// The model's desc, as [`create_lang_model`](crate::model::create_lang_model)
@@ -43,6 +43,17 @@ pub struct AgentSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
 
+    /// Whether the agent works in a sandbox, which its state then has to hold. It brings a
+    /// shell and file tools there, in the style of the model's org, but for any `tools` names
+    /// itself.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub use_sandbox: bool,
+
+    /// Whether the agent drives a browser, which its state then has to hold. It brings the
+    /// `browser_*` tools.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub use_browser: bool,
+
     /// How old tool results are truncated in the history as each turn begins.
     #[serde(default)]
     pub truncation: TruncationPolicy,
@@ -55,7 +66,7 @@ pub(super) fn split_desc(desc: &str) -> (&str, &str) {
 }
 
 /// The shell and file tools for a sandbox, in the style of the model's org.
-fn sandbox_tool_descs(org: &str) -> Vec<ToolDesc> {
+pub(super) fn sandbox_tool_descs(org: &str) -> Vec<ToolDesc> {
     let mut descs = vec![get_shell_tool_desc()];
     // GPT reads files through `shell`, as in Codex.
     if org == "openai" {
@@ -90,6 +101,8 @@ impl AgentSpec {
             tools: Vec::new(),
             model_options: None,
             skills: Vec::new(),
+            use_sandbox: false,
+            use_browser: false,
             truncation: TruncationPolicy::default(),
         }
     }
@@ -125,18 +138,6 @@ impl AgentSpec {
 
     pub fn tools(mut self, tools: impl IntoIterator<Item = ToolDesc>) -> Self {
         self.tools.extend(tools);
-        self
-    }
-
-    /// Add the shell and file tools for a sandbox, in the style of the model's org, skipping
-    /// any the spec already has. [`AgentBuilder::sandbox`](super::AgentBuilder::sandbox) adds
-    /// them itself.
-    pub fn sandbox_tools(mut self) -> Self {
-        for desc in sandbox_tool_descs(split_desc(&self.model).0) {
-            if !self.tools.iter().any(|t| t.name == desc.name) {
-                self.tools.push(desc);
-            }
-        }
         self
     }
 
@@ -432,14 +433,6 @@ mod tests {
         assert!(!system_names("deepseek-ai").contains(&"imgread".into()));
         assert!(!system_names("moonshotai").contains(&"imgread".into()));
         assert!(!system_names("LGAI-EXAONE").contains(&"imgread".into()));
-    }
-
-    #[test]
-    fn test_sandbox_tools_skip_tools_already_there() {
-        let spec = AgentSpec::new("openai/gpt-6-luna")
-            .sandbox_tools()
-            .sandbox_tools();
-        assert_eq!(names(&spec), ["shell", "apply_patch", "imgread"]);
     }
 
     #[test]

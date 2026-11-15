@@ -478,7 +478,7 @@ test('an agent runs its console tools in the caller’s sandbox, until it is rem
 
   // Removed, it is gone for an agent too.
   const later = await new AgentBuilder('fake-shell/model').sandbox(sandbox).build()
-  const fromSpec = await Agent.fromSpec({ model: 'fake-shell/model', tools: [] }, { sandbox })
+  const fromSpec = await Agent.fromSpec({ model: 'fake-shell/model', use_sandbox: true }, { sandbox })
   await sandbox.remove()
   const after = []
   for await (const output of later.run('write it again')) after.push(output)

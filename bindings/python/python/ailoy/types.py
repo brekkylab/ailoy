@@ -137,12 +137,25 @@ class LangModelOptions(TypedDict):
     output_schema: NotRequired[Value]
 
 
+class TruncationPolicy(TypedDict):
+    """How old tool results in the history are replaced by placeholders as each turn begins.
+    A setting left out takes its default."""
+
+    max_input_tokens: NotRequired[int]
+    preserve_recent_turns: NotRequired[int]
+    max_images: NotRequired[int]
+    preserve_recent_images: NotRequired[int]
+
+
 class AgentSpec(TypedDict):
     model: str
     instruction: NotRequired[str]
     tools: NotRequired[list[ToolDesc]]
     model_options: NotRequired[LangModelOptions]
     skills: NotRequired[list[str]]
+    use_sandbox: NotRequired[bool]
+    use_browser: NotRequired[bool]
+    truncation: NotRequired[TruncationPolicy]
 
 
 Backend = Literal["cli", "api", "bedrock", "openrouter", "self-hosted"]
@@ -183,6 +196,7 @@ __all__ = [
     "ThinkingEffort",
     "TokenUsage",
     "ToolDesc",
+    "TruncationPolicy",
     "UrlImage",
     "Value",
     "ValuePart",

@@ -87,14 +87,14 @@ impl AgentBuilder {
 
     /// Run this agent's sandbox tools in `sandbox`, with whatever volumes it was made with.
     ///
-    /// Also adds [`AgentSpec::sandbox_tools`] to the spec: a shell and file tools there, in
-    /// the style of the model's org. The sandbox's abins are listed in the system message as
+    /// The agent gets a shell and file tools there, in the style of the model's org (see
+    /// [`Agent::try_with_state`]). The sandbox's abins are listed in the system message as
     /// skills, like [`skill`](Self::skill)'s.
     ///
     /// Nothing makes a sandbox implicitly, since that means choosing a virtx server.
     /// Without one, pure tools still run and sandbox tools fail with an error.
     pub fn sandbox(mut self, sandbox: virtx::Sandbox) -> Self {
-        self.spec = self.spec.sandbox_tools();
+        self.spec.use_sandbox = true;
         self.sandbox = Some(sandbox);
         self
     }
@@ -103,6 +103,7 @@ impl AgentBuilder {
     /// browser from this process, not from the [`sandbox`](Self::sandbox). Nothing starts until
     /// the agent first uses it, or [`Agent::start_browser`].
     pub fn browser(mut self, browser: Browser) -> Self {
+        self.spec.use_browser = true;
         self.browser = Some(browser);
         self
     }
@@ -245,6 +246,11 @@ mod tests {
             .await
             .unwrap();
         assert!(agent.tool_descs.iter().any(|t| t.name == "shell"));
+        assert!(agent.spec().use_sandbox);
+        assert!(
+            agent.spec().tools.is_empty(),
+            "the sandbox's tools stay out of the spec"
+        );
 
         let sandbox = agent
             .state

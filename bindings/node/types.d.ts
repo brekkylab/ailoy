@@ -120,12 +120,26 @@ export interface LangModelOptions {
   output_schema?: Value
 }
 
+/**
+ * How old tool results in the history are replaced by placeholders as each turn begins. A
+ * setting left out takes its default.
+ */
+export interface TruncationPolicy {
+  max_input_tokens?: number
+  preserve_recent_turns?: number
+  max_images?: number
+  preserve_recent_images?: number
+}
+
 export interface AgentSpec {
   model: string
   instruction?: string
   tools?: Array<ToolDesc>
   model_options?: LangModelOptions
   skills?: Array<string>
+  use_sandbox?: boolean
+  use_browser?: boolean
+  truncation?: TruncationPolicy
 }
 
 export type Backend = 'cli' | 'api' | 'bedrock' | 'openrouter' | 'self-hosted'

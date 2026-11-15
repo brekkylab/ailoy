@@ -4,7 +4,8 @@
 //! ```ignore
 //! use ailoy::agent::*;
 //!
-//! let spec = AgentSpec::new("anthropic/claude-sonnet-5-5").instruction("Be brief.").sandbox_tools();
+//! let mut spec = AgentSpec::new("anthropic/claude-sonnet-5-5").instruction("Be brief.");
+//! spec.use_sandbox = true;
 //! let mut agent = Agent::try_with_state(spec, AgentState::new().with_sandbox(sandbox)).await?;
 //! let mut turn = agent.run(Message::new(Role::User).with_contents([Part::text("Hi")]));
 //! while let Some(output) = turn.next().await { /* … */ }

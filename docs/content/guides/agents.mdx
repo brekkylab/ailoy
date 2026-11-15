@@ -29,7 +29,7 @@ Every call returns the builder, so they chain. Node.js spells them in camelCase 
 
 ## From a spec
 
-The model, the instruction, the tools, the skills and the model options make up an agent's spec: plain JSON, which you can store and build an agent from again. The rest (its history and its sandbox) is its state, given beside the spec. `Agent.from_spec` builds an agent from both:
+The model, the instruction, the tools, the skills, the model options and whether it uses a sandbox or a browser make up an agent's spec: plain JSON, which you can store and build an agent from again. The rest (its history and its sandbox) is its state, given beside the spec. `Agent.from_spec` builds an agent from both:
 
 <Tabs syncKey="lang">
 
@@ -41,6 +41,7 @@ from ailoy import Agent
 spec = {
     "model": "anthropic/claude-haiku-5-5",
     "instruction": "Answer in one sentence.",
+    "use_sandbox": True,
 }
 agent = await Agent.from_spec(spec, history=saved_messages, sandbox=sandbox)
 ```
@@ -55,6 +56,7 @@ const { Agent } = require('@brekkylab/ailoy')
 const spec = {
   model: 'anthropic/claude-haiku-5-5',
   instruction: 'Answer in one sentence.',
+  use_sandbox: true,
 }
 const agent = await Agent.fromSpec(spec, { history: savedMessages, sandbox })
 ```
@@ -70,6 +72,7 @@ use serde_json::json;
 let spec: AgentSpec = serde_json::from_value(json!({
     "model": "anthropic/claude-haiku-5-5",
     "instruction": "Answer in one sentence.",
+    "use_sandbox": true,
 }))?;
 let state = AgentState::new()
     .with_history(saved_messages)
@@ -81,7 +84,7 @@ let agent = Agent::try_with_state(spec, state).await?;
 </TabItem>
 </Tabs>
 
-A spec lists its tools itself. `sandbox(...)` on the builder adds the shell and file tools to the spec; a sandbox given beside a spec does not, so the spec must list them for the agent to have them. In Rust, calling `.sandbox_tools()` on the `AgentSpec` adds them.
+A spec says whether the agent works in a sandbox (`use_sandbox`) and drives a browser (`use_browser`); `sandbox(...)` and `browser(...)` on the builder set them. The state has to hold a sandbox exactly when `use_sandbox` is set, and a browser exactly when `use_browser` is, or building the agent fails. A sandbox brings the shell and file tools without the spec listing them, and a browser the `browser_*` tools. A tool the spec names itself, such as its own `shell`, is used in place of the sandbox's.
 
 ## Closing
 

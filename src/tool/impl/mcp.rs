@@ -18,9 +18,7 @@
 //! let descs = register_mcp_stdio("github", "npx", ["-y", "@modelcontextprotocol/server-github"])
 //!     .await?;
 //!
-//! let spec = AgentSpec::new("anthropic/claude-sonnet-4-6")
-//!     .sandbox_tools()
-//!     .tools(descs);
+//! let spec = AgentSpec::new("anthropic/claude-sonnet-4-6").tools(descs);
 //!
 //! // ... build and run agents against `spec` ...
 //!

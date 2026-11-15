@@ -1,14 +1,17 @@
 use std::{collections::HashMap, panic::AssertUnwindSafe, sync::Arc};
 
 use crate::console::Sandbox;
-use anyhow::Context as _;
+use anyhow::{Context as _, bail};
 use futures::{
     FutureExt as _, StreamExt as _,
     stream::{BoxStream, FuturesUnordered},
 };
 
 use super::{
-    AgentSpec, AgentState, image::fit_images_off_runtime, skill::render_skills, spec::split_desc,
+    AgentSpec, AgentState,
+    image::fit_images_off_runtime,
+    skill::render_skills,
+    spec::{sandbox_tool_descs, split_desc},
 };
 use crate::{
     browser,
@@ -54,13 +57,26 @@ impl Agent {
     /// Create an agent with `state`.
     ///
     /// The model is built from `spec.model` through [`create_lang_model`], and each of
-    /// `spec.tools` through [`create_tool`]. Unless `state.history` already has a
+    /// `spec.tools` through [`create_tool`]; [`AgentSpec::use_sandbox`] and
+    /// [`AgentSpec::use_browser`] bring their tools too, and `state` has to hold a sandbox and a
+    /// browser exactly when the spec uses them. Unless `state.history` already has a
     /// [`Role::System`] message, one built from `spec.instruction`, [`AgentSpec::skills`]
     /// and the skills of the sandbox's abins is put first.
     ///
     /// Async because skills are read through the sandbox.
     pub async fn try_with_state(spec: AgentSpec, mut state: AgentState) -> anyhow::Result<Self> {
         let model = create_lang_model(&spec.model).await?;
+
+        match (spec.use_sandbox, state.sandbox.is_some()) {
+            (true, false) => bail!("the spec uses a sandbox, and the state has none"),
+            (false, true) => bail!("the state has a sandbox, and the spec does not use one"),
+            _ => {}
+        }
+        match (spec.use_browser, state.browser.is_some()) {
+            (true, false) => bail!("the spec uses a browser, and the state has none"),
+            (false, true) => bail!("the state has a browser, and the spec does not use one"),
+            _ => {}
+        }
 
         // Errors if any spec tool is missing.
         let mut tools = HashMap::with_capacity(spec.tools.len());
@@ -69,9 +85,18 @@ impl Agent {
         }
         let mut tool_descs = spec.tools.clone();
 
+        if spec.use_sandbox {
+            for desc in sandbox_tool_descs(split_desc(&spec.model).0) {
+                if !tools.contains_key(&desc.name) {
+                    tools.insert(desc.name.clone(), create_tool(&desc)?);
+                    tool_descs.push(desc);
+                }
+            }
+        }
+
         // Bound to this agent's own browser rather than resolved by name.
         if let Some(session) = &state.browser {
-            for (desc, func) in browser::tools(session, state.sandbox.is_some()) {
+            for (desc, func) in browser::tools(session, spec.use_sandbox) {
                 tools.insert(desc.name.clone(), func);
                 tool_descs.push(desc);
             }
@@ -992,6 +1017,22 @@ mod tests {
         let agent = Agent::try_with_state(spec, state).await.unwrap();
         assert_eq!(agent.history().len(), 1);
         assert_eq!(text_of(&agent.history()[0]), "Mine.");
+    }
+
+    /// A spec using a sandbox or a browser needs its state to hold one.
+    #[tokio::test]
+    async fn test_a_spec_using_a_sandbox_or_browser_needs_one() {
+        let name = "test-agent-uses";
+        let (_, spec) = scripted(name, []);
+        let mut uses_sandbox = spec.clone();
+        uses_sandbox.use_sandbox = true;
+        let err = Agent::try_new(uses_sandbox).await.err().unwrap();
+        assert!(err.to_string().contains("uses a sandbox"), "{err}");
+
+        let mut uses_browser = spec;
+        uses_browser.use_browser = true;
+        let err = Agent::try_new(uses_browser).await.err().unwrap();
+        assert!(err.to_string().contains("uses a browser"), "{err}");
     }
 
     #[tokio::test]
