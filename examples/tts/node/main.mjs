@@ -126,16 +126,6 @@ async function main() {
     if (!(await client.listImage()).some((image) => image.reference.split('/').pop() === IMAGE)) {
       console.log(`Building ${IMAGE}, once; it takes a few minutes.`)
       const recipe = new Recipe('python:3.12-slim-trixie')
-        // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader the wheel
-        // opens. Mesa from backports: 26.0 against trixie's 25.0.
-        .run(
-          "echo 'deb http://deb.debian.org/debian trixie-backports main' " +
-            '> /etc/apt/sources.list.d/backports.list ' +
-            '&& apt-get update && apt-get install -y --no-install-recommends ' +
-            '-t trixie-backports mesa-vulkan-drivers ' +
-            '&& apt-get install -y --no-install-recommends libvulkan1 ' +
-            '&& rm -rf /var/lib/apt/lists/*',
-        )
         .run('pip install --no-cache-dir ncnn numpy tokenizers')
       for await (const entry of client.buildImage(recipe, IMAGE)) {
         if ('end' in entry && entry.end.error) throw new Error(`building ${IMAGE}: ${entry.end.error}`)

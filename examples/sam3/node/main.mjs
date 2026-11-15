@@ -110,17 +110,6 @@ async function main(prompt) {
     console.log(`Building ${IMAGE}, once; it takes a few minutes.`)
     // Debian, not Alpine: PyPI's ncnn wheels are manylinux (glibc) only.
     const recipe = new Recipe('python:3.12-slim-trixie')
-      // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader the wheel
-      // opens. Mesa from backports: venus passes VK_KHR_shader_bfloat16 and
-      // VK_KHR_cooperative_matrix through from 26.0 on, and trixie itself has 25.0.
-      .run(
-        "echo 'deb http://deb.debian.org/debian trixie-backports main' " +
-          '> /etc/apt/sources.list.d/backports.list ' +
-          '&& apt-get update && apt-get install -y --no-install-recommends ' +
-          '-t trixie-backports mesa-vulkan-drivers ' +
-          '&& apt-get install -y --no-install-recommends libvulkan1 ' +
-          '&& rm -rf /var/lib/apt/lists/*',
-      )
       // Headless OpenCV: `opencv-python` needs libGL, which the slim image lacks. `ncnn` asks
       // for it by name, and both wheels install the same `cv2` package, so `--no-deps` on
       // `ncnn` and its own dependencies spelled out, opencv aside.

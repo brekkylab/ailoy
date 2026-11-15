@@ -27,8 +27,8 @@
 //! the date, until the game has run for `OPENTTD_YEARS` years. Older command output drops out
 //! of its context as it goes, and its notes in `artifacts/notes.md` carry what it knows.
 //!
-//! **Ports**: `ttd.py` reaches the game's admin port and `shot.py`, which takes screenshots,
-//! at `127.0.0.1` in the sandbox. Only the VNC server's port is opened, and forwarded to an
+//! **Ports**: `ttd.py` reaches the game's admin port at `127.0.0.1` in the sandbox, and takes
+//! screenshots with virtx's `display`, the abin the viewer runs on. Only the VNC server's port is opened, and forwarded to an
 //! address on this machine's loopback, which the program prints.
 //!
 //! **Watching**: open that address as `vnc://127.0.0.1:PORT` (Screen Sharing on macOS, or any
@@ -39,8 +39,8 @@
 //! Two volumes on the virtx server are mounted into the sandbox:
 //!
 //! * `ailoy-gameplay` at `/skills/openttd`, read-only — `../shared/`, put there each run: the
-//!   skill (`SKILL.md`, `ttd.py`, `admin.py`) and, in `server/`, `start.sh`, the Game Script,
-//!   the AI and `shot.py`.
+//!   skill (`SKILL.md`, `ttd.py`, `admin.py`) and, in `server/`, `start.sh`, the Game Script
+//!   and the AI.
 //! * `ailoy-gameplay-artifacts` at `/artifacts`, writable — the agent's notes, the screenshots
 //!   it took, the saved games in `user/openttd/save/` (the last as `ailoy-final.sav`), and the
 //!   logs. It stays on the server between runs, and is copied to `artifacts/` beside this file
@@ -121,8 +121,8 @@ async fn main() -> anyhow::Result<()> {
     // ailoy has none. The sandboxes it holds go when this program does.
     let client = tokio::task::spawn_blocking(|| Client::spawn_virtx([] as [&str; 0])).await??;
 
-    // The image, built once: the game, and the free graphics, sounds and music it needs, a
-    // display for the viewer, Python for `ttd.py`, and ImageMagick for the agent's screenshots.
+    // The image, built once: the game, and the free graphics, sounds and music it needs, and
+    // Python for `ttd.py`. The viewer's screen and its screenshots are the `display` abin's.
     // The server answers a tag in its full form, as `docker.io/library/ailoy-gameplay:1`.
     let images = client.list_image().await?;
     if !images
@@ -133,8 +133,7 @@ async fn main() -> anyhow::Result<()> {
         let recipe = Recipe::new("debian:trixie-slim").step(
             "apt-get update \
             && apt-get install -y --no-install-recommends \
-                openttd openttd-opengfx openttd-opensfx openttd-openmsx xvfb x11vnc python3 \
-                imagemagick \
+                openttd openttd-opengfx openttd-opensfx openttd-openmsx python3 \
             && rm -rf /var/lib/apt/lists/*",
         );
         let mut log = client.build_image(recipe, IMAGE).log();
@@ -188,6 +187,7 @@ async fn main() -> anyhow::Result<()> {
         },
     ];
     args.ports = vec![VNC_PORT];
+    args.abins = vec!["display".to_string()];
     args.vcpus = Some(2);
     args.memory_mib = Some(2048);
     let sandbox = client.create_sandbox(&args).await?;

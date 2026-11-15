@@ -16,7 +16,7 @@ license = "Apache-2.0"
 repository = "https://github.com/brekkylab/ailoy"
 
 [workspace.dependencies]
-virtx = { package = "virtx-rs", path = "../virtx/virtx-rs" }
+virtx = { path = "../virtx/virtx-rs" }
 
 [package]
 name = "ailoy"

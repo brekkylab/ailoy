@@ -152,17 +152,6 @@ async function main(prompt) {
     // Debian, not Alpine: PyPI's musllinux ncnn wheel crashes freeing its first `Mat`, where the
     // manylinux (glibc) one runs laya.
     const recipe = new Recipe('python:3.12-slim-trixie')
-      // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader the wheel
-      // opens. Mesa from backports: venus passes VK_KHR_shader_bfloat16 through from 26.0 on,
-      // and trixie itself has 25.0.
-      .run(
-        "echo 'deb http://deb.debian.org/debian trixie-backports main' " +
-          '> /etc/apt/sources.list.d/backports.list ' +
-          '&& apt-get update && apt-get install -y --no-install-recommends ' +
-          '-t trixie-backports mesa-vulkan-drivers ' +
-          '&& apt-get install -y --no-install-recommends libvulkan1 ' +
-          '&& rm -rf /var/lib/apt/lists/*',
-      )
       .run('pip install --no-cache-dir ncnn numpy tokenizers')
     for await (const entry of client.buildImage(recipe, IMAGE)) {
       if ('end' in entry && entry.end.error) throw new Error(`building ${IMAGE}: ${entry.end.error}`)

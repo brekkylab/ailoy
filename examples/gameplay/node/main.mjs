@@ -6,9 +6,9 @@
 // The Node side of the Rust `gameplay` example, whose `main.rs` has the long form. The game
 // runs as a dedicated server in a sandbox, and the agent runs a company in it from the same
 // sandbox, through the skill's `ttd.py`. `examples/gameplay/shared`, the skill (`SKILL.md`,
-// `ttd.py`, `admin.py`) and the game's side (`server/`: `start.sh`, the Game Script, the AI and
-// `shot.py`) that the three sides share, goes each run onto a volume of the virtx server
-// mounted at `/skills/openttd`.
+// `ttd.py`, `admin.py`) and the game's side (`server/`: `start.sh`, the Game Script and the
+// AI) that the three sides share, goes each run onto a volume of the virtx server mounted at
+// `/skills/openttd`.
 //
 // * The volume `ailoy-gameplay-artifacts` at `/artifacts`, writable — the agent's notes, the
 //   screenshots it took, the saved games in `user/openttd/save/` (the last as
@@ -107,16 +107,15 @@ async function main(goal) {
   // ailoy has none. The sandboxes it holds go when it is closed.
   const client = Client.spawn()
 
-  // The image, built once: the game, and the free graphics, sounds and music it needs, a
-  // display for the viewer, Python for `ttd.py`, and ImageMagick for the agent's screenshots.
+  // The image, built once: the game, and the free graphics, sounds and music it needs, and
+  // Python for `ttd.py`. The viewer's screen and its screenshots are the `display` abin's.
   // The server answers a tag in its full form, as `docker.io/library/ailoy-gameplay:1`.
   if (!(await client.listImage()).some((image) => image.reference.split('/').pop() === IMAGE)) {
     console.log(`Building ${IMAGE}, once; it takes a few minutes.`)
     const recipe = new Recipe('debian:trixie-slim').run(
       'apt-get update ' +
         '&& apt-get install -y --no-install-recommends ' +
-        'openttd openttd-opengfx openttd-opensfx openttd-openmsx xvfb x11vnc python3 ' +
-        'imagemagick ' +
+        'openttd openttd-opengfx openttd-opensfx openttd-openmsx python3 ' +
         '&& rm -rf /var/lib/apt/lists/*',
     )
     for await (const entry of client.buildImage(recipe, IMAGE)) {
@@ -147,6 +146,7 @@ async function main(goal) {
       { volume: artifacts, path: '/artifacts' },
     ],
     ports: [VNC_PORT],
+    abins: ['display'],
     vcpus: 2,
     memoryMib: 2048,
   })

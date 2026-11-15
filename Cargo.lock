@@ -79,7 +79,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
- "virtx-rs",
+ "virtx",
  "wreq",
  "wreq-util",
 ]
@@ -97,7 +97,7 @@ dependencies = [
  "napi-derive",
  "serde",
  "tokio",
- "virtx-rs",
+ "virtx",
 ]
 
 [[package]]
@@ -113,7 +113,7 @@ dependencies = [
  "pythonize",
  "serde",
  "tokio",
- "virtx-rs",
+ "virtx",
 ]
 
 [[package]]
@@ -3812,16 +3812,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
-name = "virtx-core"
-version = "0.1.2"
-dependencies = [
- "anyhow",
- "cbindgen",
- "serde",
-]
-
-[[package]]
-name = "virtx-rs"
+name = "virtx"
 version = "0.1.2"
 dependencies = [
  "futures-core",
@@ -3829,6 +3820,15 @@ dependencies = [
  "serde",
  "serde_json",
  "virtx-core",
+]
+
+[[package]]
+name = "virtx-core"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "cbindgen",
+ "serde",
 ]
 
 [[package]]

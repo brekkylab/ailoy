@@ -69,6 +69,7 @@ pub fn sandbox(env: &Env, sandbox: &Object<'_>) -> Result<virtx::Sandbox> {
         snapshot: sandbox.get("snapshot").map_err(get)?,
         running: sandbox.get("running").map_err(get)?.ok_or_else(not_one)?,
         ports: Vec::new(),
+        abins: sandbox.get("abins").map_err(get)?.unwrap_or_default(),
     };
     Ok((*borrowed).sandbox(info))
 }
