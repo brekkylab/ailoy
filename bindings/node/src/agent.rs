@@ -22,7 +22,7 @@ use ailoy::{
     datatype::Value,
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::ThinkingEffort,
-    tool::{ToolDesc, WebSearchEngineKind},
+    tool::ToolDesc,
 };
 use futures::{StreamExt as _, stream::BoxStream};
 use napi::{
@@ -168,19 +168,10 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.tools(descs)))
     }
 
-    /// `engines` by name — `'Google'`, `'DuckDuckGo'`, … — or every engine when empty.
+    /// Add `web_search`, searching with the provider `setWebSearchProvider` set.
     #[napi]
-    pub fn web_search_tool<'env>(
-        &mut self,
-        env: &Env,
-        this: This<'env>,
-        #[napi(ts_arg_type = "Array<WebSearchEngine>")] engines: Option<Unknown<'_>>,
-    ) -> Result<This<'env>> {
-        let engines: Vec<WebSearchEngineKind> = match engines {
-            Some(engines) => from_js(env, engines, "a list of web search engines")?,
-            None => Vec::new(),
-        };
-        self.update(this, |b| Ok(b.web_search_tool(engines)))
+    pub fn web_search_tool<'env>(&mut self, this: This<'env>) -> Result<This<'env>> {
+        self.update(this, |b| Ok(b.web_search_tool()))
     }
 
     #[napi]

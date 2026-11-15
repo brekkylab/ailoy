@@ -16,7 +16,7 @@ Every call returns the builder, so they chain. Node.js spells them in camelCase 
 | `instruction(text)` | The system message's text. | [Below](#instruction) |
 | `sandbox(sandbox)` | A virtx sandbox to work in, and a shell and file tools there. | [Giving an agent a sandbox](/docs/guides/sandbox/) |
 | `tool(desc)`, `tools(descs)` | Tools by name: your own functions, or a registered MCP server's. | [Tools](/docs/guides/tools/#your-own-functions), [Using MCP](/docs/guides/using-mcp/) |
-| `web_search_tool(engines)`, `web_fetch_tool()` | Searching the web and reading a page, from your program. | [Tools](/docs/guides/tools/#the-web) |
+| `web_search_tool()`, `web_fetch_tool()` | Searching the web and reading a page, from your program. | [Tools](/docs/guides/tools/#the-web) |
 | `browser(...)` | A browser it drives with `browser_*` tools. | [Using a browser](/docs/guides/using-browser/) |
 | `skill(dir)` | A folder of instructions in its sandbox, for one kind of task. | [Skills](/docs/guides/skills/) |
 | `truncation(...)` | Old tool results and images cut once a run's input grows past a limit. | [Truncation](/docs/guides/truncation/) |

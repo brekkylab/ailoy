@@ -15,7 +15,7 @@ use crate::{
     datatype::Value,
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
     model::{InferLangModel, LangModelOptions, RequestRefused, create_lang_model},
-    tool::{ToolDesc, ToolFunc, create_tool, r#impl::get_web_search_tool_factory},
+    tool::{ToolDesc, ToolFunc, create_tool},
 };
 
 /// Per-part size limit for tool results, past which the middle is cut out.
@@ -65,14 +65,7 @@ impl Agent {
         // Errors if any spec tool is missing.
         let mut tools = HashMap::with_capacity(spec.tools.len());
         for desc in &spec.tools {
-            let func = match (&spec.web_search_engines, desc.name.as_str()) {
-                // The engines are this spec's, so its `web_search` is built here.
-                (Some(engines), "web_search") => {
-                    get_web_search_tool_factory(engines.clone())(desc)?
-                }
-                _ => create_tool(desc)?,
-            };
-            tools.insert(desc.name.clone(), func);
+            tools.insert(desc.name.clone(), create_tool(desc)?);
         }
         let mut tool_descs = spec.tools.clone();
 

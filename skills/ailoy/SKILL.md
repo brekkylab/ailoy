@@ -86,7 +86,7 @@ What else the builder takes, by what the task needs:
 
 | The agent should | Builder call |
 |---|---|
-| read the web | `.web_fetch_tool()`, `.web_search_tool([...])` |
+| read the web | `.web_fetch_tool()`, `.web_search_tool()` |
 | use an MCP server's tools | `tools = await register_mcp_stdio("fetch", "uvx", ["mcp-server-fetch"])`, then `.tools(tools)`; `register_mcp_streamable_http(prefix, url)` for a remote one |
 | call your own function | `desc = register_tool({"name": ..., "description": ..., "parameters": <JSON schema>}, func)`, then `.tool(desc)` |
 | drive a web browser | `.browser()` for the user's own Chrome (remote debugging on), `.browser(isolated=True)` for one of its own; it runs on the host, not in the sandbox |

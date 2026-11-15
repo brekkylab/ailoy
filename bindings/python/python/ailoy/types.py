@@ -142,7 +142,6 @@ class AgentSpec(TypedDict):
     instruction: NotRequired[str]
     tools: NotRequired[list[ToolDesc]]
     model_options: NotRequired[LangModelOptions]
-    web_search_engines: NotRequired[list[str]]
     skills: NotRequired[list[str]]
 
 
@@ -161,9 +160,7 @@ class LangModelServer(TypedDict):
     api_key: NotRequired[str]
     models: NotRequired[dict[str, str]]
 
-WebSearchEngine = Literal[
-    "Bing", "Brave", "DuckDuckGo", "Google", "Mojeek", "Naver", "Startpage", "Yahoo", "Yandex"
-]
+WebSearchProvider = Literal["web", "brave", "tavily", "exa", "naver"]
 
 __all__ = [
     "AgentSpec",
@@ -189,5 +186,5 @@ __all__ = [
     "UrlImage",
     "Value",
     "ValuePart",
-    "WebSearchEngine",
+    "WebSearchProvider",
 ]

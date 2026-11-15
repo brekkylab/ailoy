@@ -6,7 +6,7 @@ use crate::{
     message::{Message, Part, Role},
     model::{LangModelOptions, ThinkingEffort},
     tool::{
-        ToolDesc, WebSearchEngineKind,
+        ToolDesc,
         r#impl::{
             get_apply_patch_tool_desc, get_edit_tool_desc, get_imgread_tool_desc,
             get_read_file_tool_desc, get_read_tool_desc, get_shell_tool_desc,
@@ -37,11 +37,6 @@ pub struct AgentSpec {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_options: Option<LangModelOptions>,
-
-    /// Engines used by the `web_search` tool. `None` (or not provided) means
-    /// all available engines. Only meaningful when `web_search` is listed in `tools`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub web_search_engines: Option<Vec<WebSearchEngineKind>>,
 
     /// Skill directories in the console, each holding a `SKILL.md`. See
     /// [`skill`](Self::skill).
@@ -94,7 +89,6 @@ impl AgentSpec {
             instruction: None,
             tools: Vec::new(),
             model_options: None,
-            web_search_engines: None,
             skills: Vec::new(),
             truncation: TruncationPolicy::default(),
         }
@@ -146,11 +140,11 @@ impl AgentSpec {
         self
     }
 
-    /// Add `web_search`; a non-empty `engines` restricts it to those, empty uses all.
-    pub fn web_search_tool(mut self, engines: Vec<WebSearchEngineKind>) -> Self {
-        self.tools.push(get_web_search_tool_desc());
-        if !engines.is_empty() {
-            self.web_search_engines = Some(engines);
+    /// Add `web_search`, unless the spec has it. How it searches is the
+    /// [`WebSearchProvider`](crate::tool::WebSearchProvider) set where the agent runs.
+    pub fn web_search_tool(mut self) -> Self {
+        if !self.tools.iter().any(|t| t.name == "web_search") {
+            self.tools.push(get_web_search_tool_desc());
         }
         self
     }
@@ -449,9 +443,10 @@ mod tests {
     }
 
     #[test]
-    fn test_web_search_tool_empty_engines_keeps_field_none() {
-        let spec = AgentSpec::new("anthropic").web_search_tool(vec![]);
-        assert!(spec.web_search_engines.is_none());
+    fn test_web_search_tool_is_added_once() {
+        let spec = AgentSpec::new("anthropic")
+            .web_search_tool()
+            .web_search_tool();
         assert_eq!(names(&spec), ["web_search"]);
     }
 
@@ -460,7 +455,7 @@ mod tests {
         let spec = AgentSpec::new("anthropic/claude-sonnet-5-5")
             .instruction("Be brief.")
             .thinking_effort(ThinkingEffort::Low)
-            .web_search_tool(vec![WebSearchEngineKind::Google])
+            .web_search_tool()
             .truncation(TruncationPolicy {
                 max_input_tokens: 50_000,
                 ..Default::default()
@@ -469,13 +464,10 @@ mod tests {
         let back: AgentSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(back.model, "anthropic/claude-sonnet-5-5");
         assert_eq!(
-            back.model_options.unwrap().thinking_effort,
+            back.model_options.as_ref().unwrap().thinking_effort,
             Some(ThinkingEffort::Low)
         );
-        assert_eq!(
-            back.web_search_engines.as_deref(),
-            Some([WebSearchEngineKind::Google].as_slice())
-        );
+        assert_eq!(names(&back), ["web_search"]);
         assert_eq!(back.truncation.max_input_tokens, 50_000);
     }
 

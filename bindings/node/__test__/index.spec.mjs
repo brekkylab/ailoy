@@ -39,6 +39,17 @@ test('a builder is spent by build()', async () => {
   assert.throws(() => builder.instruction('again'), { code: 'INVALID_ARG' })
 })
 
+test('the web search provider is set by name', () => {
+  assert.equal(ailoy.getWebSearchProvider(), 'web')
+  try {
+    ailoy.setWebSearchProvider('naver')
+    assert.equal(ailoy.getWebSearchProvider(), 'naver')
+    assert.throws(() => ailoy.setWebSearchProvider('bing'), { code: 'INVALID_ARG' })
+  } finally {
+    ailoy.setWebSearchProvider('web')
+  }
+})
+
 test('an object that does not fit says what was expected', () => {
   assert.throws(() => new AgentBuilder('m').tool({ description: 'no name' }), {
     code: 'INVALID_ARG',

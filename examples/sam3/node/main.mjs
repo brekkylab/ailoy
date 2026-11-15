@@ -168,7 +168,7 @@ async function main(prompt) {
     agent = await new AgentBuilder(process.env.AILOY_MODEL ?? 'openai/gpt-6-astra')
       .instruction(INSTRUCTION)
       .webFetchTool()
-      .webSearchTool([])
+      .webSearchTool()
       .sandbox(sandbox)
       .skill('/skills/sam3')
       .build()

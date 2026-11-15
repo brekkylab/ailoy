@@ -204,7 +204,7 @@ async def main(prompt: str) -> None:
         ailoy.AgentBuilder(os.environ.get("AILOY_MODEL", "anthropic/claude-sonnet-5"))
         .instruction(INSTRUCTION)
         .web_fetch_tool()
-        .web_search_tool([])
+        .web_search_tool()
         .sandbox(sandbox)
         .skill("/skills/laya")
         .build()

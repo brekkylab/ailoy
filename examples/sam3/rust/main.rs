@@ -191,7 +191,7 @@ async fn main() -> anyhow::Result<()> {
         "Everything in this folder is collected and handed back to the user, and a result left anywhere else is not delivered.",
     ))
     .web_fetch_tool()
-    .web_search_tool(vec![])
+    .web_search_tool()
     .sandbox(sandbox)
     .skill("/skills/sam3")
     .build()

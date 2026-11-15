@@ -125,7 +125,6 @@ export interface AgentSpec {
   instruction?: string
   tools?: Array<ToolDesc>
   model_options?: LangModelOptions
-  web_search_engines?: Array<WebSearchEngine>
   skills?: Array<string>
 }
 
@@ -162,13 +161,4 @@ export interface CustomLangModel {
   ): AsyncIterable<MessageDeltaOutput>
 }
 
-export type WebSearchEngine =
-  | 'Bing'
-  | 'Brave'
-  | 'DuckDuckGo'
-  | 'Google'
-  | 'Mojeek'
-  | 'Naver'
-  | 'Startpage'
-  | 'Yahoo'
-  | 'Yandex'
+export type WebSearchProvider = 'web' | 'brave' | 'tavily' | 'exa' | 'naver'

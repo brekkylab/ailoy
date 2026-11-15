@@ -1,11 +1,16 @@
-mod aggregator;
+//! The `web_search` tool, run by the [`WebSearchProvider`] set with
+//! [`set_web_search_provider`]: the web's own result pages by default, or a search API.
+
+mod brave;
 mod engine;
-mod engines;
+mod exa;
+mod naver;
+mod tavily;
+mod web;
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-use aggregator::MetaSearcher;
-pub use engines::WebSearchEngineKind;
+use engine::SearchEngine;
 
 use crate::{
     datatype::Value,
@@ -13,13 +18,48 @@ use crate::{
     tool_func,
 };
 
+/// How the `web_search` tool searches, spelled `"web"`, `"brave"`, `"tavily"`, `"exa"` or
+/// `"naver"` in its serde form. For a search of your own, set a provider for the tool named
+/// `web_search` with [`set_tool_provider`](crate::tool::set_tool_provider).
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, strum::Display,
+)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+pub enum WebSearchProvider {
+    /// The result pages of Google, Bing, DuckDuckGo, Startpage, Yahoo, Mojeek and Yandex, one
+    /// engine a call in turn, the next taking over when one blocks or finds nothing. Needs no
+    /// key.
+    #[default]
+    Web,
+    /// The Brave Search API, with the key in `BRAVE_API_KEY`.
+    Brave,
+    /// The Tavily API, with the key in `TAVILY_API_KEY`.
+    Tavily,
+    /// The Exa API, with the key in `EXA_API_KEY`.
+    Exa,
+    /// Naver's web document search API, with `NAVER_CLIENT_ID` and `NAVER_CLIENT_SECRET`.
+    Naver,
+}
+
+static PROVIDER: RwLock<WebSearchProvider> = RwLock::new(WebSearchProvider::Web);
+
+/// Search with `provider` in every `web_search` tool built from now on.
+pub fn set_web_search_provider(provider: WebSearchProvider) {
+    *PROVIDER.write().unwrap() = provider;
+}
+
+/// The provider `web_search` tools are built with.
+pub fn get_web_search_provider() -> WebSearchProvider {
+    *PROVIDER.read().unwrap()
+}
+
 pub fn get_web_search_tool_desc() -> ToolDesc {
     ToolDescBuilder::new("web_search")
         .description(
-            "Search the web using multiple search engines simultaneously. \
-             Returns aggregated and deduplicated results ranked by how many \
-             engines returned them. Use this tool to find current information, \
-             facts, documentation, news, or any web-accessible content.",
+            "Search the web. Returns each result's title, URL, a short description and the \
+             engine or API it came from. Use this tool to find current information, facts, \
+             documentation, news, or any web-accessible content.",
         )
         .parameters(crate::to_value!({
             "type": "object",
@@ -30,7 +70,7 @@ pub fn get_web_search_tool_desc() -> ToolDesc {
                 },
                 "max_results": {
                     "type": "integer",
-                    "description": "Maximum number of results to return. Default: 10. Max: 30.",
+                    "description": "Maximum number of results to return. Default: 10. Max: 20.",
                     "default": 10
                 }
             },
@@ -39,50 +79,49 @@ pub fn get_web_search_tool_desc() -> ToolDesc {
         .build()
 }
 
-/// Returns a factory for the `web_search` tool that fans out to the given engines.
-pub fn get_web_search_tool_factory(
-    engines: Vec<WebSearchEngineKind>,
-) -> impl Fn(&ToolDesc) -> anyhow::Result<ToolFunc> {
-    move |_| {
-        let searcher = Arc::new(MetaSearcher::new(engines.clone()));
+/// A factory for the `web_search` tool, searching with the provider set when it is built. A
+/// search API without its key fails the build.
+pub fn get_web_search_tool_factory() -> impl Fn(&ToolDesc) -> anyhow::Result<ToolFunc> {
+    |_| {
+        let searcher: Arc<dyn SearchEngine> = match get_web_search_provider() {
+            WebSearchProvider::Web => Arc::new(web::Web::new()?),
+            WebSearchProvider::Brave => Arc::new(brave::Brave::from_env()?),
+            WebSearchProvider::Tavily => Arc::new(tavily::Tavily::from_env()?),
+            WebSearchProvider::Exa => Arc::new(exa::Exa::from_env()?),
+            WebSearchProvider::Naver => Arc::new(naver::Naver::from_env()?),
+        };
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .user_agent(engine::gen_useragent())
+            .build()?;
         Ok(tool_func!(async |args: Value| -> Value
-            with [searcher = searcher.clone()]
+            with [searcher = searcher.clone(), client = client.clone()]
             {
-            let query = args
-                .pointer("/query")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
+            let query = args.pointer("/query").and_then(|v| v.as_str()).unwrap_or("");
+            if query.is_empty() {
+                return crate::to_value!({ "results": [], "total": 0 });
+            }
             let max_results = args
                 .pointer("/max_results")
                 .and_then(|v| v.as_unsigned())
                 .unwrap_or(10)
-                .min(30) as usize;
+                .clamp(1, 20) as usize;
 
-            if query.is_empty() {
-                return crate::to_value!({ "results": [], "total": 0 });
+            match searcher.search(&client, query, max_results).await {
+                Ok(results) => {
+                    let total = results.len() as u64;
+                    let results = results.into_iter().map(|r| {
+                        crate::to_value!({
+                            "title": r.title.as_str(),
+                            "url": r.url.as_str(),
+                            "description": r.description.as_str(),
+                            "source": r.engine
+                        })
+                    });
+                    crate::to_value!({ "results": Value::array(results), "total": total })
+                }
+                Err(e) => crate::to_value!({ "error": e.to_string() }),
             }
-
-            let results = searcher.search(&query, max_results).await;
-            let total = results.len();
-
-            let result_values: Vec<Value> = results
-                .into_iter()
-                .map(|r| {
-                    crate::to_value!({
-                        "title": r.title.as_str(),
-                        "url": r.url.as_str(),
-                        "description": r.description.as_str(),
-                        "sources": Value::array(r.sources.into_iter().map(Value::string))
-                    })
-                })
-                .collect();
-
-            crate::to_value!({
-                "results": Value::array(result_values),
-                "total": total as u64
-            })
         }))
     }
 }
@@ -92,122 +131,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tool_descriptor() {
-        let desc = get_web_search_tool_desc();
-        assert_eq!(desc.name, "web_search");
-        assert!(desc.description.is_some());
+    fn test_provider_serde_names() {
+        for (provider, name) in [
+            (WebSearchProvider::Web, "web"),
+            (WebSearchProvider::Brave, "brave"),
+            (WebSearchProvider::Tavily, "tavily"),
+            (WebSearchProvider::Exa, "exa"),
+            (WebSearchProvider::Naver, "naver"),
+        ] {
+            assert_eq!(serde_json::to_value(provider).unwrap(), name);
+            assert_eq!(provider.to_string(), name);
+        }
     }
 
+    /// Each search API is built from the environment, so a missing key fails the build
+    /// rather than the first search.
     #[test]
-    fn test_tool_schema_requires_query() {
-        let desc = get_web_search_tool_desc();
-        let required = desc
-            .parameters
-            .pointer("/required")
-            .and_then(|v| v.as_array());
-        assert!(required.is_some());
-        let required_fields: Vec<&str> = required
-            .unwrap()
-            .iter()
-            .filter_map(|v| v.as_str())
-            .collect();
-        assert!(required_fields.contains(&"query"));
+    fn test_an_api_without_its_key_fails_the_build() {
+        for (var, build) in [
+            ("BRAVE_API_KEY", brave::Brave::from_env().err()),
+            ("TAVILY_API_KEY", tavily::Tavily::from_env().err()),
+            ("EXA_API_KEY", exa::Exa::from_env().err()),
+            ("NAVER_CLIENT_ID", naver::Naver::from_env().err()),
+        ] {
+            if std::env::var(var).is_err() {
+                assert!(build.unwrap().to_string().contains(var));
+            }
+        }
     }
 
-    /// Verifies the full builtin tool pipeline end-to-end:
-    /// - MetaSearcher fans out to all engines and aggregates results.
-    /// - At least one result related to the brekkylab/ailoy project appears.
-    /// - Results from multiple distinct engines are present (aggregation works).
-    /// - Every result has the required fields in the correct format.
+    /// One query through whichever API has its key in the environment.
     #[tokio::test]
-    #[ignore = "requires network"]
-    async fn test_web_search_tool_aggregation() {
-        // Call the underlying searcher directly so we can inspect AggregatedResult fields.
-        let searcher = MetaSearcher::new(vec![]);
-        let results = searcher.search("ailoy", 20).await;
-
-        println!("Total aggregated results: {}", results.len());
-        for r in &results {
-            println!(
-                "[{}] \"{}\" — {} (sources: {:?})",
-                r.relevance, r.title, r.url, r.sources
-            );
-        }
-
-        // 1. There must be at least one result.
-        assert!(
-            !results.is_empty(),
-            "Expected at least one aggregated result"
-        );
-
-        // 2. Every result must have a non-empty title and an http(s) URL.
-        for r in &results {
-            assert!(!r.title.is_empty(), "title must not be empty: {:?}", r);
-            assert!(
-                r.url.starts_with("http"),
-                "url must start with http: {:?}",
-                r
-            );
-            assert!(!r.sources.is_empty(), "sources must not be empty: {:?}", r);
-        }
-
-        // 3. At least one result should be clearly related to the brekkylab/ailoy project.
-        let ailoy_project_urls = [
-            "github.com/brekkylab/ailoy",
-            "brekkylab.github.io/ailoy",
-            "medium.com/ailoy",
-            "pypi.org/project/ailoy",
-        ];
-        let has_project_result = results.iter().any(|r| {
-            let url_lower = r.url.to_lowercase();
-            ailoy_project_urls
-                .iter()
-                .any(|needle| url_lower.contains(needle))
-        });
-        assert!(
-            has_project_result,
-            "Expected at least one result related to the brekkylab/ailoy project, got: {:#?}",
-            results.iter().map(|r| &r.url).collect::<Vec<_>>()
-        );
-
-        // 4. Results are sorted by descending relevance.
-        for window in results.windows(2) {
-            assert!(
-                window[0].relevance >= window[1].relevance,
-                "Results must be sorted by descending relevance: {} < {}",
-                window[0].relevance,
-                window[1].relevance
-            );
-        }
-
-        // 5. Aggregation is working: collect all engine names that contributed.
-        let all_sources: std::collections::HashSet<&str> = results
-            .iter()
-            .flat_map(|r| r.sources.iter().copied())
-            .collect();
-        println!("Engines that returned results: {:?}", all_sources);
-        assert!(
-            all_sources.len() >= 3,
-            "Expected results from at least 3 distinct engines, got {:?}",
-            all_sources
-        );
-    }
-
-    #[test]
-    fn test_engine_kind_all_count() {
-        assert_eq!(WebSearchEngineKind::ALL.len(), 9);
-    }
-
-    #[test]
-    fn test_engine_kind_name_matches_engine_name() {
-        for kind in WebSearchEngineKind::ALL {
-            let engine = kind.instantiate();
-            assert_eq!(
-                kind.name(),
-                engine.name(),
-                "WebSearchEngineKind::{:?} name() must match engine.name()",
-                kind
-            );
+    #[ignore = "requires network and keys"]
+    async fn test_each_api_finds_results() {
+        let client = reqwest::Client::new();
+        let searchers: Vec<Arc<dyn SearchEngine>> = [
+            brave::Brave::from_env().ok().map(|s| Arc::new(s) as _),
+            tavily::Tavily::from_env().ok().map(|s| Arc::new(s) as _),
+            exa::Exa::from_env().ok().map(|s| Arc::new(s) as _),
+            naver::Naver::from_env().ok().map(|s| Arc::new(s) as _),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        for searcher in searchers {
+            let results = searcher.search(&client, "rust language", 5).await.unwrap();
+            assert!(!results.is_empty(), "{}", searcher.name());
+            assert!(results.len() <= 5, "{}", searcher.name());
+            assert!(results.iter().all(|r| r.url.starts_with("http")));
         }
     }
 }

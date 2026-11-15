@@ -4,7 +4,7 @@ use crate::{
     datatype::Value,
     message::Message,
     model::ThinkingEffort,
-    tool::{ToolDesc, WebSearchEngineKind},
+    tool::ToolDesc,
 };
 
 /// Fluent builder over [`AgentSpec`] for [`Agent`].
@@ -66,8 +66,9 @@ impl AgentBuilder {
         self
     }
 
-    pub fn web_search_tool(mut self, engines: Vec<WebSearchEngineKind>) -> Self {
-        self.spec = self.spec.web_search_tool(engines);
+    /// Add `web_search`. See [`AgentSpec::web_search_tool`].
+    pub fn web_search_tool(mut self) -> Self {
+        self.spec = self.spec.web_search_tool();
         self
     }
 

@@ -5,10 +5,11 @@
 //! `AgentBuilder.tool`/`tools`.
 
 use ailoy::tool::{
-    ToolDesc, register_mcp_stdio as register_mcp_stdio_rs,
+    ToolDesc, WebSearchProvider, get_web_search_provider as get_web_search_provider_rs,
+    register_mcp_stdio as register_mcp_stdio_rs,
     register_mcp_streamable_http as register_mcp_streamable_http_rs,
     remove_tool_provider as remove_tool_provider_rs, set_tool_provider as set_tool_provider_rs,
-    unregister_mcp as unregister_mcp_rs,
+    set_web_search_provider as set_web_search_provider_rs, unregister_mcp as unregister_mcp_rs,
 };
 use pyo3::{exceptions::PyValueError, prelude::*};
 use pyo3_async_runtimes::tokio::future_into_py;
@@ -106,7 +107,26 @@ fn unregister_mcp(prefix: String) -> usize {
     unregister_mcp_rs(&prefix)
 }
 
+/// Search with `provider` — `"web"`, `"brave"`, `"tavily"`, `"exa"` or `"naver"` — in every
+/// `web_search` tool built from now on.
+#[pyfunction]
+fn set_web_search_provider(provider: Bound<'_, PyAny>) -> PyResult<()> {
+    set_web_search_provider_rs(from_py::<WebSearchProvider>(
+        &provider,
+        "a web search provider",
+    )?);
+    Ok(())
+}
+
+/// The provider `web_search` tools are built with.
+#[pyfunction]
+fn get_web_search_provider() -> String {
+    get_web_search_provider_rs().to_string()
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(set_web_search_provider, m)?)?;
+    m.add_function(wrap_pyfunction!(get_web_search_provider, m)?)?;
     m.add_function(wrap_pyfunction!(set_tool_provider, m)?)?;
     m.add_function(wrap_pyfunction!(remove_tool_provider, m)?)?;
     m.add_function(wrap_pyfunction!(register_tool, m)?)?;

@@ -64,7 +64,7 @@ pub fn get_builtin_tool_factories() -> Vec<(&'static str, ToolFactory)> {
         ("write", Arc::new(move |_| Ok(write.clone()))),
         ("edit", Arc::new(move |_| Ok(edit.clone()))),
         ("apply_patch", Arc::new(move |_| Ok(apply_patch.clone()))),
-        ("web_search", Arc::new(get_web_search_tool_factory(vec![]))),
+        ("web_search", Arc::new(get_web_search_tool_factory())),
         ("web_fetch", Arc::new(get_web_fetch_tool_factory())),
     ]
 }

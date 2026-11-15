@@ -32,6 +32,8 @@ from ._ailoy import (
     remove_tool_provider,
     set_lang_model_provider,
     set_tool_provider,
+    set_web_search_provider,
+    get_web_search_provider,
     unregister_mcp,
 )
 
@@ -49,6 +51,8 @@ __all__ = [
     "remove_tool_provider",
     "set_lang_model_provider",
     "set_tool_provider",
+    "set_web_search_provider",
+    "get_web_search_provider",
     "types",
     "unregister_mcp",
 ]

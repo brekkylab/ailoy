@@ -16,7 +16,7 @@ use ailoy::{
     datatype::Value,
     message::Message,
     model::ThinkingEffort,
-    tool::{ToolDesc, WebSearchEngineKind},
+    tool::ToolDesc,
 };
 use futures::{StreamExt as _, stream::BoxStream};
 use pyo3::{
@@ -111,17 +111,9 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.tools(descs)))
     }
 
-    /// `engines` by name — `"Google"`, `"DuckDuckGo"`, … — or every engine when empty.
-    #[pyo3(signature = (engines = None))]
-    fn web_search_tool<'py>(
-        slf: PyRef<'py, Self>,
-        engines: Option<Bound<'py, PyAny>>,
-    ) -> PyResult<PyRef<'py, Self>> {
-        let engines: Vec<WebSearchEngineKind> = match engines {
-            Some(engines) => from_py(&engines, "a list of web search engines")?,
-            None => Vec::new(),
-        };
-        Self::update(slf, |b| Ok(b.web_search_tool(engines)))
+    /// Add `web_search`, searching with the provider `set_web_search_provider` set.
+    fn web_search_tool(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
+        Self::update(slf, |b| Ok(b.web_search_tool()))
     }
 
     fn web_fetch_tool(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
