@@ -46,7 +46,7 @@ pub fn get_mem_search_tool_desc() -> ToolDesc {
 
 /// The `mem_search` tool bound to `memory`.
 pub fn get_mem_search_tool_func(memory: Memory) -> ToolFunc {
-    crate::tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value
+    crate::tool_func!(async |args: Value, sandbox: &Sandbox| -> Value
         with [memory = memory.clone()]
     {
         let Some(query) = args.pointer("/query").and_then(|v| v.as_str()) else {
@@ -61,7 +61,7 @@ pub fn get_mem_search_tool_func(memory: Memory) -> ToolFunc {
             .map(|n| n.max(1))
             .unwrap_or(DEFAULT_LIMIT) as usize;
 
-        let found = match memory.search(console, query).await {
+        let found = match memory.search(sandbox, query).await {
             Ok(found) => found,
             Err(e) => {
                 return crate::to_value!({
@@ -109,7 +109,7 @@ pub fn get_mem_insert_tool_desc() -> ToolDesc {
 
 /// The `mem_insert` tool for `memory`.
 pub fn get_mem_insert_tool_func(memory: Memory) -> ToolFunc {
-    crate::tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value
+    crate::tool_func!(async |args: Value, sandbox: &Sandbox| -> Value
         with [memory = memory.clone()]
     {
         // Arrays only: a model that packed two memories into one string would have them
@@ -132,7 +132,7 @@ pub fn get_mem_insert_tool_func(memory: Memory) -> ToolFunc {
             texts.push(text.to_string());
         }
 
-        let written = match memory.insert(console, &texts).await {
+        let written = match memory.insert(sandbox, &texts).await {
             Ok(written) => written,
             Err(e) => {
                 return crate::to_value!({
@@ -154,40 +154,37 @@ mod tests {
     use futures::StreamExt as _;
 
     use super::*;
-    use crate::{
-        console::ConsoleClient, datatype::Value, message::Message, test_console, to_value,
-    };
+    use crate::{console::Sandbox, datatype::Value, message::Message, test_sandbox, to_value};
+
+    /// A path in a test sandbox's `/tmp` that no other call answers.
+    fn fresh_path(name: &str) -> String {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        format!("/tmp/{name}-{n}.sqlite")
+    }
 
     /// A store with memories in it, made and filled by `mem` itself.
-    async fn filled(console: &mut ConsoleClient, memories: &[&str]) -> Memory {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir
-            .keep()
-            .join("notes.sqlite")
-            .to_string_lossy()
-            .to_string();
+    async fn filled(sandbox: &Sandbox, memories: &[&str]) -> Memory {
+        let path = fresh_path("notes");
 
-        let init = console.exec(["mem", "init", &path], None).await.unwrap();
-        assert_eq!(init.code, 0, "{}", String::from_utf8_lossy(&init.stderr));
+        let init = crate::console::exec(sandbox, ["mem", "init", &path], None)
+            .await
+            .unwrap();
+        assert_eq!(init.code, 0, "{}", init.stderr);
 
         if !memories.is_empty() {
             let mut argv = vec!["mem".to_string(), "insert".to_string(), path.clone()];
             argv.extend(memories.iter().map(|m| m.to_string()));
-            let insert = console.exec(&argv, None).await.unwrap();
-            assert_eq!(
-                insert.code,
-                0,
-                "{}",
-                String::from_utf8_lossy(&insert.stderr)
-            );
+            let insert = crate::console::exec(sandbox, &argv, None).await.unwrap();
+            assert_eq!(insert.code, 0, "{}", insert.stderr);
         }
 
         Memory::new(path)
     }
 
     /// One call of a tool, as the agent makes it.
-    async fn call(func: &ToolFunc, args: Value, console: &mut ConsoleClient) -> Message {
-        func.call(args, "1", console).next().await.unwrap().message
+    async fn call(func: &ToolFunc, args: Value, sandbox: &Sandbox) -> Message {
+        func.call(args, "1", sandbox).next().await.unwrap().message
     }
 
     fn value(msg: &Message) -> Value {
@@ -207,15 +204,11 @@ mod tests {
     #[test_with::executable(mem)]
     #[tokio::test]
     async fn test_mem_search_tool_answers_with_the_nearest_memory() {
-        let mut console = test_console().await;
-        let memory = filled(
-            &mut console,
-            &["User drinks tea", "User switched to oat milk"],
-        )
-        .await;
+        let sandbox = test_sandbox().await;
+        let memory = filled(&sandbox, &["User drinks tea", "User switched to oat milk"]).await;
         let func = get_mem_search_tool_func(memory);
 
-        let out = value(&call(&func, to_value!({ "query": "oat milk" }), &mut console).await);
+        let out = value(&call(&func, to_value!({ "query": "oat milk" }), &sandbox).await);
         assert_eq!(strings(&out, "/memories"), ["User switched to oat milk"]);
         assert_eq!(out.pointer("/count").unwrap().as_integer().unwrap(), 1);
     }
@@ -224,15 +217,15 @@ mod tests {
     #[test_with::executable(mem)]
     #[tokio::test]
     async fn test_mem_search_tool_honors_limit() {
-        let mut console = test_console().await;
-        let memory = filled(&mut console, &["User drinks tea", "User drinks coffee"]).await;
+        let sandbox = test_sandbox().await;
+        let memory = filled(&sandbox, &["User drinks tea", "User drinks coffee"]).await;
         let func = get_mem_search_tool_func(memory);
 
         let out = value(
             &call(
                 &func,
                 to_value!({ "query": "what does the user drink", "limit": 1 }),
-                &mut console,
+                &sandbox,
             )
             .await,
         );
@@ -242,11 +235,11 @@ mod tests {
     #[test_with::executable(mem)]
     #[tokio::test]
     async fn test_mem_search_tool_with_nothing_near_is_an_empty_list() {
-        let mut console = test_console().await;
-        let memory = filled(&mut console, &["User drinks tea"]).await;
+        let sandbox = test_sandbox().await;
+        let memory = filled(&sandbox, &["User drinks tea"]).await;
         let func = get_mem_search_tool_func(memory);
 
-        let out = value(&call(&func, to_value!({ "query": "almond" }), &mut console).await);
+        let out = value(&call(&func, to_value!({ "query": "almond" }), &sandbox).await);
         assert!(strings(&out, "/memories").is_empty(), "{out:?}");
         assert_eq!(out.pointer("/count").unwrap().as_integer().unwrap(), 0);
     }
@@ -254,11 +247,11 @@ mod tests {
     #[test_with::executable(mem)]
     #[tokio::test]
     async fn test_mem_search_tool_without_a_query_is_a_validation_error() {
-        let mut console = test_console().await;
-        let memory = filled(&mut console, &[]).await;
+        let sandbox = test_sandbox().await;
+        let memory = filled(&sandbox, &[]).await;
         let func = get_mem_search_tool_func(memory);
 
-        let out = value(&call(&func, to_value!({}), &mut console).await);
+        let out = value(&call(&func, to_value!({}), &sandbox).await);
         assert_eq!(
             out.pointer("/phase").unwrap().as_str().unwrap(),
             "validation"
@@ -269,8 +262,8 @@ mod tests {
     #[test_with::executable(mem)]
     #[tokio::test]
     async fn test_mem_insert_tool_writes_what_it_was_given() {
-        let mut console = test_console().await;
-        let memory = filled(&mut console, &[]).await;
+        let sandbox = test_sandbox().await;
+        let memory = filled(&sandbox, &[]).await;
         let insert = get_mem_insert_tool_func(memory.clone());
         let search = get_mem_search_tool_func(memory);
 
@@ -278,7 +271,7 @@ mod tests {
             &call(
                 &insert,
                 to_value!({ "memories": ["User switched to oat milk", "User drinks tea"] }),
-                &mut console,
+                &sandbox,
             )
             .await,
         );
@@ -287,7 +280,7 @@ mod tests {
             ["User switched to oat milk", "User drinks tea"]
         );
 
-        let found = value(&call(&search, to_value!({ "query": "oat milk" }), &mut console).await);
+        let found = value(&call(&search, to_value!({ "query": "oat milk" }), &sandbox).await);
         assert_eq!(strings(&found, "/memories"), ["User switched to oat milk"]);
     }
 
@@ -296,15 +289,15 @@ mod tests {
     #[test_with::executable(mem)]
     #[tokio::test]
     async fn test_mem_insert_tool_refuses_a_bare_string() {
-        let mut console = test_console().await;
-        let memory = filled(&mut console, &[]).await;
+        let sandbox = test_sandbox().await;
+        let memory = filled(&sandbox, &[]).await;
         let func = get_mem_insert_tool_func(memory);
 
         let out = value(
             &call(
                 &func,
                 to_value!({ "memories": "User drinks tea" }),
-                &mut console,
+                &sandbox,
             )
             .await,
         );
@@ -319,21 +312,16 @@ mod tests {
     #[test_with::executable(mem)]
     #[tokio::test]
     async fn test_mem_insert_tool_reports_a_missing_store() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir
-            .path()
-            .join("missing.sqlite")
-            .to_string_lossy()
-            .to_string();
+        let path = fresh_path("missing");
 
-        let mut console = test_console().await;
+        let sandbox = test_sandbox().await;
         let func = get_mem_insert_tool_func(Memory::new(&path));
 
         let out = value(
             &call(
                 &func,
                 to_value!({ "memories": ["User drinks tea"] }),
-                &mut console,
+                &sandbox,
             )
             .await,
         );

@@ -5,22 +5,22 @@ use futures::{
     future::BoxFuture,
     stream::{self, BoxStream},
 };
-use virtx::console::ConsoleClient;
 
 use crate::{
+    console::Sandbox,
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role},
 };
 
-/// A tool body that borrows the console for as long as its stream runs.
+/// A tool body that borrows the sandbox for as long as its stream runs.
 #[rustfmt::skip]
-type ConsoleFn =
-    dyn for<'a> Fn(Value, String, &'a mut ConsoleClient) -> BoxStream<'a, MessageOutput> + Send + Sync;
+type SandboxFn =
+    dyn for<'a> Fn(Value, String, &'a Sandbox) -> BoxStream<'a, MessageOutput> + Send + Sync;
 
 #[derive(Clone)]
 enum ToolFuncInner {
     Pure(Arc<dyn Fn(Value, String) -> BoxStream<'static, MessageOutput> + Send + Sync>),
-    WithConsole(Arc<ConsoleFn>),
+    WithSandbox(Arc<SandboxFn>),
 }
 
 #[derive(Clone)]
@@ -29,7 +29,7 @@ pub struct ToolFunc {
 }
 
 impl ToolFunc {
-    /// Construct a [`ToolFunc`] from a closure that does not need a console.
+    /// Construct a [`ToolFunc`] from a closure that does not need a sandbox.
     ///
     /// Prefer the [`crate::tool_func!`] macro; use `new` only for advanced
     /// cases the macro does not cover.
@@ -42,35 +42,31 @@ impl ToolFunc {
         }
     }
 
-    /// Construct a [`ToolFunc`] from a closure that borrows a `&mut ConsoleClient`.
+    /// Construct a [`ToolFunc`] from a closure that borrows the agent's `&Sandbox`.
     /// The returned stream's lifetime is tied to the borrow.
     ///
-    /// Prefer the [`crate::tool_func!`] macro; use `new_with_console` only
+    /// Prefer the [`crate::tool_func!`] macro; use `new_with_sandbox` only
     /// for advanced cases the macro does not cover.
-    pub fn new_with_console<F>(f: F) -> Self
+    pub fn new_with_sandbox<F>(f: F) -> Self
     where
-        F: for<'a> Fn(Value, String, &'a mut ConsoleClient) -> BoxStream<'a, MessageOutput>
+        F: for<'a> Fn(Value, String, &'a Sandbox) -> BoxStream<'a, MessageOutput>
             + Send
             + Sync
             + 'static,
     {
         Self {
-            inner: ToolFuncInner::WithConsole(Arc::new(f)),
+            inner: ToolFuncInner::WithSandbox(Arc::new(f)),
         }
     }
 
-    /// Whether this tool's inner closure actually consumes the `&mut ConsoleClient`.
-    /// Callers may use this to skip starting a console for pure tools.
-    pub fn needs_console(&self) -> bool {
-        matches!(self.inner, ToolFuncInner::WithConsole(_))
+    /// Whether this tool's inner closure takes the `&Sandbox`.
+    pub fn needs_sandbox(&self) -> bool {
+        matches!(self.inner, ToolFuncInner::WithSandbox(_))
     }
 
-    /// Invoke the tool without a console, or `None` if it needs one.
+    /// Invoke the tool without a sandbox, or `None` if it needs one.
     ///
-    /// The stream is `'static`, which is the point: a pure tool is driven without
-    /// taking the console lock, so it runs alongside the console tools of its batch.
-    ///
-    /// `None` for a console tool, since a live [`ConsoleClient`] can't be fabricated.
+    /// `None` for a sandbox tool, since a sandbox can't be fabricated.
     pub fn call_pure(
         &self,
         args: Value,
@@ -78,21 +74,21 @@ impl ToolFunc {
     ) -> Option<BoxStream<'static, MessageOutput>> {
         match &self.inner {
             ToolFuncInner::Pure(f) => Some(f(args, id.into())),
-            ToolFuncInner::WithConsole(_) => None,
+            ToolFuncInner::WithSandbox(_) => None,
         }
     }
 
-    /// Invoke the tool. `console` is always required; pure variants ignore it.
-    /// A caller with no console to lend uses [`call_pure`](Self::call_pure).
+    /// Invoke the tool. `sandbox` is always required; pure variants ignore it.
+    /// A caller with no sandbox to lend uses [`call_pure`](Self::call_pure).
     pub fn call<'a>(
         &self,
         args: Value,
         id: impl Into<String>,
-        console: &'a mut ConsoleClient,
+        sandbox: &'a Sandbox,
     ) -> BoxStream<'a, MessageOutput> {
         match &self.inner {
             ToolFuncInner::Pure(f) => f(args, id.into()),
-            ToolFuncInner::WithConsole(f) => f(args, id.into(), console),
+            ToolFuncInner::WithSandbox(f) => f(args, id.into(), sandbox),
         }
     }
 }
@@ -184,27 +180,27 @@ pub mod __private {
 ///
 /// ```ignore
 /// tool_func!(|args: Value| -> Value { … })
-/// tool_func!(|args: Value, console: &mut ConsoleClient| -> Value { … })
+/// tool_func!(|args: Value, sandbox: &Sandbox| -> Value { … })
 /// tool_func!(|args: Value, id: String| -> Message { … })
-/// tool_func!(|args: Value, id: String, console: &mut ConsoleClient| -> Message { … })
+/// tool_func!(|args: Value, id: String, sandbox: &Sandbox| -> Message { … })
 /// ```
 ///
 /// Async — closure body is `async`-awaitable:
 ///
 /// ```ignore
 /// tool_func!(async |args: Value| -> Value { … })
-/// tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value { … })
+/// tool_func!(async |args: Value, sandbox: &Sandbox| -> Value { … })
 /// tool_func!(async |args: Value, id: String| -> Message { … })
-/// tool_func!(async |args: Value, id: String, console: &mut ConsoleClient| -> Message { … })
+/// tool_func!(async |args: Value, id: String, sandbox: &Sandbox| -> Message { … })
 /// ```
 ///
 /// Stream — closure body produces a `Stream`/`BoxStream`:
 ///
 /// ```ignore
 /// tool_func!(stream |args: Value| -> Value { … })
-/// tool_func!(stream |args: Value, console: &mut ConsoleClient| -> Value { … })
+/// tool_func!(stream |args: Value, sandbox: &Sandbox| -> Value { … })
 /// tool_func!(stream |args: Value, id: String| -> Message { … })
-/// tool_func!(stream |args: Value, id: String, console: &mut ConsoleClient| -> Message { … })
+/// tool_func!(stream |args: Value, id: String, sandbox: &Sandbox| -> Message { … })
 /// ```
 ///
 /// Async/stream variants also accept a `with [name = expr, ...]` clause to lift
@@ -212,7 +208,7 @@ pub mod __private {
 /// `Fn` closure tries to move the same outer variable on every call):
 ///
 /// ```ignore
-/// tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value
+/// tool_func!(async |args: Value, sandbox: &Sandbox| -> Value
 ///     with [runner = runner.clone()]
 ///     {
 ///         // body sees local `runner` (the per-call clone)
@@ -240,12 +236,12 @@ macro_rules! tool_func {
         )
     };
 
-    // ─── sync, with console ───────────────────────────────────────────────
-    (|$args:ident : Value, $console:ident : &mut ConsoleClient| -> Value $body:block) => {
-        $crate::tool::ToolFunc::new_with_console(
+    // ─── sync, with sandbox ───────────────────────────────────────────────
+    (|$args:ident : Value, $sandbox:ident : &Sandbox| -> Value $body:block) => {
+        $crate::tool::ToolFunc::new_with_sandbox(
             move |$args: $crate::datatype::Value,
                   id: ::std::string::String,
-                  $console: &mut $crate::console::ConsoleClient|
+                  $sandbox: &$crate::console::Sandbox|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 let value: $crate::datatype::Value = $body;
                 $crate::tool::__private::value_to_stream(id, value)
@@ -254,13 +250,13 @@ macro_rules! tool_func {
     };
 
     (
-        |$args:ident : Value, $id:ident : String, $console:ident : &mut ConsoleClient| -> Message
+        |$args:ident : Value, $id:ident : String, $sandbox:ident : &Sandbox| -> Message
             $body:block
     ) => {
-        $crate::tool::ToolFunc::new_with_console(
+        $crate::tool::ToolFunc::new_with_sandbox(
             move |$args: $crate::datatype::Value,
                   $id: ::std::string::String,
-                  $console: &mut $crate::console::ConsoleClient|
+                  $sandbox: &$crate::console::Sandbox|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 let message: $crate::message::Message = $body;
                 $crate::tool::__private::message_to_stream(message)
@@ -307,21 +303,21 @@ macro_rules! tool_func {
         )
     };
 
-    // ─── async, with console ──────────────────────────────────────────────
-    (async |$args:ident : Value, $console:ident : &mut ConsoleClient| -> Value $body:block) => {
+    // ─── async, with sandbox ──────────────────────────────────────────────
+    (async |$args:ident : Value, $sandbox:ident : &Sandbox| -> Value $body:block) => {
         $crate::tool_func!(
-            async |$args: Value, $console: &mut ConsoleClient| -> Value with [] $body
+            async |$args: Value, $sandbox: &Sandbox| -> Value with [] $body
         )
     };
 
     (
-        async |$args:ident : Value, $console:ident : &mut ConsoleClient| -> Value
+        async |$args:ident : Value, $sandbox:ident : &Sandbox| -> Value
             with [$($cap:ident = $expr:expr),* $(,)?] $body:block
     ) => {
-        $crate::tool::ToolFunc::new_with_console(
+        $crate::tool::ToolFunc::new_with_sandbox(
             move |$args: $crate::datatype::Value,
                   id: ::std::string::String,
-                  $console: &mut $crate::console::ConsoleClient|
+                  $sandbox: &$crate::console::Sandbox|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 $(let $cap = $expr;)*
                 let fut: ::futures::future::BoxFuture<'_, $crate::datatype::Value> =
@@ -332,22 +328,22 @@ macro_rules! tool_func {
     };
 
     (
-        async |$args:ident : Value, $id:ident : String, $console:ident : &mut ConsoleClient|
+        async |$args:ident : Value, $id:ident : String, $sandbox:ident : &Sandbox|
             -> Message $body:block
     ) => {
         $crate::tool_func!(
-            async |$args: Value, $id: String, $console: &mut ConsoleClient| -> Message with [] $body
+            async |$args: Value, $id: String, $sandbox: &Sandbox| -> Message with [] $body
         )
     };
 
     (
-        async |$args:ident : Value, $id:ident : String, $console:ident : &mut ConsoleClient|
+        async |$args:ident : Value, $id:ident : String, $sandbox:ident : &Sandbox|
             -> Message with [$($cap:ident = $expr:expr),* $(,)?] $body:block
     ) => {
-        $crate::tool::ToolFunc::new_with_console(
+        $crate::tool::ToolFunc::new_with_sandbox(
             move |$args: $crate::datatype::Value,
                   $id: ::std::string::String,
-                  $console: &mut $crate::console::ConsoleClient|
+                  $sandbox: &$crate::console::Sandbox|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 $(let $cap = $expr;)*
                 let fut: ::futures::future::BoxFuture<'_, $crate::message::Message> =
@@ -378,12 +374,12 @@ macro_rules! tool_func {
         )
     };
 
-    // ─── stream, with console ─────────────────────────────────────────────
-    (stream |$args:ident : Value, $console:ident : &mut ConsoleClient| -> Value $body:block) => {
-        $crate::tool::ToolFunc::new_with_console(
+    // ─── stream, with sandbox ─────────────────────────────────────────────
+    (stream |$args:ident : Value, $sandbox:ident : &Sandbox| -> Value $body:block) => {
+        $crate::tool::ToolFunc::new_with_sandbox(
             move |$args: $crate::datatype::Value,
                   id: ::std::string::String,
-                  $console: &mut $crate::console::ConsoleClient|
+                  $sandbox: &$crate::console::Sandbox|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 let s: ::futures::stream::BoxStream<'_, $crate::datatype::Value> =
                     ::std::boxed::Box::pin($body);
@@ -393,13 +389,13 @@ macro_rules! tool_func {
     };
 
     (
-        stream |$args:ident : Value, $id:ident : String, $console:ident : &mut ConsoleClient|
+        stream |$args:ident : Value, $id:ident : String, $sandbox:ident : &Sandbox|
             -> Message $body:block
     ) => {
-        $crate::tool::ToolFunc::new_with_console(
+        $crate::tool::ToolFunc::new_with_sandbox(
             move |$args: $crate::datatype::Value,
                   $id: ::std::string::String,
-                  $console: &mut $crate::console::ConsoleClient|
+                  $sandbox: &$crate::console::Sandbox|
                   -> ::futures::stream::BoxStream<'_, $crate::message::MessageOutput> {
                 let s: ::futures::stream::BoxStream<'_, $crate::message::Message> =
                     ::std::boxed::Box::pin($body);
@@ -412,14 +408,14 @@ macro_rules! tool_func {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_console;
+    use crate::test_sandbox;
 
     #[tokio::test]
     async fn test_sync_value() {
-        let mut console = test_console().await;
+        let sandbox = test_sandbox().await;
         let f = tool_func!(|_args: Value| -> Value { Value::string("ok") });
         let out = f
-            .call(Value::object_empty(), "call-1", &mut console)
+            .call(Value::object_empty(), "call-1", &sandbox)
             .next()
             .await
             .unwrap();
@@ -431,13 +427,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sync_value_with_console() {
-        let mut console = test_console().await;
-        let f = tool_func!(|_args: Value, _console: &mut ConsoleClient| -> Value {
-            Value::string("ok")
-        });
+    async fn test_sync_value_with_sandbox() {
+        let sandbox = test_sandbox().await;
+        let f = tool_func!(|_args: Value, _sandbox: &Sandbox| -> Value { Value::string("ok") });
         let out = f
-            .call(Value::object_empty(), "call-1", &mut console)
+            .call(Value::object_empty(), "call-1", &sandbox)
             .next()
             .await
             .unwrap();
@@ -449,10 +443,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_async_value() {
-        let mut console = test_console().await;
+        let sandbox = test_sandbox().await;
         let f = tool_func!(async |_args: Value| -> Value { Value::bool(true) });
         let out = f
-            .call(Value::object_empty(), "call-1", &mut console)
+            .call(Value::object_empty(), "call-1", &sandbox)
             .next()
             .await
             .unwrap();
@@ -460,16 +454,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_async_value_with_console() {
-        let mut console = test_console().await;
-        let f = tool_func!(async |_args: Value, console: &mut ConsoleClient| -> Value {
-            // `exec` takes an argv and returns raw bytes: a shell must be invoked
-            // explicitly and the output decoded by the caller.
-            let r = console.exec(["sh", "-c", "echo hi"], None).await.unwrap();
-            Value::string(String::from_utf8_lossy(&r.stdout).trim().to_string())
+    async fn test_async_value_with_sandbox() {
+        let sandbox = test_sandbox().await;
+        let f = tool_func!(async |_args: Value, sandbox: &Sandbox| -> Value {
+            // `exec` takes an argv: a shell must be invoked explicitly.
+            let r = crate::console::exec(sandbox, ["sh", "-c", "echo hi"], None)
+                .await
+                .unwrap();
+            Value::string(r.stdout.trim().to_string())
         });
         let out = f
-            .call(Value::object_empty(), "call-1", &mut console)
+            .call(Value::object_empty(), "call-1", &sandbox)
             .next()
             .await
             .unwrap();
@@ -481,12 +476,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_stream_value() {
-        let mut console = test_console().await;
+        let sandbox = test_sandbox().await;
         let f = tool_func!(stream |_args: Value| -> Value {
             stream::iter(vec![Value::integer(1), Value::integer(2), Value::integer(3)])
         });
         let outputs: Vec<_> = f
-            .call(Value::object_empty(), "call-1", &mut console)
+            .call(Value::object_empty(), "call-1", &sandbox)
             .collect()
             .await;
         assert_eq!(outputs.len(), 3);
@@ -497,11 +492,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_needs_console() {
+    async fn test_needs_sandbox() {
         let pure = tool_func!(|_args: Value| -> Value { Value::bool(false) });
-        let with_console =
-            tool_func!(|_args: Value, _console: &mut ConsoleClient| -> Value { Value::bool(true) });
-        assert!(!pure.needs_console());
-        assert!(with_console.needs_console());
+        let with_sandbox =
+            tool_func!(|_args: Value, _sandbox: &Sandbox| -> Value { Value::bool(true) });
+        assert!(!pure.needs_sandbox());
+        assert!(with_sandbox.needs_sandbox());
     }
 }

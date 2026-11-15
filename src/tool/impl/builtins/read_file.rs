@@ -97,7 +97,7 @@ pub fn get_read_file_tool_desc() -> ToolDesc {
 
 pub fn get_read_file_tool_func() -> ToolFunc {
     tool_func!(
-        async |args: Value, id: String, console: &mut ConsoleClient| -> Message {
+        async |args: Value, id: String, sandbox: &Sandbox| -> Message {
             let path = args
                 .pointer("/file_path")
                 .and_then(|v| v.as_str())
@@ -116,7 +116,7 @@ pub fn get_read_file_tool_func() -> ToolFunc {
             {
                 return error_message(id, "start_line cannot be greater than end_line");
             }
-            let text = match load_text(console, path).await {
+            let text = match load_text(sandbox, path).await {
                 Ok(text) => text,
                 Err((e, _)) => return error_message(id, e),
             };

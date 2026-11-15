@@ -5,8 +5,8 @@
 //! the result or an awaitable of it, and the result must be what a message can hold: `None`, a
 //! bool, a number, a string, or a list or dict of those.
 //!
-//! A Python tool is not handed the console; one that runs commands holds its own
-//! `ConsoleClient`.
+//! A Python tool is not handed the sandbox; one that runs commands holds its own
+//! `virtx.Sandbox`.
 
 use std::sync::Arc;
 

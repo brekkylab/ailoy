@@ -1,0 +1,35 @@
+[
+  {
+    "label": "Getting started",
+    "items": [
+      { "label": "Overview", "link": "/" },
+      { "slug": "guides/installation" },
+      { "slug": "guides/quick-start" }
+    ]
+  },
+  { "slug": "concepts" },
+  {
+    "label": "Building an agent",
+    "items": [
+      { "slug": "guides/agents" },
+      { "slug": "guides/sandbox" },
+      { "slug": "guides/running" },
+      { "slug": "guides/model-providers" },
+      { "slug": "guides/message-format" }
+    ]
+  },
+  {
+    "label": "Tools",
+    "items": [
+      { "slug": "guides/tools" },
+      { "slug": "guides/using-mcp" },
+      { "slug": "guides/using-browser" },
+      { "slug": "guides/skills" }
+    ]
+  },
+  {
+    "label": "State over time",
+    "items": [{ "slug": "guides/context-manager" }]
+  },
+  { "slug": "reference" }
+]

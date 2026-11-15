@@ -1,12 +1,11 @@
-use std::{collections::HashMap, panic::AssertUnwindSafe, path::Path, sync::Arc};
+use std::{collections::HashMap, panic::AssertUnwindSafe, sync::Arc};
 
+use crate::console::Sandbox;
 use anyhow::Context as _;
 use futures::{
     FutureExt as _, StreamExt as _,
     stream::{BoxStream, FuturesUnordered},
 };
-use tokio::sync::Mutex;
-use virtx::console::ConsoleClient;
 
 use super::{
     AgentSpec, AgentState, ContextManager, image::fit_images_off_runtime, skill::render_skills,
@@ -37,14 +36,14 @@ const CUT_OFF: &str = "the model's reply was cut off at its output limit";
 /// conversations.
 ///
 /// Pairs an [`AgentSpec`] (model + instruction + tools) with an [`AgentState`]
-/// (history + console). [`run`](Self::run) streams one turn, calling tools until the model
+/// (history + sandbox). [`run`](Self::run) streams one turn, calling tools until the model
 /// answers, and appends every message to the history.
 pub struct Agent {
     model: Arc<dyn InferLangModel>,
 
     options: LangModelOptions,
 
-    tool_descs: Vec<ToolDesc>,
+    pub(super) tool_descs: Vec<ToolDesc>,
 
     tools: HashMap<String, ToolFunc>,
 
@@ -68,7 +67,7 @@ impl Agent {
     /// [`Role::System`] message, one built from `spec.instruction` and
     /// [`AgentSpec::skills`] is put first.
     ///
-    /// Async because skills are read through the console.
+    /// Async because skills are read through the sandbox.
     pub async fn try_with_state(spec: AgentSpec, mut state: AgentState) -> anyhow::Result<Self> {
         let model = create_lang_model(&spec.model).await?;
 
@@ -102,8 +101,7 @@ impl Agent {
 
         // Like memory, bound to this agent's own browser rather than resolved by name.
         if let Some(session) = &state.browser {
-            let console = state.console.lock().await.is_some();
-            for (desc, func) in browser::tools(session, console) {
+            for (desc, func) in browser::tools(session, state.sandbox.is_some()) {
                 tools.insert(desc.name.clone(), func);
                 tool_descs.push(desc);
             }
@@ -114,7 +112,7 @@ impl Agent {
                 None
             } else {
                 let org = split_desc(&spec.model).0;
-                Some(render_skills(&spec.skills, &state.console, org).await?)
+                Some(render_skills(&spec.skills, state.sandbox.as_ref(), org).await?)
             };
             let text = [spec.instruction, skills]
                 .into_iter()
@@ -302,8 +300,7 @@ impl Agent {
     }
 
     /// Add `query` to the history, led by a browser reconnection the agent has not heard of,
-    /// truncate the history if it has grown past the context manager's limit, and tell the
-    /// model where its console mounts are.
+    /// and truncate the history if it has grown past the context manager's limit.
     async fn begin_turn(&mut self, mut query: Message) {
         close_dangling_calls(&mut self.state.history);
         // No context manager acts as one with every setting left out.
@@ -316,7 +313,6 @@ impl Agent {
         let query = fit_images_off_runtime(query).await;
         self.state.history.push(query);
         self.manage_context();
-        self.seed_mounts().await;
     }
 
     /// Connects this agent's browser now rather than on its first use. This is when the browser
@@ -330,95 +326,26 @@ impl Agent {
             .await
     }
 
-    /// List the console's mounts in the system message, read afresh each turn.
-    ///
-    /// Only paths are listed; what a mount is for belongs in the instruction. The section
-    /// goes into a caller-written system message too, since mounts are not known ahead of
-    /// time, and only once: it is its own marker.
-    async fn seed_mounts(&mut self) {
-        let mounts: Vec<std::path::PathBuf> = match self.state.console.lock().await.as_ref() {
-            Some(console) => console.mounts().map(Path::to_path_buf).collect(),
-            None => return,
-        };
-        if mounts.is_empty() {
-            return;
-        }
-
-        let mut section = String::from(
-            "# Mounts\n\nThe directories you have been given, in the order they were mounted:\n",
-        );
-        for path in &mounts {
-            section.push_str(&format!("\n- `{}`", path.display()));
-        }
-
-        let Some(system) = self
-            .state
-            .history
-            .iter_mut()
-            .find(|m| m.role == Role::System)
-        else {
-            self.state.history.insert(
-                0,
-                Message::new(Role::System).with_contents([Part::text(section)]),
-            );
-            return;
-        };
-        // Into the first text part, which every model reads as the system prompt.
-        let text = system.contents.iter_mut().find_map(|p| match p {
-            Part::Text { text } => Some(text),
-            _ => None,
-        });
-        match text {
-            Some(text) if text.contains(&section) => {}
-            Some(text) => {
-                text.push_str("\n\n");
-                text.push_str(&section);
-            }
-            None => system.contents.insert(0, Part::text(section)),
-        }
-    }
-
     /// Run `calls` concurrently, yielding each result as a [`Role::Tool`] message as it
     /// finishes, one per call.
-    ///
-    /// The console is started for the batch only if a console tool is in it, and stopped
-    /// after, so its backend (possibly a whole micro-VM) is not kept up while the model
-    /// thinks. Stopping keeps the session, so the next batch resumes the same console.
     fn call_tools(&self, calls: Vec<Part>) -> BoxStream<'static, anyhow::Result<Message>> {
-        let calls: Vec<_> = calls
+        let sandbox = self.state.sandbox.clone();
+        calls
             .iter()
             .filter_map(Part::as_function)
             .map(|(id, name, args)| {
-                (
+                let tool = self.tools.get(name).cloned();
+                call_tool(
                     id.to_owned(),
                     name.to_owned(),
                     args.clone(),
-                    self.tools.get(name).cloned(),
+                    tool,
+                    sandbox.clone(),
                 )
             })
-            .collect();
-        let needs_console = calls
-            .iter()
-            .any(|(.., tool)| tool.as_ref().is_some_and(ToolFunc::needs_console));
-        let console = self.state.console.clone();
-
-        Box::pin(async_stream::try_stream! {
-            if needs_console && let Some(console) = console.lock().await.as_mut() {
-                console.start().await?;
-            }
-
-            let mut pending: FuturesUnordered<_> = calls
-                .into_iter()
-                .map(|(id, name, args, tool)| call_tool(id, name, args, tool, console.clone()))
-                .collect();
-            while let Some(message) = pending.next().await {
-                yield message;
-            }
-
-            if needs_console && let Some(console) = console.lock().await.as_mut() {
-                console.stop().await?;
-            }
-        })
+            .collect::<FuturesUnordered<_>>()
+            .map(Ok)
+            .boxed()
     }
 }
 
@@ -439,7 +366,7 @@ fn tool_output(message: Message) -> MessageOutput {
 }
 
 /// Answer every call of the last assistant message that has no result yet, as when the
-/// caller dropped the stream mid-turn or the console failed to start. Without this the
+/// caller dropped the stream mid-turn. Without this the
 /// next request carries calls without results, which APIs reject (Claude with a 400).
 fn close_dangling_calls(history: &mut Vec<Message>) {
     let Some(at) = history.iter().rposition(|m| m.role == Role::Assistant) else {
@@ -570,14 +497,14 @@ fn tool_error(id: String, text: impl Into<String>) -> Message {
 
 /// Run one tool call to its result, the last message its stream yields.
 ///
-/// Whatever goes wrong (an unknown tool, a missing console, a panic) becomes the result,
+/// Whatever goes wrong (an unknown tool, a missing sandbox, a panic) becomes the result,
 /// so the model gets exactly one per call and can recover.
 async fn call_tool(
     id: String,
     name: String,
     args: Value,
     tool: Option<ToolFunc>,
-    console: Arc<Mutex<Option<ConsoleClient>>>,
+    sandbox: Option<Sandbox>,
 ) -> Message {
     let Some(tool) = tool else {
         return tool_error(id, format!("there is no tool named '{name}'"));
@@ -591,12 +518,11 @@ async fn call_tool(
         match tool.call_pure(args.clone(), call_id.clone()) {
             Some(stream) => Ok(stream.fold(None, last).await),
             None => {
-                let mut guard = console.lock().await;
-                let Some(console) = guard.as_mut() else {
-                    return Err("it needs a console, and the agent has none; \
-                                give it one with `AgentState::with_console`");
+                let Some(sandbox) = sandbox.as_ref() else {
+                    return Err("it needs a sandbox, and the agent has none; \
+                                give it one with `AgentBuilder::sandbox`");
                 };
-                Ok(tool.call(args, call_id, console).fold(None, last).await)
+                Ok(tool.call(args, call_id, sandbox).fold(None, last).await)
             }
         }
     };
@@ -756,7 +682,7 @@ mod tests {
     }
 
     /// Registers `script` as the model `name` and returns its spec, with the `echo`,
-    /// `shot` (returns an image), `boom` (panics) and `console_only` tools.
+    /// `shot` (returns an image), `boom` (panics) and `sandbox_only` tools.
     fn scripted(
         name: &str,
         script: impl IntoIterator<Item = anyhow::Result<MessageOutput>>,
@@ -794,8 +720,8 @@ mod tests {
             }),
         );
         set_tool_provider(
-            "console_only",
-            tool_func!(async |_args: Value, _console: &mut ConsoleClient| -> Value { Value::Null }),
+            "sandbox_only",
+            tool_func!(async |_args: Value, _sandbox: &Sandbox| -> Value { Value::Null }),
         );
 
         let tool = |name: &str| {
@@ -809,7 +735,7 @@ mod tests {
                 tool("echo"),
                 tool("shot"),
                 tool("boom"),
-                tool("console_only"),
+                tool("sandbox_only"),
             ]);
         (model, spec)
     }
@@ -906,7 +832,7 @@ mod tests {
                     ("c1", "echo"),
                     ("c2", "boom"),
                     ("c3", "missing"),
-                    ("c4", "console_only"),
+                    ("c4", "sandbox_only"),
                 ]),
                 answer("done"),
             ],
@@ -923,7 +849,7 @@ mod tests {
         assert_eq!(results.len(), 4);
         assert!(text_of(&results["c2"]).contains("panicked"));
         assert!(text_of(&results["c3"]).contains("no tool named"));
-        assert!(text_of(&results["c4"]).contains("needs a console"));
+        assert!(text_of(&results["c4"]).contains("needs a sandbox"));
         assert_eq!(text_of(agent.history().last().unwrap()), "done");
     }
 

@@ -5,10 +5,9 @@
 //! lock's owned guard in its stream, which also makes a second `run` wait for the first to
 //! finish, as `&mut self` would in Rust.
 //!
-//! `AgentBuilder.console` attaches the agent to a `@brekkylab/virtx` `ConsoleClient`'s session
-//! (see [`crate::console`]). The `ConsoleClient` stays usable: its calls and the agent's take
-//! turns on its lock, one protocol call at a time, the agent starts and stops its backend
-//! around each batch of tool calls, and `ConsoleClient.close()` ends the session for both.
+//! `AgentBuilder.sandbox` gives the agent a `@brekkylab/virtx` `Sandbox` (see
+//! [`crate::console`]), which stays the caller's: the agent runs in it over the same client, and
+//! never removes it.
 //!
 //! `AgentRun`'s `next()` and `return()` are an async iterator's, and the package's `index.js`
 //! gives the class `Symbol.asyncIterator` so `for await` takes it. napi's own async-iterator
@@ -41,10 +40,8 @@ use crate::{
     error::{self, Result, invalid, promise, thrown, unsigned},
 };
 
-/// A value let go of on the runtime it was made on. Dropping an agent or a turn's stream may
-/// drop the last hold on its console, whose client is let go of on a task when dropped on a
-/// runtime (an attached console says no `quit`: the session is the virtx `ConsoleClient`'s), and
-/// a garbage-collection finalizer is not on one.
+/// A value let go of on the runtime it was made on: what an agent or a turn's stream holds may
+/// let go of itself on a task, and a garbage-collection finalizer is not on a runtime.
 pub struct OnRuntime<T> {
     pub value: Option<T>,
     pub runtime: Handle,
@@ -172,16 +169,6 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.tools(descs)))
     }
 
-    #[napi]
-    pub fn system_tools<'env>(&mut self, this: This<'env>) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.system_tools()))
-    }
-
-    #[napi]
-    pub fn shell_tool<'env>(&mut self, this: This<'env>) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.shell_tool()))
-    }
-
     /// `engines` by name — `'Google'`, `'DuckDuckGo'`, … — or every engine when empty.
     #[napi]
     pub fn web_search_tool<'env>(
@@ -213,16 +200,17 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.history(history)))
     }
 
-    /// Run the agent's console tools in the session of `console`, a `@brekkylab/virtx`
-    /// `ConsoleClient`, which the agent then shares.
+    /// Run the agent's console tools in `sandbox`, a `@brekkylab/virtx` `Sandbox`, which stays
+    /// the caller's.
     #[napi]
-    pub fn console<'env>(
+    pub fn sandbox<'env>(
         &mut self,
+        env: &Env,
         this: This<'env>,
-        #[napi(ts_arg_type = "ConsoleClient")] console: Object<'_>,
+        #[napi(ts_arg_type = "Sandbox")] sandbox: Object<'_>,
     ) -> Result<This<'env>> {
-        let slot = console::attach(&console)?;
-        self.update(this, |b| Ok(b.shared_console(slot)))
+        let sandbox = console::sandbox(env, &sandbox)?;
+        self.update(this, |b| Ok(b.sandbox(sandbox)))
     }
 
     /// The person's own Chromium-based browser with remote debugging on (Chrome by default: 144 or
@@ -433,7 +421,7 @@ impl JsAgent {
     /// An agent from a spec (the object an `AgentSpec` serializes to). `options.memory` is the
     /// file to remember into.
     #[napi(
-        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; console?: ConsoleClient; memory?: string }",
+        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; sandbox?: Sandbox; memory?: string }",
         ts_return_type = "Promise<Agent>"
     )]
     pub fn from_spec<'env>(
@@ -453,8 +441,8 @@ impl JsAgent {
                         "a list of messages",
                     )?);
                 }
-                if let Some(console) = options.get::<Object>("console").map_err(get)? {
-                    state = state.with_console_slot(console::attach(&console)?);
+                if let Some(sandbox) = options.get::<Object>("sandbox").map_err(get)? {
+                    state = state.with_sandbox(console::sandbox(env, &sandbox)?);
                 }
                 if let Some(memfile) = options.get::<String>("memory").map_err(get)? {
                     state = state.with_memory(Memory::new(memfile));
@@ -523,7 +511,7 @@ impl JsAgent {
         Ok(self.start(self::query(env, query)?, Mode::Deltas))
     }
 
-    /// Let go of the agent now, and of its console if nothing else holds it. Waits for a turn
+    /// Let go of the agent now, and of its hold of its sandbox's client. Waits for a turn
     /// being iterated to finish. Closing twice is the same as closing once.
     #[napi(ts_return_type = "Promise<void>")]
     pub fn close<'env>(&self, env: &'env Env) -> napi::Result<PromiseRaw<'env, ()>> {
