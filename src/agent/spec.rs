@@ -218,7 +218,7 @@ impl TruncationPolicy {
     /// Only for the start of a turn, with the query already in `history`: Claude refuses a
     /// thinking block handed back once anything before it has changed, and at turn start
     /// none follows, since the backends replay thinking only after the last user message.
-    pub(super) fn apply(&self, history: &mut [Message], last_input_tokens: Option<u64>) {
+    pub(super) fn apply(&self, history: &mut [Message], context_tokens: Option<u64>) {
         // Past `max_images` images in tool results, the oldest go until
         // `preserve_recent_images` remain: many at once, so the prompt cache breaks once in
         // several turns rather than every turn.
@@ -246,7 +246,7 @@ impl TruncationPolicy {
         // latest `preserve_recent_turns` user turns lose their contents. A turn counts from
         // its user message, since one turn may hold many assistant messages; with fewer turns
         // than that, nothing changes.
-        if self.max_input_tokens == 0 || last_input_tokens.unwrap_or(0) <= self.max_input_tokens {
+        if self.max_input_tokens == 0 || context_tokens.unwrap_or(0) <= self.max_input_tokens {
             return;
         }
         let users = history

@@ -1878,7 +1878,7 @@ mod tests {
             "{answer}"
         );
         // Applied: the button wrote the coupon into the title.
-        let session = agent.state.browser.clone().unwrap();
+        let session = agent.browser.clone().unwrap();
         let (title, _) = call(
             &tools(&session, false),
             "browser_evaluate",
