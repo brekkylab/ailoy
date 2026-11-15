@@ -313,9 +313,11 @@ impl PyAgent {
         if let Some(history) = history {
             state = state.with_history(from_py::<Vec<Message>>(&history, "a list of messages")?);
         }
-        let sandbox = sandbox.map(|s| console::sandbox(&s)).transpose()?;
+        if let Some(sandbox) = sandbox {
+            state = state.with_sandbox(console::sandbox(&sandbox)?);
+        }
         future_into_py(py, async move {
-            let agent = Agent::try_with_state(spec, state, sandbox, None)
+            let agent = Agent::try_with_state(spec, state)
                 .await
                 .map_err(error::anyhow)?;
             Ok(PyAgent::new(agent))

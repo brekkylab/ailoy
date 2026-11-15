@@ -31,11 +31,7 @@ use crate::{
 pub struct AgentBuilder {
     spec: AgentSpec,
 
-    history: Vec<Message>,
-
-    sandbox: Option<virtx::Sandbox>,
-
-    browser: Option<Browser>,
+    state: AgentState,
 }
 
 impl AgentBuilder {
@@ -44,9 +40,7 @@ impl AgentBuilder {
     pub fn new(model: impl Into<String>) -> Self {
         Self {
             spec: AgentSpec::new(model),
-            history: Vec::new(),
-            sandbox: None,
-            browser: None,
+            state: AgentState::new(),
         }
     }
 
@@ -81,7 +75,7 @@ impl AgentBuilder {
     /// A leading system message here overrides the one the spec's instruction would
     /// produce; otherwise the instruction is still seeded, at the front of this history.
     pub fn history(mut self, history: impl IntoIterator<Item = Message>) -> Self {
-        self.history = history.into_iter().collect();
+        self.state = self.state.with_history(history);
         self
     }
 
@@ -95,7 +89,7 @@ impl AgentBuilder {
     /// Without one, pure tools still run and sandbox tools fail with an error.
     pub fn sandbox(mut self, sandbox: virtx::Sandbox) -> Self {
         self.spec.use_sandbox = true;
-        self.sandbox = Some(sandbox);
+        self.state = self.state.with_sandbox(sandbox);
         self
     }
 
@@ -104,7 +98,7 @@ impl AgentBuilder {
     /// the agent first uses it, or [`Agent::start_browser`].
     pub fn browser(mut self, browser: Browser) -> Self {
         self.spec.use_browser = true;
-        self.browser = Some(browser);
+        self.state = self.state.with_browser(browser);
         self
     }
 
@@ -135,15 +129,7 @@ impl AgentBuilder {
     /// Materialise the agent via [`Agent::try_with_state`], which is async
     /// because it builds the model and reads the skills through the sandbox.
     pub async fn build(self) -> anyhow::Result<Agent> {
-        let Self {
-            spec,
-            history,
-            sandbox,
-            browser,
-        } = self;
-
-        let state = AgentState::new().with_history(history);
-        Agent::try_with_state(spec, state, sandbox, browser).await
+        Agent::try_with_state(self.spec, self.state).await
     }
 }
 
@@ -229,7 +215,7 @@ mod tests {
         assert!(agent.tool_descs.is_empty(), "no sandbox, no system tools");
     }
 
-    /// `sandbox()` hands the supplied sandbox to the agent, which runs its tools there.
+    /// `sandbox()` puts the supplied sandbox into `state.sandbox`.
     #[tokio::test]
     async fn test_builder_sandbox_is_applied() {
         let agent = builder()
@@ -245,6 +231,7 @@ mod tests {
         );
 
         let sandbox = agent
+            .state
             .sandbox
             .as_ref()
             .expect("the supplied sandbox is held");

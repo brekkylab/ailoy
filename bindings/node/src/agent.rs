@@ -415,7 +415,6 @@ impl JsAgent {
         let prepared = (|| -> Result<_> {
             let spec: AgentSpec = from_js(env, spec, "an agent spec")?;
             let mut state = AgentState::new();
-            let mut sandbox = None;
             if let Some(options) = options {
                 let get = |e: napi::Error| invalid(e.reason);
                 if let Some(history) = options.get::<Unknown>("history").map_err(get)? {
@@ -425,15 +424,15 @@ impl JsAgent {
                         "a list of messages",
                     )?);
                 }
-                if let Some(given) = options.get::<Object>("sandbox").map_err(get)? {
-                    sandbox = Some(console::sandbox(env, &given)?);
+                if let Some(sandbox) = options.get::<Object>("sandbox").map_err(get)? {
+                    state = state.with_sandbox(console::sandbox(env, &sandbox)?);
                 }
             }
-            Ok((spec, state, sandbox))
+            Ok((spec, state))
         })();
-        let (spec, state, sandbox) = prepared.map_err(|e| thrown(env, e))?;
+        let (spec, state) = prepared.map_err(|e| thrown(env, e))?;
         promise(env, async move {
-            let agent = Agent::try_with_state(spec, state, sandbox, None)
+            let agent = Agent::try_with_state(spec, state)
                 .await
                 .map_err(error::anyhow)?;
             Ok(JsAgent::new(agent))
