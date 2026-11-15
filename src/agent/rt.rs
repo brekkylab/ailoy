@@ -290,9 +290,7 @@ impl Agent {
         }
         let query = fit_images_off_runtime(query).await;
         self.state.history.push(query);
-        self.spec
-            .truncation
-            .apply(&mut self.state.history, self.state.context_tokens);
+        self.state.truncate_history(&self.spec.truncation);
     }
 
     /// Connects this agent's browser now rather than on its first use. This is when the browser
@@ -575,7 +573,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::agent::{TruncationPolicy, spec::IMAGE_PLACEHOLDER};
+    use crate::agent::{TruncationPolicy, state::IMAGE_PLACEHOLDER};
     use crate::{
         datatype::Bytes,
         message::{Role, TokenUsage},
