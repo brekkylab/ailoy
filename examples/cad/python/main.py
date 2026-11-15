@@ -58,7 +58,6 @@ if (
 import ailoy  # noqa: E402
 from virtx import (  # noqa: E402
     Client,
-    ImageJobEnd,
     Recipe,
     SandboxVolume,
     VirtxError,
@@ -118,9 +117,7 @@ async def main(prompt: str) -> None:
                 "runtype scipy typing_extensions trimesh numpy pillow"
             )
         )
-        async for entry in client.build_image(recipe, IMAGE):
-            if isinstance(entry.entry, ImageJobEnd) and entry.entry.error:
-                raise RuntimeError(f"building {IMAGE}: {entry.entry.error}")
+        await client.build_image(recipe, IMAGE).complete()
 
     # The volumes, made the first time and kept on the server: `409` says one is there already.
     volumes = []

@@ -5,7 +5,7 @@
 
 use futures::StreamExt;
 pub use virtx::{Error, Sandbox};
-use virtx::{Files as _, SandboxExecArgs, SandboxJobEntry};
+use virtx::{Files as _, SandboxExecArgs, SandboxJobEntry, Source};
 
 /// What a command printed, line by line, and how it ended.
 #[derive(Clone, Debug, Default)]
@@ -47,7 +47,10 @@ where
             }
         }
     }
-    Err(Error::Call("the command's log ended before it did".into()))
+    Err(Error::Call(
+        Source::Transport,
+        "the command's log ended before it did".into(),
+    ))
 }
 
 /// The whole file at `path` in `sandbox`, as a command names it.

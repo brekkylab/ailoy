@@ -48,14 +48,12 @@ Keys are read from the environment when the model is built, so set them before t
 Decide what the agent's machine holds before writing the agent: the image is where its software comes from, and volumes are how files go in before a run and come out after.
 
 ```python
-from virtx import Client, ImageJobEnd, Recipe, SandboxVolume
+from virtx import Client, Recipe, SandboxVolume
 
 client = Client.spawn()   # starts virtx's server, fetched into its cache the first time
 
 recipe = Recipe("python:3.12-slim-trixie").run("pip install matplotlib")
-async for entry in client.build_image(recipe, "plot:latest"):
-    if isinstance(entry.entry, ImageJobEnd) and entry.entry.error:
-        raise RuntimeError(entry.entry.error)
+await client.build_image(recipe, "plot:latest").complete()
 
 artifacts = await client.create_volume("plot-artifacts")   # kept on the server; `409` if it is there
 sandbox = await client.create_sandbox(

@@ -118,9 +118,7 @@ async function main(prompt) {
           'portalocker requests tokenizers tqdm ' +
           '&& pip install --no-cache-dir --no-deps ncnn',
       )
-    for await (const entry of client.buildImage(recipe, IMAGE)) {
-      if ('end' in entry && entry.end.error) throw new Error(`building ${IMAGE}: ${entry.end.error}`)
-    }
+    await client.buildImage(recipe, IMAGE).complete()
   }
 
   // The volumes, made the first time and kept on the server: `409` says one is there already.

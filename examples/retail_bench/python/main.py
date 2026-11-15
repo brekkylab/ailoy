@@ -82,7 +82,6 @@ if (
 import ailoy  # noqa: E402
 from virtx import (  # noqa: E402
     Client,
-    ImageJobEnd,
     Sandbox,
     SandboxVolume,
     VirtxError,
@@ -158,9 +157,7 @@ async def main(args: argparse.Namespace) -> None:
     images = await client.list_image()
     if not any(image.reference.split("/")[-1] == IMAGE for image in images):
         print(f"Pulling {IMAGE}, once.")
-        async for entry in client.pull_image(IMAGE):
-            if isinstance(entry.entry, ImageJobEnd) and entry.entry.error:
-                raise RuntimeError(f"pulling {IMAGE}: {entry.entry.error}")
+        await client.pull_image(IMAGE).complete()
 
     # The volumes, made the first time and kept on the server: `409` says one is there already.
     # Emptied, so that nothing an earlier run left, its days or its notes, is read in this one.

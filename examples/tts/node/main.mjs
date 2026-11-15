@@ -127,9 +127,7 @@ async function main() {
       console.log(`Building ${IMAGE}, once; it takes a few minutes.`)
       const recipe = new Recipe('python:3.12-slim-trixie')
         .run('pip install --no-cache-dir ncnn numpy tokenizers')
-      for await (const entry of client.buildImage(recipe, IMAGE)) {
-        if ('end' in entry && entry.end.error) throw new Error(`building ${IMAGE}: ${entry.end.error}`)
-      }
+      await client.buildImage(recipe, IMAGE).complete()
     }
 
     // The volumes, made the first time and kept on the server: `409` says one is there already.
