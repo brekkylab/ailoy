@@ -43,7 +43,7 @@ The seven tools in the table come with `sandbox(...)` and run in that sandbox, a
 
 <Tabs syncKey="lang">
 
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```python
 agent = await (
@@ -56,7 +56,7 @@ agent = await (
 
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```js
 const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
@@ -67,7 +67,7 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
 
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```rust
 use ailoy::tool::WebSearchEngineKind;
@@ -91,7 +91,7 @@ This gives the agent `order_status`, which looks an order up by its id:
 
 <Tabs syncKey="lang">
 
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```python
 import asyncio
@@ -134,7 +134,7 @@ asyncio.run(main())
 
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```js
 const { AgentBuilder, registerTool } = require('@brekkylab/ailoy')
@@ -176,7 +176,7 @@ main()
 
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```rust
 use ailoy::{

@@ -126,9 +126,15 @@ header.header {
   font-weight: 600;
 }
 .sl-markdown-content h2 {
-  margin-top: 2.75rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--sl-color-hairline);
+  margin-top: 3rem;
+}
+.sl-markdown-content h3 {
+  margin-top: 2rem;
+}
+/* A page that opens with a heading starts it at the top, not under a gap. */
+.sl-markdown-content > :first-child,
+.sl-markdown-content > :first-child :is(h2, h3) {
+  margin-top: 0;
 }
 
 /* On this page: a hairline down the side, the current section marked in yellow. */
@@ -207,6 +213,10 @@ mobile-starlight-toc .toggle {
 .sl-markdown-content :is(th, td) {
   border: 0;
   border-bottom: 1px solid var(--sl-color-hairline);
+}
+/* A name in a table's first column stays on one line (self-hosted, not self- / hosted). */
+.sl-markdown-content td:first-child code {
+  white-space: nowrap;
 }
 .sl-markdown-content th {
   color: var(--sl-color-gray-2);
