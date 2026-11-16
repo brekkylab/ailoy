@@ -4,27 +4,9 @@
 import MobileMenuFooter from 'virtual:starlight/components/MobileMenuFooter';
 import { Icon } from '@astrojs/starlight/components';
 import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro';
+import PageIcon from './PageIcon.astro';
 
 const { sidebar } = Astro.locals.starlightRoute;
-
-// ponytail: icons keyed by address here, so sidebar.json (which ailoy.co reads too) stays as is.
-const ICONS: Record<string, any> = {
-  '/docs/': 'open-book',
-  '/docs/guides/installation/': 'download',
-  '/docs/guides/quick-start/': 'rocket',
-  '/docs/concepts/': 'information',
-  '/docs/guides/agents/': 'setting',
-  '/docs/guides/sandbox/': 'laptop',
-  '/docs/guides/running/': 'right-arrow',
-  '/docs/guides/model-providers/': 'server',
-  '/docs/guides/message-format/': 'comment-alt',
-  '/docs/guides/tools/': 'puzzle',
-  '/docs/guides/using-mcp/': 'link',
-  '/docs/guides/using-browser/': 'window',
-  '/docs/guides/skills/': 'star',
-  '/docs/guides/context-manager/': 'list-format',
-  '/docs/reference/': 'document'
-};
 const hasCurrent = (e: any): boolean => e.isCurrent || (e.entries ?? []).some(hasCurrent);
 ---
 
@@ -46,7 +28,7 @@ const hasCurrent = (e: any): boolean => e.isCurrent || (e.entries ?? []).some(ha
         e.type === 'link' ? (
           <li>
             <a href={e.href} aria-current={e.isCurrent ? 'page' : undefined} class="item solo">
-              <Icon name={ICONS[e.href] ?? 'document'} size="1rem" />
+              <PageIcon href={e.href} />
               <span>{e.label}</span>
             </a>
           </li>
@@ -61,7 +43,7 @@ const hasCurrent = (e: any): boolean => e.isCurrent || (e.entries ?? []).some(ha
                 {e.entries.map((c: any) => (
                   <li>
                     <a href={c.href} aria-current={c.isCurrent ? 'page' : undefined} class="item">
-                      <Icon name={ICONS[c.href] ?? 'document'} size="1rem" />
+                      <PageIcon href={c.href} />
                       <span>{c.label}</span>
                     </a>
                   </li>

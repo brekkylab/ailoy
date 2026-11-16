@@ -11,7 +11,7 @@ const path = Astro.url.pathname;
 const tabs = [
   { label: 'Docs', href: '/docs/', match: (p: string) => !p.startsWith('/docs/guides/') && !p.startsWith('/docs/reference/') },
   { label: 'Guides', href: '/docs/guides/agents/', match: (p: string) => p.startsWith('/docs/guides/') && !/\/(installation|quick-start)\//.test(p) },
-  { label: 'Examples', href: 'https://github.com/brekkylab/ailoy/tree/main/examples', match: () => false },
+  { label: 'Examples', href: 'https://ailoy.co/examples/', match: () => false },
   { label: 'API reference', href: '/docs/reference/', match: (p: string) => p.startsWith('/docs/reference/') }
 ];
 ---

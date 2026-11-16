@@ -72,6 +72,16 @@ header site-search button {
   border-radius: 0;
 }
 
+/* GitHub and Discord in the header: grey like search and the theme switch, white on hover.
+   Yellow stays for what is current. */
+header .icons a {
+  color: var(--sl-color-gray-2);
+}
+header .icons a:hover {
+  color: var(--sl-color-white);
+  opacity: 1;
+}
+
 /* Phone menu button and the phone's On this page toggle: square, on hairlines. */
 .sl-menu-button {
   border-radius: 0 !important;
