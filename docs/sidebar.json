@@ -35,6 +35,6 @@
   },
   {
     "label": "Reference",
-    "items": [{ "slug": "reference" }]
+    "items": [{ "slug": "reference", "badge": "Soon" }]
   }
 ]

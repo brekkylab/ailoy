@@ -11,7 +11,8 @@ const path = Astro.url.pathname;
 const tabs = [
   { label: 'Docs', href: '/docs/', match: (p: string) => !p.startsWith('/docs/reference/') },
   { label: 'Examples', href: 'https://ailoy.co/examples/', match: () => false },
-  { label: 'API reference', href: '/docs/reference/', match: (p: string) => p.startsWith('/docs/reference/') }
+  // `soon` until the reference pages are written (planned for Weeks 4 and 5).
+  { label: 'API reference', href: '/docs/reference/', match: (p: string) => p.startsWith('/docs/reference/'), soon: true }
 ];
 ---
 
@@ -25,6 +26,7 @@ const tabs = [
       tabs.map((t) => (
         <a href={t.href} aria-current={t.match(path) ? 'page' : undefined}>
           {t.label}
+          {t.soon && <span class="soon">Soon</span>}
         </a>
       ))
     }
@@ -76,6 +78,14 @@ const tabs = [
     text-decoration: none;
     border-bottom: 1px solid transparent;
     margin-bottom: -1px;
+  }
+  .soon {
+    margin-inline-start: 0.4rem;
+    padding: 0 5px;
+    font-size: 0.6875rem;
+    line-height: 16px;
+    color: var(--sl-color-gray-3);
+    border: 1px solid var(--sl-color-hairline);
   }
   .tabs a:hover {
     color: var(--sl-color-white);

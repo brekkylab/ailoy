@@ -153,6 +153,21 @@ header.header {
   scrollbar-color: var(--sl-color-gray-5) transparent;
 }
 
+/* No full-width line under the page header: the header and the body read as one column. A
+   slightly wider column takes up some of the empty space on wide screens. */
+.content-panel + .content-panel {
+  border-top: 0 !important;
+}
+:root {
+  --sl-content-width: 48rem;
+}
+
+/* On this page: the first entry only jumps back to the title, so it is left out. */
+starlight-toc nav > ul > li:first-child,
+mobile-starlight-toc nav > ul > li:first-child {
+  display: none;
+}
+
 /* On this page: a hairline down the side, the current section marked in yellow. Rows match the
    sidebar's: 20px line, 6px above and below. */
 starlight-toc h2 {
@@ -211,7 +226,7 @@ mobile-starlight-toc .toggle {
   color: var(--sl-color-white);
 }
 .sl-link-card .description {
-  color: var(--sl-color-gray-3);
+  color: var(--sl-color-gray-2);
   font-size: 0.875rem;
 }
 .starlight-aside {

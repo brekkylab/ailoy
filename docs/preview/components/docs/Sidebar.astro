@@ -1,13 +1,13 @@
 ---
 // Starlight override: a search button and a hide button on top, then the groups, each page with an
-// icon. Search opens the header's search dialog, so there is one dialog on the page.
+// icon. Groups are plain headings, always open: with this few pages nobody folds them. Search
+// opens the header's search dialog, so there is one dialog on the page.
 import MobileMenuFooter from 'virtual:starlight/components/MobileMenuFooter';
 import { Icon } from '@astrojs/starlight/components';
 import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro';
 import PageIcon from './PageIcon.astro';
 
 const { sidebar } = Astro.locals.starlightRoute;
-const hasCurrent = (e: any): boolean => e.isCurrent || (e.entries ?? []).some(hasCurrent);
 ---
 
 <div class="tools">
@@ -34,22 +34,18 @@ const hasCurrent = (e: any): boolean => e.isCurrent || (e.entries ?? []).some(ha
           </li>
         ) : (
           <li>
-            <details open={hasCurrent(e) || !e.collapsed}>
-              <summary>
-                <span>{e.label}</span>
-                <Icon name="down-caret" size="1rem" class="caret" />
-              </summary>
-              <ul>
-                {e.entries.map((c: any) => (
-                  <li>
-                    <a href={c.href} aria-current={c.isCurrent ? 'page' : undefined} class="item">
-                      <PageIcon href={c.href} />
-                      <span>{c.label}</span>
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </details>
+            <p class="group">{e.label}</p>
+            <ul>
+              {e.entries.map((c: any) => (
+                <li>
+                  <a href={c.href} aria-current={c.isCurrent ? 'page' : undefined} class="item">
+                    <PageIcon href={c.href} />
+                    <span>{c.label}</span>
+                    {c.badge && <span class="badge">{c.badge.text}</span>}
+                  </a>
+                </li>
+              ))}
+            </ul>
           </li>
         )
       )
@@ -131,31 +127,25 @@ const hasCurrent = (e: any): boolean => e.isCurrent || (e.entries ?? []).some(ha
   .top > li + li {
     margin-top: 0.75rem;
   }
-  summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+  .group {
+    margin: 0;
     padding: 6px 8px;
     font-size: 0.8125rem;
     line-height: 20px;
     font-weight: 600;
     color: var(--sl-color-white);
-    cursor: pointer;
-    user-select: none;
-    list-style: none;
   }
-  summary::-webkit-details-marker {
-    display: none;
-  }
-  summary :global(.caret) {
-    color: var(--sl-color-gray-3);
-    transition: transform 0.15s ease;
-  }
-  details:not([open]) summary :global(.caret) {
-    transform: rotate(-90deg);
-  }
-  details ul {
+  .group + ul {
     margin-top: 0.15rem;
+  }
+  /* A page not written yet: a quiet label, not the yellow of what is current. */
+  .badge {
+    margin-inline-start: auto;
+    padding: 0 6px;
+    font-size: 0.6875rem;
+    line-height: 18px;
+    color: var(--sl-color-gray-3);
+    border: 1px solid var(--sl-color-hairline);
   }
   /* Same row as the On this page list: 20px line, 6px above and below, 32px in all. */
   .item {
