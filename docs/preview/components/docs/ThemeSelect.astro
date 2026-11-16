@@ -1,3 +1,39 @@
 ---
-// Starlight override: no theme picker. The whole site is dark (see docs/ThemeProvider.astro).
+// Starlight override: one button that switches between dark and light.
+import { Icon } from '@astrojs/starlight/components';
 ---
+
+<button type="button" class="theme" data-theme-toggle aria-label="Switch between dark and light">
+  <Icon name="sun" class="sun" size="1.1rem" />
+  <Icon name="moon" class="moon" size="1.1rem" />
+</button>
+
+<script>
+  for (const b of document.querySelectorAll('[data-theme-toggle]')) {
+    b.addEventListener('click', () => {
+      const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+      document.documentElement.dataset.theme = next;
+      try {
+        localStorage.setItem('starlight-theme', next);
+      } catch {}
+    });
+  }
+</script>
+
+<style>
+  .theme {
+    display: flex;
+    padding: 0.25rem;
+    background: transparent;
+    border: 0;
+    color: var(--sl-color-gray-2);
+    cursor: pointer;
+  }
+  .theme:hover {
+    color: var(--sl-color-white);
+  }
+  :global([data-theme='dark']) .theme :global(.sun),
+  :global([data-theme='light']) .theme :global(.moon) {
+    display: none;
+  }
+</style>

@@ -1,0 +1,103 @@
+---
+// Starlight override: the site title, then the docs' sections as tabs, then search, links and the
+// theme switch. A tab is current when the page's path falls under it.
+import Search from 'virtual:starlight/components/Search';
+import SiteTitle from 'virtual:starlight/components/SiteTitle';
+import SocialIcons from 'virtual:starlight/components/SocialIcons';
+import ThemeSelect from 'virtual:starlight/components/ThemeSelect';
+import { Icon } from '@astrojs/starlight/components';
+
+const path = Astro.url.pathname;
+const tabs = [
+  { label: 'Docs', href: '/docs/', match: (p: string) => !p.startsWith('/docs/guides/') && !p.startsWith('/docs/reference/') },
+  { label: 'Guides', href: '/docs/guides/agents/', match: (p: string) => p.startsWith('/docs/guides/') && !/\/(installation|quick-start)\//.test(p) },
+  { label: 'Examples', href: 'https://github.com/brekkylab/ailoy/tree/main/examples', match: () => false },
+  { label: 'API reference', href: '/docs/reference/', match: (p: string) => p.startsWith('/docs/reference/') }
+];
+---
+
+<div class="header">
+  <button type="button" class="show-sb" data-show-sidebar aria-label="Show sidebar" title="Show sidebar">
+    <Icon name="bars" size="1.1rem" />
+  </button>
+  <SiteTitle />
+  <nav class="tabs" aria-label="Sections">
+    {
+      tabs.map((t) => (
+        <a href={t.href} aria-current={t.match(path) ? 'page' : undefined}>
+          {t.label}
+        </a>
+      ))
+    }
+  </nav>
+  <div class="right">
+    <Search />
+    <div class="icons md:sl-flex sl-hidden">
+      <SocialIcons />
+      <ThemeSelect />
+    </div>
+  </div>
+</div>
+
+<style>
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    height: 100%;
+  }
+  .show-sb {
+    display: none;
+    margin-inline-end: -1rem;
+    padding: 0.25rem;
+    background: transparent;
+    border: 0;
+    color: var(--sl-color-gray-2);
+    cursor: pointer;
+  }
+  .show-sb:hover {
+    color: var(--sl-color-white);
+  }
+  @media (min-width: 50rem) {
+    :global(:root[data-sidebar-hidden]) .show-sb {
+      display: flex;
+    }
+  }
+  .tabs {
+    display: none;
+    gap: 0.25rem;
+    height: 100%;
+  }
+  .tabs a {
+    display: flex;
+    align-items: center;
+    padding-inline: 0.75rem;
+    font-size: 0.875rem;
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    margin-bottom: -1px;
+  }
+  .tabs a:hover {
+    color: var(--sl-color-white);
+  }
+  .tabs a[aria-current='page'] {
+    color: var(--sl-color-white);
+    border-bottom-color: var(--sl-color-accent);
+  }
+  .right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-inline-start: auto;
+  }
+  .icons {
+    align-items: center;
+    gap: 1rem;
+  }
+  @media (min-width: 72rem) {
+    .tabs {
+      display: flex;
+    }
+  }
+</style>

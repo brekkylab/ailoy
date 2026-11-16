@@ -1,0 +1,206 @@
+---
+// Starlight override: a search button and a hide button on top, then the groups, each page with an
+// icon. Search opens the header's search dialog, so there is one dialog on the page.
+import MobileMenuFooter from 'virtual:starlight/components/MobileMenuFooter';
+import { Icon } from '@astrojs/starlight/components';
+import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro';
+
+const { sidebar } = Astro.locals.starlightRoute;
+
+// ponytail: icons keyed by address here, so sidebar.json (which ailoy.co reads too) stays as is.
+const ICONS: Record<string, any> = {
+  '/docs/': 'open-book',
+  '/docs/guides/installation/': 'download',
+  '/docs/guides/quick-start/': 'rocket',
+  '/docs/concepts/': 'information',
+  '/docs/guides/agents/': 'setting',
+  '/docs/guides/sandbox/': 'laptop',
+  '/docs/guides/running/': 'right-arrow',
+  '/docs/guides/model-providers/': 'server',
+  '/docs/guides/message-format/': 'comment-alt',
+  '/docs/guides/tools/': 'puzzle',
+  '/docs/guides/using-mcp/': 'link',
+  '/docs/guides/using-browser/': 'window',
+  '/docs/guides/skills/': 'star',
+  '/docs/guides/context-manager/': 'list-format',
+  '/docs/reference/': 'document'
+};
+const hasCurrent = (e: any): boolean => e.isCurrent || (e.entries ?? []).some(hasCurrent);
+---
+
+<div class="tools">
+  <button class="search" type="button" data-open-search>
+    <Icon name="magnifier" size="1rem" />
+    <span>Search</span>
+    <kbd>Ctrl K</kbd>
+  </button>
+  <button class="hide" type="button" data-hide-sidebar aria-label="Hide sidebar" title="Hide sidebar">
+    <Icon name="left-caret" size="1rem" />
+  </button>
+</div>
+
+<SidebarPersister>
+  <ul class="top">
+    {
+      sidebar.map((e: any) =>
+        e.type === 'link' ? (
+          <li>
+            <a href={e.href} aria-current={e.isCurrent ? 'page' : undefined} class="item solo">
+              <Icon name={ICONS[e.href] ?? 'document'} size="1rem" />
+              <span>{e.label}</span>
+            </a>
+          </li>
+        ) : (
+          <li>
+            <details open={hasCurrent(e) || !e.collapsed}>
+              <summary>
+                <span>{e.label}</span>
+                <Icon name="down-caret" size="1rem" class="caret" />
+              </summary>
+              <ul>
+                {e.entries.map((c: any) => (
+                  <li>
+                    <a href={c.href} aria-current={c.isCurrent ? 'page' : undefined} class="item">
+                      <Icon name={ICONS[c.href] ?? 'document'} size="1rem" />
+                      <span>{c.label}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </li>
+        )
+      )
+    }
+  </ul>
+</SidebarPersister>
+
+<div class="md:sl-hidden">
+  <MobileMenuFooter />
+</div>
+
+<script>
+  document.querySelector('[data-open-search]')?.addEventListener('click', () => {
+    document.querySelector<HTMLButtonElement>('site-search button[data-open-modal]')?.click();
+  });
+  const root = document.documentElement;
+  const setHidden = (hidden: boolean) => {
+    root.toggleAttribute('data-sidebar-hidden', hidden);
+    try {
+      localStorage.setItem('ailoy-sidebar-hidden', hidden ? '1' : '');
+    } catch {}
+  };
+  document.querySelector('[data-hide-sidebar]')?.addEventListener('click', () => setHidden(true));
+  document.addEventListener('click', (ev) => {
+    if ((ev.target as Element).closest?.('[data-show-sidebar]')) setHidden(false);
+  });
+</script>
+
+<style>
+  .tools {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.25rem;
+  }
+  .search {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.6rem;
+    background: transparent;
+    border: 1px solid var(--sl-color-hairline);
+    color: var(--sl-color-gray-3);
+    font: inherit;
+    font-size: 0.875rem;
+    cursor: pointer;
+  }
+  .search:hover,
+  .hide:hover {
+    border-color: var(--sl-color-gray-4);
+    color: var(--sl-color-white);
+  }
+  .search kbd {
+    margin-inline-start: auto;
+    font: inherit;
+    font-size: 0.75rem;
+    color: var(--sl-color-gray-3);
+  }
+  .hide {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 2.1rem;
+    background: transparent;
+    border: 1px solid var(--sl-color-hairline);
+    color: var(--sl-color-gray-3);
+    cursor: pointer;
+  }
+  @media (min-width: 50rem) {
+    .hide {
+      display: flex;
+    }
+  }
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .top > li + li {
+    margin-top: 0.75rem;
+  }
+  summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--sl-color-white);
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  summary :global(.caret) {
+    color: var(--sl-color-gray-3);
+    transition: transform 0.15s ease;
+  }
+  details:not([open]) summary :global(.caret) {
+    transform: rotate(-90deg);
+  }
+  details ul {
+    margin-top: 0.15rem;
+  }
+  .item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.4rem 0.5rem;
+    font-size: 0.875rem;
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+    border-inline-start: 1px solid transparent;
+  }
+  .item :global(svg) {
+    flex-shrink: 0;
+    color: var(--sl-color-gray-3);
+  }
+  .item:hover {
+    color: var(--sl-color-white);
+    background: var(--sl-color-gray-6);
+  }
+  .item[aria-current='page'] {
+    color: var(--sl-color-white);
+    background: var(--sl-color-gray-6);
+    border-inline-start-color: var(--sl-color-accent);
+  }
+  .item[aria-current='page'] :global(svg) {
+    color: var(--sl-color-accent);
+  }
+  .solo {
+    font-weight: 500;
+  }
+</style>
