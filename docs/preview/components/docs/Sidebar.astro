@@ -82,7 +82,7 @@ const hasCurrent = (e: any): boolean => e.isCurrent || (e.entries ?? []).some(ha
   .tools {
     display: flex;
     gap: 0.5rem;
-    margin-bottom: 1.25rem;
+    margin-bottom: 1rem;
   }
   .search {
     flex: 1;
@@ -135,8 +135,9 @@ const hasCurrent = (e: any): boolean => e.isCurrent || (e.entries ?? []).some(ha
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.35rem 0.5rem;
+    padding: 6px 8px;
     font-size: 0.8125rem;
+    line-height: 20px;
     font-weight: 600;
     color: var(--sl-color-white);
     cursor: pointer;
@@ -156,12 +157,14 @@ const hasCurrent = (e: any): boolean => e.isCurrent || (e.entries ?? []).some(ha
   details ul {
     margin-top: 0.15rem;
   }
+  /* Same row as the On this page list: 20px line, 6px above and below, 32px in all. */
   .item {
     display: flex;
     align-items: center;
     gap: 0.6rem;
-    padding: 0.4rem 0.5rem;
+    padding: 6px 8px;
     font-size: 0.875rem;
+    line-height: 20px;
     color: var(--sl-color-gray-2);
     text-decoration: none;
     border-inline-start: 1px solid transparent;

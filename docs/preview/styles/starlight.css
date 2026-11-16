@@ -137,7 +137,32 @@ header.header {
   margin-top: 0;
 }
 
-/* On this page: a hairline down the side, the current section marked in yellow. */
+/* The three columns start on one line: the sidebar, the page and On this page all begin 24px
+   under the header, with 16px at the sides. */
+.sidebar-content {
+  padding-top: 1.5rem !important;
+}
+.right-sidebar-panel {
+  padding-top: 1.5rem !important;
+}
+/* The sidebar's scrollbar shows only while the pointer is over it. */
+.sidebar-pane {
+  scrollbar-color: transparent transparent;
+}
+.sidebar-pane:hover {
+  scrollbar-color: var(--sl-color-gray-5) transparent;
+}
+
+/* On this page: a hairline down the side, the current section marked in yellow. Rows match the
+   sidebar's: 20px line, 6px above and below. */
+starlight-toc h2 {
+  margin-bottom: 0.5rem;
+  line-height: 20px;
+}
+starlight-toc nav a {
+  padding-block: 6px !important;
+  line-height: 20px;
+}
 starlight-toc nav > ul {
   border-inline-start: 1px solid var(--sl-color-hairline);
 }
