@@ -109,6 +109,11 @@ header.header {
 .sidebar-pane {
   border-inline-end: 1px solid var(--sl-color-hairline);
 }
+/* No full-height line beside On this page: with the sidebar's, it boxed in the empty margin on wide
+   screens. The list keeps its own hairline. */
+.right-sidebar {
+  border-inline-start: 0 !important;
+}
 
 /* A hidden sidebar gives its width back to the page; the button left of the title brings it back. */
 @media (min-width: 50rem) {
@@ -273,6 +278,13 @@ starlight-tabs [role='tab'][aria-selected='true'] {
   color: var(--sl-color-white);
   border-bottom-color: var(--sl-color-accent);
   font-weight: 500;
+}
+
+/* Code shows exactly what to type: no ligatures turning -> or != into one glyph. */
+code,
+pre,
+.expressive-code {
+  font-variant-ligatures: none;
 }
 
 /* Inline code: a flat chip. */
