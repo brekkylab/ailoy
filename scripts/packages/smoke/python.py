@@ -25,6 +25,13 @@ def text(content):
 
 
 class FakeModel(BaseHTTPRequestHandler):
+    def do_GET(self):
+        # `GET /v1/models`: nothing listed, so a model is asked for by its desc.
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"data": []}')
+
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         messages = body["messages"]
@@ -64,9 +71,10 @@ async def main():
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeModel)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    # The `fake` org runs on vLLM, which reads its server from the environment.
-    os.environ["VLLM_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
-    ailoy.set_lang_model_provider("fake", "vllm")
+    # The `fake` org runs on the self-hosted backend, which reads its server from the
+    # environment.
+    os.environ["SELF_HOSTED_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
+    ailoy.set_lang_model_provider("fake", "self-hosted")
 
     # A whole turn -- model, tool, model -- through the extension's bridge to asyncio both ways.
     calls = []
@@ -125,19 +133,28 @@ async def main():
         check(bool(version), f"the console server answers (protocol {version})")
 
     if bin_dir and want("SMOKE_VM"):
-        # An agent's shell tool, in a VM session that sees a host directory.
-        host = tempfile.mkdtemp(prefix="ailoy-smoke-host-")
-        open(os.path.join(host, "from-host.txt"), "w").write("by path")
-        console = await virtx.ConsoleClient.builder().image(virtx.Recipe("alpine:latest")).mount(host, "/host").build()
-        agent = await ailoy.AgentBuilder("fake/model").shell_tool().console(console).build()
+        # An agent's shell tool, in a sandbox that sees a volume.
+        client = virtx.Client.spawn()
+        if not any(i.reference.split("/")[-1] == "alpine:latest" for i in await client.list_image()):
+            async for entry in client.pull_image("alpine:latest"):
+                if isinstance(entry.entry, virtx.ImageJobEnd) and entry.entry.error:
+                    raise RuntimeError(f"pulling alpine:latest: {entry.entry.error}")
+        volume = await client.create_volume()
+        await volume.write_file("from-host.txt", "by volume")
+        sandbox = await client.create_sandbox(
+            "alpine:latest", volumes=[virtx.SandboxVolume(volume=volume.name, path="/host")]
+        )
+        agent = await ailoy.AgentBuilder("fake/model").sandbox(sandbox).build()
         cmd = "uname -m; cat /host/from-host.txt; echo written > /host/from-vm.txt"
         outputs = await run(agent, "shell " + json.dumps({"cmd": cmd}))
         said = json.dumps(outputs[1]["message"]["contents"]) if len(outputs) > 1 else ""
         print(f"  vm: {said}")
-        check("by path" in said, "the agent's shell tool reads the session's mount")
-        check(open(os.path.join(host, "from-vm.txt")).read().strip() == "written", "the host sees the VM's write")
+        check("by volume" in said, "the agent's shell tool reads the sandbox's volume")
+        check((await volume.read_file("from-vm.txt")).decode().strip() == "written", "the volume keeps the sandbox's write")
         await agent.close()
-        await console.close()
+        await sandbox.remove()
+        await volume.remove()
+        client.close()
 
     server.shutdown()
     print("FAILED: " + "; ".join(failures) if failures else "ALL PASS", flush=True)

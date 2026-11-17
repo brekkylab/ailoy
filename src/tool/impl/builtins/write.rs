@@ -1,7 +1,3 @@
-use std::path::Path;
-
-use virtx::protocol::Error;
-
 use crate::{
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
@@ -31,7 +27,7 @@ pub fn get_write_tool_desc() -> ToolDesc {
 }
 
 pub fn get_write_tool_func() -> ToolFunc {
-    tool_func!(async |args: Value, console: &mut ConsoleClient| -> Value {
+    tool_func!(async |args: Value, sandbox: &Sandbox| -> Value {
         let Some(path) = args.pointer("/path").and_then(|v| v.as_str()) else {
             return crate::to_value!({
                 "error": "missing required parameter: path",
@@ -45,38 +41,8 @@ pub fn get_write_tool_func() -> ToolFunc {
             });
         };
 
-        // virtx `write` does not create missing parent directories (`NOT_FOUND`).
-        // This tool does, only when that miss actually happens.
-        let mut wrote = console.write(path, content.as_bytes().to_vec(), None).await;
-
-        if wrote.as_ref().err().and_then(|e| e.code()) == Some(Error::NOT_FOUND)
-            && let Some(parent) = Path::new(path)
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-        {
-            let parent = parent.to_string_lossy().into_owned();
-            match console.exec(["mkdir", "-p", &parent], None).await {
-                Ok(r) if r.code == 0 => {
-                    wrote = console.write(path, content.as_bytes().to_vec(), None).await;
-                }
-                Ok(r) => {
-                    return crate::to_value!({
-                        "error": format!(
-                            "write {path}: mkdir {parent} failed (exit {}): {}",
-                            r.code,
-                            String::from_utf8_lossy(&r.stderr).trim()
-                        ),
-                        "phase": "io",
-                    });
-                }
-                Err(e) => {
-                    return crate::to_value!({
-                        "error": format!("write {path}: mkdir {parent}: {e}"),
-                        "phase": "io",
-                    });
-                }
-            }
-        }
+        // Its directory is made if it is not there.
+        let wrote = crate::console::write(sandbox, path, content).await;
 
         match wrote {
             Ok(_) => crate::to_value!({
@@ -96,26 +62,28 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, message::Message, test_console, to_value};
+    use crate::{console::Sandbox, datatype::Value, message::Message, test_sandbox, to_value};
 
-    async fn call(args: Value) -> Message {
+    /// Where a test puts the file a call works on.
+    const PATH: &str = "/tmp/subject";
+
+    async fn call(sandbox: &Sandbox, args: Value) -> Message {
         let f = get_write_tool_func();
-        let mut console = test_console().await;
-        f.call(args, "1", &mut console)
-            .next()
-            .await
-            .unwrap()
-            .message
+        f.call(args, "1", sandbox).next().await.unwrap().message
     }
 
     #[tokio::test]
     async fn test_write_creates_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("hello.txt");
-        let msg = call(to_value!({
-            "path": path.to_string_lossy().to_string(),
-            "content": "ailoy",
-        }))
+        // In directories that are not there yet, which the tool makes.
+        let path = "/tmp/new/dir/hello.txt";
+        let sandbox = test_sandbox().await;
+        let msg = call(
+            &sandbox,
+            to_value!({
+                "path": path,
+                "content": "ailoy",
+            }),
+        )
         .await;
         let ok = msg.contents[0]
             .as_value()
@@ -123,25 +91,34 @@ mod tests {
             .pointer("/ok")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        assert!(ok);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "ailoy");
+        assert!(ok, "{msg:?}");
+        assert_eq!(
+            crate::console::read(&sandbox, path).await.unwrap(),
+            b"ailoy"
+        );
     }
 
     #[tokio::test]
     async fn test_write_overwrites_existing() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "old").unwrap();
-        call(to_value!({
-            "path": tmp.path().to_string_lossy().to_string(),
-            "content": "new",
-        }))
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, "old").await.unwrap();
+        call(
+            &sandbox,
+            to_value!({
+                "path": PATH,
+                "content": "new",
+            }),
+        )
         .await;
-        assert_eq!(std::fs::read_to_string(tmp.path()).unwrap(), "new");
+        assert_eq!(
+            String::from_utf8(crate::console::read(&sandbox, PATH).await.unwrap()).unwrap(),
+            "new"
+        );
     }
 
     #[tokio::test]
     async fn test_write_validation_errors() {
-        let msg = call(to_value!({ "content": "x" })).await;
+        let msg = call(&test_sandbox().await, to_value!({ "content": "x" })).await;
         let phase = msg.contents[0]
             .as_value()
             .unwrap()

@@ -38,3 +38,6 @@ pub use desc::*;
 pub use func::*;
 pub use r#impl::*;
 pub use provider::*;
+
+/// What a sandbox tool runs a command with, and reads and writes a file with.
+pub use crate::console::{ExecOutput, Sandbox, exec, read, resolve, write};

@@ -11,11 +11,12 @@ import argparse
 import json
 import os
 import random
+import subprocess
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from admin import SHOT_ADDRESSES, Admin, AdminError, connect  # noqa: E402
+from admin import Admin, AdminError  # noqa: E402
 
 # `--json`: print results as they come, for a program to read.
 AS_JSON = False
@@ -106,15 +107,14 @@ def show_map(result):
 
 
 def screenshot(name):
-    """Have the game's console take a screenshot, and return where it put it."""
-    with connect(SHOT_ADDRESSES, 10) as conn:
-        conn.settimeout(60)
-        conn.sendall(f"{name}\n".encode())
-        answer = conn.makefile("rb").readline().decode().strip()
-    status, _, rest = answer.partition(" ")
-    if status != "ok":
-        raise AdminError(f"the screenshot failed: {rest or 'no answer'}")
-    return rest
+    """Save what the viewer's screen shows to `/artifacts/shots/NAME.png`, and return the path."""
+    shots = "/artifacts/shots"
+    os.makedirs(shots, exist_ok=True)
+    path = f"{shots}/{name}.png"
+    done = subprocess.run(["display", "shot", path], capture_output=True, text=True, timeout=30)
+    if done.returncode != 0:
+        raise AdminError(f"the screenshot failed: {done.stderr.strip() or 'no answer'}")
+    return path
 
 
 def main():

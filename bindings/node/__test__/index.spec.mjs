@@ -20,36 +20,17 @@ const {
   setLangModelProvider,
   setToolProvider,
 } = ailoy
-const { ConsoleClient, Recipe, ensureVirtx } = virtx
+const { Client } = virtx
 
-// ---- the console, from @brekkylab/virtx -----------------------------------------------------
+// ---- the sandbox, from @brekkylab/virtx -----------------------------------------------------
 
 test('virtx is a dependency, not re-exported', () => {
-  assert.equal(ailoy.ConsoleClient, undefined)
-  assert.equal(typeof ConsoleClient, 'function')
+  assert.equal(ailoy.Sandbox, undefined)
+  assert.equal(typeof Client, 'function')
 })
 
-test('an agent takes only a virtx console', () => {
-  assert.throws(() => new AgentBuilder('any/model').console({}), { code: 'INVALID_ARG' })
-})
-
-test('a console without a server fails with virtx’s code', async () => {
-  // The builder looks for the server under $VIRTX_HOME/bin when it is made, so an empty home
-  // is a host with no server, whatever this one has.
-  const home = process.env.VIRTX_HOME
-  process.env.VIRTX_HOME = mkdtempSync(join(tmpdir(), 'ailoy-no-server-'))
-  try {
-    await assert.rejects(ConsoleClient.builder().build(), { code: 'VIRTX_ERROR' })
-  } finally {
-    if (home === undefined) delete process.env.VIRTX_HOME
-    else process.env.VIRTX_HOME = home
-  }
-})
-
-test('a console the server refuses fails with the refusal’s code', async () => {
-  await ensureVirtx()
-  // A session boots on an image, and this builder names none.
-  await assert.rejects(ConsoleClient.builder().build(), { code: 'INVALID_PARAMS', message: /image/ })
+test('an agent takes only a virtx sandbox', () => {
+  assert.throws(() => new AgentBuilder('any/model').sandbox({}), { code: 'INVALID_ARG' })
 })
 
 // ---- the builder and the registries --------------------------------------------------------
@@ -67,8 +48,17 @@ test('an object that does not fit says what was expected', () => {
   })
 })
 
+/**
+ * Run the models of `org` on the self-hosted backend, against a port nothing listens
+ * on, for an agent that is built but never asked.
+ */
+const serveNowhere = (org) => {
+  process.env.SELF_HOSTED_BASE_URL = 'http://127.0.0.1:9/v1'
+  setLangModelProvider(org, 'self-hosted')
+}
+
 test('a browser connects only when used, and needs no console', async () => {
-  setLangModelProvider('fake-browser', 'vllm')
+  serveNowhere('fake-browser')
   const agent = await new AgentBuilder('fake-browser/model').browser({ startUrl: 'https://example.com' }).build()
   await agent.close()
 })
@@ -85,7 +75,7 @@ test('a browser can be less careful', () => {
 })
 
 test('an isolated browser has options of its own', async () => {
-  setLangModelProvider('fake-browser', 'vllm')
+  serveNowhere('fake-browser')
   const agent = await new AgentBuilder('fake-browser/model')
     .browser({ isolated: true, headless: true, executable: '/nonexistent/chrome', profile: '/nonexistent/profile' })
     .build()
@@ -96,7 +86,7 @@ test('an isolated browser has options of its own', async () => {
 })
 
 test('an agent without a browser cannot start one', async () => {
-  setLangModelProvider('fake-browser', 'vllm')
+  serveNowhere('fake-browser')
   const agent = await new AgentBuilder('fake-browser/model').build()
   await assert.rejects(agent.startBrowser(), { code: 'AILOY_ERROR', message: /no browser/ })
   await agent.close()
@@ -119,10 +109,16 @@ const lastContent = (messages) => {
 const fakeModel = (call = { name: 'add', arguments: { a: 2, b: 3 } }) =>
   new Promise((resolve) => {
     const server = createServer((req, res) => {
+      if (req.method === 'GET') {
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ data: server.listed.map((id) => ({ id })) }))
+        return
+      }
       let body = ''
       req.on('data', (chunk) => (body += chunk))
       req.on('end', () => {
-        const { messages, stream } = JSON.parse(body)
+        const { model, messages, stream } = JSON.parse(body)
+        server.seen.push([model, req.headers.authorization ?? null])
         const answered = messages[messages.length - 1].role === 'tool'
         const message = answered
           ? { role: 'assistant', content: `the tool said ${lastContent(messages)}` }
@@ -154,16 +150,21 @@ const fakeModel = (call = { name: 'add', arguments: { a: 2, b: 3 } }) =>
         res.end('data: [DONE]\n\n')
       })
     })
+    // Every request's model id and `authorization` header, as sent.
+    server.seen = []
+    // The ids `GET /v1/models` lists.
+    server.listed = []
     server.listen(0, '127.0.0.1', () => resolve(server))
   })
 
 /**
- * Run the models of `org` on the vLLM backend, against `server`. vLLM reads its server from
- * the environment when a model is built, so the agent or model is built right after.
+ * Run the models of `org` on the self-hosted backend, against `server`. The backend
+ * reads its server from the environment when a model is built, so the agent or model is built
+ * right after.
  */
 const serve = (org, server) => {
-  process.env.VLLM_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
-  setLangModelProvider(org, 'vllm')
+  process.env.SELF_HOSTED_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
+  setLangModelProvider(org, 'self-hosted')
 }
 
 const ADD = {
@@ -247,6 +248,79 @@ test('breaking out of a turn ends it where it stands', async (t) => {
   assert.deepEqual(calls, [])
   // The agent is free again for the next turn.
   assert.ok(Array.isArray(agent.history))
+})
+
+test('a server of your own keeps the desc', async (t) => {
+  const server = await fakeModel()
+  t.after(() => server.close())
+  const base_url = `http://127.0.0.1:${server.address().port}/v1`
+  setLangModelProvider('meta-llama', {
+    backend: 'self-hosted',
+    base_url,
+    api_key: 'k',
+    models: { 'Llama-3.3-70B-Instruct': 'llama3.3:70b' },
+  })
+  setLangModelProvider('Qwen', { backend: 'self-hosted', base_url })
+  try {
+    assert.equal(getLangModelProvider('meta-llama/Llama-3.3-70B-Instruct'), 'self-hosted')
+    server.listed = ['qwen/qwen3-8b', 'qwen3.5-27b']
+    const messages = [{ role: 'user', contents: [{ type: 'text', text: 'hi' }] }]
+    for (const desc of [
+      'meta-llama/Llama-3.3-70B-Instruct',
+      'meta-llama/Llama-3.1-8B-Instruct',
+      'Qwen/Qwen3-8B',
+      'Qwen/Qwen3.5-27B',
+    ]) {
+      await (await LangModel.create(desc)).infer(messages)
+    }
+    // The server is sent its own id for the model: mapped by `models`, listed by the server
+    // for the desc or the name alone, or the desc as it is.
+    assert.deepEqual(server.seen, [
+      ['llama3.3:70b', 'Bearer k'],
+      ['meta-llama/Llama-3.1-8B-Instruct', 'Bearer k'],
+      ['qwen/qwen3-8b', null],
+      ['qwen3.5-27b', null],
+    ])
+  } finally {
+    removeLangModelProvider('meta-llama')
+    setLangModelProvider('Qwen', 'api')
+  }
+
+  assert.throws(() => setLangModelProvider('x', { backend: 'cli', base_url }), {
+    code: 'INVALID_ARG',
+    message: /self-hosted/,
+  })
+  assert.throws(() => setLangModelProvider('x', { backend: 'self-hosted' }), { code: 'INVALID_ARG', message: /base_url/ })
+  assert.throws(() => setLangModelProvider('x', { backend: 'self-hosted', baseUrl: base_url }), {
+    code: 'INVALID_ARG',
+    message: /baseUrl/,
+  })
+  assert.throws(() => setLangModelProvider('x', { backend: 'self-hosted', base_url: '' }), {
+    code: 'INVALID_ARG',
+    message: /base_url/,
+  })
+  assert.throws(() => setLangModelProvider('x', { backend: 'self-hosted', base_url, models: ['a'] }), {
+    code: 'INVALID_ARG',
+  })
+  assert.equal(getLangModelProvider('x'), null)
+})
+
+test('the self-hosted backend reads its server from the environment', async (t) => {
+  const server = await fakeModel()
+  t.after(() => server.close())
+  setLangModelProvider('env-served', 'self-hosted')
+  const messages = [{ role: 'user', contents: [{ type: 'text', text: 'hi' }] }]
+  try {
+    delete process.env.SELF_HOSTED_BASE_URL
+    await assert.rejects(LangModel.create('env-served/model'), { message: /SELF_HOSTED_BASE_URL/ })
+
+    process.env.SELF_HOSTED_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`
+    await (await LangModel.create('env-served/model')).infer(messages)
+    assert.deepEqual(server.seen, [['env-served/model', null]])
+  } finally {
+    delete process.env.SELF_HOSTED_BASE_URL
+    removeLangModelProvider('env-served')
+  }
 })
 
 test('a model runs without an agent', async (t) => {
@@ -397,52 +471,32 @@ test('a factory that throws fails the build', async (t) => {
   await assert.rejects(new AgentBuilder('broken/x').build(), { message: /no models today/ })
 })
 
-// ---- a shared console, against the console server virtx starts by default ---------------
+// ---- the caller's sandbox, against the server virtx starts by default ---------------------
 
-test('an agent shares its console, and closing the agent leaves it open', async () => {
-  const console_ = await ConsoleClient.builder()
-    .image(new Recipe('python:3.12-slim-trixie'))
-    .network(false)
-    .build()
-  try {
-    // Never asked anything, so the model only has to be built.
-    process.env.VLLM_BASE_URL = 'http://127.0.0.1:9/v1'
-    setLangModelProvider('fake-console', 'vllm')
-    const agent = await new AgentBuilder('fake-console/model').shellTool().console(console_).build()
-    await agent.close()
-    const result = await console_.exec(['echo', 'still here'])
-    assert.equal(result.stdout.toString().trim(), 'still here')
-  } finally {
-    await console_.close()
-  }
-})
-
-test('an agent runs its console tools in the shared session, until the console closes', async (t) => {
-  const server = await fakeModel({ name: 'shell', arguments: { cmd: 'echo relayed > /tmp/out.txt' } })
+test('an agent runs its console tools in the caller’s sandbox, until it is removed', async (t) => {
+  const server = await fakeModel({ name: 'shell', arguments: { cmd: 'echo shared > /tmp/out.txt' } })
   t.after(() => server.close())
+  const client = Client.spawn()
+  t.after(() => client.close())
+  await client.pullImage('python:3.12-slim').complete()
+  const sandbox = await client.createSandbox('python:3.12-slim', { network: false, memoryMib: 1024 })
 
-  const console_ = await ConsoleClient.builder()
-    .image(new Recipe('python:3.12-slim-trixie'))
-    .network(false)
-    .build()
   serve('fake-shell', server)
-  const agent = await new AgentBuilder('fake-shell/model').shellTool().console(console_).build()
-  const later = await Agent.fromSpec({ model: 'fake-shell/model', tools: [] }, { console: console_ })
-  try {
-    const outputs = []
-    for await (const output of agent.run('write it')) outputs.push(output)
-    assert.equal(outputs[1].message.role, 'tool')
-    const result = await console_.exec(['cat', '/tmp/out.txt'])
-    assert.equal(result.stdout.toString(), 'relayed\n')
-  } finally {
-    await console_.close()
-  }
+  const agent = await new AgentBuilder('fake-shell/model').sandbox(sandbox).build()
+  const outputs = []
+  for await (const output of agent.run('write it')) outputs.push(output)
+  assert.equal(outputs[1].message.role, 'tool')
+  // The sandbox is still the caller's to use.
+  assert.equal(await sandbox.readText('tmp/out.txt'), 'shared\n')
 
-  // The session was the console's: an agent attached to it fails once it is closed.
-  const shell = await new AgentBuilder('fake-shell/model').shellTool().console(console_).build()
-  await assert.rejects(async () => {
-    for await (const _ of shell.run('write it again'));
-  }, { code: 'CONSOLE_BROKEN', message: /closed/ })
+  // Removed, it is gone for an agent too.
+  const later = await new AgentBuilder('fake-shell/model').sandbox(sandbox).build()
+  const fromSpec = await Agent.fromSpec({ model: 'fake-shell/model', tools: [] }, { sandbox })
+  await sandbox.remove()
+  const after = []
+  for await (const output of later.run('write it again')) after.push(output)
+  assert.match(JSON.stringify(after[1].message.contents), /404/)
   await agent.close()
   await later.close()
+  await fromSpec.close()
 })
