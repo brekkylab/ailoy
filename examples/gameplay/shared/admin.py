@@ -31,11 +31,8 @@ SERVER_CONSOLE = 121
 SERVER_GAMESCRIPT = 124
 SERVER_RCON_END = 125
 
-# Where the game is: the same address from either console. In the game's own it is the
-# server itself, and from the agent's it is the port the game's console published, which
-# every console on the host reaches at 127.0.0.1.
-ADMIN_ADDRESSES = [("127.0.0.1", 3977)]
-SHOT_ADDRESSES = [("127.0.0.1", 5902)]
+# Where the game is: in the sandbox, beside the agent's commands.
+ADMIN_ADDRESS = ("127.0.0.1", 3977)
 
 UPDATE_DATE = 0
 UPDATE_GAMESCRIPT = 9
@@ -74,18 +71,16 @@ def string(s):
     return s.encode() + b"\0"
 
 
-def connect(addresses, timeout):
-    """A connection to the first of `addresses` that takes one, trying until `timeout`."""
+def connect(address, timeout):
+    """A connection to `address`, trying until `timeout`."""
     deadline = time.monotonic() + timeout
     while True:
-        for address in addresses:
-            try:
-                return socket.create_connection(address, timeout=5)
-            except OSError:
-                pass
+        try:
+            return socket.create_connection(address, timeout=5)
+        except OSError:
+            pass
         if time.monotonic() > deadline:
-            where = " or ".join(f"{h}:{p}" for h, p in addresses)
-            raise AdminError(f"the game does not answer at {where}")
+            raise AdminError(f"the game does not answer at {address[0]}:{address[1]}")
         time.sleep(0.5)
 
 
@@ -94,7 +89,7 @@ class Admin:
 
     def __init__(self, password=None, timeout=10):
         password = password or os.environ.get("OPENTTD_ADMIN_PASSWORD", "ailoy")
-        self.sock = connect(ADMIN_ADDRESSES, timeout)
+        self.sock = connect(ADMIN_ADDRESS, timeout)
         self.buf = b""
         self.send(ADMIN_JOIN, string(password) + string("ailoy") + string("1"))
         while True:

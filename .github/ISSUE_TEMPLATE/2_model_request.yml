@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        [Model providers](https://ailoy.co/docs/guide/model-providers/) lists what Ailoy runs now, and a newer model from a maker listed there may already run by its name. Search the [model requests](https://github.com/brekkylab/ailoy/issues?q=is%3Aissue%20label%3A%22model%20request%22) first.
+        [Model providers](https://ailoy.co/docs/guides/model-providers/) lists what Ailoy runs now, and a newer model from a maker listed there may already run by its name. Search the [model requests](https://github.com/brekkylab/ailoy/issues?q=is%3Aissue%20label%3A%22model%20request%22) first.
 
   - type: input
     id: model

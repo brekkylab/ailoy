@@ -36,3 +36,6 @@ features = ["pyo3/extension-module"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.uv.sources]
+virtx = { path = "../../../virtx/virtx-py", editable = true }

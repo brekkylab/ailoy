@@ -1,13 +1,7 @@
-use std::sync::Arc;
-
-use tokio::sync::Mutex;
-use virtx::console::ConsoleClient;
-
 use crate::{
     agent::{Agent, AgentSpec, AgentState, ContextManager},
     browser::{Browser, BrowserSession},
     datatype::Value,
-    memory::Memory,
     message::Message,
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -39,9 +33,7 @@ pub struct AgentBuilder {
 
     history: Vec<Message>,
 
-    console: Option<Arc<Mutex<Option<ConsoleClient>>>>,
-
-    memory: Option<Memory>,
+    sandbox: Option<virtx::Sandbox>,
 
     context_manager: Option<ContextManager>,
 
@@ -55,8 +47,7 @@ impl AgentBuilder {
         Self {
             spec: AgentSpec::new(model),
             history: Vec::new(),
-            console: None,
-            memory: None,
+            sandbox: None,
             context_manager: None,
             browser: None,
         }
@@ -78,18 +69,6 @@ impl AgentBuilder {
         self
     }
 
-    /// Append the canonical local-execution toolset.
-    /// See [`AgentSpec::system_tools`] for the per-family tool selection.
-    pub fn system_tools(mut self) -> Self {
-        self.spec = self.spec.system_tools();
-        self
-    }
-
-    pub fn shell_tool(mut self) -> Self {
-        self.spec = self.spec.shell_tool();
-        self
-    }
-
     pub fn web_search_tool(mut self, engines: Vec<WebSearchEngineKind>) -> Self {
         self.spec = self.spec.web_search_tool(engines);
         self
@@ -108,40 +87,25 @@ impl AgentBuilder {
         self
     }
 
-    /// Run this agent's console tools in `console`. It need not be started: each tool
-    /// batch that has a console tool starts it.
+    /// Run this agent's sandbox tools in `sandbox`, with whatever volumes it was made with.
     ///
-    /// Nothing builds a console implicitly, since that means choosing a console server.
-    /// Without one, pure tools still run and console tools fail with an error.
-    pub fn console(mut self, console: ConsoleClient) -> Self {
-        self.console = Some(Arc::new(Mutex::new(Some(console))));
-        self
-    }
-
-    /// Share a console slot with another `Agent` built elsewhere.
-    pub fn shared_console(mut self, console: Arc<Mutex<Option<ConsoleClient>>>) -> Self {
-        self.console = Some(console);
+    /// Also adds [`AgentSpec::sandbox_tools`] to the spec: a shell and file tools there, in
+    /// the style of the model's org. The sandbox's abins are listed in the system message as
+    /// skills, like [`skill`](Self::skill)'s.
+    ///
+    /// Nothing makes a sandbox implicitly, since that means choosing a virtx server.
+    /// Without one, pure tools still run and sandbox tools fail with an error.
+    pub fn sandbox(mut self, sandbox: virtx::Sandbox) -> Self {
+        self.spec = self.spec.sandbox_tools();
+        self.sandbox = Some(sandbox);
         self
     }
 
     /// Give the agent a browser and the `browser_*` tools. The tools reach the
-    /// browser from this process, not from the [`console`](Self::console). Nothing starts until
+    /// browser from this process, not from the [`sandbox`](Self::sandbox). Nothing starts until
     /// the agent first uses it, or [`Agent::start_browser`].
     pub fn browser(mut self, browser: Browser) -> Self {
         self.browser = Some(browser);
-        self
-    }
-
-    /// Let this agent remember into `memory`.
-    ///
-    /// Adds the `mem_search` and `mem_insert` tools; they are not spec tools because the
-    /// store is a per-agent value, not a name with a [`ToolProvider`](crate::tool::ToolProvider).
-    ///
-    /// The store must already exist (`mem init`); a missing file is reported by the first
-    /// memory tool call, not by [`build`](Self::build). Memory tools run on the
-    /// [`console`](Self::console), so one is required too.
-    pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
-        self.memory = Some(memory.into());
         self
     }
 
@@ -170,23 +134,19 @@ impl AgentBuilder {
     }
 
     /// Materialise the agent via [`Agent::try_with_state`], which is async
-    /// because it builds the model and reads the skills through the console.
+    /// because it builds the model and reads the skills through the sandbox.
     pub async fn build(self) -> anyhow::Result<Agent> {
         let Self {
             spec,
             history,
-            console,
-            memory,
+            sandbox,
             context_manager,
             browser,
         } = self;
 
         let mut state = AgentState::new().with_history(history);
-        if let Some(console) = console {
-            state = state.with_console_slot(console);
-        }
-        if let Some(memory) = memory {
-            state = state.with_memory(memory);
+        if let Some(sandbox) = sandbox {
+            state = state.with_sandbox(sandbox);
         }
         if let Some(browser) = browser {
             browser.check()?;
@@ -209,7 +169,7 @@ mod tests {
     use crate::{
         message::{MessageDeltaOutput, MessageOutput, Part, Role},
         model::{InferLangModel, LangModelOptions, LangModelProvider, set_lang_model_provider},
-        test_console,
+        test_sandbox,
     };
 
     /// The org the tests build their model under.
@@ -278,24 +238,54 @@ mod tests {
     async fn test_builder_no_instruction() {
         let agent = builder().build().await.unwrap();
         assert!(agent.history().is_empty());
+        assert!(agent.tool_descs.is_empty(), "no sandbox, no system tools");
     }
 
-    /// `console()` puts the supplied console into `state.console`.
+    /// `sandbox()` puts the supplied sandbox into `state.sandbox`.
     #[tokio::test]
-    async fn test_builder_console_is_applied() {
+    async fn test_builder_sandbox_is_applied() {
         let agent = builder()
-            .console(test_console().await)
+            .sandbox(test_sandbox().await)
             .build()
             .await
             .unwrap();
+        assert!(agent.tool_descs.iter().any(|t| t.name == "shell"));
 
-        let mut guard = agent.state.console.lock().await;
-        let console = guard.as_mut().expect("the supplied console is in the slot");
-        let result = console
-            .exec(["sh", "-c", "echo ok"], None)
+        let sandbox = agent
+            .state
+            .sandbox
+            .as_ref()
+            .expect("the supplied sandbox is held");
+        let result = crate::console::exec(sandbox, ["sh", "-c", "echo ok"], None)
             .await
             .expect("exec failed");
-        assert_eq!(result.stdout, b"ok\n");
+        assert_eq!(result.stdout, "ok\n");
+    }
+
+    /// A sandbox's abins are listed as skills, at the `SKILL.md` virtx puts beside them.
+    #[tokio::test]
+    async fn test_builder_lists_the_sandbox_abins_as_skills() {
+        let sandbox = test_sandbox().await;
+        let with_abin = sandbox
+            .client()
+            .create_sandbox(&virtx::SandboxCreateArgs::new("python:3.12-slim").abin("index"))
+            .await
+            .expect("making a sandbox with the index abin");
+        let agent = builder()
+            .instruction("You are a test agent.")
+            .sandbox(with_abin.clone())
+            .build()
+            .await
+            .unwrap();
+        with_abin.remove().await.ok();
+        sandbox.remove().await.ok();
+
+        let text = system_text(&agent).expect("a system message");
+        assert!(text.starts_with("You are a test agent."), "{text}");
+        assert!(
+            text.contains("- `index` at /abin/skills/index/SKILL.md."),
+            "{text}"
+        );
     }
 
     #[tokio::test]
@@ -342,33 +332,5 @@ mod tests {
 
         assert_eq!(agent.history().len(), 2);
         assert_eq!(system_text(&agent).as_deref(), Some("stored instruction"));
-    }
-
-    /// `memory()` lands on the state, which decides whether the agent gets memory tools.
-    #[tokio::test]
-    async fn test_builder_memory_is_applied() {
-        let agent = builder()
-            .memory(Memory::new("/work/notes.sqlite"))
-            .build()
-            .await
-            .unwrap();
-
-        assert_eq!(
-            agent.state.memory,
-            Some(Memory::new("/work/notes.sqlite")),
-            "the memory the builder was given is the one on the state"
-        );
-    }
-
-    /// A path converts into the equivalent `Memory`.
-    #[tokio::test]
-    async fn test_builder_memory_takes_a_path() {
-        let agent = builder()
-            .memory(std::path::Path::new("/work/notes.sqlite"))
-            .build()
-            .await
-            .unwrap();
-
-        assert_eq!(agent.state.memory, Some(Memory::new("/work/notes.sqlite")));
     }
 }

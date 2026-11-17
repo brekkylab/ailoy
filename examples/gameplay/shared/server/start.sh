@@ -1,12 +1,12 @@
 #!/bin/sh
-# Start OpenTTD as a dedicated server run by the bridge, a client watching it on a virtual
-# display, and a VNC server showing that display.
+# Start OpenTTD as a dedicated server run by the bridge, and a client watching it on virtx's
+# `display`, which serves its screen over VNC.
 #
 #     sh start.sh WIDTHxHEIGHT PASSWORD [SAVEGAME]
 #
-# The host publishes the VNC server (5900), the game's admin port (3977) and `shot.py` (5902),
-# at the same ports on its loopback but the viewer's. A new game unless SAVEGAME, a file in the saves folder, is given. Everything is left
-# running when this returns; the server's process id is in /tmp/openttd.pid.
+# VNC listens at 5900 and the game's admin port at 3977. A new game unless SAVEGAME, a file in
+# the saves folder, is given. It prints `ready` once all of it is up, and runs until the game's
+# server ends, so it is the one job the game is.
 set -eu
 SIZE=$1
 PASSWORD=$2
@@ -14,8 +14,8 @@ SAVE=${3:-}
 HERE=$(dirname "$0")
 LOGS=/artifacts/logs
 
-# Saved games, and the scripts the game finds, under XDG's data folder on the mount so that
-# the saves outlast the console. The settings are written fresh each time, out of the way.
+# Saved games, and the scripts the game finds, under XDG's data folder on the volume so that
+# the saves outlast the sandbox. The settings are written fresh each time, out of the way.
 export XDG_DATA_HOME=/artifacts/user XDG_CONFIG_HOME=/tmp/config
 DATA=$XDG_DATA_HOME/openttd
 SERVER=$XDG_CONFIG_HOME/openttd
@@ -30,10 +30,14 @@ cp -r "$HERE/game/AiloyBridge" "$DATA/game/"
 #
 # The game is paused but for when the agent acts or waits, so it neither pauses for a
 # client joining nor for there being none. A script gets far more work done in a tick than
-# by default, so that finding a road takes game hours, not weeks.
+# by default, so that finding a road takes game hours, not weeks. A save is written before
+# `save` answers, so a file copied once it has is whole.
 cat >"$SERVER/openttd.cfg" <<EOF
 [version]
 ini_version = 7
+
+[gui]
+threaded_saves = false
 
 [game_creation]
 map_x = ${OPENTTD_MAP_X:-8}
@@ -63,8 +67,7 @@ printf '[network]\nserver_name = ailoy\nclient_name = server\nparticipate_survey
 printf '[network]\nadmin_password = %s\n' "${OPENTTD_ADMIN_PASSWORD:-ailoy}" >"$SERVER/secrets.cfg"
 
 # The viewer's settings, next to its own `openttd.cfg`, and never written back.
-printf '[version]\nini_version = 7\n\n[misc]\nresolution = %s,%s\nvideo_hw_accel = false\n' \
-    "${SIZE%x*}" "${SIZE#*x}" >"$VIEWER/openttd.cfg"
+printf '[version]\nini_version = 7\n\n[misc]\nvideo_hw_accel = false\n' >"$VIEWER/openttd.cfg"
 printf '[network]\nclient_name = viewer\nparticipate_survey = no\n' >"$VIEWER/private.cfg"
 
 if [ -n "$SAVE" ]; then
@@ -73,8 +76,8 @@ else
     GAME="-g -G ${OPENTTD_SEED:-$(date +%s)}"
 fi
 # shellcheck disable=SC2086
-nohup /usr/games/openttd -D 127.0.0.1:3979 $GAME -x -d script=4 >"$LOGS/server.log" 2>&1 &
-echo $! >/tmp/openttd.pid
+/usr/games/openttd -D 127.0.0.1:3979 $GAME -x -d script=4 >"$LOGS/server.log" 2>&1 &
+SERVER_PID=$!
 
 # Open the company, pause, and wait for the bridge to answer.
 python3 "$HERE/ready.py" >"$LOGS/ready.log" 2>&1 || {
@@ -83,17 +86,18 @@ python3 "$HERE/ready.py" >"$LOGS/ready.log" 2>&1 || {
     exit 1
 }
 
-export DISPLAY=:99
-nohup Xvfb :99 -screen 0 "${SIZE}x24" -nolisten tcp >"$LOGS/xvfb.log" 2>&1 &
-for _ in $(seq 50); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.1; done
-
-# No sound and no music: nothing would carry them to the viewer. `#255` joins as a
-# spectator; a player can still open a company of their own from the game's menu.
-nohup /usr/games/openttd -c "$VIEWER/openttd.cfg" -x -r "$SIZE" -s null -m null \
+# The viewer, on `display`'s screen `:99`, which `ttd.py look` takes its screenshots of. No
+# sound and no music: nothing would carry them to the viewer. `#255` joins as a spectator; a
+# player can still open a company of their own from the game's menu.
+DISPLAY_VNC_PASSWORD=$PASSWORD display run --size "$SIZE" -- \
+    /usr/games/openttd -c "$VIEWER/openttd.cfg" -x -r "$SIZE" -s null -m null \
     -n "127.0.0.1:3979#255" >"$LOGS/viewer.log" 2>&1 &
+for _ in $(seq 100); do grep -qx ready "$LOGS/viewer.log" && break; sleep 0.1; done
+grep -qx ready "$LOGS/viewer.log" || {
+    echo "the viewer's screen did not come up:" >&2
+    tail -n 20 "$LOGS/viewer.log" >&2
+    exit 1
+}
 
-# `-threads` so that input is taken while a frame is being sent: the game redraws all the
-# time, and with one thread a click waits behind the frames, until the next input comes.
-nohup x11vnc -display :99 -localhost -rfbport 5900 -forever -shared -passwd "$PASSWORD" \
-    -threads -quiet >"$LOGS/x11vnc.log" 2>&1 &
-nohup python3 "$HERE/shot.py" 5902 >"$LOGS/shot.log" 2>&1 &
+echo ready
+wait "$SERVER_PID"

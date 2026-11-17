@@ -49,25 +49,13 @@ pub fn get_imgread_tool_desc() -> ToolDesc {
 
 pub fn get_imgread_tool_func() -> ToolFunc {
     tool_func!(
-        async |args: Value, id: String, console: &mut ConsoleClient| -> Message {
+        async |args: Value, id: String, sandbox: &Sandbox| -> Message {
             let Some(path_str) = args.pointer("/path").and_then(|v| v.as_str()) else {
                 return error_message(id, "missing required parameter: path", "validation");
             };
 
-            // One `read` must reach the end: a short answer means the file is
-            // bigger than one message carries.
-            let bytes = match console.read(path_str, None, None).await {
-                Ok(r) if (r.data.len() as u64) < r.size => {
-                    return error_message(
-                        id,
-                        format!(
-                            "read {path_str}: file is {} bytes, more than one message carries",
-                            r.size
-                        ),
-                        "io",
-                    );
-                }
-                Ok(r) => r.data,
+            let bytes = match crate::console::read(sandbox, path_str).await {
+                Ok(bytes) => bytes,
                 Err(e) => return error_message(id, format!("read {path_str}: {e}"), "io"),
             };
 
@@ -106,16 +94,14 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::{datatype::Value, test_console, to_value};
+    use crate::{console::Sandbox, datatype::Value, test_sandbox, to_value};
 
-    async fn call(args: Value) -> Message {
+    /// Where a test puts the file a call works on.
+    const PATH: &str = "/tmp/subject";
+
+    async fn call(sandbox: &Sandbox, args: Value) -> Message {
         let f = get_imgread_tool_func();
-        let mut console = test_console().await;
-        f.call(args, "1", &mut console)
-            .next()
-            .await
-            .unwrap()
-            .message
+        f.call(args, "1", sandbox).next().await.unwrap().message
     }
 
     fn phase(msg: &Message) -> String {
@@ -138,29 +124,35 @@ mod tests {
             0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC,
             0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
         ];
-        let tmp = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
-        std::fs::write(tmp.path(), png).unwrap();
-        let msg = call(to_value!({ "path": tmp.path().to_string_lossy().to_string() })).await;
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, png).await.unwrap();
+        let msg = call(&sandbox, to_value!({ "path": PATH })).await;
         assert!(msg.contents[0].is_image(), "expected image part");
     }
 
     #[tokio::test]
     async fn test_imgread_rejects_text() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "hello\n").unwrap();
-        let msg = call(to_value!({ "path": tmp.path().to_string_lossy().to_string() })).await;
+        let sandbox = test_sandbox().await;
+        crate::console::write(&sandbox, PATH, "hello\n")
+            .await
+            .unwrap();
+        let msg = call(&sandbox, to_value!({ "path": PATH })).await;
         assert_eq!(phase(&msg), "validation");
     }
 
     #[tokio::test]
     async fn test_imgread_missing_path() {
-        let msg = call(to_value!({})).await;
+        let msg = call(&test_sandbox().await, to_value!({})).await;
         assert_eq!(phase(&msg), "validation");
     }
 
     #[tokio::test]
     async fn test_imgread_nonexistent_returns_io_error() {
-        let msg = call(to_value!({ "path": "/this/path/does/not/exist/xyz.png" })).await;
+        let msg = call(
+            &test_sandbox().await,
+            to_value!({ "path": "/this/path/does/not/exist/xyz.png" }),
+        )
+        .await;
         assert_eq!(phase(&msg), "io");
     }
 }
