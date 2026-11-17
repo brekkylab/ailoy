@@ -126,7 +126,7 @@ pub struct BrowserOptions {
 
 #[napi(object)]
 pub struct MemoryOptions {
-    pub limit: Option<u32>,
+    pub limit: Option<i64>,
 }
 
 #[napi(object)]
@@ -294,7 +294,7 @@ impl JsAgentBuilder {
         options: Option<MemoryOptions>,
     ) -> Result<This<'env>> {
         let mut memory = Memory::new(dir);
-        if let Some(limit) = options.and_then(|o| o.limit) {
+        if let Some(limit) = unsigned(options.and_then(|o| o.limit), "limit")? {
             memory = memory.with_limit(limit as usize);
         }
         self.update(this, |b| Ok(b.memory(memory)))
