@@ -107,11 +107,19 @@ pub fn get_memory_tool_func(memory: Memory) -> ToolFunc {
         let limit = memory.limit();
         let written = tokio::task::spawn_blocking(move || memory.edit(&edits)).await;
         match written {
-            Ok(Ok(entries)) => crate::to_value!({
-                "result": "saved",
-                "memory": shown(&entries, limit),
-                "note": "Your system prompt still shows the memory from the start of this conversation; this shows up from the next one.",
-            }),
+            Ok(Ok(edited)) => {
+                let mut out = crate::to_value!({
+                    "result": "saved",
+                    "memory": shown(&edited.entries, limit),
+                    "note": "Your system prompt still shows the memory from the start of this conversation; this shows up from the next one.",
+                });
+                if !edited.notes.is_empty()
+                    && let Value::Object(fields) = &mut out
+                {
+                    fields.insert("notes".into(), Value::array(edited.notes));
+                }
+                out
+            }
             Ok(Err(EditError::Refused(refusal))) => crate::to_value!({
                 "error": format!("{refusal}. Nothing was changed."),
                 "phase": "validation",
@@ -319,5 +327,22 @@ mod tests {
             "{out:?}"
         );
         assert_eq!(memory.read().unwrap().len(), 3);
+    }
+
+    /// A fact added again is kept once, and the result says so.
+    #[tokio::test]
+    async fn test_memory_tool_notes_a_fact_added_again() {
+        let memory = fresh();
+        let func = get_memory_tool_func(memory.clone());
+        let args = to_value!({ "action": "add", "content": "Drinks tea" });
+        let first = call_pure(&func, args.clone()).await;
+        assert!(first.pointer("/notes").is_none(), "{first:?}");
+        let again = call_pure(&func, args).await;
+        let note = again
+            .pointer("/notes/0")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(note.contains("already an entry"), "{again:?}");
+        assert_eq!(memory.read().unwrap().len(), 1);
     }
 }

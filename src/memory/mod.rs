@@ -6,4 +6,4 @@ mod file;
 #[cfg(test)]
 pub(crate) use file::today;
 pub(crate) use file::used;
-pub use file::{EditError, EditRefusal, FILE_NAME, Memory, MemoryEdit};
+pub use file::{EditError, EditRefusal, Edited, FILE_NAME, Memory, MemoryEdit};

@@ -103,7 +103,7 @@ impl Memory {
     /// Edits wait for each other, from this process or another, on a lock file in the folder:
     /// each reads the file another has just written, so two at once both land. On a file
     /// system that cannot lock a file, as some network ones, an edit goes on without waiting.
-    pub fn edit(&self, edits: &[MemoryEdit]) -> Result<Vec<String>, EditError> {
+    pub fn edit(&self, edits: &[MemoryEdit]) -> Result<Edited, EditError> {
         let lock_path = self.dir.join(LOCK_NAME);
         let lock = std::fs::OpenOptions::new()
             .create(true)
@@ -119,8 +119,8 @@ impl Memory {
 
         let current = self.read()?;
         let edited = edited(&current, edits, self.limit, &today())?;
-        if edited != current {
-            let mut text = edited.join(SEPARATOR);
+        if edited.entries != current {
+            let mut text = edited.entries.join(SEPARATOR);
             if !text.is_empty() {
                 text.push('\n');
             }
@@ -202,6 +202,15 @@ pub enum MemoryEdit {
     },
 }
 
+/// What [`Memory::edit`] made of the edits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Edited {
+    /// The entries after the edits.
+    pub entries: Vec<String>,
+    /// What the edits did other than as asked, such as a fact added that was already there.
+    pub notes: Vec<String>,
+}
+
 /// Why [`Memory::edit`] changed nothing.
 #[derive(Debug, thiserror::Error)]
 pub enum EditError {
@@ -254,24 +263,37 @@ pub(crate) fn used(entries: &[String]) -> usize {
 }
 
 /// `current` with `edits` made in order, or the reason none can be; what is added or replaced
-/// is stamped with `today`.
+/// is stamped with `today`. A fact added again is kept once, where it was, with `today`'s
+/// date, as a replace with the same text would leave it.
 fn edited(
     current: &[String],
     edits: &[MemoryEdit],
     limit: usize,
     today: &str,
-) -> Result<Vec<String>, EditRefusal> {
+) -> Result<Edited, EditRefusal> {
     let refuse = |reason: String| EditRefusal {
         reason,
         entries: current.to_vec(),
     };
     let mut entries = current.to_vec();
+    let mut notes = Vec::new();
     for edit in edits {
         match edit {
             MemoryEdit::Add { content } => {
                 let content = entry(content, today).map_err(refuse)?;
-                if !entries.iter().any(|e| same(e, &content)) {
-                    entries.push(content);
+                let copies: Vec<usize> = (0..entries.len())
+                    .filter(|&i| same(&entries[i], &content))
+                    .collect();
+                match copies.split_first() {
+                    None => entries.push(content),
+                    Some((&first, rest)) => {
+                        notes.push(format!(
+                            "{:?} was already an entry; it is kept once, now dated {today}",
+                            body(&content)
+                        ));
+                        remove_all(&mut entries, rest);
+                        entries[first] = content;
+                    }
                 }
             }
             MemoryEdit::Replace { old_text, content } => {
@@ -299,7 +321,7 @@ fn edited(
              entries in the same call, or remove one if that is not enough"
         )));
     }
-    Ok(entries)
+    Ok(Edited { entries, notes })
 }
 
 /// The file's entries: its paragraphs, trimmed. A line of only spaces separates too, since a
@@ -451,7 +473,8 @@ mod tests {
             DEFAULT_LIMIT,
             DAY,
         )
-        .unwrap();
+        .unwrap()
+        .entries;
         assert_eq!(
             after,
             [
@@ -476,11 +499,12 @@ mod tests {
             DEFAULT_LIMIT,
             DAY,
         )
-        .unwrap();
+        .unwrap()
+        .entries;
         assert_eq!(
             after,
             [
-                "[2026-11-10] Drinks tea".to_string(),
+                dated("Drinks tea"),
                 dated("Lives in Busan"),
                 dated("Married in (2027-03)")
             ]
@@ -508,19 +532,31 @@ mod tests {
     }
 
     /// The same entry repeated, spacing aside, is one entry: every copy goes, and adding it
-    /// again adds nothing.
+    /// again keeps it once, where it was, dated the day it was added again, and says so.
     #[test]
     fn test_repeated_entries_count_as_one() {
         let twice = entries(&["Drinks tea", "Drinks  tea", "Lives in Seoul"]);
         assert_eq!(
-            edited(&twice, &[remove("tea")], DEFAULT_LIMIT, DAY).unwrap(),
+            edited(&twice, &[remove("tea")], DEFAULT_LIMIT, DAY)
+                .unwrap()
+                .entries,
             ["Lives in Seoul"]
         );
-        let once = entries(&["Drinks tea"]);
+        let start = entries(&["[2026-11-10] Drinks tea", "Lives in Seoul", "Drinks  tea"]);
+        let again = edited(&start, &[add("Drinks tea")], DEFAULT_LIMIT, DAY).unwrap();
         assert_eq!(
-            edited(&once, &[add("Drinks  tea ")], DEFAULT_LIMIT, DAY).unwrap(),
-            once
+            again.entries,
+            [dated("Drinks tea"), "Lives in Seoul".into()]
         );
+        assert_eq!(again.notes.len(), 1);
+        assert!(
+            again.notes[0].contains("already an entry"),
+            "{:?}",
+            again.notes
+        );
+
+        let new = edited(&start, &[add("Lives in Busan")], DEFAULT_LIMIT, DAY).unwrap();
+        assert!(new.notes.is_empty());
     }
 
     /// An entry that another one contains whole is still picked out by its own text.
@@ -535,11 +571,14 @@ mod tests {
                 DEFAULT_LIMIT,
                 DAY
             )
-            .unwrap(),
+            .unwrap()
+            .entries,
             [dated("Likes coffee"), dated("Likes tea with milk")]
         );
         assert_eq!(
-            edited(&start, &[remove(&dated("Likes tea"))], DEFAULT_LIMIT, DAY).unwrap(),
+            edited(&start, &[remove(&dated("Likes tea"))], DEFAULT_LIMIT, DAY)
+                .unwrap()
+                .entries,
             [dated("Likes tea with milk")]
         );
     }
@@ -550,7 +589,9 @@ mod tests {
         let e = edited(&start, &[add("bbbbb")], 100, DAY).unwrap_err();
         assert!(e.reason.contains("over its limit of 100"), "{e}");
         assert_eq!(
-            edited(&start, &[remove("aaa"), add("bbbbb")], 100, DAY).unwrap(),
+            edited(&start, &[remove("aaa"), add("bbbbb")], 100, DAY)
+                .unwrap()
+                .entries,
             [dated("bbbbb")]
         );
 
