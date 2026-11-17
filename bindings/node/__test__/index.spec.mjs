@@ -314,6 +314,11 @@ test('a memory shapes the system message', async (t) => {
   writeFileSync(path, 'Name is Minsu\n')
   const again = await Agent.fromSpec({ model: 'memory-echo/echo' }, { memory: folder })
   assert.match(system(again), /\[13\/3000 chars\]\nName is Minsu$/)
+
+  assert.throws(() => new AgentBuilder('memory-echo/echo').memory(folder, { limit: -1 }), {
+    code: 'INVALID_ARG',
+    message: /limit must not be negative/,
+  })
 })
 
 test('a provider reads back as it was set', () => {
