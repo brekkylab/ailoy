@@ -280,13 +280,14 @@ async def test_a_memory_file_shapes_the_system_message(tmp_path):
     def system(agent):
         return agent.history[0]["contents"][0]["text"]
 
-    path = tmp_path / "agent1" / "agent2" / "memory.md"
-    agent = await AgentBuilder(MODEL).memory_file(path, limit=500).build()
+    folder = tmp_path / "agent1" / "agent2"
+    path = folder / "MEMORY.md"
+    agent = await AgentBuilder(MODEL).memory(folder, limit=500).build()
     assert system(agent).endswith("[0/500 chars]\n(empty)")
-    assert path.parent.is_dir() and not path.exists()
+    assert folder.is_dir() and not path.exists()
 
     path.write_text("Name is Minsu\n")
-    agent = await ailoy.Agent.from_spec({"model": MODEL}, memory_file=str(path))
+    agent = await ailoy.Agent.from_spec({"model": MODEL}, memory=str(folder))
     assert system(agent).endswith("[13/3000 chars]\nName is Minsu")
 
 

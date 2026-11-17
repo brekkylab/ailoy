@@ -63,9 +63,9 @@ impl Agent {
     /// The model is built from `spec.model` through [`create_lang_model`], and each of
     /// `spec.tools` through [`create_tool`]. Unless `state.history` already has a
     /// [`Role::System`] message, one built from `spec.instruction`, [`AgentSpec::skills`] and
-    /// `state.memory_file` is put first.
+    /// `state.memory` is put first.
     ///
-    /// Errors if the folders on the way to `state.memory_file` cannot be made, or the file
+    /// Errors if the folders on the way to `state.memory` cannot be made, or the file
     /// cannot be read. Async because skills are read through the console.
     pub async fn try_with_state(spec: AgentSpec, mut state: AgentState) -> anyhow::Result<Self> {
         let model = create_lang_model(&spec.model).await?;
@@ -86,19 +86,19 @@ impl Agent {
 
         // The file is read now, for the system message; made absolute first, so a later change
         // of the current directory still finds it.
-        let memory_file = match state.memory_file.take() {
+        let memory = match state.memory.take() {
             Some(file) => {
                 let file = file
                     .prepared()
                     .with_context(|| "making the memory file's folder")?;
                 let entries = file
                     .read()
-                    .with_context(|| format!("reading {}", file.path().display()))?;
+                    .with_context(|| format!("reading {}", file.file().display()))?;
                 let (desc, func) = (get_memory_tool_desc(), get_memory_tool_func(file.clone()));
                 tools.insert(desc.name.clone(), func);
                 tool_descs.push(desc);
                 let section = file.render(&entries);
-                state.memory_file = Some(file);
+                state.memory = Some(file);
                 Some(section)
             }
             None => None,
@@ -121,7 +121,7 @@ impl Agent {
                 Some(render_skills(&spec.skills, &state.console, org).await?)
             };
             // Last, so what comes before it stays a cacheable prefix across sessions.
-            let text = [spec.instruction, skills, memory_file]
+            let text = [spec.instruction, skills, memory]
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>()
@@ -677,7 +677,7 @@ mod tests {
     use crate::agent::context::IMAGE_PLACEHOLDER;
     use crate::{
         datatype::Bytes,
-        memory::MemoryFile,
+        memory::Memory,
         message::{Role, TokenUsage},
         model::{LangModelProvider, set_lang_model_provider},
         suppress_panics, to_value,
@@ -1519,7 +1519,8 @@ mod tests {
     #[tokio::test]
     async fn test_a_memory_file_adds_its_tool_and_section() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("agent1/agent2/memory.md");
+        let folder = dir.path().join("agent1/agent2");
+        let path = folder.join("MEMORY.md");
         let (_, spec) = scripted(
             "test-agent-memory-file",
             [
@@ -1535,9 +1536,9 @@ mod tests {
                 answer("Noted."),
             ],
         );
-        let state = AgentState::new().with_memory_file(MemoryFile::new(&path));
+        let state = AgentState::new().with_memory(Memory::new(&folder));
         let mut agent = Agent::try_with_state(spec.clone(), state).await.unwrap();
-        assert!(path.parent().unwrap().is_dir() && !path.exists());
+        assert!(folder.is_dir() && !path.exists());
         let system = text_of(&agent.history()[0]);
         assert!(system.starts_with("Be brief.\n\n# Memory\n"), "{system}");
         assert!(system.ends_with("[0/3000 chars]\n(empty)"), "{system}");
@@ -1552,7 +1553,7 @@ mod tests {
         );
 
         let (_, spec) = scripted("test-agent-memory-file-next", []);
-        let state = AgentState::new().with_memory_file(MemoryFile::new(&path));
+        let state = AgentState::new().with_memory(Memory::new(&folder));
         let agent = Agent::try_with_state(spec, state).await.unwrap();
         assert!(text_of(&agent.history()[0]).ends_with("[13/3000 chars]\nName is Minsu"));
     }
@@ -1564,7 +1565,7 @@ mod tests {
         let blocked = dir.path().join("a-file");
         std::fs::write(&blocked, "").unwrap();
         let (_, spec) = scripted("test-agent-memory-file-blocked", []);
-        let state = AgentState::new().with_memory_file(MemoryFile::new(blocked.join("memory.md")));
+        let state = AgentState::new().with_memory(Memory::new(&blocked));
         assert!(Agent::try_with_state(spec, state).await.is_err());
     }
 }

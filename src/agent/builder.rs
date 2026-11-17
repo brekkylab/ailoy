@@ -7,7 +7,7 @@ use crate::{
     agent::{Agent, AgentSpec, AgentState, ContextManager},
     browser::{Browser, BrowserSession},
     datatype::Value,
-    memory::MemoryFile,
+    memory::Memory,
     message::Message,
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -41,7 +41,7 @@ pub struct AgentBuilder {
 
     console: Option<Arc<Mutex<Option<ConsoleClient>>>>,
 
-    memory_file: Option<MemoryFile>,
+    memory: Option<Memory>,
 
     context_manager: Option<ContextManager>,
 
@@ -56,7 +56,7 @@ impl AgentBuilder {
             spec: AgentSpec::new(model),
             history: Vec::new(),
             console: None,
-            memory_file: None,
+            memory: None,
             context_manager: None,
             browser: None,
         }
@@ -132,16 +132,16 @@ impl AgentBuilder {
         self
     }
 
-    /// Let this agent keep short notes in the file `memory_file` names, on this host: a path
-    /// such as `/data/agent1/memory.md`, relative to the current directory unless absolute.
+    /// Let this agent keep short notes in `MEMORY.md` in the folder `memory` names on this
+    /// host: a path such as `/data/agent1`, relative to the current directory unless absolute.
     ///
     /// Adds the `memory` tool, which writes the notes, and a section of the system message that
     /// shows them as they were when the agent was made, so a change shows from the next
-    /// session on. [`build`](Self::build) makes the folders on the way to the file, and fails
-    /// if it cannot; the file is made by the first note. The section goes into the system
+    /// session on. [`build`](Self::build) makes the folder, and those on the way to it, and
+    /// fails if it cannot; the file is made by the first note. The section goes into the system
     /// message the agent writes, not into one a [`history`](Self::history) brings.
-    pub fn memory_file(mut self, memory_file: impl Into<MemoryFile>) -> Self {
-        self.memory_file = Some(memory_file.into());
+    pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
+        self.memory = Some(memory.into());
         self
     }
 
@@ -176,7 +176,7 @@ impl AgentBuilder {
             spec,
             history,
             console,
-            memory_file,
+            memory,
             context_manager,
             browser,
         } = self;
@@ -185,8 +185,8 @@ impl AgentBuilder {
         if let Some(console) = console {
             state = state.with_console_slot(console);
         }
-        if let Some(memory_file) = memory_file {
-            state = state.with_memory_file(memory_file);
+        if let Some(memory) = memory {
+            state = state.with_memory(memory);
         }
         if let Some(browser) = browser {
             browser.check()?;

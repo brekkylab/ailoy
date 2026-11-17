@@ -304,14 +304,15 @@ test('a memory file shapes the system message', async (t) => {
   t.after(() => removeLangModelProvider('memfile-echo'))
   const system = (agent) => agent.history[0].contents[0].text
   const dir = mkdtempSync(join(tmpdir(), 'ailoy-memory-file-'))
-  const path = join(dir, 'agent1', 'agent2', 'memory.md')
+  const folder = join(dir, 'agent1', 'agent2')
+  const path = join(folder, 'MEMORY.md')
 
-  const agent = await new AgentBuilder('memfile-echo/echo').memoryFile(path, { limit: 500 }).build()
+  const agent = await new AgentBuilder('memfile-echo/echo').memory(folder, { limit: 500 }).build()
   assert.match(system(agent), /\[0\/500 chars\]\n\(empty\)$/)
-  assert.ok(existsSync(join(dir, 'agent1', 'agent2')) && !existsSync(path))
+  assert.ok(existsSync(folder) && !existsSync(path))
 
   writeFileSync(path, 'Name is Minsu\n')
-  const again = await Agent.fromSpec({ model: 'memfile-echo/echo' }, { memoryFile: path })
+  const again = await Agent.fromSpec({ model: 'memfile-echo/echo' }, { memory: folder })
   assert.match(system(again), /\[13\/3000 chars\]\nName is Minsu$/)
 })
 

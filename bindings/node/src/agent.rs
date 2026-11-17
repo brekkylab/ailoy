@@ -21,7 +21,7 @@ use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     browser::{Browser, UserBrowser},
     datatype::Value,
-    memory::MemoryFile,
+    memory::Memory,
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -125,7 +125,7 @@ pub struct BrowserOptions {
 }
 
 #[napi(object)]
-pub struct MemoryFileOptions {
+pub struct MemoryOptions {
     pub limit: Option<u32>,
 }
 
@@ -283,21 +283,21 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.browser(browser)))
     }
 
-    /// Keep short notes in the file at `path` on this host, which the system message shows,
-    /// and give the `memory` tool; `options.limit` bounds the file in characters (3,000 by
-    /// default).
-    #[napi(ts_args_type = "path: string, options?: { limit?: number }")]
-    pub fn memory_file<'env>(
+    /// Keep short notes in `MEMORY.md` in the folder `dir` on this host, which the system
+    /// message shows, and give the `memory` tool; `options.limit` bounds the file in characters
+    /// (3,000 by default).
+    #[napi(ts_args_type = "dir: string, options?: { limit?: number }")]
+    pub fn memory<'env>(
         &mut self,
         this: This<'env>,
-        path: String,
-        options: Option<MemoryFileOptions>,
+        dir: String,
+        options: Option<MemoryOptions>,
     ) -> Result<This<'env>> {
-        let mut file = MemoryFile::new(path);
+        let mut memory = Memory::new(dir);
         if let Some(limit) = options.and_then(|o| o.limit) {
-            file = file.with_limit(limit as usize);
+            memory = memory.with_limit(limit as usize);
         }
-        self.update(this, |b| Ok(b.memory_file(file)))
+        self.update(this, |b| Ok(b.memory(memory)))
     }
 
     #[napi]
@@ -446,10 +446,10 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<It
 
 #[napi]
 impl JsAgent {
-    /// An agent from a spec (the object an `AgentSpec` serializes to). `options.memoryFile` is
-    /// the file to keep notes in.
+    /// An agent from a spec (the object an `AgentSpec` serializes to). `options.memory` is
+    /// the folder on this host whose `MEMORY.md` it keeps notes in.
     #[napi(
-        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; console?: ConsoleClient; memoryFile?: string }",
+        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; console?: ConsoleClient; memory?: string }",
         ts_return_type = "Promise<Agent>"
     )]
     pub fn from_spec<'env>(
@@ -472,8 +472,8 @@ impl JsAgent {
                 if let Some(console) = options.get::<Object>("console").map_err(get)? {
                     state = state.with_console_slot(console::attach(&console)?);
                 }
-                if let Some(path) = options.get::<String>("memoryFile").map_err(get)? {
-                    state = state.with_memory_file(MemoryFile::new(path));
+                if let Some(dir) = options.get::<String>("memory").map_err(get)? {
+                    state = state.with_memory(Memory::new(dir));
                 }
             }
             Ok((spec, state))

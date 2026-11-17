@@ -7,36 +7,39 @@ use std::{
 /// entries read as paragraphs and never hold one.
 const SEPARATOR: &str = "\n\n";
 
-/// The most characters the file may hold unless [`MemoryFile::with_limit`] says otherwise.
+/// The file in a memory's folder that holds its entries.
+pub const FILE_NAME: &str = "MEMORY.md";
+
+/// The most characters the file may hold unless [`Memory::with_limit`] says otherwise.
 const DEFAULT_LIMIT: usize = 3_000;
 
-/// A Markdown file on this host that an agent keeps short notes in, with the `memory` tool, and
-/// that its system message shows from the next session on.
+/// A folder on this host whose `MEMORY.md` an agent keeps short notes in, with the `memory`
+/// tool, and that its system message shows from the next session on.
 ///
-/// The notes are entries, paragraphs apart. The folders on the way to the file are made when
-/// the agent is, and the file on the first entry; until then the memory is empty.
+/// The notes are entries, paragraphs apart. The folder, and those on the way to it, are made
+/// when the agent is, and the file on the first entry; until then the memory is empty.
 ///
 /// ```rust,no_run
-/// # use ailoy::memory::{MemoryEdit, MemoryFile};
+/// # use ailoy::memory::{MemoryEdit, Memory};
 /// # fn f() -> anyhow::Result<()> {
-/// let memory = MemoryFile::new("/data/agent1/memory.md").prepared()?;
+/// let memory = Memory::new("/data/agent1").prepared()?;
 /// memory.edit(&[MemoryEdit::Add { content: "Name is Minsu".into() }])?;
 /// assert_eq!(memory.read()?, ["Name is Minsu"]);
 /// # Ok(())
 /// # }
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MemoryFile {
-    path: PathBuf,
+pub struct Memory {
+    dir: PathBuf,
     limit: usize,
 }
 
-impl MemoryFile {
-    /// The memory in the file at `path`, relative to the current directory unless absolute,
+impl Memory {
+    /// The memory kept in the folder `dir`, relative to the current directory unless absolute,
     /// holding at most 3,000 characters.
-    pub fn new(path: impl Into<PathBuf>) -> Self {
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
         Self {
-            path: path.into(),
+            dir: dir.into(),
             limit: DEFAULT_LIMIT,
         }
     }
@@ -47,28 +50,32 @@ impl MemoryFile {
         self
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    /// The folder, as given or, once [`prepared`](Self::prepared), absolute.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// The file in the folder that holds the entries, [`FILE_NAME`].
+    pub fn file(&self) -> PathBuf {
+        self.dir.join(FILE_NAME)
     }
 
     pub fn limit(&self) -> usize {
         self.limit
     }
 
-    /// This memory at its absolute path, with the folders on the way to it made, so that a
+    /// This memory with its folder absolute and made, with those on the way to it, so that a
     /// later change of the current directory still finds it and a folder that cannot be made
     /// shows now rather than on the first entry.
     pub fn prepared(self) -> io::Result<Self> {
-        let path = std::path::absolute(&self.path)?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        Ok(Self { path, ..self })
+        let dir = std::path::absolute(&self.dir)?;
+        std::fs::create_dir_all(&dir)?;
+        Ok(Self { dir, ..self })
     }
 
     /// The entries as the file holds them now; none for a file not written yet.
     pub fn read(&self) -> io::Result<Vec<String>> {
-        match std::fs::read_to_string(&self.path) {
+        match std::fs::read_to_string(self.file()) {
             Ok(text) => Ok(parse_entries(&text)),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
             Err(e) => Err(e),
@@ -90,14 +97,9 @@ impl MemoryFile {
             if !text.is_empty() {
                 text.push('\n');
             }
-            let name = self
-                .path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let temp = self.path.with_file_name(format!(".{name}.tmp"));
+            let temp = self.dir.join(format!(".{FILE_NAME}.tmp"));
             std::fs::write(&temp, text)?;
-            std::fs::rename(&temp, &self.path)?;
+            std::fs::rename(&temp, self.file())?;
         }
         Ok(edited)
     }
@@ -120,27 +122,27 @@ impl MemoryFile {
     }
 }
 
-impl From<PathBuf> for MemoryFile {
-    fn from(path: PathBuf) -> Self {
-        Self::new(path)
+impl From<PathBuf> for Memory {
+    fn from(dir: PathBuf) -> Self {
+        Self::new(dir)
     }
 }
 
-impl From<&Path> for MemoryFile {
-    fn from(path: &Path) -> Self {
-        Self::new(path)
+impl From<&Path> for Memory {
+    fn from(dir: &Path) -> Self {
+        Self::new(dir)
     }
 }
 
-impl From<String> for MemoryFile {
-    fn from(path: String) -> Self {
-        Self::new(path)
+impl From<String> for Memory {
+    fn from(dir: String) -> Self {
+        Self::new(dir)
     }
 }
 
-impl From<&str> for MemoryFile {
-    fn from(path: &str) -> Self {
-        Self::new(path)
+impl From<&str> for Memory {
+    fn from(dir: &str) -> Self {
+        Self::new(dir)
     }
 }
 
@@ -161,7 +163,7 @@ pub enum MemoryEdit {
     },
 }
 
-/// Why [`MemoryFile::edit`] changed nothing.
+/// Why [`Memory::edit`] changed nothing.
 #[derive(Debug, thiserror::Error)]
 pub enum EditError {
     /// The edits cannot be made as asked; the file is as it was.
@@ -227,8 +229,8 @@ fn edited(
     let size = used(&entries);
     if size > limit && size > used(current) {
         return Err(refuse(format!(
-            "the memory would be {size} characters, over its limit of {limit}; remove or \
-             shorten entries in the same call"
+            "the memory would be {size} characters, over its limit of {limit}; shorten \
+             entries in the same call, or remove one if that is not enough"
         )));
     }
     Ok(entries)
@@ -335,10 +337,9 @@ mod tests {
         texts.iter().map(|s| s.to_string()).collect()
     }
 
-    /// A memory file in a fresh folder of its own.
-    fn fresh() -> MemoryFile {
-        let dir = tempfile::tempdir().unwrap().keep();
-        MemoryFile::new(dir.join("memory.md"))
+    /// A memory in a fresh folder of its own.
+    fn fresh() -> Memory {
+        Memory::new(tempfile::tempdir().unwrap().keep())
     }
 
     #[test]
@@ -426,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_render_shows_the_entries_and_how_full_the_file_is() {
-        let memory = MemoryFile::new("/m/memory.md").with_limit(500);
+        let memory = Memory::new("/m").with_limit(500);
         let text = memory.render(&entries(&["Name is Minsu", "Drinks tea"]));
         assert!(text.starts_with("# Memory\n"), "{text}");
         assert!(text.contains("`memory` tool"), "{text}");
@@ -437,24 +438,22 @@ mod tests {
         assert!(memory.render(&[]).ends_with("[0/500 chars]\n(empty)"));
     }
 
-    /// Preparing makes every missing folder on the way and the path absolute, but not the file.
+    /// Preparing makes the folder and every missing one on the way, and the folder absolute,
+    /// but not the file.
     #[test]
     fn test_prepared_makes_the_folders_but_not_the_file() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("agent1/agent2/memory.md");
-        let memory = MemoryFile::new(&path).prepared().unwrap();
-        assert!(path.parent().unwrap().is_dir());
-        assert!(!path.exists());
-        assert!(memory.path().is_absolute());
+        let folder = dir.path().join("agent1/agent2");
+        let memory = Memory::new(&folder).prepared().unwrap();
+        assert!(folder.is_dir());
+        assert_eq!(memory.file(), folder.join("MEMORY.md"));
+        assert!(!memory.file().exists());
+        assert!(memory.dir().is_absolute());
 
         // A folder that cannot be made, here because a file has its name, fails now.
         let blocked = dir.path().join("a-file");
         std::fs::write(&blocked, "").unwrap();
-        assert!(
-            MemoryFile::new(blocked.join("memory.md"))
-                .prepared()
-                .is_err()
-        );
+        assert!(Memory::new(&blocked).prepared().is_err());
     }
 
     /// A file not written yet reads as no entries; the first edit makes it, and it reads back.
@@ -462,13 +461,13 @@ mod tests {
     fn test_edits_are_written_and_read_back() {
         let memory = fresh();
         assert!(memory.read().unwrap().is_empty());
-        assert!(!memory.path().exists());
+        assert!(!memory.file().exists());
 
         memory
             .edit(&[add("- Name is Minsu"), add("Drinks tea")])
             .unwrap();
         assert_eq!(
-            std::fs::read_to_string(memory.path()).unwrap(),
+            std::fs::read_to_string(memory.file()).unwrap(),
             "- Name is Minsu\n\nDrinks tea\n"
         );
         memory.edit(&[remove("tea")]).unwrap();

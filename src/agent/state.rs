@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use virtx::console::ConsoleClient;
 
-use crate::{browser::BrowserSession, memory::MemoryFile, message::Message};
+use crate::{browser::BrowserSession, memory::Memory, message::Message};
 
 /// What an [`Agent`](super::Agent) carries from one turn to the next.
 #[derive(Default)]
@@ -24,7 +24,7 @@ pub struct AgentState {
 
     /// The file this agent keeps notes in, which its system message shows; `None` means no
     /// `memory` tool.
-    pub memory_file: Option<MemoryFile>,
+    pub memory: Option<Memory>,
 
     /// Input tokens of the last model call, which a
     /// [`ContextManager`](super::ContextManager) checks against its limit as a turn begins.
@@ -56,10 +56,10 @@ impl AgentState {
         self
     }
 
-    /// Keep notes in `memory_file`. See
-    /// [`AgentBuilder::memory_file`](super::AgentBuilder::memory_file).
-    pub fn with_memory_file(mut self, memory_file: MemoryFile) -> Self {
-        self.memory_file = Some(memory_file);
+    /// Keep notes in `MEMORY.md` in the folder `memory` names. See
+    /// [`AgentBuilder::memory`](super::AgentBuilder::memory).
+    pub fn with_memory(mut self, memory: Memory) -> Self {
+        self.memory = Some(memory);
         self
     }
 

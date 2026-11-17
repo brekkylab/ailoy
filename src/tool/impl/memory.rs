@@ -1,4 +1,4 @@
-//! `memory` over a [`MemoryFile`]: an agent's own notes, as a tool.
+//! `memory` over a [`Memory`]: an agent's own notes, as a tool.
 //!
 //! Not a built-in: a registry entry resolves from the [`AgentSpec`](crate::agent::AgentSpec)
 //! alone, but this also needs *which* file, one a caller handed to one agent. So the file is
@@ -8,7 +8,7 @@
 
 use crate::{
     datatype::Value,
-    memory::{EditError, MemoryEdit, MemoryFile},
+    memory::{EditError, Memory, MemoryEdit},
     tool::{ToolDesc, ToolDescBuilder, ToolFunc},
 };
 
@@ -16,11 +16,11 @@ pub fn get_memory_tool_desc() -> ToolDesc {
     let action = crate::to_value!({
         "type": "string",
         "enum": ["add", "replace", "remove"],
-        "description": "'add' a new entry; 'replace' the entry containing old_text with content; 'remove' the entry containing old_text."
+        "description": "'add' a new fact as its own entry; 'replace' the entry containing old_text with content, when its fact changed; 'remove' the entry containing old_text."
     });
     let content = crate::to_value!({
         "type": "string",
-        "description": "The entry to add, or the whole new text of the replaced entry."
+        "description": "One fact: the entry to add, or the whole new text of the replaced entry."
     });
     let old_text = crate::to_value!({
         "type": "string",
@@ -32,10 +32,13 @@ pub fn get_memory_tool_desc() -> ToolDesc {
             "conversation: who the user is (name, work, lasting preferences, how they like to be ",
             "helped) and your own notes (agreements, what to avoid, lessons learned). ",
             "Only what will matter in every conversation: leave out details, one-off tasks and ",
-            "progress. When a fact changes, replace its entry instead of adding another. End a ",
-            "fact whose date matters with the date, as (YYYY-MM-DD). ",
-            "The memory has a size limit; when it is full, remove or shorten entries in the same ",
-            "call. For several changes at once, send them as operations: all are made or none. ",
+            "progress. Each entry is one fact: a new fact is a new entry, even about the same ",
+            "user. When a fact changes, replace that fact's entry instead of adding another, and ",
+            "never rewrite an entry to fit another fact into it. End a fact whose date matters ",
+            "with the date, as (YYYY-MM-DD). ",
+            "The memory has a size limit; when it is full, make room in the same call: shorten ",
+            "entries first, and remove one only when shortening is not enough, then tell the user ",
+            "what you removed. For several changes at once, send them as operations: all are made or none. ",
             "Your system prompt keeps the memory as it was when this conversation started; ",
             "changes show up from the next one.",
         ))
@@ -64,7 +67,7 @@ pub fn get_memory_tool_desc() -> ToolDesc {
 }
 
 /// The `memory` tool bound to `memory`.
-pub fn get_memory_tool_func(memory: MemoryFile) -> ToolFunc {
+pub fn get_memory_tool_func(memory: Memory) -> ToolFunc {
     crate::tool_func!(async |args: Value| -> Value with [memory = memory.clone()] {
         let edits = match args.pointer("/operations") {
             Some(Value::Array(ops)) => ops.iter().map(edit).collect::<Result<Vec<_>, _>>(),
@@ -157,14 +160,14 @@ mod tests {
         value(&output.message)
     }
 
-    fn memory_file() -> MemoryFile {
+    fn fresh() -> Memory {
         let dir = tempfile::tempdir().unwrap().keep();
-        MemoryFile::new(dir.join("memory.md")).with_limit(100)
+        Memory::new(dir).with_limit(100)
     }
 
     #[tokio::test]
     async fn test_memory_tool_edits_the_file() {
-        let memory = memory_file();
+        let memory = fresh();
         let func = get_memory_tool_func(memory.clone());
 
         let out = call_pure(
@@ -205,7 +208,7 @@ mod tests {
     /// from them.
     #[tokio::test]
     async fn test_memory_tool_refusal_shows_the_entries() {
-        let memory = memory_file();
+        let memory = fresh();
         let func = get_memory_tool_func(memory.clone());
         call_pure(
             &func,

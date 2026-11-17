@@ -16,7 +16,7 @@ use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     browser::{Browser, UserBrowser},
     datatype::Value,
-    memory::MemoryFile,
+    memory::Memory,
     message::Message,
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -207,19 +207,20 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.browser(browser)))
     }
 
-    /// Keep short notes in the file at `path` on this host, which the system message shows,
-    /// and give the `memory` tool; `limit` bounds the file in characters (3,000 by default).
-    #[pyo3(signature = (path, *, limit = None))]
-    fn memory_file(
+    /// Keep short notes in `MEMORY.md` in the folder `dir` on this host, which the system
+    /// message shows, and give the `memory` tool; `limit` bounds the file in characters (3,000
+    /// by default).
+    #[pyo3(signature = (dir, *, limit = None))]
+    fn memory(
         slf: PyRef<'_, Self>,
-        path: PathBuf,
+        dir: PathBuf,
         limit: Option<usize>,
     ) -> PyResult<PyRef<'_, Self>> {
-        let mut file = MemoryFile::new(path);
+        let mut memory = Memory::new(dir);
         if let Some(limit) = limit {
-            file = file.with_limit(limit);
+            memory = memory.with_limit(limit);
         }
-        Self::update(slf, |b| Ok(b.memory_file(file)))
+        Self::update(slf, |b| Ok(b.memory(memory)))
     }
 
     fn skill(slf: PyRef<'_, Self>, dir: String) -> PyResult<PyRef<'_, Self>> {
@@ -337,13 +338,13 @@ impl PyAgent {
     /// An agent from a spec — the dict an `AgentSpec` serializes to — for a caller who holds
     /// one rather than building it up. Awaitable.
     #[staticmethod]
-    #[pyo3(signature = (spec, *, history = None, console = None, memory_file = None))]
+    #[pyo3(signature = (spec, *, history = None, console = None, memory = None))]
     fn from_spec<'py>(
         py: Python<'py>,
         spec: Bound<'py, PyAny>,
         history: Option<Bound<'py, PyAny>>,
         console: Option<Bound<'py, PyAny>>,
-        memory_file: Option<PathBuf>,
+        memory: Option<PathBuf>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let spec: AgentSpec = from_py(&spec, "an agent spec")?;
         let mut state = AgentState::new();
@@ -353,8 +354,8 @@ impl PyAgent {
         if let Some(console) = console {
             state = state.with_console_slot(console::attach(&console)?);
         }
-        if let Some(path) = memory_file {
-            state = state.with_memory_file(MemoryFile::new(path));
+        if let Some(dir) = memory {
+            state = state.with_memory(Memory::new(dir));
         }
         future_into_py(py, async move {
             let agent = Agent::try_with_state(spec, state)
