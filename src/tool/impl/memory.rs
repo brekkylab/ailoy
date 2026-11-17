@@ -70,9 +70,25 @@ pub fn get_memory_tool_desc() -> ToolDesc {
 /// The `memory` tool bound to `memory`.
 pub fn get_memory_tool_func(memory: Memory) -> ToolFunc {
     crate::tool_func!(async |args: Value| -> Value with [memory = memory.clone()] {
-        let edits = match args.pointer("/operations") {
-            Some(Value::Array(ops)) => ops.iter().map(edit).collect::<Result<Vec<_>, _>>(),
-            Some(_) => Err("operations must be an array of objects".to_string()),
+        // A null or empty `operations` is one the model left unused, as some fill every field.
+        let operations = match args.pointer("/operations") {
+            None | Some(Value::Null) => None,
+            Some(Value::Array(ops)) if ops.is_empty() => None,
+            Some(Value::Array(ops)) => Some(ops),
+            Some(_) => return validation("operations must be an array of objects".into()),
+        };
+        let single = ["action", "content", "old_text"]
+            .iter()
+            .any(|name| args.pointer(&format!("/{name}")).is_some_and(|v| !v.is_null()));
+        let edits = match operations {
+            Some(_) if single => {
+                return validation(
+                    "give either action, content and old_text for one change, or operations, \
+                     not both"
+                        .into(),
+                );
+            }
+            Some(ops) => ops.iter().map(edit).collect::<Result<Vec<_>, _>>(),
             None => edit(&args).map(|edit| vec![edit]),
         };
         let edits = match edits {
@@ -237,13 +253,18 @@ mod tests {
                 Some(tea.as_str())
             );
         }
-        assert_eq!(memory.read().unwrap(), [tea]);
+        assert_eq!(memory.read().unwrap(), std::slice::from_ref(&tea));
 
         for args in [
             to_value!({}),
             to_value!({ "action": "add" }),
             to_value!({ "action": "append", "content": "x" }),
             to_value!({ "operations": [] }),
+            to_value!({ "operations": "[]" }),
+            // Both shapes at once: neither is made.
+            to_value!({ "action": "add", "content": "x", "operations": [
+                { "action": "add", "content": "y" }
+            ] }),
         ] {
             let out = call_pure(&func, args.clone()).await;
             assert_eq!(
@@ -252,5 +273,29 @@ mod tests {
                 "{args:?}"
             );
         }
+        assert_eq!(memory.read().unwrap(), [tea]);
+    }
+
+    /// An `operations` the model left null or empty beside one change is no reason to refuse it.
+    #[tokio::test]
+    async fn test_memory_tool_ignores_an_unused_operations() {
+        let memory = fresh();
+        let func = get_memory_tool_func(memory.clone());
+        for (content, operations) in [
+            ("Drinks tea", Value::Null),
+            ("Lives in Seoul", to_value!([])),
+        ] {
+            let out = call_pure(
+                &func,
+                to_value!({ "action": "add", "content": content, "operations": operations }),
+            )
+            .await;
+            assert_eq!(
+                out.pointer("/result").unwrap().as_str(),
+                Some("saved"),
+                "{out:?}"
+            );
+        }
+        assert_eq!(memory.read().unwrap().len(), 2);
     }
 }
