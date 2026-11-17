@@ -68,7 +68,11 @@ class AgentBuilder:
         ``start_url`` is the page the agent's tab opens on.
         """
         ...
-    def memory(self, dir: _Path, *, limit: int | None = None) -> Self: ...
+    def memory(self, dir: _Path, *, limit: int | None = None) -> Self:
+        """Keep short notes on the user in ``MEMORY.md`` in the folder ``dir`` on this host,
+        which the system message shows as they were at ``build()``, and give the ``memory``
+        tool to change them. ``limit`` bounds the file in characters (3,000 by default)."""
+        ...
     def skill(self, dir: str) -> Self: ...
     def context_manager(
         self,
@@ -96,7 +100,10 @@ class Agent:
         history: list[Message] | None = None,
         console: ConsoleClient | None = None,
         memory: _Path | None = None,
-    ) -> Agent: ...
+    ) -> Agent:
+        """An agent from a spec. ``memory`` is the folder on this host whose ``MEMORY.md`` it
+        keeps notes in, as ``AgentBuilder.memory`` gives it, with the default limit."""
+        ...
     @property
     def history(self) -> list[Message]: ...
     async def start_browser(self) -> None:

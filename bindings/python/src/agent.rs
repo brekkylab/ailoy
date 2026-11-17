@@ -336,7 +336,8 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, PyResult<
 #[pymethods]
 impl PyAgent {
     /// An agent from a spec — the dict an `AgentSpec` serializes to — for a caller who holds
-    /// one rather than building it up. Awaitable.
+    /// one rather than building it up. Awaitable. `memory` is the folder on this host whose
+    /// `MEMORY.md` it keeps notes in, with the default limit.
     #[staticmethod]
     #[pyo3(signature = (spec, *, history = None, console = None, memory = None))]
     fn from_spec<'py>(
