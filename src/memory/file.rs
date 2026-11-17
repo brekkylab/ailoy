@@ -365,7 +365,8 @@ fn entry(content: &str, today: &str) -> Result<String, String> {
 /// The entry containing `old_text`, whitespace runs counting as one space: its index, or the
 /// indices of every copy when the matches are the same entry repeated. Of several entries
 /// containing it, one that it is the whole of is the one meant, since no longer `old_text`
-/// could pick that one out.
+/// could pick that one out. A date leading `old_text` that no entry has, copied from the
+/// system message before the entry was written again, is looked past.
 fn find(entries: &[String], old_text: &str) -> Result<Vec<usize>, String> {
     let needle = squash(old_text);
     if needle.is_empty() {
@@ -375,9 +376,18 @@ fn find(entries: &[String], old_text: &str) -> Result<Vec<usize>, String> {
         [first, rest @ ..] => rest.iter().all(|&i| same(&entries[i], &entries[*first])),
         [] => false,
     };
-    let hits: Vec<usize> = (0..entries.len())
-        .filter(|&i| squash(&entries[i]).contains(&needle))
-        .collect();
+    let containing = |needle: &str| -> Vec<usize> {
+        (0..entries.len())
+            .filter(|&i| squash(&entries[i]).contains(needle))
+            .collect()
+    };
+    let mut hits = containing(&needle);
+    if hits.is_empty() {
+        let bare = squash(body(old_text.trim()));
+        if !bare.is_empty() && bare != needle {
+            hits = containing(&bare);
+        }
+    }
     if hits.is_empty() {
         return Err(format!("no entry contains {old_text:?}"));
     }
@@ -557,6 +567,34 @@ mod tests {
 
         let new = edited(&start, &[add("Lives in Busan")], DEFAULT_LIMIT, DAY).unwrap();
         assert!(new.notes.is_empty());
+    }
+
+    /// A date leading old_text that the entry no longer has, written again since the system
+    /// message was made, does not keep the entry from being found.
+    #[test]
+    fn test_old_text_with_an_older_date_still_finds_its_entry() {
+        let start = entries(&[&dated("Lives in Seoul, Gangnam"), &dated("Drinks tea")]);
+        assert_eq!(
+            edited(
+                &start,
+                &[replace("[2026-11-10] Lives in Seoul", "Lives in Busan")],
+                DEFAULT_LIMIT,
+                DAY
+            )
+            .unwrap()
+            .entries,
+            [dated("Lives in Busan"), dated("Drinks tea")]
+        );
+        // Without the date it still has to be in an entry.
+        assert!(
+            edited(
+                &start,
+                &[remove("[2026-11-10] Lives in Daegu")],
+                DEFAULT_LIMIT,
+                DAY
+            )
+            .is_err()
+        );
     }
 
     /// An entry that another one contains whole is still picked out by its own text.
