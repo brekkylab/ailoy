@@ -86,4 +86,12 @@ At the start of each turn, when the tool results hold more than `max_images` ima
 
 As with the token limit, the placeholders stay in `agent.history`.
 
-Apart from the cap, and for every model, an embedded image past 2576 pixels on its longer edge, attached or returned by a tool, is shrunk to that edge before it enters the history. The shrunk image is turned upright by its EXIF orientation and keeps its color profile. A WebP with transparent pixels comes back as PNG. An opaque lossless WebP also comes back as PNG, unless that PNG would pass 5 MB in base64, in which case it comes back as JPEG. Any other WebP comes back as JPEG. An image that would still come out past 5 MB in base64, or that is animated, is left as it is, and so is a GIF of any size.
+Apart from the cap, and for every model, an embedded image past 2576 pixels on its longer edge, attached or returned by a tool, is shrunk to that edge before it enters the history. The shrunk image is turned upright by its EXIF orientation and keeps its color profile, and comes back as:
+
+| Image | Comes back as |
+| --- | --- |
+| Any but a WebP | Its own format |
+| A WebP with transparent pixels | PNG |
+| An opaque lossless WebP | PNG, or JPEG if that PNG would pass 5 MB in base64 |
+| Any other WebP | JPEG |
+| One that would still come out past 5 MB in base64, an animated one, or a GIF of any size | Left as it is |
