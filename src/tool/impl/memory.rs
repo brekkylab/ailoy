@@ -181,7 +181,7 @@ mod tests {
         msg.contents[0].as_value().unwrap().clone()
     }
 
-    /// One call of a tool that needs no console.
+    /// One call of a tool that needs no sandbox.
     async fn call_pure(func: &ToolFunc, args: Value) -> Value {
         let output = func
             .call_pure(args, "1")
