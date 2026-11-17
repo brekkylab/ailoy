@@ -79,9 +79,14 @@ pub fn get_memory_tool_func(memory: Memory) -> ToolFunc {
             Some(Value::Array(ops)) => Some(ops),
             Some(_) => return validation("operations must be an array of objects".into()),
         };
-        let single = ["action", "content", "old_text"]
-            .iter()
-            .any(|name| args.pointer(&format!("/{name}")).is_some_and(|v| !v.is_null()));
+        // Likewise a field left null or empty beside `operations`.
+        let single = ["action", "content", "old_text"].iter().any(|name| {
+            args.pointer(&format!("/{name}")).is_some_and(|v| match v {
+                Value::Null => false,
+                Value::String(s) => !s.is_empty(),
+                _ => true,
+            })
+        });
         let edits = match operations {
             Some(_) if single => {
                 return validation(
@@ -299,5 +304,20 @@ mod tests {
             );
         }
         assert_eq!(memory.read().unwrap().len(), 2);
+
+        // And the single change's fields left null or empty beside operations.
+        let out = call_pure(
+            &func,
+            to_value!({ "action": "", "content": "", "old_text": Value::Null, "operations": [
+                { "action": "add", "content": "Has a cat" }
+            ] }),
+        )
+        .await;
+        assert_eq!(
+            out.pointer("/result").unwrap().as_str(),
+            Some("saved"),
+            "{out:?}"
+        );
+        assert_eq!(memory.read().unwrap().len(), 3);
     }
 }
