@@ -88,9 +88,10 @@ impl Agent {
         // of the current directory still finds it.
         let memory = match state.memory.take() {
             Some(file) => {
+                let folder = file.dir().display().to_string();
                 let file = file
                     .prepared()
-                    .with_context(|| "making the memory file's folder")?;
+                    .with_context(|| format!("making the memory folder {folder}"))?;
                 let entries = file
                     .read()
                     .with_context(|| format!("reading {}", file.file().display()))?;
@@ -1514,10 +1515,10 @@ mod tests {
         assert_eq!(middle_truncate("short", 10), "short");
     }
 
-    /// A memory file adds the `memory` tool and, last in the system message, its notes as they
+    /// A memory adds the `memory` tool and, last in the system message, its notes as they
     /// were when the agent was made; its folders are made then, and the file by the first note.
     #[tokio::test]
-    async fn test_a_memory_file_adds_its_tool_and_section() {
+    async fn test_a_memory_adds_its_tool_and_section() {
         let dir = tempfile::tempdir().unwrap();
         let folder = dir.path().join("agent1/agent2");
         let path = folder.join("MEMORY.md");
@@ -1566,9 +1567,9 @@ mod tests {
         );
     }
 
-    /// A memory file whose folder cannot be made fails the agent.
+    /// A memory whose folder cannot be made fails the agent.
     #[tokio::test]
-    async fn test_a_memory_file_that_cannot_be_kept_fails_the_agent() {
+    async fn test_a_memory_that_cannot_be_kept_fails_the_agent() {
         let dir = tempfile::tempdir().unwrap();
         let blocked = dir.path().join("a-file");
         std::fs::write(&blocked, "").unwrap();

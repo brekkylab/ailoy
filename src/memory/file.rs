@@ -203,7 +203,7 @@ pub enum EditError {
     Refused(#[from] EditRefusal),
 
     /// The file could not be read or written.
-    #[error("the memory file could not be read or written: {0}")]
+    #[error("the memory's MEMORY.md could not be read or written: {0}")]
     Io(#[from] io::Error),
 }
 

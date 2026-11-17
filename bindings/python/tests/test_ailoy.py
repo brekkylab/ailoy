@@ -276,7 +276,7 @@ async def test_history_is_refused_mid_turn_and_turns_take_turns():
     assert texts(await run(agent, "hi")) == ["hello"]
 
 
-async def test_a_memory_file_shapes_the_system_message(tmp_path):
+async def test_a_memory_shapes_the_system_message(tmp_path):
     def system(agent):
         return agent.history[0]["contents"][0]["text"]
 

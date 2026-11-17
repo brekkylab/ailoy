@@ -1,9 +1,9 @@
 //! `memory` over a [`Memory`]: an agent's own notes, as a tool.
 //!
 //! Not a built-in: a registry entry resolves from the [`AgentSpec`](crate::agent::AgentSpec)
-//! alone, but this also needs *which* file, one a caller handed to one agent. So the file is
-//! captured in the closure rather than taken as an argument: the model never names a memory
-//! file and cannot name another. Only an agent given a memory file gets this tool — see
+//! alone, but this also needs *which* memory, the folder a caller handed to one agent. So the
+//! memory is captured in the closure rather than taken as an argument: the model never names
+//! a folder and cannot name another. Only an agent given a memory gets this tool — see
 //! [`Agent::try_with_state`](crate::agent::Agent::try_with_state).
 
 use crate::{
