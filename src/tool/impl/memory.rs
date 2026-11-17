@@ -29,10 +29,12 @@ pub fn get_memory_tool_desc() -> ToolDesc {
     ToolDescBuilder::new("memory")
         .description(concat!(
             "Keep short notes that are put in your system prompt at the start of every future ",
-            "conversation: who the user is (name, work, lasting preferences, how they like to be ",
-            "helped) and your own notes (agreements, what to avoid, lessons learned). ",
-            "Only what will matter in every conversation: leave out details, one-off tasks and ",
-            "progress. Each entry is one fact: a new fact is a new entry, even about the same ",
+            "conversation: what you learn about the user that would still help in a later ",
+            "conversation (who they are, how they like to be helped, their circumstances and ",
+            "plans) and your own notes (agreements, what to avoid, lessons learned). A fact the ",
+            "user mentions in passing counts, even inside a request about something else. Leave ",
+            "out what only this conversation needs: the request itself, details and progress. ",
+            "Each entry is one fact: a new fact is a new entry, even about the same ",
             "user. When a fact changes, replace that fact's entry instead of adding another, and ",
             "never rewrite an entry to fit another fact into it. Each entry starts with the date ",
             "it was last written, as [YYYY-MM-DD], which is added for you: write only the fact, ",
