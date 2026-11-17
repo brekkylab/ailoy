@@ -96,7 +96,9 @@ impl Memory {
     /// The limit is checked on the result, so one batch can make room and fill it, and only when
     /// the file grew: one already over its limit (edited by hand) can still shrink. The file is
     /// written to a temporary one beside it and moved into place, so a reader never sees half
-    /// of it.
+    /// of it. It keeps its permissions, and a `MEMORY.md` that is a symbolic link stays one:
+    /// the file it names is the one replaced. A file the first entry makes is the owner's
+    /// alone to read.
     ///
     /// Edits wait for each other, from this process or another, on a lock file in the folder:
     /// each reads the file another has just written, so two at once both land.
@@ -115,10 +117,20 @@ impl Memory {
             if !text.is_empty() {
                 text.push('\n');
             }
-            let mut temp = tempfile::NamedTempFile::new_in(&self.dir)?;
+            // The file a symbolic link names, so the link is left as it is.
+            let target = match std::fs::canonicalize(self.file()) {
+                Ok(target) => target,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => self.file(),
+                Err(e) => return Err(e.into()),
+            };
+            let beside = target.parent().unwrap_or(&self.dir);
+            let mut temp = tempfile::NamedTempFile::new_in(beside)?;
             io::Write::write_all(&mut temp, text.as_bytes())?;
+            if let Ok(old) = std::fs::metadata(&target) {
+                temp.as_file().set_permissions(old.permissions())?;
+            }
             temp.as_file().sync_all()?;
-            temp.persist(self.file()).map_err(|e| e.error)?;
+            temp.persist(&target).map_err(|e| e.error)?;
         }
         Ok(edited)
     }
@@ -594,6 +606,40 @@ mod tests {
         let e = memory.edit(&[remove("coffee")]).unwrap_err();
         assert!(matches!(e, EditError::Refused(_)), "{e}");
         assert_eq!(memory.read().unwrap(), name);
+    }
+
+    /// An edit keeps the file's permissions, and writes through a symbolic link rather than
+    /// over it.
+    #[cfg(unix)]
+    #[test]
+    fn test_an_edit_keeps_the_files_permissions_and_its_link() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let memory = fresh();
+        memory.edit(&[add("Drinks tea")]).unwrap();
+        assert_eq!(mode(&memory.file()), 0o600);
+        std::fs::set_permissions(memory.file(), std::fs::Permissions::from_mode(0o644)).unwrap();
+        memory.edit(&[add("Lives in Seoul")]).unwrap();
+        assert_eq!(mode(&memory.file()), 0o644);
+
+        let elsewhere = tempfile::tempdir().unwrap();
+        let real = elsewhere.path().join("notes.md");
+        std::fs::write(&real, "Drinks tea\n").unwrap();
+        let linked = fresh();
+        std::os::unix::fs::symlink(&real, linked.file()).unwrap();
+        linked.edit(&[add("Lives in Seoul")]).unwrap();
+        assert!(
+            std::fs::symlink_metadata(linked.file())
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(
+            std::fs::read_to_string(&real)
+                .unwrap()
+                .contains("Lives in Seoul")
+        );
     }
 
     /// Edits made at once, as a model's parallel tool calls are, wait for each other: every
