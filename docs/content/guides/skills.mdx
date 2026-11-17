@@ -134,3 +134,13 @@ For any other org, the same preamble is followed by a Markdown list, one line pe
 ```
 
 Skills are added only to the system message the agent writes itself. A `history(...)` that brings a system message keeps it: the skills are not read or added.
+
+## Troubleshooting
+
+| What you see | Why, and what to do |
+| --- | --- |
+| `reading the skill <dir>/SKILL.md` at `build()` (a `VirtxError` with status `404` in Python and Node.js) | The `SKILL.md` of a `skill(dir)` isn't in the sandbox. `dir` is a path in the sandbox, not on your machine: check that the volume holding it is mounted there. |
+| ``the frontmatter has no `name` ``, or ``no `description` `` | Add the field to the frontmatter, on one line. |
+| ``a SKILL.md opens with a `---` line`` | The file must start with the frontmatter, between two `---` lines. |
+| `an agent with skills needs a sandbox to read them from` | Give the agent a sandbox with `sandbox(...)`. |
+| A skill's description in the system message is just `>` or `\|` | YAML's multi-line values aren't read, and no error is raised: put the description on one line. |

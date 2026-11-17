@@ -393,3 +393,18 @@ let agent = AgentBuilder::new("mine/echo").build().await?;
 </Tabs>
 
 In Python and Node.js the factory itself must return the model directly, not an awaitable or promise of it. The model's methods are called with the messages, tools and options as dicts or objects, the same shapes the [message format](/docs/guides/message-format/) describes.
+
+## Troubleshooting
+
+| What you see | Why, and what to do |
+| --- | --- |
+| `failed to start the claude CLI` (or `codex`, `gemini`), on the first turn | The CLI isn't installed, or isn't on the `PATH` of your program. Install it ([With a CLI login](/docs/guides/installation/#with-a-cli-login-default)), or switch the org to `api`. |
+| The CLI's own error on the first turn, such as Claude Code's "Not logged in" | Log in: `claude auth login`, `codex login`, or run `gemini` and sign in. Codex is read from its `auth.json`, so a login kept in the system keyring (`cli_auth_credentials_store`) isn't found. |
+| `ANTHROPIC_API_KEY is not set` (or another `…_API_KEY`), at `build()` | Set the variable before building the agent; a blank one counts as unset. [Backends](#backends) lists each org's variable. |
+| `'<org>' has no CLI`, or `'<org>' has no API of its own` | Only `anthropic`, `openai` and `google` have a CLI, and `api` knows only the orgs in [Naming a model](#naming-a-model). Use `bedrock`, `openrouter` or `self-hosted` for any other. |
+| `no provider set for lang model org '<org>'` | The org has no default backend. Set one with `set_lang_model_provider` first. |
+| `AWS_BEARER_TOKEN_BEDROCK is not set` | Bedrock is reached with a bearer token, not AWS access keys or a profile. Set the token. |
+| `Bedrock request failed with status …` on the first turn | The region is wrong, as `us-east-1` is used when neither `AWS_REGION` nor `AWS_DEFAULT_REGION` is set, or Bedrock doesn't serve the model there. Ailoy builds an id for any model, so a model Bedrock lacks, such as Gemini, fails only when it is called. |
+| `SELF_HOSTED_BASE_URL is not set` | Set it, or give the server per org with `set_lang_model_provider` ([A server of your own](#a-server-of-your-own)). |
+| `chat completions request failed with status 404: …` | The `base_url` is missing its `/v1`. Ailoy adds `/chat/completions` to the URL as given. |
+| A connection error naming `<base_url>/chat/completions` on the first turn | The server isn't running, or the host or port is wrong. `build()` still succeeds and only logs `listing the models at <base_url>/models failed`. |

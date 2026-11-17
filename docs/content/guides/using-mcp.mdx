@@ -188,3 +188,11 @@ ailoy::tool::unregister_mcp("fetch");
 
 </TabItem>
 </Tabs>
+
+## Troubleshooting
+
+| What you see | Why, and what to do |
+| --- | --- |
+| An OS error such as `No such file or directory (os error 2)` or `program not found` from `register_mcp_stdio` | The command, such as `uvx`, isn't installed or isn't on your program's `PATH`. Install it (`uvx` comes with [uv](https://docs.astral.sh/uv/)), or give its full path. |
+| `connection closed: initialize response` | The server started and exited before answering. Its error output isn't shown, so run the same command in a terminal to see why. |
+| A tool's name isn't the one the server gives it | Tools are named `<prefix>__<name>`, and any character outside letters, digits, `_` and `-` becomes `_`: prefix `my.server` and tool `odd/name` give `my_server__odd_name`. A name over 64 characters logs a warning, since some model APIs refuse it. |
