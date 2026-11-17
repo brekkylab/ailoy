@@ -186,5 +186,6 @@ An agent's work is in two places: its history, and its sandbox's files. To carry
 | `vcpus`, `memory_mib` | Room for heavy commands. | [Setting up sandboxes](https://virtx.sh/docs/guides/setting-sandboxes/) |
 | `snapshot` | Files from earlier work to start on. | [Keeping work in snapshots](https://virtx.sh/docs/guides/keeping-snapshots/) |
 | `gpu`, `gpu_memory_mib` | A GPU through Vulkan, for work such as deep learning. | [Using GPUs](https://virtx.sh/docs/guides/using-gpus/) |
+| `abins` (`.abin(name)` in Rust) | virtx's own programs at `/abin`, such as `index`, `docread` and `display`. Each one with a `SKILL.md` becomes one of the agent's [skills](/docs/guides/skills/). | [Setting up sandboxes](https://virtx.sh/docs/guides/setting-sandboxes/) |
 
 Node.js spells them in camelCase (`memoryMib`, `gpuMemoryMib`), and Rust sets them on `SandboxCreateArgs`. virtx's [Hello world](https://virtx.sh/docs/hello-world/) covers which server to run, on your machine or elsewhere.

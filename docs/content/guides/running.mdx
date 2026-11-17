@@ -117,7 +117,7 @@ A turn ends with an error rather than a message in these cases, and the agent st
 
 A tool that fails does not end the turn: an unknown tool, a missing sandbox, an exception in your function or a failed command becomes that call's result, and the model can try something else.
 
-In Python, ailoy's own errors are `AiloyError`, and a sandbox's failures are virtx's `VirtxError`, with the server's `status`. In Node.js, the error's `code` is `AILOY_ERROR` or `VIRTX_ERROR`.
+In Python, ailoy's own errors are `AiloyError`, and a sandbox's failures are virtx's `VirtxError`, with the server's `status`. In Node.js, an error from the agent has `code` `AILOY_ERROR`, or `VIRTX_ERROR` for a sandbox's failure. A call on virtx's own package, such as `createSandbox`, throws its `VirtxError` instead, with `source` and `status`.
 
 ## Usage
 
