@@ -10,6 +10,9 @@ const SEPARATOR: &str = "\n\n";
 /// The file in a memory's folder that holds its entries.
 pub const FILE_NAME: &str = "MEMORY.md";
 
+/// The file in a memory's folder that edits lock, one at a time, so none is lost.
+const LOCK_NAME: &str = ".MEMORY.md.lock";
+
 /// How a date leads an entry: `[2026-11-17] `, the host's date when the entry was last written.
 const STAMP_LEN: usize = "[YYYY-MM-DD] ".len();
 
@@ -28,7 +31,8 @@ const DEFAULT_LIMIT: usize = 3_000;
 /// # fn f() -> anyhow::Result<()> {
 /// let memory = Memory::new("/data/agent1").prepared()?;
 /// memory.edit(&[MemoryEdit::Add { content: "Name is Minsu".into() }])?;
-/// assert_eq!(memory.read()?, ["Name is Minsu"]);
+/// // Led by the day it was written, as `[2026-11-17] Name is Minsu`.
+/// assert!(memory.read()?[0].ends_with("] Name is Minsu"));
 /// # Ok(())
 /// # }
 /// ```
@@ -93,7 +97,17 @@ impl Memory {
     /// the file grew: one already over its limit (edited by hand) can still shrink. The file is
     /// written to a temporary one beside it and moved into place, so a reader never sees half
     /// of it.
+    ///
+    /// Edits wait for each other, from this process or another, on a lock file in the folder:
+    /// each reads the file another has just written, so two at once both land.
     pub fn edit(&self, edits: &[MemoryEdit]) -> Result<Vec<String>, EditError> {
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(self.dir.join(LOCK_NAME))?;
+        lock.lock()?;
+
         let current = self.read()?;
         let edited = edited(&current, edits, self.limit, &today())?;
         if edited != current {
@@ -101,9 +115,10 @@ impl Memory {
             if !text.is_empty() {
                 text.push('\n');
             }
-            let temp = self.dir.join(format!(".{FILE_NAME}.tmp"));
-            std::fs::write(&temp, text)?;
-            std::fs::rename(&temp, self.file())?;
+            let mut temp = tempfile::NamedTempFile::new_in(&self.dir)?;
+            io::Write::write_all(&mut temp, text.as_bytes())?;
+            temp.as_file().sync_all()?;
+            temp.persist(self.file()).map_err(|e| e.error)?;
         }
         Ok(edited)
     }
@@ -307,23 +322,39 @@ fn entry(content: &str, today: &str) -> Result<String, String> {
 }
 
 /// The entry containing `old_text`, whitespace runs counting as one space: its index, or the
-/// indices of every copy when the matches are the same entry repeated.
+/// indices of every copy when the matches are the same entry repeated. Of several entries
+/// containing it, one that it is the whole of is the one meant, since no longer `old_text`
+/// could pick that one out.
 fn find(entries: &[String], old_text: &str) -> Result<Vec<usize>, String> {
     let needle = squash(old_text);
     if needle.is_empty() {
         return Err("old_text cannot be empty".into());
     }
+    let one = |hits: &[usize]| match hits {
+        [first, rest @ ..] => rest.iter().all(|&i| same(&entries[i], &entries[*first])),
+        [] => false,
+    };
     let hits: Vec<usize> = (0..entries.len())
         .filter(|&i| squash(&entries[i]).contains(&needle))
         .collect();
-    match hits.as_slice() {
-        [] => Err(format!("no entry contains {old_text:?}")),
-        [first, rest @ ..] if rest.iter().all(|&i| same(&entries[i], &entries[*first])) => Ok(hits),
-        _ => Err(format!(
-            "{} entries contain {old_text:?}; give a longer old_text that only one contains",
-            hits.len()
-        )),
+    if hits.is_empty() {
+        return Err(format!("no entry contains {old_text:?}"));
     }
+    if one(&hits) {
+        return Ok(hits);
+    }
+    let whole: Vec<usize> = hits
+        .iter()
+        .copied()
+        .filter(|&i| same(&entries[i], old_text))
+        .collect();
+    if one(&whole) {
+        return Ok(whole);
+    }
+    Err(format!(
+        "{} entries contain {old_text:?}; give a longer old_text that only one contains",
+        hits.len()
+    ))
 }
 
 /// Remove the entries at `at`, which is ascending.
@@ -473,6 +504,27 @@ mod tests {
         );
     }
 
+    /// An entry that another one contains whole is still picked out by its own text.
+    #[test]
+    fn test_an_entry_inside_another_is_picked_out_by_its_whole_text() {
+        let start = entries(&[&dated("Likes tea"), &dated("Likes tea with milk")]);
+        assert!(edited(&start, &[remove("tea")], DEFAULT_LIMIT, DAY).is_err());
+        assert_eq!(
+            edited(
+                &start,
+                &[replace(" Likes  tea", "Likes coffee")],
+                DEFAULT_LIMIT,
+                DAY
+            )
+            .unwrap(),
+            [dated("Likes coffee"), dated("Likes tea with milk")]
+        );
+        assert_eq!(
+            edited(&start, &[remove(&dated("Likes tea"))], DEFAULT_LIMIT, DAY).unwrap(),
+            [dated("Likes tea with milk")]
+        );
+    }
+
     #[test]
     fn test_the_limit_applies_to_the_result_and_only_to_growth() {
         let start = entries(&[&"a".repeat(95)]);
@@ -542,5 +594,29 @@ mod tests {
         let e = memory.edit(&[remove("coffee")]).unwrap_err();
         assert!(matches!(e, EditError::Refused(_)), "{e}");
         assert_eq!(memory.read().unwrap(), name);
+    }
+
+    /// Edits made at once, as a model's parallel tool calls are, wait for each other: every
+    /// one lands.
+    #[test]
+    fn test_edits_at_once_all_land() {
+        let memory = fresh();
+        let threads: Vec<_> = (0..8)
+            .map(|i| {
+                let memory = memory.clone();
+                std::thread::spawn(move || memory.edit(&[add(&format!("Fact {i}"))]).unwrap())
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let mut got: Vec<String> = memory
+            .read()
+            .unwrap()
+            .iter()
+            .map(|e| body(e).to_string())
+            .collect();
+        got.sort();
+        assert_eq!(got, (0..8).map(|i| format!("Fact {i}")).collect::<Vec<_>>());
     }
 }
