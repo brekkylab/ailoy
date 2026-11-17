@@ -1546,7 +1546,11 @@ mod tests {
 
         let outputs: Vec<_> = agent.run(user("I'm Minsu")).collect().await;
         assert!(outputs.iter().all(Result::is_ok));
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Name is Minsu\n");
+        let day = crate::memory::today();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!("[{day}] Name is Minsu\n")
+        );
         assert!(
             text_of(&agent.history()[0]).ends_with("(empty)"),
             "unchanged this session"
@@ -1555,7 +1559,11 @@ mod tests {
         let (_, spec) = scripted("test-agent-memory-file-next", []);
         let state = AgentState::new().with_memory(Memory::new(&folder));
         let agent = Agent::try_with_state(spec, state).await.unwrap();
-        assert!(text_of(&agent.history()[0]).ends_with("[13/3000 chars]\nName is Minsu"));
+        let system = text_of(&agent.history()[0]);
+        assert!(
+            system.ends_with(&format!("[26/3000 chars]\n[{day}] Name is Minsu")),
+            "{system}"
+        );
     }
 
     /// A memory file whose folder cannot be made fails the agent.

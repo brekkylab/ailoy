@@ -20,7 +20,7 @@ pub fn get_memory_tool_desc() -> ToolDesc {
     });
     let content = crate::to_value!({
         "type": "string",
-        "description": "One fact: the entry to add, or the whole new text of the replaced entry."
+        "description": "One fact, without a date: the entry to add, or the whole new text of the replaced entry."
     });
     let old_text = crate::to_value!({
         "type": "string",
@@ -34,8 +34,9 @@ pub fn get_memory_tool_desc() -> ToolDesc {
             "Only what will matter in every conversation: leave out details, one-off tasks and ",
             "progress. Each entry is one fact: a new fact is a new entry, even about the same ",
             "user. When a fact changes, replace that fact's entry instead of adding another, and ",
-            "never rewrite an entry to fit another fact into it. End a fact whose date matters ",
-            "with the date, as (YYYY-MM-DD). ",
+            "never rewrite an entry to fit another fact into it. Each entry starts with the date ",
+            "it was last written, as [YYYY-MM-DD], which is added for you: write only the fact, ",
+            "and use the dates to tell what may be out of date. ",
             "The memory has a size limit; when it is full, make room in the same call: shorten ",
             "entries first, and remove one only when shortening is not enough, then tell the user ",
             "what you removed. For several changes at once, send them as operations: all are made or none. ",
@@ -182,7 +183,7 @@ mod tests {
         );
         assert_eq!(
             out.pointer("/memory/usage").unwrap().as_str(),
-            Some("13/100 chars")
+            Some("26/100 chars")
         );
 
         let out = call_pure(
@@ -198,9 +199,13 @@ mod tests {
             Some("saved"),
             "{out:?}"
         );
+        let day = crate::memory::today();
         assert_eq!(
             memory.read().unwrap(),
-            ["Name is Minsu Kim", "Answer briefly"]
+            [
+                format!("[{day}] Name is Minsu Kim"),
+                format!("[{day}] Answer briefly")
+            ]
         );
     }
 
@@ -215,6 +220,7 @@ mod tests {
             to_value!({ "action": "add", "content": "Drinks tea" }),
         )
         .await;
+        let tea = format!("[{}] Drinks tea", crate::memory::today());
 
         for args in [
             to_value!({ "action": "remove", "old_text": "coffee" }),
@@ -228,10 +234,10 @@ mod tests {
             );
             assert_eq!(
                 out.pointer("/memory/entries/0").unwrap().as_str(),
-                Some("Drinks tea")
+                Some(tea.as_str())
             );
         }
-        assert_eq!(memory.read().unwrap(), ["Drinks tea"]);
+        assert_eq!(memory.read().unwrap(), [tea]);
 
         for args in [
             to_value!({}),

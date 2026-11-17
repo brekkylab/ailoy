@@ -10,13 +10,17 @@ const SEPARATOR: &str = "\n\n";
 /// The file in a memory's folder that holds its entries.
 pub const FILE_NAME: &str = "MEMORY.md";
 
+/// How a date leads an entry: `[2026-11-17] `, the host's date when the entry was last written.
+const STAMP_LEN: usize = "[YYYY-MM-DD] ".len();
+
 /// The most characters the file may hold unless [`Memory::with_limit`] says otherwise.
 const DEFAULT_LIMIT: usize = 3_000;
 
 /// A folder on this host whose `MEMORY.md` an agent keeps short notes in, with the `memory`
 /// tool, and that its system message shows from the next session on.
 ///
-/// The notes are entries, paragraphs apart. The folder, and those on the way to it, are made
+/// The notes are entries, paragraphs apart, each led by the host's date when it was last
+/// written, as `[2026-11-17] Drinks tea`. The folder, and those on the way to it, are made
 /// when the agent is, and the file on the first entry; until then the memory is empty.
 ///
 /// ```rust,no_run
@@ -91,7 +95,7 @@ impl Memory {
     /// of it.
     pub fn edit(&self, edits: &[MemoryEdit]) -> Result<Vec<String>, EditError> {
         let current = self.read()?;
-        let edited = edited(&current, edits, self.limit)?;
+        let edited = edited(&current, edits, self.limit, &today())?;
         if edited != current {
             let mut text = edited.join(SEPARATOR);
             if !text.is_empty() {
@@ -108,8 +112,9 @@ impl Memory {
     pub fn render(&self, entries: &[String]) -> String {
         format!(
             "# Memory\n\n\
-             Your memory of this user, kept with the `memory` tool across conversations. It was \
-             loaded when this conversation started; your changes show up next time.\n\n\
+             Your memory of this user, kept with the `memory` tool across conversations, each \
+             entry led by the date it was last written. It was loaded when this conversation \
+             started; your changes show up next time.\n\n\
              [{}/{} chars]\n{}",
             used(entries),
             self.limit,
@@ -184,16 +189,43 @@ pub struct EditRefusal {
     pub entries: Vec<String>,
 }
 
+/// The host's date, as entries are stamped with it.
+pub(crate) fn today() -> String {
+    chrono::Local::now().format("%Y-%m-%d").to_string()
+}
+
+/// `entry` without the date that leads it, if one does.
+fn body(entry: &str) -> &str {
+    let b = entry.as_bytes();
+    let stamped = b.len() >= STAMP_LEN
+        && b[0] == b'['
+        && b[11] == b']'
+        && b[12] == b' '
+        && b[5] == b'-'
+        && b[8] == b'-'
+        && [1, 2, 3, 4, 6, 7, 9, 10]
+            .iter()
+            .all(|&i| b[i].is_ascii_digit());
+    if stamped { &entry[STAMP_LEN..] } else { entry }
+}
+
+/// Whether two entries say the same thing: their dates and spacing aside.
+fn same(a: &str, b: &str) -> bool {
+    squash(body(a)) == squash(body(b))
+}
+
 /// Characters in the file, as its limit counts them.
 pub(crate) fn used(entries: &[String]) -> usize {
     entries.join(SEPARATOR).chars().count()
 }
 
-/// `current` with `edits` made in order, or the reason none can be.
+/// `current` with `edits` made in order, or the reason none can be; what is added or replaced
+/// is stamped with `today`.
 fn edited(
     current: &[String],
     edits: &[MemoryEdit],
     limit: usize,
+    today: &str,
 ) -> Result<Vec<String>, EditRefusal> {
     let refuse = |reason: String| EditRefusal {
         reason,
@@ -203,17 +235,17 @@ fn edited(
     for edit in edits {
         match edit {
             MemoryEdit::Add { content } => {
-                let content = entry(content).map_err(refuse)?;
-                if !entries.iter().any(|e| squash(e) == squash(&content)) {
+                let content = entry(content, today).map_err(refuse)?;
+                if !entries.iter().any(|e| same(e, &content)) {
                     entries.push(content);
                 }
             }
             MemoryEdit::Replace { old_text, content } => {
-                let content = entry(content).map_err(refuse)?;
+                let content = entry(content, today).map_err(refuse)?;
                 let hits = find(&entries, old_text).map_err(refuse)?;
                 remove_all(&mut entries, &hits[1..]);
-                let elsewhere = (0..entries.len())
-                    .any(|i| i != hits[0] && squash(&entries[i]) == squash(&content));
+                let elsewhere =
+                    (0..entries.len()).any(|i| i != hits[0] && same(&entries[i], &content));
                 if elsewhere {
                     entries.remove(hits[0]);
                 } else {
@@ -258,19 +290,20 @@ fn parse_entries(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// `content` as one entry: trimmed, with blank lines dropped so it reads back as one
-/// paragraph; refused if nothing is left.
-fn entry(content: &str) -> Result<String, String> {
+/// `content` as one entry stamped with `today`: trimmed, with blank lines dropped so it reads
+/// back as one paragraph, and without a date of its own leading it (one copied from an entry);
+/// refused if nothing is left.
+fn entry(content: &str, today: &str) -> Result<String, String> {
     let content = content
         .lines()
         .filter(|line| !line.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n");
-    let content = content.trim();
+    let content = body(content.trim()).trim();
     if content.is_empty() {
         return Err("an entry cannot be empty".into());
     }
-    Ok(content.to_string())
+    Ok(format!("[{today}] {content}"))
 }
 
 /// The entry containing `old_text`, whitespace runs counting as one space: its index, or the
@@ -285,13 +318,7 @@ fn find(entries: &[String], old_text: &str) -> Result<Vec<usize>, String> {
         .collect();
     match hits.as_slice() {
         [] => Err(format!("no entry contains {old_text:?}")),
-        [first, rest @ ..]
-            if rest
-                .iter()
-                .all(|&i| squash(&entries[i]) == squash(&entries[*first])) =>
-        {
-            Ok(hits)
-        }
+        [first, rest @ ..] if rest.iter().all(|&i| same(&entries[i], &entries[*first])) => Ok(hits),
         _ => Err(format!(
             "{} entries contain {old_text:?}; give a longer old_text that only one contains",
             hits.len()
@@ -333,6 +360,13 @@ mod tests {
         }
     }
 
+    const DAY: &str = "2026-11-17";
+
+    /// `text` as an entry written on [`DAY`].
+    fn dated(text: &str) -> String {
+        format!("[{DAY}] {text}")
+    }
+
     fn entries(texts: &[&str]) -> Vec<String> {
         texts.iter().map(|s| s.to_string()).collect()
     }
@@ -355,7 +389,7 @@ mod tests {
     fn test_edits_add_replace_and_remove_by_old_text() {
         let start = entries(&["Name is Minsu", "Drinks tea"]);
         // Whitespace-lenient, not case-blind.
-        assert!(edited(&start, &[replace("drinks   TEA", "x")], DEFAULT_LIMIT).is_err());
+        assert!(edited(&start, &[replace("drinks   TEA", "x")], DEFAULT_LIMIT, DAY).is_err());
 
         let after = edited(
             &start,
@@ -365,15 +399,45 @@ mod tests {
                 add("Prefers short answers\n\n  \nin Korean"),
             ],
             DEFAULT_LIMIT,
+            DAY,
         )
         .unwrap();
         assert_eq!(
             after,
             [
-                "Drinks only oat-milk lattes",
-                "Prefers short answers\nin Korean"
+                dated("Drinks only oat-milk lattes"),
+                dated("Prefers short answers\nin Korean")
             ]
         );
+    }
+
+    /// What is added or replaced is led by the day it was written, not by a date the model
+    /// copied from an entry; an entry's date leaves it the same fact as before.
+    #[test]
+    fn test_entries_are_led_by_the_day_they_were_written() {
+        let start = entries(&["[2026-11-10] Drinks tea", "Lives in Seoul"]);
+        let after = edited(
+            &start,
+            &[
+                add("[2026-11-10] Drinks tea"),
+                replace("Seoul", "[2026-11-10] Lives in Busan"),
+                add("Married in (2027-03)"),
+            ],
+            DEFAULT_LIMIT,
+            DAY,
+        )
+        .unwrap();
+        assert_eq!(
+            after,
+            [
+                "[2026-11-10] Drinks tea".to_string(),
+                dated("Lives in Busan"),
+                dated("Married in (2027-03)")
+            ]
+        );
+        assert_eq!(body(&dated("Drinks tea")), "Drinks tea");
+        assert_eq!(body("[2026-1-10] Drinks tea"), "[2026-1-10] Drinks tea");
+        assert_eq!(body("Drinks tea"), "Drinks tea");
     }
 
     /// An edit that cannot be made changes nothing, and the refusal shows the entries as they
@@ -381,13 +445,13 @@ mod tests {
     #[test]
     fn test_an_edit_that_cannot_be_made_changes_nothing() {
         let start = entries(&["Lives in Seoul", "Works in Seoul"]);
-        let e = edited(&start, &[add("new"), remove("Seoul")], DEFAULT_LIMIT).unwrap_err();
+        let e = edited(&start, &[add("new"), remove("Seoul")], DEFAULT_LIMIT, DAY).unwrap_err();
         assert!(e.reason.contains("2 entries"), "{e}");
         assert_eq!(e.entries, start);
 
         for bad in [add("  "), add("\n \n"), remove(" "), remove("Busan")] {
             assert!(
-                edited(&start, std::slice::from_ref(&bad), DEFAULT_LIMIT).is_err(),
+                edited(&start, std::slice::from_ref(&bad), DEFAULT_LIMIT, DAY).is_err(),
                 "{bad:?}"
             );
         }
@@ -399,12 +463,12 @@ mod tests {
     fn test_repeated_entries_count_as_one() {
         let twice = entries(&["Drinks tea", "Drinks  tea", "Lives in Seoul"]);
         assert_eq!(
-            edited(&twice, &[remove("tea")], DEFAULT_LIMIT).unwrap(),
+            edited(&twice, &[remove("tea")], DEFAULT_LIMIT, DAY).unwrap(),
             ["Lives in Seoul"]
         );
         let once = entries(&["Drinks tea"]);
         assert_eq!(
-            edited(&once, &[add("Drinks  tea ")], DEFAULT_LIMIT).unwrap(),
+            edited(&once, &[add("Drinks  tea ")], DEFAULT_LIMIT, DAY).unwrap(),
             once
         );
     }
@@ -412,17 +476,17 @@ mod tests {
     #[test]
     fn test_the_limit_applies_to_the_result_and_only_to_growth() {
         let start = entries(&[&"a".repeat(95)]);
-        let e = edited(&start, &[add("bbbbb")], 100).unwrap_err();
+        let e = edited(&start, &[add("bbbbb")], 100, DAY).unwrap_err();
         assert!(e.reason.contains("over its limit of 100"), "{e}");
         assert_eq!(
-            edited(&start, &[remove("aaa"), add("bbbbb")], 100).unwrap(),
-            ["bbbbb"]
+            edited(&start, &[remove("aaa"), add("bbbbb")], 100, DAY).unwrap(),
+            [dated("bbbbb")]
         );
 
         // Over its limit already (edited by hand): may shrink, may not grow.
         let over = entries(&[&"a".repeat(80), &"b".repeat(80)]);
-        assert!(edited(&over, &[replace("aaa", "a")], 100).is_ok());
-        assert!(edited(&over, &[add("c")], 100).is_err());
+        assert!(edited(&over, &[replace("aaa", "a")], 100, DAY).is_ok());
+        assert!(edited(&over, &[add("c")], 100, DAY).is_err());
     }
 
     #[test]
@@ -466,15 +530,17 @@ mod tests {
         memory
             .edit(&[add("- Name is Minsu"), add("Drinks tea")])
             .unwrap();
+        let day = today();
         assert_eq!(
             std::fs::read_to_string(memory.file()).unwrap(),
-            "- Name is Minsu\n\nDrinks tea\n"
+            format!("[{day}] - Name is Minsu\n\n[{day}] Drinks tea\n")
         );
         memory.edit(&[remove("tea")]).unwrap();
-        assert_eq!(memory.read().unwrap(), ["- Name is Minsu"]);
+        let name = [format!("[{day}] - Name is Minsu")];
+        assert_eq!(memory.read().unwrap(), name);
 
         let e = memory.edit(&[remove("coffee")]).unwrap_err();
         assert!(matches!(e, EditError::Refused(_)), "{e}");
-        assert_eq!(memory.read().unwrap(), ["- Name is Minsu"]);
+        assert_eq!(memory.read().unwrap(), name);
     }
 }

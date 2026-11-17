@@ -52,6 +52,7 @@ anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"
 base64 = "0.23"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 virtx = { workspace = true }
 dedent = "0.1.1"
 derive_builder = "0.20.2"
