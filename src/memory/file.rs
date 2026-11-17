@@ -101,14 +101,21 @@ impl Memory {
     /// alone to read.
     ///
     /// Edits wait for each other, from this process or another, on a lock file in the folder:
-    /// each reads the file another has just written, so two at once both land.
+    /// each reads the file another has just written, so two at once both land. On a file
+    /// system that cannot lock a file, as some network ones, an edit goes on without waiting.
     pub fn edit(&self, edits: &[MemoryEdit]) -> Result<Vec<String>, EditError> {
+        let lock_path = self.dir.join(LOCK_NAME);
         let lock = std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
-            .open(self.dir.join(LOCK_NAME))?;
-        lock.lock()?;
+            .open(&lock_path)?;
+        if let Err(e) = lock.lock() {
+            log::warn!(
+                "could not lock {}: {e}; editing the memory without waiting for other edits",
+                lock_path.display()
+            );
+        }
 
         let current = self.read()?;
         let edited = edited(&current, edits, self.limit, &today())?;
