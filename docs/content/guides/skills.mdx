@@ -5,6 +5,10 @@ description: "Give an agent folders of instructions for one kind of task, in the
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
+:::note[Needs a sandbox]
+The agent reads its skills through its sandbox, so an agent with skills needs one ([Giving an agent a sandbox](/docs/guides/sandbox/)).
+:::
+
 A skill is a folder of instructions for one kind of task, with the files those instructions use, in the [Agent Skills](https://agentskills.io/specification) format. The agent is told which skills it has and what each is for, and to read a skill's instructions when a task matches it.
 
 ## What a skill folder holds

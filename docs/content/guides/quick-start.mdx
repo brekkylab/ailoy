@@ -9,6 +9,8 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 This page assumes Ailoy is installed and the model has a way to run: a CLI you are logged in to, or an API key. [Installation](/docs/guides/installation/) covers both.
 :::
 
+<div class="steps-flow">
+
 ## Run an agent
 
 An agent needs only a model. This one has no tools and no sandbox, so it answers from what the model knows:
@@ -221,6 +223,8 @@ async fn main() -> anyhow::Result<()> {
 </Tabs>
 
 The image has no matplotlib, so the agent installs it with the shell that `sandbox(...)` gives it, along with file tools ([Tools](/docs/guides/tools/)).
+
+</div>
 
 ## What happened
 
