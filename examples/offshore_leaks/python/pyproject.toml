@@ -2,7 +2,7 @@
 name = "ailoy-example-offshore-leaks"
 version = "0.1.0"
 description = "ICIJ's Offshore Leaks database analyzed by an agent, on ailoy's Python bindings, and the script that loads it into DuckDB."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "ailoy-py",
     "virtx>=0.1.2,<0.2",

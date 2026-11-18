@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11, <3.15"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -78,10 +78,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "typing-extensions", marker = "python_full_version < '3.11'", specifier = ">=4" },
-    { name = "virtx", editable = "../../../../virtx/virtx-py" },
-]
+requires-dist = [{ name = "virtx", editable = "../../../../virtx/virtx-py" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2850,4 +2847,5 @@ source = { editable = "../../../../virtx/virtx-py" }
 dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=1" },
+    { name = "ruff", specifier = "==0.17.5" },
 ]

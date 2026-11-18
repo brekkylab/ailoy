@@ -12,6 +12,6 @@
     "@brekkylab/virtx": "file:../../../../virtx/virtx-node"
   },
   "engines": {
-    "node": ">= 20.12"
+    "node": ">= 22"
   }
 }
