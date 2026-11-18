@@ -255,10 +255,18 @@ mobile-starlight-toc .toggle {
   color: var(--sl-color-white);
 }
 
-/* Tables in a closed box: a hairline round every cell, the header row shaded. */
+/* Tables in a closed box: a hairline round every cell, the header row shaded. On wider screens a
+   table fills the column, so its box never runs past its last column; on a phone it keeps
+   Starlight's block display, which scrolls sideways. */
 .sl-markdown-content table {
   border-collapse: collapse;
   border: 1px solid var(--sl-color-hairline);
+}
+@media (min-width: 50rem) {
+  .sl-markdown-content table {
+    display: table;
+    width: 100%;
+  }
 }
 .sl-markdown-content :is(th, td) {
   border: 1px solid var(--sl-color-hairline);
