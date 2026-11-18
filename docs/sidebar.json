@@ -3,8 +3,8 @@
     "label": "Get started",
     "items": [
       { "label": "Welcome to Ailoy", "link": "/" },
-      { "slug": "guides/installation" },
-      { "slug": "guides/quick-start" }
+      { "slug": "guides/quick-start" },
+      { "slug": "guides/installation" }
     ]
   },
   {
