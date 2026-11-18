@@ -26,7 +26,7 @@ cargo test
 (cd bindings/node && npm test)          # after `npm run build:debug`
 ```
 
-There is no pull-request CI, so what you run locally is the gate. `git config core.hooksPath .githooks` installs the hooks in `.githooks/`: the format check on every commit, and clippy plus the library's tests on every push. `SKIP_HOOKS=1 git push` skips the hook for that one command. A run without provider keys covers less than the suite: say which keys were set when you report one.
+A pull request runs the same checks on Linux, without provider keys, so run them locally first. `git config core.hooksPath .githooks` installs the hooks in `.githooks/`: the format check on every commit, and clippy plus the library's tests on every push. `SKIP_HOOKS=1 git push` skips the hook for that one command. A run without provider keys covers less than the suite: say which keys were set when you report one.
 
 ## Pull requests
 
