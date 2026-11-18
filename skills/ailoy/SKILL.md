@@ -21,7 +21,7 @@ The sandbox is [virtx](https://github.com/brekkylab/virtx)'s: Ailoy takes a `San
 
 ## 2. Name the model, and decide how it runs
 
-A model is `<org>/<name>`: the maker's own name for it, the official API id for Claude, GPT and Gemini (`anthropic/claude-haiku-5-5`, `openai/gpt-5.6-luna`, `google/gemini-3.1-pro`) and the Hugging Face repo id for open-weight models (`deepseek-ai/DeepSeek-V3.2`). The name stays the same whichever **backend** runs it; the org's backend decides that.
+A model is `<org>/<name>`: the maker's own name for it, the official API id for Claude, GPT and Gemini (`anthropic/claude-haiku-5-5`, `openai/gpt-5.6-luna`, `google/gemini-3.1-pro`) the Hugging Face repo id for open-weight models (`deepseek-ai/DeepSeek-V3.2`), and the API id for a model with no repo (`LGAI-EXAONE/k-exaone_v2.5`). The name stays the same whichever **backend** runs it; the org's backend decides that.
 
 | Backend | Runs the model through | Needs |
 |---|---|---|
@@ -29,7 +29,7 @@ A model is `<org>/<name>`: the maker's own name for it, the official API id for 
 | `api` (default for the other orgs) | The org's own API | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, ... |
 | `bedrock` | Amazon Bedrock | `AWS_BEARER_TOKEN_BEDROCK`, and `AWS_REGION` (else `us-east-1`) |
 | `openrouter` | OpenRouter | `OPENROUTER_API_KEY` |
-| `vllm` | A vLLM server | `VLLM_BASE_URL` (default `http://localhost:8000/v1`) |
+| `self-hosted` | A server you run yourself: vLLM, llama-server, Ollama, LM Studio, SGLang, or another endpoint serving the OpenAI-compatible Chat Completions API. The model keeps its name whatever the server calls it | `SELF_HOSTED_BASE_URL` |
 
 So with Claude Code, Codex or Gemini CLI logged in on the host, no key is needed: `AgentBuilder("anthropic/claude-haiku-5-5")` runs on that login, and `AgentBuilder("anthropic")` alone runs the CLI's default model. To use a key instead, switch the org's backend before building the agent:
 
@@ -39,21 +39,21 @@ import ailoy
 ailoy.set_lang_model_provider("anthropic", "api")   # every anthropic/ model built after this uses ANTHROPIC_API_KEY
 ```
 
-Node is `setLangModelProvider('anthropic', 'api')`; Rust is `ailoy::model::set_lang_model_provider("anthropic", Backend::Api)`. Keys are read from the environment when the model is built, so set them before that; a missing one fails at `build()` with `ANTHROPIC_API_KEY is not set`. A CLI that is not installed fails only at the first turn, with `failed to start the claude CLI`. Pick the CLI when the user is running it on their own machine with a subscription, and a key when it runs unattended (CI, servers) where nobody can log in. [`docs/content/guides/model-providers.mdx`](../../docs/content/guides/model-providers.mdx) has which org runs on which backend.
+Node is `setLangModelProvider('anthropic', 'api')`; Rust is `ailoy::model::set_lang_model_provider("anthropic", Backend::Api)`. A server per org, instead of the one in the environment, is the backend with its URL, and `models` when the server calls a model something else: `ailoy.set_lang_model_provider("meta-llama", {"backend": "self-hosted", "base_url": "http://localhost:11434/v1", "models": {"Llama-3.3-70B-Instruct": "llama3.3:70b"}})` runs `meta-llama/Llama-3.3-70B-Instruct` on Ollama.
+
+Keys are read from the environment when the model is built, so set them before that; a missing one fails at `build()` with `ANTHROPIC_API_KEY is not set`. A CLI that is not installed fails only at the first turn, with `failed to start the claude CLI`. Pick the CLI when the user is running it on their own machine with a subscription, and a key when it runs unattended (CI, servers) where nobody can log in. [`docs/content/guides/model-providers.mdx`](../../docs/content/guides/model-providers.mdx) has which org runs on which backend.
 
 ## 3. Give it a computer
 
 Decide what the agent's machine holds before writing the agent: the image is where its software comes from, and volumes are how files go in before a run and come out after.
 
 ```python
-from virtx import Client, ImageJobEnd, Recipe, SandboxVolume
+from virtx import Client, Recipe, SandboxVolume
 
 client = Client.spawn()   # starts virtx's server, fetched into its cache the first time
 
 recipe = Recipe("python:3.12-slim-trixie").run("pip install matplotlib")
-async for entry in client.build_image(recipe, "plot:latest"):
-    if isinstance(entry.entry, ImageJobEnd) and entry.entry.error:
-        raise RuntimeError(entry.entry.error)
+await client.build_image(recipe, "plot:latest").complete()
 
 artifacts = await client.create_volume("plot-artifacts")   # kept on the server; `409` if it is there
 sandbox = await client.create_sandbox(
@@ -91,7 +91,6 @@ What else the builder takes, by what the task needs:
 | call your own function | `desc = register_tool({"name": ..., "description": ..., "parameters": <JSON schema>}, func)`, then `.tool(desc)` |
 | drive a web browser | `.browser()` for the user's own Chrome (remote debugging on), `.browser(isolated=True)` for one of its own; it runs on the host, not in the sandbox |
 | follow a procedure you wrote | `.skill("/skills/<name>")`, a directory holding a `SKILL.md`, on a volume mounted into the sandbox |
-| remember across sessions | `.memory("/work/notes.sqlite")`, a store made by `mem init` inside the sandbox |
 | pick up an earlier conversation | `.history(messages)`, e.g. a previous agent's `agent.history` |
 | keep long runs within the context window | `.context_manager(max_input_tokens=..., preserve_recent_turns=..., max_images=..., preserve_recent_images=...)`, which blanks old tool results past `max_input_tokens` (off unless given) and old screenshots past `max_images` (30, `0` for off) |
 | think harder, or less | `.thinking_effort("low" \| "medium" \| "high")` |

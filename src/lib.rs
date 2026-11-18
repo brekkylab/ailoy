@@ -6,7 +6,6 @@ pub mod browser;
 pub mod console;
 pub mod datatype;
 mod macros;
-pub mod memory;
 pub mod message;
 pub mod model;
 pub mod tool;
@@ -23,8 +22,6 @@ pub use indexmap as __indexmap;
 /// loudly.
 #[cfg(test)]
 pub(crate) async fn test_sandbox() -> virtx::Sandbox {
-    use futures::StreamExt as _;
-
     const IMAGE: &str = "python:3.12-slim";
     static CLIENT: tokio::sync::OnceCell<virtx::Client> = tokio::sync::OnceCell::const_new();
     let client = CLIENT
@@ -33,13 +30,11 @@ pub(crate) async fn test_sandbox() -> virtx::Sandbox {
             let client = virtx::Client::spawn_virtx([] as [&str; 0])
                 .await
                 .unwrap_or_else(|e| panic!("starting the virtx server: {e}"));
-            let mut log = client.pull_image(IMAGE, None).log();
-            while let Some(entry) = log.next().await {
-                let entry = entry.unwrap_or_else(|e| panic!("pulling {IMAGE}: {e}"));
-                if let virtx::ImageJobEntry::End(end) = entry.entry {
-                    assert!(end.error.is_none(), "pulling {IMAGE}: {:?}", end.error);
-                }
-            }
+            client
+                .pull_image(IMAGE, None)
+                .complete(false)
+                .await
+                .unwrap_or_else(|e| panic!("pulling {IMAGE}: {e}"));
             client
         })
         .await;

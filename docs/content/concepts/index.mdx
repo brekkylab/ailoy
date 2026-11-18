@@ -38,7 +38,7 @@ Not everything an agent does happens in the sandbox:
 
 | Part | Where it runs |
 | --- | --- |
-| The model | The provider's servers, through its CLI on your machine or its API; or a vLLM server of your own |
+| The model | The provider's servers, through its CLI on your machine or its API; or a server you run yourself, such as vLLM or Ollama |
 | The sandbox | A virtx server: your machine with `Client.spawn()`, or another one |
 | Your own functions, `web_search`, `web_fetch` | Your program |
 | MCP servers | A stdio server is a process on your machine; an HTTP server runs wherever it is hosted |

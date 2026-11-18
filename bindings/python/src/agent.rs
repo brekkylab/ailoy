@@ -14,7 +14,6 @@ use ailoy::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
     browser::{Browser, UserBrowser},
     datatype::Value,
-    memory::Memory,
     message::Message,
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -195,11 +194,6 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.browser(browser)))
     }
 
-    /// Remember into the memory store at `memfile`, a path in the console.
-    fn memory(slf: PyRef<'_, Self>, memfile: String) -> PyResult<PyRef<'_, Self>> {
-        Self::update(slf, |b| Ok(b.memory(Memory::new(memfile))))
-    }
-
     fn skill(slf: PyRef<'_, Self>, dir: String) -> PyResult<PyRef<'_, Self>> {
         Self::update(slf, |b| Ok(b.skill(dir)))
     }
@@ -315,13 +309,12 @@ impl PyAgent {
     /// An agent from a spec — the dict an `AgentSpec` serializes to — for a caller who holds
     /// one rather than building it up. Awaitable.
     #[staticmethod]
-    #[pyo3(signature = (spec, *, history = None, sandbox = None, memory = None))]
+    #[pyo3(signature = (spec, *, history = None, sandbox = None))]
     fn from_spec<'py>(
         py: Python<'py>,
         spec: Bound<'py, PyAny>,
         history: Option<Bound<'py, PyAny>>,
         sandbox: Option<Bound<'py, PyAny>>,
-        memory: Option<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let spec: AgentSpec = from_py(&spec, "an agent spec")?;
         let mut state = AgentState::new();
@@ -330,9 +323,6 @@ impl PyAgent {
         }
         if let Some(sandbox) = sandbox {
             state = state.with_sandbox(console::sandbox(&sandbox)?);
-        }
-        if let Some(memfile) = memory {
-            state = state.with_memory(Memory::new(memfile));
         }
         future_into_py(py, async move {
             let agent = Agent::try_with_state(spec, state)

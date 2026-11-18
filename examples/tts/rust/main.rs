@@ -40,9 +40,9 @@ use ailoy::{
     agent::AgentBuilder,
     message::{Message, Part, Role},
 };
-use anyhow::{Context as _, bail};
+use anyhow::Context as _;
 use futures::StreamExt as _;
-use virtx::{Client, Files as _, ImageJobEntry, Recipe, SandboxCreateArgs, SandboxVolume};
+use virtx::{Client, Files as _, Recipe, SandboxCreateArgs, SandboxVolume};
 
 /// The image the sandbox boots, built once on the virtx server and kept under this tag.
 const IMAGE: &str = "ailoy-tts:1";
@@ -84,25 +84,8 @@ async fn main() -> anyhow::Result<()> {
     {
         println!("Building {IMAGE}, once; it takes a few minutes.");
         let recipe = Recipe::new("python:3.12-slim-trixie")
-            // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader the
-            // wheel opens. Mesa from backports: 26.0 against trixie's 25.0.
-            .step(
-                "echo 'deb http://deb.debian.org/debian trixie-backports main' \
-                > /etc/apt/sources.list.d/backports.list \
-                && apt-get update && apt-get install -y --no-install-recommends \
-                -t trixie-backports mesa-vulkan-drivers \
-                && apt-get install -y --no-install-recommends libvulkan1 \
-                && rm -rf /var/lib/apt/lists/*",
-            )
             .step("pip install --no-cache-dir ncnn numpy tokenizers");
-        let mut log = client.build_image(recipe, IMAGE).log();
-        while let Some(entry) = log.next().await {
-            if let ImageJobEntry::End(end) = entry?.entry
-                && let Some(error) = end.error
-            {
-                bail!("building {IMAGE}: {error}");
-            }
-        }
+        client.build_image(recipe, IMAGE).complete(false).await?;
     }
 
     // The volumes, made the first time and kept on the server: `409` says one is there already.

@@ -8,9 +8,9 @@ mod gemini_cli;
 mod glm_api;
 mod gpt_api;
 mod kimi_api;
+mod openai_compatible;
 mod openrouter_api;
 mod qwen_api;
-mod vllm;
 
 pub use bedrock_api::*;
 pub use claude_api::*;
@@ -22,6 +22,6 @@ pub use gemini_cli::*;
 pub use glm_api::*;
 pub use gpt_api::*;
 pub use kimi_api::*;
+pub use openai_compatible::*;
 pub use openrouter_api::*;
 pub use qwen_api::*;
-pub use vllm::*;

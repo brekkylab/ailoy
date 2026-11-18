@@ -27,7 +27,7 @@ Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform
 
 <Tabs syncKey="lang">
 
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```sh
 pip install ailoy-py
@@ -36,7 +36,7 @@ pip install ailoy-py
 This installs `virtx` too, the package your code makes sandboxes with.
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```sh
 npm install @brekkylab/ailoy
@@ -45,7 +45,7 @@ npm install @brekkylab/ailoy
 This installs `@brekkylab/virtx` too, the package your code makes sandboxes with. With pnpm, which keeps a package from importing what it did not list, add `@brekkylab/virtx` yourself.
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```sh
 cargo add ailoy virtx
@@ -82,7 +82,7 @@ export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY
 
 <Tabs syncKey="lang">
 
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```python
 import ailoy
@@ -92,7 +92,7 @@ ailoy.set_lang_model_provider("anthropic", "api")
 
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```js
 const { setLangModelProvider } = require('@brekkylab/ailoy')
@@ -102,7 +102,7 @@ setLangModelProvider('anthropic', 'api')
 
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```rust
 ailoy::model::set_lang_model_provider("anthropic", "api");
@@ -112,7 +112,7 @@ ailoy::model::set_lang_model_provider("anthropic", "api");
 </TabItem>
 </Tabs>
 
-[Model providers](/docs/guides/model-providers/) lists every backend: the CLIs, each org's own API, Amazon Bedrock, OpenRouter and vLLM.
+[Model providers](/docs/guides/model-providers/) lists every backend: the CLIs, each org’s own API, Amazon Bedrock, OpenRouter and a server you run yourself (vLLM, llama-server, Ollama, LM Studio).
 
 ## Next
 

@@ -45,7 +45,7 @@ if (
 
 import ailoy  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
-from virtx import Client, ImageJobEnd, Recipe  # noqa: E402
+from virtx import Client, Recipe  # noqa: E402
 
 # The image the sandbox boots, built once on the virtx server and kept under this tag.
 IMAGE = "ailoy-browser-use:1"
@@ -116,9 +116,7 @@ async def main(model: str, shell: bool, isolated: bool) -> None:
             recipe = Recipe("python:3.12-slim-trixie").run(
                 "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*"
             )
-            async for entry in client.build_image(recipe, IMAGE):
-                if isinstance(entry.entry, ImageJobEnd) and entry.entry.error:
-                    raise RuntimeError(f"building {IMAGE}: {entry.entry.error}")
+            await client.build_image(recipe, IMAGE).complete()
 
         sandbox = await client.create_sandbox(IMAGE, network=True)
         builder = builder.sandbox(sandbox)

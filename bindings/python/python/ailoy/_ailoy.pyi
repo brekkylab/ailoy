@@ -8,6 +8,7 @@ from .types import (
     AgentSpec,
     Backend,
     LangModelOptions,
+    LangModelServer,
     Message,
     MessageDeltaOutput,
     MessageOutput,
@@ -66,7 +67,6 @@ class AgentBuilder:
         ``start_url`` is the page the agent's tab opens on.
         """
         ...
-    def memory(self, memfile: str) -> Self: ...
     def skill(self, dir: str) -> Self: ...
     def context_manager(
         self,
@@ -93,7 +93,6 @@ class Agent:
         *,
         history: list[Message] | None = None,
         sandbox: Sandbox | None = None,
-        memory: str | None = None,
     ) -> Agent: ...
     @property
     def history(self) -> list[Message]: ...
@@ -150,7 +149,9 @@ class StreamingCustomLangModel(CustomLangModel, Protocol):
 
 LangModelFactory = Callable[[str, str | None], LangModel | CustomLangModel]
 
-def set_lang_model_provider(org: str, provider: Backend | LangModelFactory) -> None: ...
+def set_lang_model_provider(
+    org: str, provider: Backend | LangModelServer | LangModelFactory
+) -> None: ...
 def get_lang_model_provider(desc: str) -> Backend | Literal["custom"] | None: ...
 def remove_lang_model_provider(org: str) -> bool: ...
 def set_tool_provider(name: str, func: Callable[..., Any | Awaitable[Any]]) -> None: ...

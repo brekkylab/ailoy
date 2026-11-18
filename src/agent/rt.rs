@@ -16,13 +16,7 @@ use crate::{
     datatype::Value,
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
     model::{InferLangModel, LangModelOptions, RequestRefused, create_lang_model},
-    tool::{
-        ToolDesc, ToolFunc, create_tool,
-        r#impl::{
-            get_mem_insert_tool_desc, get_mem_insert_tool_func, get_mem_search_tool_desc,
-            get_mem_search_tool_func, get_web_search_tool_factory,
-        },
-    },
+    tool::{ToolDesc, ToolFunc, create_tool, r#impl::get_web_search_tool_factory},
 };
 
 /// Per-part size limit for tool results, past which the middle is cut out.
@@ -64,8 +58,8 @@ impl Agent {
     ///
     /// The model is built from `spec.model` through [`create_lang_model`], and each of
     /// `spec.tools` through [`create_tool`]. Unless `state.history` already has a
-    /// [`Role::System`] message, one built from `spec.instruction` and
-    /// [`AgentSpec::skills`] is put first.
+    /// [`Role::System`] message, one built from `spec.instruction`, [`AgentSpec::skills`]
+    /// and the skills of the sandbox's abins is put first.
     ///
     /// Async because skills are read through the sandbox.
     pub async fn try_with_state(spec: AgentSpec, mut state: AgentState) -> anyhow::Result<Self> {
@@ -85,21 +79,7 @@ impl Agent {
         }
         let mut tool_descs = spec.tools.clone();
 
-        // The store is this agent's `Memory`, not a registry name, so these are built here.
-        if let Some(memory) = state.memory.clone() {
-            for (desc, func) in [
-                (
-                    get_mem_search_tool_desc(),
-                    get_mem_search_tool_func(memory.clone()),
-                ),
-                (get_mem_insert_tool_desc(), get_mem_insert_tool_func(memory)),
-            ] {
-                tools.insert(desc.name.clone(), func);
-                tool_descs.push(desc);
-            }
-        }
-
-        // Like memory, bound to this agent's own browser rather than resolved by name.
+        // Bound to this agent's own browser rather than resolved by name.
         if let Some(session) = &state.browser {
             for (desc, func) in browser::tools(session, state.sandbox.is_some()) {
                 tools.insert(desc.name.clone(), func);
@@ -108,12 +88,8 @@ impl Agent {
         }
 
         if !state.history.iter().any(|m| m.role == Role::System) {
-            let skills = if spec.skills.is_empty() {
-                None
-            } else {
-                let org = split_desc(&spec.model).0;
-                Some(render_skills(&spec.skills, state.sandbox.as_ref(), org).await?)
-            };
+            let org = split_desc(&spec.model).0;
+            let skills = render_skills(&spec.skills, state.sandbox.as_ref(), org).await?;
             let text = [spec.instruction, skills]
                 .into_iter()
                 .flatten()

@@ -24,9 +24,8 @@ use ailoy::{
     browser::Browser,
     message::{Message, Part, Role},
 };
-use anyhow::bail;
 use futures::StreamExt as _;
-use virtx::{Client, ImageJobEntry, Recipe, SandboxCreateArgs};
+use virtx::{Client, Recipe, SandboxCreateArgs};
 
 /// The image the sandbox boots, built once on the virtx server and kept under this tag.
 const IMAGE: &str = "ailoy-browser-use:1";
@@ -98,14 +97,7 @@ async fn main() -> anyhow::Result<()> {
                 "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl \
                  && rm -rf /var/lib/apt/lists/*",
             );
-            let mut log = client.build_image(recipe, IMAGE).log();
-            while let Some(entry) = log.next().await {
-                if let ImageJobEntry::End(end) = entry?.entry
-                    && let Some(error) = end.error
-                {
-                    bail!("building {IMAGE}: {error}");
-                }
-            }
+            client.build_image(recipe, IMAGE).complete(false).await?;
         }
 
         let mut args = SandboxCreateArgs::new(IMAGE);

@@ -69,14 +69,13 @@ indexmap = { version = "2", features = ["serde"] }
 infer = "0.22"
 log = "0.4"
 ordered-float = { version = "5.0.0", features = ["serde"] }
-parking_lot = "0.12.4"
+parking_lot = "0.13"
 png = "0.18"
 reqwest = { version = "0.13", features = ["form", "json", "stream"] }
 # MCP client only: no server/macros defaults, and just the two transports
 # `MCPTransport` names (stdio child process, streamable HTTP).
 rmcp = { version = "3", default-features = false, features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 scraper = "0.27"
-jsonschema = { version = "0.60", default-features = false }
 schemars = { version = "1", features = ["preserve_order", "url2"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"

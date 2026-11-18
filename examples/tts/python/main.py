@@ -57,7 +57,7 @@ if (
     )
 
 import ailoy  # noqa: E402
-from virtx import Client, ImageJobEnd, Recipe, SandboxVolume, VirtxError  # noqa: E402
+from virtx import Client, Recipe, SandboxVolume, VirtxError  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
 # The image the sandbox boots, built once on the virtx server and kept under this tag.
@@ -121,23 +121,10 @@ async def main() -> None:
     images = await client.list_image()
     if not any(image.reference.split("/")[-1] == IMAGE for image in images):
         print(f"Building {IMAGE}, once; it takes a few minutes.")
-        recipe = (
-            Recipe("python:3.12-slim-trixie")
-            # `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader the
-            # wheel opens. Mesa from backports: 26.0 against trixie's 25.0.
-            .run(
-                "echo 'deb http://deb.debian.org/debian trixie-backports main' "
-                "> /etc/apt/sources.list.d/backports.list "
-                "&& apt-get update && apt-get install -y --no-install-recommends "
-                "-t trixie-backports mesa-vulkan-drivers "
-                "&& apt-get install -y --no-install-recommends libvulkan1 "
-                "&& rm -rf /var/lib/apt/lists/*"
-            )
-            .run("pip install --no-cache-dir ncnn numpy tokenizers")
+        recipe = Recipe("python:3.12-slim-trixie").run(
+            "pip install --no-cache-dir ncnn numpy tokenizers"
         )
-        async for entry in client.build_image(recipe, IMAGE):
-            if isinstance(entry.entry, ImageJobEnd) and entry.entry.error:
-                raise RuntimeError(f"building {IMAGE}: {entry.entry.error}")
+        await client.build_image(recipe, IMAGE).complete()
 
     # The volumes, made the first time and kept on the server: `409` says one is there already.
     volumes = []

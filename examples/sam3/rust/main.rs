@@ -38,9 +38,9 @@ use ailoy::{
     agent::AgentBuilder,
     message::{Message, Part, Role},
 };
-use anyhow::{Context as _, bail};
+use anyhow::Context as _;
 use futures::StreamExt as _;
-use virtx::{Client, Files as _, ImageJobEntry, Recipe, SandboxCreateArgs, SandboxVolume};
+use virtx::{Client, Files as _, Recipe, SandboxCreateArgs, SandboxVolume};
 
 /// The image the sandbox boots, built once on the virtx server and kept under this tag.
 const IMAGE: &str = "ailoy-sam3:1";
@@ -74,17 +74,6 @@ async fn main() -> anyhow::Result<()> {
         println!("Building {IMAGE}, once; it takes a few minutes.");
         // Debian, not Alpine: PyPI's ncnn wheels are manylinux (glibc) only.
         let recipe = Recipe::new("python:3.12-slim-trixie")
-            // `mesa-vulkan-drivers` carries the guest's venus ICD, `libvulkan1` the loader the
-            // wheel opens. Mesa from backports: venus passes VK_KHR_shader_bfloat16 and
-            // VK_KHR_cooperative_matrix through from 26.0 on, and trixie itself has 25.0.
-            .step(
-                "echo 'deb http://deb.debian.org/debian trixie-backports main' \
-                > /etc/apt/sources.list.d/backports.list \
-                && apt-get update && apt-get install -y --no-install-recommends \
-                -t trixie-backports mesa-vulkan-drivers \
-                && apt-get install -y --no-install-recommends libvulkan1 \
-                && rm -rf /var/lib/apt/lists/*",
-            )
             // Headless OpenCV: `opencv-python` needs libGL, which the slim image lacks. `ncnn`
             // asks for it by name, and both wheels install the same `cv2` package, so naming the
             // headless one alongside `ncnn` is not enough -- whichever lands second wins. Hence
@@ -94,14 +83,7 @@ async fn main() -> anyhow::Result<()> {
                 portalocker requests tokenizers tqdm \
                 && pip install --no-cache-dir --no-deps ncnn",
             );
-        let mut log = client.build_image(recipe, IMAGE).log();
-        while let Some(entry) = log.next().await {
-            if let ImageJobEntry::End(end) = entry?.entry
-                && let Some(error) = end.error
-            {
-                bail!("building {IMAGE}: {error}");
-            }
-        }
+        client.build_image(recipe, IMAGE).complete(false).await?;
     }
 
     // The volumes, made the first time and kept on the server: `409` says one is there already.

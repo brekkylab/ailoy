@@ -96,9 +96,7 @@ async function main(model, shell, isolated) {
       const recipe = new Recipe('python:3.12-slim-trixie').run(
         'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*',
       )
-      for await (const entry of client.buildImage(recipe, IMAGE)) {
-        if ('end' in entry && entry.end.error) throw new Error(`building ${IMAGE}: ${entry.end.error}`)
-      }
+      await client.buildImage(recipe, IMAGE).complete()
     }
 
     const sandbox = await client.createSandbox(IMAGE, { network: true })

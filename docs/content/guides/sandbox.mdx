@@ -19,14 +19,14 @@ This page covers what an agent needs from a sandbox. [virtx's docs](https://virt
 
 <Tabs syncKey="lang">
 
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```python
 import asyncio
 from pathlib import Path
 
 from ailoy import AgentBuilder
-from virtx import Client, ImageJobEnd, Recipe
+from virtx import Client, Recipe
 
 
 async def main() -> None:
@@ -34,9 +34,7 @@ async def main() -> None:
 
     # Kept on the server under its tag: later sandboxes boot it without building again.
     recipe = Recipe("python:3.12-slim-trixie").run("pip install --no-cache-dir matplotlib")
-    async for entry in client.build_image(recipe, "plot:latest"):
-        if isinstance(entry.entry, ImageJobEnd) and entry.entry.error:
-            raise RuntimeError(entry.entry.error)
+    await client.build_image(recipe, "plot:latest").complete()
 
     sandbox = await client.create_sandbox("plot:latest")
 
@@ -59,7 +57,7 @@ asyncio.run(main())
 
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```js
 const { writeFileSync } = require('node:fs')
@@ -71,9 +69,7 @@ async function main() {
 
   // Kept on the server under its tag: later sandboxes boot it without building again.
   const recipe = new Recipe('python:3.12-slim-trixie').run('pip install --no-cache-dir matplotlib')
-  for await (const entry of client.buildImage(recipe, 'plot:latest')) {
-    if ('end' in entry && entry.end.error) throw new Error(entry.end.error)
-  }
+  await client.buildImage(recipe, 'plot:latest').complete()
 
   const sandbox = await client.createSandbox('plot:latest')
 
@@ -94,7 +90,7 @@ main()
 
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```rust
 use ailoy::{
@@ -102,22 +98,15 @@ use ailoy::{
     message::{Message, Part, Role},
 };
 use futures::StreamExt as _;
-use virtx::{Client, Files as _, ImageJobEntry, Recipe, SandboxCreateArgs};
+use virtx::{Client, Files as _, Recipe, SandboxCreateArgs};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let client = Client::spawn_virtx([] as [&str; 0])?;
+    let client = Client::spawn_virtx([] as [&str; 0]).await?;
 
     // Kept on the server under its tag: later sandboxes boot it without building again.
     let recipe = Recipe::new("python:3.12-slim-trixie").step("pip install --no-cache-dir matplotlib");
-    let mut log = client.build_image(recipe, "plot:latest").log();
-    while let Some(entry) = log.next().await {
-        if let ImageJobEntry::End(end) = entry?.entry
-            && let Some(error) = end.error
-        {
-            anyhow::bail!(error);
-        }
-    }
+    client.build_image(recipe, "plot:latest").complete(false).await?;
 
     let sandbox = client
         .create_sandbox(&SandboxCreateArgs::new("plot:latest"))

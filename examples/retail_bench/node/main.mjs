@@ -154,9 +154,7 @@ async function main() {
   // `docker.io/library/python:3.12-slim-trixie`.
   if (!(await client.listImage()).some((image) => image.reference.split('/').pop() === IMAGE)) {
     console.log(`Pulling ${IMAGE}, once.`)
-    for await (const entry of client.pullImage(IMAGE)) {
-      if ('end' in entry && entry.end.error) throw new Error(`pulling ${IMAGE}: ${entry.end.error}`)
-    }
+    await client.pullImage(IMAGE).complete()
   }
 
   // The volumes, made the first time and kept on the server: `409` says one is there already.
