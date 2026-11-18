@@ -210,15 +210,23 @@ mobile-starlight-toc .toggle {
   box-shadow: none;
 }
 .card,
-.sl-link-card,
-.pagination-links a {
+.sl-link-card {
   background: var(--sl-color-gray-6);
   border: 1px solid var(--sl-color-hairline);
 }
-.sl-link-card:hover,
-.pagination-links a:hover {
+/* a hovered card's border only brightens a little */
+.sl-link-card:hover {
   background: var(--sl-color-gray-6);
-  border-color: var(--sl-color-accent);
+  border-color: var(--sl-color-gray-4);
+}
+/* Previous and next are plain links, no box: the title turns yellow on hover. */
+.pagination-links a {
+  background: none;
+  border: 0;
+  padding: 0.5rem 0;
+}
+.pagination-links a:hover .link-title {
+  color: var(--sl-color-text-accent);
 }
 .sl-link-card .title,
 .pagination-links .link-title {
