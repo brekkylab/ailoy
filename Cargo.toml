@@ -16,7 +16,8 @@ license = "Apache-2.0"
 repository = "https://github.com/brekkylab/ailoy"
 
 [workspace.dependencies]
-virtx = { path = "../virtx/virtx-rs" }
+# The client. Its library is `ailoy`'s `embedded` feature, or the one a binding opens.
+virtx = { version = "0.2.0", default-features = false }
 
 [package]
 name = "ailoy"
@@ -45,7 +46,11 @@ path = "src/lib.rs"
 
 
 [features]
-default = []
+# The virtx library linked in, for a Rust program over `ailoy` alone. The bindings leave it out:
+# each opens the library the virtx package of its language opened, so that the caller's sandbox
+# and the agent's are over one.
+default = ["embedded"]
+embedded = ["virtx/embedded"]
 
 [dependencies]
 anyhow = "1"
@@ -64,14 +69,13 @@ indexmap = { version = "2", features = ["serde"] }
 infer = "0.22"
 log = "0.4"
 ordered-float = { version = "5.0.0", features = ["serde"] }
-parking_lot = "0.12.4"
+parking_lot = "0.13"
 png = "0.18"
 reqwest = { version = "0.13", features = ["form", "json", "stream"] }
 # MCP client only: no server/macros defaults, and just the two transports
 # `MCPTransport` names (stdio child process, streamable HTTP).
 rmcp = { version = "3", default-features = false, features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 scraper = "0.27"
-jsonschema = { version = "0.60", default-features = false }
 schemars = { version = "1", features = ["preserve_order", "url2"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"

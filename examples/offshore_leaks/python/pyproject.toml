@@ -2,10 +2,10 @@
 name = "ailoy-example-offshore-leaks"
 version = "0.1.0"
 description = "ICIJ's Offshore Leaks database analyzed by an agent, on ailoy's Python bindings, and the script that loads it into DuckDB."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "ailoy-py",
-    "virtx>=0.1.2,<0.2",
+    "virtx>=0.2.0,<0.3",
     # Pinned: the guest opens the file this writes and must install the same version.
     "duckdb==1.5.5",
     "python-dotenv>=1",
@@ -18,4 +18,3 @@ package = false
 [tool.uv.sources]
 # The bindings in this checkout, built by maturin on the first `uv run`.
 ailoy-py = { path = "../../../bindings/python", editable = true }
-virtx = { path = "../../../../virtx/virtx-py", editable = true }

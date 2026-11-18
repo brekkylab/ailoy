@@ -33,7 +33,7 @@ The model, the instruction, the tools, the skills, the model options and whether
 
 <Tabs syncKey="lang">
 
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```python
 from ailoy import Agent
@@ -48,7 +48,7 @@ agent = await Agent.from_spec(spec, history=saved_messages, sandbox=sandbox)
 
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```js
 const { Agent } = require('@brekkylab/ailoy')
@@ -63,7 +63,7 @@ const agent = await Agent.fromSpec(spec, { history: savedMessages, sandbox })
 
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```rust
 use ailoy::agent::{Agent, AgentSpec, AgentState};

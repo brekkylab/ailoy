@@ -1,6 +1,6 @@
 version = 1
-revision = 2
-requires-python = ">=3.10"
+revision = 3
+requires-python = ">=3.11"
 
 [[package]]
 name = "ailoy-example-offshore-leaks"
@@ -18,22 +18,18 @@ requires-dist = [
     { name = "ailoy-py", editable = "../../../bindings/python" },
     { name = "duckdb", specifier = "==1.5.5" },
     { name = "python-dotenv", specifier = ">=1" },
-    { name = "virtx", editable = "../../../../virtx/virtx-py" },
+    { name = "virtx", specifier = ">=0.2.0,<0.3" },
 ]
 
 [[package]]
 name = "ailoy-py"
 source = { editable = "../../../bindings/python" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
     { name = "virtx" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "typing-extensions", marker = "python_full_version < '3.11'", specifier = ">=4" },
-    { name = "virtx", editable = "../../../../virtx/virtx-py" },
-]
+requires-dist = [{ name = "virtx", specifier = ">=0.2.0,<0.3" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -48,12 +44,6 @@ version = "1.5.5"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/7d/19/e57151753576373c6696a12022648546cca6038e8833fda2908ee2342d9b/duckdb-1.5.5.tar.gz", hash = "sha256:72f33ee57ca7595b23957671a2cc7f7fe2be0ecc2d68f63abedcfcaa3a5c1238", size = 18066741, upload-time = "2026-07-22T10:55:17.819Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/52/d4/298acf9331a80b3ce6ac64dd940e7e13f4058fb69d18914445f02e3c7bfe/duckdb-1.5.5-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:3b805507f88171b428b21c966c30e9a3d54e30b24528918a44ed0032542bc26f", size = 32702934, upload-time = "2026-07-22T10:53:19.069Z" },
-    { url = "https://files.pythonhosted.org/packages/d5/90/c489fb63d64b2e7ee109ce8460bdede003a0f256e5b41a03a2a1c4764058/duckdb-1.5.5-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:b08e19cc856220d8a26fa62abc2264b349aff67255e9373c6a3f607addd56dc6", size = 17343604, upload-time = "2026-07-22T10:53:22.767Z" },
-    { url = "https://files.pythonhosted.org/packages/0b/27/effa80a15b1f0c61c235622f797868485359e8c9ad6a8e358e7a0c479151/duckdb-1.5.5-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:a17e6a922e42a5c06ed2353fe78c5dff2610f6632d603836f9606ad0bf754079", size = 15488179, upload-time = "2026-07-22T10:53:25.945Z" },
-    { url = "https://files.pythonhosted.org/packages/5d/07/21212345c8d24ba62dceaa20be3b21f5c46f1510b1b42ce93bb058afe0c4/duckdb-1.5.5-cp310-cp310-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:1bdc38922c365c37720149f90d90b1e9823eb82dad6830855b5f87537fa6fc0c", size = 19367323, upload-time = "2026-07-22T10:53:30.23Z" },
-    { url = "https://files.pythonhosted.org/packages/3f/d0/10371ae875fb4b5ef61bb892743b4b2e90c512b371fdf29317deb744857d/duckdb-1.5.5-cp310-cp310-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e238060db5ca59879882a6e9b015e2c65d5c64ddf281ba1d7a9a2033764152cf", size = 21476568, upload-time = "2026-07-22T10:53:33.486Z" },
-    { url = "https://files.pythonhosted.org/packages/b2/35/09568ce617dd7bc0757b3d7b6a981660b9e4f0b7594de8ed776755eae740/duckdb-1.5.5-cp310-cp310-win_amd64.whl", hash = "sha256:4acc72798ba1885a9c17d1242903d2cd502f13b1271c7677f7cab25d8578eceb", size = 13156129, upload-time = "2026-07-22T10:53:37.55Z" },
     { url = "https://files.pythonhosted.org/packages/9c/c2/b62ec24d57bb8df4e24b0b58f7f8facb32f5fdb9f1895aed9e9fcdded168/duckdb-1.5.5-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:1b543841b0ae18a9c982345cfa3987e9c065d3a4b0f067daa473d92d1e65f528", size = 32708371, upload-time = "2026-07-22T10:53:41.642Z" },
     { url = "https://files.pythonhosted.org/packages/8a/ce/769171ba45f0b73632dc3bc3108d891e81dd6c6bbfba630a34a75b4dcc0f/duckdb-1.5.5-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:1a925d06c2a4c3b64553d6cc1aced5028d376d4479bed689a7d47e9b1dccd80a", size = 17343979, upload-time = "2026-07-22T10:53:44.951Z" },
     { url = "https://files.pythonhosted.org/packages/46/59/a8e3384ee916e00d5dcf985194c1511d61978540778a1e96fa47f9fb3e0d/duckdb-1.5.5-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:0c42757cb34722144bd4dfb94b6f336339e7b2468f6813fa7fa9a319ba07bab4", size = 15493704, upload-time = "2026-07-22T10:53:47.912Z" },
@@ -94,23 +84,12 @@ wheels = [
 ]
 
 [[package]]
-name = "typing-extensions"
-version = "4.16.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f6/cc/6253133b5bb138fc3306cebfbda2c520f545d36b5be2c7255cc528bb45d6/typing_extensions-4.16.0.tar.gz", hash = "sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5", size = 113555, upload-time = "2026-07-02T08:40:05.92Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl", hash = "sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8", size = 45571, upload-time = "2026-07-02T08:40:04.659Z" },
-]
-
-[[package]]
 name = "virtx"
-version = "0.1.2"
-source = { editable = "../../../../virtx/virtx-py" }
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8" },
-    { name = "pytest-asyncio", specifier = ">=1" },
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/0f/2374f3b1191d61ca31a6ab563e6c354955c175a0e689fc420746be764b5e/virtx-0.2.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:4f5640710e9c932857b0d4eb559f8addb295bffbc84eb462a0a074f0ce7e8b55", size = 4336836, upload-time = "2026-11-18T11:04:17.415Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/ad/7317617fd4669cb3a4350c62aac2bce73857fbdca97f81261f6c0a9ae54f/virtx-0.2.0-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:68c997eeb9a25ec9653f0e22970524fda0351f2d0bab7f6a9550a25864193654", size = 4824984, upload-time = "2026-11-18T11:04:19.101Z" },
+    { url = "https://files.pythonhosted.org/packages/86/c4/fac8e38584cf591153a1adee1a8479291581146daba9d32fbf947d32bfe6/virtx-0.2.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:1601df1dd50f64eb9cd95a4f666d62ce42db716e09a4a80d7ad07ced210514cd", size = 4815968, upload-time = "2026-11-18T11:04:20.494Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/74/18fce4fdf6cea987639528307da55ccf16c28b82a6e88d3e7cdbe899dcd2/virtx-0.2.0-py3-none-win_amd64.whl", hash = "sha256:83413b517106cb2b8c597953272207bac2f4165cfb811886730ec5881907065c", size = 4175845, upload-time = "2026-11-18T11:04:21.906Z" },
 ]
