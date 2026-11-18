@@ -2,7 +2,8 @@
 // The banner at the top of the Welcome page: the mark and "Ailoy Documentation" over a drawing of
 // Ailoy's idea, three languages braiding into one agent that works in a microVM of its own. It is
 // dark in both themes, like an image. PageTitle shows it above the Welcome page's title, so it
-// stays out of the page's Markdown.
+// stays out of the page's Markdown. On wide screens "On this page" starts below it, level with the
+// breadcrumb, and sticks once the page scrolls past the banner.
 import AiloyMark from './AiloyMark.astro';
 ---
 
@@ -32,6 +33,39 @@ import AiloyMark from './AiloyMark.astro';
   </svg>
 </figure>
 
+<script>
+  // On wide screens the banner reaches across the "On this page" column too, and that column,
+  // which Starlight fixes to the top, starts at the breadcrumb below the banner and scrolls with
+  // the page until the banner is gone (sticky in the CSS below).
+  const wide = matchMedia('(min-width: 72rem)');
+  const place = () => {
+    const banner = document.querySelector<HTMLElement>('.wb');
+    const bar = document.querySelector<HTMLElement>('.right-sidebar');
+    const toc = document.querySelector('starlight-toc');
+    const crumbs = document.querySelector('.page-head .crumbs');
+    if (!banner || !bar || !toc || !crumbs) return;
+    banner.style.marginRight = '0px';
+    bar.style.marginTop = '0px';
+    if (!wide.matches) return;
+    banner.style.marginRight = `${banner.getBoundingClientRect().right - toc.getBoundingClientRect().right}px`;
+    bar.style.marginTop = `${crumbs.getBoundingClientRect().top + scrollY - toc.getBoundingClientRect().top}px`;
+  };
+  // Again whenever the page's head changes size: the window resizing, or the banner's title
+  // growing once its web font loads.
+  place();
+  document.fonts.ready.then(place);
+  const head = document.querySelector('.page-head');
+  if (head) new ResizeObserver(place).observe(head);
+</script>
+
+<style is:global>
+  @media (min-width: 72rem) {
+    :root:has(.wb) .right-sidebar {
+      position: sticky;
+    }
+  }
+</style>
+
 <style>
   .wb {
     position: relative;
@@ -40,7 +74,7 @@ import AiloyMark from './AiloyMark.astro';
     align-items: center;
     gap: 1.5rem;
     margin: 0 0 1.75rem;
-    padding: 2.25rem 2rem;
+    padding: 3.25rem 2.75rem;
     background:
       radial-gradient(120% 140% at 100% 0%, rgba(255, 197, 61, 0.14), transparent 55%),
       repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0 1px, transparent 1px 48px),
@@ -62,7 +96,7 @@ import AiloyMark from './AiloyMark.astro';
   }
   .wb-title {
     margin-top: 1rem !important;
-    font-size: clamp(1.75rem, 3.4vw, 2.5rem);
+    font-size: clamp(1.75rem, 3.4vw, 3rem);
     font-weight: 700;
     line-height: 1.05;
     letter-spacing: -0.02em;
