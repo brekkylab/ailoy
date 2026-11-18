@@ -17,10 +17,9 @@
 use std::sync::Arc;
 
 use ailoy::{
-    agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
+    agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager, Memory},
     browser::{Browser, UserBrowser},
     datatype::Value,
-    memory::Memory,
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -434,10 +433,9 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<It
 
 #[napi]
 impl JsAgent {
-    /// An agent from a spec (the object an `AgentSpec` serializes to). `options.memory` is
-    /// the folder on this host whose `MEMORY.md` it keeps notes in.
+    /// An agent from a spec (the object an `AgentSpec` serializes to).
     #[napi(
-        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; sandbox?: Sandbox; memory?: string }",
+        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; sandbox?: Sandbox }",
         ts_return_type = "Promise<Agent>"
     )]
     pub fn from_spec<'env>(
@@ -459,9 +457,6 @@ impl JsAgent {
                 }
                 if let Some(sandbox) = options.get::<Object>("sandbox").map_err(get)? {
                     state = state.with_sandbox(console::sandbox(env, &sandbox)?);
-                }
-                if let Some(dir) = options.get::<String>("memory").map_err(get)? {
-                    state = state.with_memory(Memory::new(dir));
                 }
             }
             Ok((spec, state))

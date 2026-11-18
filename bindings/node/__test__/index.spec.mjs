@@ -386,8 +386,10 @@ test('a memory shapes the system message', async (t) => {
   assert.ok(existsSync(folder) && !existsSync(path))
 
   writeFileSync(path, 'Name is Minsu\n')
-  const again = await Agent.fromSpec({ model: 'memory-echo/echo' }, { memory: folder })
+  const again = await Agent.fromSpec({ model: 'memory-echo/echo', memory: { dir: folder } })
   assert.match(system(again), /\[13\/3000 chars\]\nName is Minsu$/)
+  const bounded = await Agent.fromSpec({ model: 'memory-echo/echo', memory: { dir: folder, limit: 20 } })
+  assert.match(system(bounded), /\[13\/20 chars\]\nName is Minsu$/)
 
   assert.throws(() => new AgentBuilder('memory-echo/echo').memory(folder, { limit: -1 }), {
     code: 'INVALID_ARG',

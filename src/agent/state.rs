@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{browser::BrowserSession, console::Sandbox, memory::Memory, message::Message};
+use crate::{browser::BrowserSession, console::Sandbox, message::Message};
 
 /// What an [`Agent`](super::Agent) carries from one turn to the next.
 #[derive(Default)]
@@ -12,10 +12,6 @@ pub struct AgentState {
     /// With `None`, pure tools still run and sandbox tools fail with an error; nothing
     /// fills this in, since making a sandbox means choosing a virtx server.
     pub sandbox: Option<Sandbox>,
-
-    /// The folder this agent keeps notes in, which its system message shows; `None` means no
-    /// `memory` tool.
-    pub memory: Option<Memory>,
 
     /// Input tokens of the last model call, which a
     /// [`ContextManager`](super::ContextManager) checks against its limit as a turn begins.
@@ -38,13 +34,6 @@ impl AgentState {
     /// Run sandbox tools in `sandbox`.
     pub fn with_sandbox(mut self, sandbox: Sandbox) -> Self {
         self.sandbox = Some(sandbox);
-        self
-    }
-
-    /// Keep notes in `MEMORY.md` in the folder `memory` names. See
-    /// [`AgentBuilder::memory`](super::AgentBuilder::memory).
-    pub fn with_memory(mut self, memory: Memory) -> Self {
-        self.memory = Some(memory);
         self
     }
 

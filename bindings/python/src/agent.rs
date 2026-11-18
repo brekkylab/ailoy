@@ -11,10 +11,9 @@
 use std::{path::PathBuf, sync::Arc};
 
 use ailoy::{
-    agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
+    agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager, Memory},
     browser::{Browser, UserBrowser},
     datatype::Value,
-    memory::Memory,
     message::Message,
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -324,16 +323,14 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, PyResult<
 #[pymethods]
 impl PyAgent {
     /// An agent from a spec — the dict an `AgentSpec` serializes to — for a caller who holds
-    /// one rather than building it up. Awaitable. `memory` is the folder on this host whose
-    /// `MEMORY.md` it keeps notes in, with the default limit.
+    /// one rather than building it up. Awaitable.
     #[staticmethod]
-    #[pyo3(signature = (spec, *, history = None, sandbox = None, memory = None))]
+    #[pyo3(signature = (spec, *, history = None, sandbox = None))]
     fn from_spec<'py>(
         py: Python<'py>,
         spec: Bound<'py, PyAny>,
         history: Option<Bound<'py, PyAny>>,
         sandbox: Option<Bound<'py, PyAny>>,
-        memory: Option<PathBuf>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let spec: AgentSpec = from_py(&spec, "an agent spec")?;
         let mut state = AgentState::new();
@@ -342,9 +339,6 @@ impl PyAgent {
         }
         if let Some(sandbox) = sandbox {
             state = state.with_sandbox(console::sandbox(&sandbox)?);
-        }
-        if let Some(dir) = memory {
-            state = state.with_memory(Memory::new(dir));
         }
         future_into_py(py, async move {
             let agent = Agent::try_with_state(spec, state)

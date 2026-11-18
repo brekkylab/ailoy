@@ -137,6 +137,14 @@ class LangModelOptions(TypedDict):
     output_schema: NotRequired[Value]
 
 
+class Memory(TypedDict):
+    """A folder on this host whose ``MEMORY.md`` the agent keeps notes on the user in, and how
+    many characters the file may hold (3,000 by default)."""
+
+    dir: str
+    limit: NotRequired[int]
+
+
 class AgentSpec(TypedDict):
     model: str
     instruction: NotRequired[str]
@@ -144,6 +152,7 @@ class AgentSpec(TypedDict):
     model_options: NotRequired[LangModelOptions]
     web_search_engines: NotRequired[list[str]]
     skills: NotRequired[list[str]]
+    memory: NotRequired[Memory]
 
 
 Backend = Literal["cli", "api", "bedrock", "openrouter", "self-hosted"]

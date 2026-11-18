@@ -1,6 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::Memory;
 use crate::{
     datatype::Value,
     model::{LangModelOptions, ThinkingEffort},
@@ -46,6 +47,11 @@ pub struct AgentSpec {
     /// [`skill`](Self::skill).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
+
+    /// The folder on this host whose `MEMORY.md` the agent keeps notes on the user in. See
+    /// [`memory`](Self::memory).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<Memory>,
 }
 
 /// The org a desc names (`"anthropic"` of `"anthropic/claude-sonnet-5-5"`) and the name
@@ -91,6 +97,7 @@ impl AgentSpec {
             model_options: None,
             web_search_engines: None,
             skills: Vec::new(),
+            memory: None,
         }
     }
 
@@ -109,6 +116,21 @@ impl AgentSpec {
     /// in the history.
     pub fn skill(mut self, dir: impl Into<String>) -> Self {
         self.skills.push(dir.into());
+        self
+    }
+
+    /// Let this agent keep short notes on the user in `MEMORY.md` in the folder `memory`
+    /// names on this host: a path such as `/data/agent1`, relative to the current directory
+    /// when the agent is built unless absolute. It needs no sandbox.
+    ///
+    /// Adds the `memory` tool, which writes the notes, and a section at the end of the system
+    /// message that shows them as they were when the agent was built, so a change shows from
+    /// the next agent on. Building the agent makes the folder, and those on the way to it, and
+    /// fails if it cannot, or if [`tools`](Self::tools) has a `memory` tool of its own; the
+    /// file is made by the first note. Like skills, the section goes only into the system
+    /// message built from the instruction, never into one already in the history.
+    pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
+        self.memory = Some(memory.into());
         self
     }
 

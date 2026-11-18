@@ -98,11 +98,7 @@ class Agent:
         *,
         history: list[Message] | None = None,
         sandbox: Sandbox | None = None,
-        memory: _Path | None = None,
-    ) -> Agent:
-        """An agent from a spec. ``memory`` is the folder on this host whose ``MEMORY.md`` it
-        keeps notes in, as ``AgentBuilder.memory`` gives it, with the default limit."""
-        ...
+    ) -> Agent: ...
     @property
     def history(self) -> list[Message]: ...
     async def start_browser(self) -> None:

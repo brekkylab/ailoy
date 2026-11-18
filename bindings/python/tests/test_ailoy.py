@@ -359,8 +359,10 @@ async def test_a_memory_shapes_the_system_message(tmp_path):
     assert folder.is_dir() and not path.exists()
 
     path.write_text("Name is Minsu\n")
-    agent = await ailoy.Agent.from_spec({"model": MODEL}, memory=str(folder))
+    agent = await ailoy.Agent.from_spec({"model": MODEL, "memory": {"dir": str(folder)}})
     assert system(agent).endswith("[13/3000 chars]\nName is Minsu")
+    agent = await ailoy.Agent.from_spec({"model": MODEL, "memory": {"dir": str(folder), "limit": 20}})
+    assert system(agent).endswith("[13/20 chars]\nName is Minsu")
 
 
 async def test_from_spec_and_closing():

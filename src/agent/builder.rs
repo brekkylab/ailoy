@@ -1,8 +1,7 @@
 use crate::{
-    agent::{Agent, AgentSpec, AgentState, ContextManager},
+    agent::{Agent, AgentSpec, AgentState, ContextManager, Memory},
     browser::{Browser, BrowserSession},
     datatype::Value,
-    memory::Memory,
     message::Message,
     model::ThinkingEffort,
     tool::{ToolDesc, WebSearchEngineKind},
@@ -39,8 +38,6 @@ pub struct AgentBuilder {
     context_manager: Option<ContextManager>,
 
     browser: Option<Browser>,
-
-    memory: Option<Memory>,
 }
 
 impl AgentBuilder {
@@ -53,7 +50,6 @@ impl AgentBuilder {
             sandbox: None,
             context_manager: None,
             browser: None,
-            memory: None,
         }
     }
 
@@ -113,16 +109,10 @@ impl AgentBuilder {
         self
     }
 
-    /// Let this agent keep short notes in `MEMORY.md` in the folder `memory` names on this
-    /// host: a path such as `/data/agent1`, relative to the current directory unless absolute.
-    ///
-    /// Adds the `memory` tool, which writes the notes, and a section of the system message that
-    /// shows them as they were when the agent was made, so a change shows from the next
-    /// session on. [`build`](Self::build) makes the folder, and those on the way to it, and
-    /// fails if it cannot; the file is made by the first note. The section goes into the system
-    /// message the agent writes, not into one a [`history`](Self::history) brings.
+    /// Let this agent keep short notes on the user in `MEMORY.md` in a folder on this host.
+    /// See [`AgentSpec::memory`].
     pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
-        self.memory = Some(memory.into());
+        self.spec = self.spec.memory(memory);
         self
     }
 
@@ -159,7 +149,6 @@ impl AgentBuilder {
             sandbox,
             context_manager,
             browser,
-            memory,
         } = self;
 
         let mut state = AgentState::new().with_history(history);
@@ -169,9 +158,6 @@ impl AgentBuilder {
         if let Some(browser) = browser {
             browser.check()?;
             state = state.with_browser(BrowserSession::new(browser));
-        }
-        if let Some(memory) = memory {
-            state = state.with_memory(memory);
         }
 
         let mut agent = Agent::try_with_state(spec, state).await?;
