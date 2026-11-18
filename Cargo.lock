@@ -3784,6 +3784,8 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "virtx"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a7d4e7d9b15f45b874d316a612675af3b83468817c1a3d93f9be6005f2a4d85"
 dependencies = [
  "futures-core",
  "libloading 0.8.9",
@@ -3795,6 +3797,8 @@ dependencies = [
 [[package]]
 name = "virtx-core"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce00726fb52813dbb9ce4c13344d9274b490886356f76cadd72ae96282563391"
 dependencies = [
  "anyhow",
  "async-stream",
