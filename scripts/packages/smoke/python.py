@@ -1,10 +1,10 @@
 """The Python package as a user installs it, on the platform this runs on.
 
 What this platform can do is said in the environment, as for ``node.mjs``:
-SMOKE_MOUNT, SMOKE_SERVER, SMOKE_VM. A turn's model is served from this process, the
+SMOKE_SERVER, SMOKE_VM. A turn's model is served from this process, the
 same one ``fake.mjs`` serves: no network, and no API key.
 """
-import asyncio, json, os, tempfile, threading
+import asyncio, json, os, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import ailoy
@@ -67,7 +67,7 @@ async def run(agent, query):
 
 async def main():
     check(hasattr(ailoy, "AgentBuilder"), f"the package loads from {os.path.dirname(ailoy.__file__)}")
-    check("echo hi" in repr(virtx.Recipe("alpine:latest").step("echo hi")), "virtx comes along")
+    check("echo hi" in json.dumps(virtx.Recipe("alpine:latest").run("echo hi").to_dict()), "virtx comes along")
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeModel)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -100,49 +100,39 @@ async def main():
     check("5" in json.dumps(outputs[-1]["message"]["contents"]), "the model answered with what the tool said")
     await agent.close()
 
-    # Whether or not this host can mount: without a provider, a mount is an error, not a crash.
-    point = tempfile.mkdtemp(prefix="ailoy-smoke-")
-    try:
-        m = virtx.HostMount(virtx.Directory().with_file("a.txt", "hi"), point)
-    except Exception as e:
-        m = None
-        print(f"  HostMount: {e}")
-    check((m is not None) == want("SMOKE_MOUNT"), f"a HostMount is {'' if m else 'not '}made")
-    if m is not None:
-        check(open(os.path.join(point, "a.txt")).read() == "hi", "HostMount serves its tree")
-        del m
-        check(not os.path.exists(os.path.join(point, "a.txt")), "dropping the HostMount takes it down")
-
     # The console server, as the guides have it: `ensure_virtx()` first.
-    bin_dir = None
+    server_path = None
     try:
-        bin_dir = await virtx.ensure_virtx()
-        print(f"  ensure_virtx: {bin_dir}")
+        server_path = await virtx.ensure_virtx()
+        print(f"  ensure_virtx: {server_path}")
     except Exception as e:
         print(f"  ensure_virtx: {e}")
-    check((bin_dir is not None) == want("SMOKE_SERVER"), f"ensure_virtx {'fetched' if bin_dir else 'fetched no'} server")
-    if bin_dir:
+    check((server_path is not None) == want("SMOKE_SERVER"), f"ensure_virtx {'fetched' if server_path else 'fetched no'} server")
+    if server_path:
         exe = ".exe" if os.name == "nt" else ""
-        check(os.path.isfile(os.path.join(bin_dir, f"virtx-uvm{exe}")), f"virtx-uvm{exe} is in {bin_dir}")
+        check(
+            os.path.basename(server_path) == f"virtx-stdio{exe}" and os.path.isfile(server_path),
+            f"ensure_virtx answers virtx-stdio{exe}",
+        )
         if os.environ.get("VIRTX_HOME"):
-            check(os.path.relpath(bin_dir, os.environ["VIRTX_HOME"]) == "bin", "into $VIRTX_HOME/bin")
-        # The server runs on this machine, and answers -- no VM needed to ask its version.
-        images = await virtx.ImageClient.try_new()
-        version = await images.version()
-        await images.close()
-        check(bool(version), f"the console server answers (protocol {version})")
+            within = os.path.relpath(server_path, os.environ["VIRTX_HOME"])
+            check(not within.startswith(".."), "into $VIRTX_HOME")
+        # The server runs on this machine, and answers -- no VM needed to list its images.
+        client = virtx.Client.spawn(server_path)
+        images = await client.list_image()
+        client.close()
+        print(f"  list_image: {len(images)} images")
+        check(isinstance(images, list), "the console server answers")
 
-    if bin_dir and want("SMOKE_VM"):
+    if server_path and want("SMOKE_VM"):
         # An agent's shell tool, in a sandbox that sees a volume.
-        client = virtx.Client.spawn()
+        client = virtx.Client.spawn(server_path)
         if not any(i.reference.split("/")[-1] == "alpine:latest" for i in await client.list_image()):
-            async for entry in client.pull_image("alpine:latest"):
-                if isinstance(entry.entry, virtx.ImageJobEnd) and entry.entry.error:
-                    raise RuntimeError(f"pulling alpine:latest: {entry.entry.error}")
+            await client.pull_image("alpine:latest").complete()
         volume = await client.create_volume()
         await volume.write_file("from-host.txt", "by volume")
         sandbox = await client.create_sandbox(
-            "alpine:latest", volumes=[virtx.SandboxVolume(volume=volume.name, path="/host")]
+            "alpine:latest", volumes=[virtx.SandboxVolume(volume=volume, path="/host")]
         )
         agent = await ailoy.AgentBuilder("fake/model").sandbox(sandbox).build()
         cmd = "uname -m; cat /host/from-host.txt; echo written > /host/from-vm.txt"

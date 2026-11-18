@@ -1,8 +1,16 @@
 ---
-// Starlight override: always dark, like the product pages, whatever the OS or a stored choice.
+// Starlight override: dark unless the reader picked light with the switch. Also restores a hidden
+// sidebar before the page paints.
 ---
 
 <script is:inline>
-  document.documentElement.dataset.theme = 'dark';
-  window.StarlightThemeProvider = { updatePickers() {} };
+  (() => {
+    let theme = 'dark';
+    try {
+      theme = localStorage.getItem('starlight-theme') === 'light' ? 'light' : 'dark';
+      if (localStorage.getItem('ailoy-sidebar-hidden')) document.documentElement.setAttribute('data-sidebar-hidden', '');
+    } catch {}
+    document.documentElement.dataset.theme = theme;
+    window.StarlightThemeProvider = { updatePickers() {} };
+  })();
 </script>

@@ -6,7 +6,7 @@ description = "Laya on ncnn as an agent's skill, on ailoy's Python bindings, and
 requires-python = ">=3.11,<3.15"
 dependencies = [
     "ailoy-py",
-    "virtx>=0.1.2,<0.2",
+    "virtx>=0.2.0,<0.3",
     "huggingface_hub",
     "laya==0.3.20",
     "ncnn",
@@ -24,4 +24,3 @@ package = false
 [tool.uv.sources]
 # The bindings in this checkout, built by maturin on the first `uv run`.
 ailoy-py = { path = "../../../bindings/python", editable = true }
-virtx = { path = "../../../../virtx/virtx-py", editable = true }

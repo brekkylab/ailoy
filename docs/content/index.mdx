@@ -1,20 +1,31 @@
 ---
-title: Ailoy
+title: Overview
 description: Build agents that each get a Linux microVM of their own, with a GPU within reach, from Python, Node.js or Rust.
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Tabs, TabItem, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 Ailoy is an open-source SDK for building AI agents in your own code, in Python, Node.js or Rust. Each agent gets its own Linux microVM as a sandbox, where it can install software, write and run code, and keep files without touching your machine. You set up the sandbox as part of building the agent.
 
+## Start here
+
+<CardGrid>
+  <LinkCard title="Installation" description="The package for your language, the machine it needs, and a model to drive it." href="/docs/guides/installation/" />
+  <LinkCard title="Quick start" description="Run an agent for one turn, then give it a sandbox and let it draw a chart." href="/docs/guides/quick-start/" />
+  <LinkCard title="How an agent works" description="Where each part runs and what happens in a turn." href="/docs/concepts/" />
+  <LinkCard title="Giving an agent a sandbox" description="Images, volumes for inputs and results, and picking up later." href="/docs/guides/sandbox/" />
+</CardGrid>
+
 ## What agents do with it
 
-With a computer, an agent can do work you didn't write a function for. Each example below is in the repository, in all three languages:
+With a computer, an agent can do work you didn't write a function for. Each example runs in Python, Node.js and Rust, and [ailoy.co/examples](https://ailoy.co/examples/) shows them all running:
 
-| | |
-| --- | --- |
-| ![An agent designing a part in CadQuery](../images/ailoy-cad.gif) **[CAD modeling](https://github.com/brekkylab/ailoy/tree/main/examples/cad)**: writes CadQuery, renders the part from four sides, looks at the renders and fixes it. | ![An agent segmenting a video](../images/ailoy-sam3-video.gif) **[Image editing](https://github.com/brekkylab/ailoy/tree/main/examples/sam3)**: segments images and video with SAM3, on the sandbox's GPU. |
-| ![An agent playing OpenTTD](../images/ailoy-openttd.gif) **[Gameplay](https://github.com/brekkylab/ailoy/tree/main/examples/gameplay)**: plays OpenTTD in its sandbox while you watch over VNC. | ![An agent answering with Laya](../images/ailoy-laya.gif) **[Decisions with a local model](https://github.com/brekkylab/ailoy/tree/main/examples/laya)**: answers typed questions about tickets with a model it runs on the GPU. |
+<CardGrid>
+  <LinkCard title="CAD modeling" description="Writes CadQuery, renders the part from four sides, looks at the renders and fixes it." href="https://ailoy.co/examples/cad/" />
+  <LinkCard title="Image editing" description="Segments images and video with SAM3, on the sandbox's GPU." href="https://ailoy.co/examples/sam3/" />
+  <LinkCard title="Gameplay" description="Plays OpenTTD in its sandbox while you watch over VNC." href="https://ailoy.co/examples/gameplay/" />
+  <LinkCard title="Decisions with a local model" description="Answers typed questions about tickets with a model it runs on the GPU." href="https://ailoy.co/examples/laya/" />
+</CardGrid>
 
 ## What Ailoy gives you
 
@@ -27,21 +38,21 @@ With a computer, an agent can do work you didn't write a function for. Each exam
 ## Installation
 
 <Tabs syncKey="lang">
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```sh
 pip install ailoy-py
 ```
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```sh
 npm install @brekkylab/ailoy
 ```
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```sh
 cargo add ailoy virtx
@@ -56,7 +67,7 @@ The model needs a way to run: a CLI you are logged in to, or an API key. [Instal
 
 <Tabs syncKey="lang">
 
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```python
 import asyncio
@@ -81,7 +92,7 @@ asyncio.run(main())
 ```
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```js
 const { AgentBuilder } = require('@brekkylab/ailoy')
@@ -104,7 +115,7 @@ main()
 ```
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```rust
 use ailoy::{
@@ -139,12 +150,6 @@ async fn main() -> anyhow::Result<()> {
 </Tabs>
 
 [Quick start](/docs/guides/quick-start/) goes on from here and gives the same agent a sandbox.
-
-## Start here
-
-- **New to Ailoy:** [Installation](/docs/guides/installation/) sets up the packages and a way for the model to run.
-- **Ready to build your first agent:** [Quick start](/docs/guides/quick-start/) runs one turn, then gives the agent a sandbox to draw a chart in.
-- **Here for agents that work in a sandbox:** [Giving an agent a sandbox](/docs/guides/sandbox/) covers what a sandbox brings an agent, where its programs, inputs and results live, and how work carries over.
 
 ## Choose your path
 

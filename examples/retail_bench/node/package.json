@@ -9,9 +9,9 @@
   },
   "dependencies": {
     "@brekkylab/ailoy": "file:../../../bindings/node",
-    "@brekkylab/virtx": "file:../../../../virtx/virtx-node"
+    "@brekkylab/virtx": "^0.2.0"
   },
   "engines": {
-    "node": ">= 20.12"
+    "node": ">= 22"
   }
 }

@@ -15,7 +15,7 @@ Each tool is registered as `{prefix}__{name}`, so tools from different servers d
 
 <Tabs syncKey="lang">
 
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```python
 import asyncio
@@ -43,7 +43,7 @@ asyncio.run(main())
 
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```js
 const { AgentBuilder, registerMcpStdio } = require('@brekkylab/ailoy')
@@ -71,7 +71,7 @@ main()
 
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```rust
 use ailoy::{
@@ -119,7 +119,7 @@ A stdio server runs on the host, not in the agent's sandbox, with the same acces
 
 <Tabs syncKey="lang">
 
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```python
 from ailoy import register_mcp_streamable_http
@@ -129,7 +129,7 @@ tools = await register_mcp_streamable_http("deepwiki", "https://mcp.deepwiki.com
 
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```js
 const { registerMcpStreamableHttp } = require('@brekkylab/ailoy')
@@ -139,7 +139,7 @@ const tools = await registerMcpStreamableHttp('deepwiki', 'https://mcp.deepwiki.
 
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```rust
 use ailoy::tool::register_mcp_streamable_http;
@@ -159,7 +159,7 @@ Pass `tools` to `AgentBuilder.tools(...)` as above.
 
 <Tabs syncKey="lang">
 
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```python
 from ailoy import unregister_mcp
@@ -169,7 +169,7 @@ unregister_mcp("fetch")
 
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```js
 const { unregisterMcp } = require('@brekkylab/ailoy')
@@ -179,7 +179,7 @@ unregisterMcp('fetch')
 
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```rust
 ailoy::tool::unregister_mcp("fetch");

@@ -161,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
     // ── the sandbox
     // The virtx server, fetched into virtx's cache the first time: a host that installed only
     // ailoy has none. The sandbox it holds goes when this program does.
-    let client = tokio::task::spawn_blocking(|| Client::spawn_virtx([] as [&str; 0])).await??;
+    let client = Client::spawn_virtx([] as [&str; 0]).await?;
 
     // The image, pulled once. The server answers a reference in its full form, as
     // `docker.io/library/python:3.12-slim-trixie`.
