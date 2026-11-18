@@ -88,3 +88,8 @@ A spec lists its tools itself. `sandbox(...)` on the builder adds the shell and 
 In Python and Node.js, `close()` releases what the agent holds: its model, any browser it started itself, and its hold on the sandbox's client. It waits for a turn being iterated to finish. In Python, `async with agent:` closes it at the end of the block. A Rust agent releases them when it is dropped.
 
 Closing an agent leaves its sandbox as it is, for you to use again or remove.
+
+## Next
+
+- [Giving an agent a sandbox](/docs/guides/sandbox/): the computer the agent works in.
+- [Model providers](/docs/guides/model-providers/): naming a model and choosing how it runs.

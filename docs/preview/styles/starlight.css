@@ -210,15 +210,23 @@ mobile-starlight-toc .toggle {
   box-shadow: none;
 }
 .card,
-.sl-link-card,
-.pagination-links a {
+.sl-link-card {
   background: var(--sl-color-gray-6);
   border: 1px solid var(--sl-color-hairline);
 }
-.sl-link-card:hover,
-.pagination-links a:hover {
+/* a hovered card's border only brightens a little */
+.sl-link-card:hover {
   background: var(--sl-color-gray-6);
-  border-color: var(--sl-color-accent);
+  border-color: var(--sl-color-gray-4);
+}
+/* Previous and next are plain links, no box: the title turns yellow on hover. */
+.pagination-links a {
+  background: none;
+  border: 0;
+  padding: 0.5rem 0;
+}
+.pagination-links a:hover .link-title {
+  color: var(--sl-color-text-accent);
 }
 .sl-link-card .title,
 .pagination-links .link-title {
@@ -247,13 +255,30 @@ mobile-starlight-toc .toggle {
   color: var(--sl-color-white);
 }
 
-/* Tables on hairlines. */
+/* Tables in a closed box: a hairline round every cell, the header row shaded. On wider screens a
+   table fills the column, so its box never runs past its last column; on a phone it keeps
+   Starlight's block display, which scrolls sideways. */
 .sl-markdown-content table {
   border-collapse: collapse;
+  border: 1px solid var(--sl-color-hairline);
+}
+@media (min-width: 50rem) {
+  .sl-markdown-content table {
+    display: table;
+    width: 100%;
+  }
 }
 .sl-markdown-content :is(th, td) {
-  border: 0;
-  border-bottom: 1px solid var(--sl-color-hairline);
+  border: 1px solid var(--sl-color-hairline);
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+}
+/* Long code in a cell breaks rather than pushing the table past the column. */
+.sl-markdown-content td:not(:first-child) code {
+  overflow-wrap: anywhere;
+}
+.sl-markdown-content thead th {
+  background: var(--sl-color-gray-6);
 }
 /* A name in a table's first column stays on one line (self-hosted, not self- / hosted). */
 .sl-markdown-content td:first-child code {
@@ -299,4 +324,38 @@ pre,
 footer .meta {
   font-size: 0.8125rem;
   color: var(--sl-color-gray-3);
+}
+
+/* Setup pages (Installation, Quick start) wrap their steps in .steps-flow: each h2 gets its number
+   in a square on a rail down the left, as numbered steps. */
+.sl-markdown-content .steps-flow {
+  counter-reset: step;
+  position: relative;
+  padding-left: 2.75rem;
+}
+.sl-markdown-content .steps-flow::before {
+  content: '';
+  position: absolute;
+  left: 0.875rem;
+  top: 1.25rem;
+  bottom: 0;
+  border-left: 1px solid var(--sl-color-hairline);
+}
+.sl-markdown-content .steps-flow > h2 {
+  position: relative;
+}
+.sl-markdown-content .steps-flow > h2::before {
+  counter-increment: step;
+  content: counter(step);
+  position: absolute;
+  left: -2.75rem;
+  top: 0.15em;
+  width: 1.75rem;
+  height: 1.75rem;
+  display: grid;
+  place-items: center;
+  background: var(--sl-color-black);
+  border: 1px solid var(--sl-color-accent);
+  color: var(--sl-color-accent);
+  font: 600 0.875rem/1 var(--sl-font-mono);
 }

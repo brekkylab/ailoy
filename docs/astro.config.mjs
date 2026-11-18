@@ -69,6 +69,7 @@ export default defineConfig({
         Header: './preview/components/docs/Header.astro',
         Sidebar: './preview/components/docs/Sidebar.astro',
         PageTitle: './preview/components/docs/PageTitle.astro',
+        Footer: './preview/components/docs/Footer.astro',
         SiteTitle: './preview/components/docs/SiteTitle.astro',
         ThemeSelect: './preview/components/docs/ThemeSelect.astro',
         ThemeProvider: './preview/components/docs/ThemeProvider.astro'

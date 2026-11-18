@@ -7,6 +7,8 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 An agent needs Ailoy and virtx's packages, a way for its model to run, and a machine that can run its sandbox.
 
+<div class="steps-flow">
+
 ## Requirements
 
 - Python 3.10 or later, Node.js 18 or later, or Rust 1.95 or later.
@@ -114,6 +116,8 @@ ailoy::model::set_lang_model_provider("anthropic", ailoy::model::Backend::Api);
 
 [Model providers](/docs/guides/model-providers/) lists every backend: the CLIs, each org’s own API, Amazon Bedrock, OpenRouter and a server you run yourself (vLLM, llama-server, Ollama, LM Studio).
 
+</div>
+
 ## Troubleshooting
 
 | What you see | Cause | Fix |
@@ -126,4 +130,5 @@ ailoy::model::set_lang_model_provider("anthropic", ailoy::model::Backend::Api);
 
 ## Next
 
-[Quick start](/docs/guides/quick-start/) runs an agent for one turn, then gives it a sandbox.
+- [How an agent works](/docs/concepts/): where each part runs and what happens in a turn.
+- [Defining an agent](/docs/guides/agents/): everything an `AgentBuilder` can give an agent.
