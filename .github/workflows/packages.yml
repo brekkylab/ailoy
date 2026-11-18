@@ -182,6 +182,9 @@ jobs:
           # Apart from anything built on the runner itself: C compiled against its newer
           # glibc's headers, restored here, would put that glibc back into the package.
           key: ${{ matrix.target }}${{ matrix.container && '-manylinux_2_28' || '' }}
+          # Saved from `main` alone: only its caches are read by every other ref, a tag's
+          # included, and one saved anywhere else is used only by that ref again.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: actions/setup-node@v7
         with:
@@ -379,6 +382,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: crate
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: libclang
         run: sudo apt-get update -q && sudo apt-get install -yq libclang-dev
