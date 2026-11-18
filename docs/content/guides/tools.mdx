@@ -252,7 +252,7 @@ Tools are registered by name for the whole process, the built-in ones included. 
 
 The notes go at the end of the system message as they were when the agent was built, and the agent changes them with the `memory` tool: it adds a fact as an entry of its own, replaces an entry when its fact changes, or removes one. The changes in one call are made in order, all or none. Each entry is led by this host's date when it was last written, as `[2026-11-17] Drinks barley tea`. A change shows in the next agent built on the folder, not in the one that made it.
 
-The file holds at most 3,000 characters unless `limit` says otherwise. A change that would make it larger is refused, and the agent shortens or removes entries to make room. A person can edit the file too: its entries are paragraphs, a blank line apart.
+The entries hold at most 3,000 characters unless `limit` says otherwise. A change that would make them larger is refused, and the agent shortens or removes entries to make room. A person can edit the file too: its entries are paragraphs, a blank line apart.
 
 <Tabs syncKey="lang">
 

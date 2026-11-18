@@ -183,6 +183,7 @@ __all__ = [
     "ImagePart",
     "LangModelOptions",
     "LangModelServer",
+    "Memory",
     "Message",
     "MessageDelta",
     "MessageDeltaOutput",

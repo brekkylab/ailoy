@@ -70,6 +70,10 @@ impl Agent {
     pub async fn try_with_state(spec: AgentSpec, mut state: AgentState) -> anyhow::Result<Self> {
         let model = create_lang_model(&spec.model).await?;
 
+        if spec.memory.is_some() && spec.tools.iter().any(|d| d.name == "memory") {
+            anyhow::bail!("the spec has a `memory` tool of its own beside a memory");
+        }
+
         // Errors if any spec tool is missing.
         let mut tools = HashMap::with_capacity(spec.tools.len());
         for desc in &spec.tools {
@@ -87,9 +91,6 @@ impl Agent {
         // Made absolute first, so a later change of the current directory still finds it.
         let memory = spec.memory.as_ref().map(|m| m.prepared()).transpose()?;
         if let Some(memory) = &memory {
-            if tools.contains_key("memory") {
-                anyhow::bail!("the spec has a `memory` tool of its own beside a memory");
-            }
             let (desc, func) = memory_tool(memory);
             tools.insert(desc.name.clone(), func);
             tool_descs.push(desc);
@@ -591,7 +592,6 @@ mod tests {
     use super::*;
     use crate::agent::context::IMAGE_PLACEHOLDER;
     use crate::{
-        agent::Memory,
         datatype::Bytes,
         message::{Role, TokenUsage},
         model::{LangModelProvider, set_lang_model_provider},
@@ -1498,22 +1498,20 @@ mod tests {
     }
 
     /// A `memory` tool of the spec's own, beside a memory, fails the agent rather than one
-    /// replacing the other.
+    /// replacing the other, before the memory's folder is made.
     #[tokio::test]
     async fn test_a_memory_beside_a_memory_tool_fails_the_agent() {
-        set_tool_provider(
-            "memory",
-            tool_func!(|_args: Value| -> Value { Value::Null }),
-        );
         let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("agent1");
         let (_, spec) = scripted("test-agent-memory-twice", []);
         let spec = spec
             .tool(ToolDescBuilder::new("memory").build())
-            .memory(Memory::new(dir.path()));
+            .memory(&*folder);
         let e = Agent::try_with_state(spec, AgentState::new())
             .await
             .err()
             .expect("refused");
         assert!(e.to_string().contains("`memory` tool"), "{e}");
+        assert!(!folder.exists());
     }
 }

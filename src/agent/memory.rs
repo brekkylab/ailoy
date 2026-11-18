@@ -28,7 +28,7 @@ const SEPARATOR: &str = "\n\n";
 /// How a date leads an entry: `[2026-11-17] `, the host's date when the entry was last written.
 const STAMP_LEN: usize = "[YYYY-MM-DD] ".len();
 
-/// The most characters the file may hold unless [`Memory::with_limit`] says otherwise.
+/// The most characters the entries may hold unless [`Memory::with_limit`] says otherwise.
 const DEFAULT_LIMIT: usize = 3_000;
 
 /// A folder on this host whose `MEMORY.md` an agent keeps short notes on the user in, with
@@ -42,7 +42,7 @@ pub struct Memory {
     /// The folder, relative to the current directory when the agent is built unless absolute.
     dir: PathBuf,
 
-    /// How many characters `MEMORY.md` may hold.
+    /// How many characters the entries may hold, with the blank lines between them.
     #[serde(default = "default_limit")]
     limit: usize,
 }
@@ -60,7 +60,7 @@ impl Memory {
         }
     }
 
-    /// How many characters the file may hold.
+    /// How many characters the entries may hold, with the blank lines between them.
     pub fn with_limit(mut self, chars: usize) -> Self {
         self.limit = chars;
         self
@@ -344,7 +344,7 @@ pub(super) fn today() -> String {
     chrono::Local::now().format("%Y-%m-%d").to_string()
 }
 
-/// Characters in the file, as its limit counts them.
+/// Characters in the entries, with the blank lines between them, as the limit counts them.
 fn used(entries: &[String]) -> usize {
     entries.join(SEPARATOR).chars().count()
 }
@@ -457,7 +457,8 @@ fn find(entries: &[String], old_text: &str) -> Result<usize, String> {
         [i] => Ok(i),
         [] => Err(format!("no entry contains {old_text:?}")),
         _ => Err(format!(
-            "{} entries contain {old_text:?}; give a longer old_text that only one contains",
+            "{} entries contain {old_text:?}; give more of the entry, or all of it, so that \
+             only one matches",
             hits.len()
         )),
     }
