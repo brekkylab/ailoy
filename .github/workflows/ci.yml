@@ -1,0 +1,148 @@
+# A pull request is formatted, linted and tested on Linux, the library and each binding in a job
+# of its own; nothing is built for release or published (that is `packages`'s). `main` is too,
+# after each merge, and that run is what saves the Rust caches every other ref reads. The docs
+# are `docs`'s.
+#
+# No provider key is given: a test that needs one skips without it, and a fork's pull request
+# could read any key it were given. A test that needs a sandbox boots one on the virtx server
+# the virtx package fetches, over the runner's KVM.
+name: ci
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - "**"
+      - "!**/*.md"
+      - "!docs/**"
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+# A newer push to the pull request makes an older run moot. A run on `main` finishes once
+# started, or a merge after a merge would leave no run to save the caches.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Neither rust-cache nor a runner keeps an incremental build.
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: rustfmt, clippy
+
+      # wreq's BoringSSL (`btls-sys`) generates its bindings with bindgen, which needs libclang.
+      - name: libclang
+        run: sudo apt-get update -q && sudo apt-get install -yq libclang-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: rust
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # GitHub's runner has KVM, but /dev/kvm is root's until a rule says otherwise.
+      - name: KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test
+
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: bindings/python
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+        working-directory: .
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+
+      - name: libclang
+        run: sudo apt-get update -q && sudo apt-get install -yq libclang-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: python
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # A full version: setup-uv publishes no major tag to follow since v8.
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - run: uv run maturin develop
+      - run: uv run pytest
+
+  node:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: bindings/node
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+        working-directory: .
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+
+      - name: libclang
+        run: sudo apt-get update -q && sudo apt-get install -yq libclang-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: node
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bindings/node/package-lock.json
+
+      - run: npm ci
+      - run: npm run build:debug
+      - run: npm test
