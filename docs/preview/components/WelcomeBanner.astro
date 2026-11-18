@@ -42,9 +42,9 @@ import AiloyMark from './AiloyMark.astro';
 </figure>
 
 <script>
-  // On wide screens the banner reaches across the "On this page" column too, and that column,
-  // which Starlight fixes to the top, starts at the breadcrumb below the banner and scrolls with
-  // the page until the banner is gone (sticky in the CSS below).
+  // On wide screens the banner reaches a little to the left and across the "On this page" column,
+  // and that column, which Starlight fixes to the top, starts at the breadcrumb below the banner
+  // and scrolls with the page until the banner is gone (sticky in the CSS below).
   const wide = matchMedia('(min-width: 72rem)');
   const place = () => {
     const banner = document.querySelector<HTMLElement>('.wb');
@@ -53,8 +53,13 @@ import AiloyMark from './AiloyMark.astro';
     const crumbs = document.querySelector('.page-head .crumbs');
     if (!banner || !bar || !toc || !crumbs) return;
     banner.style.marginRight = '0px';
+    banner.style.marginLeft = '0px';
     bar.style.marginTop = '0px';
     if (!wide.matches) return;
+    // and 48px out to the left, less if the sidebar is nearer than that plus a 24px gap
+    const pane = banner.closest('.main-pane');
+    const room = pane ? banner.getBoundingClientRect().left - pane.getBoundingClientRect().left - 24 : 0;
+    banner.style.marginLeft = `${-Math.max(0, Math.min(48, room))}px`;
     banner.style.marginRight = `${banner.getBoundingClientRect().right - toc.getBoundingClientRect().right}px`;
     bar.style.marginTop = `${crumbs.getBoundingClientRect().top + scrollY - toc.getBoundingClientRect().top}px`;
   };
