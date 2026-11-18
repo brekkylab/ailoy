@@ -132,7 +132,7 @@ wheels = [
 
 [[package]]
 name = "virtx"
-version = "0.1.2"
+version = "0.2.0"
 source = { editable = "../../../virtx/virtx-py" }
 
 [package.metadata]
