@@ -13,7 +13,8 @@ name = "_ailoy"
 crate-type = ["cdylib"]
 
 [dependencies]
-ailoy = { path = "../.." }
+# Without `embedded`: the library is the one the virtx package of this language opened.
+ailoy = { path = "../..", default-features = false }
 virtx = { workspace = true }
 # `abi3-py310`: one wheel per platform, not per interpreter. `extension-module` is set in
 # `pyproject.toml` instead: it leaves libpython unlinked, which suits the interpreter-loaded

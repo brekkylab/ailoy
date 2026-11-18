@@ -102,7 +102,7 @@ use virtx::{Client, Files as _, Recipe, SandboxCreateArgs};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let client = Client::spawn_virtx([] as [&str; 0])?;
+    let client = Client::spawn_virtx([] as [&str; 0]).await?;
 
     // Kept on the server under its tag: later sandboxes boot it without building again.
     let recipe = Recipe::new("python:3.12-slim-trixie").step("pip install --no-cache-dir matplotlib");
