@@ -156,7 +156,7 @@ main()
 ```toml
 [dependencies]
 ailoy = "0.3"
-virtx = "0.1"
+virtx = "0.2"
 ```
 
 ```rust

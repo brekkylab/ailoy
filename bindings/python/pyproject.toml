@@ -7,12 +7,10 @@ name = "ailoy-py"
 dynamic = ["version"]
 description = "Agents that drive a language model through tool-augmented turns, in a virtx console."
 readme = "../../README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-    "virtx>=0.1.2,<0.2",
-    # `NotRequired`, for `ailoy.types`, is in `typing` from 3.11.
-    "typing_extensions>=4; python_version < '3.11'",
+    "virtx>=0.2.0,<0.3",
 ]
 classifiers = [
     "Programming Language :: Rust",
@@ -36,6 +34,3 @@ features = ["pyo3/extension-module"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-
-[tool.uv.sources]
-virtx = { path = "../../../virtx/virtx-py", editable = true }
