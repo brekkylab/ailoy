@@ -1,0 +1,114 @@
+---
+// The banner at the top of the Welcome page: the mark and "Ailoy Documentation" over a drawing of
+// Ailoy's idea, three languages braiding into one agent that works in a microVM of its own. It is
+// dark in both themes, like an image. PageTitle shows it above the Welcome page's title, so it
+// stays out of the page's Markdown.
+import AiloyMark from './AiloyMark.astro';
+---
+
+<figure class="wb" aria-label="Ailoy Documentation">
+  <div class="wb-text">
+    <p class="wb-brand"><AiloyMark size={26} /> Ailoy</p>
+    <p class="wb-title">Ailoy<br />Documentation</p>
+    <p class="wb-sub">AI agents with a computer of their own</p>
+  </div>
+  <svg class="wb-art" viewBox="0 0 420 220" aria-hidden="true">
+    <g class="wb-lang">
+      <text x="8" y="44">Python</text>
+      <text x="8" y="114">Node.js</text>
+      <text x="8" y="184">Rust</text>
+    </g>
+    <g class="wb-lines">
+      <path d="M78 40 C 150 40, 160 110, 236 110" />
+      <path d="M78 110 C 150 110, 160 110, 236 110" />
+      <path d="M78 180 C 150 180, 160 110, 236 110" />
+      <path d="M78 46 C 140 46, 170 104, 236 106" class="thin" />
+      <path d="M78 174 C 140 174, 170 116, 236 114" class="thin" />
+    </g>
+    <rect x="236" y="62" width="172" height="96" class="wb-box" />
+    <text x="252" y="92" class="wb-t">agent</text>
+    <rect x="252" y="104" width="140" height="40" class="wb-vm" />
+    <text x="264" y="129" class="wb-s">microVM · GPU</text>
+  </svg>
+</figure>
+
+<style>
+  .wb {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 1.1fr;
+    align-items: center;
+    gap: 1.5rem;
+    margin: 0 0 1.75rem;
+    padding: 2.25rem 2rem;
+    background:
+      radial-gradient(120% 140% at 100% 0%, rgba(255, 197, 61, 0.14), transparent 55%),
+      repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0 1px, transparent 1px 48px),
+      #000;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #fff;
+    overflow: hidden;
+  }
+  .wb p {
+    margin: 0;
+  }
+  .wb-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: rgba(255, 255, 255, 0.75);
+  }
+  .wb-title {
+    margin-top: 1rem !important;
+    font-size: clamp(1.75rem, 3.4vw, 2.5rem);
+    font-weight: 700;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+  }
+  .wb-sub {
+    margin-top: 0.875rem !important;
+    color: #ffc53d;
+    font-size: 0.95rem;
+  }
+  .wb-art {
+    width: 100%;
+    height: auto;
+  }
+  .wb-lang text {
+    fill: rgba(255, 255, 255, 0.7);
+    font: 500 15px var(--sl-font-mono, monospace);
+  }
+  .wb-lines path {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.55);
+    stroke-width: 1.5;
+  }
+  .wb-lines path.thin {
+    stroke: rgba(255, 197, 61, 0.6);
+    stroke-width: 1;
+  }
+  .wb-box {
+    fill: #0b0b0b;
+    stroke: rgba(255, 255, 255, 0.4);
+  }
+  .wb-vm {
+    fill: rgba(255, 197, 61, 0.1);
+    stroke: #ffc53d;
+  }
+  .wb-t {
+    fill: #fff;
+    font: 600 16px var(--sl-font, sans-serif);
+  }
+  .wb-s {
+    fill: #ffc53d;
+    font: 500 13px var(--sl-font-mono, monospace);
+  }
+  @media (max-width: 640px) {
+    .wb {
+      grid-template-columns: 1fr;
+      padding: 1.5rem 1.25rem;
+    }
+  }
+</style>

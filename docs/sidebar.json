@@ -2,15 +2,15 @@
   {
     "label": "Get started",
     "items": [
-      { "label": "Overview", "link": "/" },
+      { "label": "Welcome to Ailoy", "link": "/" },
       { "slug": "guides/installation" },
-      { "slug": "guides/quick-start" },
-      { "slug": "concepts" }
+      { "slug": "guides/quick-start" }
     ]
   },
   {
     "label": "Build an agent",
     "items": [
+      { "slug": "concepts" },
       { "slug": "guides/agents" },
       { "slug": "guides/sandbox" },
       { "slug": "guides/running" },
