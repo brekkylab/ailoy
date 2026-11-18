@@ -153,7 +153,12 @@ A sandbox's files come from three places, and they last differently:
 | A volume | Inputs, skills, results you want back | Until you remove the volume; several sandboxes can mount it, and your code reads and writes it while they do | [Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/) |
 | The sandbox's own files | What the agent writes anywhere else, such as packages it installs | Until the sandbox is removed, or kept in a snapshot | [Keeping work in snapshots](https://virtx.sh/docs/guides/keeping-snapshots/) |
 
-So a package every run needs goes in the image, not in a step the agent repeats, and the files you hand the agent or want back go on a volume. The examples in `examples/` all work this way: they build their image once, put their skill and inputs on named volumes, and copy the results back at the end.
+So:
+
+- A package every run needs goes in the image, not in a step the agent repeats.
+- The files you hand the agent or want back go on a volume.
+
+The examples in `examples/` all work this way: they build their image once, put their skill and inputs on named volumes, and copy the results back at the end.
 
 ### Building an image from a shell
 
@@ -168,11 +173,18 @@ A sandbox then boots from `plot:latest`. virtx's [Images](https://virtx.sh/docs/
 
 ## Inputs and results
 
-Before a turn, write what the agent should read onto a volume mounted in its sandbox, read-only if it should not change it. After the turn, read what it wrote, from the volume or from the sandbox. Say where in the instruction, so the agent knows where to look and where to write. virtx's [Reading and writing files](https://virtx.sh/docs/guides/reading-writing-files/) covers doing this from your code.
+- Before a turn, write what the agent should read onto a volume mounted in its sandbox, read-only if it should not change it.
+- After the turn, read what it wrote, from the volume or from the sandbox.
+- Say where in the instruction, so the agent knows where to look and where to write.
+
+virtx's [Reading and writing files](https://virtx.sh/docs/guides/reading-writing-files/) covers doing this from your code.
 
 ## Picking up later
 
-An agent's work is in two places: its history, and its sandbox's files. To carry on where a run stopped, build an agent with the same history (`history(...)` on the `AgentBuilder`). Hand it either the same sandbox, found again with `get_sandbox`, or a new sandbox on a snapshot of the old one's files.
+An agent's work is in two places: its history, and its sandbox's files. To carry on where a run stopped:
+
+- Build an agent with the same history (`history(...)` on the `AgentBuilder`).
+- Hand it either the same sandbox, found again with `get_sandbox`, or a new sandbox on a snapshot of the old one's files.
 
 ## Sandbox options
 
@@ -186,6 +198,7 @@ An agent's work is in two places: its history, and its sandbox's files. To carry
 | `vcpus`, `memory_mib` | Room for heavy commands. | [Setting up sandboxes](https://virtx.sh/docs/guides/setting-sandboxes/) |
 | `snapshot` | Files from earlier work to start on. | [Keeping work in snapshots](https://virtx.sh/docs/guides/keeping-snapshots/) |
 | `gpu`, `gpu_memory_mib` | A GPU through Vulkan, for work such as deep learning. | [Using GPUs](https://virtx.sh/docs/guides/using-gpus/) |
+| `abins` (`.abin(name)` in Rust) | virtx's own programs at `/abin`, such as `index`, `docread` and `display`. Each one with a `SKILL.md` becomes one of the agent's [skills](/docs/guides/skills/). | [Setting up sandboxes](https://virtx.sh/docs/guides/setting-sandboxes/) |
 
 Node.js spells them in camelCase (`memoryMib`, `gpuMemoryMib`), and Rust sets them on `SandboxCreateArgs`. virtx's [Hello world](https://virtx.sh/docs/hello-world/) covers which server to run, on your machine or elsewhere.
 

@@ -17,7 +17,7 @@ An agent given a sandbox with `sandbox(...)` gets a shell and tools to read and 
 | --- | --- |
 | `openai` | `shell`, `apply_patch`, `imgread` |
 | `google` | `shell`, `read_file`, `write`, `edit`, `imgread` |
-| `deepseek-ai`, `moonshotai`, `zai-org`, `Qwen` | `shell`, `read`, `write`, `edit` |
+| `deepseek-ai`, `moonshotai`, `zai-org`, `Qwen`, `LGAI-EXAONE` | `shell`, `read`, `write`, `edit` |
 | Any other, `anthropic` included | `shell`, `read`, `write`, `edit`, `imgread` |
 
 | Tool | What it does |
@@ -30,7 +30,7 @@ An agent given a sandbox with `sandbox(...)` gets a shell and tools to read and 
 | `apply_patch` | Adds, deletes, updates and moves files, from a patch in the format Codex uses. |
 | `imgread` | Reads a PNG, JPEG, GIF or WebP image of up to 5 MB and gives it to the model as an image. |
 
-`imgread` is left out for `deepseek-ai`, `moonshotai`, `zai-org` and `Qwen` because their backends pass a tool result to the model as text, so the model would get a label in place of the image.
+`imgread` is left out for `deepseek-ai`, `moonshotai`, `zai-org`, `Qwen` and `LGAI-EXAONE` because their backends pass a tool result to the model as text, so the model would get a label in place of the image.
 
 The seven tools in the table come with `sandbox(...)` and run in that sandbox, as in [Giving an agent a sandbox](/docs/guides/sandbox/); an agent without one does not get them. The agent does not start, stop or remove its sandbox. virtx stops an idle sandbox's VM and boots it again over what it wrote when it is next needed, so a later call finds the files as the last one left them.
 
@@ -244,8 +244,12 @@ Tool calls the model makes in one step run at the same time, the seven built-in 
 
 A Python or Node.js function runs in your program, not in the sandbox. To run a command or read a file there, it calls the virtx `Sandbox` you made, such as `sandbox.exec(...)` or `sandbox.read_file(...)`. In Rust, a closure that also takes `sandbox: &Sandbox` gets the agent's sandbox, as the built-in tools do, and `ailoy::tool::{exec, read, write}` run a command and read and write a file in it.
 
-Tools are registered by name for the whole process, the built-in ones included. Registering a name again, `shell` among them, replaces its function for every agent built after that. The exception is `web_search` in an agent given a non-empty list of engines, which builds its own. `remove_tool_provider` (`removeToolProvider`) takes a name out.
+Tools are registered by name for the whole process, the built-in ones included. Registering a name again, `shell` among them, replaces its function for every agent built after that. `set_tool_provider(name, func)` (`setToolProvider` in Node.js) replaces only the function, for a tool whose description a spec already has. The exception is `web_search` in an agent given a non-empty list of engines, which builds its own. `remove_tool_provider` (`removeToolProvider`) takes a name out.
 
 ## How much of a result the model reads
 
-The agent keeps at most 30,000 characters of each part of a tool result, for built-in tools and your own alike. A longer part keeps its first and last 15,000 characters around a note of how many were cut, so a file read whole may reach the model with its middle missing. A Python or Node.js function's result, a string included, becomes a value part. A value part is measured in characters of its JSON, and once that passes 30,000, the model gets the JSON text as a string with its middle cut. `web_fetch` and `shell` size their results to fit: a long page comes in pieces that each reach the model whole, and `shell` cuts a long stdout or stderr itself, keeping its start and end around a note of how many characters it lost.
+The agent keeps at most 30,000 characters of each part of a tool result, for built-in tools and your own alike:
+
+- A longer part keeps its first and last 15,000 characters around a note of how many were cut, so a file read whole may reach the model with its middle missing.
+- A Python or Node.js function's result, a string included, becomes a value part. A value part is measured in characters of its JSON, and once that passes 30,000, the model gets the JSON text as a string with its middle cut.
+- `web_fetch` and `shell` size their results to fit: a long page comes in pieces that each reach the model whole, and `shell` cuts a long stdout or stderr itself, keeping its start and end around a note of how many characters it lost.

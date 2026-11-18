@@ -64,7 +64,7 @@ Each org's models run on one **backend**:
 
 By default, Claude, GPT and Gemini run through their CLIs, and the other orgs through their own APIs. Keys are read from the environment when a model is built, so set them before that.
 
-`cli` and `api` know the orgs in [Naming a model](#naming-a-model). The other backends build a model for any org, `meta-llama` or `mistralai` as well:
+`cli` and `api` know the orgs in [Naming a model](#naming-a-model). The other backends build a model for any org, `meta-llama` or `mistralai` as well. Such an org has no backend until you set one with `set_lang_model_provider`; building its model before that fails. Which backends serve which org:
 
 | Org | `cli` | `api` | `bedrock` | `openrouter` | `self-hosted` |
 | --- | :-: | :-: | :-: | :-: | :-: |
@@ -165,7 +165,7 @@ let chat = AgentBuilder::new("meta-llama/Llama-3.3-70B-Instruct").build().await?
 </TabItem>
 </Tabs>
 
-The model keeps its name whatever the server calls it. When a model is built, Ailoy finds the id to send in three steps and takes the first that gives one: `models` (`with_model` in Rust), which maps a name to the id the server serves it as; the server's own list at `/v1/models`, where an id equal to `<org>/<name>` or to `<name>` alone counts, ignoring case; and the desc as you wrote it. So vLLM, which serves Hugging Face repo ids, needs nothing; LM Studio lists `qwen/qwen3-0.6b` and is sent that for `Qwen/Qwen3-0.6B`; and Ollama's `llama3.3:70b` is nothing like `Llama-3.3-70B-Instruct`, so it is mapped, as above. `get_lang_model_provider` answers `self-hosted`.
+The model keeps its name whatever the server calls it. When a model is built, Ailoy finds the id to send in three steps and takes the first that gives one: `models` (`with_model` in Rust), which maps a name to the id the server serves it as; the server's own list at `<base_url>/models`, where an id equal to `<org>/<name>` or to `<name>` alone counts, ignoring case; and the desc as you wrote it. So vLLM, which serves Hugging Face repo ids, needs nothing; LM Studio lists `qwen/qwen3-0.6b` and is sent that for `Qwen/Qwen3-0.6B`; and Ollama's `llama3.3:70b` is nothing like `Llama-3.3-70B-Instruct`, so it is mapped, as above. `get_lang_model_provider` answers `self-hosted`.
 
 Another endpoint that serves the OpenAI-compatible Chat Completions API, such as a LiteLLM gateway or Together's API, runs on `self-hosted` the same way: its URL as `base_url` and its key as `api_key`.
 

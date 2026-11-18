@@ -48,10 +48,10 @@ This installs `@brekkylab/virtx` too, the package your code makes sandboxes with
 <TabItem label="Rust" icon="seti:rust">
 
 ```sh
-cargo add ailoy virtx
+cargo add ailoy virtx futures anyhow tokio --features tokio/macros,tokio/rt-multi-thread
 ```
 
-`virtx` is the crate your code makes sandboxes with. Cargo lets your code use only the crates it lists, so add it beside `ailoy`.
+`virtx` is the crate your code makes sandboxes with. Cargo lets your code use only the crates it lists, so add it beside `ailoy`. `tokio`, `futures` and `anyhow` are what the examples on these pages run on.
 
 </TabItem>
 </Tabs>
@@ -105,7 +105,7 @@ setLangModelProvider('anthropic', 'api')
 <TabItem label="Rust" icon="seti:rust">
 
 ```rust
-ailoy::model::set_lang_model_provider("anthropic", "api");
+ailoy::model::set_lang_model_provider("anthropic", ailoy::model::Backend::Api);
 ```
 
 
