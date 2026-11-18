@@ -20,6 +20,7 @@ export const GET: APIRoute = ({ props, site }) => {
       return `- [${a('title')}](${a('href')})${a('description') ? `: ${a('description')}` : ''}`;
     })
     .replace(/^[ \t]*<HowDiagram\b[^>]*\/>[ \t]*(\n|$)/gm, '')
+    .replace(/^[ \t]*<\/?div\b[^>]*>[ \t]*(\n|$)/gm, '')
     // Full addresses, so links still work once the page is pasted into a chat.
     .replace(/\]\(\/docs\//g, `](${new URL('/docs/', site)}`)
     .replace(/\n{3,}/g, '\n\n')
