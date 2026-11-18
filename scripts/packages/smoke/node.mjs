@@ -2,15 +2,13 @@
 //
 // Run from a project that installed `@brekkylab/ailoy` and `@brekkylab/virtx`, so each resolves
 // the way that project's code would. What this platform can do is said in the environment:
-//   SMOKE_MOUNT   1 if a FUSE provider is installed here, else 0
-//   SMOKE_SERVER  1 if virtx-uvm publishes a server for this platform, which `ensureVirtx()`
+//   SMOKE_SERVER  1 if virtx publishes `virtx-stdio` for this platform, which `ensureVirtx()`
 //                 fetches into $VIRTX_HOME, else 0
 //   SMOKE_VM      1 if this machine can boot one (KVM or HVF), else 0
 //
 // A turn's model is served from this process (`fake.mjs`): no network, and no API key.
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
-import os from 'node:os'
 import path from 'node:path'
 
 import { fakeModel } from './fake.mjs'
@@ -38,7 +36,7 @@ const installed = fs.readdirSync(scope).sort()
 console.log(`  installed: ${installed.join(' ')}`)
 check(installed.length === 4, 'exactly one platform package was installed beside each root (ailoy, virtx)')
 
-check(new virtx.Recipe('alpine:latest').step('echo hi').toString().includes('echo hi'), 'virtx comes along')
+check(JSON.stringify(new virtx.Recipe('alpine:latest').run('echo hi')).includes('echo hi'), 'virtx comes along')
 
 const model = await fakeModel()
 try {
@@ -68,21 +66,6 @@ try {
   check(/5/.test(JSON.stringify(outputs.at(-1)?.message.contents)), 'the model answered with what the tool said')
   await agent.close()
 
-  // Whether or not this host can mount: without a provider, a mount is an error, not a crash.
-  const point = fs.mkdtempSync(path.join(os.tmpdir(), 'ailoy-smoke-'))
-  let mount = null
-  try {
-    mount = new virtx.HostMount(new virtx.Directory().withFile('a.txt', 'hi'), point)
-  } catch (e) {
-    console.log(`  HostMount: ${e.message}`)
-  }
-  check(!!mount === want('SMOKE_MOUNT'), `a HostMount is ${mount ? '' : 'not '}made`)
-  if (mount) {
-    check(fs.readFileSync(path.join(point, 'a.txt'), 'utf8') === 'hi', 'HostMount serves its tree')
-    await mount.unmount()
-    check(!fs.existsSync(path.join(point, 'a.txt')), 'HostMount.unmount() takes it down')
-  }
-
   // The console server, as the guides have it: `ensureVirtx()` first.
   let server = null
   try {
@@ -94,24 +77,24 @@ try {
   check(!!server === want('SMOKE_SERVER'), `ensureVirtx ${server ? 'fetched' : 'fetched no'} server`)
   if (server) {
     const exe = process.platform === 'win32' ? '.exe' : ''
-    check(fs.existsSync(path.join(server, `virtx-uvm${exe}`)), `virtx-uvm${exe} is in ${server}`)
+    check(path.basename(server) === `virtx-stdio${exe}` && fs.statSync(server).isFile(), `ensureVirtx answers virtx-stdio${exe}`)
     if (process.env.VIRTX_HOME) {
-      check(path.relative(process.env.VIRTX_HOME, server) === 'bin', 'into $VIRTX_HOME/bin')
+      const within = path.relative(process.env.VIRTX_HOME, server)
+      check(!within.startsWith('..') && !path.isAbsolute(within), 'into $VIRTX_HOME')
     }
-    // The server runs on this machine, and answers -- no VM needed to ask its version.
-    const images = await virtx.ImageClient.tryNew()
-    const version = await images.version()
-    await images.close()
-    check(typeof version === 'string' && version.length > 0, `the console server answers (protocol ${version})`)
+    // The server runs on this machine, and answers -- no VM needed to list its images.
+    const client = virtx.Client.spawn(server)
+    const images = await client.listImage()
+    await client.close()
+    console.log(`  listImage: ${images.length} images`)
+    check(Array.isArray(images), 'the console server answers')
   }
 
   if (server && want('SMOKE_VM')) {
     // An agent's shell tool, in a sandbox that sees a volume.
-    const client = virtx.Client.spawn()
+    const client = virtx.Client.spawn(server)
     if (!(await client.listImage()).some((i) => i.reference.split('/').pop() === 'alpine:latest')) {
-      for await (const entry of client.pullImage('alpine:latest')) {
-        if ('end' in entry && entry.end.error) throw new Error(`pulling alpine:latest: ${entry.end.error}`)
-      }
+      await client.pullImage('alpine:latest').complete()
     }
     const volume = await client.createVolume()
     await volume.writeFile('from-host.txt', 'by volume')

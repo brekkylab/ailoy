@@ -12,8 +12,8 @@ publish = false
 
 [dependencies]
 ailoy = { version = "0.3", registry = "local" }
-# The same crate `ailoy` depends on, for the console, the image client and `ensure_virtx`,
-# which it does not re-export; with its library linked in, as `ailoy` has it.
+# The same crate `ailoy` depends on, for the client and `ensure_virtx`, which it does not
+# re-export; with its library linked in (`embedded`, a default feature).
 virtx = "0.2"
 anyhow = "1"
 futures = "0.3"
