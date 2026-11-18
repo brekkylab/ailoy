@@ -1,6 +1,6 @@
 ---
-// The banner at the top of the Welcome page: the mark and "Ailoy Documentation" over a drawing of
-// Ailoy's idea, three languages braiding into one agent that works in a microVM of its own. It is
+// The banner at the top of the Welcome page: the mark and "Ailoy Documentation" beside a drawing of
+// Ailoy's idea, three languages flowing into one agent that works in a microVM of its own. It is
 // dark in both themes, like an image. PageTitle shows it above the Welcome page's title, so it
 // stays out of the page's Markdown. On wide screens "On this page" starts below it, level with the
 // breadcrumb, and sticks once the page scrolls past the banner.
@@ -13,23 +13,31 @@ import AiloyMark from './AiloyMark.astro';
     <p class="wb-title">Ailoy<br />Documentation</p>
     <p class="wb-sub">AI agents with a computer of their own</p>
   </div>
-  <svg class="wb-art" viewBox="0 0 420 220" aria-hidden="true">
+  <svg class="wb-art" viewBox="0 0 440 220" aria-hidden="true">
+    <defs>
+      <linearGradient id="wb-flow" gradientUnits="userSpaceOnUse" x1="92" y1="0" x2="262" y2="0">
+        <stop offset="0" stop-color="#fff" stop-opacity="0.22" />
+        <stop offset="1" stop-color="#ffc53d" />
+      </linearGradient>
+      <marker id="wb-tip" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="#ffc53d" />
+      </marker>
+    </defs>
     <g class="wb-lang">
-      <text x="8" y="44">Python</text>
-      <text x="8" y="114">Node.js</text>
-      <text x="8" y="184">Rust</text>
+      <rect x="4" y="24" width="88" height="32" /><text x="48" y="45">Python</text>
+      <rect x="4" y="94" width="88" height="32" /><text x="48" y="115">Node.js</text>
+      <rect x="4" y="164" width="88" height="32" /><text x="48" y="185">Rust</text>
     </g>
-    <g class="wb-lines">
-      <path d="M78 40 C 150 40, 160 110, 236 110" />
-      <path d="M78 110 C 150 110, 160 110, 236 110" />
-      <path d="M78 180 C 150 180, 160 110, 236 110" />
-      <path d="M78 46 C 140 46, 170 104, 236 106" class="thin" />
-      <path d="M78 174 C 140 174, 170 116, 236 114" class="thin" />
+    <g class="wb-lines" marker-end="url(#wb-tip)">
+      <path d="M92 40 C 178 40, 184 96, 263 96" />
+      <path d="M92 110 L 263 110" />
+      <path d="M92 180 C 178 180, 184 124, 263 124" />
     </g>
-    <rect x="236" y="62" width="172" height="96" class="wb-box" />
-    <text x="252" y="92" class="wb-t">agent</text>
-    <rect x="252" y="104" width="140" height="40" class="wb-vm" />
-    <text x="264" y="129" class="wb-s">microVM · GPU</text>
+    <rect x="264" y="56" width="168" height="108" class="wb-box" />
+    <text x="282" y="84" class="wb-t">Agent</text>
+    <circle cx="414" cy="79" r="3.5" class="wb-live" />
+    <rect x="280" y="98" width="136" height="48" class="wb-vm" />
+    <text x="348" y="127" class="wb-s">microVM · GPU</text>
   </svg>
 </figure>
 
@@ -110,34 +118,39 @@ import AiloyMark from './AiloyMark.astro';
     width: 100%;
     height: auto;
   }
+  .wb-lang rect {
+    fill: #0e0f11;
+    stroke: rgba(255, 255, 255, 0.18);
+  }
   .wb-lang text {
-    fill: rgba(255, 255, 255, 0.7);
-    font: 500 15px var(--sl-font-mono, monospace);
+    fill: rgba(255, 255, 255, 0.85);
+    font: 500 13px var(--sl-font, sans-serif);
+    text-anchor: middle;
   }
   .wb-lines path {
     fill: none;
-    stroke: rgba(255, 255, 255, 0.55);
+    stroke: url(#wb-flow);
     stroke-width: 1.5;
-  }
-  .wb-lines path.thin {
-    stroke: rgba(255, 197, 61, 0.6);
-    stroke-width: 1;
   }
   .wb-box {
     fill: #0b0b0b;
-    stroke: rgba(255, 255, 255, 0.4);
+    stroke: rgba(255, 255, 255, 0.22);
   }
   .wb-vm {
-    fill: rgba(255, 197, 61, 0.1);
+    fill: rgba(255, 197, 61, 0.08);
     stroke: #ffc53d;
+  }
+  .wb-live {
+    fill: #ffc53d;
   }
   .wb-t {
     fill: #fff;
-    font: 600 16px var(--sl-font, sans-serif);
+    font: 600 15px var(--sl-font, sans-serif);
   }
   .wb-s {
     fill: #ffc53d;
-    font: 500 13px var(--sl-font-mono, monospace);
+    font: 500 13px var(--sl-font, sans-serif);
+    text-anchor: middle;
   }
   @media (max-width: 640px) {
     .wb {
