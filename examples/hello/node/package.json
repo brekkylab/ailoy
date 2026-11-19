@@ -11,6 +11,6 @@
     "@brekkylab/ailoy": "file:../../../bindings/node"
   },
   "engines": {
-    "node": ">= 20.12"
+    "node": ">= 22"
   }
 }

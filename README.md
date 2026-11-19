@@ -156,7 +156,7 @@ main()
 ```toml
 [dependencies]
 ailoy = "0.3"
-virtx = { package = "virtx-rs", version = "0.1" }
+virtx = "0.2"
 ```
 
 ```rust
@@ -170,7 +170,7 @@ use virtx::{Client, Files as _, SandboxCreateArgs};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Starts virtx's server, fetched into its cache the first time.
-    let client = Client::spawn_virtx([] as [&str; 0])?;
+    let client = Client::spawn_virtx([] as [&str; 0]).await?;
     client.pull_image("python:3.12-slim-trixie", None).complete(false).await?;
     let sandbox = client
         .create_sandbox(&SandboxCreateArgs::new("python:3.12-slim-trixie"))
