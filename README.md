@@ -229,7 +229,7 @@ The examples live in [ailoy-examples](https://github.com/brekkylab/ailoy-example
 | [laya](https://github.com/brekkylab/ailoy-examples/tree/main/laya) | Answers typed decision questions with a local model on the GPU |
 | [browser-use](https://github.com/brekkylab/ailoy-examples/tree/main/browser-use) | Waits for what you ask of it, in a window of your own browser |
 
-The smallest one, [hello](./examples/hello), one turn with no tools and no sandbox, stays here:
+Small examples that each show one thing stay here in [`examples/`](./examples). The first, [hello](./examples/hello), is one turn with no tools and no sandbox:
 
 ```sh
 cargo run --example hello                           # Rust
