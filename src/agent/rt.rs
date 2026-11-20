@@ -8,7 +8,10 @@ use futures::{
 };
 
 use super::{
-    AgentSpec, AgentState, ContextManager, image::fit_images_off_runtime, skill::render_skills,
+    AgentSpec, AgentState, ContextManager,
+    image::fit_images_off_runtime,
+    memory::{memory_tool, render_memory},
+    skill::render_skills,
     spec::split_desc,
 };
 use crate::{
@@ -58,12 +61,18 @@ impl Agent {
     ///
     /// The model is built from `spec.model` through [`create_lang_model`], and each of
     /// `spec.tools` through [`create_tool`]. Unless `state.history` already has a
-    /// [`Role::System`] message, one built from `spec.instruction`, [`AgentSpec::skills`]
-    /// and the skills of the sandbox's abins is put first.
+    /// [`Role::System`] message, one built from `spec.instruction`, [`AgentSpec::skills`],
+    /// the skills of the sandbox's abins and [`AgentSpec::memory`] is put first.
     ///
-    /// Async because skills are read through the sandbox.
+    /// Errors if the folders on the way to the memory cannot be made, its file cannot be read,
+    /// or `spec.tools` has a `memory` tool beside it. Async because skills are read through the
+    /// sandbox.
     pub async fn try_with_state(spec: AgentSpec, mut state: AgentState) -> anyhow::Result<Self> {
         let model = create_lang_model(&spec.model).await?;
+
+        if spec.memory.is_some() && spec.tools.iter().any(|d| d.name == "memory") {
+            anyhow::bail!("the spec has a `memory` tool of its own beside a memory");
+        }
 
         // Errors if any spec tool is missing.
         let mut tools = HashMap::with_capacity(spec.tools.len());
@@ -79,7 +88,15 @@ impl Agent {
         }
         let mut tool_descs = spec.tools.clone();
 
-        // Bound to this agent's own browser rather than resolved by name.
+        // Made absolute first, so a later change of the current directory still finds it.
+        let memory = spec.memory.as_ref().map(|m| m.prepared()).transpose()?;
+        if let Some(memory) = &memory {
+            let (desc, func) = memory_tool(memory);
+            tools.insert(desc.name.clone(), func);
+            tool_descs.push(desc);
+        }
+
+        // Like memory, bound to this agent's own browser rather than resolved by name.
         if let Some(session) = &state.browser {
             for (desc, func) in browser::tools(session, state.sandbox.is_some()) {
                 tools.insert(desc.name.clone(), func);
@@ -90,7 +107,9 @@ impl Agent {
         if !state.history.iter().any(|m| m.role == Role::System) {
             let org = split_desc(&spec.model).0;
             let skills = render_skills(&spec.skills, state.sandbox.as_ref(), org).await?;
-            let text = [spec.instruction, skills]
+            let memory = memory.as_ref().map(render_memory).transpose()?;
+            // Last, so what comes before it stays a cacheable prefix across sessions.
+            let text = [spec.instruction, skills, memory]
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>()
@@ -1408,5 +1427,91 @@ mod tests {
         let cut = middle_truncate(&"a".repeat(10), 4);
         assert!(cut.starts_with("aa\n\n... [6 characters omitted]"), "{cut}");
         assert_eq!(middle_truncate("short", 10), "short");
+    }
+
+    /// A memory adds the `memory` tool and, last in the system message, its notes as they
+    /// were when the agent was made; its folders are made then, and the file by the first note.
+    #[tokio::test]
+    async fn test_a_memory_adds_its_tool_and_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("agent1/agent2");
+        let path = folder.join("MEMORY.md");
+        let (_, spec) = scripted(
+            "test-agent-memory-file",
+            [
+                Ok(MessageOutput {
+                    message: Message::new(Role::Assistant).with_tool_calls([Part::function(
+                        "c1",
+                        "memory",
+                        to_value!({"operations": [{"action": "add", "content": "Name is Minsu"}]}),
+                    )]),
+                    finish_reason: FinishReason::ToolCall {},
+                    usage: None,
+                }),
+                answer("Noted."),
+            ],
+        );
+        let mut agent = Agent::try_with_state(spec.clone().memory(&*folder), AgentState::new())
+            .await
+            .unwrap();
+        assert!(folder.is_dir() && !path.exists());
+        let system = text_of(&agent.history()[0]);
+        assert!(system.starts_with("Be brief.\n\n# Memory\n"), "{system}");
+        assert!(system.ends_with("[0/3000 chars]\n(empty)"), "{system}");
+        assert!(agent.tool_descs.iter().any(|d| d.name == "memory"));
+
+        let outputs: Vec<_> = agent.run(user("I'm Minsu")).collect().await;
+        assert!(outputs.iter().all(Result::is_ok));
+        let day = super::super::memory::today();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!("[{day}] Name is Minsu\n")
+        );
+        assert!(
+            text_of(&agent.history()[0]).ends_with("(empty)"),
+            "unchanged this session"
+        );
+
+        let (_, spec) = scripted("test-agent-memory-file-next", []);
+        let agent = Agent::try_with_state(spec.memory(&*folder), AgentState::new())
+            .await
+            .unwrap();
+        let system = text_of(&agent.history()[0]);
+        assert!(
+            system.ends_with(&format!("[26/3000 chars]\n[{day}] Name is Minsu")),
+            "{system}"
+        );
+    }
+
+    /// A memory whose folder cannot be made fails the agent.
+    #[tokio::test]
+    async fn test_a_memory_that_cannot_be_kept_fails_the_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocked = dir.path().join("a-file");
+        std::fs::write(&blocked, "").unwrap();
+        let (_, spec) = scripted("test-agent-memory-file-blocked", []);
+        assert!(
+            Agent::try_with_state(spec.memory(&*blocked), AgentState::new())
+                .await
+                .is_err()
+        );
+    }
+
+    /// A `memory` tool of the spec's own, beside a memory, fails the agent rather than one
+    /// replacing the other, before the memory's folder is made.
+    #[tokio::test]
+    async fn test_a_memory_beside_a_memory_tool_fails_the_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("agent1");
+        let (_, spec) = scripted("test-agent-memory-twice", []);
+        let spec = spec
+            .tool(ToolDescBuilder::new("memory").build())
+            .memory(&*folder);
+        let e = Agent::try_with_state(spec, AgentState::new())
+            .await
+            .err()
+            .expect("refused");
+        assert!(e.to_string().contains("`memory` tool"), "{e}");
+        assert!(!folder.exists());
     }
 }

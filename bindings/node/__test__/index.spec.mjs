@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -370,6 +372,30 @@ class StreamingEcho extends Echo {
 }
 
 const textOf = (outputs) => outputs.map((o) => o.message.contents[0].text)
+
+test('a memory shapes the system message', async (t) => {
+  setLangModelProvider('memory-echo', (_, name) => new Echo(name))
+  t.after(() => removeLangModelProvider('memory-echo'))
+  const system = (agent) => agent.history[0].contents[0].text
+  const dir = mkdtempSync(join(tmpdir(), 'ailoy-memory-'))
+  const folder = join(dir, 'agent1', 'agent2')
+  const path = join(folder, 'MEMORY.md')
+
+  const agent = await new AgentBuilder('memory-echo/echo').memory(folder, { limit: 500 }).build()
+  assert.match(system(agent), /\[0\/500 chars\]\n\(empty\)$/)
+  assert.ok(existsSync(folder) && !existsSync(path))
+
+  writeFileSync(path, 'Name is Minsu\n')
+  const again = await Agent.fromSpec({ model: 'memory-echo/echo', memory: { dir: folder } })
+  assert.match(system(again), /\[13\/3000 chars\]\nName is Minsu$/)
+  const bounded = await Agent.fromSpec({ model: 'memory-echo/echo', memory: { dir: folder, limit: 20 } })
+  assert.match(system(bounded), /\[13\/20 chars\]\nName is Minsu$/)
+
+  assert.throws(() => new AgentBuilder('memory-echo/echo').memory(folder, { limit: -1 }), {
+    code: 'INVALID_ARG',
+    message: /limit must not be negative/,
+  })
+})
 
 test('a provider reads back as it was set', () => {
   assert.equal(getLangModelProvider('anthropic'), 'cli')

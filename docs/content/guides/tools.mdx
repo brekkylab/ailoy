@@ -5,7 +5,7 @@ description: "The built-in tools, functions of your own, and the tools of MCP se
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-An agent calls the tools you give it on the `AgentBuilder`: the built-in ones on this page, functions of your own, and the tools of an [MCP server](/docs/guides/using-mcp/) or of the [browser](/docs/guides/using-browser/).
+An agent calls the tools you give it on the `AgentBuilder`: the built-in ones on this page, functions of your own, the tools of an [MCP server](/docs/guides/using-mcp/) or of the [browser](/docs/guides/using-browser/), and [the one `memory(...)` adds](#memory).
 
 ## Built-in tools
 
@@ -245,6 +245,64 @@ Tool calls the model makes in one step run at the same time, the seven built-in 
 A Python or Node.js function runs in your program, not in the sandbox. To run a command or read a file there, it calls the virtx `Sandbox` you made, such as `sandbox.exec(...)` or `sandbox.read_file(...)`. In Rust, a closure that also takes `sandbox: &Sandbox` gets the agent's sandbox, as the built-in tools do, and `ailoy::tool::{exec, read, write}` run a command and read and write a file in it.
 
 Tools are registered by name for the whole process, the built-in ones included. Registering a name again, `shell` among them, replaces its function for every agent built after that. The exception is `web_search` in an agent given a non-empty list of engines, which builds its own. `remove_tool_provider` (`removeToolProvider`) takes a name out.
+
+## Memory
+
+`memory(dir)` gives the agent notes on the user that outlast a session. They are kept on this host, in `MEMORY.md` in the folder `dir`, so they need no sandbox. The folder, and those on the way to it, are made when the agent is built; the file is made by the first note.
+
+The notes go at the end of the system message as they were when the agent was built, and the agent changes them with the `memory` tool: it adds a fact as an entry of its own, replaces an entry when its fact changes, or removes one. The changes in one call are made in order, all or none. Each entry is led by this host's date when it was last written, as `[2026-11-17] Drinks barley tea`. A change shows in the next agent built on the folder, not in the one that made it.
+
+The entries hold at most 3,000 characters unless `limit` says otherwise. A change that would make them larger is refused, and the agent shortens or removes entries to make room. A person can edit the file too: its entries are paragraphs, a blank line apart.
+
+<Tabs syncKey="lang">
+
+<TabItem label="Python">
+
+```python
+from ailoy import Agent, AgentBuilder
+
+agent = await AgentBuilder("anthropic/claude-haiku-5-5").memory("./memory/user1", limit=2000).build()
+
+# The same folder for an agent from a spec.
+agent = await Agent.from_spec(
+    {"model": "anthropic/claude-haiku-5-5", "memory": {"dir": "./memory/user1", "limit": 2000}}
+)
+```
+
+
+</TabItem>
+<TabItem label="Node.js">
+
+```js
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
+  .memory('./memory/user1', { limit: 2000 })
+  .build()
+
+// The same folder for an agent from a spec.
+const again = await Agent.fromSpec({
+  model: 'anthropic/claude-haiku-5-5',
+  memory: { dir: './memory/user1', limit: 2000 },
+})
+```
+
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use ailoy::agent::Memory;
+
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
+    .memory(Memory::new("./memory/user1").with_limit(2000))
+    .build()
+    .await?;
+```
+
+
+</TabItem>
+</Tabs>
+
+An agent built with a history that already holds a system message keeps that message as it is: it gets the `memory` tool, but its notes are not added. A spec that lists a `memory` tool of its own beside a memory fails to build.
 
 ## How much of a result the model reads
 

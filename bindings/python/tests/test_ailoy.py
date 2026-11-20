@@ -348,6 +348,23 @@ async def test_history_is_refused_mid_turn_and_turns_take_turns():
     assert texts(await run(agent, "hi")) == ["hello"]
 
 
+async def test_a_memory_shapes_the_system_message(tmp_path):
+    def system(agent):
+        return agent.history[0]["contents"][0]["text"]
+
+    folder = tmp_path / "agent1" / "agent2"
+    path = folder / "MEMORY.md"
+    agent = await AgentBuilder(MODEL).memory(folder, limit=500).build()
+    assert system(agent).endswith("[0/500 chars]\n(empty)")
+    assert folder.is_dir() and not path.exists()
+
+    path.write_text("Name is Minsu\n")
+    agent = await ailoy.Agent.from_spec({"model": MODEL, "memory": {"dir": str(folder)}})
+    assert system(agent).endswith("[13/3000 chars]\nName is Minsu")
+    agent = await ailoy.Agent.from_spec({"model": MODEL, "memory": {"dir": str(folder), "limit": 20}})
+    assert system(agent).endswith("[13/20 chars]\nName is Minsu")
+
+
 async def test_from_spec_and_closing():
     spec = {"model": MODEL, "instruction": "From a spec."}
     history = [{"role": "user", "contents": [{"type": "text", "text": "earlier"}]}]

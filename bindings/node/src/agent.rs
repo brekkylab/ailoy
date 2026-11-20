@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use ailoy::{
-    agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
+    agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager, Memory},
     browser::{Browser, UserBrowser},
     datatype::Value,
     message::{Message, MessageDeltaOutput, MessageOutput},
@@ -118,6 +118,11 @@ pub struct BrowserOptions {
     pub careful: Option<bool>,
     /// The page the agent's tab opens on.
     pub start_url: Option<String>,
+}
+
+#[napi(object)]
+pub struct MemoryOptions {
+    pub limit: Option<i64>,
 }
 
 #[napi(object)]
@@ -263,6 +268,23 @@ impl JsAgentBuilder {
             browser = browser.start_url(url);
         }
         self.update(this, |b| Ok(b.browser(browser)))
+    }
+
+    /// Keep short notes in `MEMORY.md` in the folder `dir` on this host, which the system
+    /// message shows, and give the `memory` tool; `options.limit` bounds the file in characters
+    /// (3,000 by default).
+    #[napi(ts_args_type = "dir: string, options?: { limit?: number }")]
+    pub fn memory<'env>(
+        &mut self,
+        this: This<'env>,
+        dir: String,
+        options: Option<MemoryOptions>,
+    ) -> Result<This<'env>> {
+        let mut memory = Memory::new(dir);
+        if let Some(limit) = unsigned(options.and_then(|o| o.limit), "limit")? {
+            memory = memory.with_limit(limit as usize);
+        }
+        self.update(this, |b| Ok(b.memory(memory)))
     }
 
     #[napi]
