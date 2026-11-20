@@ -7,11 +7,13 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 An agent needs Ailoy and virtx's packages, a way for its model to run, and a machine that can run its sandbox.
 
+<div class="steps-flow">
+
 ## Requirements
 
-- Python 3.10 or later, Node.js 18 or later, or Rust 1.95 or later.
+- Python 3.11 or later, Node.js 22 or later, or Rust 1.95 or later.
 - For the machine that runs the sandbox, which is yours unless the virtx server runs elsewhere, depending on its OS:
-  - **Linux:** KVM, with `/dev/kvm` open to your user and virtualization enabled in the firmware, and FUSE. Most kernels have KVM built in.
+  - **Linux:** KVM, with `/dev/kvm` open to your user and virtualization enabled in the firmware. Most kernels have KVM built in.
   - **macOS:** Apple silicon.
   - **Windows:** Windows 11 or later, with the Windows Hypervisor Platform turned on (below).
 
@@ -48,10 +50,10 @@ This installs `@brekkylab/virtx` too, the package your code makes sandboxes with
 <TabItem label="Rust" icon="seti:rust">
 
 ```sh
-cargo add ailoy virtx
+cargo add ailoy virtx futures anyhow tokio --features tokio/macros,tokio/rt-multi-thread
 ```
 
-`virtx` is the crate your code makes sandboxes with. Cargo lets your code use only the crates it lists, so add it beside `ailoy`.
+`virtx` is the crate your code makes sandboxes with. Cargo lets your code use only the crates it lists, so add it beside `ailoy`. `tokio`, `futures` and `anyhow` are what the examples on these pages run on.
 
 </TabItem>
 </Tabs>
@@ -105,7 +107,7 @@ setLangModelProvider('anthropic', 'api')
 <TabItem label="Rust" icon="seti:rust">
 
 ```rust
-ailoy::model::set_lang_model_provider("anthropic", "api");
+ailoy::model::set_lang_model_provider("anthropic", ailoy::model::Backend::Api);
 ```
 
 
@@ -114,6 +116,19 @@ ailoy::model::set_lang_model_provider("anthropic", "api");
 
 [Model providers](/docs/guides/model-providers/) lists every backend: the CLIs, each org’s own API, Amazon Bedrock, OpenRouter and a server you run yourself (vLLM, llama-server, Ollama, LM Studio).
 
+</div>
+
+## Troubleshooting
+
+| What you see | Cause | Fix |
+| --- | --- | --- |
+| `boot_failed`, when a sandbox is made | This machine can't boot a VM. | **Linux:** open `/dev/kvm` to your user with `sudo usermod -aG kvm $USER`, then log in again. **Windows:** turn on the [Hypervisor Platform](#windows). **Any OS:** turn on virtualization (Intel VT-x, AMD-V) in the firmware. Set `KRUN_LOG=debug` to see the hypervisor's own messages after `last logged`. |
+| `no virtx-stdio release … for macos-x86_64` | virtx runs on Apple silicon only, not on an Intel Mac. | Run the virtx server on another machine and connect to it ([Hello world](https://virtx.sh/docs/hello-world/)). |
+| `fetching …/virtx/releases/…`, on the first `Client.spawn()` | The server's download failed. | Check the network or proxy, set `VIRTX_DIST_URL` to a mirror, or download the server yourself and point `VIRTX_STDIO` at it ([Environment variables](https://virtx.sh/docs/reference/api/#environment-variables)). |
+| `… does not match its SHA256SUMS` | The download came back changed, as a proxy may do. | Try again, or set `VIRTX_STDIO` as above. |
+| An error from the model's CLI or API on the first turn | It comes from the model's backend, not the sandbox. | See [Model providers](/docs/guides/model-providers/#troubleshooting). |
+
 ## Next
 
-[Quick start](/docs/guides/quick-start/) runs an agent for one turn, then gives it a sandbox.
+- [How an agent works](/docs/concepts/): where each part runs and what happens in a turn.
+- [Defining an agent](/docs/guides/agents/): everything an `AgentBuilder` can give an agent.

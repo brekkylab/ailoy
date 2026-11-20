@@ -1,24 +1,15 @@
 ---
-title: Overview
-description: Build agents that each get a Linux microVM of their own, with a GPU within reach, from Python, Node.js or Rust.
+title: Welcome to Ailoy
+description: What Ailoy is, what you can build with it, and where to start.
 ---
 
-import { Tabs, TabItem, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-Ailoy is an open-source SDK for building AI agents in your own code, in Python, Node.js or Rust. Each agent gets its own Linux microVM as a sandbox, where it can install software, write and run code, and keep files without touching your machine. You set up the sandbox as part of building the agent.
+Ailoy is an open-source SDK for building AI agents in Python, Node.js or Rust. Each agent can have a Linux microVM of its own, where it installs software, runs code and keeps files without touching your machine.
 
-## Start here
+## What you can build
 
-<CardGrid>
-  <LinkCard title="Installation" description="The package for your language, the machine it needs, and a model to drive it." href="/docs/guides/installation/" />
-  <LinkCard title="Quick start" description="Run an agent for one turn, then give it a sandbox and let it draw a chart." href="/docs/guides/quick-start/" />
-  <LinkCard title="How an agent works" description="Where each part runs and what happens in a turn." href="/docs/concepts/" />
-  <LinkCard title="Giving an agent a sandbox" description="Images, volumes for inputs and results, and picking up later." href="/docs/guides/sandbox/" />
-</CardGrid>
-
-## What agents do with it
-
-With a computer, an agent can do work you didn't write a function for. Each example runs in Python, Node.js and Rust, and [ailoy.co/examples](https://ailoy.co/examples/) shows them all running:
+With a computer of its own, an agent can do work you didn't write a function for. [ailoy.co/examples](https://ailoy.co/examples/) shows each one running:
 
 <CardGrid>
   <LinkCard title="CAD modeling" description="Writes CadQuery, renders the part from four sides, looks at the renders and fixes it." href="https://ailoy.co/examples/cad/" />
@@ -27,133 +18,22 @@ With a computer, an agent can do work you didn't write a function for. Each exam
   <LinkCard title="Decisions with a local model" description="Answers typed questions about tickets with a model it runs on the GPU." href="https://ailoy.co/examples/laya/" />
 </CardGrid>
 
-## What Ailoy gives you
+## Key features
 
-- **A sandbox that's already connected**: make one with [virtx](https://virtx.sh/docs/), built by the same team, and pass it to `sandbox(...)`, with no separate account or glue code.
-- **Any machine, GPU included**: your own machine, your own server or virtx's cloud, with that machine's GPU usable inside the sandbox.
-- **One string to change models**: every model gets the same message format and tools in the style it expects.
-- **The CLI you already use**: Claude, GPT and Gemini run on your Claude Code, Codex or Gemini CLI login by default.
-- **One library, three languages**: Python and Node.js bind to one Rust core, with the same API.
+<CardGrid>
+  <LinkCard title="Agents" description="AgentBuilder puts together a model, tools, skills and a sandbox." href="/docs/guides/agents/" />
+  <LinkCard title="Sandboxes" description="A microVM made with virtx, on your machine, your server or virtx's cloud, GPU included." href="/docs/guides/sandbox/" />
+  <LinkCard title="Models" description="Change the model with one string. Claude, GPT and Gemini run on your CLI login." href="/docs/guides/model-providers/" />
+  <LinkCard title="Tools" description="A shell and file tools in the sandbox, plus your own functions, MCP and a browser." href="/docs/guides/tools/" />
+  <LinkCard title="Skills" description="Folders of instructions for one kind of task, in the Agent Skills format." href="/docs/guides/skills/" />
+  <LinkCard title="Context manager" description="Keeps a long run under the model's context limit." href="/docs/guides/context-manager/" />
+</CardGrid>
 
-## Installation
+## Before you start
 
-<Tabs syncKey="lang">
-<TabItem label="Python" icon="seti:python">
-
-```sh
-pip install ailoy-py
-```
-
-</TabItem>
-<TabItem label="Node.js" icon="seti:javascript">
-
-```sh
-npm install @brekkylab/ailoy
-```
-
-</TabItem>
-<TabItem label="Rust" icon="seti:rust">
-
-```sh
-cargo add ailoy virtx
-```
-
-</TabItem>
-</Tabs>
-
-The model needs a way to run: a CLI you are logged in to, or an API key. [Installation](/docs/guides/installation/) covers both.
-
-## Hello world
-
-<Tabs syncKey="lang">
-
-<TabItem label="Python" icon="seti:python">
-
-```python
-import asyncio
-
-from ailoy import AgentBuilder
-
-
-async def main() -> None:
-    agent = await (
-        # For openai, use "openai/gpt-6-luna"
-        AgentBuilder("anthropic/claude-haiku-5-5")
-        .build()
-    )
-
-    async for output in agent.run("What is the meaning of hello world?"):
-        for part in output["message"]["contents"]:
-            if part["type"] == "text":
-                print(part["text"])
-
-
-asyncio.run(main())
-```
-
-</TabItem>
-<TabItem label="Node.js" icon="seti:javascript">
-
-```js
-const { AgentBuilder } = require('@brekkylab/ailoy')
-
-async function main() {
-  // For openai, use "openai/gpt-6-luna"
-  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
-    .build()
-
-  for await (const { message } of agent.run('What is the meaning of hello world?')) {
-    for (const part of message.contents) {
-      if (part.type === 'text') console.log(part.text)
-    }
-  }
-
-  await agent.close()
-}
-
-main()
-```
-
-</TabItem>
-<TabItem label="Rust" icon="seti:rust">
-
-```rust
-use ailoy::{
-    agent::AgentBuilder,
-    message::{Message, Part, Role},
-};
-use futures::StreamExt as _;
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // For openai, use "openai/gpt-6-luna"
-    let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
-        .build()
-        .await?;
-
-    let query = Message::new(Role::User).with_contents([Part::text("What is the meaning of hello world?")]);
-    let mut stream = agent.run(query);
-    while let Some(output) = stream.next().await {
-        let message = output?.message;
-        if message.role == Role::Assistant {
-            for text in message.contents.iter().filter_map(Part::as_text) {
-                println!("{text}");
-            }
-        }
-    }
-
-    Ok(())
-}
-```
-
-</TabItem>
-</Tabs>
-
-[Quick start](/docs/guides/quick-start/) goes on from here and gives the same agent a sandbox.
+You need Python 3.11+, Node.js 22+ or Rust 1.95+, a machine that can run microVMs (Linux with KVM, Apple silicon or Windows 11), and a CLI login or API key for the model. [Quick start](/docs/guides/quick-start/) runs your first agent, and [Installation](/docs/guides/installation/) walks through each in detail.
 
 ## Choose your path
-
-If you know what you want to do but not where it is covered:
 
 | If you want to... | Go to |
 | --- | --- |
@@ -168,7 +48,4 @@ If you know what you want to do but not where it is covered:
 | Keep a long run under the model's context limit | [Context manager](/docs/guides/context-manager/) |
 | Save an agent's definition and build it again | [Defining an agent](/docs/guides/agents/#from-a-spec) |
 
-## More
-
-- [For AI coding assistants](https://github.com/brekkylab/ailoy/blob/main/skills/ailoy/SKILL.md): SKILL.md, the steps an agent should follow to build with Ailoy
-- [Discord](https://discord.gg/27rx3EJy3P): questions and help
+For AI coding assistants, [SKILL.md](https://github.com/brekkylab/ailoy/blob/main/skills/ailoy/SKILL.md) has the steps to build with Ailoy, [llms.txt](https://ailoy.co/llms.txt) sums up Ailoy, and [llms-full.txt](https://ailoy.co/llms-full.txt) has every page of these docs in one file.

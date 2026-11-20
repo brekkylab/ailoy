@@ -34,12 +34,12 @@
 #
 # # Platforms
 #
-# | package suffix  | built on                            | tested on        | the test can                  |
-# |-----------------|-------------------------------------|------------------|-------------------------------|
-# | darwin-arm64    | macos-15                            | macos-15         | mount (FUSE-T), serve         |
-# | linux-x64-gnu   | ubuntu-24.04, in manylinux_2_28     | ubuntu-22.04     | mount, serve, boot            |
-# | linux-arm64-gnu | ubuntu-24.04-arm, in manylinux_2_28 | ubuntu-22.04-arm | mount, serve                  |
-# | win32-x64-msvc  | windows-2025                        | windows-2025     | load without Dokany, serve    |
+# | package suffix  | built on                            | tested on        | the test can |
+# |-----------------|-------------------------------------|------------------|--------------|
+# | darwin-arm64    | macos-15                            | macos-15         | serve        |
+# | linux-x64-gnu   | ubuntu-24.04, in manylinux_2_28     | ubuntu-22.04     | serve, boot  |
+# | linux-arm64-gnu | ubuntu-24.04-arm, in manylinux_2_28 | ubuntu-22.04-arm | serve        |
+# | win32-x64-msvc  | windows-2025                        | windows-2025     | serve        |
 #
 # "serve" is the console server answering -- everything short of a VM. macOS runners are
 # virtual M1s without nested virtualization, the arm64 Linux runners have no /dev/kvm, and
@@ -48,7 +48,7 @@
 #
 # # The glibc floor
 #
-# The Linux packages run on glibc 2.28 and later, as virtx's do and as the virtx-uvm server
+# The Linux packages run on glibc 2.28 and later, as virtx's do and as the virtx-stdio server
 # they fetch does: the addon and the wheel are built in a manylinux_2_28 container
 # (AlmaLinux 8), against its glibc's headers, and `The glibc each Linux artifact needs` fails
 # a build that needs more. Built on the runner itself they would need its glibc: the C in
@@ -62,12 +62,9 @@
 # has to be a version tag, `vX.Y.Z`, and every manifest `.bumpversion.toml` names -- the
 # workspace, npm's packages -- has to say that version (the wheel takes the workspace's).
 #
-# virtx is one release (`[workspace.dependencies]` in Cargo.toml): the crate from
-# crates.io, and its bindings' crates -- which crates.io does not have -- from git at the
-# release's tag, patched onto that same crate. Which console server that release fetches is
-# virtx's business: its crate on crates.io carries the virtx-uvm release it was tested with
-# (`virtx-uvm.version`, see virtx's `build.rs`), and virtx publishes only once that release
-# is out, so the bindings built here and a user's build of the crate fetch the same one.
+# virtx is one release: the crate `[workspace.dependencies]` in Cargo.toml names, from
+# crates.io. The console server a virtx client fetches is `virtx-stdio` of the client's own
+# version, so the bindings built here and a user's build of the crate fetch the same one.
 name: packages
 
 on:
@@ -229,9 +226,8 @@ jobs:
           args: --release --out ../../dist/wheels
 
       # What the addon and the extension need from the loader to be loaded at all. Neither
-      # may need a DLL Windows does not ship: the C runtime is linked in (`.cargo/config.toml`)
-      # and Dokany is delay-loaded, so a host without either still loads the package, and only
-      # a mount says what to install.
+      # may need a DLL Windows does not ship: the C runtime is linked in (`.cargo/config.toml`),
+      # so a host without it still loads the package.
       - name: The DLLs each Windows artifact loads
         if: runner.os == 'Windows'
         shell: bash
@@ -409,19 +405,15 @@ jobs:
         include:
           - platform: darwin-arm64
             runner: macos-15
-            mount: "1"
             vm: "0"
           - platform: linux-x64-gnu
             runner: ubuntu-22.04
-            mount: "1"
             vm: "1"
           - platform: linux-arm64-gnu
             runner: ubuntu-22.04-arm
-            mount: "1"
             vm: "0"
           - platform: win32-x64-msvc
             runner: windows-2025
-            mount: "0"
             vm: "0"
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -514,36 +506,12 @@ jobs:
           "$py" -m pip show ailoy-py
           echo "SMOKE_PYTHON=$py" >> "$GITHUB_ENV"
 
-      # On macOS, first without FUSE-T, which a user may not have: the import and every
-      # call but a mount must work, and a mount must be an error rather than a crash.
-      - name: Smoke, without FUSE-T
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          SMOKE_MOUNT: "0"
-        run: |
-          cd "$RUNNER_TEMP/project" && VIRTX_HOME="$VIRTX_HOME_NODE" node "$GITHUB_WORKSPACE/scripts/packages/smoke/node.mjs"
-          VIRTX_HOME="$VIRTX_HOME_PYTHON" "$SMOKE_PYTHON" "$GITHUB_WORKSPACE/scripts/packages/smoke/python.py"
-
-      # The runner image's Homebrew never updates itself (HOMEBREW_NO_AUTO_UPDATE), so its
-      # casks are as old as the image: without `brew update` it installs the FUSE-T of the
-      # day the image was built, which may be older than virtx needs.
-      - name: FUSE-T
-        if: runner.os == 'macOS'
-        run: |
-          brew update --quiet
-          brew install --cask fuse-t
-
       - name: Smoke, Node
         shell: bash
-        env:
-          SMOKE_MOUNT: ${{ matrix.mount }}
         run: cd "$RUNNER_TEMP/project" && VIRTX_HOME="$VIRTX_HOME_NODE" node "$GITHUB_WORKSPACE/scripts/packages/smoke/node.mjs"
 
       - name: Smoke, Python
         shell: bash
-        env:
-          SMOKE_MOUNT: ${{ matrix.mount }}
         run: VIRTX_HOME="$VIRTX_HOME_PYTHON" "$SMOKE_PYTHON" "$GITHUB_WORKSPACE/scripts/packages/smoke/python.py"
 
       - uses: dtolnay/rust-toolchain@stable

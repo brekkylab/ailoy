@@ -1,0 +1,28 @@
+---
+// Starlight override: a "Need help?" line on every page, above Starlight's own footer (the
+// previous and next links).
+import Default from '@astrojs/starlight/components/Footer.astro';
+---
+
+<p class="need-help">
+  <strong>Need help?</strong> Ask on <a href="https://discord.gg/27rx3EJy3P">Discord</a> or open an
+  issue on <a href="https://github.com/brekkylab/ailoy/issues">GitHub</a>.
+</p>
+<Default />
+
+<style>
+  .need-help {
+    margin: 3rem 0 0;
+    padding: 0.875rem 1rem;
+    border: 1px solid var(--sl-color-hairline);
+    color: var(--sl-color-gray-2);
+    font-size: 0.875rem;
+  }
+  .need-help strong {
+    color: var(--sl-color-white);
+    margin-right: 0.25rem;
+  }
+  .need-help a {
+    color: var(--sl-color-text-accent);
+  }
+</style>

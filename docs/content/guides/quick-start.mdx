@@ -5,9 +5,35 @@ description: "Run an agent for one turn, then give it a sandbox and let it make 
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-:::note
-This page assumes Ailoy is installed and the model has a way to run: a CLI you are logged in to, or an API key. [Installation](/docs/guides/installation/) covers both.
-:::
+<div class="steps-flow">
+
+## Install
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```sh
+pip install ailoy-py
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```sh
+npm install @brekkylab/ailoy
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```sh
+cargo add ailoy virtx futures anyhow tokio --features tokio/macros,tokio/rt-multi-thread
+```
+
+</TabItem>
+</Tabs>
+
+The model runs on a CLI you are logged in to (Claude Code, for the Claude model on this page) or on an API key. [Installation](/docs/guides/installation/) covers the machine the sandbox needs, API keys, and fixes for common errors.
 
 ## Run an agent
 
@@ -187,7 +213,7 @@ use virtx::{Client, Files as _, SandboxCreateArgs};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Starts virtx's server, fetched into its cache the first time.
-    let client = Client::spawn_virtx([] as [&str; 0])?;
+    let client = Client::spawn_virtx([] as [&str; 0]).await?;
     client.pull_image("python:3.12-slim-trixie", None).complete(false).await?;
     let sandbox = client
         .create_sandbox(&SandboxCreateArgs::new("python:3.12-slim-trixie"))
@@ -222,8 +248,11 @@ async fn main() -> anyhow::Result<()> {
 
 The image has no matplotlib, so the agent installs it with the shell that `sandbox(...)` gives it, along with file tools ([Tools](/docs/guides/tools/)).
 
+</div>
+
 ## What happened
 
-- [How an agent works](/docs/concepts/) walks through the turn: the model asks for tools, they run, and their results go back to it until it answers.
+- [How an agent works](/docs/concepts/#a-turn) walks through the turn: the model asks for tools, they run, and their results go back to it until it answers.
 - [Giving an agent a sandbox](/docs/guides/sandbox/) covers images, volumes for inputs and results, and picking up later.
 - [Defining an agent](/docs/guides/agents/) lists everything else an agent can be given.
+- If a step fails, [Troubleshooting](/docs/guides/installation/#troubleshooting) lists the usual errors and their fixes.

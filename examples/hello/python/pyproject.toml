@@ -2,7 +2,7 @@
 name = "ailoy-example-hello"
 version = "0.1.0"
 description = "One agent turn with a fixed question, on ailoy's Python bindings."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["ailoy-py", "python-dotenv>=1"]
 
 [tool.uv]
