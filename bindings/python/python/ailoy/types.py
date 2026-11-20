@@ -7,6 +7,7 @@ against these at runtime; the Rust side does, when the dict arrives.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Literal, NotRequired, TypedDict, Union
 
 Role = Literal["system", "user", "assistant", "tool"]
@@ -152,6 +153,22 @@ class AgentSpec(TypedDict):
     truncation: NotRequired[TruncationPolicy]
 
 
+class BrowserOptions(TypedDict, total=False):
+    """A browser for ``Agent.from_spec``: the keywords of ``AgentBuilder.browser``."""
+
+    user_browser: (
+        Literal["chrome", "chrome-beta", "chrome-dev", "chrome-canary", "chromium", "edge", "brave"]
+        | str
+        | os.PathLike[str]
+    )
+    careful: bool
+    start_url: str
+    isolated: bool
+    headless: bool
+    executable: str | os.PathLike[str]
+    profile: str | os.PathLike[str]
+
+
 Backend = Literal["cli", "api", "bedrock", "openrouter", "self-hosted"]
 
 
@@ -172,6 +189,7 @@ WebSearchProvider = Literal["web", "brave", "tavily", "exa", "naver"]
 __all__ = [
     "AgentSpec",
     "Backend",
+    "BrowserOptions",
     "EmbeddedImage",
     "FinishReason",
     "FunctionPart",

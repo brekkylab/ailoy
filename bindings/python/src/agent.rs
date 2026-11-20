@@ -22,6 +22,7 @@ use futures::{StreamExt as _, stream::BoxStream};
 use pyo3::{
     exceptions::{PyStopAsyncIteration, PyValueError},
     prelude::*,
+    types::PyDict,
 };
 use pyo3_async_runtimes::tokio::{future_into_py, get_runtime};
 use tokio::sync::Mutex;
@@ -86,6 +87,58 @@ fn user_browser_of(value: &Bound<'_, PyAny>) -> PyResult<UserBrowser> {
         PyValueError::new_err("user_browser is a browser's name or its user data directory")
     })?;
     Ok(UserBrowser::Custom(dir))
+}
+
+/// A browser's options: `AgentBuilder.browser`'s keywords, or the dict `Agent.from_spec` takes.
+struct BrowserOptions<'py> {
+    user_browser: Option<Bound<'py, PyAny>>,
+    careful: Option<bool>,
+    start_url: Option<String>,
+    isolated: Option<bool>,
+    headless: Option<bool>,
+    executable: Option<PathBuf>,
+    profile: Option<PathBuf>,
+}
+
+impl<'py> BrowserOptions<'py> {
+    /// From a dict, where a key left out or `None` is the default.
+    fn from_dict(options: &Bound<'py, PyDict>) -> PyResult<Self> {
+        let item = |key: &str| Ok::<_, PyErr>(options.get_item(key)?.filter(|v| !v.is_none()));
+        Ok(BrowserOptions {
+            user_browser: item("user_browser")?,
+            careful: item("careful")?.map(|v| v.extract()).transpose()?,
+            start_url: item("start_url")?.map(|v| v.extract()).transpose()?,
+            isolated: item("isolated")?.map(|v| v.extract()).transpose()?,
+            headless: item("headless")?.map(|v| v.extract()).transpose()?,
+            executable: item("executable")?.map(|v| v.extract()).transpose()?,
+            profile: item("profile")?.map(|v| v.extract()).transpose()?,
+        })
+    }
+}
+
+fn browser_of(options: BrowserOptions<'_>) -> PyResult<Browser> {
+    let mut browser = if options.isolated.unwrap_or(false) {
+        Browser::isolated()
+    } else {
+        Browser::user()
+    };
+    if let Some(host) = options.user_browser {
+        browser = browser.user_browser(user_browser_of(&host)?);
+    }
+    if options.headless.unwrap_or(false) {
+        browser = browser.headless(true);
+    }
+    if let Some(path) = options.executable {
+        browser = browser.executable(path);
+    }
+    if let Some(dir) = options.profile {
+        browser = browser.profile(dir);
+    }
+    browser = browser.careful(options.careful.unwrap_or(true));
+    if let Some(url) = options.start_url {
+        browser = browser.start_url(url);
+    }
+    Ok(browser)
 }
 
 #[pymethods]
@@ -162,27 +215,15 @@ impl PyAgentBuilder {
         executable: Option<PathBuf>,
         profile: Option<PathBuf>,
     ) -> PyResult<PyRef<'py, Self>> {
-        let mut browser = if isolated {
-            Browser::isolated()
-        } else {
-            Browser::user()
-        };
-        if let Some(host) = user_browser {
-            browser = browser.user_browser(user_browser_of(&host)?);
-        }
-        if headless {
-            browser = browser.headless(true);
-        }
-        if let Some(path) = executable {
-            browser = browser.executable(path);
-        }
-        if let Some(dir) = profile {
-            browser = browser.profile(dir);
-        }
-        browser = browser.careful(careful);
-        if let Some(url) = start_url {
-            browser = browser.start_url(url);
-        }
+        let browser = browser_of(BrowserOptions {
+            user_browser,
+            careful: Some(careful),
+            start_url,
+            isolated: Some(isolated),
+            headless: Some(headless),
+            executable,
+            profile,
+        })?;
         Self::update(slf, |b| Ok(b.browser(browser)))
     }
 
@@ -299,14 +340,16 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, PyResult<
 #[pymethods]
 impl PyAgent {
     /// An agent from a spec — the dict an `AgentSpec` serializes to — for a caller who holds
-    /// one rather than building it up. Awaitable.
+    /// one rather than building it up. `browser` is a dict of `AgentBuilder.browser`'s keywords.
+    /// Awaitable.
     #[staticmethod]
-    #[pyo3(signature = (spec, *, history = None, sandbox = None))]
+    #[pyo3(signature = (spec, *, history = None, sandbox = None, browser = None))]
     fn from_spec<'py>(
         py: Python<'py>,
         spec: Bound<'py, PyAny>,
         history: Option<Bound<'py, PyAny>>,
         sandbox: Option<Bound<'py, PyAny>>,
+        browser: Option<Bound<'py, PyDict>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let spec: AgentSpec = from_py(&spec, "an agent spec")?;
         let mut state = AgentState::new();
@@ -315,6 +358,9 @@ impl PyAgent {
         }
         if let Some(sandbox) = sandbox {
             state = state.with_sandbox(console::sandbox(&sandbox)?);
+        }
+        if let Some(browser) = browser {
+            state = state.with_browser(browser_of(BrowserOptions::from_dict(&browser)?)?);
         }
         future_into_py(py, async move {
             let agent = Agent::try_with_state(spec, state)

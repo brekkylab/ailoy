@@ -7,6 +7,7 @@ from virtx import Sandbox
 from .types import (
     AgentSpec,
     Backend,
+    BrowserOptions,
     LangModelOptions,
     LangModelServer,
     Message,
@@ -93,6 +94,7 @@ class Agent:
         *,
         history: list[Message] | None = None,
         sandbox: Sandbox | None = None,
+        browser: BrowserOptions | None = None,
     ) -> Agent: ...
     @property
     def history(self) -> list[Message]: ...

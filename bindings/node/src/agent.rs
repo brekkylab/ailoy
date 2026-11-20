@@ -120,6 +120,49 @@ pub struct BrowserOptions {
     pub start_url: Option<String>,
 }
 
+fn browser_of(options: Option<BrowserOptions>) -> Result<Browser> {
+    let options = options.unwrap_or(BrowserOptions {
+        isolated: None,
+        headless: None,
+        executable: None,
+        profile: None,
+        user_browser: None,
+        careful: None,
+        start_url: None,
+    });
+    let mut browser = if options.isolated.unwrap_or(false) {
+        Browser::isolated()
+    } else {
+        Browser::user()
+    };
+    if let Some(host) = options.user_browser {
+        browser = browser.user_browser(match host {
+            Either::A(name) => UserBrowser::named(&name).ok_or_else(|| {
+                let names: Vec<&str> = UserBrowser::NAMED.iter().map(UserBrowser::name).collect();
+                invalid(format!(
+                    "userBrowser is one of {} or {{ userDataDir }}, not {name:?}",
+                    names.join(", ")
+                ))
+            })?,
+            Either::B(dir) => UserBrowser::Custom(dir.user_data_dir.into()),
+        });
+    }
+    if let Some(headless) = options.headless {
+        browser = browser.headless(headless);
+    }
+    if let Some(path) = options.executable {
+        browser = browser.executable(path);
+    }
+    if let Some(dir) = options.profile {
+        browser = browser.profile(dir);
+    }
+    browser = browser.careful(options.careful.unwrap_or(true));
+    if let Some(url) = options.start_url {
+        browser = browser.start_url(url);
+    }
+    Ok(browser)
+}
+
 #[napi(object)]
 pub struct TruncationOptions {
     pub max_input_tokens: Option<i64>,
@@ -213,46 +256,7 @@ impl JsAgentBuilder {
         this: This<'env>,
         options: Option<BrowserOptions>,
     ) -> Result<This<'env>> {
-        let options = options.unwrap_or(BrowserOptions {
-            isolated: None,
-            headless: None,
-            executable: None,
-            profile: None,
-            user_browser: None,
-            careful: None,
-            start_url: None,
-        });
-        let mut browser = if options.isolated.unwrap_or(false) {
-            Browser::isolated()
-        } else {
-            Browser::user()
-        };
-        if let Some(host) = options.user_browser {
-            browser = browser.user_browser(match host {
-                Either::A(name) => UserBrowser::named(&name).ok_or_else(|| {
-                    let names: Vec<&str> =
-                        UserBrowser::NAMED.iter().map(UserBrowser::name).collect();
-                    invalid(format!(
-                        "userBrowser is one of {} or {{ userDataDir }}, not {name:?}",
-                        names.join(", ")
-                    ))
-                })?,
-                Either::B(dir) => UserBrowser::Custom(dir.user_data_dir.into()),
-            });
-        }
-        if let Some(headless) = options.headless {
-            browser = browser.headless(headless);
-        }
-        if let Some(path) = options.executable {
-            browser = browser.executable(path);
-        }
-        if let Some(dir) = options.profile {
-            browser = browser.profile(dir);
-        }
-        browser = browser.careful(options.careful.unwrap_or(true));
-        if let Some(url) = options.start_url {
-            browser = browser.start_url(url);
-        }
+        let browser = browser_of(options)?;
         self.update(this, |b| Ok(b.browser(browser)))
     }
 
@@ -404,7 +408,7 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<It
 impl JsAgent {
     /// An agent from a spec (the object an `AgentSpec` serializes to).
     #[napi(
-        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; sandbox?: Sandbox }",
+        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; sandbox?: Sandbox; browser?: BrowserOptions }",
         ts_return_type = "Promise<Agent>"
     )]
     pub fn from_spec<'env>(
@@ -426,6 +430,9 @@ impl JsAgent {
                 }
                 if let Some(sandbox) = options.get::<Object>("sandbox").map_err(get)? {
                     state = state.with_sandbox(console::sandbox(env, &sandbox)?);
+                }
+                if let Some(browser) = options.get::<BrowserOptions>("browser").map_err(get)? {
+                    state = state.with_browser(browser_of(Some(browser))?);
                 }
             }
             Ok((spec, state))
