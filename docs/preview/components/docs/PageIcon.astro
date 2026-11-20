@@ -6,8 +6,9 @@ interface Props {
 }
 
 const PATHS: Record<string, string> = {
-  // Overview: the docs' front page.
-  '/docs/': '<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>',
+  // Welcome to Ailoy: the docs' front page, the Ailoy mark (AiloyMark.astro's shapes, filled in the
+  // icon's colour so it dims and lights like the others).
+  '/docs/': '<g fill="currentColor" stroke="none"><path d="M17.3938 19.5161C19.0508 19.5161 20.394 18.1729 20.394 16.5159C20.394 14.8589 19.0508 13.5156 17.3938 13.5156C15.7368 13.5156 14.3936 14.8589 14.3936 16.5159C14.3936 18.1729 15.7368 19.5161 17.3938 19.5161Z"/><path d="M6.07168 12H12.3579L9.28623 19.5006H3L6.07168 12Z"/><path d="M9.28613 4.5H15.5724L18.644 12.0006H12.3578L9.28613 4.5Z"/></g>',
   // Installation: getting the packages.
   '/docs/guides/installation/': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
   // Quick start: the first run.
