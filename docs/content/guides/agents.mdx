@@ -29,7 +29,7 @@ Every call returns the builder, so they chain. Node.js spells them in camelCase 
 
 ## From a spec
 
-The model, the instruction, the tools, the skills, the model options and whether it uses a sandbox or a browser make up an agent's spec: plain JSON, which you can store and build an agent from again. The rest (its history and its sandbox) is its state, given beside the spec. `Agent.from_spec` builds an agent from both:
+The model, the instruction, the tools, the skills, the model options and whether it uses a sandbox or a browser make up an agent's spec: plain JSON, which you can store and build an agent from again. The rest (its history, its sandbox and its browser) is its state, given beside the spec; a spec with `use_browser` takes `browser`, with the options of `browser(...)`. `Agent.from_spec` builds an agent from both:
 
 <Tabs syncKey="lang">
 
