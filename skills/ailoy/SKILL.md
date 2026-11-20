@@ -117,13 +117,4 @@ Read the file back from the volume, not the model's last sentence: a turn that e
 
 ## Examples
 
-Each lives in `examples/<name>/` with a folder per language and a `shared/` folder for what the three have in common, and runs with the commands in its `README.md`.
-
-| Example | Shows |
-|---|---|
-| [`hello`](../../examples/hello) | one turn, no tools, no sandbox |
-| [`browser-use`](../../examples/browser-use) | the user's own browser, or an isolated one, alongside a sandbox |
-| [`cad`](../../examples/cad) | a skill on a volume, a volume for artifacts, a model that looks at its own renders |
-| [`offshore_leaks`](../../examples/offshore_leaks) | a large dataset on a read-only volume, analysed with SQL and Python the agent writes |
-| [`retail_bench`](../../examples/retail_bench) | a simulator the agent drives one turn at a time |
-| [`gameplay`](../../examples/gameplay), [`sam3`](../../examples/sam3), [`tts`](../../examples/tts), [`laya`](../../examples/laya) | the GPU inside the sandbox: a game over VNC, a vision model, speech, a local LLM |
+The examples in Ailoy's [`examples/`](https://github.com/brekkylab/ailoy/tree/main/examples) are small, each showing one thing in Rust, Python and Node, starting with `hello`: one turn, no tools, no sandbox. Fuller agents that use a sandbox (skills and data on volumes, artifacts handed back, the GPU, a browser) are in [ailoy-examples](https://github.com/brekkylab/ailoy-examples), whose README lists them.

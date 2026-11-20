@@ -214,41 +214,27 @@ codex plugin marketplace add brekkylab/ailoy && codex plugin add ailoy@brekkylab
 
 ## What can an agent do?
 
+The examples live in [ailoy-examples](https://github.com/brekkylab/ailoy-examples), each in Rust, Python and Node, with the commands to run them in their READMEs.
+
 > You'll need a GPU (any GPU that supports Vulkan, or Metal on Macs) for the examples that run ML models.
 
 | Example | Description |
 | --- | --- |
-| [hello](./examples/hello) | One turn with no tools and no sandbox |
-| [cad](./examples/cad) | Writes CadQuery, renders the model from four sides, looks at the renders and iterates |
-| [offshore_leaks](./examples/offshore_leaks) | Analyses the ICIJ Offshore Leaks database with SQL and Python that the agent writes itself |
-| [retail_bench](./examples/retail_bench) | Runs a supermarket simulator, one day per turn |
-| [gameplay](./examples/gameplay) | Plays OpenTTD (Transport Tycoon Deluxe) while you watch over VNC |
-| [sam3](./examples/sam3) | Segments images and videos with SAM3 on the guest GPU (ncnn + Vulkan) |
-| [tts](./examples/tts) | Speaks text in a voice described in words, using Qwen3-TTS |
-| [laya](./examples/laya) | Answers typed decision questions with a local model on the GPU |
-| [browser-use](./examples/browser-use) | Waits for what you ask of it, in a window of your own browser |
+| [cad](https://github.com/brekkylab/ailoy-examples/tree/main/cad) | Writes CadQuery, renders the model from four sides, looks at the renders and iterates |
+| [offshore_leaks](https://github.com/brekkylab/ailoy-examples/tree/main/offshore_leaks) | Analyses the ICIJ Offshore Leaks database with SQL and Python that the agent writes itself |
+| [retail_bench](https://github.com/brekkylab/ailoy-examples/tree/main/retail_bench) | Runs a supermarket simulator, one day per turn |
+| [gameplay](https://github.com/brekkylab/ailoy-examples/tree/main/gameplay) | Plays OpenTTD (Transport Tycoon Deluxe) while you watch over VNC |
+| [sam3](https://github.com/brekkylab/ailoy-examples/tree/main/sam3) | Segments images and videos with SAM3 on the guest GPU (ncnn + Vulkan) |
+| [tts](https://github.com/brekkylab/ailoy-examples/tree/main/tts) | Speaks text in a voice described in words, using Qwen3-TTS |
+| [laya](https://github.com/brekkylab/ailoy-examples/tree/main/laya) | Answers typed decision questions with a local model on the GPU |
+| [browser-use](https://github.com/brekkylab/ailoy-examples/tree/main/browser-use) | Waits for what you ask of it, in a window of your own browser |
 
-Each example lives in `examples/<name>`, with one folder per language (`rust`, `python`, `node`) and, where the three share files (skills, prompts, model preparation scripts), a `shared` folder.
-
-Rust:
+Small examples that each show one thing stay here in [`examples/`](./examples). The first, [hello](./examples/hello), is one turn with no tools and no sandbox:
 
 ```sh
-cargo run --example <name>
-```
-
-Python:
-
-```sh
-cd examples/<name>/python
-uv run main.py
-```
-
-Node:
-
-```sh
-cd examples/<name>/node
-npm install
-npm start
+cargo run --example hello                           # Rust
+cd examples/hello/python && uv run main.py          # Python
+cd examples/hello/node && npm install && npm start  # Node
 ```
 
 ## How it works

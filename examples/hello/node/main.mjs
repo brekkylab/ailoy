@@ -1,9 +1,9 @@
-// Run one agent turn with a fixed question: no tools, no console, no system message.
+// Run one agent turn with a fixed question: no tools, no sandbox, no system message.
 //
 //     node main.mjs [model]
 //
-// `model` defaults to `openai/gpt-5.6-luna`; its org's backend has to be set up as
-// `docs/content/guides/model-providers.mdx` says, any key in the
+// `model` defaults to `openai/gpt-6-luna`; its org's backend has to be set up as
+// https://ailoy.co/docs/guides/model-providers/ says, any key in the
 // environment or in `.env`.
 //
 // `npm install` here first, after building the addon (`npm run build` in `bindings/node`).
@@ -47,4 +47,4 @@ async function main(model) {
 }
 
 loadDotenv()
-await main(process.argv[2] ?? 'openai/gpt-5.6-luna')
+await main(process.argv[2] ?? 'openai/gpt-6-luna')
