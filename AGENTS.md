@@ -6,7 +6,7 @@ Ailoy is a library for building AI agents that each own a virtual machine (a [vi
 
 - The library is `src/`. A feature goes into the crate first and the bindings connect to it; `bindings/python/` and `bindings/node/` carry only what one language needs of its own.
 - The sandbox is virtx's: an agent takes a `Sandbox` made with virtx's own package (`virtx` on crates.io and PyPI, `@brekkylab/virtx` on npm). Ailoy adds no sandbox API of its own. The bindings take the caller's sandbox over the one `libvirtx_core` both packages open (`bindings/*/src/console.rs`).
-- A change to what the library does moves the bindings with it, and, when a public API they show changes, the three Quickstart blocks in `README.md` and the examples under `examples/`.
+- A change to what the library does moves the bindings with it, and, when a public API they show changes, the three Quickstart blocks in `README.md`, `examples/hello`, and, once released, the examples in [ailoy-examples](https://github.com/brekkylab/ailoy-examples).
 - That is the standard for a change you make: the crate first, every binding connected, before the work is done. It is not the gate for a person's pull request: `CONTRIBUTING.md` accepts a crate change that reaches only one binding, or a change made in one binding without the crate, and a review holds a PR to that, with the crate-first shape as a suggestion or a follow-up. Code you write for a person who then opens the PR is held to the first; their PR is held to the second.
 - Names follow each language's convention and nothing else: `run_stream` in Rust and Python, `runStream` in Node. The thing they name is the same.
 
@@ -18,7 +18,7 @@ Ailoy is a library for building AI agents that each own a virtual machine (a [vi
 - `src/message/` — the message, part and delta types every surface marshals.
 - `src/console.rs` — the virtx sandbox an agent is given, and what the built-in tools do with it.
 - `bindings/python/src/` and `bindings/node/src/` — the wrappers, in Rust. The Python package itself is `bindings/python/python/ailoy/`; the Node package is `bindings/node/index.js` and its `.d.ts` files.
-- `examples/<name>/` — one folder per language (`rust`, `python`, `node`) and a `shared/` folder for what the three have in common. The Rust example is also registered in `Cargo.toml`.
+- `examples/hello/` — the one example kept here, one folder per language (`rust`, `python`, `node`); the Rust one is registered in `Cargo.toml`. Every other example is in [ailoy-examples](https://github.com/brekkylab/ailoy-examples), which takes Ailoy from a release (until the next one, from an Ailoy checkout beside it).
 - `docs/` — the Starlight docs site, served at ailoy.co/docs; the pages are in `docs/content/` and `docs/README.md` says what a page may use. Anything longer than a README section goes there. `README.md` stays short: the pitch, the install lines and one example per language.
 
 ## Tests and lint

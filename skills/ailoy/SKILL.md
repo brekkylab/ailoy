@@ -117,13 +117,13 @@ Read the file back from the volume, not the model's last sentence: a turn that e
 
 ## Examples
 
-Each lives in `examples/<name>/` with a folder per language and a `shared/` folder for what the three have in common, and runs with the commands in its `README.md`.
+`hello` is in this repository; the rest are in [ailoy-examples](https://github.com/brekkylab/ailoy-examples). Each has a folder per language, and runs with the commands in its `README.md`; where the three share files, a `shared/` folder holds them.
 
 | Example | Shows |
 |---|---|
 | [`hello`](../../examples/hello) | one turn, no tools, no sandbox |
-| [`browser-use`](../../examples/browser-use) | the user's own browser, or an isolated one, alongside a sandbox |
-| [`cad`](../../examples/cad) | a skill on a volume, a volume for artifacts, a model that looks at its own renders |
-| [`offshore_leaks`](../../examples/offshore_leaks) | a large dataset on a read-only volume, analysed with SQL and Python the agent writes |
-| [`retail_bench`](../../examples/retail_bench) | a simulator the agent drives one turn at a time |
-| [`gameplay`](../../examples/gameplay), [`sam3`](../../examples/sam3), [`tts`](../../examples/tts), [`laya`](../../examples/laya) | the GPU inside the sandbox: a game over VNC, a vision model, speech, a local LLM |
+| [`browser-use`](https://github.com/brekkylab/ailoy-examples/tree/main/browser-use) | the user's own browser, or an isolated one, alongside a sandbox |
+| [`cad`](https://github.com/brekkylab/ailoy-examples/tree/main/cad) | a skill on a volume, a volume for artifacts, a model that looks at its own renders |
+| [`offshore_leaks`](https://github.com/brekkylab/ailoy-examples/tree/main/offshore_leaks) | a large dataset on a read-only volume, analysed with SQL and Python the agent writes |
+| [`retail_bench`](https://github.com/brekkylab/ailoy-examples/tree/main/retail_bench) | a simulator the agent drives one turn at a time |
+| [`gameplay`](https://github.com/brekkylab/ailoy-examples/tree/main/gameplay), [`sam3`](https://github.com/brekkylab/ailoy-examples/tree/main/sam3), [`tts`](https://github.com/brekkylab/ailoy-examples/tree/main/tts), [`laya`](https://github.com/brekkylab/ailoy-examples/tree/main/laya) | the GPU inside the sandbox: a game over VNC, a vision model, speech, a local LLM |
