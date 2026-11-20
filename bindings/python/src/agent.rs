@@ -11,17 +11,18 @@
 use std::{path::PathBuf, sync::Arc};
 
 use ailoy::{
-    agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
+    agent::{Agent, AgentBuilder, AgentSpec, AgentState, TruncationPolicy},
     browser::{Browser, UserBrowser},
     datatype::Value,
     message::Message,
     model::ThinkingEffort,
-    tool::{ToolDesc, WebSearchEngineKind},
+    tool::ToolDesc,
 };
 use futures::{StreamExt as _, stream::BoxStream};
 use pyo3::{
     exceptions::{PyStopAsyncIteration, PyValueError},
     prelude::*,
+    types::PyDict,
 };
 use pyo3_async_runtimes::tokio::{future_into_py, get_runtime};
 use tokio::sync::Mutex;
@@ -88,6 +89,58 @@ fn user_browser_of(value: &Bound<'_, PyAny>) -> PyResult<UserBrowser> {
     Ok(UserBrowser::Custom(dir))
 }
 
+/// A browser's options: `AgentBuilder.browser`'s keywords, or the dict `Agent.from_spec` takes.
+struct BrowserOptions<'py> {
+    user_browser: Option<Bound<'py, PyAny>>,
+    careful: Option<bool>,
+    start_url: Option<String>,
+    isolated: Option<bool>,
+    headless: Option<bool>,
+    executable: Option<PathBuf>,
+    profile: Option<PathBuf>,
+}
+
+impl<'py> BrowserOptions<'py> {
+    /// From a dict, where a key left out or `None` is the default.
+    fn from_dict(options: &Bound<'py, PyDict>) -> PyResult<Self> {
+        let item = |key: &str| Ok::<_, PyErr>(options.get_item(key)?.filter(|v| !v.is_none()));
+        Ok(BrowserOptions {
+            user_browser: item("user_browser")?,
+            careful: item("careful")?.map(|v| v.extract()).transpose()?,
+            start_url: item("start_url")?.map(|v| v.extract()).transpose()?,
+            isolated: item("isolated")?.map(|v| v.extract()).transpose()?,
+            headless: item("headless")?.map(|v| v.extract()).transpose()?,
+            executable: item("executable")?.map(|v| v.extract()).transpose()?,
+            profile: item("profile")?.map(|v| v.extract()).transpose()?,
+        })
+    }
+}
+
+fn browser_of(options: BrowserOptions<'_>) -> PyResult<Browser> {
+    let mut browser = if options.isolated.unwrap_or(false) {
+        Browser::isolated()
+    } else {
+        Browser::user()
+    };
+    if let Some(host) = options.user_browser {
+        browser = browser.user_browser(user_browser_of(&host)?);
+    }
+    if options.headless.unwrap_or(false) {
+        browser = browser.headless(true);
+    }
+    if let Some(path) = options.executable {
+        browser = browser.executable(path);
+    }
+    if let Some(dir) = options.profile {
+        browser = browser.profile(dir);
+    }
+    browser = browser.careful(options.careful.unwrap_or(true));
+    if let Some(url) = options.start_url {
+        browser = browser.start_url(url);
+    }
+    Ok(browser)
+}
+
 #[pymethods]
 impl PyAgentBuilder {
     /// A builder for `model`, such as `"anthropic/claude-sonnet-5-5"`: `<org>/<name>`, built
@@ -111,17 +164,9 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.tools(descs)))
     }
 
-    /// `engines` by name — `"Google"`, `"DuckDuckGo"`, … — or every engine when empty.
-    #[pyo3(signature = (engines = None))]
-    fn web_search_tool<'py>(
-        slf: PyRef<'py, Self>,
-        engines: Option<Bound<'py, PyAny>>,
-    ) -> PyResult<PyRef<'py, Self>> {
-        let engines: Vec<WebSearchEngineKind> = match engines {
-            Some(engines) => from_py(&engines, "a list of web search engines")?,
-            None => Vec::new(),
-        };
-        Self::update(slf, |b| Ok(b.web_search_tool(engines)))
+    /// Add `web_search`, searching with the provider `set_web_search_provider` set.
+    fn web_search_tool(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
+        Self::update(slf, |b| Ok(b.web_search_tool()))
     }
 
     fn web_fetch_tool(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
@@ -170,27 +215,15 @@ impl PyAgentBuilder {
         executable: Option<PathBuf>,
         profile: Option<PathBuf>,
     ) -> PyResult<PyRef<'py, Self>> {
-        let mut browser = if isolated {
-            Browser::isolated()
-        } else {
-            Browser::user()
-        };
-        if let Some(host) = user_browser {
-            browser = browser.user_browser(user_browser_of(&host)?);
-        }
-        if headless {
-            browser = browser.headless(true);
-        }
-        if let Some(path) = executable {
-            browser = browser.executable(path);
-        }
-        if let Some(dir) = profile {
-            browser = browser.profile(dir);
-        }
-        browser = browser.careful(careful);
-        if let Some(url) = start_url {
-            browser = browser.start_url(url);
-        }
+        let browser = browser_of(BrowserOptions {
+            user_browser,
+            careful: Some(careful),
+            start_url,
+            isolated: Some(isolated),
+            headless: Some(headless),
+            executable,
+            profile,
+        })?;
         Self::update(slf, |b| Ok(b.browser(browser)))
     }
 
@@ -199,22 +232,22 @@ impl PyAgentBuilder {
     }
 
     #[pyo3(signature = (max_input_tokens = None, preserve_recent_turns = None, max_images = None, preserve_recent_images = None))]
-    fn context_manager(
+    fn truncation(
         slf: PyRef<'_, Self>,
         max_input_tokens: Option<u64>,
         preserve_recent_turns: Option<usize>,
         max_images: Option<usize>,
         preserve_recent_images: Option<usize>,
     ) -> PyResult<PyRef<'_, Self>> {
-        let default = ContextManager::default();
-        let cm = ContextManager {
+        let default = TruncationPolicy::default();
+        let policy = TruncationPolicy {
             max_input_tokens: max_input_tokens.unwrap_or(default.max_input_tokens),
             preserve_recent_turns: preserve_recent_turns.unwrap_or(default.preserve_recent_turns),
             max_images: max_images.unwrap_or(default.max_images),
             preserve_recent_images: preserve_recent_images
                 .unwrap_or(default.preserve_recent_images),
         };
-        Self::update(slf, |b| Ok(b.context_manager(cm)))
+        Self::update(slf, |b| Ok(b.truncation(policy)))
     }
 
     /// How much the model thinks before it answers: `"low"`, `"medium"` or `"high"`.
@@ -307,14 +340,16 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, PyResult<
 #[pymethods]
 impl PyAgent {
     /// An agent from a spec — the dict an `AgentSpec` serializes to — for a caller who holds
-    /// one rather than building it up. Awaitable.
+    /// one rather than building it up. `browser` is a dict of `AgentBuilder.browser`'s keywords.
+    /// Awaitable.
     #[staticmethod]
-    #[pyo3(signature = (spec, *, history = None, sandbox = None))]
+    #[pyo3(signature = (spec, *, history = None, sandbox = None, browser = None))]
     fn from_spec<'py>(
         py: Python<'py>,
         spec: Bound<'py, PyAny>,
         history: Option<Bound<'py, PyAny>>,
         sandbox: Option<Bound<'py, PyAny>>,
+        browser: Option<Bound<'py, PyDict>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let spec: AgentSpec = from_py(&spec, "an agent spec")?;
         let mut state = AgentState::new();
@@ -323,6 +358,9 @@ impl PyAgent {
         }
         if let Some(sandbox) = sandbox {
             state = state.with_sandbox(console::sandbox(&sandbox)?);
+        }
+        if let Some(browser) = browser {
+            state = state.with_browser(browser_of(BrowserOptions::from_dict(&browser)?)?);
         }
         future_into_py(py, async move {
             let agent = Agent::try_with_state(spec, state)

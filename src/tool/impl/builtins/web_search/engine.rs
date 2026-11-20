@@ -23,6 +23,9 @@ pub enum SearchError {
     NoResults,
     #[error("Engine is blocking requests (rate limit or CAPTCHA)")]
     Blocked,
+    /// A search API's refusal or an unexpected answer, or every engine failing.
+    #[error("{0}")]
+    Api(String),
 }
 
 /// Holds pre-compiled CSS selectors for extracting results from a search engine's HTML.

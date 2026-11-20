@@ -39,6 +39,17 @@ test('a builder is spent by build()', async () => {
   assert.throws(() => builder.instruction('again'), { code: 'INVALID_ARG' })
 })
 
+test('the web search provider is set by name', () => {
+  assert.equal(ailoy.getWebSearchProvider(), 'web')
+  try {
+    ailoy.setWebSearchProvider('naver')
+    assert.equal(ailoy.getWebSearchProvider(), 'naver')
+    assert.throws(() => ailoy.setWebSearchProvider('bing'), { code: 'INVALID_ARG' })
+  } finally {
+    ailoy.setWebSearchProvider('web')
+  }
+})
+
 test('an object that does not fit says what was expected', () => {
   assert.throws(() => new AgentBuilder('m').tool({ description: 'no name' }), {
     code: 'INVALID_ARG',
@@ -467,7 +478,7 @@ test('an agent runs its console tools in the caller’s sandbox, until it is rem
 
   // Removed, it is gone for an agent too.
   const later = await new AgentBuilder('fake-shell/model').sandbox(sandbox).build()
-  const fromSpec = await Agent.fromSpec({ model: 'fake-shell/model', tools: [] }, { sandbox })
+  const fromSpec = await Agent.fromSpec({ model: 'fake-shell/model', use_sandbox: true }, { sandbox })
   await sandbox.remove()
   const after = []
   for await (const output of later.run('write it again')) after.push(output)

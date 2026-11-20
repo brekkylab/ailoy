@@ -17,12 +17,12 @@
 use std::sync::Arc;
 
 use ailoy::{
-    agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
+    agent::{Agent, AgentBuilder, AgentSpec, AgentState, TruncationPolicy},
     browser::{Browser, UserBrowser},
     datatype::Value,
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::ThinkingEffort,
-    tool::{ToolDesc, WebSearchEngineKind},
+    tool::ToolDesc,
 };
 use futures::{StreamExt as _, stream::BoxStream};
 use napi::{
@@ -120,8 +120,51 @@ pub struct BrowserOptions {
     pub start_url: Option<String>,
 }
 
+fn browser_of(options: Option<BrowserOptions>) -> Result<Browser> {
+    let options = options.unwrap_or(BrowserOptions {
+        isolated: None,
+        headless: None,
+        executable: None,
+        profile: None,
+        user_browser: None,
+        careful: None,
+        start_url: None,
+    });
+    let mut browser = if options.isolated.unwrap_or(false) {
+        Browser::isolated()
+    } else {
+        Browser::user()
+    };
+    if let Some(host) = options.user_browser {
+        browser = browser.user_browser(match host {
+            Either::A(name) => UserBrowser::named(&name).ok_or_else(|| {
+                let names: Vec<&str> = UserBrowser::NAMED.iter().map(UserBrowser::name).collect();
+                invalid(format!(
+                    "userBrowser is one of {} or {{ userDataDir }}, not {name:?}",
+                    names.join(", ")
+                ))
+            })?,
+            Either::B(dir) => UserBrowser::Custom(dir.user_data_dir.into()),
+        });
+    }
+    if let Some(headless) = options.headless {
+        browser = browser.headless(headless);
+    }
+    if let Some(path) = options.executable {
+        browser = browser.executable(path);
+    }
+    if let Some(dir) = options.profile {
+        browser = browser.profile(dir);
+    }
+    browser = browser.careful(options.careful.unwrap_or(true));
+    if let Some(url) = options.start_url {
+        browser = browser.start_url(url);
+    }
+    Ok(browser)
+}
+
 #[napi(object)]
-pub struct ContextManagerOptions {
+pub struct TruncationOptions {
     pub max_input_tokens: Option<i64>,
     pub preserve_recent_turns: Option<i64>,
     pub max_images: Option<i64>,
@@ -168,19 +211,10 @@ impl JsAgentBuilder {
         self.update(this, |b| Ok(b.tools(descs)))
     }
 
-    /// `engines` by name — `'Google'`, `'DuckDuckGo'`, … — or every engine when empty.
+    /// Add `web_search`, searching with the provider `setWebSearchProvider` set.
     #[napi]
-    pub fn web_search_tool<'env>(
-        &mut self,
-        env: &Env,
-        this: This<'env>,
-        #[napi(ts_arg_type = "Array<WebSearchEngine>")] engines: Option<Unknown<'_>>,
-    ) -> Result<This<'env>> {
-        let engines: Vec<WebSearchEngineKind> = match engines {
-            Some(engines) => from_js(env, engines, "a list of web search engines")?,
-            None => Vec::new(),
-        };
-        self.update(this, |b| Ok(b.web_search_tool(engines)))
+    pub fn web_search_tool<'env>(&mut self, this: This<'env>) -> Result<This<'env>> {
+        self.update(this, |b| Ok(b.web_search_tool()))
     }
 
     #[napi]
@@ -222,46 +256,7 @@ impl JsAgentBuilder {
         this: This<'env>,
         options: Option<BrowserOptions>,
     ) -> Result<This<'env>> {
-        let options = options.unwrap_or(BrowserOptions {
-            isolated: None,
-            headless: None,
-            executable: None,
-            profile: None,
-            user_browser: None,
-            careful: None,
-            start_url: None,
-        });
-        let mut browser = if options.isolated.unwrap_or(false) {
-            Browser::isolated()
-        } else {
-            Browser::user()
-        };
-        if let Some(host) = options.user_browser {
-            browser = browser.user_browser(match host {
-                Either::A(name) => UserBrowser::named(&name).ok_or_else(|| {
-                    let names: Vec<&str> =
-                        UserBrowser::NAMED.iter().map(UserBrowser::name).collect();
-                    invalid(format!(
-                        "userBrowser is one of {} or {{ userDataDir }}, not {name:?}",
-                        names.join(", ")
-                    ))
-                })?,
-                Either::B(dir) => UserBrowser::Custom(dir.user_data_dir.into()),
-            });
-        }
-        if let Some(headless) = options.headless {
-            browser = browser.headless(headless);
-        }
-        if let Some(path) = options.executable {
-            browser = browser.executable(path);
-        }
-        if let Some(dir) = options.profile {
-            browser = browser.profile(dir);
-        }
-        browser = browser.careful(options.careful.unwrap_or(true));
-        if let Some(url) = options.start_url {
-            browser = browser.start_url(url);
-        }
+        let browser = browser_of(options)?;
         self.update(this, |b| Ok(b.browser(browser)))
     }
 
@@ -271,19 +266,19 @@ impl JsAgentBuilder {
     }
 
     #[napi]
-    pub fn context_manager<'env>(
+    pub fn truncation<'env>(
         &mut self,
         this: This<'env>,
-        options: Option<ContextManagerOptions>,
+        options: Option<TruncationOptions>,
     ) -> Result<This<'env>> {
-        let default = ContextManager::default();
-        let options = options.unwrap_or(ContextManagerOptions {
+        let default = TruncationPolicy::default();
+        let options = options.unwrap_or(TruncationOptions {
             max_input_tokens: None,
             preserve_recent_turns: None,
             max_images: None,
             preserve_recent_images: None,
         });
-        let cm = ContextManager {
+        let policy = TruncationPolicy {
             max_input_tokens: unsigned(options.max_input_tokens, "maxInputTokens")?
                 .unwrap_or(default.max_input_tokens),
             preserve_recent_turns: unsigned(options.preserve_recent_turns, "preserveRecentTurns")?
@@ -296,7 +291,7 @@ impl JsAgentBuilder {
             )?
             .map_or(default.preserve_recent_images, |n| n as usize),
         };
-        self.update(this, |b| Ok(b.context_manager(cm)))
+        self.update(this, |b| Ok(b.truncation(policy)))
     }
 
     /// How much the model thinks before it answers.
@@ -413,7 +408,7 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<It
 impl JsAgent {
     /// An agent from a spec (the object an `AgentSpec` serializes to).
     #[napi(
-        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; sandbox?: Sandbox }",
+        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; sandbox?: Sandbox; browser?: BrowserOptions }",
         ts_return_type = "Promise<Agent>"
     )]
     pub fn from_spec<'env>(
@@ -435,6 +430,9 @@ impl JsAgent {
                 }
                 if let Some(sandbox) = options.get::<Object>("sandbox").map_err(get)? {
                     state = state.with_sandbox(console::sandbox(env, &sandbox)?);
+                }
+                if let Some(browser) = options.get::<BrowserOptions>("browser").map_err(get)? {
+                    state = state.with_browser(browser_of(Some(browser))?);
                 }
             }
             Ok((spec, state))

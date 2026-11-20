@@ -179,7 +179,7 @@ async def main(prompt: str) -> None:
         ailoy.AgentBuilder(os.environ.get("AILOY_MODEL", "openai/gpt-6-astra"))
         .instruction(INSTRUCTION)
         .web_fetch_tool()
-        .web_search_tool([])
+        .web_search_tool()
         .sandbox(sandbox)
         .skill("/skills/sam3")
         .build()

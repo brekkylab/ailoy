@@ -128,9 +128,9 @@ A tool that fails does not end the turn: an unknown tool, a missing sandbox, an 
 
 ## Usage
 
-Each `MessageOutput` from the model carries `usage`, its input and output token counts, when the provider reports them. A long run's input grows with every tool result; [Context manager](/docs/guides/context-manager/) keeps it under a limit.
+Each `MessageOutput` from the model carries `usage`, its input and output token counts, when the provider reports them. A long run's input grows with every tool result; [Truncation](/docs/guides/truncation/) keeps it under a limit.
 
 ## Next
 
-- [Context manager](/docs/guides/context-manager/): keep a long run under the model's context limit.
+- [Truncation](/docs/guides/truncation/): keep a long run under the model's context limit.
 - [Message format](/docs/guides/message-format/): the messages `run` yields.

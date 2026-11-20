@@ -1,22 +1,24 @@
 use std::{collections::HashMap, panic::AssertUnwindSafe, sync::Arc};
 
 use crate::console::Sandbox;
-use anyhow::Context as _;
+use anyhow::{Context as _, bail};
 use futures::{
     FutureExt as _, StreamExt as _,
     stream::{BoxStream, FuturesUnordered},
 };
 
 use super::{
-    AgentSpec, AgentState, ContextManager, image::fit_images_off_runtime, skill::render_skills,
-    spec::split_desc,
+    AgentSpec, AgentState,
+    image::fit_images_off_runtime,
+    skill::render_skills,
+    spec::{sandbox_tool_descs, split_desc},
 };
 use crate::{
     browser,
     datatype::Value,
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
     model::{InferLangModel, LangModelOptions, RequestRefused, create_lang_model},
-    tool::{ToolDesc, ToolFunc, create_tool, r#impl::get_web_search_tool_factory},
+    tool::{ToolDesc, ToolFunc, create_tool},
 };
 
 /// Per-part size limit for tool results, past which the middle is cut out.
@@ -30,9 +32,12 @@ const CUT_OFF: &str = "the model's reply was cut off at its output limit";
 /// conversations.
 ///
 /// Pairs an [`AgentSpec`] (model + instruction + tools) with an [`AgentState`]
-/// (history + sandbox). [`run`](Self::run) streams one turn, calling tools until the model
-/// answers, and appends every message to the history.
+/// (history + sandbox + browser), holding the model and tools built from the spec.
+/// [`run`](Self::run) streams one turn, calling tools until the model answers, and appends
+/// every message to the history.
 pub struct Agent {
+    spec: AgentSpec,
+
     model: Arc<dyn InferLangModel>,
 
     options: LangModelOptions,
@@ -42,10 +47,6 @@ pub struct Agent {
     tools: HashMap<String, ToolFunc>,
 
     pub state: AgentState,
-
-    /// Cuts old tool results out of the history as a turn begins, once a call's input has
-    /// grown past its limit.
-    context_manager: Option<ContextManager>,
 }
 
 impl Agent {
@@ -57,7 +58,9 @@ impl Agent {
     /// Create an agent with `state`.
     ///
     /// The model is built from `spec.model` through [`create_lang_model`], and each of
-    /// `spec.tools` through [`create_tool`]. Unless `state.history` already has a
+    /// `spec.tools` through [`create_tool`]; [`AgentSpec::use_sandbox`] and
+    /// [`AgentSpec::use_browser`] bring their tools too, and `state` has to hold a sandbox and a
+    /// browser exactly when the spec uses them. Unless `state.history` already has a
     /// [`Role::System`] message, one built from `spec.instruction`, [`AgentSpec::skills`]
     /// and the skills of the sandbox's abins is put first.
     ///
@@ -65,23 +68,39 @@ impl Agent {
     pub async fn try_with_state(spec: AgentSpec, mut state: AgentState) -> anyhow::Result<Self> {
         let model = create_lang_model(&spec.model).await?;
 
+        match (spec.use_sandbox, state.sandbox.is_some()) {
+            (true, false) => bail!("the spec uses a sandbox, and the state has none"),
+            (false, true) => bail!("the state has a sandbox, and the spec does not use one"),
+            _ => {}
+        }
+        match (spec.use_browser, state.browser.is_some()) {
+            (true, false) => bail!("the spec uses a browser, and the state has none"),
+            (false, true) => bail!("the state has a browser, and the spec does not use one"),
+            _ => {}
+        }
+        if let Some(session) = &state.browser {
+            session.config().check()?;
+        }
+
         // Errors if any spec tool is missing.
         let mut tools = HashMap::with_capacity(spec.tools.len());
         for desc in &spec.tools {
-            let func = match (&spec.web_search_engines, desc.name.as_str()) {
-                // The engines are this spec's, so its `web_search` is built here.
-                (Some(engines), "web_search") => {
-                    get_web_search_tool_factory(engines.clone())(desc)?
-                }
-                _ => create_tool(desc)?,
-            };
-            tools.insert(desc.name.clone(), func);
+            tools.insert(desc.name.clone(), create_tool(desc)?);
         }
         let mut tool_descs = spec.tools.clone();
 
+        if spec.use_sandbox {
+            for desc in sandbox_tool_descs(split_desc(&spec.model).0) {
+                if !tools.contains_key(&desc.name) {
+                    tools.insert(desc.name.clone(), create_tool(&desc)?);
+                    tool_descs.push(desc);
+                }
+            }
+        }
+
         // Bound to this agent's own browser rather than resolved by name.
         if let Some(session) = &state.browser {
-            for (desc, func) in browser::tools(session, state.sandbox.is_some()) {
+            for (desc, func) in browser::tools(session, spec.use_sandbox) {
                 tools.insert(desc.name.clone(), func);
                 tool_descs.push(desc);
             }
@@ -90,7 +109,7 @@ impl Agent {
         if !state.history.iter().any(|m| m.role == Role::System) {
             let org = split_desc(&spec.model).0;
             let skills = render_skills(&spec.skills, state.sandbox.as_ref(), org).await?;
-            let text = [spec.instruction, skills]
+            let text = [spec.instruction.clone(), skills]
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>()
@@ -105,11 +124,11 @@ impl Agent {
 
         Ok(Self {
             model,
-            options: spec.model_options.unwrap_or_default(),
+            options: spec.model_options.clone().unwrap_or_default(),
             tool_descs,
             tools,
             state,
-            context_manager: None,
+            spec,
         })
     }
 
@@ -118,33 +137,16 @@ impl Agent {
         &self.state.history
     }
 
-    pub fn context_manager(&self) -> Option<&ContextManager> {
-        self.context_manager.as_ref()
+    /// The spec this agent was made from.
+    pub fn spec(&self) -> &AgentSpec {
+        &self.spec
     }
 
-    pub fn set_context_manager(&mut self, context_manager: Option<ContextManager>) {
-        self.context_manager = context_manager;
-    }
-
-    /// Truncate the history if the last call's input went past the context manager's limit.
-    ///
-    /// Run only as a turn begins. A turn's requests send back the thinking the model has produced
-    /// in it, and the Claude API can refuse a thinking block once anything before it has changed,
-    /// so a turn's input may grow past the limit until the next turn begins.
-    fn manage_context(&mut self) {
-        if let Some(cm) = &self.context_manager
-            && cm.max_input_tokens > 0
-            && self.state.last_input_tokens.unwrap_or(0) > cm.max_input_tokens
-        {
-            cm.truncate_history(&mut self.state.history);
-        }
-    }
-
-    /// Commit the model's `output` to the history, noting its input size for
-    /// [`manage_context`](Self::manage_context).
+    /// Commit the model's `output` to the history, noting its input size for the next turn's
+    /// [`TruncationPolicy`](super::TruncationPolicy).
     fn commit(&mut self, output: &MessageOutput) {
         if let Some(usage) = &output.usage {
-            self.state.last_input_tokens = Some(usage.input_tokens);
+            self.state.context_tokens = Some(usage.input_tokens);
         }
         self.state.history.push(output.message.clone());
     }
@@ -276,19 +278,19 @@ impl Agent {
     }
 
     /// Add `query` to the history, led by a browser reconnection the agent has not heard of,
-    /// and truncate the history if it has grown past the context manager's limit.
+    /// and truncate the history by the spec's [`TruncationPolicy`](super::TruncationPolicy).
+    ///
+    /// Truncation runs only here: a turn's requests send back the thinking the model has
+    /// produced in it, which the Claude API can refuse once anything before it has changed, so a
+    /// turn's input may grow past the limit until the next turn begins.
     async fn begin_turn(&mut self, mut query: Message) {
         close_dangling_calls(&mut self.state.history);
-        // No context manager acts as one with every setting left out.
-        let default = ContextManager::default();
-        let cm = self.context_manager.as_ref().unwrap_or(&default);
-        cm.cap_images(&mut self.state.history);
         if let Some(note) = self.state.browser.as_ref().and_then(|b| b.catch_up()) {
             query.contents.insert(0, Part::text(note));
         }
         let query = fit_images_off_runtime(query).await;
         self.state.history.push(query);
-        self.manage_context();
+        self.state.truncate_history(&self.spec.truncation);
     }
 
     /// Connects this agent's browser now rather than on its first use. This is when the browser
@@ -385,7 +387,7 @@ enum Refused {
     #[allow(dead_code)]
     OlderImages,
     /// The whole history, over the model's context limit. Mend: truncate it as
-    /// [`ContextManager`] does, without waiting for the usage that triggers it. Past a turn's
+    /// [`TruncationPolicy`](super::TruncationPolicy) does, without waiting for the usage that triggers it. Past a turn's
     /// first request this changes what comes before the turn's thinking, so the requests after
     /// must leave that thinking out (see [`Agent::manage_context`]).
     #[allow(dead_code)]
@@ -571,7 +573,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::agent::context::IMAGE_PLACEHOLDER;
+    use crate::agent::{TruncationPolicy, state::IMAGE_PLACEHOLDER};
     use crate::{
         datatype::Bytes,
         message::{Role, TokenUsage},
@@ -1019,6 +1021,22 @@ mod tests {
         assert_eq!(text_of(&agent.history()[0]), "Mine.");
     }
 
+    /// A spec using a sandbox or a browser needs its state to hold one.
+    #[tokio::test]
+    async fn test_a_spec_using_a_sandbox_or_browser_needs_one() {
+        let name = "test-agent-uses";
+        let (_, spec) = scripted(name, []);
+        let mut uses_sandbox = spec.clone();
+        uses_sandbox.use_sandbox = true;
+        let err = Agent::try_new(uses_sandbox).await.err().unwrap();
+        assert!(err.to_string().contains("uses a sandbox"), "{err}");
+
+        let mut uses_browser = spec;
+        uses_browser.use_browser = true;
+        let err = Agent::try_new(uses_browser).await.err().unwrap();
+        assert!(err.to_string().contains("uses a browser"), "{err}");
+    }
+
     #[tokio::test]
     async fn test_a_missing_tool_fails_construction() {
         let name = "test-agent-missing-tool";
@@ -1055,7 +1073,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_context_manager_truncates_once_input_grows_past_its_limit() {
+    async fn test_truncation_truncates_once_input_grows_past_its_limit() {
         let name = "test-agent-context";
         let (model, spec) = scripted(
             name,
@@ -1065,12 +1083,12 @@ mod tests {
                 with_input(answer("two"), 10),
             ],
         );
-        let mut agent = Agent::try_new(spec).await.unwrap();
-        agent.set_context_manager(Some(ContextManager {
+        let spec = spec.truncation(TruncationPolicy {
             max_input_tokens: 100,
             preserve_recent_turns: 1,
             ..Default::default()
-        }));
+        });
+        let mut agent = Agent::try_new(spec).await.unwrap();
 
         agent.run(user("first")).for_each(|_| async {}).await;
         // The last call read 200 tokens, so the next turn's first call cuts the old result.
@@ -1096,12 +1114,12 @@ mod tests {
                 with_input(answer("two"), 10),
             ],
         );
-        let mut agent = Agent::try_new(spec).await.unwrap();
-        agent.set_context_manager(Some(ContextManager {
+        let spec = spec.truncation(TruncationPolicy {
             max_input_tokens: 0,
             preserve_recent_turns: 1,
             ..Default::default()
-        }));
+        });
+        let mut agent = Agent::try_new(spec).await.unwrap();
 
         agent.run(user("first")).for_each(|_| async {}).await;
         agent.run(user("second")).for_each(|_| async {}).await;
@@ -1129,12 +1147,12 @@ mod tests {
                     with_input(answer("three"), 10),
                 ],
             );
-            let mut agent = Agent::try_new(spec).await.unwrap();
-            agent.set_context_manager(Some(ContextManager {
+            let spec = spec.truncation(TruncationPolicy {
                 max_input_tokens: 100,
                 preserve_recent_turns: preserve,
                 ..Default::default()
-            }));
+            });
+            let mut agent = Agent::try_new(spec).await.unwrap();
             for query in ["first", "second", "third"] {
                 if stream {
                     agent.run_stream(user(query)).for_each(|_| async {}).await;
@@ -1160,7 +1178,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_context_manager_replaces_old_images_at_the_start_of_a_turn() {
+    async fn test_truncation_replaces_old_images_at_the_start_of_a_turn() {
         let name = "test-agent-images";
         let (model, spec) = scripted(
             name,
@@ -1172,12 +1190,12 @@ mod tests {
                 answer("two"),
             ],
         );
-        let mut agent = Agent::try_new(spec).await.unwrap();
-        agent.set_context_manager(Some(ContextManager {
+        let spec = spec.truncation(TruncationPolicy {
             max_images: 2,
             preserve_recent_images: 1,
             ..Default::default()
-        }));
+        });
+        let mut agent = Agent::try_new(spec).await.unwrap();
 
         agent.run(user("first")).for_each(|_| async {}).await;
         // Within a turn every screenshot stays, over the cap or not.
@@ -1195,9 +1213,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_images_are_capped_at_the_default_without_a_context_manager() {
+    async fn test_images_are_capped_at_the_default_policy() {
         let name = "test-agent-images-default";
-        let default = ContextManager::default();
+        let default = TruncationPolicy::default();
         let shots: Vec<_> = (0..=default.max_images)
             .map(|n| calls(&[(&format!("c{n}"), "shot")]))
             .collect();
@@ -1206,7 +1224,7 @@ mod tests {
             shots.into_iter().chain([answer("one"), answer("two")]),
         );
         let mut agent = Agent::try_new(spec).await.unwrap();
-        assert!(agent.context_manager().is_none());
+        assert_eq!(&agent.spec().truncation, &default);
 
         agent.run(user("first")).for_each(|_| async {}).await;
         agent.run(user("second")).for_each(|_| async {}).await;
@@ -1232,12 +1250,12 @@ mod tests {
                 answer("two"),
             ],
         );
-        let mut agent = Agent::try_new(spec).await.unwrap();
-        agent.set_context_manager(Some(ContextManager {
+        let spec = spec.truncation(TruncationPolicy {
             max_images: 1,
             preserve_recent_images: 0,
             ..Default::default()
-        }));
+        });
+        let mut agent = Agent::try_new(spec).await.unwrap();
         let query = |text: &str| {
             let image = Part::image_embedded("image/png", Bytes::from(vec![0u8; 4])).unwrap();
             Message::new(Role::User).with_contents([Part::text(text), image.clone(), image])
@@ -1325,13 +1343,13 @@ mod tests {
                     Err(anyhow::anyhow!("overloaded")),
                 ],
             );
-            let mut agent = Agent::try_new(spec).await.unwrap();
-            agent.set_context_manager(Some(ContextManager {
+            let spec = spec.truncation(TruncationPolicy {
                 max_input_tokens: 100,
                 preserve_recent_turns: 1,
                 max_images: 1,
                 preserve_recent_images: 0,
-            }));
+            });
+            let mut agent = Agent::try_new(spec).await.unwrap();
 
             agent.run(user("first")).for_each(|_| async {}).await;
             let turns = agent.history().len();

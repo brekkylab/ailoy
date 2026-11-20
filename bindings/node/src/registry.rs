@@ -5,10 +5,11 @@
 //! `AgentBuilder.tool`/`tools`.
 
 use ailoy::tool::{
-    ToolDesc, register_mcp_stdio as register_mcp_stdio_rs,
+    ToolDesc, WebSearchProvider, get_web_search_provider as get_web_search_provider_rs,
+    register_mcp_stdio as register_mcp_stdio_rs,
     register_mcp_streamable_http as register_mcp_streamable_http_rs,
     remove_tool_provider as remove_tool_provider_rs, set_tool_provider as set_tool_provider_rs,
-    unregister_mcp as unregister_mcp_rs,
+    set_web_search_provider as set_web_search_provider_rs, unregister_mcp as unregister_mcp_rs,
 };
 use napi::{
     Env,
@@ -95,4 +96,25 @@ pub fn register_mcp_streamable_http<'env>(
 pub fn unregister_mcp(prefix: String) -> u32 {
     // Off the runtime is fine for the registry, but ending the session cancels a task on it.
     within_runtime_if_available(|| unregister_mcp_rs(&prefix)) as u32
+}
+
+/// Search with `provider` — `'web'`, `'brave'`, `'tavily'`, `'exa'` or `'naver'` — in every
+/// `web_search` tool built from now on.
+#[napi]
+pub fn set_web_search_provider(
+    env: &Env,
+    #[napi(ts_arg_type = "WebSearchProvider")] provider: Unknown<'_>,
+) -> Result<()> {
+    set_web_search_provider_rs(from_js::<WebSearchProvider>(
+        env,
+        provider,
+        "a web search provider",
+    )?);
+    Ok(())
+}
+
+/// The provider `web_search` tools are built with.
+#[napi(ts_return_type = "WebSearchProvider")]
+pub fn get_web_search_provider() -> String {
+    get_web_search_provider_rs().to_string()
 }

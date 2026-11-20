@@ -129,6 +129,17 @@ def test_register_tool_refuses_what_it_cannot_use():
         ailoy.set_tool_provider("x", "not callable")
 
 
+def test_web_search_provider_is_set_by_name():
+    assert ailoy.get_web_search_provider() == "web"
+    try:
+        ailoy.set_web_search_provider("naver")
+        assert ailoy.get_web_search_provider() == "naver"
+        with pytest.raises(ValueError):
+            ailoy.set_web_search_provider("bing")
+    finally:
+        ailoy.set_web_search_provider("web")
+
+
 def test_set_lang_model_provider_refuses_an_unknown_backend():
     with pytest.raises(ValueError):
         ailoy.set_lang_model_provider("x", "smoke-signals")

@@ -5,7 +5,7 @@ use crate::{
     datatype::Value,
     model::{LangModelOptions, ThinkingEffort},
     tool::{
-        ToolDesc, WebSearchEngineKind,
+        ToolDesc,
         r#impl::{
             get_apply_patch_tool_desc, get_edit_tool_desc, get_imgread_tool_desc,
             get_read_file_tool_desc, get_read_tool_desc, get_shell_tool_desc,
@@ -17,8 +17,8 @@ use crate::{
 /// What makes an agent distinct: its model, instruction and tools.
 ///
 /// Tools are built through the providers set with
-/// [`set_tool_provider`](crate::tool::set_tool_provider); the console lives on
-/// [`AgentState`](super::AgentState).
+/// [`set_tool_provider`](crate::tool::set_tool_provider). The sandbox and the browser live on
+/// [`AgentState`](super::AgentState); the spec says whether the agent uses them.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSpec {
     /// The model's desc, as [`create_lang_model`](crate::model::create_lang_model)
@@ -37,15 +37,25 @@ pub struct AgentSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_options: Option<LangModelOptions>,
 
-    /// Engines used by the `web_search` tool. `None` (or not provided) means
-    /// all available engines. Only meaningful when `web_search` is listed in `tools`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub web_search_engines: Option<Vec<WebSearchEngineKind>>,
-
     /// Skill directories in the console, each holding a `SKILL.md`. See
     /// [`skill`](Self::skill).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
+
+    /// Whether the agent works in a sandbox, which its state then has to hold. It brings a
+    /// shell and file tools there, in the style of the model's org, but for any `tools` names
+    /// itself.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub use_sandbox: bool,
+
+    /// Whether the agent drives a browser, which its state then has to hold. It brings the
+    /// `browser_*` tools.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub use_browser: bool,
+
+    /// How old tool results are truncated in the history as each turn begins.
+    #[serde(default)]
+    pub truncation: TruncationPolicy,
 }
 
 /// The org a desc names (`"anthropic"` of `"anthropic/claude-sonnet-5-5"`) and the name
@@ -55,7 +65,7 @@ pub(super) fn split_desc(desc: &str) -> (&str, &str) {
 }
 
 /// The shell and file tools for a sandbox, in the style of the model's org.
-fn sandbox_tool_descs(org: &str) -> Vec<ToolDesc> {
+pub(super) fn sandbox_tool_descs(org: &str) -> Vec<ToolDesc> {
     let mut descs = vec![get_shell_tool_desc()];
     // GPT reads files through `shell`, as in Codex.
     if org == "openai" {
@@ -89,8 +99,10 @@ impl AgentSpec {
             instruction: None,
             tools: Vec::new(),
             model_options: None,
-            web_search_engines: None,
             skills: Vec::new(),
+            use_sandbox: false,
+            use_browser: false,
+            truncation: TruncationPolicy::default(),
         }
     }
 
@@ -112,6 +124,12 @@ impl AgentSpec {
         self
     }
 
+    /// Truncate old tool results in the history by `policy`. See [`TruncationPolicy`].
+    pub fn truncation(mut self, policy: TruncationPolicy) -> Self {
+        self.truncation = policy;
+        self
+    }
+
     pub fn tool(mut self, tool: ToolDesc) -> Self {
         self.tools.push(tool);
         self
@@ -122,23 +140,11 @@ impl AgentSpec {
         self
     }
 
-    /// Add the shell and file tools for a sandbox, in the style of the model's org, skipping
-    /// any the spec already has. [`AgentBuilder::sandbox`](super::AgentBuilder::sandbox) adds
-    /// them itself.
-    pub fn sandbox_tools(mut self) -> Self {
-        for desc in sandbox_tool_descs(split_desc(&self.model).0) {
-            if !self.tools.iter().any(|t| t.name == desc.name) {
-                self.tools.push(desc);
-            }
-        }
-        self
-    }
-
-    /// Add `web_search`; a non-empty `engines` restricts it to those, empty uses all.
-    pub fn web_search_tool(mut self, engines: Vec<WebSearchEngineKind>) -> Self {
-        self.tools.push(get_web_search_tool_desc());
-        if !engines.is_empty() {
-            self.web_search_engines = Some(engines);
+    /// Add `web_search`, unless the spec has it. How it searches is the
+    /// [`WebSearchProvider`](crate::tool::WebSearchProvider) set where the agent runs.
+    pub fn web_search_tool(mut self) -> Self {
+        if !self.tools.iter().any(|t| t.name == "web_search") {
+            self.tools.push(get_web_search_tool_desc());
         }
         self
     }
@@ -165,6 +171,35 @@ impl AgentSpec {
             .get_or_insert_with(LangModelOptions::default)
             .output_schema = Some(schema);
         self
+    }
+}
+
+/// How old tool results in an agent's history are replaced by placeholders as each turn
+/// begins, so a long run stays within the model's context window.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TruncationPolicy {
+    /// The input tokens of the last model call past which old tool results are replaced.
+    /// `0`, the default, turns this off.
+    pub max_input_tokens: u64,
+    /// The latest user turns whose tool results are left as they are. The turn just begun
+    /// is always one of them, so `0` acts as `1`.
+    pub preserve_recent_turns: usize,
+    /// Images in tool results the history may hold; past it, the oldest are replaced.
+    /// `0` turns this off.
+    pub max_images: usize,
+    /// Images in tool results left once `max_images` is passed.
+    pub preserve_recent_images: usize,
+}
+
+impl Default for TruncationPolicy {
+    fn default() -> Self {
+        Self {
+            max_input_tokens: 0,
+            preserve_recent_turns: 3,
+            max_images: 30,
+            preserve_recent_images: 10,
+        }
     }
 }
 
@@ -198,17 +233,10 @@ mod tests {
     }
 
     #[test]
-    fn test_sandbox_tools_skip_tools_already_there() {
-        let spec = AgentSpec::new("openai/gpt-6-luna")
-            .sandbox_tools()
-            .sandbox_tools();
-        assert_eq!(names(&spec), ["shell", "apply_patch", "imgread"]);
-    }
-
-    #[test]
-    fn test_web_search_tool_empty_engines_keeps_field_none() {
-        let spec = AgentSpec::new("anthropic").web_search_tool(vec![]);
-        assert!(spec.web_search_engines.is_none());
+    fn test_web_search_tool_is_added_once() {
+        let spec = AgentSpec::new("anthropic")
+            .web_search_tool()
+            .web_search_tool();
         assert_eq!(names(&spec), ["web_search"]);
     }
 
@@ -217,17 +245,26 @@ mod tests {
         let spec = AgentSpec::new("anthropic/claude-sonnet-5-5")
             .instruction("Be brief.")
             .thinking_effort(ThinkingEffort::Low)
-            .web_search_tool(vec![WebSearchEngineKind::Google]);
+            .web_search_tool()
+            .truncation(TruncationPolicy {
+                max_input_tokens: 50_000,
+                ..Default::default()
+            });
         let json = serde_json::to_string(&spec).unwrap();
         let back: AgentSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(back.model, "anthropic/claude-sonnet-5-5");
         assert_eq!(
-            back.model_options.unwrap().thinking_effort,
+            back.model_options.as_ref().unwrap().thinking_effort,
             Some(ThinkingEffort::Low)
         );
-        assert_eq!(
-            back.web_search_engines.as_deref(),
-            Some([WebSearchEngineKind::Google].as_slice())
-        );
+        assert_eq!(names(&back), ["web_search"]);
+        assert_eq!(back.truncation.max_input_tokens, 50_000);
+    }
+
+    /// A spec saved without `truncation` loads with the default policy.
+    #[test]
+    fn test_spec_without_truncation_takes_the_default() {
+        let spec: AgentSpec = serde_json::from_str(r#"{"model": "anthropic"}"#).unwrap();
+        assert_eq!(spec.truncation, TruncationPolicy::default());
     }
 }

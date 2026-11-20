@@ -7,6 +7,7 @@ against these at runtime; the Rust side does, when the dict arrives.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Literal, NotRequired, TypedDict, Union
 
 Role = Literal["system", "user", "assistant", "tool"]
@@ -131,13 +132,41 @@ class LangModelOptions(TypedDict):
     output_schema: NotRequired[Value]
 
 
+class TruncationPolicy(TypedDict):
+    """How old tool results in the history are replaced by placeholders as each turn begins.
+    A setting left out takes its default."""
+
+    max_input_tokens: NotRequired[int]
+    preserve_recent_turns: NotRequired[int]
+    max_images: NotRequired[int]
+    preserve_recent_images: NotRequired[int]
+
+
 class AgentSpec(TypedDict):
     model: str
     instruction: NotRequired[str]
     tools: NotRequired[list[ToolDesc]]
     model_options: NotRequired[LangModelOptions]
-    web_search_engines: NotRequired[list[str]]
     skills: NotRequired[list[str]]
+    use_sandbox: NotRequired[bool]
+    use_browser: NotRequired[bool]
+    truncation: NotRequired[TruncationPolicy]
+
+
+class BrowserOptions(TypedDict, total=False):
+    """A browser for ``Agent.from_spec``: the keywords of ``AgentBuilder.browser``."""
+
+    user_browser: (
+        Literal["chrome", "chrome-beta", "chrome-dev", "chrome-canary", "chromium", "edge", "brave"]
+        | str
+        | os.PathLike[str]
+    )
+    careful: bool
+    start_url: str
+    isolated: bool
+    headless: bool
+    executable: str | os.PathLike[str]
+    profile: str | os.PathLike[str]
 
 
 Backend = Literal["cli", "api", "bedrock", "openrouter", "self-hosted"]
@@ -155,13 +184,12 @@ class LangModelServer(TypedDict):
     api_key: NotRequired[str]
     models: NotRequired[dict[str, str]]
 
-WebSearchEngine = Literal[
-    "Bing", "Brave", "DuckDuckGo", "Google", "Mojeek", "Naver", "Startpage", "Yahoo", "Yandex"
-]
+WebSearchProvider = Literal["web", "brave", "tavily", "exa", "naver"]
 
 __all__ = [
     "AgentSpec",
     "Backend",
+    "BrowserOptions",
     "EmbeddedImage",
     "FinishReason",
     "FunctionPart",
@@ -180,8 +208,9 @@ __all__ = [
     "ThinkingEffort",
     "TokenUsage",
     "ToolDesc",
+    "TruncationPolicy",
     "UrlImage",
     "Value",
     "ValuePart",
-    "WebSearchEngine",
+    "WebSearchProvider",
 ]

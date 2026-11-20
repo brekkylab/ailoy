@@ -1,10 +1,10 @@
 use crate::{
-    agent::{Agent, AgentSpec, AgentState, ContextManager},
-    browser::{Browser, BrowserSession},
+    agent::{Agent, AgentSpec, AgentState, TruncationPolicy},
+    browser::Browser,
     datatype::Value,
     message::Message,
     model::ThinkingEffort,
-    tool::{ToolDesc, WebSearchEngineKind},
+    tool::ToolDesc,
 };
 
 /// Fluent builder over [`AgentSpec`] for [`Agent`].
@@ -31,13 +31,7 @@ use crate::{
 pub struct AgentBuilder {
     spec: AgentSpec,
 
-    history: Vec<Message>,
-
-    sandbox: Option<virtx::Sandbox>,
-
-    context_manager: Option<ContextManager>,
-
-    browser: Option<Browser>,
+    state: AgentState,
 }
 
 impl AgentBuilder {
@@ -46,10 +40,7 @@ impl AgentBuilder {
     pub fn new(model: impl Into<String>) -> Self {
         Self {
             spec: AgentSpec::new(model),
-            history: Vec::new(),
-            sandbox: None,
-            context_manager: None,
-            browser: None,
+            state: AgentState::new(),
         }
     }
 
@@ -69,8 +60,9 @@ impl AgentBuilder {
         self
     }
 
-    pub fn web_search_tool(mut self, engines: Vec<WebSearchEngineKind>) -> Self {
-        self.spec = self.spec.web_search_tool(engines);
+    /// Add `web_search`. See [`AgentSpec::web_search_tool`].
+    pub fn web_search_tool(mut self) -> Self {
+        self.spec = self.spec.web_search_tool();
         self
     }
 
@@ -83,21 +75,21 @@ impl AgentBuilder {
     /// A leading system message here overrides the one the spec's instruction would
     /// produce; otherwise the instruction is still seeded, at the front of this history.
     pub fn history(mut self, history: impl IntoIterator<Item = Message>) -> Self {
-        self.history = history.into_iter().collect();
+        self.state = self.state.with_history(history);
         self
     }
 
     /// Run this agent's sandbox tools in `sandbox`, with whatever volumes it was made with.
     ///
-    /// Also adds [`AgentSpec::sandbox_tools`] to the spec: a shell and file tools there, in
-    /// the style of the model's org. The sandbox's abins are listed in the system message as
+    /// The agent gets a shell and file tools there, in the style of the model's org (see
+    /// [`Agent::try_with_state`]). The sandbox's abins are listed in the system message as
     /// skills, like [`skill`](Self::skill)'s.
     ///
     /// Nothing makes a sandbox implicitly, since that means choosing a virtx server.
     /// Without one, pure tools still run and sandbox tools fail with an error.
     pub fn sandbox(mut self, sandbox: virtx::Sandbox) -> Self {
-        self.spec = self.spec.sandbox_tools();
-        self.sandbox = Some(sandbox);
+        self.spec.use_sandbox = true;
+        self.state = self.state.with_sandbox(sandbox);
         self
     }
 
@@ -105,7 +97,8 @@ impl AgentBuilder {
     /// browser from this process, not from the [`sandbox`](Self::sandbox). Nothing starts until
     /// the agent first uses it, or [`Agent::start_browser`].
     pub fn browser(mut self, browser: Browser) -> Self {
-        self.browser = Some(browser);
+        self.spec.use_browser = true;
+        self.state = self.state.with_browser(browser);
         self
     }
 
@@ -115,9 +108,9 @@ impl AgentBuilder {
         self
     }
 
-    /// Set the context window management spec.
-    pub fn context_manager(mut self, spec: ContextManager) -> Self {
-        self.context_manager = Some(spec);
+    /// How old tool results are truncated in the history. See [`AgentSpec::truncation`].
+    pub fn truncation(mut self, policy: TruncationPolicy) -> Self {
+        self.spec = self.spec.truncation(policy);
         self
     }
 
@@ -136,26 +129,7 @@ impl AgentBuilder {
     /// Materialise the agent via [`Agent::try_with_state`], which is async
     /// because it builds the model and reads the skills through the sandbox.
     pub async fn build(self) -> anyhow::Result<Agent> {
-        let Self {
-            spec,
-            history,
-            sandbox,
-            context_manager,
-            browser,
-        } = self;
-
-        let mut state = AgentState::new().with_history(history);
-        if let Some(sandbox) = sandbox {
-            state = state.with_sandbox(sandbox);
-        }
-        if let Some(browser) = browser {
-            browser.check()?;
-            state = state.with_browser(BrowserSession::new(browser));
-        }
-
-        let mut agent = Agent::try_with_state(spec, state).await?;
-        agent.set_context_manager(context_manager);
-        Ok(agent)
+        Agent::try_with_state(self.spec, self.state).await
     }
 }
 
@@ -250,6 +224,11 @@ mod tests {
             .await
             .unwrap();
         assert!(agent.tool_descs.iter().any(|t| t.name == "shell"));
+        assert!(agent.spec().use_sandbox);
+        assert!(
+            agent.spec().tools.is_empty(),
+            "the sandbox's tools stay out of the spec"
+        );
 
         let sandbox = agent
             .state
@@ -289,14 +268,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_builder_context_manager_is_applied() {
-        let cm = ContextManager {
+    async fn test_builder_truncation_is_applied() {
+        let policy = TruncationPolicy {
             max_input_tokens: 10_000,
             preserve_recent_turns: 2,
             ..Default::default()
         };
-        let agent = builder().context_manager(cm).build().await.unwrap();
-        assert!(agent.context_manager().is_some());
+        let agent = builder().truncation(policy.clone()).build().await.unwrap();
+        assert_eq!(agent.spec().truncation, policy);
     }
 
     #[tokio::test]

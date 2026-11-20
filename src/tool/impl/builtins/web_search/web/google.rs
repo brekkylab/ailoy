@@ -145,7 +145,7 @@ impl SearchEngine for Google {
 
         // No data-ved anchors means we didn't get the SSR result page (JS
         // shell, region-specific layout, soft block, …). Treat as Blocked
-        // so the aggregator can skip Google instead of silently dropping it.
+        // so the next engine takes over instead of Google being silently empty.
         let ssr_anchor_count = document.select(&self.sel_results).count();
         if ssr_anchor_count == 0 {
             log::warn!("Google blocked: no data-ved anchors in response (likely JS shell)");
