@@ -1,0 +1,166 @@
+---
+// The banner at the top of the Welcome page: the mark and "Ailoy Documentation" beside a drawing of
+// Ailoy's idea, three languages flowing into one agent that works in a microVM of its own. It is
+// dark in both themes, like an image. PageTitle shows it above the Welcome page's title, so it
+// stays out of the page's Markdown. On wide screens "On this page" starts below it, level with the
+// breadcrumb, and sticks once the page scrolls past the banner.
+import AiloyMark from './AiloyMark.astro';
+---
+
+<figure class="wb" aria-label="Ailoy Documentation">
+  <div class="wb-text">
+    <p class="wb-brand"><AiloyMark size={26} /> Ailoy</p>
+    <p class="wb-title">Ailoy<br />Documentation</p>
+    <p class="wb-sub">AI agents with a computer of their own</p>
+  </div>
+  <svg class="wb-art" viewBox="0 0 440 220" aria-hidden="true">
+    <defs>
+      <linearGradient id="wb-flow" gradientUnits="userSpaceOnUse" x1="92" y1="0" x2="262" y2="0">
+        <stop offset="0" stop-color="#fff" stop-opacity="0.22" />
+        <stop offset="1" stop-color="#ffc53d" />
+      </linearGradient>
+      <marker id="wb-tip" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="#ffc53d" />
+      </marker>
+    </defs>
+    <g class="wb-lang">
+      <rect x="4" y="24" width="88" height="32" /><text x="48" y="45">Python</text>
+      <rect x="4" y="94" width="88" height="32" /><text x="48" y="115">Node.js</text>
+      <rect x="4" y="164" width="88" height="32" /><text x="48" y="185">Rust</text>
+    </g>
+    <g class="wb-lines" marker-end="url(#wb-tip)">
+      <path d="M92 40 C 178 40, 184 96, 263 96" />
+      <path d="M92 110 L 263 110" />
+      <path d="M92 180 C 178 180, 184 124, 263 124" />
+    </g>
+    <rect x="264" y="56" width="168" height="108" class="wb-box" />
+    <text x="282" y="84" class="wb-t">Agent</text>
+    <circle cx="414" cy="79" r="3.5" class="wb-live" />
+    <rect x="280" y="98" width="136" height="48" class="wb-vm" />
+    <text x="348" y="127" class="wb-s">microVM · GPU</text>
+  </svg>
+</figure>
+
+<script>
+  // On wide screens the banner reaches a little to the left and across the "On this page" column,
+  // and that column, which Starlight fixes to the top, starts at the breadcrumb below the banner
+  // and scrolls with the page until the banner is gone (sticky in the CSS below).
+  const wide = matchMedia('(min-width: 72rem)');
+  const place = () => {
+    const banner = document.querySelector<HTMLElement>('.wb');
+    const bar = document.querySelector<HTMLElement>('.right-sidebar');
+    const toc = document.querySelector('starlight-toc');
+    const crumbs = document.querySelector('.page-head .crumbs');
+    if (!banner || !bar || !toc || !crumbs) return;
+    banner.style.marginRight = '0px';
+    banner.style.marginLeft = '0px';
+    bar.style.marginTop = '0px';
+    if (!wide.matches) return;
+    // and 48px out to the left, less if the sidebar is nearer than that plus a 24px gap
+    const pane = banner.closest('.main-pane');
+    const room = pane ? banner.getBoundingClientRect().left - pane.getBoundingClientRect().left - 24 : 0;
+    banner.style.marginLeft = `${-Math.max(0, Math.min(48, room))}px`;
+    banner.style.marginRight = `${banner.getBoundingClientRect().right - toc.getBoundingClientRect().right}px`;
+    bar.style.marginTop = `${crumbs.getBoundingClientRect().top + scrollY - toc.getBoundingClientRect().top}px`;
+  };
+  // Again whenever the page's head changes size: the window resizing, or the banner's title
+  // growing once its web font loads.
+  place();
+  document.fonts.ready.then(place);
+  const head = document.querySelector('.page-head');
+  if (head) new ResizeObserver(place).observe(head);
+</script>
+
+<style is:global>
+  @media (min-width: 72rem) {
+    :root:has(.wb) .right-sidebar {
+      position: sticky;
+    }
+  }
+</style>
+
+<style>
+  .wb {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 1.1fr;
+    align-items: center;
+    gap: 1.5rem;
+    margin: 0 0 1.75rem;
+    padding: 3.25rem 2.75rem;
+    background:
+      radial-gradient(120% 140% at 100% 0%, rgba(255, 197, 61, 0.14), transparent 55%),
+      repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0 1px, transparent 1px 48px),
+      #000;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #fff;
+    overflow: hidden;
+  }
+  .wb p {
+    margin: 0;
+  }
+  .wb-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: rgba(255, 255, 255, 0.75);
+  }
+  .wb-title {
+    margin-top: 1rem !important;
+    font-size: clamp(1.75rem, 3.4vw, 3rem);
+    font-weight: 700;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+  }
+  .wb-sub {
+    margin-top: 0.875rem !important;
+    color: #ffc53d;
+    font-size: 0.95rem;
+  }
+  .wb-art {
+    width: 100%;
+    height: auto;
+  }
+  .wb-lang rect {
+    fill: #0e0f11;
+    stroke: rgba(255, 255, 255, 0.18);
+  }
+  .wb-lang text {
+    fill: rgba(255, 255, 255, 0.85);
+    font: 500 13px var(--sl-font, sans-serif);
+    text-anchor: middle;
+  }
+  .wb-lines path {
+    fill: none;
+    stroke: url(#wb-flow);
+    stroke-width: 1.5;
+  }
+  .wb-box {
+    fill: #0b0b0b;
+    stroke: rgba(255, 255, 255, 0.22);
+  }
+  .wb-vm {
+    fill: rgba(255, 197, 61, 0.08);
+    stroke: #ffc53d;
+  }
+  .wb-live {
+    fill: #ffc53d;
+  }
+  .wb-t {
+    fill: #fff;
+    font: 600 15px var(--sl-font, sans-serif);
+  }
+  .wb-s {
+    fill: #ffc53d;
+    font: 500 13px var(--sl-font, sans-serif);
+    text-anchor: middle;
+  }
+  @media (max-width: 640px) {
+    .wb {
+      grid-template-columns: 1fr;
+      padding: 1.5rem 1.25rem;
+    }
+  }
+</style>

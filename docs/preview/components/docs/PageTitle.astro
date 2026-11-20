@@ -2,6 +2,7 @@
 // Starlight override: a breadcrumb, the title with the page's description under it, and actions:
 // copy the page as Markdown, or open it as Markdown, on GitHub, or in ChatGPT or Claude.
 import { Icon } from '@astrojs/starlight/components';
+import WelcomeBanner from '../WelcomeBanner.astro';
 
 // Starlight's own id for the title, which its "Overview" link in the table of contents targets.
 const PAGE_TITLE_ID = '_top';
@@ -23,6 +24,7 @@ const actions = [
 ---
 
 <div class="page-head">
+  {path === '/docs/' && <WelcomeBanner />}
   {
     group && (
       <nav class="crumbs" aria-label="Breadcrumb">

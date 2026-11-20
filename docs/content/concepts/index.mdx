@@ -49,10 +49,15 @@ Not everything an agent does happens in the sandbox:
 An Ailoy agent is two things:
 
 - **Spec**: the model, the instruction, the tools, the skills and the model options. It is plain JSON that says what the agent is, so it can be saved and an agent built from it again.
-- **State**: the history, the sandbox and the memory. It is what the agent has done and where.
+- **State**: the history and the sandbox. It is what the agent has done and where.
 
 The label in the drawing's agent box, model · tools · skill, is part of its spec. `AgentBuilder` fills in both. [Defining an agent](/docs/guides/agents/) lists every call, and builds an agent from a saved spec.
 
 ## Messages
 
 Ailoy speaks one message format to every model. A message has a role (`system`, `user`, `assistant` or `tool`) and parts: text, images, tool calls and values. Streaming yields deltas, pieces of a message that add up to it. [Message format](/docs/guides/message-format/) covers the fields.
+
+## Next
+
+- [Defining an agent](/docs/guides/agents/): everything an `AgentBuilder` can give an agent.
+- [Giving an agent a sandbox](/docs/guides/sandbox/): images, volumes, and picking up later.
