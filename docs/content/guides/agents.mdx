@@ -25,7 +25,7 @@ Every call returns the builder, so they chain. Node.js spells them in camelCase 
 
 ## Instruction
 
-`instruction(...)` is the system message's text: who the agent is, what it is for, and where in its sandbox to find inputs and leave results. The agent writes the system message from this text and the list of its [skills](/docs/guides/skills/), and puts that message at the front of its history, unless the history you give it already has one.
+`instruction(...)` is the system message's text: who the agent is, what it is for, and where in its sandbox to find inputs and leave results. The agent writes the system message from this text and the list of its [skills](/docs/guides/skills/), those of `skill(...)` and those of its sandbox's abins, and puts that message at the front of its history, unless the history you give it already has one.
 
 ## From a spec
 
@@ -91,3 +91,8 @@ A spec says whether the agent works in a sandbox (`use_sandbox`) and drives a br
 In Python and Node.js, `close()` releases what the agent holds: its model, any browser it started itself, and its hold on the sandbox's client. It waits for a turn being iterated to finish. In Python, `async with agent:` closes it at the end of the block. A Rust agent releases them when it is dropped.
 
 Closing an agent leaves its sandbox as it is, for you to use again or remove.
+
+## Next
+
+- [Giving an agent a sandbox](/docs/guides/sandbox/): the computer the agent works in.
+- [Model providers](/docs/guides/model-providers/): naming a model and choosing how it runs.
