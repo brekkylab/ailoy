@@ -11,6 +11,7 @@ mod kimi_api;
 mod openai_compatible;
 mod openrouter_api;
 mod qwen_api;
+mod retry;
 
 pub use bedrock_api::*;
 pub use claude_api::*;

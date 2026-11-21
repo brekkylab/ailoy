@@ -52,6 +52,7 @@ dependencies = [
  "image",
  "indexmap",
  "infer",
+ "llm-resilience",
  "log",
  "ordered-float",
  "parking_lot 0.13.0",
@@ -1767,6 +1768,17 @@ name = "litemap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
+
+[[package]]
+name = "llm-resilience"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4fafca5201b2933a00b87b97c03a73d0e577e504cd53a50781b05be9d119b3c"
+dependencies = [
+ "parking_lot 0.12.5",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "lock_api"

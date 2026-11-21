@@ -11,13 +11,14 @@ use futures::{
     stream::{self, BoxStream},
 };
 
+use super::retry::{RetryPolicy, send_with_retry};
 use crate::{
     datatype::Value,
     message::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
-    model::{InferLangModel, LangModelOptions, api_error},
+    model::{InferLangModel, LangModelOptions},
     to_value,
     tool::ToolDesc,
 };
@@ -206,40 +207,15 @@ static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|
 /// POSTs `body`, retrying 429s and 5xx overloads with backoff, and returns the successful
 /// response unread.
 async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest::Response> {
-    const MAX_RETRIES: u32 = 3;
-    const MAX_WAIT_SECS: u64 = 10;
-    // Rate limits, and the transient errors and overloads (529) servers recover from.
-    const RETRY_STATUSES: [u16; 6] = [429, 500, 502, 503, 504, 529];
-
-    for attempt in 0..=MAX_RETRIES {
-        let response = CLIENT
+    const POLICY: RetryPolicy = RetryPolicy::new("GLM API request");
+    send_with_retry(API_URL, &POLICY, || {
+        CLIENT
             .post(API_URL)
             .bearer_auth(api_key)
             .header("accept", "text/event-stream")
             .json(body)
-            .send()
-            .await?;
-
-        let status = response.status();
-        if status.is_success() {
-            return Ok(response);
-        }
-        if RETRY_STATUSES.contains(&status.as_u16()) && attempt < MAX_RETRIES {
-            let wait_secs = (1u64 << attempt).min(MAX_WAIT_SECS);
-            log::warn!(
-                "Got {status}. Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
-                attempt + 1
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
-            continue;
-        }
-        let text = response.text().await.unwrap_or_default();
-        return Err(api_error(
-            status.as_u16(),
-            format!("GLM API request failed with status {status}: {text}"),
-        ));
-    }
-    unreachable!("retry loop returns or bails on every path")
+    })
+    .await
 }
 
 /// Cuts the next complete SSE event out of `buf` and returns its joined `data:` lines;

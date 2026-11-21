@@ -11,13 +11,14 @@ use futures::{
     stream::{self, BoxStream},
 };
 
+use super::retry::{RetryPolicy, send_with_retry};
 use crate::{
     datatype::Value,
     message::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
-    model::{InferLangModel, LangModelOptions, ThinkingEffort, api_error},
+    model::{InferLangModel, LangModelOptions, ThinkingEffort},
     to_value,
     tool::ToolDesc,
 };
@@ -222,38 +223,16 @@ async fn send(
     api_key: Option<&str>,
     body: &serde_json::Value,
 ) -> anyhow::Result<reqwest::Response> {
-    const MAX_RETRIES: u32 = 3;
-    const MAX_WAIT_SECS: u64 = 10;
-    // Rate limits, and the transient errors and overloads (529) servers recover from.
-    const RETRY_STATUSES: [u16; 6] = [429, 500, 502, 503, 504, 529];
-
-    for attempt in 0..=MAX_RETRIES {
-        let mut request = CLIENT.post(url).header("accept", "text/event-stream");
-        if let Some(api_key) = api_key {
-            request = request.bearer_auth(api_key);
-        }
-        let response = request.json(body).send().await?;
-
-        let status = response.status();
-        if status.is_success() {
-            return Ok(response);
-        }
-        if RETRY_STATUSES.contains(&status.as_u16()) && attempt < MAX_RETRIES {
-            let wait_secs = (1u64 << attempt).min(MAX_WAIT_SECS);
-            log::warn!(
-                "Got {status}. Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
-                attempt + 1
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
-            continue;
-        }
-        let text = response.text().await.unwrap_or_default();
-        return Err(api_error(
-            status.as_u16(),
-            format!("chat completions request failed with status {status}: {text}"),
-        ));
-    }
-    unreachable!("retry loop returns or bails on every path")
+    const POLICY: RetryPolicy = RetryPolicy::new("chat completions request");
+    send_with_retry(url, &POLICY, || {
+        let request = CLIENT.post(url).header("accept", "text/event-stream");
+        let request = match api_key {
+            Some(api_key) => request.bearer_auth(api_key),
+            None => request,
+        };
+        request.json(body)
+    })
+    .await
 }
 
 /// Cuts the next complete SSE event out of `buf` and returns its joined `data:` lines;
