@@ -13,13 +13,14 @@ use futures::{
     stream::{self, BoxStream},
 };
 
+use super::retry::{RetryPolicy, send_with_retry};
 use crate::{
     datatype::Value,
     message::{
         Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, PartDelta,
         PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
-    model::{InferLangModel, LangModelOptions, ThinkingEffort, api_error},
+    model::{InferLangModel, LangModelOptions, ThinkingEffort},
     to_value,
     tool::ToolDesc,
 };
@@ -223,57 +224,19 @@ async fn send(
     api_key: &str,
     body: &serde_json::Value,
 ) -> anyhow::Result<reqwest::Response> {
-    const MAX_RETRIES: u32 = 3;
-    const MAX_WAIT_SECS: u64 = 10;
-    // The transient errors and overloads (529) servers recover from; 429 is checked apart.
-    const RETRY_STATUSES: [u16; 5] = [500, 502, 503, 504, 529];
-
-    for attempt in 0..=MAX_RETRIES {
-        let response = CLIENT
+    const POLICY: RetryPolicy = RetryPolicy {
+        // A quota that is used up comes without a RetryInfo, and does not pass with time.
+        permanent: Some(|status, text| status == 429 && !text.contains("google.rpc.RetryInfo")),
+        ..RetryPolicy::new("Gemini API request")
+    };
+    send_with_retry(url, &POLICY, || {
+        CLIENT
             .post(url)
             .header("x-goog-api-key", api_key)
             .header("accept", "text/event-stream")
             .json(body)
-            .send()
-            .await?;
-
-        let status = response.status();
-        if status.is_success() {
-            return Ok(response);
-        }
-        if status.as_u16() == 429 && attempt < MAX_RETRIES {
-            let text = response.text().await.unwrap_or_default();
-            // A quota that is used up comes without a RetryInfo, and does not pass with time.
-            if !text.contains("google.rpc.RetryInfo") {
-                return Err(api_error(
-                    status.as_u16(),
-                    format!("Gemini API request failed with status {status}: {text}"),
-                ));
-            }
-            let wait_secs = (1u64 << attempt).min(MAX_WAIT_SECS);
-            log::warn!(
-                "Rate limited (429). Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
-                attempt + 1
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
-            continue;
-        }
-        if RETRY_STATUSES.contains(&status.as_u16()) && attempt < MAX_RETRIES {
-            let wait_secs = (1u64 << attempt).min(MAX_WAIT_SECS);
-            log::warn!(
-                "Request failed with status {status}. Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
-                attempt + 1
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
-            continue;
-        }
-        let text = response.text().await.unwrap_or_default();
-        return Err(api_error(
-            status.as_u16(),
-            format!("Gemini API request failed with status {status}: {text}"),
-        ));
-    }
-    unreachable!("retry loop returns or bails on every path")
+    })
+    .await
 }
 
 /// Cuts the next complete SSE event out of `buf` and returns its joined `data:` lines;

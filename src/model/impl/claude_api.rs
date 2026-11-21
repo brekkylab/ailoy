@@ -10,13 +10,14 @@ use futures::{
     stream::{self, BoxStream},
 };
 
+use super::retry::{RetryPolicy, send_with_retry};
 use crate::{
     datatype::Value,
     message::{
         Delta as _, FinishReason, Message, MessageDelta, MessageDeltaOutput, MessageOutput, Part,
         PartDelta, PartDeltaFunction, PartFunction, PartImage, Role, TokenUsage,
     },
-    model::{InferLangModel, LangModelOptions, ThinkingEffort, api_error},
+    model::{InferLangModel, LangModelOptions, ThinkingEffort},
     to_value,
     tool::ToolDesc,
 };
@@ -247,12 +248,11 @@ static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|
 /// POSTs `body`, retrying 429s and 5xx overloads with backoff, and returns the successful
 /// response unread.
 async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest::Response> {
-    const MAX_RETRIES: u32 = 3;
-    const MAX_WAIT_SECS: u64 = 10;
-    // Rate limits, and the transient errors and overloads (529) servers recover from.
-    const RETRY_STATUSES: [u16; 6] = [429, 500, 502, 503, 504, 529];
-
-    for attempt in 0..=MAX_RETRIES {
+    const POLICY: RetryPolicy = RetryPolicy {
+        honor_retry_after: true,
+        ..RetryPolicy::new("Anthropic API request")
+    };
+    send_with_retry(API_URL, &POLICY, || {
         let request = CLIENT
             .post(API_URL)
             .header("x-api-key", api_key)
@@ -261,34 +261,9 @@ async fn send(api_key: &str, body: &serde_json::Value) -> anyhow::Result<reqwest
             .json(body);
         #[cfg(target_arch = "wasm32")]
         let request = request.header("anthropic-dangerous-direct-browser-access", "true");
-        let response = request.send().await?;
-
-        let status = response.status();
-        if status.is_success() {
-            return Ok(response);
-        }
-        if RETRY_STATUSES.contains(&status.as_u16()) && attempt < MAX_RETRIES {
-            let wait_secs = response
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(1u64 << attempt)
-                .min(MAX_WAIT_SECS);
-            log::warn!(
-                "Request failed with status {status}. Retrying after {wait_secs}s (attempt {}/{MAX_RETRIES})",
-                attempt + 1
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
-            continue;
-        }
-        let text = response.text().await.unwrap_or_default();
-        return Err(api_error(
-            status.as_u16(),
-            format!("Anthropic API request failed with status {status}: {text}"),
-        ));
-    }
-    unreachable!("retry loop returns or bails on every path")
+        request
+    })
+    .await
 }
 
 /// Cuts the next complete SSE event out of `buf` and returns its joined `data:` lines;
