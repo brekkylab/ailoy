@@ -7,8 +7,39 @@ import { Icon } from '@astrojs/starlight/components';
 import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro';
 import PageIcon from './PageIcon.astro';
 
-const { sidebar } = Astro.locals.starlightRoute;
+// The header's tabs split the sidebar: the API reference tab shows the reference groups of the
+// language being read (Python on the reference's own Overview), with a switch to the same page in
+// the other language; the Docs tab shows every other group.
+const REF = '/docs/reference/';
+const path = Astro.url.pathname;
+const inReference = path.startsWith(REF);
+const lang = path.startsWith(`${REF}nodejs/`) ? 'nodejs' : 'python';
+// the page within its language, or '' on a shared page, which leads to the language's Installation
+const inLang = /^\/docs\/reference\/(python|nodejs)\//;
+const rest = inLang.test(path) ? path.replace(inLang, '') : '';
+const hrefs = (e: any): string[] => (e.type === 'link' ? [e.href] : e.entries.map((c: any) => c.href));
+const sidebar = Astro.locals.starlightRoute.sidebar.filter((e: any) => {
+  const ref = hrefs(e).some((h) => h.startsWith(REF));
+  return inReference ? hrefs(e).some((h) => h.startsWith(`${REF}${lang}/`) || h === `${REF}${lang}`) : !ref;
+});
+const languages = [
+  { label: 'Python', href: `${REF}python/${rest}`, current: lang === 'python' },
+  { label: 'Node.js', href: `${REF}nodejs/${rest}`, current: lang === 'nodejs' },
+  { label: 'Rust', href: "https://docs.rs/ailoy/latest/ailoy/", current: false },
+];
 ---
+
+{
+  inReference && (
+    <nav class="langs" aria-label="SDK language">
+      {languages.map((l) => (
+        <a href={l.href} aria-current={l.current ? 'true' : undefined}>
+          {l.label}
+        </a>
+      ))}
+    </nav>
+  )
+}
 
 <div class="tools">
   <button class="search" type="button" data-open-search>
@@ -28,7 +59,7 @@ const { sidebar } = Astro.locals.starlightRoute;
         e.type === 'link' ? (
           <li>
             <a href={e.href} aria-current={e.isCurrent ? 'page' : undefined} class="item solo">
-              <PageIcon href={e.href} />
+              {!inReference && <PageIcon href={e.href} />}
               <span>{e.label}</span>
             </a>
           </li>
@@ -39,7 +70,7 @@ const { sidebar } = Astro.locals.starlightRoute;
               {e.entries.map((c: any) => (
                 <li>
                   <a href={c.href} aria-current={c.isCurrent ? 'page' : undefined} class="item">
-                    <PageIcon href={c.href} />
+                    {!inReference && <PageIcon href={c.href} />}
                     <span>{c.label}</span>
                     {c.badge && <span class="badge">{c.badge.text}</span>}
                   </a>
@@ -75,6 +106,30 @@ const { sidebar } = Astro.locals.starlightRoute;
 </script>
 
 <style>
+  .langs {
+    display: flex;
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--sl-color-hairline);
+  }
+  .langs a {
+    flex: 1;
+    padding: 0.4rem 0.5rem;
+    text-align: center;
+    font-size: 0.8125rem;
+    color: var(--sl-color-gray-3);
+    text-decoration: none;
+  }
+  .langs a + a {
+    border-inline-start: 1px solid var(--sl-color-hairline);
+  }
+  .langs a:hover {
+    color: var(--sl-color-white);
+  }
+  .langs a[aria-current] {
+    color: var(--sl-color-white);
+    background: var(--sl-color-gray-6);
+    font-weight: 600;
+  }
   .tools {
     display: flex;
     gap: 0.5rem;

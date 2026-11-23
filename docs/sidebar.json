@@ -34,42 +34,81 @@
     ]
   },
   {
-    "label": "Reference",
+    "label": "Get started",
     "items": [
-      { "slug": "reference" },
-      { "label": "Rust (docs.rs)", "link": "https://docs.rs/ailoy/0.3.2/ailoy/" }
+      { "slug": "reference", "label": "Introduction" },
+      { "slug": "reference/choosing-an-sdk", "label": "Choosing an SDK" },
+      { "slug": "reference/choosing-a-model-provider", "label": "Choosing a model provider" },
+      { "slug": "reference/python", "label": "Installation" },
+      { "slug": "reference/python/errors", "label": "Errors" }
     ]
   },
   {
-    "label": "Python reference",
+    "label": "Agents",
     "items": [
-      { "slug": "reference/python", "label": "Overview" },
-      { "slug": "reference/python/agent-builder" },
-      { "slug": "reference/python/agent" },
-      { "slug": "reference/python/agent-run" },
-      { "slug": "reference/python/lang-model" },
-      { "slug": "reference/python/functions" },
-      { "slug": "reference/python/types" },
-      { "slug": "reference/python/ailoy-error" }
+      { "slug": "reference/python/agent-builder", "label": "AgentBuilder" },
+      { "slug": "reference/python/agent", "label": "Agent" },
+      { "slug": "reference/python/agent-run", "label": "AgentRun" }
     ]
   },
   {
-    "label": "Node.js reference",
+    "label": "Models",
     "items": [
-      { "slug": "reference/nodejs", "label": "Overview" },
-      { "slug": "reference/nodejs/agent" },
-      { "slug": "reference/nodejs/agent-builder" },
-      { "slug": "reference/nodejs/agent-run" },
-      { "slug": "reference/nodejs/lang-model" },
-      { "slug": "reference/nodejs/get-lang-model-provider" },
-      { "slug": "reference/nodejs/register-mcp-stdio" },
-      { "slug": "reference/nodejs/register-mcp-streamable-http" },
-      { "slug": "reference/nodejs/register-tool" },
-      { "slug": "reference/nodejs/remove-lang-model-provider" },
-      { "slug": "reference/nodejs/remove-tool-provider" },
-      { "slug": "reference/nodejs/set-lang-model-provider" },
-      { "slug": "reference/nodejs/set-tool-provider" },
-      { "slug": "reference/nodejs/unregister-mcp" }
+      { "slug": "reference/python/lang-model", "label": "LangModel" },
+      { "slug": "reference/python/model-providers", "label": "Model providers" }
+    ]
+  },
+  {
+    "label": "Tools",
+    "items": [
+      { "slug": "reference/python/tools", "label": "Tools and MCP" }
+    ]
+  },
+  {
+    "label": "Data shapes",
+    "items": [
+      { "slug": "reference/python/messages", "label": "Messages" },
+      { "slug": "reference/python/outputs", "label": "Outputs" },
+      { "slug": "reference/python/specs-and-options", "label": "Specs and options" }
+    ]
+  },
+  {
+    "label": "Get started",
+    "items": [
+      { "slug": "reference", "label": "Introduction" },
+      { "slug": "reference/choosing-an-sdk", "label": "Choosing an SDK" },
+      { "slug": "reference/choosing-a-model-provider", "label": "Choosing a model provider" },
+      { "slug": "reference/nodejs", "label": "Installation" },
+      { "slug": "reference/nodejs/errors", "label": "Errors" }
+    ]
+  },
+  {
+    "label": "Agents",
+    "items": [
+      { "slug": "reference/nodejs/agent-builder", "label": "AgentBuilder" },
+      { "slug": "reference/nodejs/agent", "label": "Agent" },
+      { "slug": "reference/nodejs/agent-run", "label": "AgentRun" }
+    ]
+  },
+  {
+    "label": "Models",
+    "items": [
+      { "slug": "reference/nodejs/lang-model", "label": "LangModel" },
+      { "slug": "reference/nodejs/model-providers", "label": "Model providers" }
+    ]
+  },
+  {
+    "label": "Tools",
+    "items": [
+      { "slug": "reference/nodejs/tools", "label": "Tools and MCP" }
+    ]
+  },
+  {
+    "label": "Data shapes",
+    "items": [
+      { "slug": "reference/nodejs/messages", "label": "Messages" },
+      { "slug": "reference/nodejs/outputs", "label": "Outputs" },
+      { "slug": "reference/nodejs/specs-and-options", "label": "Specs and options" }
     ]
   }
 ]

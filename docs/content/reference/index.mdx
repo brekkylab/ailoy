@@ -1,0 +1,117 @@
+---
+title: "Ailoy SDK reference"
+description: "What the Ailoy SDK is for, your first agent in a few lines, and how this reference is organized."
+head:
+  - tag: meta
+    attrs:
+      name: robots
+      content: noindex
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+The Ailoy SDK builds AI agents in Python, Node.js or Rust. An agent drives the language model you name, calls the tools you give it, and does its work in a console of its own. This reference documents every class, function and type the SDK exports, with an example on every page.
+
+## Why use the Ailoy SDK?
+
+Calling a model is one request. An agent is a loop: send the conversation, see which tools the model asks for, run them, send the results back, and go on until the model answers. The Ailoy SDK runs that loop for you.
+
+- **Any model, one line to switch.** A model is named `<org>/<name>`, such as `anthropic/claude-sonnet-5-5`. The same name runs through the org's CLI, its API, Bedrock, OpenRouter or your own vLLM server, and you pick the backend with one call.
+- **Tools without glue code.** Built-in tools for the shell, files, web search, web fetch and a browser; your own functions; and any MCP server's tools. The model sees each tool's description, and the SDK runs the calls and hands back the results.
+- **A sandbox for the work.** Console tools run in a console from `virtx`, apart from your own machine.
+- **Streaming and control.** A turn is something you iterate as it runs. You see each message, or each word as it's written, and you can stop the turn anywhere.
+- **Three languages, one behavior.** The Python and Node.js packages wrap the same Rust core, so an agent behaves the same in each.
+
+## Your first agent
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```py
+import asyncio
+
+from ailoy import AgentBuilder
+
+
+async def main() -> None:
+    agent = await (
+        AgentBuilder("anthropic/claude-sonnet-5-5")
+        .instruction("Answer in one short paragraph.")
+        .web_fetch_tool()
+        .build()
+    )
+    async with agent:
+        async for out in agent.run("What is on https://example.com?"):
+            for part in out["message"]["contents"]:
+                if part["type"] == "text":
+                    print(part["text"])
+
+
+asyncio.run(main())
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const { AgentBuilder } = require('@brekkylab/ailoy')
+
+async function main() {
+  const agent = await new AgentBuilder('anthropic/claude-sonnet-5-5')
+    .instruction('Answer in one short paragraph.')
+    .webFetchTool()
+    .build()
+
+  for await (const out of agent.run('What is on https://example.com?')) {
+    for (const part of out.message.contents) {
+      if (part.type === 'text') console.log(part.text)
+    }
+  }
+  await agent.close()
+}
+
+main()
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rs
+use ailoy::agent::AgentBuilder;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let agent = AgentBuilder::new("anthropic/claude-sonnet-5-5")
+        .instruction("Answer in one short paragraph.")
+        .web_fetch_tool()
+        .build()
+        .await?;
+    // agent.run(query) is a stream of each message the model and the tools produce
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
+This runs Claude through Claude Code, the default for `anthropic` models, so it needs Claude Code installed and signed in. To use an API key instead, see [Choosing a model provider](/docs/reference/choosing-a-model-provider/).
+
+## How this reference is organized
+
+| Section | Pages | Read it when |
+| --- | --- | --- |
+| Get started | [Choosing an SDK](/docs/reference/choosing-an-sdk/), [Choosing a model provider](/docs/reference/choosing-a-model-provider/), [Installation](/docs/reference/python/), [Errors](/docs/reference/python/errors/) | You're setting up, or something failed. |
+| Agents | [AgentBuilder](/docs/reference/python/agent-builder/), [Agent](/docs/reference/python/agent/), [AgentRun](/docs/reference/python/agent-run/) | You're configuring an agent and running turns. |
+| Models | [LangModel](/docs/reference/python/lang-model/), [Model providers](/docs/reference/python/model-providers/) | You want to call a model directly, or change how one runs. |
+| Tools | [Tools and MCP](/docs/reference/python/tools/) | You're giving the agent your functions or an MCP server. |
+| Data shapes | [Messages](/docs/reference/python/messages/), [Outputs](/docs/reference/python/outputs/), [Specs and options](/docs/reference/python/specs-and-options/) | You're reading or building what goes in and out. |
+
+Python and Node.js have the same pages in the same order. Switch language at the top of the sidebar and you stay on the same page. Rust is documented on [docs.rs](https://docs.rs/ailoy/0.3.2/ailoy/).
+
+Every page has the same layout: what the page covers and when you'd use it, an example, a table of its members, and then each member's signature, parameters, return value and errors.
+
+## Next steps
+
+- [Choosing an SDK](/docs/reference/choosing-an-sdk/): Python, Node.js or Rust.
+- [Choosing a model provider](/docs/reference/choosing-a-model-provider/): how your agent's model runs.
+- [AgentBuilder](/docs/reference/python/agent-builder/): everything an agent can be given.

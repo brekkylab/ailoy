@@ -1,0 +1,133 @@
+---
+title: "Choosing a model provider"
+description: "How your agent's model runs: through its CLI, its API, Bedrock, OpenRouter, vLLM or a model of your own, and when to use each."
+head:
+  - tag: meta
+    attrs:
+      name: robots
+      content: noindex
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Your code names a model, such as `anthropic/claude-sonnet-5-5`. The **provider** set for the model's org decides how it runs. The name stays the same whichever provider you pick, so you can start on one backend and move to another without changing the agent.
+
+## Pick a backend
+
+| Backend | Use it when | It needs |
+| --- | --- | --- |
+| `"cli"`, the org's CLI | You already use Claude Code, Codex or Gemini CLI. The agent runs through the CLI, on its sign-in. The default for `anthropic`, `openai` and `google`. | The CLI installed and signed in. |
+| `"api"`, the org's own API | You have the org's API key. The default for every org without a CLI. | The org's key (see below). |
+| `"bedrock"` | Your models run on AWS. | `AWS_BEARER_TOKEN_BEDROCK`, and `AWS_REGION`. |
+| `"openrouter"` | You want one key for models from many orgs. | `OPENROUTER_API_KEY`. |
+| `"vllm"` | You serve open models on your own GPUs. | A vLLM server at `VLLM_BASE_URL` (by default `http://localhost:8000/v1`), with `VLLM_API_KEY` if it's set. |
+| A factory | You have your own model, or want a stand-in for tests. | A function that returns a model. |
+
+Set a provider once, before the agent is built. It applies to the whole process: every agent and `LangModel` built afterwards runs that org's models through it.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```py
+import asyncio
+
+from ailoy import LangModel, get_lang_model_provider, set_lang_model_provider
+from ailoy.types import LangModelOptions, Message, MessageOutput, ToolDesc
+
+# Claude through its own API (reads ANTHROPIC_API_KEY) instead of Claude Code
+set_lang_model_provider("anthropic", "api")
+print(get_lang_model_provider("anthropic/claude-sonnet-5-5"))  # api
+
+# Qwen on your own vLLM server (VLLM_BASE_URL)
+set_lang_model_provider("Qwen", "vllm")
+
+
+# A model of your own: here, one that repeats the last message back
+class Echo:
+    def infer(
+        self, messages: list[Message], tools: list[ToolDesc], options: LangModelOptions
+    ) -> MessageOutput:
+        last = messages[-1]["contents"]
+        return {"message": {"role": "assistant", "contents": last}, "finish_reason": {"type": "stop"}}
+
+
+set_lang_model_provider("echo", lambda org, name: Echo())
+
+
+async def main() -> None:
+    model = await LangModel.create("echo/any-name")
+    out = await model.infer([{"role": "user", "contents": [{"type": "text", "text": "hi"}]}])
+    print(out["message"]["contents"])
+
+
+asyncio.run(main())
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const { LangModel, getLangModelProvider, setLangModelProvider } = require('@brekkylab/ailoy')
+
+// Claude through its own API (reads ANTHROPIC_API_KEY) instead of Claude Code
+setLangModelProvider('anthropic', 'api')
+console.log(getLangModelProvider('anthropic/claude-sonnet-5-5')) // api
+
+// Qwen on your own vLLM server (VLLM_BASE_URL)
+setLangModelProvider('Qwen', 'vllm')
+
+// A model of your own: here, one that repeats the last message back
+/** @type {import('@brekkylab/ailoy').CustomLangModel} */
+const echo = {
+  infer(messages) {
+    const last = messages[messages.length - 1].contents
+    return { message: { role: 'assistant', contents: last }, finish_reason: { type: 'stop' } }
+  },
+}
+setLangModelProvider('echo', () => echo)
+
+async function main() {
+  const model = await LangModel.create('echo/any-name')
+  const out = await model.infer([{ role: 'user', contents: [{ type: 'text', text: 'hi' }] }])
+  console.log(out.message.contents)
+}
+
+main()
+```
+
+</TabItem>
+</Tabs>
+
+## Name the model
+
+A model is named the way its maker names it, as `<org>/<name>`. `<org>` alone runs the CLI's default model, and every backend except the CLIs needs a name.
+
+| Models | Naming | Example |
+| --- | --- | --- |
+| Claude | `anthropic/<official API id>` | `anthropic/claude-sonnet-5-5` |
+| GPT | `openai/<official API id>` | `openai/gpt-6.1-sol` |
+| Gemini | `google/<official API id>` | `google/gemini-3.1-pro` |
+| DeepSeek | Hugging Face repo id | `deepseek-ai/DeepSeek-V3.2` |
+| Kimi | Hugging Face repo id | `moonshotai/Kimi-K2-Thinking` |
+| GLM | Hugging Face repo id | `zai-org/GLM-4.6` |
+| Qwen | Hugging Face repo id | `Qwen/Qwen3-235B-A22B-Instruct-2507` |
+
+## What each org can run on
+
+| Org | CLI | APIs |
+| --- | --- | --- |
+| `anthropic` | Claude Code | own API, Bedrock, OpenRouter |
+| `openai` | Codex | own API, Bedrock, OpenRouter |
+| `google` | Gemini CLI | own API, OpenRouter |
+| `deepseek-ai` | none | own API, Bedrock, OpenRouter, vLLM |
+| `moonshotai` | none | own API, Bedrock, OpenRouter, vLLM |
+| `zai-org` | none | own API, Bedrock, OpenRouter, vLLM |
+| `Qwen` | none | own API, Bedrock, OpenRouter, vLLM |
+
+The own APIs read their key from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`, `ZAI_API_KEY` and `DASHSCOPE_API_KEY` (Qwen).
+
+## Next steps
+
+- [Model providers](/docs/reference/python/model-providers/): `set_lang_model_provider` and the rest of the provider functions.
+- [LangModel](/docs/reference/python/lang-model/): run a model directly, without an agent.
+- [Model providers guide](/docs/guides/model-providers/): setting up each backend.

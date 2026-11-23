@@ -1,6 +1,6 @@
 ---
-title: AgentRun
-description: A turn, iterated with for await.
+title: "AgentRun"
+description: "One turn of an agent, iterated as it runs."
 head:
   - tag: meta
     attrs:
@@ -8,55 +8,58 @@ head:
       content: noindex
 ---
 
-*Generated from the [v0.3.2](https://github.com/brekkylab/ailoy/tree/v0.3.2) release of `@brekkylab/ailoy`.*
+`agent.run()` and `agent.runStream()` return an `AgentRun`, the turn before it has started, typed as an `AsyncIterableIterator`. Iterate it with `for await`.
 
-A turn, iterated with `for await`.
+Nothing runs until the first `next()`, and the turn only goes as far as it has been iterated. Breaking out of the loop, or `return()`, ends the turn where it stands.
 
-Nothing runs until the first `next()`, and the turn only goes as far as it has been
-iterated: breaking out of the loop, or `return()`, ends it where it stands.
+What it yields depends on where it came from. `run()` yields a [`MessageOutput`](../outputs/#messageoutput) per complete message: the model's, then each tool's result. `runStream()` yields [`MessageDeltaOutput`](../outputs/#messagedeltaoutput)s: pieces of the model's message as it's generated, and each tool's result whole. Errors from the model, a tool's provider or the console reject the `next()` they happen in, which `for await` throws.
 
-## Constructors
+## Example
 
-### Constructor
+```js
+const { AgentBuilder } = require('@brekkylab/ailoy')
 
-```ts
-new AgentRun(): AgentRun;
+async function main() {
+  const agent = await new AgentBuilder('anthropic/claude-sonnet-5-5').webFetchTool().build()
+
+  const turn = agent.run('Read https://example.com and summarize it.') // nothing has run yet
+  for await (const out of turn) {
+    console.log(out.message.role, out.finish_reason.type)
+    if (out.message.role === 'tool') break // ends the turn here, after the first tool result
+  }
+  await agent.close()
+}
+
+main()
 ```
 
-#### Returns
+Guides: [Running an agent](/docs/guides/running/).
 
-`AgentRun`
+## Members
+
+| Member | Description |
+| --- | --- |
+| [`next()`](#next) | Run the turn on to its next output. |
+| [`return()`](#return) | End the turn where it stands, as breaking out of `for await` does. |
 
 ## Methods
 
-### next()
+### `next()`
+
+Run the turn on to its next output. Done once the turn has ended.
 
 ```ts
-next(): Promise<IteratorResult<
-  | MessageOutput
-| MessageDeltaOutput, undefined>>;
+next(): Promise<IteratorResult<MessageOutput | MessageDeltaOutput, undefined>>
 ```
 
-#### Returns
+**Returns** `Promise<IteratorResult<`[`MessageOutput`](/docs/reference/nodejs/outputs/#messageoutput)` | `[`MessageDeltaOutput`](/docs/reference/nodejs/outputs/#messagedeltaoutput)`, undefined>>`: The next output, or done.
 
-`Promise`\<`IteratorResult`\<
-  \| [`MessageOutput`](/docs/reference/nodejs/message-output/)
-  \| [`MessageDeltaOutput`](/docs/reference/nodejs/message-delta-output/), `undefined`\>\>
-
-***
-
-### return()
-
-```ts
-return(): Promise<IteratorResult<
-  | MessageOutput
-| MessageDeltaOutput, undefined>>;
-```
+### `return()`
 
 End the turn where it stands, as breaking out of `for await` does.
 
-#### Returns
+```ts
+return(): Promise<IteratorResult<MessageOutput | MessageDeltaOutput, undefined>>
+```
 
-`Promise`\<`IteratorResult`\<
-  \| [`MessageOutput`](/docs/reference/nodejs/message-output/)
-  \| [`MessageDeltaOutput`](/docs/reference/nodejs/message-delta-output/), `undefined`\>\>
+**Returns** `Promise<IteratorResult<`[`MessageOutput`](/docs/reference/nodejs/outputs/#messageoutput)` | `[`MessageDeltaOutput`](/docs/reference/nodejs/outputs/#messagedeltaoutput)`, undefined>>`: Done.

@@ -1,175 +1,172 @@
-"""Writes the Python reference: one page per class in ``ailoy.__all__``, one for its functions and
-one for ``ailoy.types``, plus an overview.
+"""Reads the Python API of a release into the JSON model render.mjs writes the pages from.
 
-Usage (regen.mjs runs it): gen_py.py <the tag's bindings/python/python> <out dir> <tag>
+Usage (regen.mjs runs it): gen_py.py <the tag's bindings/python/python> <out.json> <tag>
 
 Signatures come from the tag's stubs, which griffe reads without importing the native module.
 Docstrings the stubs leave out come from the installed ailoy-py of the same version, whose native
 module has them from the Rust doc comments.
+
+The model maps each name to {"kind": "class" | "function" | "type", "module", "doc", ...}: a
+class has "members", a function "params", "returns" and "signature", a type "definition" and
+"fields". Node's node_api.mjs writes the same shape.
 """
 
+import json
 import re
 import sys
 from importlib.metadata import version as installed_version
 from pathlib import Path
 
 import ailoy as runtime
+import black
 import griffe
-import griffe2md
 
-src, out_dir, tag = sys.argv[1:4]
-out = Path(out_dir)
+src, out_file, tag = sys.argv[1:4]
 version = tag.removeprefix("v")
 
 if installed_version("ailoy-py") != version:
     sys.exit(f"gen_py.py: ailoy-py {installed_version('ailoy-py')} is installed; {tag} needs ailoy-py=={version}")
 
 pkg = griffe.load("ailoy", search_paths=[src], resolve_aliases=True, allow_inspection=False)
-exported = sorted(pkg.exports or [])
-
-# A class page's description, where the class's docstring makes a poor one.
-DESCRIPTIONS = {
-    "AgentBuilder": "sets up an agent and builds it.",
-    "Agent": "runs turns and holds the history.",
-    "AgentRun": "one turn, iterated with async for.",
-    "LangModel": "a model run without an agent.",
-    "AiloyError": "the exception ailoy raises.",
-}
-
-config = {
-    **griffe2md.default_config,
-    "search_paths": [src],
-    "show_root_full_path": False,
-    "show_object_full_path": False,
-    "show_root_members_full_path": False,
-    "show_signature_annotations": True,
-    "members_order": "source",
-    "heading_level": 2,
-    "docstring_style": None,
-    "summary": False,
-    "show_submodules": False,
-    # bases would link to anchors the site doesn't have (TypedDict, Protocol)
-    "show_bases": False,
-}
-
-
-def kebab(name):
-    return re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", name).lower()
+# what set_lang_model_provider takes, declared in the stubs only
+STUB_ONLY = ["CustomLangModel", "StreamingCustomLangModel", "LangModelFactory"]
+BLACK = black.Mode(line_length=80)
 
 
 def target(obj):
     return obj.final_target if obj.is_alias else obj
 
 
-def fill_docstrings(obj, live):
-    if live is None:
-        return
+def text(value):
+    # the stubs' private `_Path` is what pyo3 takes as a PathBuf: a str or an os.PathLike
+    return None if value is None else re.sub(r"\b_Path\b", "str | os.PathLike[str]", str(value))
+
+
+def live_doc(owner, name=None):
+    """The docstring the native module has, from the Rust doc comments."""
+    if owner is None:
+        return ""
+    obj = owner.__dict__.get(name) if name else owner
+    if isinstance(obj, (staticmethod, classmethod)):
+        obj = obj.__func__
+    return (getattr(obj, "__doc__", None) or "").strip()
+
+
+def doc_of(obj, owner=None, name=None):
     obj = target(obj)
-    doc = (getattr(live, "__doc__", None) or "").strip()
-    if doc and not obj.docstring and not obj.is_module:
-        obj.docstring = griffe.Docstring(doc, parent=obj)
+    return obj.docstring.value.strip() if obj.docstring else live_doc(owner, name)
+
+
+def function(fn, doc):
+    fn = target(fn)
+    params = [
+        {"name": p.name, "type": text(p.annotation), "default": text(p.default), "keyword_only": p.kind.value == "keyword-only"}
+        for p in fn.parameters
+        if p.name not in ("self", "cls")
+    ]
+    out = {
+        "doc": doc,
+        "params": params,
+        "returns": text(fn.returns),
+        "is_async": "async" in fn.labels,
+        "is_static": "staticmethod" in fn.labels,
+    }
+    out["signature"] = signature(fn.name, out)
+    return out
+
+
+def signature(name, fn):
+    """The signature as Python, black-formatted: `async def build() -> Agent`."""
+    parts, star = [], False
+    for p in fn["params"]:
+        if p["keyword_only"] and not star:
+            parts.append("*")
+            star = True
+        part = p["name"] + (f": {p['type']}" if p["type"] else "")
+        if p["default"] is not None:
+            part += f" = {p['default']}"
+        parts.append(part)
+    returns = f" -> {fn['returns']}" if fn["returns"] else ""
+    code = f"{'async ' if fn['is_async'] else ''}def {name}({', '.join(parts)}){returns}: ..."
+    code = black.format_str(code, mode=BLACK).strip()
+    code = re.sub(r":\s*\.\.\.$", "", code)
+    return ("@staticmethod\n" if fn["is_static"] else "") + code
+
+
+def class_of(name, obj, live):
+    obj = target(obj)
+    members = []
+    for member_name, member in obj.members.items():
+        # the dunders are how Python iterates and awaits; the page says so in words
+        if member_name.startswith("_") and member_name != "__init__":
+            continue
+        member = target(member)
+        doc = doc_of(member, live, member_name)
+        if "property" in member.labels:
+            t = text(member.returns if member.is_function else member.annotation)
+            members.append({"name": member_name, "kind": "property", "doc": doc, "type": t, "signature": f"{member_name}: {t}"})
+        elif member.is_function:
+            kind = "constructor" if member_name == "__init__" else "method"
+            fn = function(member, doc)
+            if kind == "constructor":
+                fn["signature"] = fn["signature"].replace("def __init__(", f"{name}(", 1).replace(" -> None", "")
+            members.append({"name": member_name, "kind": kind, **fn})
+    return {"kind": "class", "doc": doc_of(obj, live), "members": members}
+
+
+def typed_dict(name, obj):
+    """A TypedDict and its fields, a NotRequired[T] as an optional T."""
+    fields = []
+    for field_name, attr in target(obj).members.items():
+        attr = target(attr)
+        if not attr.is_attribute:
+            continue
+        t = text(attr.annotation) or "Any"
+        optional = t.startswith("NotRequired[")
+        fields.append({"name": field_name, "type": t[len("NotRequired[") : -1] if optional else t, "optional": optional})
+    lines = [f"class {name}(TypedDict):"]
+    lines += [f"    {f['name']}: {f'NotRequired[{f["type"]}]' if f['optional'] else f['type']}" for f in fields]
+    return {"kind": "type", "doc": doc_of(obj), "definition": "\n".join(lines), "fields": fields}
+
+
+def alias(name, obj):
+    obj = target(obj)
+    code = black.format_str(f"{name} = {text(obj.value)}", mode=BLACK).strip()
+    doc = obj.docstring.value.strip() if obj.docstring else ""
+    # types.py documents an alias in the comment above it (`# Anything JSON can hold.`)
+    if not doc and obj.lineno and obj.filepath:
+        lines = Path(obj.filepath).read_text(encoding="utf-8").splitlines()
+        above, i = [], obj.lineno - 2
+        while i >= 0 and lines[i].lstrip().startswith("#"):
+            above.insert(0, lines[i].lstrip().lstrip("#").strip())
+            i -= 1
+        doc = " ".join(above)
+    return {"kind": "type", "doc": doc, "definition": code, "fields": []}
+
+
+api = {}
+
+for name in pkg.exports or []:
+    obj = target(pkg[name])
+    live = getattr(runtime, name, None)
+    if obj.is_module:
+        continue
     if obj.is_class:
-        for name, member in obj.members.items():
-            if not name.startswith("_"):
-                fill_docstrings(member, getattr(live, name, None))
+        api[name] = {**class_of(name, obj, live), "module": "ailoy"}
+    elif obj.is_function:
+        api[name] = {**function(obj, doc_of(obj, live)), "kind": "function", "module": "ailoy"}
+    else:
+        sys.exit(f"gen_py.py: ailoy exports {name}, neither a class, a function nor a module")
 
+types = target(pkg["types"])
+for name in types.exports or []:
+    obj = target(types[name])
+    api[name] = {**(typed_dict(name, obj) if obj.is_class else alias(name, obj)), "module": "ailoy.types"}
 
-def functions_in(obj):
-    obj = target(obj)
-    if obj.is_function:
-        yield obj
-    elif obj.is_class:
-        yield from (target(m) for m in obj.members.values() if target(m).is_function)
+stubs = target(pkg["_ailoy"])
+for name in STUB_ONLY:
+    obj = target(stubs[name])
+    entry = class_of(name, obj, None) if obj.is_class else alias(name, obj)
+    api[name] = {**entry, "kind": "class" if obj.is_class else "type", "module": "ailoy._ailoy", "stub_only": True}
 
-
-def render(name, heading):
-    obj = pkg[name]
-    cfg = {**config, "show_root_heading": heading}
-    if target(obj).is_module:
-        # what the module exports, not what it imports
-        cfg["members"] = sorted(target(obj).exports or [])
-    body = griffe2md.render_object_docs(obj, cfg)
-    # griffe2md leaves async and staticmethod out of signatures
-    for f in functions_in(obj):
-        prefix = ("@staticmethod\n" if "staticmethod" in f.labels else "") + ("async " if "async" in f.labels else "")
-        if prefix:
-            body = re.sub(rf"(```python\n){re.escape(f.name)}\(", rf"\g<1>{prefix}{f.name}(", body, count=1)
-    return body
-
-
-def page(title, desc, body):
-    return f"""---
-title: {title}
-description: "{desc}"
-head:
-  - tag: meta
-    attrs:
-      name: robots
-      content: noindex
----
-
-*Generated from the [{tag}](https://github.com/brekkylab/ailoy/tree/{tag}) release of `ailoy-py`.*
-
-{body}"""
-
-
-def clean(text):
-    # rustdoc links: to a crate module -> that module on docs.rs; any other [`X`] -> `X`
-    text = re.sub(
-        r"\[`crate::([\w:]+)`\](?!\()",
-        lambda m: f"[`crate::{m[1]}`](https://docs.rs/ailoy/{version}/ailoy/{m[1].replace('::', '/')}/index.html)",
-        text,
-    )
-    text = re.sub(r"\[(`[^`\]]+`)\](?!\()", r"\1", text)
-    # the docs use no em dashes; the docstrings use them as commas
-    text = re.sub(r"\s*\u2014\s*", ", ", text)
-    return re.sub(r"\n{3,}", "\n\n", text).rstrip("\n") + "\n"
-
-
-classes = [n for n in exported if target(pkg[n]).is_class]
-functions = [n for n in exported if target(pkg[n]).is_function]
-modules = [n for n in exported if target(pkg[n]).is_module]
-if modules != ["types"] or len(classes) + len(functions) + 1 != len(exported):
-    sys.exit(f"gen_py.py: ailoy exports something with no page here: {exported}")
-
-for name in classes + functions:
-    fill_docstrings(pkg[name], getattr(runtime, name))
-
-# class order: the order a reader meets them, then any new ones by name
-order = ["AgentBuilder", "Agent", "AgentRun", "LangModel"]
-classes = sorted(classes, key=lambda n: (order.index(n) if n in order else len(order), n == "AiloyError", n))
-
-pages = []  # (slug, title, what it covers, body)
-for name in classes:
-    first = (target(pkg[name]).docstring.value.split(". ")[0].rstrip(".") + ".") if target(pkg[name]).docstring else ""
-    pages.append((kebab(name), name, DESCRIPTIONS.get(name, first or f"the {name} class."), render(name, False)))
-pages.insert(
-    len([c for c in classes if c != "AiloyError"]),
-    ("functions", "Functions", "the module functions: model and tool providers, and MCP.",
-     "\n".join(render(n, True) for n in functions)),
-)
-pages.insert(
-    len(pages) - (1 if "AiloyError" in classes else 0),
-    ("types", "Types", "the dict shapes in ailoy.types of messages, tools and specs.", render("types", True)),
-)
-
-out.mkdir(parents=True, exist_ok=True)
-for slug, title, covers, body in pages:
-    desc = f"Python reference for {title}: {covers}" if title not in ("Functions", "Types") else f"Python reference for {covers}"
-    (out / f"{slug}.md").write_text(clean(page(title, desc, body)), encoding="utf-8", newline="\n")
-
-rows = "\n".join(f"| [{title}](/docs/reference/python/{slug}/) | {covers[0].upper() + covers[1:]} |" for slug, title, covers, _ in pages)
-overview = f"""The package is `ailoy-py` on PyPI. Every name below is imported from `ailoy`.
-
-| Page | What it covers |
-| --- | --- |
-{rows}
-"""
-(out / "index.md").write_text(
-    clean(page("Python API reference", f"The Python API of ailoy-py {version}, generated from {tag}.", overview)),
-    encoding="utf-8",
-    newline="\n",
-)
-
-# the sidebar's Python entries, for regen.mjs
-print(" ".join(slug for slug, _, _, _ in pages))
+Path(out_file).write_text(json.dumps(api, indent=1), encoding="utf-8")
