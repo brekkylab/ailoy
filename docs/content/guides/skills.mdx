@@ -13,7 +13,7 @@ A skill is a folder of instructions for one kind of task, with the files those i
 
 ## What a skill folder holds
 
-A `SKILL.md`, and anything it refers to: scripts, references, data. `SKILL.md` opens with YAML frontmatter giving the skill's `name` and a `description` of what it does and when to use it, and the instructions follow. This is the start of the one in `examples/laya/shared`, whose instructions tell the agent to run `run_laya.py` from the same folder:
+A `SKILL.md`, and anything it refers to: scripts, references, data. `SKILL.md` opens with YAML frontmatter giving the skill's `name` and a `description` of what it does and when to use it, and the instructions follow. This is the start of the one in [`laya/shared`](https://github.com/brekkylab/ailoy-examples/tree/main/laya/shared) in ailoy-examples, whose instructions tell the agent to run `run_laya.py` from the same folder:
 
 ````markdown
 ---
@@ -42,7 +42,7 @@ Ailoy reads `name` and `description` and nothing else from the frontmatter, each
 
 ## Giving the agent a skill
 
-`skill(dir)` takes the folder's path in the agent's sandbox, not on your machine. Put the folder in the sandbox, with whatever its instructions expect to find there: Laya's instructions read its model from `/models`, which `examples/laya` puts on a volume of its own. A volume, as below, keeps the skill on the virtx server between runs; baking it into the image works too ([Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/), [Images](https://virtx.sh/docs/guides/images/)). Call `skill` once for each skill.
+`skill(dir)` takes the folder's path in the agent's sandbox, not on your machine. Put the folder in the sandbox, with whatever its instructions expect to find there: Laya's instructions read its model from `/models`, which the [laya example](https://github.com/brekkylab/ailoy-examples/tree/main/laya) puts on a volume of its own. A volume, as below, keeps the skill on the virtx server between runs; baking it into the image works too ([Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/), [Images](https://virtx.sh/docs/guides/images/)). Call `skill` once for each skill.
 
 <Tabs syncKey="lang">
 
