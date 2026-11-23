@@ -45,6 +45,8 @@ where
                 out.timed_out = timeout_ms.is_some() && end.code == 128 + 9;
                 return Ok(out);
             }
+            // A kind a later protocol adds: passed over.
+            _ => {}
         }
     }
     Err(Error::Call(
