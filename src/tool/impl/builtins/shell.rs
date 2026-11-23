@@ -2,7 +2,7 @@ use super::largest_fitting;
 use crate::{
     agent::{MAX_TOOL_RESULT_CHARS, fits_tool_result},
     datatype::Value,
-    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
+    tool::{SandboxJobEndReason, ToolDesc, ToolDescBuilder, ToolFunc},
     tool_func,
 };
 
@@ -132,12 +132,14 @@ pub fn get_shell_tool_func() -> ToolFunc {
         let out = match crate::console::exec(sandbox, ["sh", "-c", cmd.as_str()], timeout_ms).await
         {
             // A killed command has no exit code of its own.
-            Ok(out) if out.timed_out => {
+            Ok(out) if out.reason.is_some() => {
+                let reason = serde_json::to_value(&out.reason).unwrap_or_default();
                 return crate::to_value!({
                     "stdout": "",
                     "stderr": "",
                     "exit_code": -1,
-                    "timed_out": true
+                    "timed_out": out.reason == Some(SandboxJobEndReason::Timeout),
+                    "reason": reason.as_str().unwrap_or_default()
                 });
             }
             Ok(out) => out,
@@ -224,6 +226,7 @@ mod tests {
                 value.pointer("/timed_out").and_then(|v| v.as_bool()),
                 Some(false)
             );
+            assert!(value.pointer("/reason").is_none(), "{row}");
             let text = |key: &str| value.pointer(key).and_then(|v| v.as_str()).unwrap();
             let kept = [
                 kept_of(&stdout, text("/stdout")),
@@ -320,13 +323,15 @@ mod tests {
             .await
             .unwrap()
             .message;
-        let timed_out = msg.contents[0]
-            .as_value()
-            .unwrap()
-            .pointer("/timed_out")
-            .and_then(|v| v.as_bool())
-            .unwrap();
-        assert!(timed_out);
+        let value = msg.contents[0].as_value().unwrap();
+        assert_eq!(
+            value.pointer("/timed_out").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            value.pointer("/reason").and_then(|v| v.as_str()),
+            Some("timeout")
+        );
     }
 
     #[tokio::test]

@@ -4,7 +4,7 @@
 //! it is here: a command's whole output, and a path as the files API names it.
 
 use futures::StreamExt;
-pub use virtx::{Error, Sandbox};
+pub use virtx::{Error, Sandbox, SandboxJobEndReason};
 use virtx::{Files as _, SandboxExecArgs, SandboxJobEntry, Source};
 
 /// What a command printed, line by line, and how it ended.
@@ -15,8 +15,10 @@ pub struct ExecOutput {
     pub stderr: String,
     /// The server stopped keeping its output partway.
     pub truncated: bool,
-    /// It was killed for running past the timeout it was given.
+    /// It was killed for running past the timeout it was given: `reason` is `Timeout`.
     pub timed_out: bool,
+    /// Why the server killed it; `None` when it ended by itself.
+    pub reason: Option<SandboxJobEndReason>,
 }
 
 /// Run `argv` in `sandbox`, without a shell, and wait for it to end; killed after
@@ -41,8 +43,8 @@ where
             SandboxJobEntry::Truncated {} => out.truncated = true,
             SandboxJobEntry::End(end) => {
                 out.code = end.code;
-                // The server kills a command past its timeout with SIGKILL.
-                out.timed_out = timeout_ms.is_some() && end.code == 128 + 9;
+                out.timed_out = end.reason == Some(SandboxJobEndReason::Timeout);
+                out.reason = end.reason;
                 return Ok(out);
             }
             // A kind a later protocol adds: passed over.

@@ -40,4 +40,4 @@ pub use r#impl::*;
 pub use provider::*;
 
 /// What a sandbox tool runs a command with, and reads and writes a file with.
-pub use crate::console::{ExecOutput, Sandbox, exec, read, resolve, write};
+pub use crate::console::{ExecOutput, Sandbox, SandboxJobEndReason, exec, read, resolve, write};
