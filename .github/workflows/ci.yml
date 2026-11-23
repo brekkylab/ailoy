@@ -3,9 +3,9 @@
 # after each merge, and that run is what saves the Rust caches every other ref reads. The docs
 # are `docs`'s.
 #
-# No provider key is given: a test that needs one skips without it, and a fork's pull request
-# could read any key it were given. A test that needs a sandbox boots one on the virtx server
-# the virtx package fetches, over the runner's KVM.
+# No provider key is given, since a fork's pull request could read any key it were given. A test
+# that needs a sandbox boots one on the virtx server the virtx package fetches, over the runner's
+# KVM.
 name: ci
 
 on:
@@ -103,8 +103,10 @@ jobs:
       # A full version: setup-uv publishes no major tag to follow since v8.
       - uses: astral-sh/setup-uv@v10.3.3
 
-      - run: uv run maturin develop
-      - run: uv run pytest
+      # Plain `uv run` would build the project in its sync and maturin would build it again.
+      - run: uv sync --locked --no-install-project
+      - run: uv run --no-sync maturin develop
+      - run: uv run --no-sync pytest
 
   node:
     runs-on: ubuntu-24.04
