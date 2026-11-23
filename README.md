@@ -44,7 +44,7 @@ It supports <img src="https://cdn.simpleicons.org/python" width="16"/> Python, <
 
 No system dependencies are required, but your agent's model needs a way to run: by default its provider's CLI (Claude Code, Codex or Gemini CLI), or its API with a key.
 
-On Windows, the sandbox's micro-VM runs on the *Windows Hypervisor Platform*, which is off by default.
+On Windows, the sandbox's microVM runs on the *Windows Hypervisor Platform*, which is off by default.
 Turn the optional feature on from an administrator PowerShell and restart, with virtualization enabled in the firmware:
 
 ```powershell

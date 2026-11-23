@@ -23,7 +23,7 @@ A turn is one query and everything the agent does to answer it, going back and f
 
 ## The agent's sandbox
 
-An Ailoy agent can be given a sandbox, a Linux microVM from [virtx](https://virtx.sh/docs/). virtx is an open-source runtime developed alongside Ailoy. In the sandbox, the agent installs software, writes and runs code, and keeps files without touching your machine. Your code makes the sandbox with virtx's package and hands it to the agent, which then gets a shell and file tools that run inside it.
+An Ailoy agent can be given a sandbox, a Linux microVM from [virtx](https://virtx.sh/docs/). virtx is a standalone, open-source microVM sandbox for AI agents. In the sandbox, the agent installs software, writes and runs code, and keeps files without touching your machine. Your code makes the sandbox with virtx's package and hands it to the agent, which then gets a shell and file tools that run inside it.
 
 What is in the sandbox comes from two places:
 
