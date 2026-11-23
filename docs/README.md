@@ -9,7 +9,10 @@ sidebar.json  the sidebar: its groups and the order of the pages
 images/       pictures the pages and the repo's README.md show
 preview/      the preview's own code: content config, ailoy.co's header and styles, the link check
 public/       the favicon and the logos (README.md links the logos by URL)
+reference-gen/  writes content/reference/ from a release; see its README.md
 ```
+
+The API reference, `content/reference/`, is generated: don't edit its pages, regenerate them.
 
 ## Preview
 

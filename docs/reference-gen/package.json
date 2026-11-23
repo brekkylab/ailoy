@@ -1,0 +1,16 @@
+{
+  "name": "ailoy-reference-gen",
+  "private": true,
+  "type": "module",
+  "description": "Generates docs/content/reference/ from an Ailoy release.",
+  "scripts": {
+    "regen": "node regen.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "typedoc": "0.28.20",
+    "typedoc-plugin-frontmatter": "1.3.3",
+    "typedoc-plugin-markdown": "4.14.1",
+    "typescript": "6.0.3"
+  }
+}
