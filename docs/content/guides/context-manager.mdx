@@ -20,7 +20,7 @@ Every setting has a default, and an agent without a context manager behaves as i
 
 <Tabs syncKey="lang">
 
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```python
 agent = await (
@@ -33,7 +33,7 @@ agent = await (
 
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```js
 const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
@@ -44,7 +44,7 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
 
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```rust
 use ailoy::agent::ContextManager;
@@ -86,4 +86,17 @@ At the start of each turn, when the tool results hold more than `max_images` ima
 
 As with the token limit, the placeholders stay in `agent.history`.
 
-Apart from the cap, and for every model, an embedded image past 2576 pixels on its longer edge, attached or returned by a tool, is shrunk to that edge before it enters the history. The shrunk image is turned upright by its EXIF orientation and keeps its color profile. A WebP with transparent pixels comes back as PNG. An opaque lossless WebP also comes back as PNG, unless that PNG would pass 5 MB in base64, in which case it comes back as JPEG. Any other WebP comes back as JPEG. An image that would still come out past 5 MB in base64, or that is animated, is left as it is.
+Apart from the cap, and for every model, an embedded image past 2576 pixels on its longer edge, attached or returned by a tool, is shrunk to that edge before it enters the history. The shrunk image is turned upright by its EXIF orientation and keeps its color profile, and comes back as:
+
+| Image | Comes back as |
+| --- | --- |
+| Any but a WebP | Its own format |
+| A WebP with transparent pixels | PNG |
+| An opaque lossless WebP | PNG, or JPEG if that PNG would pass 5 MB in base64 |
+| Any other WebP | JPEG |
+| One that would still come out past 5 MB in base64, an animated one, or a GIF of any size | Left as it is |
+
+## Next
+
+- [Model providers](/docs/guides/model-providers/): naming a model and choosing how it runs.
+- [Tools](/docs/guides/tools/): built-in tools, your own functions, MCP and the browser.

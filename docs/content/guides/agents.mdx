@@ -26,7 +26,7 @@ Every call returns the builder, so they chain. Node.js spells them in camelCase 
 
 ## Instruction
 
-`instruction(...)` is the system message's text: who the agent is, what it is for, and where in its sandbox to find inputs and leave results. The agent writes the system message from this text, the list of its [skills](/docs/guides/skills/) and the notes in its [memory](/docs/guides/tools/#memory), and puts that message at the front of its history, unless the history you give it already has one.
+`instruction(...)` is the system message's text: who the agent is, what it is for, and where in its sandbox to find inputs and leave results. The agent writes the system message from this text, the list of its [skills](/docs/guides/skills/) (those of `skill(...)` and those of its sandbox's abins) and the notes in its [memory](/docs/guides/tools/#memory), and puts that message at the front of its history, unless the history you give it already has one.
 
 ## From a spec
 
@@ -34,7 +34,7 @@ The model, the instruction, the tools, the skills, the memory and the model opti
 
 <Tabs syncKey="lang">
 
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```python
 from ailoy import Agent
@@ -48,7 +48,7 @@ agent = await Agent.from_spec(spec, history=saved_messages, sandbox=sandbox)
 
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```js
 const { Agent } = require('@brekkylab/ailoy')
@@ -62,7 +62,7 @@ const agent = await Agent.fromSpec(spec, { history: savedMessages, sandbox })
 
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```rust
 use ailoy::agent::{Agent, AgentSpec, AgentState};
@@ -82,10 +82,15 @@ let agent = Agent::try_with_state(spec, state).await?;
 </TabItem>
 </Tabs>
 
-A spec lists its tools itself. `sandbox(...)` on the builder adds the shell and file tools to the spec; a sandbox given beside a spec does not, so the spec must list them for the agent to have them. In Rust, calling `.sandbox_tools()` on the `AgentSpec` adds them.
+A spec lists its tools itself. `sandbox(...)` on the builder adds the shell and file tools to the spec; a sandbox given beside a spec does not, so the spec must list them for the agent to have them. In Rust, calling `.sandbox_tools()` on the `AgentSpec` adds them. Python and Node.js have no such call: to give an agent with a sandbox a saved history there, build it with `AgentBuilder`, `history(...)` and `sandbox(...)`.
 
 ## Closing
 
 In Python and Node.js, `close()` releases what the agent holds: its model, any browser it started itself, and its hold on the sandbox's client. It waits for a turn being iterated to finish. In Python, `async with agent:` closes it at the end of the block. A Rust agent releases them when it is dropped.
 
 Closing an agent leaves its sandbox as it is, for you to use again or remove.
+
+## Next
+
+- [Giving an agent a sandbox](/docs/guides/sandbox/): the computer the agent works in.
+- [Model providers](/docs/guides/model-providers/): naming a model and choosing how it runs.

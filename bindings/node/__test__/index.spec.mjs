@@ -41,6 +41,18 @@ test('a builder is spent by build()', async () => {
   assert.throws(() => builder.instruction('again'), { code: 'INVALID_ARG' })
 })
 
+test('an unserved model is refused', async () => {
+  await assert.rejects(new AgentBuilder('nobody/serves-this').build(), { code: 'AILOY_ERROR' })
+})
+
+test('an unregistered tool is refused', async (t) => {
+  setLangModelProvider('tooled-missing', (org, name) => new Echo(name))
+  t.after(() => removeLangModelProvider('tooled-missing'))
+  const missing = { name: 'missing', parameters: { type: 'object' } }
+
+  await assert.rejects(new AgentBuilder('tooled-missing/model').tool(missing).build(), { code: 'AILOY_ERROR' })
+})
+
 test('an object that does not fit says what was expected', () => {
   assert.throws(() => new AgentBuilder('m').tool({ description: 'no name' }), {
     code: 'INVALID_ARG',
@@ -342,6 +354,10 @@ test('a model runs without an agent', async (t) => {
 test('a backend that does not exist is refused', () => {
   assert.throws(() => setLangModelProvider('x', 'smoke-signals'), { code: 'INVALID_ARG' })
   assert.throws(() => setLangModelProvider('x', 42), { code: 'INVALID_ARG' })
+})
+
+test('an unknown org cannot make a language model', async () => {
+  await assert.rejects(LangModel.create('nobody/serves-this'), { code: 'AILOY_ERROR' })
 })
 
 /** A model of the test's own, answering with the last user text. */

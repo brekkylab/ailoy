@@ -5,7 +5,7 @@ description: "Run a turn whole or streamed, stop it, carry a conversation over m
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-A turn starts with your query and ends when the model answers without asking for a tool. In between, the model may ask for tools any number of times, and their results go back to it. [How an agent works](/docs/concepts/) walks through it.
+A turn starts with your query and ends when the model answers without asking for a tool. In between, the model may ask for tools any number of times, and their results go back to it. [How an agent works](/docs/concepts/#a-turn) walks through it.
 
 ## run and run_stream
 
@@ -17,13 +17,16 @@ A turn starts with your query and ends when the model answers without asking for
 | `finish_reason` | Why the model stopped: `stop`, `length`, `tool_call` or `refusal` (with a `reason`). |
 | `usage` | Input and output token counts, when the provider reports them. |
 
-`agent.run_stream(query)` (`runStream` in Node.js) yields `MessageDeltaOutput`s instead: each `delta` holds a piece of a message, such as a few tokens of text or thinking, and each tool result comes as one delta. Concatenated, the deltas between two `finish_reason`s make up the message `run` would yield. In Rust, the `Delta` trait's `accumulate` and `finish` do this for you.
+`agent.run_stream(query)` (`runStream` in Node.js) yields `MessageDeltaOutput`s instead:
+
+- Each `delta` holds a piece of a message, such as a few tokens of text or thinking, and each tool result comes as one delta.
+- Concatenated, the deltas between two `finish_reason`s make up the message `run` would yield. In Rust, the `Delta` trait's `accumulate` and `finish` do this for you.
 
 Use `run` when you act on whole messages, and `run_stream` to show the model's words as it writes them.
 
 <Tabs syncKey="lang">
 
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```python
 async for output in agent.run_stream("Explain what a microVM is."):
@@ -34,7 +37,7 @@ async for output in agent.run_stream("Explain what a microVM is."):
 
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```js
 for await (const { delta } of agent.runStream('Explain what a microVM is.')) {
@@ -46,7 +49,7 @@ for await (const { delta } of agent.runStream('Explain what a microVM is.')) {
 
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```rust
 let query = Message::new(Role::User).with_contents([Part::text("Explain what a microVM is.")]);
@@ -66,7 +69,10 @@ while let Some(output) = stream.next().await {
 
 ## Iterating a turn
 
-Nothing runs until the turn is iterated: `agent.run(...)` returns a value to loop over, and each step of the loop moves the turn on. To stop a turn partway, break out of the loop. In Python, `aclose()` on the run does the same; in Rust, drop the stream. As the next turn begins, each tool call the model made that has no result yet gets a result saying so, which keeps the conversation in a form the model's API accepts.
+Nothing runs until the turn is iterated: `agent.run(...)` returns a value to loop over, and each step of the loop moves the turn on.
+
+- To stop a turn partway, break out of the loop. In Python, `aclose()` on the run does the same; in Rust, drop the stream.
+- As the next turn begins, each tool call the model made that has no result yet gets a result saying so, which keeps the conversation in a form the model's API accepts.
 
 ## Many turns
 
@@ -76,7 +82,7 @@ To continue a conversation in a new agent, as after your program restarts, pass 
 
 <Tabs syncKey="lang">
 
-<TabItem label="Python">
+<TabItem label="Python" icon="seti:python">
 
 ```python
 agent = await AgentBuilder("anthropic/claude-haiku-5-5").history(saved_messages).build()
@@ -84,7 +90,7 @@ agent = await AgentBuilder("anthropic/claude-haiku-5-5").history(saved_messages)
 
 
 </TabItem>
-<TabItem label="Node.js">
+<TabItem label="Node.js" icon="seti:javascript">
 
 ```js
 const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').history(savedMessages).build()
@@ -92,7 +98,7 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').history(saved
 
 
 </TabItem>
-<TabItem label="Rust">
+<TabItem label="Rust" icon="seti:rust">
 
 ```rust
 let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
@@ -117,8 +123,14 @@ A turn ends with an error rather than a message in these cases, and the agent st
 
 A tool that fails does not end the turn: an unknown tool, a missing sandbox, an exception in your function or a failed command becomes that call's result, and the model can try something else.
 
-In Python, ailoy's own errors are `AiloyError`, and a sandbox's failures are virtx's `VirtxError`, with the server's `status`. In Node.js, the error's `code` is `AILOY_ERROR` or `VIRTX_ERROR`.
+- In Python, ailoy's own errors are `AiloyError`, and a sandbox's failures are virtx's `VirtxError`, with the server's `status`.
+- In Node.js, an error from the agent has `code` `AILOY_ERROR`, or `VIRTX_ERROR` for a sandbox's failure. A call on virtx's own package, such as `createSandbox`, throws its `VirtxError` instead, with `source` and `status`.
 
 ## Usage
 
 Each `MessageOutput` from the model carries `usage`, its input and output token counts, when the provider reports them. A long run's input grows with every tool result; [Context manager](/docs/guides/context-manager/) keeps it under a limit.
+
+## Next
+
+- [Context manager](/docs/guides/context-manager/): keep a long run under the model's context limit.
+- [Message format](/docs/guides/message-format/): the messages `run` yields.

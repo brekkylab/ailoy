@@ -23,7 +23,7 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Ailoy",
-    "shortDescription": "AI agent builder with a VM at its heart",
+    "shortDescription": "The open-source agent SDK that gives every agent its own VM",
     "developerName": "brekkylab",
     "category": "Developer Tools",
     "longDescription": "Ailoy is a library for building AI agents in Python, Node.js and Rust. An agent drives a language model through tool-augmented turns, and each agent can own a Linux micro-VM to work in: it installs software, writes and runs code, and keeps files there, touching the host only through the folders you mount. Tools come from the built-in set, from any MCP server, from your own functions and from skill directories you write, and the GPU reaches into the VM for models and games.",

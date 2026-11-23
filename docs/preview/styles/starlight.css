@@ -1,39 +1,361 @@
-/* Starlight, toned to match the product pages: same fonts, same yellow accent on near-black. */
+/* Starlight, in ailoy.co's language: Archivo, black with white hairlines, one yellow, square corners.
+   Monospace is for code only. */
 :root {
-  --sl-font: 'Schibsted Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --sl-font: 'Archivo', ui-sans-serif, system-ui, sans-serif;
   --sl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --sl-nav-height: 3.75rem;
+  --sl-sidebar-width: 17.5rem;
+  --sl-content-width: 48rem;
+  --sl-text-h2: 1.5rem;
+  --sl-text-h3: 1.1875rem;
 }
 :root[data-theme='dark'] {
-  --sl-color-accent-low: #3a2e0c;
+  --sl-color-accent-low: #2b220a;
   --sl-color-accent: #ffc53d;
   --sl-color-accent-high: #ffe3a1;
-  --sl-color-white: #ecebe6;
-  --sl-color-gray-1: #d6d5d0;
-  --sl-color-gray-2: #b9bac0;
-  --sl-color-gray-3: #7f828a;
+  --sl-color-white: #f2f1ec;
+  --sl-color-gray-1: #d9d8d3;
+  --sl-color-gray-2: #b4b5ba;
+  --sl-color-gray-3: #80838b;
   --sl-color-gray-4: #4a4d54;
-  --sl-color-gray-5: #24262b;
-  --sl-color-gray-6: #121417;
-  --sl-color-black: #0c0d0f;
+  --sl-color-gray-5: #1c1e22;
+  --sl-color-gray-6: #0e0f11;
+  --sl-color-black: #050506;
+  --sl-color-hairline: rgba(255, 255, 255, 0.12);
+  --sl-color-hairline-light: rgba(255, 255, 255, 0.12);
+  --sl-color-hairline-shade: #000;
+  --sl-color-bg-nav: #050506;
+  --sl-color-bg-sidebar: #050506;
 }
 :root[data-theme='light'] {
-  --sl-color-accent-low: #fbe9c4;
-  --sl-color-accent: #9a6b00;
-  --sl-color-accent-high: #4a3300;
+  --sl-color-accent-low: #fbecc8;
+  --sl-color-accent: #8a5f00;
+  --sl-color-accent-high: #3d2b00;
+  --sl-color-white: #0b0c0e;
+  --sl-color-gray-1: #24262b;
+  --sl-color-gray-2: #43464d;
+  --sl-color-gray-3: #6c7079;
+  --sl-color-gray-4: #a7aab0;
+  --sl-color-gray-5: #e3e3e0;
+  --sl-color-gray-6: #f3f3f1;
+  --sl-color-gray-7: #f8f8f6;
+  --sl-color-black: #ffffff;
+  --sl-color-hairline: rgba(0, 0, 0, 0.12);
+  --sl-color-hairline-light: rgba(0, 0, 0, 0.1);
+  --sl-color-bg-nav: #ffffff;
+  --sl-color-bg-sidebar: #ffffff;
 }
 
-/* Current page in the sidebar: yellow text, no filled pill. */
-.sidebar-content a[aria-current='page'],
-.sidebar-content a[aria-current='page']:hover,
-.sidebar-content a[aria-current='page']:focus {
+/* ponytail: the mark ships white only; light mode inverts it until the designer's dark icon is in. */
+:root[data-theme='light'] .ailoy-mark {
+  filter: invert(1);
+}
+
+/* Scrollbars: thin and dark, never a white bar. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sl-color-gray-5) transparent;
+}
+
+/* The header's search shrinks to an icon while the sidebar, which has its own search, shows. */
+@media (min-width: 50rem) {
+  :root:not([data-sidebar-hidden]) header site-search button > :is(span, kbd) {
+    display: none !important;
+  }
+  :root:not([data-sidebar-hidden]) header site-search button {
+    border: 0;
+    background: transparent;
+    padding: 0.25rem;
+  }
+}
+header site-search button {
+  border-radius: 0;
+}
+
+/* GitHub and Discord in the header: grey like search and the theme switch, white on hover.
+   Yellow stays for what is current. */
+header .icons a {
+  color: var(--sl-color-gray-2);
+}
+header .icons a:hover {
+  color: var(--sl-color-white);
+  opacity: 1;
+}
+
+/* Phone menu button and the phone's On this page toggle: square, on hairlines. */
+.sl-menu-button {
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--sl-color-white) !important;
+  box-shadow: none !important;
+  border: 1px solid var(--sl-color-hairline) !important;
+}
+mobile-starlight-toc .toggle {
+  border-radius: 0;
+  border-color: var(--sl-color-hairline);
   background: transparent;
-  color: var(--sl-color-accent);
+}
+mobile-starlight-toc .dropdown {
+  border-radius: 0;
+  background: var(--sl-color-gray-6);
+  border-color: var(--sl-color-hairline);
+}
+
+/* Hairlines, not shadows, between the header, sidebar and page. */
+header.header {
+  border-bottom: 1px solid var(--sl-color-hairline);
+  padding-block: 0;
+}
+.sidebar-pane {
+  border-inline-end: 1px solid var(--sl-color-hairline);
+}
+/* No full-height line beside On this page: with the sidebar's, it boxed in the empty margin on wide
+   screens. The list keeps its own hairline. */
+.right-sidebar {
+  border-inline-start: 0 !important;
+}
+
+/* A hidden sidebar gives its width back to the page; the button left of the title brings it back. */
+@media (min-width: 50rem) {
+  :root[data-sidebar-hidden] {
+    --sl-content-inline-start: 0rem;
+  }
+  :root[data-sidebar-hidden] .sidebar-pane {
+    display: none;
+  }
+}
+
+/* Headings: Archivo, tight, no full stop. */
+.sl-markdown-content :is(h2, h3) {
+  letter-spacing: -0.015em;
+  font-weight: 600;
+}
+.sl-markdown-content h2 {
+  margin-top: 3rem;
+}
+.sl-markdown-content h3 {
+  margin-top: 2rem;
+}
+/* A page that opens with a heading starts it at the top, not under a gap. */
+.sl-markdown-content > :first-child,
+.sl-markdown-content > :first-child :is(h2, h3) {
+  margin-top: 0;
+}
+
+/* The three columns start on one line: the sidebar, the page and On this page all begin 24px
+   under the header, with 16px at the sides. */
+.sidebar-content {
+  padding-top: 1.5rem !important;
+}
+.right-sidebar-panel {
+  padding-top: 1.5rem !important;
+}
+/* The sidebar's scrollbar shows only while the pointer is over it. */
+.sidebar-pane {
+  scrollbar-color: transparent transparent;
+}
+.sidebar-pane:hover {
+  scrollbar-color: var(--sl-color-gray-5) transparent;
+}
+
+/* No full-width line under the page header: the header and the body read as one column. */
+.content-panel + .content-panel {
+  border-top: 0 !important;
+}
+
+/* On this page: the first entry only jumps back to the title, so it is left out. */
+starlight-toc nav > ul > li:first-child,
+mobile-starlight-toc nav > ul > li:first-child {
+  display: none;
+}
+
+/* On this page: a hairline down the side, the current section marked in yellow. Rows match the
+   sidebar's: 20px line, 6px above and below. */
+starlight-toc h2 {
+  margin-bottom: 0.5rem;
+  line-height: 20px;
+}
+starlight-toc nav a {
+  padding-block: 6px !important;
+  line-height: 20px;
+}
+starlight-toc nav > ul {
+  border-inline-start: 1px solid var(--sl-color-hairline);
+}
+starlight-toc a {
+  margin-inline-start: -1px;
+  border-inline-start: 1px solid transparent;
+  color: var(--sl-color-gray-3);
+}
+starlight-toc a:hover {
+  color: var(--sl-color-white);
+}
+starlight-toc a[aria-current='true'] {
+  color: var(--sl-color-white);
+  border-inline-start-color: var(--sl-color-accent);
+}
+starlight-toc h2,
+mobile-starlight-toc .toggle {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--sl-color-gray-2);
+}
+
+/* Cards, link cards, callouts and the previous / next links: square hairline panels. */
+.card,
+.sl-link-card,
+.pagination-links a,
+.starlight-aside {
+  border-radius: 0;
+  box-shadow: none;
+}
+.card,
+.sl-link-card {
+  background: var(--sl-color-gray-6);
+  border: 1px solid var(--sl-color-hairline);
+}
+/* a hovered card's border only brightens a little */
+.sl-link-card:hover {
+  background: var(--sl-color-gray-6);
+  border-color: var(--sl-color-gray-4);
+}
+/* Previous and next are plain links, no box: the title turns yellow on hover. */
+.pagination-links a {
+  background: none;
+  border: 0;
+  padding: 0.5rem 0;
+}
+.pagination-links a:hover .link-title {
+  color: var(--sl-color-text-accent);
+}
+.sl-link-card .title,
+.pagination-links .link-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--sl-color-white);
+}
+.sl-link-card .description {
+  color: var(--sl-color-gray-2);
+  font-size: 0.875rem;
+}
+.starlight-aside {
+  background: var(--sl-color-gray-6);
+  border: 1px solid var(--sl-color-hairline);
+  border-inline-start: 2px solid var(--sl-color-gray-3);
+}
+.starlight-aside--tip,
+.starlight-aside--note {
+  border-inline-start-color: var(--sl-color-accent);
+}
+.starlight-aside--caution,
+.starlight-aside--danger {
+  border-inline-start-color: #e5484d;
+}
+.starlight-aside__title {
+  color: var(--sl-color-white);
+}
+
+/* Tables in a closed box: a hairline round every cell, the header row shaded. On wider screens a
+   table fills the column, so its box never runs past its last column; on a phone it keeps
+   Starlight's block display, which scrolls sideways. */
+.sl-markdown-content table {
+  border-collapse: collapse;
+  border: 1px solid var(--sl-color-hairline);
+}
+@media (min-width: 50rem) {
+  .sl-markdown-content table {
+    display: table;
+    width: 100%;
+  }
+}
+.sl-markdown-content :is(th, td) {
+  border: 1px solid var(--sl-color-hairline);
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+}
+/* Long code in a cell breaks rather than pushing the table past the column. */
+.sl-markdown-content td:not(:first-child) code {
+  overflow-wrap: anywhere;
+}
+.sl-markdown-content thead th {
+  background: var(--sl-color-gray-6);
+}
+/* A name in a table's first column stays on one line (self-hosted, not self- / hosted). */
+.sl-markdown-content td:first-child code {
+  white-space: nowrap;
+}
+.sl-markdown-content th {
+  color: var(--sl-color-gray-2);
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+/* Language tabs above code: plain labels, the chosen one underlined in yellow. */
+starlight-tabs [role='tablist'] {
+  border-bottom: 1px solid var(--sl-color-hairline);
+}
+starlight-tabs [role='tab'] {
+  font-size: 0.875rem;
+  color: var(--sl-color-gray-3);
+  border-bottom: 1px solid transparent;
+}
+starlight-tabs [role='tab'][aria-selected='true'] {
+  color: var(--sl-color-white);
+  border-bottom-color: var(--sl-color-accent);
   font-weight: 500;
 }
 
-/* Cards and link cards: square, like the product pages. */
-.card,
-.sl-link-card,
-.pagination-links a {
+/* Code shows exactly what to type: no ligatures turning -> or != into one glyph. */
+code,
+pre,
+.expressive-code {
+  font-variant-ligatures: none;
+}
+
+/* Inline code: a flat chip. */
+.sl-markdown-content :not(pre) > code {
+  background: var(--sl-color-gray-5);
+  border: 0;
   border-radius: 0;
+  padding: 0.1em 0.35em;
+}
+
+/* Footer: edit link and last updated in one quiet row above the previous / next panels. */
+footer .meta {
+  font-size: 0.8125rem;
+  color: var(--sl-color-gray-3);
+}
+
+/* Setup pages (Installation, Quick start) wrap their steps in .steps-flow: each h2 gets its number
+   in a square on a rail down the left, as numbered steps. */
+.sl-markdown-content .steps-flow {
+  counter-reset: step;
+  position: relative;
+  padding-left: 2.75rem;
+}
+.sl-markdown-content .steps-flow::before {
+  content: '';
+  position: absolute;
+  left: 0.875rem;
+  top: 1.25rem;
+  bottom: 0;
+  border-left: 1px solid var(--sl-color-hairline);
+}
+.sl-markdown-content .steps-flow > h2 {
+  position: relative;
+}
+.sl-markdown-content .steps-flow > h2::before {
+  counter-increment: step;
+  content: counter(step);
+  position: absolute;
+  left: -2.75rem;
+  top: 0.15em;
+  width: 1.75rem;
+  height: 1.75rem;
+  display: grid;
+  place-items: center;
+  background: var(--sl-color-black);
+  border: 1px solid var(--sl-color-accent);
+  color: var(--sl-color-accent);
+  font: 600 0.875rem/1 var(--sl-font-mono);
 }

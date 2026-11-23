@@ -1,0 +1,181 @@
+---
+// Starlight override: a search button and a hide button on top, then the groups, each page with an
+// icon. Groups are plain headings, always open: with this few pages nobody folds them. Search
+// opens the header's search dialog, so there is one dialog on the page.
+import MobileMenuFooter from 'virtual:starlight/components/MobileMenuFooter';
+import { Icon } from '@astrojs/starlight/components';
+import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro';
+import PageIcon from './PageIcon.astro';
+
+const { sidebar } = Astro.locals.starlightRoute;
+---
+
+<div class="tools">
+  <button class="search" type="button" data-open-search>
+    <Icon name="magnifier" size="1rem" />
+    <span>Search</span>
+    <kbd>Ctrl K</kbd>
+  </button>
+  <button class="hide" type="button" data-hide-sidebar aria-label="Hide sidebar" title="Hide sidebar">
+    <Icon name="left-caret" size="1rem" />
+  </button>
+</div>
+
+<SidebarPersister>
+  <ul class="top">
+    {
+      sidebar.map((e: any) =>
+        e.type === 'link' ? (
+          <li>
+            <a href={e.href} aria-current={e.isCurrent ? 'page' : undefined} class="item solo">
+              <PageIcon href={e.href} />
+              <span>{e.label}</span>
+            </a>
+          </li>
+        ) : (
+          <li>
+            <p class="group">{e.label}</p>
+            <ul>
+              {e.entries.map((c: any) => (
+                <li>
+                  <a href={c.href} aria-current={c.isCurrent ? 'page' : undefined} class="item">
+                    <PageIcon href={c.href} />
+                    <span>{c.label}</span>
+                    {c.badge && <span class="badge">{c.badge.text}</span>}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </li>
+        )
+      )
+    }
+  </ul>
+</SidebarPersister>
+
+<div class="md:sl-hidden">
+  <MobileMenuFooter />
+</div>
+
+<script>
+  document.querySelector('[data-open-search]')?.addEventListener('click', () => {
+    document.querySelector<HTMLButtonElement>('site-search button[data-open-modal]')?.click();
+  });
+  const root = document.documentElement;
+  const setHidden = (hidden: boolean) => {
+    root.toggleAttribute('data-sidebar-hidden', hidden);
+    try {
+      localStorage.setItem('ailoy-sidebar-hidden', hidden ? '1' : '');
+    } catch {}
+  };
+  document.querySelector('[data-hide-sidebar]')?.addEventListener('click', () => setHidden(true));
+  document.addEventListener('click', (ev) => {
+    if ((ev.target as Element).closest?.('[data-show-sidebar]')) setHidden(false);
+  });
+</script>
+
+<style>
+  .tools {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .search {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.6rem;
+    background: transparent;
+    border: 1px solid var(--sl-color-hairline);
+    color: var(--sl-color-gray-3);
+    font: inherit;
+    font-size: 0.875rem;
+    cursor: pointer;
+  }
+  .search:hover,
+  .hide:hover {
+    border-color: var(--sl-color-gray-4);
+    color: var(--sl-color-white);
+  }
+  .search kbd {
+    margin-inline-start: auto;
+    font: inherit;
+    font-size: 0.75rem;
+    color: var(--sl-color-gray-3);
+  }
+  .hide {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 2.1rem;
+    background: transparent;
+    border: 1px solid var(--sl-color-hairline);
+    color: var(--sl-color-gray-3);
+    cursor: pointer;
+  }
+  @media (min-width: 50rem) {
+    .hide {
+      display: flex;
+    }
+  }
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .top > li + li {
+    margin-top: 0.75rem;
+  }
+  .group {
+    margin: 0;
+    padding: 6px 8px;
+    font-size: 0.8125rem;
+    line-height: 20px;
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+  .group + ul {
+    margin-top: 0.15rem;
+  }
+  /* A page not written yet: a quiet label, not the yellow of what is current. */
+  .badge {
+    margin-inline-start: auto;
+    padding: 0 6px;
+    font-size: 0.6875rem;
+    line-height: 18px;
+    color: var(--sl-color-gray-3);
+    border: 1px solid var(--sl-color-hairline);
+  }
+  /* Same row as the On this page list: 20px line, 6px above and below, 32px in all. */
+  .item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 6px 8px;
+    font-size: 0.875rem;
+    line-height: 20px;
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+    border-inline-start: 1px solid transparent;
+  }
+  .item :global(svg) {
+    flex-shrink: 0;
+    color: var(--sl-color-gray-3);
+  }
+  .item:hover {
+    color: var(--sl-color-white);
+    background: var(--sl-color-gray-6);
+  }
+  .item[aria-current='page'] {
+    color: var(--sl-color-white);
+    background: var(--sl-color-gray-6);
+    border-inline-start-color: var(--sl-color-accent);
+  }
+  .item[aria-current='page'] :global(svg) {
+    color: var(--sl-color-accent);
+  }
+  .solo {
+    font-weight: 500;
+  }
+</style>

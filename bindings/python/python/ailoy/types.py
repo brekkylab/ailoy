@@ -7,13 +7,7 @@ against these at runtime; the Rust side does, when the dict arrives.
 
 from __future__ import annotations
 
-import sys
-from typing import Any, Literal, TypedDict, Union
-
-if sys.version_info >= (3, 11):
-    from typing import NotRequired
-else:  # pragma: no cover
-    from typing_extensions import NotRequired
+from typing import Any, Literal, NotRequired, TypedDict, Union
 
 Role = Literal["system", "user", "assistant", "tool"]
 

@@ -1,0 +1,173 @@
+---
+// Starlight override: a breadcrumb, the title with the page's description under it, and actions:
+// copy the page as Markdown, or open it as Markdown, on GitHub, or in ChatGPT or Claude.
+import { Icon } from '@astrojs/starlight/components';
+import WelcomeBanner from '../WelcomeBanner.astro';
+
+// Starlight's own id for the title, which its "Overview" link in the table of contents targets.
+const PAGE_TITLE_ID = '_top';
+const { entry, sidebar, editUrl } = Astro.locals.starlightRoute;
+const found = sidebar.find((e: any) => e.type === 'group' && e.entries.some((c: any) => c.isCurrent)) as any;
+// No breadcrumb when it would only repeat the title (the Tools page in the Tools group).
+const group = found?.label === entry.data.title ? undefined : found;
+
+const path = Astro.url.pathname;
+const md = path === '/docs/' ? '/docs/index.md' : path.replace(/\/$/, '') + '.md';
+const mdAbsolute = new URL(md, Astro.site).href;
+const prompt = encodeURIComponent(`Read ${mdAbsolute} so I can ask questions about it.`);
+const actions = [
+  { label: 'View as Markdown', href: md, icon: 'document' },
+  { label: 'Open on GitHub', href: editUrl?.href.replace('/edit/', '/blob/'), icon: 'github' },
+  { label: 'Open in ChatGPT', href: `https://chatgpt.com/?q=${prompt}`, icon: 'comment-alt' },
+  { label: 'Open in Claude', href: `https://claude.ai/new?q=${prompt}`, icon: 'comment-alt' }
+].filter((a) => a.href);
+---
+
+<div class="page-head">
+  {path === '/docs/' && <WelcomeBanner />}
+  {
+    group && (
+      <nav class="crumbs" aria-label="Breadcrumb">
+        <span>{group.label}</span>
+        <Icon name="right-caret" size="0.9rem" />
+        <span aria-current="page">{entry.data.title}</span>
+      </nav>
+    )
+  }
+  <h1 id={PAGE_TITLE_ID}>{entry.data.title}</h1>
+  {entry.data.description && <p class="lede">{entry.data.description}</p>}
+  <div class="actions">
+    <button type="button" data-copy-md={md}>
+      <Icon name="document" size="0.95rem" />
+      <span data-label>Copy Markdown</span>
+    </button>
+    <details class="open">
+      <summary>
+        Open
+        <Icon name="down-caret" size="0.95rem" />
+      </summary>
+      <div class="menu">
+        {
+          actions.map((a) => (
+            <a href={a.href} target={a.href.startsWith('/') ? undefined : '_blank'} rel="noopener">
+              <Icon name={a.icon as any} size="0.95rem" />
+              {a.label}
+              <Icon name="external" size="0.8rem" class="ext" />
+            </a>
+          ))
+        }
+      </div>
+    </details>
+  </div>
+</div>
+
+<script>
+  for (const b of document.querySelectorAll<HTMLButtonElement>('[data-copy-md]')) {
+    const label = b.querySelector('[data-label]')!;
+    b.addEventListener('click', async () => {
+      try {
+        const text = await (await fetch(b.dataset.copyMd!)).text();
+        await navigator.clipboard.writeText(text);
+        label.textContent = 'Copied';
+      } catch {
+        label.textContent = 'Copy failed';
+      }
+      setTimeout(() => (label.textContent = 'Copy Markdown'), 1600);
+    });
+  }
+  // Close the Open menu on a click outside it.
+  document.addEventListener('click', (ev) => {
+    for (const d of document.querySelectorAll<HTMLDetailsElement>('details.open[open]')) {
+      if (!d.contains(ev.target as Node)) d.open = false;
+    }
+  });
+</script>
+
+<style>
+  .page-head {
+    padding-bottom: 0.5rem;
+  }
+  .crumbs {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8125rem;
+    color: var(--sl-color-gray-3);
+  }
+  .crumbs [aria-current] {
+    color: var(--sl-color-gray-2);
+  }
+  h1 {
+    margin-top: 0.75rem;
+    font-size: clamp(1.9rem, 2.6vw, 2.5rem);
+    line-height: 1.15;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--sl-color-white);
+  }
+  .lede {
+    margin-top: 0.75rem;
+    font-size: 1.0625rem;
+    color: var(--sl-color-gray-2);
+    max-width: 44rem;
+  }
+  .actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1.25rem;
+  }
+  .actions button,
+  .open summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    height: 2rem;
+    padding-inline: 0.7rem;
+    background: transparent;
+    border: 1px solid var(--sl-color-hairline);
+    color: var(--sl-color-gray-1);
+    font: inherit;
+    font-size: 0.8125rem;
+    cursor: pointer;
+    list-style: none;
+  }
+  .open summary::-webkit-details-marker {
+    display: none;
+  }
+  .actions button:hover,
+  .open summary:hover,
+  .open[open] summary {
+    border-color: var(--sl-color-gray-4);
+    color: var(--sl-color-white);
+  }
+  .open {
+    position: relative;
+  }
+  .menu {
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 0.35rem);
+    left: 0;
+    min-width: 13rem;
+    padding: 0.3rem;
+    background: var(--sl-color-gray-6);
+    border: 1px solid var(--sl-color-hairline);
+  }
+  .menu a {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.45rem 0.55rem;
+    font-size: 0.8125rem;
+    color: var(--sl-color-gray-1);
+    text-decoration: none;
+  }
+  .menu a:hover {
+    background: var(--sl-color-gray-5);
+    color: var(--sl-color-white);
+  }
+  .menu :global(.ext) {
+    margin-inline-start: auto;
+    color: var(--sl-color-gray-3);
+  }
+</style>

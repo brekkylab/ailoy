@@ -1,7 +1,7 @@
 //! The crate as a user takes it, on the platform this runs on -- as `node.mjs` and
 //! `python.py` are for the bindings, and told what this platform can do the same way:
 //!
-//!   SMOKE_SERVER  1 if virtx-uvm publishes a server for this platform, which
+//!   SMOKE_SERVER  1 if virtx publishes `virtx-stdio` for this platform, which
 //!                 `ensure_virtx()` fetches into $VIRTX_HOME, else 0
 //!   SMOKE_VM      1 if this machine can boot one (KVM or HVF), else 0
 //!
@@ -16,10 +16,7 @@ use ailoy::{
 };
 use futures::StreamExt as _;
 use serde_json::{Value, json};
-use virtx::{
-    Client, Files as _, ImageJobEntry, SandboxCreateArgs, SandboxVolume, image::ImageClient,
-    image::Recipe,
-};
+use virtx::{Client, Files as _, SandboxCreateArgs};
 
 fn want(name: &str) -> bool {
     std::env::var(name).as_deref() == Ok("1")
@@ -133,12 +130,12 @@ async fn main() -> anyhow::Result<()> {
     let said: Vec<&str> = outputs.iter().flat_map(|o| o.message.contents.iter().filter_map(Part::as_text)).collect();
     check(said == ["hello"], "a turn against the model answers");
 
-    // The console server, as the guides have it: `ensure_virtx()` first -- the release the
-    // virtx from crates.io pins.
-    let server = match virtx::ensure_virtx().await {
-        Ok(bin) => {
-            println!("  ensure_virtx: {}", bin.display());
-            Some(bin)
+    // The console server, as the guides have it: `ensure_virtx()` first -- `virtx-stdio` of
+    // the version of the virtx from crates.io.
+    let server = match async { virtx::ensure_virtx()?.await }.await {
+        Ok(path) => {
+            println!("  ensure_virtx: {}", path.display());
+            Some(path)
         }
         Err(e) => {
             println!("  ensure_virtx: {e:#}");
@@ -146,41 +143,36 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     check(server.is_some() == want("SMOKE_SERVER"), &format!("ensure_virtx {} server", if server.is_some() { "fetched" } else { "fetched no" }));
-    if let Some(bin) = &server {
+    if let Some(path) = &server {
         let exe = if cfg!(windows) { ".exe" } else { "" };
-        check(bin.join(format!("virtx-uvm{exe}")).is_file(), &format!("virtx-uvm{exe} is in {}", bin.display()));
+        let name = format!("virtx-stdio{exe}");
+        check(path.file_name() == Some(name.as_ref()) && path.is_file(), &format!("ensure_virtx answers {name}"));
         if let Some(home) = std::env::var_os("VIRTX_HOME") {
-            check(*bin == std::path::Path::new(&home).join("bin"), "into $VIRTX_HOME/bin");
+            check(path.starts_with(&home), "into $VIRTX_HOME");
         }
-        // The server runs on this machine, and answers -- no VM needed to ask its version.
-        let mut images = ImageClient::try_new().await.map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        let version = images.version().await.map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        drop(images);
-        check(!version.is_empty(), &format!("the console server answers (protocol {version})"));
+        // The server runs on this machine, and answers -- no VM needed to list its images.
+        let client = Client::spawn(path.to_string_lossy(), [] as [&str; 0])?;
+        let images = client.list_image().await;
+        client.close().await?;
+        match &images {
+            Ok(images) => println!("  list_image: {} images", images.len()),
+            Err(e) => println!("  list_image: {e}"),
+        }
+        check(images.is_ok(), "the console server answers");
     }
 
-    if server.is_some() && want("SMOKE_VM") {
+    if let Some(path) = &server
+        && want("SMOKE_VM")
+    {
         // An agent's shell tool, in a sandbox that sees a volume.
-        let client = tokio::task::spawn_blocking(|| Client::spawn_virtx([] as [&str; 0])).await??;
+        let client = Client::spawn(path.to_string_lossy(), [] as [&str; 0])?;
         let images = client.list_image().await?;
         if !images.iter().any(|i| i.reference.rsplit('/').next() == Some("alpine:latest")) {
-            let mut log = client.pull_image("alpine:latest", None).log();
-            while let Some(entry) = log.next().await {
-                if let ImageJobEntry::End(end) = entry?.entry
-                    && let Some(error) = end.error
-                {
-                    anyhow::bail!("pulling alpine:latest: {error}");
-                }
-            }
+            client.pull_image("alpine:latest", None).complete(false).await?;
         }
         let volume = client.create_volume(None::<String>).await?;
         volume.write_file("from-host.txt", "by volume", None).await?;
-        let mut args = SandboxCreateArgs::new("alpine:latest");
-        args.volumes = vec![SandboxVolume {
-            volume: volume.name().to_string(),
-            path: "/host".to_string(),
-            readonly: false,
-        }];
+        let args = SandboxCreateArgs::new("alpine:latest").volume(volume.name(), "/host");
         let sandbox = client.create_sandbox(&args).await?;
         let mut agent = AgentBuilder::new("fake/model").sandbox(sandbox.clone()).build().await?;
         let cmd = "uname -m; cat /host/from-host.txt; echo written > /host/from-vm.txt";

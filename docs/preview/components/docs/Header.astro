@@ -1,0 +1,113 @@
+---
+// Starlight override: the site title, then the docs' sections as tabs, then search, links and the
+// theme switch. A tab is current when the page's path falls under it.
+import Search from 'virtual:starlight/components/Search';
+import SiteTitle from 'virtual:starlight/components/SiteTitle';
+import SocialIcons from 'virtual:starlight/components/SocialIcons';
+import ThemeSelect from 'virtual:starlight/components/ThemeSelect';
+import { Icon } from '@astrojs/starlight/components';
+
+const path = Astro.url.pathname;
+const tabs = [
+  { label: 'Docs', href: '/docs/', match: (p: string) => !p.startsWith('/docs/reference/') },
+  { label: 'Examples', href: 'https://ailoy.co/examples/', match: () => false },
+  { label: 'Changelog', href: 'https://github.com/brekkylab/ailoy/releases', match: () => false },
+  // `soon` until the reference pages are written (planned for Weeks 4 and 5).
+  { label: 'API reference', href: '/docs/reference/', match: (p: string) => p.startsWith('/docs/reference/'), soon: true }
+];
+---
+
+<div class="header">
+  <button type="button" class="show-sb" data-show-sidebar aria-label="Show sidebar" title="Show sidebar">
+    <Icon name="bars" size="1.1rem" />
+  </button>
+  <SiteTitle />
+  <nav class="tabs" aria-label="Sections">
+    {
+      tabs.map((t) => (
+        <a href={t.href} aria-current={t.match(path) ? 'page' : undefined}>
+          {t.label}
+          {t.soon && <span class="soon">Soon</span>}
+        </a>
+      ))
+    }
+  </nav>
+  <div class="right">
+    <Search />
+    <div class="icons md:sl-flex sl-hidden">
+      <SocialIcons />
+      <ThemeSelect />
+    </div>
+  </div>
+</div>
+
+<style>
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    height: 100%;
+  }
+  .show-sb {
+    display: none;
+    margin-inline-end: -1rem;
+    padding: 0.25rem;
+    background: transparent;
+    border: 0;
+    color: var(--sl-color-gray-2);
+    cursor: pointer;
+  }
+  .show-sb:hover {
+    color: var(--sl-color-white);
+  }
+  @media (min-width: 50rem) {
+    :global(:root[data-sidebar-hidden]) .show-sb {
+      display: flex;
+    }
+  }
+  .tabs {
+    display: none;
+    gap: 0.25rem;
+    height: 100%;
+  }
+  .tabs a {
+    display: flex;
+    align-items: center;
+    padding-inline: 0.75rem;
+    font-size: 0.875rem;
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    margin-bottom: -1px;
+  }
+  .soon {
+    margin-inline-start: 0.4rem;
+    padding: 0 5px;
+    font-size: 0.6875rem;
+    line-height: 16px;
+    color: var(--sl-color-gray-3);
+    border: 1px solid var(--sl-color-hairline);
+  }
+  .tabs a:hover {
+    color: var(--sl-color-white);
+  }
+  .tabs a[aria-current='page'] {
+    color: var(--sl-color-white);
+    border-bottom-color: var(--sl-color-accent);
+  }
+  .right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-inline-start: auto;
+  }
+  .icons {
+    align-items: center;
+    gap: 1rem;
+  }
+  @media (min-width: 72rem) {
+    .tabs {
+      display: flex;
+    }
+  }
+</style>

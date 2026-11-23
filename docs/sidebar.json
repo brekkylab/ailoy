@@ -1,19 +1,25 @@
 [
   {
-    "label": "Getting started",
+    "label": "Get started",
     "items": [
-      { "label": "Overview", "link": "/" },
-      { "slug": "guides/installation" },
-      { "slug": "guides/quick-start" }
+      { "label": "Welcome to Ailoy", "link": "/" },
+      { "slug": "guides/quick-start" },
+      { "slug": "guides/installation" }
     ]
   },
-  { "slug": "concepts" },
   {
-    "label": "Building an agent",
+    "label": "Build an agent",
     "items": [
+      { "slug": "concepts" },
       { "slug": "guides/agents" },
       { "slug": "guides/sandbox" },
       { "slug": "guides/running" },
+      { "slug": "guides/context-manager" }
+    ]
+  },
+  {
+    "label": "Models",
+    "items": [
       { "slug": "guides/model-providers" },
       { "slug": "guides/message-format" }
     ]
@@ -28,8 +34,7 @@
     ]
   },
   {
-    "label": "State over time",
-    "items": [{ "slug": "guides/context-manager" }]
-  },
-  { "slug": "reference" }
+    "label": "Reference",
+    "items": [{ "slug": "reference", "badge": "Soon" }]
+  }
 ]
