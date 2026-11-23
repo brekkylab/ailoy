@@ -1,5 +1,5 @@
 use crate::{
-    agent::{Agent, AgentSpec, AgentState, ContextManager},
+    agent::{Agent, AgentSpec, AgentState, ContextManager, Memory},
     browser::{Browser, BrowserSession},
     datatype::Value,
     message::Message,
@@ -106,6 +106,13 @@ impl AgentBuilder {
     /// the agent first uses it, or [`Agent::start_browser`].
     pub fn browser(mut self, browser: Browser) -> Self {
         self.browser = Some(browser);
+        self
+    }
+
+    /// Let this agent keep short notes on the user in `MEMORY.md` in a folder on this host.
+    /// See [`AgentSpec::memory`].
+    pub fn memory(mut self, memory: impl Into<Memory>) -> Self {
+        self.spec = self.spec.memory(memory);
         self
     }
 

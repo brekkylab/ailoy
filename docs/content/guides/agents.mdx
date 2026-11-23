@@ -19,17 +19,18 @@ Every call returns the builder, so they chain. Node.js spells them in camelCase 
 | `web_search_tool(engines)`, `web_fetch_tool()` | Searching the web and reading a page, from your program. | [Tools](/docs/guides/tools/#the-web) |
 | `browser(...)` | A browser it drives with `browser_*` tools. | [Using a browser](/docs/guides/using-browser/) |
 | `skill(dir)` | A folder of instructions in its sandbox, for one kind of task. | [Skills](/docs/guides/skills/) |
+| `memory(dir)` | Notes on the user that outlast a session, in a folder on this host. | [Tools](/docs/guides/tools/#memory) |
 | `context_manager(...)` | Old tool results and images cut once a run's input grows past a limit. | [Context manager](/docs/guides/context-manager/) |
 | `thinking_effort(effort)`, `output_schema(schema)` | How much the model thinks, and a JSON schema its answers must match. | [Model providers](/docs/guides/model-providers/#model-options) |
 | `history(messages)` | An earlier conversation to continue. | [Running an agent](/docs/guides/running/#many-turns) |
 
 ## Instruction
 
-`instruction(...)` is the system message's text: who the agent is, what it is for, and where in its sandbox to find inputs and leave results. The agent writes the system message from this text and the list of its [skills](/docs/guides/skills/), those of `skill(...)` and those of its sandbox's abins, and puts that message at the front of its history, unless the history you give it already has one.
+`instruction(...)` is the system message's text: who the agent is, what it is for, and where in its sandbox to find inputs and leave results. The agent writes the system message from this text, the list of its [skills](/docs/guides/skills/) (those of `skill(...)` and those of its sandbox's abins) and the notes in its [memory](/docs/guides/tools/#memory), and puts that message at the front of its history, unless the history you give it already has one.
 
 ## From a spec
 
-The model, the instruction, the tools, the skills and the model options make up an agent's spec: plain JSON, which you can store and build an agent from again. The rest (its history and its sandbox) is its state, given beside the spec. `Agent.from_spec` builds an agent from both:
+The model, the instruction, the tools, the skills, the memory and the model options make up an agent's spec: plain JSON, which you can store and build an agent from again. The rest (its history and its sandbox) is its state, given beside the spec. `Agent.from_spec` builds an agent from both:
 
 <Tabs syncKey="lang">
 

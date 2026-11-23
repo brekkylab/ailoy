@@ -11,7 +11,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use ailoy::{
-    agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager},
+    agent::{Agent, AgentBuilder, AgentSpec, AgentState, ContextManager, Memory},
     browser::{Browser, UserBrowser},
     datatype::Value,
     message::Message,
@@ -192,6 +192,22 @@ impl PyAgentBuilder {
             browser = browser.start_url(url);
         }
         Self::update(slf, |b| Ok(b.browser(browser)))
+    }
+
+    /// Keep short notes in `MEMORY.md` in the folder `dir` on this host, which the system
+    /// message shows, and give the `memory` tool; `limit` bounds the file in characters (3,000
+    /// by default).
+    #[pyo3(signature = (dir, *, limit = None))]
+    fn memory(
+        slf: PyRef<'_, Self>,
+        dir: PathBuf,
+        limit: Option<usize>,
+    ) -> PyResult<PyRef<'_, Self>> {
+        let mut memory = Memory::new(dir);
+        if let Some(limit) = limit {
+            memory = memory.with_limit(limit);
+        }
+        Self::update(slf, |b| Ok(b.memory(memory)))
     }
 
     fn skill(slf: PyRef<'_, Self>, dir: String) -> PyResult<PyRef<'_, Self>> {

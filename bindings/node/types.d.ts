@@ -120,6 +120,15 @@ export interface LangModelOptions {
   output_schema?: Value
 }
 
+/**
+ * A folder on this host whose `MEMORY.md` the agent keeps notes on the user in, and how many
+ * characters the file may hold (3,000 by default).
+ */
+export interface Memory {
+  dir: string
+  limit?: number
+}
+
 export interface AgentSpec {
   model: string
   instruction?: string
@@ -127,6 +136,7 @@ export interface AgentSpec {
   model_options?: LangModelOptions
   web_search_engines?: Array<WebSearchEngine>
   skills?: Array<string>
+  memory?: Memory
 }
 
 export type Backend = 'cli' | 'api' | 'bedrock' | 'openrouter' | 'self-hosted'

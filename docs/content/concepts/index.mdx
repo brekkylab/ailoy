@@ -48,7 +48,7 @@ Not everything an agent does happens in the sandbox:
 
 An Ailoy agent is two things:
 
-- **Spec**: the model, the instruction, the tools, the skills and the model options. It is plain JSON that says what the agent is, so it can be saved and an agent built from it again.
+- **Spec**: the model, the instruction, the tools, the skills, the memory and the model options. It is plain JSON that says what the agent is, so it can be saved and an agent built from it again.
 - **State**: the history and the sandbox. It is what the agent has done and where.
 
 The label in the drawing's agent box, model · tools · skill, is part of its spec. `AgentBuilder` fills in both. [Defining an agent](/docs/guides/agents/) lists every call, and builds an agent from a saved spec.
