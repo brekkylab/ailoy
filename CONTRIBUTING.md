@@ -21,7 +21,7 @@ An agent's sandbox runs on [virtx](https://github.com/brekkylab/virtx)'s server,
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test
+cargo test -p ailoy -p ailoy-core -p ailoy-runner
 (cd bindings/python && uv run pytest)   # after `maturin develop`
 (cd bindings/node && npm test)          # after `npm run build:debug`
 ```

@@ -34,6 +34,7 @@ dependencies = [
 name = "ailoy"
 version = "0.3.2"
 dependencies = [
+ "ailoy-core",
  "anyhow",
  "async-stream",
  "async-trait",
@@ -53,15 +54,12 @@ dependencies = [
  "indexmap",
  "infer",
  "log",
- "ordered-float",
  "parking_lot 0.13.0",
  "png",
  "reqwest",
  "rmcp",
- "schemars",
  "scraper",
  "serde",
- "serde_bytes",
  "serde_json",
  "shellexpand",
  "strum",
@@ -79,6 +77,33 @@ dependencies = [
  "virtx",
  "wreq",
  "wreq-util",
+]
+
+[[package]]
+name = "ailoy-core"
+version = "0.3.2"
+dependencies = [
+ "ailoy-core",
+ "anyhow",
+ "async-stream",
+ "base64 0.23.1",
+ "bytes",
+ "futures",
+ "http-body",
+ "http-over-x",
+ "hyper",
+ "indexmap",
+ "ordered-float",
+ "schemars",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "strum",
+ "tokio",
+ "tower-service",
+ "url",
+ "uuid",
+ "virtx",
 ]
 
 [[package]]
@@ -111,6 +136,19 @@ dependencies = [
  "serde",
  "tokio",
  "virtx",
+]
+
+[[package]]
+name = "ailoy-runner"
+version = "0.3.2"
+dependencies = [
+ "ailoy-core",
+ "anyhow",
+ "axum",
+ "http-over-x",
+ "indexmap",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -1345,6 +1383,29 @@ dependencies = [
  "http",
  "http-body",
  "pin-project-lite",
+]
+
+[[package]]
+name = "http-over-x"
+version = "0.1.0"
+source = "git+https://github.com/ailoy-co/http-over-x?rev=f21730b#f21730b981cd064961d7fd44b478cfa955626182"
+dependencies = [
+ "async-stream",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "percent-encoding",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "sse-stream",
+ "tokio",
+ "tower-service",
 ]
 
 [[package]]

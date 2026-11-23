@@ -12,10 +12,11 @@ Ailoy is a library for building AI agents that each own a virtual machine (a [vi
 
 ## Where a change goes
 
-- `src/agent/` — the builder, the run loop (`rt.rs`), the truncation policy, skills, and the spec an agent is described by.
+- `src/agent/` — the builder, the run loop (`rt.rs`), the state an agent carries between turns, and skills.
 - `src/model/` — the model traits, one module per backend under `impl/` (a vendor API, a CLI, Bedrock, OpenRouter, an OpenAI-compatible server such as vLLM) and the provider registry with its catalogs under `provider/`.
 - `src/tool/impl/` — built-in tools in `builtins/`, plus the MCP tool provider.
-- `src/message/` — the message, part and delta types every surface marshals.
+- `ailoy-core/src/` — what names an agent and what it says, as data that goes wherever an agent runs: the spec and the state an agent carries between turns (`agent/`), the message, part and delta types every surface marshals (`message/`), a tool's description, its provider's trait and `ToolFunc` (`tool/`), a model's options (`model.rs`) and `Value` (`datatype/`). It names models and tools and builds none; `ailoy` shows these types at its own paths (`ailoy::message::Message`).
+- `ailoy-runner/src/` — where an agent runs: what provides the tools a spec names and the agents kept by name, each with its sessions (`provider.rs`), and the two HTTP APIs that serve them, one to `ailoy_core::Client` and one to `ailoy_core::AdminClient` (`router.rs`).
 - `src/console.rs` — the virtx sandbox an agent is given, and what the built-in tools do with it.
 - `bindings/python/src/` and `bindings/node/src/` — the wrappers, in Rust. The Python package itself is `bindings/python/python/ailoy/`; the Node package is `bindings/node/index.js` and its `.d.ts` files.
 - `examples/<name>/` — one folder per language (`rust`, `python`, `node`) and a `shared/` folder for what the three have in common. The Rust example is also registered in `Cargo.toml`.
@@ -28,7 +29,7 @@ Run these before pushing. Only `docs/` has pull-request CI (its build), so for t
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test
+cargo test -p ailoy -p ailoy-core -p ailoy-runner
 (cd bindings/python && uv run maturin develop && uv run pytest)        # Python
 (cd bindings/node && npm install && npm run build:debug && npm test)   # Node
 ```

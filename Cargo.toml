@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "./",
+    "ailoy-core",
+    "ailoy-runner",
     "bindings/node",
     "bindings/python",
 ]
@@ -53,6 +55,8 @@ default = ["embedded"]
 embedded = ["virtx/embedded"]
 
 [dependencies]
+# The spec, messages and tool descriptions, which this crate shows as its own.
+ailoy-core = { path = "ailoy-core", version = "0.3.2" }
 anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"
@@ -68,7 +72,6 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 indexmap = { version = "2", features = ["serde"] }
 infer = "0.22"
 log = "0.4"
-ordered-float = { version = "5.0.0", features = ["serde"] }
 parking_lot = "0.13"
 png = "0.18"
 reqwest = { version = "0.13", features = ["form", "json", "stream"] }
@@ -76,9 +79,7 @@ reqwest = { version = "0.13", features = ["form", "json", "stream"] }
 # `MCPTransport` names (stdio child process, streamable HTTP).
 rmcp = { version = "3", default-features = false, features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 scraper = "0.27"
-schemars = { version = "1", features = ["preserve_order", "url2"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_bytes = "0.11"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 strum = { version = "0.28", features = ["derive"] }
 shellexpand = "3"

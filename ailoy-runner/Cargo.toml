@@ -1,0 +1,23 @@
+[package]
+name = "ailoy-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Where an Ailoy agent runs: what provides its tools, the agents kept, and the router that serves them."
+readme = "../README.md"
+keywords = ["agent", "llm", "ai", "tool-use"]
+categories = ["development-tools"]
+
+[dependencies]
+ailoy-core = { path = "../ailoy-core", version = "0.3.2" }
+axum = { version = "0.8", default-features = false, features = ["json"] }
+http-over-x = { git = "https://github.com/ailoy-co/http-over-x", rev = "f21730b", default-features = false, features = ["server"] }
+indexmap = "2"
+serde_json = "1.0"
+
+[dev-dependencies]
+ailoy-core = { path = "../ailoy-core", features = ["embed"] }
+anyhow = "1"
+tokio = { version = "1.0", default-features = false, features = ["macros", "rt"] }
