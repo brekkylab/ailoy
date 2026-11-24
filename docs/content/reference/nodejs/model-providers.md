@@ -8,14 +8,14 @@ head:
       content: noindex
 ---
 
-An agent or a `LangModel` names its model by a desc, `<org>/<name>`, or `<org>` alone for a CLI's default model. The provider set for the org decides how the model runs: the org's CLI, its own API, Bedrock, OpenRouter, vLLM, or a factory of your own. The same desc runs through every backend.
+An agent or a `LangModel` names its model by a desc, `<org>/<name>`, or `<org>` alone for a CLI's default model. The provider set for the org decides how the model runs: the org's CLI, its own API, Bedrock, OpenRouter, vLLM, or a factory of your own. The same desc runs through every backend, except that DeepSeek's own API names its models without a version, so it takes DeepSeek's own names (`deepseek-ai/deepseek-chat`).
 
 | Models | Naming | Desc |
 | --- | --- | --- |
 | Claude | `anthropic/<official API id>` | `anthropic/claude-sonnet-5-5` |
 | GPT | `openai/<official API id>` | `openai/gpt-6.1-sol` |
 | Gemini | `google/<official API id>` | `google/gemini-3.1-pro` |
-| DeepSeek | Hugging Face repo id | `deepseek-ai/DeepSeek-V3.2` |
+| DeepSeek | Hugging Face repo id; DeepSeek's own name on its own API | `deepseek-ai/DeepSeek-V3.2`, `deepseek-ai/deepseek-chat` |
 | Kimi | Hugging Face repo id | `moonshotai/Kimi-K2-Thinking` |
 | GLM | Hugging Face repo id | `zai-org/GLM-4.6` |
 | Qwen | Hugging Face repo id | `Qwen/Qwen3-235B-A22B-Instruct-2507` |

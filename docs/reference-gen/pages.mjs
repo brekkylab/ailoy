@@ -47,12 +47,12 @@ export const PAGES = [
     intro: {
       python: `\`AgentBuilder\` collects everything an agent is made of, then \`build()\` turns it into an [\`Agent\`](../agent/). Start one with the model's desc, call the methods for what the agent needs, and await \`build()\`.
 
-Each method changes the builder in place and returns it, so calls chain. Nothing is checked or started until \`build()\`. That's when the model is built through the provider set for its org, each tool through the provider set for its name, and each skill's \`SKILL.md\` is read through the console. A missing provider or an unreadable skill raises [\`AiloyError\`](../errors/) from \`build()\`.
+Each method changes the builder in place and returns it, so calls chain. Nothing is checked or started until \`build()\`. That's when the model is built through the provider set for its org, each tool through the provider set for its name, and each skill's \`SKILL.md\` is read through the console. A missing provider raises [\`AiloyError\`](../errors/) from \`build()\`, and a \`SKILL.md\` the console can't read raises the console's own failure, such as \`virtx.ConsoleRefused\`.
 
 A builder makes one agent. Once \`build()\` has run, every method raises \`ValueError\` ("this AgentBuilder has already been built").`,
       nodejs: `\`AgentBuilder\` collects everything an agent is made of, then \`build()\` turns it into an [\`Agent\`](../agent/). Start one with \`new AgentBuilder(model)\`, call the methods for what the agent needs, and await \`build()\`.
 
-Each method changes the builder in place and returns it, so calls chain. Nothing is checked or started until \`build()\`. That's when the model is built through the provider set for its org, each tool through the provider set for its name, and each skill's \`SKILL.md\` is read through the console. A missing provider or an unreadable skill rejects \`build()\` with an [\`AILOY_ERROR\`](../errors/).
+Each method changes the builder in place and returns it, so calls chain. Nothing is checked or started until \`build()\`. That's when the model is built through the provider set for its org, each tool through the provider set for its name, and each skill's \`SKILL.md\` is read through the console. A missing provider rejects \`build()\` with an [\`AILOY_ERROR\`](../errors/), and a \`SKILL.md\` the console can't read rejects it with the console's code, such as \`NOT_FOUND\`.
 
 A builder makes one agent. Once \`build()\` has run, every method throws an error with code \`INVALID_ARG\` ("this AgentBuilder has already been built").`,
     },
@@ -113,14 +113,14 @@ When the model asks for a tool, the request comes back in the message's \`tool_c
     summary: 'How a model desc is built: the backend set for each org, or a model of your own.',
     guides: [GUIDES.models],
     items: ['set_lang_model_provider', 'get_lang_model_provider', 'remove_lang_model_provider', 'Backend', 'CustomLangModel', 'StreamingCustomLangModel', 'LangModelFactory'],
-    intro: `An agent or a \`LangModel\` names its model by a desc, \`<org>/<name>\`, or \`<org>\` alone for a CLI's default model. The provider set for the org decides how the model runs: the org's CLI, its own API, Bedrock, OpenRouter, vLLM, or a factory of your own. The same desc runs through every backend.
+    intro: `An agent or a \`LangModel\` names its model by a desc, \`<org>/<name>\`, or \`<org>\` alone for a CLI's default model. The provider set for the org decides how the model runs: the org's CLI, its own API, Bedrock, OpenRouter, vLLM, or a factory of your own. The same desc runs through every backend, except that DeepSeek's own API names its models without a version, so it takes DeepSeek's own names (\`deepseek-ai/deepseek-chat\`).
 
 | Models | Naming | Desc |
 | --- | --- | --- |
 | Claude | \`anthropic/<official API id>\` | \`anthropic/claude-sonnet-5-5\` |
 | GPT | \`openai/<official API id>\` | \`openai/gpt-6.1-sol\` |
 | Gemini | \`google/<official API id>\` | \`google/gemini-3.1-pro\` |
-| DeepSeek | Hugging Face repo id | \`deepseek-ai/DeepSeek-V3.2\` |
+| DeepSeek | Hugging Face repo id; DeepSeek's own name on its own API | \`deepseek-ai/DeepSeek-V3.2\`, \`deepseek-ai/deepseek-chat\` |
 | Kimi | Hugging Face repo id | \`moonshotai/Kimi-K2-Thinking\` |
 | GLM | Hugging Face repo id | \`zai-org/GLM-4.6\` |
 | Qwen | Hugging Face repo id | \`Qwen/Qwen3-235B-A22B-Instruct-2507\` |
@@ -323,7 +323,7 @@ export const FILL = {
     override: true,
     doc: "Build the agent: the model through the provider set for its org, each tool through the provider set for its name, and each skill's `SKILL.md` read through the console. Awaitable, since building the model and reading skills take time.",
     returns: 'The agent.',
-    raises: { python: '`AiloyError` when the model\'s org or a tool has no provider, a skill can\'t be read, or the browser settings don\'t fit together. `ValueError` when the builder was already built.', nodejs: '`AILOY_ERROR` when the model\'s org or a tool has no provider, a skill can\'t be read, or the browser settings don\'t fit together. `INVALID_ARG` when the builder was already built.' },
+    raises: { python: '`AiloyError` when the model\'s org or a tool has no provider, a skill is given without a console or its frontmatter can\'t be read, or the browser settings don\'t fit together. The console\'s own failure, such as `virtx.ConsoleRefused`, when a skill\'s `SKILL.md` can\'t be read. `ValueError` when the builder was already built.', nodejs: '`AILOY_ERROR` when the model\'s org or a tool has no provider, a skill is given without a console or its frontmatter can\'t be read, or the browser settings don\'t fit together. The console\'s code, such as `NOT_FOUND`, when a skill\'s `SKILL.md` can\'t be read. `INVALID_ARG` when the builder was already built.' },
   },
 
   // Agent

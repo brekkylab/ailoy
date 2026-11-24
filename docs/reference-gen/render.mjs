@@ -213,9 +213,11 @@ export function render({ lang, api, version, tag, outDir }) {
     ].filter(Boolean).join('\n');
   }
 
-  const frontmatter = (title, description) => `---
+  // `next: false` on the language's last page: the sidebar's next entry is the other language's
+  // Introduction, which a reader of this language never meant to go to
+  const frontmatter = (title, description, last = false) => `---
 title: ${JSON.stringify(title)}
-description: ${JSON.stringify(description)}
+description: ${JSON.stringify(description)}${last ? '\nnext: false' : ''}
 head:
   - tag: meta
     attrs:
@@ -227,11 +229,15 @@ head:
   fs.rmSync(outDir, { recursive: true, force: true });
   fs.mkdirSync(outDir, { recursive: true });
 
+  const has = (page) => page.items.some((n) => api[own(n)]) || Boolean(page.intro);
+  const bySlug = Object.fromEntries(PAGES.map((p) => [p.slug, p]));
+  const last = SECTIONS.flatMap((s) => s.pages).filter((s) => s !== 'index' && bySlug[s] && has(bySlug[s])).at(-1);
+
   const written = [];
   for (const page of PAGES) {
     const names = page.items.map(own).filter((n) => api[n]);
-    if (!names.length && !page.intro) continue;
-    const blocks = [frontmatter(page.title, page.summary).trimEnd(), say(page.intro, lang)];
+    if (!has(page)) continue;
+    const blocks = [frontmatter(page.title, page.summary, page.slug === last).trimEnd(), say(page.intro, lang)];
     const ex = example(page.slug, lang);
     if (ex) blocks.push(`## Example
 

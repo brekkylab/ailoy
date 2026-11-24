@@ -10,7 +10,7 @@ head:
 
 `AgentBuilder` collects everything an agent is made of, then `build()` turns it into an [`Agent`](../agent/). Start one with the model's desc, call the methods for what the agent needs, and await `build()`.
 
-Each method changes the builder in place and returns it, so calls chain. Nothing is checked or started until `build()`. That's when the model is built through the provider set for its org, each tool through the provider set for its name, and each skill's `SKILL.md` is read through the console. A missing provider or an unreadable skill raises [`AiloyError`](../errors/) from `build()`.
+Each method changes the builder in place and returns it, so calls chain. Nothing is checked or started until `build()`. That's when the model is built through the provider set for its org, each tool through the provider set for its name, and each skill's `SKILL.md` is read through the console. A missing provider raises [`AiloyError`](../errors/) from `build()`, and a `SKILL.md` the console can't read raises the console's own failure, such as `virtx.ConsoleRefused`.
 
 A builder makes one agent. Once `build()` has run, every method raises `ValueError` ("this AgentBuilder has already been built").
 
@@ -377,4 +377,4 @@ async def build() -> Agent
 
 **Returns** an awaitable of [`Agent`](/docs/reference/python/agent/): The agent.
 
-**Raises** `AiloyError` when the model's org or a tool has no provider, a skill can't be read, or the browser settings don't fit together. `ValueError` when the builder was already built.
+**Raises** `AiloyError` when the model's org or a tool has no provider, a skill is given without a console or its frontmatter can't be read, or the browser settings don't fit together. The console's own failure, such as `virtx.ConsoleRefused`, when a skill's `SKILL.md` can't be read. `ValueError` when the builder was already built.

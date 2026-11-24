@@ -1,6 +1,8 @@
 ---
 title: "Ailoy SDK reference"
 description: "What the Ailoy SDK is for, your first agent in a few lines, and how this reference is organized."
+# the reference's first page: the sidebar's entry before it is the Docs tab's last guide
+prev: false
 head:
   - tag: meta
     attrs:
@@ -16,7 +18,7 @@ The Ailoy SDK builds AI agents in Python, Node.js or Rust. An agent drives the l
 
 Calling a model is one request. An agent is a loop: send the conversation, see which tools the model asks for, run them, send the results back, and go on until the model answers. The Ailoy SDK runs that loop for you.
 
-- **Any model, one line to switch.** A model is named `<org>/<name>`, such as `anthropic/claude-sonnet-5-5`. The same name runs through the org's CLI, its API, Bedrock, OpenRouter or your own vLLM server, and you pick the backend with one call.
+- **Any model, one line to switch.** A model is named `<org>/<name>`, such as `anthropic/claude-sonnet-5-5`. The same name runs through the org's CLI, its API, Bedrock, OpenRouter or your own vLLM server (DeepSeek's own API takes its own names), and you pick the backend with one call.
 - **Tools without glue code.** Built-in tools for the shell, files, web search, web fetch and a browser; your own functions; and any MCP server's tools. The model sees each tool's description, and the SDK runs the calls and hands back the results.
 - **A sandbox for the work.** Console tools run in a console from `virtx`, apart from your own machine.
 - **Streaming and control.** A turn is something you iterate as it runs. You see each message, or each word as it's written, and you can stop the turn anywhere.

@@ -10,7 +10,7 @@ head:
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-Your code names a model, such as `anthropic/claude-sonnet-5-5`. The **provider** set for the model's org decides how it runs. The name stays the same whichever provider you pick, so you can start on one backend and move to another without changing the agent.
+Your code names a model, such as `anthropic/claude-sonnet-5-5`. The **provider** set for the model's org decides how it runs. The name stays the same whichever provider you pick (DeepSeek's own API is the one exception, below), so you can start on one backend and move to another without changing the agent.
 
 ## Pick a backend
 
@@ -100,14 +100,14 @@ main()
 
 ## Name the model
 
-A model is named the way its maker names it, as `<org>/<name>`. `<org>` alone runs the CLI's default model, and every backend except the CLIs needs a name.
+A model is named the way its maker names it, as `<org>/<name>`. `<org>` alone runs the CLI's default model, and every backend except the CLIs needs a name. DeepSeek's own API, the default for `deepseek-ai`, names its models without a version, so it takes DeepSeek's own names, such as `deepseek-ai/deepseek-chat`; Bedrock, OpenRouter and vLLM take the Hugging Face repo id.
 
 | Models | Naming | Example |
 | --- | --- | --- |
 | Claude | `anthropic/<official API id>` | `anthropic/claude-sonnet-5-5` |
 | GPT | `openai/<official API id>` | `openai/gpt-6.1-sol` |
 | Gemini | `google/<official API id>` | `google/gemini-3.1-pro` |
-| DeepSeek | Hugging Face repo id | `deepseek-ai/DeepSeek-V3.2` |
+| DeepSeek | Hugging Face repo id; DeepSeek's own name on its own API | `deepseek-ai/DeepSeek-V3.2`, `deepseek-ai/deepseek-chat` |
 | Kimi | Hugging Face repo id | `moonshotai/Kimi-K2-Thinking` |
 | GLM | Hugging Face repo id | `zai-org/GLM-4.6` |
 | Qwen | Hugging Face repo id | `Qwen/Qwen3-235B-A22B-Instruct-2507` |

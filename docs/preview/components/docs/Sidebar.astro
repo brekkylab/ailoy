@@ -8,36 +8,61 @@ import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.ast
 import PageIcon from './PageIcon.astro';
 
 // The header's tabs split the sidebar: the API reference tab shows the reference groups of the
-// language being read (Python on the reference's own Overview), with a switch to the same page in
-// the other language; the Docs tab shows every other group.
+// language being read, with a switch to the same page in the other language; the Docs tab shows
+// every other group.
+//
+// A page under python/ or nodejs/ is in its language. The shared pages (the Introduction and the
+// Choosing pages) are in the language the reader last chose. The choice also goes where Starlight
+// keeps the choice of its synced code tabs (`<Tabs syncKey="lang">`), so the switch, the code
+// tabs, the sidebar and the links into the reference all follow it.
 const REF = '/docs/reference/';
+const LANGS = [
+  { id: 'python', label: 'Python' },
+  { id: 'nodejs', label: 'Node.js' },
+];
 const path = Astro.url.pathname;
 const inReference = path.startsWith(REF);
-const lang = path.startsWith(`${REF}nodejs/`) ? 'nodejs' : 'python';
-// the page within its language, or '' on a shared page, which leads to the language's Installation
 const inLang = /^\/docs\/reference\/(python|nodejs)\//;
-const rest = inLang.test(path) ? path.replace(inLang, '') : '';
+const shared = inReference && !inLang.test(path);
+const lang = path.startsWith(`${REF}nodejs/`) ? 'nodejs' : 'python';
+// the page within its language, to switch to the same page in the other
+const rest = shared ? '' : path.replace(inLang, '');
 const hrefs = (e: any): string[] => (e.type === 'link' ? [e.href] : e.entries.map((c: any) => c.href));
+const langOf = (e: any) => LANGS.find((l) => hrefs(e).some((h) => h.startsWith(`${REF}${l.id}/`)))?.id;
 const sidebar = Astro.locals.starlightRoute.sidebar.filter((e: any) => {
-  const ref = hrefs(e).some((h) => h.startsWith(REF));
-  return inReference ? hrefs(e).some((h) => h.startsWith(`${REF}${lang}/`) || h === `${REF}${lang}`) : !ref;
+  if (!inReference) return !hrefs(e).some((h) => h.startsWith(REF));
+  // a shared page has both languages' groups, and shows the chosen one's
+  return shared ? langOf(e) !== undefined : langOf(e) === lang;
 });
-const languages = [
-  { label: 'Python', href: `${REF}python/${rest}`, current: lang === 'python' },
-  { label: 'Node.js', href: `${REF}nodejs/${rest}`, current: lang === 'nodejs' },
-  { label: 'Rust', href: "https://docs.rs/ailoy/latest/ailoy/", current: false },
-];
 ---
 
 {
   inReference && (
-    <nav class="langs" aria-label="SDK language">
-      {languages.map((l) => (
-        <a href={l.href} aria-current={l.current ? 'true' : undefined}>
-          {l.label}
-        </a>
-      ))}
+    <nav class="langs" aria-label="SDK language" data-lang={shared ? undefined : lang}>
+      {LANGS.map((l) =>
+        shared ? (
+          <button type="button" data-lang={l.id}>
+            {l.label}
+          </button>
+        ) : (
+          <a href={`${REF}${l.id}/${rest}`} aria-current={l.id === lang ? 'true' : undefined}>
+            {l.label}
+          </a>
+        )
+      )}
+      <a href="https://docs.rs/ailoy/latest/ailoy/">Rust</a>
     </nav>
+  )
+}
+
+{
+  shared && (
+    <script is:inline>
+      // before the sidebar paints: the chosen language's groups, without a flash of the other's
+      try {
+        if (localStorage.getItem('ailoy-reference-lang') === 'nodejs') document.documentElement.dataset.refLang = 'nodejs';
+      } catch {}
+    </script>
   )
 }
 
@@ -57,14 +82,14 @@ const languages = [
     {
       sidebar.map((e: any) =>
         e.type === 'link' ? (
-          <li>
+          <li data-only-lang={shared ? langOf(e) : undefined}>
             <a href={e.href} aria-current={e.isCurrent ? 'page' : undefined} class="item solo">
               {!inReference && <PageIcon href={e.href} />}
               <span>{e.label}</span>
             </a>
           </li>
         ) : (
-          <li>
+          <li data-only-lang={shared ? langOf(e) : undefined}>
             <p class="group">{e.label}</p>
             <ul>
               {e.entries.map((c: any) => (
@@ -103,7 +128,80 @@ const languages = [
   document.addEventListener('click', (ev) => {
     if ((ev.target as Element).closest?.('[data-show-sidebar]')) setHidden(false);
   });
+
+  // The reference's language. A page in a language records it; a shared page follows it: its
+  // sidebar groups, its switch, its code tabs, and its links into the reference (the content's
+  // and the previous/next ones) go to the chosen language. A link named for a language
+  // ("Python", "Node.js") is a deliberate one to that language and is left alone.
+  // the code tabs' key also holds "Rust", which isn't a language of the reference's pages, so the
+  // reference keeps its own
+  const LANG_KEY = 'ailoy-reference-lang';
+  const TABS_KEY = 'starlight-synced-tabs__lang';
+  const LABELS: Record<string, string> = { python: 'Python', nodejs: 'Node.js' };
+  const langs = document.querySelector<HTMLElement>('nav.langs');
+  const store = (lang: string) => {
+    try {
+      localStorage.setItem(LANG_KEY, lang);
+      localStorage.setItem(TABS_KEY, LABELS[lang]);
+    } catch {}
+  };
+  if (langs?.dataset.lang) store(langs.dataset.lang);
+  else if (langs) {
+    const IN_LANG = /^\/docs\/reference\/(python|nodejs)\//;
+    const links = [...document.querySelectorAll<HTMLAnchorElement>('main a[href^="/docs/reference/"]')].filter(
+      (a) => IN_LANG.test(a.getAttribute('href') ?? '') && !Object.values(LABELS).includes(a.textContent?.trim() ?? '')
+    );
+    const show = (lang: string) => {
+      root.dataset.refLang = lang;
+      for (const b of langs.querySelectorAll<HTMLButtonElement>('button[data-lang]')) {
+        b.setAttribute('aria-pressed', String(b.dataset.lang === lang));
+      }
+      for (const a of links) a.setAttribute('href', a.getAttribute('href')!.replace(IN_LANG, `/docs/reference/${lang}/`));
+    };
+    const chosen = () => {
+      try {
+        return localStorage.getItem(LANG_KEY) === 'nodejs' ? 'nodejs' : 'python';
+      } catch {
+        return 'python';
+      }
+    };
+    show(chosen());
+    langs.addEventListener('click', (ev) => {
+      const lang = (ev.target as Element).closest<HTMLButtonElement>('button[data-lang]')?.dataset.lang;
+      if (!lang) return;
+      store(lang);
+      show(lang);
+      // the code tabs: clicking one of a synced set switches them all, and stores the same choice
+      const tab = [...document.querySelectorAll<HTMLAnchorElement>('starlight-tabs[data-sync-key="lang"] [role="tab"]')].find(
+        (t) => t.textContent?.trim() === LABELS[lang]
+      );
+      tab?.click();
+    });
+    // a code tab chosen on the page moves the rest with it (a Rust tab leaves the language as it is)
+    document.addEventListener('click', (ev) => {
+      const tab = (ev.target as Element).closest?.('starlight-tabs[data-sync-key="lang"] [role="tab"]');
+      const lang = Object.keys(LABELS).find((l) => LABELS[l] === tab?.textContent?.trim());
+      if (!lang) return;
+      store(lang);
+      show(lang);
+    });
+  }
 </script>
+
+<style is:global>
+  /* a shared page's sidebar: the chosen language's groups (Python until Node.js is chosen) */
+  :root:not([data-ref-lang='nodejs']) [data-only-lang='nodejs'],
+  :root[data-ref-lang='nodejs'] [data-only-lang='python'] {
+    display: none;
+  }
+  /* and its switch, marked from the same attribute, which is set before the page paints */
+  :root:not([data-ref-lang='nodejs']) .langs > button[data-lang='python'],
+  :root[data-ref-lang='nodejs'] .langs > button[data-lang='nodejs'] {
+    color: var(--sl-color-white);
+    background: var(--sl-color-gray-6);
+    font-weight: 600;
+  }
+</style>
 
 <style>
   .langs {
@@ -111,21 +209,25 @@ const languages = [
     margin-bottom: 0.75rem;
     border: 1px solid var(--sl-color-hairline);
   }
-  .langs a {
+  .langs > * {
     flex: 1;
+    border: 0;
+    background: none;
+    font-family: inherit;
+    cursor: pointer;
     padding: 0.4rem 0.5rem;
     text-align: center;
     font-size: 0.8125rem;
     color: var(--sl-color-gray-3);
     text-decoration: none;
   }
-  .langs a + a {
+  .langs > * + * {
     border-inline-start: 1px solid var(--sl-color-hairline);
   }
-  .langs a:hover {
+  .langs > :hover {
     color: var(--sl-color-white);
   }
-  .langs a[aria-current] {
+  .langs > [aria-current] {
     color: var(--sl-color-white);
     background: var(--sl-color-gray-6);
     font-weight: 600;
@@ -179,8 +281,11 @@ const languages = [
     padding: 0;
     margin: 0;
   }
-  .top > li + li {
-    margin-top: 0.75rem;
+  /* a gap, not a margin between siblings: a shared page's hidden groups take no space */
+  .top {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
   }
   .group {
     margin: 0;

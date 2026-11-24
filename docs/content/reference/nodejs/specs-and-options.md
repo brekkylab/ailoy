@@ -1,6 +1,7 @@
 ---
 title: "Specs and options"
 description: "An agent as data, and the options a model, a browser and the context manager take."
+next: false
 head:
   - tag: meta
     attrs:

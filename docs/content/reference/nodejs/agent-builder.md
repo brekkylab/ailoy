@@ -10,7 +10,7 @@ head:
 
 `AgentBuilder` collects everything an agent is made of, then `build()` turns it into an [`Agent`](../agent/). Start one with `new AgentBuilder(model)`, call the methods for what the agent needs, and await `build()`.
 
-Each method changes the builder in place and returns it, so calls chain. Nothing is checked or started until `build()`. That's when the model is built through the provider set for its org, each tool through the provider set for its name, and each skill's `SKILL.md` is read through the console. A missing provider or an unreadable skill rejects `build()` with an [`AILOY_ERROR`](../errors/).
+Each method changes the builder in place and returns it, so calls chain. Nothing is checked or started until `build()`. That's when the model is built through the provider set for its org, each tool through the provider set for its name, and each skill's `SKILL.md` is read through the console. A missing provider rejects `build()` with an [`AILOY_ERROR`](../errors/), and a `SKILL.md` the console can't read rejects it with the console's code, such as `NOT_FOUND`.
 
 A builder makes one agent. Once `build()` has run, every method throws an error with code `INVALID_ARG` ("this AgentBuilder has already been built").
 
@@ -326,4 +326,4 @@ build(): Promise<Agent>
 
 **Returns** `Promise<`[`Agent`](/docs/reference/nodejs/agent/)`>`: The agent.
 
-**Throws** `AILOY_ERROR` when the model's org or a tool has no provider, a skill can't be read, or the browser settings don't fit together. `INVALID_ARG` when the builder was already built.
+**Throws** `AILOY_ERROR` when the model's org or a tool has no provider, a skill is given without a console or its frontmatter can't be read, or the browser settings don't fit together. The console's code, such as `NOT_FOUND`, when a skill's `SKILL.md` can't be read. `INVALID_ARG` when the builder was already built.
