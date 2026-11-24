@@ -23,7 +23,7 @@ Ailoy is a library for building AI agents that each own a virtual machine (a [vi
 
 ## Tests and lint
 
-Run these before pushing. Only `docs/` has pull-request CI (its build), so for the code what you run locally is the gate.
+Run these before pushing. A pull request runs them too, on Linux and without provider keys (`ci`); `docs/` has its own build (`docs`).
 
 ```bash
 cargo fmt --all --check
