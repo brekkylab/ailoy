@@ -27,6 +27,9 @@ const shared = inReference && !inLang.test(path);
 const lang = path.startsWith(`${REF}nodejs/`) ? 'nodejs' : 'python';
 // the page within its language, to switch to the same page in the other
 const rest = shared ? '' : path.replace(inLang, '');
+// the page's own entry, by its address: a shared page is in both languages' groups, and Starlight
+// marks only the first of two entries of a page as current
+const isCurrent = (href: string) => href === path;
 const hrefs = (e: any): string[] => (e.type === 'link' ? [e.href] : e.entries.map((c: any) => c.href));
 const langOf = (e: any) => LANGS.find((l) => hrefs(e).some((h) => h.startsWith(`${REF}${l.id}/`)))?.id;
 const sidebar = Astro.locals.starlightRoute.sidebar.filter((e: any) => {
@@ -83,7 +86,7 @@ const sidebar = Astro.locals.starlightRoute.sidebar.filter((e: any) => {
       sidebar.map((e: any) =>
         e.type === 'link' ? (
           <li data-only-lang={shared ? langOf(e) : undefined}>
-            <a href={e.href} aria-current={e.isCurrent ? 'page' : undefined} class="item solo">
+            <a href={e.href} aria-current={isCurrent(e.href) ? 'page' : undefined} class="item solo">
               {!inReference && <PageIcon href={e.href} />}
               <span>{e.label}</span>
             </a>
@@ -94,7 +97,7 @@ const sidebar = Astro.locals.starlightRoute.sidebar.filter((e: any) => {
             <ul>
               {e.entries.map((c: any) => (
                 <li>
-                  <a href={c.href} aria-current={c.isCurrent ? 'page' : undefined} class="item">
+                  <a href={c.href} aria-current={isCurrent(c.href) ? 'page' : undefined} class="item">
                     {!inReference && <PageIcon href={c.href} />}
                     <span>{c.label}</span>
                     {c.badge && <span class="badge">{c.badge.text}</span>}
