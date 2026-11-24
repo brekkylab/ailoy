@@ -1,17 +1,20 @@
 ---
-title: "Using MCP"
-description: "Give an agent the tools of any MCP server."
+title: "Use MCP servers"
+description: "Connect an MCP server and give its tools to an agent."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-An agent can use the tools of any [MCP](https://modelcontextprotocol.io) server. Register the server, and you get back a description of each of its tools. Pass those to the `AgentBuilder` with `tools(...)`.
+An agent can use the tools of any [MCP](https://modelcontextprotocol.io) server. It takes two steps:
 
-Each tool is registered as `{prefix}__{name}`, so tools from different servers don't clash. For example, the `fetch` tool of a server registered under `fetch` becomes `fetch__fetch`.
+1. Register the server with a prefix. You get back a description of each of its tools.
+2. Pass those descriptions to the `AgentBuilder` with `.tools(...)`.
 
-## Stdio servers
+Each tool is registered as `<prefix>__<name>`, so tools from different servers don't clash. For example, the `fetch` tool of a server registered with the prefix `fetch` becomes `fetch__fetch`.
 
-`register_mcp_stdio` starts the server as a local process and talks to it over stdin and stdout. This runs [`mcp-server-fetch`](https://github.com/modelcontextprotocol/servers/tree/main/src/fetch) with `uvx`:
+## Connect a local (stdio) server
+
+`register_mcp_stdio` starts the server as a process on your machine and talks to it over stdin and stdout. This example runs [`mcp-server-fetch`](https://github.com/modelcontextprotocol/servers/tree/main/src/fetch) with `uvx`:
 
 <Tabs syncKey="lang">
 
@@ -110,12 +113,12 @@ async fn main() -> anyhow::Result<()> {
 </Tabs>
 
 :::caution
-A stdio server runs on the host, not in the agent's sandbox, with the same access as your program. Register only servers you trust.
+A stdio server runs on your machine, not in the agent's sandbox, with the same access as your program. Only register servers you trust.
 :::
 
-## Streamable HTTP servers
+## Connect a remote (HTTP) server
 
-`register_mcp_streamable_http` connects to a remote server by its URL. This registers [DeepWiki](https://deepwiki.com)'s server, which answers questions about GitHub repositories:
+`register_mcp_streamable_http` connects to a remote server by URL, using the Streamable HTTP transport. This example connects [DeepWiki](https://deepwiki.com)'s server, which answers questions about GitHub repositories:
 
 <Tabs syncKey="lang">
 
@@ -151,11 +154,11 @@ let tools = register_mcp_streamable_http("deepwiki", "https://mcp.deepwiki.com/m
 </TabItem>
 </Tabs>
 
-Pass `tools` to `AgentBuilder.tools(...)` as above.
+Then pass `tools` to `.tools(...)` on the builder, as in the first example.
 
-## Unregistering
+## Disconnect a server
 
-`unregister_mcp` (`unregisterMcp` in Node.js) removes a server's tools by their prefix and closes the connection to the server.
+`unregister_mcp` (`unregisterMcp` in Node.js) removes all the tools registered with a prefix and closes the connection to the server.
 
 <Tabs syncKey="lang">
 
@@ -191,8 +194,13 @@ ailoy::tool::unregister_mcp("fetch");
 
 ## Troubleshooting
 
-| What you see | Why, and what to do |
+| Error | Cause and fix |
 | --- | --- |
-| An OS error such as `No such file or directory (os error 2)` or `program not found` from `register_mcp_stdio` | The command, such as `uvx`, isn't installed or isn't on your program's `PATH`. Install it (`uvx` comes with [uv](https://docs.astral.sh/uv/)), or give its full path. |
-| `connection closed: initialize response` | The server started and exited before answering. Its error output isn't shown, so run the same command in a terminal to see why. |
-| A tool's name isn't the one the server gives it | Tools are named `<prefix>__<name>`, and any character outside letters, digits, `_` and `-` becomes `_`: prefix `my.server` and tool `odd/name` give `my_server__odd_name`. A name over 64 characters logs a warning, since some model APIs refuse it. |
+| `No such file or directory (os error 2)` or `program not found` from `register_mcp_stdio` | The command, such as `uvx`, isn't installed or isn't on your program's `PATH`. Install it (`uvx` comes with [uv](https://docs.astral.sh/uv/)), or pass its full path. |
+| `connection closed: initialize response` | The server started and exited before it answered. Its error output isn't shown, so run the same command in a terminal to see why. |
+| A tool's name differs from the server's name for it | Tools are named `<prefix>__<name>`, and any character other than letters, digits, `_` and `-` becomes `_`. For example, prefix `my.server` and tool `odd/name` give `my_server__odd_name`. Names over 64 characters log a warning, because some model APIs reject them. |
+
+## Next steps
+
+- [Use a browser](/docs/guides/using-browser/): let the agent control a web browser.
+- [Tools reference](/docs/sdk/tools/#register_mcp_stdio): the MCP functions' parameters.

@@ -1,0 +1,809 @@
+---
+title: AgentBuilder
+description: "Reference for AgentBuilder: every method for configuring and building an agent."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+`AgentBuilder` creates an [`Agent`](/docs/sdk/agent/). Create a builder with a model name, call any of the methods below, then call `build()`. Every method except `build()` returns the builder, so calls can be chained.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+from ailoy import AgentBuilder
+
+agent = await (
+    AgentBuilder("anthropic/claude-haiku-5-5")
+    .instruction("Answer in one sentence.")
+    .web_search_tool()
+    .build()
+)
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const { AgentBuilder } = require('@brekkylab/ailoy')
+
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
+  .instruction('Answer in one sentence.')
+  .webSearchTool()
+  .build()
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::agent::AgentBuilder;
+
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
+    .instruction("Answer in one sentence.")
+    .web_search_tool(vec![])
+    .build()
+    .await?;
+```
+
+</TabItem>
+</Tabs>
+
+:::note
+In Python and Node.js, the builder is changed in place, and `build()` empties it. Create a new builder for each agent.
+:::
+
+| Method | Does |
+| --- | --- |
+| [Constructor](#constructor) | Starts a builder for a model. |
+| [`instruction`](#instruction) | Sets the system prompt. |
+| [`tool`](#tool), [`tools`](#tools) | Add tools by their description. |
+| [`web_search_tool`](#web_search_tool) | Adds `web_search`. |
+| [`web_fetch_tool`](#web_fetch_tool) | Adds `web_fetch`. |
+| [`sandbox`](#sandbox) | Gives the agent a sandbox and the shell and file tools. |
+| [`browser`](#browser) | Gives the agent a browser and the `browser_*` tools. |
+| [`skill`](#skill) | Adds a skill from a folder in the sandbox. |
+| [`memory`](#memory) | Lets the agent keep notes on the user. |
+| [`context_manager`](#context_manager) | Keeps the history under the model's limits. |
+| [`thinking_effort`](#thinking_effort) | Sets how much the model reasons. |
+| [`output_schema`](#output_schema) | Makes answers match a JSON schema. |
+| [`history`](#history) | Starts from a saved conversation. |
+| [`build`](#build) | Creates the agent. |
+
+## Constructor
+
+Creates a builder for the given model.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+AgentBuilder(model: str)
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+new AgentBuilder(model: string)
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+AgentBuilder::new(model: impl Into<String>) -> AgentBuilder
+```
+
+</TabItem>
+</Tabs>
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `model` | string | The model as `<org>/<name>`, such as `"anthropic/claude-haiku-5-5"`. It runs on the backend set for its org. See [Model providers](/docs/guides/model-providers/). |
+
+## instruction
+
+Sets the system prompt. The agent adds its skills and memory notes to it when it builds the system message.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+.instruction(instruction: str) -> AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+.instruction(instruction: string): AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+.instruction(inst: impl Into<String>) -> AgentBuilder
+```
+
+</TabItem>
+</Tabs>
+
+## tool
+
+Adds one tool by its description. The tool's function must be registered under the same name, with [`register_tool`](/docs/sdk/tools/#register_tool) or [`set_tool_provider`](/docs/sdk/tools/#set_tool_provider).
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+.tool(desc: ToolDesc) -> AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+.tool(desc: ToolDesc): AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+.tool(desc: ToolDesc) -> AgentBuilder
+```
+
+</TabItem>
+</Tabs>
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `desc` | [`ToolDesc`](/docs/sdk/types/#tooldesc) | The tool's name, description and argument schema. |
+
+## tools
+
+Adds several tools at once, such as the list an [MCP registration](/docs/sdk/tools/#register_mcp_stdio) returns.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+.tools(descs: list[ToolDesc]) -> AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+.tools(descs: Array<ToolDesc>): AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+.tools(descs: impl IntoIterator<Item = ToolDesc>) -> AgentBuilder
+```
+
+</TabItem>
+</Tabs>
+
+## web_search_tool
+
+Adds the `web_search` tool, which runs in your program. Node.js: `webSearchTool`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+.web_search_tool(engines: list[WebSearchEngine] | None = None) -> AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+.webSearchTool(engines?: Array<WebSearchEngine>): AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+.web_search_tool(engines: Vec<WebSearchEngineKind>) -> AgentBuilder
+```
+
+</TabItem>
+</Tabs>
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `engines` | list of [`WebSearchEngine`](/docs/sdk/types/#websearchengine) | All engines | The engines to query. An empty list also means all of them. |
+
+## web_fetch_tool
+
+Adds the `web_fetch` tool, which fetches a URL from your program. Node.js: `webFetchTool`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+.web_fetch_tool() -> AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+.webFetchTool(): AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+.web_fetch_tool() -> AgentBuilder
+```
+
+</TabItem>
+</Tabs>
+
+## sandbox
+
+Gives the agent a virtx sandbox and adds the shell and file tools that run in it. The sandbox stays yours: the agent never starts, stops or removes it. See [Give an agent a sandbox](/docs/guides/sandbox/).
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+.sandbox(sandbox: virtx.Sandbox) -> AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+.sandbox(sandbox: Sandbox): AgentBuilder   // Sandbox from @brekkylab/virtx
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+.sandbox(sandbox: virtx::Sandbox) -> AgentBuilder
+```
+
+</TabItem>
+</Tabs>
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+from virtx import Client
+
+client = Client.spawn()
+sandbox = await client.create_sandbox("python:3.12-slim-trixie")
+agent = await AgentBuilder("anthropic/claude-haiku-5-5").sandbox(sandbox).build()
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const { Client } = require('@brekkylab/virtx')
+
+const client = Client.spawn()
+const sandbox = await client.createSandbox('python:3.12-slim-trixie')
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').sandbox(sandbox).build()
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use virtx::{Client, SandboxCreateArgs};
+
+let client = Client::spawn_virtx([] as [&str; 0]).await?;
+let sandbox = client.create_sandbox(&SandboxCreateArgs::new("python:3.12-slim-trixie")).await?;
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5").sandbox(sandbox).build().await?;
+```
+
+</TabItem>
+</Tabs>
+
+## browser
+
+Gives the agent `browser_*` tools that control a Chromium-based browser over CDP. See [Use a browser](/docs/guides/using-browser/).
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+.browser(
+    *,
+    user_browser: str | Path | None = None,
+    careful: bool = True,
+    start_url: str | None = None,
+    isolated: bool = False,
+    headless: bool = False,
+    executable: str | Path | None = None,
+    profile: str | Path | None = None,
+) -> AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+.browser(options?: {
+  userBrowser?: 'chrome' | 'chrome-beta' | 'chrome-dev' | 'chrome-canary' | 'chromium' | 'edge' | 'brave' | { userDataDir: string },
+  careful?: boolean,
+  startUrl?: string,
+  isolated?: boolean,
+  headless?: boolean,
+  executable?: string,
+  profile?: string,
+}): AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::browser::{Browser, UserBrowser};
+
+.browser(browser: Browser) -> AgentBuilder
+
+// Your own browser, or a separate one:
+Browser::user()
+Browser::isolated()
+// Options, each returning the Browser:
+.user_browser(UserBrowser)   // Chrome, ChromeBeta, ChromeDev, ChromeCanary, Chromium, Edge, Brave, Custom(PathBuf)
+.careful(bool)
+.start_url(impl Into<String>)
+.headless(bool)
+.executable(impl Into<PathBuf>)
+.profile(impl Into<PathBuf>)
+```
+
+</TabItem>
+</Tabs>
+
+| Option | Type | Default | Applies to | Description |
+| --- | --- | --- | --- | --- |
+| `isolated` | bool | `false` | | `false` uses your own browser. `true` starts a separate browser on first use and closes it with the agent. |
+| `user_browser` | string or path | The browser that turned on remote debugging most recently | Your own browser | `"chrome"`, `"chrome-beta"`, `"chrome-dev"`, `"chrome-canary"`, `"chromium"`, `"edge"`, `"brave"`, or the user data directory of any other Chromium-based browser. |
+| `careful` | bool | `true` | Both | Tells the agent to use sites as a person would, so bot checks are less likely to block it. |
+| `start_url` | string | | Both | The page the agent's tab opens on. |
+| `headless` | bool | `false` | Separate browser | Runs without a window. |
+| `executable` | path | The first of Chrome, Chromium, Edge or Brave found | Separate browser | The browser executable to start. |
+| `profile` | path | A fresh profile, deleted afterwards | Separate browser | A user data directory to keep, so sign-ins last between runs. |
+
+Mixing options for your own browser with options for a separate browser fails at `build()`.
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+agent = await AgentBuilder("anthropic/claude-sonnet-5-5").browser(isolated=True).build()
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const agent = await new AgentBuilder('anthropic/claude-sonnet-5-5').browser({ isolated: true }).build()
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::browser::Browser;
+
+let agent = AgentBuilder::new("anthropic/claude-sonnet-5-5").browser(Browser::isolated()).build().await?;
+```
+
+</TabItem>
+</Tabs>
+
+## skill
+
+Adds a skill: a folder with a `SKILL.md`, at a path **inside the sandbox**. Requires [`sandbox`](#sandbox). Call once per skill. See [Skills](/docs/guides/skills/).
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+.skill(dir: str) -> AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+.skill(dir: string): AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+.skill(dir: impl Into<String>) -> AgentBuilder
+```
+
+</TabItem>
+</Tabs>
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+agent = await AgentBuilder("anthropic/claude-haiku-5-5").sandbox(sandbox).skill("/skills/laya").build()
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').sandbox(sandbox).skill('/skills/laya').build()
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5").sandbox(sandbox).skill("/skills/laya").build().await?;
+```
+
+</TabItem>
+</Tabs>
+
+## memory
+
+Keeps short notes about the user in `MEMORY.md` in a folder **on this machine**, adds them to the system message, and gives the agent the `memory` tool to change them. See [Memory](/docs/guides/memory/).
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+.memory(dir: str | Path, *, limit: int | None = None) -> AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+.memory(dir: string, options?: { limit?: number }): AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::agent::Memory;
+
+.memory(memory: impl Into<Memory>) -> AgentBuilder
+// Memory::new("./memory/user1").with_limit(2000)
+```
+
+</TabItem>
+</Tabs>
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `dir` | path | | The folder that holds `MEMORY.md`. Created when the agent is built. |
+| `limit` | int | `3000` | The most characters the notes can hold. |
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+agent = await AgentBuilder("anthropic/claude-haiku-5-5").memory("./memory/user1", limit=2000).build()
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').memory('./memory/user1', { limit: 2000 }).build()
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::agent::Memory;
+
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
+    .memory(Memory::new("./memory/user1").with_limit(2000))
+    .build()
+    .await?;
+```
+
+</TabItem>
+</Tabs>
+
+## context_manager
+
+Limits how much old tool output and how many old images the history keeps. Node.js: `contextManager`. See [Manage context](/docs/guides/context-manager/).
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+.context_manager(
+    max_input_tokens: int | None = None,
+    preserve_recent_turns: int | None = None,
+    max_images: int | None = None,
+    preserve_recent_images: int | None = None,
+) -> AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+.contextManager(options?: {
+  maxInputTokens?: number,
+  preserveRecentTurns?: number,
+  maxImages?: number,
+  preserveRecentImages?: number,
+}): AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::agent::ContextManager;
+
+.context_manager(spec: ContextManager) -> AgentBuilder
+// ContextManager { max_input_tokens: 50_000, ..Default::default() }
+```
+
+</TabItem>
+</Tabs>
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `max_input_tokens` | int | `0` (off) | Input size in tokens above which old tool results are replaced. |
+| `preserve_recent_turns` | int | `3` | How many recent turns are never changed. |
+| `max_images` | int | `30` | How many tool-result images the history can hold. `0` turns the cap off. |
+| `preserve_recent_images` | int | `10` | How many tool-result images are kept once the cap is reached. |
+
+Without this call, the agent uses these defaults.
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+agent = await (
+    AgentBuilder("anthropic/claude-haiku-5-5")
+    .context_manager(max_input_tokens=50_000, preserve_recent_turns=2)
+    .build()
+)
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
+  .contextManager({ maxInputTokens: 50000, preserveRecentTurns: 2 })
+  .build()
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::agent::ContextManager;
+
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
+    .context_manager(ContextManager { max_input_tokens: 50_000, preserve_recent_turns: 2, ..Default::default() })
+    .build()
+    .await?;
+```
+
+</TabItem>
+</Tabs>
+
+## thinking_effort
+
+Sets how much the model reasons before answering. Node.js: `thinkingEffort`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+.thinking_effort(effort: Literal["low", "medium", "high"]) -> AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+.thinkingEffort(effort: 'low' | 'medium' | 'high'): AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::model::ThinkingEffort;
+
+.thinking_effort(effort: ThinkingEffort) -> AgentBuilder   // ThinkingEffort::Low | Medium | High
+```
+
+</TabItem>
+</Tabs>
+
+If not set, the model uses its own default.
+
+## output_schema
+
+Sets a JSON schema that the model's answers must match. Node.js: `outputSchema`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+.output_schema(schema: dict) -> AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+.outputSchema(schema: object): AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+.output_schema(schema: Value) -> AgentBuilder   // ailoy::to_value!({...})
+```
+
+</TabItem>
+</Tabs>
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+agent = await (
+    AgentBuilder("anthropic/claude-haiku-5-5")
+    .thinking_effort("high")
+    .output_schema({"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]})
+    .build()
+)
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
+  .thinkingEffort('high')
+  .outputSchema({ type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] })
+  .build()
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::{model::ThinkingEffort, to_value};
+
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
+    .thinking_effort(ThinkingEffort::High)
+    .output_schema(to_value!({"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}))
+    .build()
+    .await?;
+```
+
+</TabItem>
+</Tabs>
+
+## history
+
+Starts the agent with an earlier conversation. If the first message is a system message, the agent keeps it as it is and doesn't add skills or memory notes. See [Continue a conversation](/docs/guides/running/#continue-a-conversation).
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+.history(history: list[Message]) -> AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+.history(history: Array<Message>): AgentBuilder
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+.history(history: impl IntoIterator<Item = Message>) -> AgentBuilder
+```
+
+</TabItem>
+</Tabs>
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+agent = await AgentBuilder("anthropic/claude-haiku-5-5").history(saved_messages).build()
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').history(savedMessages).build()
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5").history(saved_messages).build().await?;
+```
+
+</TabItem>
+</Tabs>
+
+## build
+
+Builds the agent. This is when the model is created, API keys are read from the environment, and skills are read from the sandbox.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+async def build() -> Agent
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+build(): Promise<Agent>
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+async fn build(self) -> anyhow::Result<Agent>
+```
+
+</TabItem>
+</Tabs>
+
+**Returns** the [`Agent`](/docs/sdk/agent/). In Python and Node.js, the builder is emptied.
+
+**Raises** if the org has no backend, a required API key is missing, a skill's `SKILL.md` is missing or invalid, or the browser options conflict. Calling `build()` a second time on the same builder raises `ValueError` in Python and an `INVALID_ARG` error in Node.js. See [Errors](/docs/sdk/errors/).

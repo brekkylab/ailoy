@@ -3,14 +3,20 @@
     "label": "Get started",
     "items": [
       { "label": "Welcome to Ailoy", "link": "/" },
-      { "slug": "guides/quick-start" },
-      { "slug": "guides/installation" }
+      { "slug": "guides/installation" },
+      { "slug": "guides/quick-start" }
+    ]
+  },
+  {
+    "label": "Core concepts",
+    "items": [
+      { "slug": "concepts" },
+      { "slug": "guides/message-format" }
     ]
   },
   {
     "label": "Build an agent",
     "items": [
-      { "slug": "concepts" },
       { "slug": "guides/agents" },
       { "slug": "guides/sandbox" },
       { "slug": "guides/running" },
@@ -19,96 +25,36 @@
   },
   {
     "label": "Models",
-    "items": [
-      { "slug": "guides/model-providers" },
-      { "slug": "guides/message-format" }
-    ]
+    "items": [{ "slug": "guides/model-providers" }]
   },
   {
     "label": "Tools",
     "items": [
       { "slug": "guides/tools" },
+      { "slug": "guides/memory" },
       { "slug": "guides/using-mcp" },
       { "slug": "guides/using-browser" },
       { "slug": "guides/skills" }
     ]
   },
   {
-    "label": "Get started",
+    "label": "Overview",
     "items": [
-      { "slug": "reference", "label": "Introduction" },
-      { "slug": "reference/choosing-an-sdk", "label": "Choosing an SDK" },
-      { "slug": "reference/choosing-a-model-provider", "label": "Choosing a model provider" },
-      { "slug": "reference/python", "label": "Installation" },
-      { "slug": "reference/python/errors", "label": "Errors" }
+      { "slug": "sdk" },
+      { "slug": "sdk/setup" },
+      { "slug": "sdk/configuration" }
     ]
   },
   {
-    "label": "Agents",
+    "label": "API reference",
     "items": [
-      { "slug": "reference/python/agent-builder", "label": "AgentBuilder" },
-      { "slug": "reference/python/agent", "label": "Agent" },
-      { "slug": "reference/python/agent-run", "label": "AgentRun" }
-    ]
-  },
-  {
-    "label": "Models",
-    "items": [
-      { "slug": "reference/python/lang-model", "label": "LangModel" },
-      { "slug": "reference/python/model-providers", "label": "Model providers" }
-    ]
-  },
-  {
-    "label": "Tools",
-    "items": [
-      { "slug": "reference/python/tools", "label": "Tools and MCP" }
-    ]
-  },
-  {
-    "label": "Data shapes",
-    "items": [
-      { "slug": "reference/python/messages", "label": "Messages" },
-      { "slug": "reference/python/outputs", "label": "Outputs" },
-      { "slug": "reference/python/specs-and-options", "label": "Specs and options" }
-    ]
-  },
-  {
-    "label": "Get started",
-    "items": [
-      { "slug": "reference", "label": "Introduction" },
-      { "slug": "reference/choosing-an-sdk", "label": "Choosing an SDK" },
-      { "slug": "reference/choosing-a-model-provider", "label": "Choosing a model provider" },
-      { "slug": "reference/nodejs", "label": "Installation" },
-      { "slug": "reference/nodejs/errors", "label": "Errors" }
-    ]
-  },
-  {
-    "label": "Agents",
-    "items": [
-      { "slug": "reference/nodejs/agent-builder", "label": "AgentBuilder" },
-      { "slug": "reference/nodejs/agent", "label": "Agent" },
-      { "slug": "reference/nodejs/agent-run", "label": "AgentRun" }
-    ]
-  },
-  {
-    "label": "Models",
-    "items": [
-      { "slug": "reference/nodejs/lang-model", "label": "LangModel" },
-      { "slug": "reference/nodejs/model-providers", "label": "Model providers" }
-    ]
-  },
-  {
-    "label": "Tools",
-    "items": [
-      { "slug": "reference/nodejs/tools", "label": "Tools and MCP" }
-    ]
-  },
-  {
-    "label": "Data shapes",
-    "items": [
-      { "slug": "reference/nodejs/messages", "label": "Messages" },
-      { "slug": "reference/nodejs/outputs", "label": "Outputs" },
-      { "slug": "reference/nodejs/specs-and-options", "label": "Specs and options" }
+      { "slug": "sdk/agent-builder" },
+      { "slug": "sdk/agent" },
+      { "slug": "sdk/models" },
+      { "slug": "sdk/tools" },
+      { "slug": "sdk/built-in-tools" },
+      { "slug": "sdk/types" },
+      { "slug": "sdk/errors" }
     ]
   }
 ]

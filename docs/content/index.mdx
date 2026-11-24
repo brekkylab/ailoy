@@ -1,51 +1,50 @@
 ---
 title: Welcome to Ailoy
-description: What Ailoy is, what you can build with it, and where to start.
+description: What Ailoy is, what you can build with it, and the three steps to your first agent.
 ---
 
 import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-Ailoy is an open-source SDK for building AI agents in Python, Node.js or Rust. Each agent can have a Linux microVM of its own, where it installs software, runs code and keeps files without touching your machine.
+Ailoy is an open-source SDK for building AI agents in Python, Node.js or Rust. You give an agent a model and tools, and optionally a Linux microVM (a sandbox) where it can install software, run code and keep files without touching your machine.
+
+## Your first agent in three steps
+
+1. **[Install Ailoy](/docs/guides/installation/)** for your language, and set up a model with a CLI login or an API key.
+
+2. **[Run the quick start](/docs/guides/quick-start/)**. You build an agent that answers a question, then give it a sandbox and have it draw a chart.
+
+3. **Add what your agent needs.** Pick a task from [Find the right guide](#find-the-right-guide) below.
 
 ## What you can build
 
-With a computer of its own, an agent can do work you didn't write a function for. [ailoy.co/use-cases](https://ailoy.co/use-cases/) shows each one running:
+Each of these is an example in [ailoy-examples](https://github.com/brekkylab/ailoy-examples). [ailoy.co/use-cases](https://ailoy.co/use-cases/) shows recordings of each run.
 
 <CardGrid>
-  <LinkCard title="CAD modeling" description="Writes CadQuery, renders the part from four sides, looks at the renders and fixes it." href="https://ailoy.co/use-cases/cad/" />
+  <LinkCard title="CAD modeling" description="Writes CadQuery, renders the part from four sides, checks the renders and fixes the model." href="https://ailoy.co/use-cases/cad/" />
   <LinkCard title="Image editing" description="Segments images and video with SAM3, on the sandbox's GPU." href="https://ailoy.co/use-cases/sam3/" />
-  <LinkCard title="Gameplay" description="Plays OpenTTD in its sandbox while you watch over VNC." href="https://ailoy.co/use-cases/gameplay/" />
-  <LinkCard title="Decisions with a local model" description="Answers typed questions about tickets with a model it runs on the GPU." href="https://ailoy.co/use-cases/laya/" />
+  <LinkCard title="Gameplay" description="Plays OpenTTD inside its sandbox while you watch over VNC." href="https://ailoy.co/use-cases/gameplay/" />
+  <LinkCard title="Decisions with a local model" description="Answers typed questions about support tickets with a model running on the GPU." href="https://ailoy.co/use-cases/laya/" />
 </CardGrid>
 
-## Key features
+## Find the right guide
 
-<CardGrid>
-  <LinkCard title="Agents" description="AgentBuilder puts together a model, tools, skills and a sandbox." href="/docs/guides/agents/" />
-  <LinkCard title="Sandboxes" description="A microVM made with virtx, on your machine, your server or virtx's cloud, GPU included." href="/docs/guides/sandbox/" />
-  <LinkCard title="Models" description="Change the model with one string. Claude, GPT and Gemini run on your CLI login." href="/docs/guides/model-providers/" />
-  <LinkCard title="Tools" description="A shell and file tools in the sandbox, plus your own functions, MCP and a browser." href="/docs/guides/tools/" />
-  <LinkCard title="Skills" description="Folders of instructions for one kind of task, in the Agent Skills format." href="/docs/guides/skills/" />
-  <LinkCard title="Context manager" description="Keeps a long run under the model's context limit." href="/docs/guides/context-manager/" />
-</CardGrid>
-
-## Before you start
-
-You need Python 3.11+, Node.js 22+ or Rust 1.95+, a machine that can run microVMs (Linux with KVM, Apple silicon or Windows 11), and a CLI login or API key for the model. [Quick start](/docs/guides/quick-start/) runs your first agent, and [Installation](/docs/guides/installation/) walks through each in detail.
-
-## Choose your path
-
-| If you want to... | Go to |
+| I want to... | Read |
 | --- | --- |
-| Give an agent a computer to work in | [Giving an agent a sandbox](/docs/guides/sandbox/) |
-| Pick a model, or how it runs: CLI, API, Bedrock, OpenRouter or a server you run yourself | [Model providers](/docs/guides/model-providers/) |
-| Let the agent call functions of your own | [Tools](/docs/guides/tools/#your-own-functions) |
-| Give it the tools of an MCP server | [Using MCP](/docs/guides/using-mcp/) |
-| Let it drive a browser | [Using a browser](/docs/guides/using-browser/) |
-| Give it instructions for one kind of task | [Skills](/docs/guides/skills/) |
-| Show its reply as the model writes it | [Running an agent](/docs/guides/running/#run-and-run_stream) |
-| Carry a conversation over turns, or pick it up later | [Running an agent](/docs/guides/running/#many-turns) |
-| Keep a long run under the model's context limit | [Context manager](/docs/guides/context-manager/) |
-| Save an agent's definition and build it again | [Defining an agent](/docs/guides/agents/#from-a-spec) |
+| Understand what happens when an agent runs | [How an agent works](/docs/concepts/) |
+| Give an agent a computer to work in | [Give an agent a sandbox](/docs/guides/sandbox/) |
+| Use a different model, or an API key instead of a CLI login | [Model providers](/docs/guides/model-providers/) |
+| Let the agent call my own functions | [Tools](/docs/guides/tools/#add-your-own-function) |
+| Connect an MCP server | [Use MCP servers](/docs/guides/using-mcp/) |
+| Let the agent use a web browser | [Use a browser](/docs/guides/using-browser/) |
+| Give the agent step-by-step instructions for a task | [Skills](/docs/guides/skills/) |
+| Let the agent remember the user between sessions | [Memory](/docs/guides/memory/) |
+| Show the reply as the model writes it | [Run an agent](/docs/guides/running/#stream-the-reply) |
+| Continue a conversation later | [Run an agent](/docs/guides/running/#continue-a-conversation) |
+| Keep long runs within the model's context window | [Manage context](/docs/guides/context-manager/) |
+| Look up a class, method or type | [SDK reference](/docs/sdk/) |
 
-For AI coding assistants, [SKILL.md](https://github.com/brekkylab/ailoy/blob/main/skills/ailoy/SKILL.md) has the steps to build with Ailoy, [llms.txt](https://ailoy.co/llms.txt) sums up Ailoy, and [llms-full.txt](https://ailoy.co/llms-full.txt) has every page of these docs in one file.
+## For AI coding assistants
+
+- [SKILL.md](https://github.com/brekkylab/ailoy/blob/main/skills/ailoy/SKILL.md): step-by-step instructions for building with Ailoy.
+- [llms.txt](https://ailoy.co/llms.txt): a short summary of Ailoy.
+- [llms-full.txt](https://ailoy.co/llms-full.txt): every page of these docs in one file.

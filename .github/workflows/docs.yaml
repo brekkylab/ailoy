@@ -1,4 +1,4 @@
-name: Docs - Build
+name: docs
 
 # The docs are served from ailoy.co, which builds them from this folder. This only checks that
 # they still build, so a broken page shows up on the pull request rather than on ailoy.co's deploy.

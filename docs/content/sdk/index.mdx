@@ -1,0 +1,97 @@
+---
+title: Introduction
+description: "What the Ailoy SDK is, its building blocks, how to install it, and how this reference is organized."
+---
+
+import { CardGrid, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The Ailoy SDK is a library for building AI agents in Python, Node.js and Rust. It gives you one API for every model provider, a tool system that covers your own functions, MCP servers and a web browser, and a Linux sandbox where the agent can run code. You write the agent in a few lines; Ailoy runs the loop of calling the model, running the tools it asks for and sending back the results.
+
+## Why use the Ailoy SDK?
+
+- **One API for every model.** Claude, GPT, Gemini, DeepSeek, Kimi, GLM, Qwen, EXAONE, or a model on your own server. Change the model by changing one string, such as `"anthropic/claude-haiku-5-5"` to `"openai/gpt-6-luna"`.
+- **No API key needed to start.** Claude, GPT and Gemini run through the CLI you're already logged in to (Claude Code, Codex or Gemini CLI).
+- **A computer for the agent.** Pass a [virtx](https://virtx.sh/docs/) sandbox, and the agent gets a shell and file tools inside a microVM, isolated from your machine.
+- **The same SDK in three languages.** The classes, methods and behavior match across Python, Node.js and Rust.
+
+## Building blocks
+
+| Block | What it does | Reference |
+| --- | --- | --- |
+| `AgentBuilder` | Configures an agent: model, instruction, tools, sandbox, skills, memory and options. | [AgentBuilder](/docs/sdk/agent-builder/) |
+| `Agent` | Runs turns and keeps the conversation history. | [Agent](/docs/sdk/agent/) |
+| Model providers | Choose how each org's models run: CLI, API, Bedrock, OpenRouter or your own server. `LangModel` calls a model directly. | [Models](/docs/sdk/models/) |
+| Tools | Registers your functions and MCP servers as tools. | [Tools](/docs/sdk/tools/) |
+| Built-in tools | The shell, file, web, memory and browser tools Ailoy includes. | [Built-in tools](/docs/sdk/built-in-tools/) |
+| Types | The data shapes: messages, outputs, tool descriptions, specs. | [Types](/docs/sdk/types/) |
+
+## Install
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```sh
+pip install ailoy-py
+```
+
+Requires Python 3.11 or later.
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```sh
+npm install @brekkylab/ailoy
+```
+
+Requires Node.js 22 or later.
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```sh
+cargo add ailoy virtx futures anyhow tokio --features tokio/macros,tokio/rt-multi-thread
+```
+
+Requires Rust 1.95 or later.
+
+</TabItem>
+</Tabs>
+
+Then set up a model, as [Installation](/docs/guides/installation/#set-up-a-model) shows, and build your first agent with the [Quick start](/docs/guides/quick-start/). [Language setup](/docs/sdk/setup/) covers what differs between Python, Node.js and Rust in a project of your own.
+
+
+## How this reference is organized
+
+Each page covers one class or area. Each entry has the signature in all three languages, a table of parameters with their types and defaults, what it returns, and the errors it can raise.
+
+Names follow each language's conventions:
+
+| | Python | Node.js | Rust |
+| --- | --- | --- | --- |
+| Methods and functions | `snake_case` (`run_stream`) | `camelCase` (`runStream`) | `snake_case` (`run_stream`) |
+| Options | Keyword arguments (`max_images=20`) | An options object (`{ maxImages: 20 }`) | Struct fields or builder methods |
+| Messages, specs, tool descriptions | `dict` | Plain object | Typed structs |
+| Async | `await`, `async for` | `await`, `for await` | `.await`, `Stream` |
+
+Messages, specs and tool descriptions are JSON data, so their keys are `snake_case` in every language, including Node.js (`finish_reason`, `mime_type`, `base_url`). Where Rust works differently, such as building messages with methods instead of dicts, the Rust tab shows how.
+
+Sandboxes come from the virtx package (`virtx`, `@brekkylab/virtx` or the `virtx` crate), documented in [virtx's reference](https://virtx.sh/docs/reference/api/).
+
+## Versions
+
+This reference covers Ailoy 0.3. Version 0.3 isn't compatible with 0.2 or earlier, and there's no migration path. The [Changelog](/docs/changelog/) lists the changes in each release, breaking changes first.
+
+## Use these docs with AI coding assistants
+
+- [SKILL.md](https://github.com/brekkylab/ailoy/blob/main/skills/ailoy/SKILL.md): step-by-step instructions for building with Ailoy.
+- [llms.txt](https://ailoy.co/llms.txt): a short summary of Ailoy.
+- [llms-full.txt](https://ailoy.co/llms-full.txt): every page of these docs in one file.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard title="Quick start" description="Run an agent, then give it a sandbox." href="/docs/guides/quick-start/" />
+  <LinkCard title="Language setup" description="Projects, async code, imports and types in each language." href="/docs/sdk/setup/" />
+  <LinkCard title="AgentBuilder" description="Every way to configure an agent." href="/docs/sdk/agent-builder/" />
+  <LinkCard title="Model providers" description="API keys, Bedrock, OpenRouter or your own server." href="/docs/guides/model-providers/" />
+</CardGrid>

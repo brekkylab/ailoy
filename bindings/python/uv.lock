@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.11"
 
 [[package]]
@@ -17,7 +17,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "virtx", specifier = ">=0.2.0,<0.3" }]
+requires-dist = [{ name = "virtx", specifier = ">=0.2.1,<0.3" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -110,15 +110,15 @@ wheels = [
 
 [[package]]
 name = "pytest-asyncio"
-version = "1.4.1.post1"
+version = "1.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pytest" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/73/7f/c60a4338420b33453d4f814ac0c930abd399f162b9bdd21af4b9e363037f/pytest_asyncio-1.4.1.post1.tar.gz", hash = "sha256:f582d9ea4a1c082195abe8bd29a1fe106aeb1cd435e3dad2d3bc2749935c36a2", size = 145360, upload-time = "2026-11-01T18:26:03.732Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/de/80724f9b5b9eca1a654179cae6edc51aaa0a355a9834a736e2a188b91780/pytest_asyncio-1.5.0.tar.gz", hash = "sha256:92c8fa83ca419fd0d4bd6a34df6520dae435841d3733c319343249492adf37f7", size = 146227, upload-time = "2026-11-12T16:35:49.845Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e3/de/adbc7578959cfab07e5e7c05cf6d54224a51e7667ea2c07458b6bc571e75/pytest_asyncio-1.4.1.post1-py3-none-any.whl", hash = "sha256:0755e488cc0a2b9bd2eab7292cc6390d4cbb8390f1020745647bae5a708e0165", size = 17140, upload-time = "2026-11-01T18:26:02.168Z" },
+    { url = "https://files.pythonhosted.org/packages/27/2d/e600d8f47597a803641704aba367c7266cd621f86561ec36da9888f160ec/pytest_asyncio-1.5.0-py3-none-any.whl", hash = "sha256:557f255ee03cc84f84a8d5f438bc9c6e0f714bf86970ae743c7ecb5a38d7e07d", size = 17215, upload-time = "2026-11-12T16:35:48.446Z" },
 ]
 
 [[package]]
@@ -132,11 +132,11 @@ wheels = [
 
 [[package]]
 name = "virtx"
-version = "0.2.0"
+version = "0.2.1"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/04/0f/2374f3b1191d61ca31a6ab563e6c354955c175a0e689fc420746be764b5e/virtx-0.2.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:4f5640710e9c932857b0d4eb559f8addb295bffbc84eb462a0a074f0ce7e8b55", size = 4336836, upload-time = "2026-11-18T11:04:17.415Z" },
-    { url = "https://files.pythonhosted.org/packages/ea/ad/7317617fd4669cb3a4350c62aac2bce73857fbdca97f81261f6c0a9ae54f/virtx-0.2.0-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:68c997eeb9a25ec9653f0e22970524fda0351f2d0bab7f6a9550a25864193654", size = 4824984, upload-time = "2026-11-18T11:04:19.101Z" },
-    { url = "https://files.pythonhosted.org/packages/86/c4/fac8e38584cf591153a1adee1a8479291581146daba9d32fbf947d32bfe6/virtx-0.2.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:1601df1dd50f64eb9cd95a4f666d62ce42db716e09a4a80d7ad07ced210514cd", size = 4815968, upload-time = "2026-11-18T11:04:20.494Z" },
-    { url = "https://files.pythonhosted.org/packages/b3/74/18fce4fdf6cea987639528307da55ccf16c28b82a6e88d3e7cdbe899dcd2/virtx-0.2.0-py3-none-win_amd64.whl", hash = "sha256:83413b517106cb2b8c597953272207bac2f4165cfb811886730ec5881907065c", size = 4175845, upload-time = "2026-11-18T11:04:21.906Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/0c/d6528d653ff3b86e9b34d1514626adf94b2839af0fadcf5618f785e3a9dd/virtx-0.2.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:f6a04a28fd44e0fb4f6bee1f5e3f0e0b7a2b00d2ed9791d80fa98a3e4c809948", size = 4630197, upload-time = "2026-11-23T09:36:32.263Z" },
+    { url = "https://files.pythonhosted.org/packages/66/e8/5dfba0355954643946efdab42149b320a63d67b50ea7d56c1ca34f1e9175/virtx-0.2.1-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:3c5182dce0adcf07ab0cb4baab7c5543f204cbf5487aa15481a4365e4ef22877", size = 5150042, upload-time = "2026-11-23T09:36:33.822Z" },
+    { url = "https://files.pythonhosted.org/packages/19/bd/fa7a24a398a01ae16b118e2f2be1ccb6037a99e9672bdddefdb63405cb82/virtx-0.2.1-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:462968fa6d283a3c84f53483822a3c1a81e4e53380b759953942f80d0cdd739a", size = 5126026, upload-time = "2026-11-23T09:36:35.263Z" },
+    { url = "https://files.pythonhosted.org/packages/21/f8/317593820d7616bd69e31ae917d2426794956d888120d5c8c8a88ac9d355/virtx-0.2.1-py3-none-win_amd64.whl", hash = "sha256:e54d605cf106b5677d978b6d403d458f5e49aab036b7fd6b0001176b9bcecf13", size = 4452552, upload-time = "2026-11-23T09:36:36.7Z" },
 ]

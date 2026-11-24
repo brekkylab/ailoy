@@ -1,0 +1,106 @@
+---
+title: Errors
+description: "The errors Ailoy raises in Python, Node.js and Rust, and how to tell them apart."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Ailoy raises two kinds of error: errors from Ailoy itself (a model that isn't set up, an unregistered tool, an API error), and errors from the sandbox, which come from virtx.
+
+| Language | Ailoy's errors | Sandbox errors |
+| --- | --- | --- |
+| Python | `ailoy.AiloyError` (a subclass of `Exception`) | `virtx.VirtxError`, with the server's `status` |
+| Node.js | `Error` with `code` set to `"AILOY_ERROR"` | `Error` with `code` set to `"VIRTX_ERROR"` |
+| Rust | `anyhow::Error` | `anyhow::Error` |
+
+An invalid argument, such as calling `build()` twice on the same builder or passing a function that isn't callable as a tool, raises `ValueError` in Python and an `Error` with `code` set to `"INVALID_ARG"` in Node.js. These are mistakes in your code, so fix the call; retrying won't help.
+
+In Node.js, calls on the virtx package itself, such as `createSandbox`, throw virtx's own `VirtxError`, with `source` and `status`. See [virtx's errors reference](https://virtx.sh/docs/reference/api/#errors).
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+from ailoy import AiloyError
+from virtx import VirtxError
+
+try:
+    async for output in agent.run("Summarize /data/report.txt"):
+        ...
+except VirtxError as e:
+    print("sandbox failed:", e.status, e)
+except AiloyError as e:
+    print("agent failed:", e)
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+try {
+  for await (const output of agent.run('Summarize /data/report.txt')) {
+    // ...
+  }
+} catch (e) {
+  if (e.code === 'VIRTX_ERROR') console.error('sandbox failed:', e.message)
+  else if (e.code === 'AILOY_ERROR') console.error('agent failed:', e.message)
+  else throw e
+}
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+let mut stream = agent.run(query);
+while let Some(output) = stream.next().await {
+    match output {
+        Ok(output) => { /* ... */ }
+        Err(e) => {
+            eprintln!("turn failed: {e:#}");
+            break;
+        }
+    }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Automatic retries
+
+Backends that call an HTTP API (`api`, `bedrock`, `openrouter` and `self-hosted`) retry a request up to 3 times when the server answers with status 429, 500, 502, 503, 504 or 529. Gemini's API (`google` on `api`) retries the same statuses except 429. Between attempts they wait for the time in the server's `Retry-After` header, or 1, 2 and then 4 seconds, at most 10 seconds. Each retry is logged as a warning (see [Logging](#logging)). If the last attempt fails, the error is raised. Retries can't be configured.
+
+The `cli` backend doesn't retry: an error from the CLI is raised as it is.
+
+## Logging
+
+Ailoy writes log messages, such as a warning for each retry, through Rust's [`log`](https://docs.rs/log) crate.
+
+- **Python and Node.js:** the packages don't pass these messages on, so nothing is printed. Errors still reach your code as exceptions.
+- **Rust:** install a logger in your program to see them, such as [`env_logger`](https://docs.rs/env_logger), and run with `RUST_LOG=ailoy=warn`.
+
+```rust
+fn main() {
+    env_logger::init();
+    // ...
+}
+```
+
+## Refused requests
+
+In Rust, when a model's API rejects the request itself, with a 4xx that isn't about load or credentials, the error is an `ailoy::model::RequestRefused`. Sending the same request again won't help; what's in it has to change. Find it with `err.downcast_ref::<RequestRefused>()`, which has the `status` and `message`.
+
+## When errors are raised
+
+| When | Common causes | Guide |
+| --- | --- | --- |
+| `AgentBuilder.build()` | The org has no backend; an API key isn't set; a skill's `SKILL.md` is missing or invalid; conflicting browser options. | [Model providers troubleshooting](/docs/guides/model-providers/#troubleshooting), [Skills troubleshooting](/docs/guides/skills/#troubleshooting) |
+| The first turn | The CLI isn't installed or logged in; the model server isn't reachable. | [Model providers troubleshooting](/docs/guides/model-providers/#troubleshooting) |
+| During a turn | The model fails before replying; the reply is cut off at the output limit; the API rejects an image twice. | [Handle errors](/docs/guides/running/#handle-errors) |
+| Reading `history` or calling `start_browser` during a turn | Python and Node.js only allow these between turns. | [Agent](/docs/sdk/agent/#history) |
+| Using an agent after `close()` | The agent has been closed. | [Agent](/docs/sdk/agent/#close) |
+| `register_mcp_stdio` | The command isn't installed, or the server exited at startup. | [MCP troubleshooting](/docs/guides/using-mcp/#troubleshooting) |
+| Creating a sandbox | The machine can't run a VM, or the image doesn't exist. | [Installation troubleshooting](/docs/guides/installation/#troubleshooting), [Sandbox troubleshooting](/docs/guides/sandbox/#troubleshooting) |
+
+A tool that fails during a turn doesn't raise. Its error becomes the tool's result, and the model can try something else.

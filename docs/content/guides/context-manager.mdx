@@ -1,22 +1,25 @@
 ---
-title: "Context manager"
-description: "Replace old tool results past a token limit, and old screenshots past a cap."
+title: "Manage context"
+description: "Keep long runs within the model's context window by replacing old tool results and old images."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-The agent sends its whole history to the model on every call, so a long run sends more with each step: every tool call adds its result: a file it read, a page it fetched or a command's output. The context manager keeps it down in two ways: it replaces old tool results with a placeholder once the model's input grows past a limit, and it replaces old screenshots once the history holds too many.
+An agent sends its whole history to the model on every call. In a long run, each tool result (a file it read, a page it fetched, a command's output) makes the next request bigger. The context manager keeps the history down in two ways:
 
-## Turning it on
+- **Token limit.** Once the model's input passes a limit you set, old tool results are replaced with a short placeholder. Off by default.
+- **Image cap.** Once the history holds too many images from tool results, the oldest are replaced. On by default.
 
-Every setting has a default, and an agent without a context manager behaves as if it had one with every default: the image cap is on and the token limit is off.
+## Configure the context manager
 
-| Setting | Default | What it is |
+Call `context_manager(...)` (`contextManager` in Node.js) on the builder. Any setting you leave out keeps its default. An agent without this call behaves as if it had one with every default: the image cap is on and the token limit is off.
+
+| Setting | Default | What it does |
 | --- | --- | --- |
-| `max_input_tokens` (`maxInputTokens`) | 0 | The input the model reports, in tokens, past which old tool results are replaced. `0` turns truncation off. |
-| `preserve_recent_turns` (`preserveRecentTurns`) | 3 | How many of the latest user turns are left as they are. |
-| `max_images` (`maxImages`) | 30 | Images in tool results the history may hold at the start of a turn. `0` turns the cap off. |
-| `preserve_recent_images` (`preserveRecentImages`) | 10 | Images in tool results left once the cap is passed. |
+| `max_input_tokens` (`maxInputTokens`) | `0` | The input size, in tokens, above which old tool results are replaced. `0` turns this off. |
+| `preserve_recent_turns` (`preserveRecentTurns`) | `3` | How many of the most recent turns are never changed. |
+| `max_images` (`maxImages`) | `30` | How many tool-result images the history can hold at the start of a turn. `0` turns the cap off. |
+| `preserve_recent_images` (`preserveRecentImages`) | `10` | How many tool-result images are kept once the cap is reached. |
 
 <Tabs syncKey="lang">
 
@@ -31,7 +34,6 @@ agent = await (
 )
 ```
 
-
 </TabItem>
 <TabItem label="Node.js" icon="seti:javascript">
 
@@ -41,7 +43,6 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
   .contextManager({ maxInputTokens: 50000, preserveRecentTurns: 2 })
   .build()
 ```
-
 
 </TabItem>
 <TabItem label="Rust" icon="seti:rust">
@@ -60,43 +61,46 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
     .await?;
 ```
 
-
 </TabItem>
 </Tabs>
 
-## Tool results past the token limit
+## How the token limit works
 
-As each turn begins, once the user's message is in the history, the agent looks at the last input token count the model reported. When that is more than `max_input_tokens`, it truncates the history:
+At the start of each turn, after your message is added to the history, the agent checks the last input token count the model reported. If it's above `max_input_tokens`, the agent shortens the history:
 
-- A turn is a user message and everything after it up to the next user message. The last `preserve_recent_turns` turns, including the one just begun, are left as they are. If the history has fewer turns than that, nothing changes. `1` and `0` both leave only the turn just begun.
-- In the turns before those, each tool result's contents become the text `[context truncated]`. The result keeps the id of the call it answers, since APIs such as Anthropic's refuse a tool call that has no result.
-- The system message, the user's messages and the model's own messages, tool calls included, stay whole. No message is removed.
+- A turn is a user message and everything after it, up to the next user message. The last `preserve_recent_turns` turns, including the one just started, are left as they are. `1` and `0` both keep only the current turn.
+- In older turns, the content of each tool result becomes `[context truncated]`. The result keeps the id of the call it answers, because some APIs, such as Anthropic's, reject a tool call without a result.
+- The system message, your messages and the model's messages (tool calls included) are never changed. No message is removed.
 
-The placeholders replace the results in the agent's history, so `agent.history` shows them too, and they stay in it.
+The placeholders replace the results in the agent's history, so `agent.history` shows them too.
 
-The count comes from a call already made, and the history is truncated only as a turn begins. A turn that goes past the limit runs to its end with the history unchanged, and the next turn begins truncated. The requests of a turn send back the thinking the model has produced in it. From Claude 5.1 on, the API can refuse a thinking block once anything before it has changed ([Keeping the prefix unchanged](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking#prefix-check)), so the history stays as it is until the turn ends. A reply without `usage` leaves the last count in place, so a model that never reports usage, such as a model of your own whose replies leave it out, never triggers truncation. And since only tool results are replaced, a history whose messages alone are past the limit keeps growing.
+Some limits to be aware of:
 
-## Images past the cap
+- **The check happens only at the start of a turn.** A turn that goes past the limit runs to the end unchanged, and the next turn starts shortened. This is because, from Claude 5.1 on, the API can reject a request if anything before a thinking block has changed ([Keeping the prefix unchanged](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking#prefix-check)).
+- **It relies on the model reporting usage.** A reply without `usage` leaves the last count in place, so a model that never reports usage (such as a custom model that leaves it out) never triggers the limit.
+- **Only tool results are replaced.** If your messages and the model's messages alone pass the limit, the history keeps growing.
 
-At the start of each turn, when the tool results hold more than `max_images` images, the oldest become the text `[image from an earlier turn removed]` until `preserve_recent_images` remain.
+## How the image cap works
 
-- Only images in tool results count and only they are replaced: a screenshot, an image read with `imgread`, an image an MCP tool returned. Images you attach to a message are never replaced.
-- Within a turn nothing is replaced, so a turn of many screenshots sends them all until the next turn starts.
-- The cap counts across every turn, the last `preserve_recent_turns` included.
+At the start of each turn, if tool results hold more than `max_images` images, the oldest are replaced with `[image from an earlier turn removed]` until `preserve_recent_images` remain.
 
-As with the token limit, the placeholders stay in `agent.history`.
+- Only images in tool results count: screenshots, images read with `imgread`, images an MCP tool returns. Images you attach to your own messages are never replaced.
+- Nothing is replaced during a turn, so a turn with many screenshots sends them all until the next turn starts.
+- The cap counts images across all turns, including the most recent ones.
 
-Apart from the cap, and for every model, an embedded image past 2576 pixels on its longer edge, attached or returned by a tool, is shrunk to that edge before it enters the history. The shrunk image is turned upright by its EXIF orientation and keeps its color profile, and comes back as:
+## Large images are resized
 
-| Image | Comes back as |
+Separately from the cap, and for every model, any embedded image larger than 2576 pixels on its longer edge is resized to 2576 before it enters the history. This applies to images you attach and images tools return. The resized image is rotated upright using its EXIF orientation and keeps its color profile. Its format:
+
+| Original image | Saved as |
 | --- | --- |
-| Any but a WebP | Its own format |
-| A WebP with transparent pixels | PNG |
-| An opaque lossless WebP | PNG, or JPEG if that PNG would pass 5 MB in base64 |
+| Anything except WebP | The same format |
+| WebP with transparency | PNG |
+| Lossless WebP without transparency | PNG, or JPEG if the PNG would be over 5 MB in base64 |
 | Any other WebP | JPEG |
-| One that would still come out past 5 MB in base64, an animated one, or a GIF of any size | Left as it is |
+| Animated images, GIFs, and images still over 5 MB in base64 after resizing | Left unchanged |
 
-## Next
+## Next steps
 
-- [Model providers](/docs/guides/model-providers/): naming a model and choosing how it runs.
-- [Tools](/docs/guides/tools/): built-in tools, your own functions, MCP and the browser.
+- [Model providers](/docs/guides/model-providers/): choose a model and how it runs.
+- [Tools](/docs/guides/tools/): built-in tools and your own functions.

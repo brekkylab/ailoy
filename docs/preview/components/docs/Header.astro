@@ -9,10 +9,10 @@ import { Icon } from '@astrojs/starlight/components';
 
 const path = Astro.url.pathname;
 const tabs = [
-  { label: 'Docs', href: '/docs/', match: (p: string) => !p.startsWith('/docs/reference/') },
+  { label: 'Docs', href: '/docs/', match: (p: string) => !/^\/docs\/(sdk|changelog)\//.test(p) },
+  { label: 'SDK', href: '/docs/sdk/', match: (p: string) => p.startsWith('/docs/sdk/') },
   { label: 'Examples', href: 'https://ailoy.co/examples/', match: () => false },
-  { label: 'Changelog', href: 'https://github.com/brekkylab/ailoy/releases', match: () => false },
-  { label: 'API reference', href: '/docs/reference/', match: (p: string) => p.startsWith('/docs/reference/') }
+  { label: 'Changelog', href: '/docs/changelog/', match: (p: string) => p.startsWith('/docs/changelog/') }
 ];
 ---
 

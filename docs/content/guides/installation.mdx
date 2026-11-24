@@ -1,31 +1,43 @@
 ---
 title: "Installation"
-description: "Install Ailoy and virtx, and set up a way for the agent's model to run."
+description: "Check your machine, install Ailoy for your language, and set up a model."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-An agent needs Ailoy and virtx's packages, a way for its model to run, and a machine that can run its sandbox.
+Setup takes three steps: check that your machine can run a sandbox, install the package for your language, and give Ailoy access to a model. Pick your language in the first tab you see. Every other tab on these pages switches with it.
 
 <div class="steps-flow">
 
-## Requirements
+## Check the requirements
 
-- Python 3.11 or later, Node.js 22 or later, or Rust 1.95 or later.
-- For the machine that runs the sandbox, which is yours unless the virtx server runs elsewhere, depending on its OS:
-  - **Linux:** KVM, with `/dev/kvm` open to your user and virtualization enabled in the firmware. Most kernels have KVM built in.
-  - **macOS:** Apple silicon.
-  - **Windows:** Windows 11 or later, with the Windows Hypervisor Platform turned on (below).
+You need one of these language versions:
 
-### Windows
+| Language | Version |
+| --- | --- |
+| Python | 3.11 or later |
+| Node.js | 22 or later |
+| Rust | 1.95 or later |
 
-The Windows Hypervisor Platform is off by default. With virtualization enabled in the firmware, turn it on from an administrator PowerShell, then restart:
+To give an agent a sandbox, the machine that runs the sandbox must support microVMs. That is your own machine unless you run the sandbox server somewhere else.
+
+| OS | What you need |
+| --- | --- |
+| Linux | KVM, with `/dev/kvm` open to your user and virtualization turned on in the firmware. Most kernels include KVM. |
+| macOS | Apple silicon. Intel Macs can't run sandboxes. |
+| Windows | Windows 11 or later, with the Windows Hypervisor Platform turned on (see below). |
+
+An agent without a sandbox runs on any machine. You can skip the OS requirements if you only want to try a model and tools first.
+
+### Turn on the Windows Hypervisor Platform
+
+The Hypervisor Platform is off by default. Make sure virtualization is turned on in the firmware, then run this in PowerShell as administrator and restart:
 
 ```powershell
 Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform
 ```
 
-## Packages
+## Install the package
 
 <Tabs syncKey="lang">
 
@@ -35,7 +47,7 @@ Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform
 pip install ailoy-py
 ```
 
-This installs `virtx` too, the package your code makes sandboxes with.
+This also installs `virtx`, the package you use to create sandboxes.
 
 </TabItem>
 <TabItem label="Node.js" icon="seti:javascript">
@@ -44,43 +56,49 @@ This installs `virtx` too, the package your code makes sandboxes with.
 npm install @brekkylab/ailoy
 ```
 
-This installs `@brekkylab/virtx` too, the package your code makes sandboxes with. With pnpm, which keeps a package from importing what it did not list, add `@brekkylab/virtx` yourself.
+This also installs `@brekkylab/virtx`, the package you use to create sandboxes. If you use pnpm, add `@brekkylab/virtx` yourself, because pnpm only lets your code import packages you list.
 
 </TabItem>
 <TabItem label="Rust" icon="seti:rust">
+
+In a Cargo project (`cargo new my-agent && cd my-agent` makes one):
 
 ```sh
 cargo add ailoy virtx futures anyhow tokio --features tokio/macros,tokio/rt-multi-thread
 ```
 
-`virtx` is the crate your code makes sandboxes with. Cargo lets your code use only the crates it lists, so add it beside `ailoy`. `tokio`, `futures` and `anyhow` are what the examples on these pages run on.
+`virtx` is the crate you use to create sandboxes. Add it next to `ailoy`, because Cargo only lets your code use crates you list. The code on these pages also uses `tokio`, `futures` and `anyhow`.
 
 </TabItem>
 </Tabs>
 
-You don't install virtx's server separately: the first `Client.spawn()` (`Client::spawn_virtx` in Rust) downloads it into virtx's cache.
+You don't install the sandbox server yourself. The first time your code calls `Client.spawn()` (`Client::spawn_virtx` in Rust), virtx downloads the server into its cache.
 
-## A model to run
+## Set up a model
 
-### With a CLI login (default)
+Every agent needs a model. Choose one of two options.
 
-Claude, GPT and Gemini run through their CLIs by default, so the examples need no key. Install the one for your model and log in:
+### Option A: log in to a CLI (no API key)
 
-| CLI | Log in | Check |
-| --- | --- | --- |
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `claude auth login` | `claude auth status` |
-| [Codex](https://github.com/openai/codex) | `codex login` | `codex login status` |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Run `gemini` and sign in | |
+Claude, GPT and Gemini models run through their official CLIs by default. If you already use one of these CLIs, you don't need an API key. Install the CLI for your model and log in:
 
-Without a login, the first turn fails with the CLI's own message, such as Claude Code's "Not logged in".
+| Model | CLI | Log in | Check the login |
+| --- | --- | --- | --- |
+| Claude | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `claude auth login` | `claude auth status` |
+| GPT | [Codex](https://github.com/openai/codex) | `codex login` | `codex login status` |
+| Gemini | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Run `gemini` and sign in | |
 
-### With an API key
+The examples in these docs use `anthropic/claude-haiku-5-5`, so Claude Code is the CLI to install if you want to run them as written.
 
-Set the key, and switch the org to the `api` backend before building the agent:
+### Option B: use an API key
+
+Set the key for your model's provider:
 
 ```sh
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY
 ```
+
+Then tell Ailoy to use the API for that provider. Run this once, before you build an agent:
 
 <Tabs syncKey="lang">
 
@@ -92,7 +110,6 @@ import ailoy
 ailoy.set_lang_model_provider("anthropic", "api")
 ```
 
-
 </TabItem>
 <TabItem label="Node.js" icon="seti:javascript">
 
@@ -102,7 +119,6 @@ const { setLangModelProvider } = require('@brekkylab/ailoy')
 setLangModelProvider('anthropic', 'api')
 ```
 
-
 </TabItem>
 <TabItem label="Rust" icon="seti:rust">
 
@@ -110,25 +126,23 @@ setLangModelProvider('anthropic', 'api')
 ailoy::model::set_lang_model_provider("anthropic", ailoy::model::Backend::Api);
 ```
 
-
 </TabItem>
 </Tabs>
 
-[Model providers](/docs/guides/model-providers/) lists every backend: the CLIs, each org’s own API, Amazon Bedrock, OpenRouter and a server you run yourself (vLLM, llama-server, Ollama, LM Studio).
+Other providers (DeepSeek, Kimi, GLM, Qwen, EXAONE), Amazon Bedrock, OpenRouter and your own model server are covered in [Model providers](/docs/guides/model-providers/).
 
 </div>
 
+## Next step
+
+You're set up. [Run the quick start](/docs/guides/quick-start/) to build your first agent.
+
 ## Troubleshooting
 
-| What you see | Cause | Fix |
+| Error | Cause | Fix |
 | --- | --- | --- |
-| `boot_failed`, when a sandbox is made | This machine can't boot a VM. | **Linux:** open `/dev/kvm` to your user with `sudo usermod -aG kvm $USER`, then log in again. **Windows:** turn on the [Hypervisor Platform](#windows). **Any OS:** turn on virtualization (Intel VT-x, AMD-V) in the firmware. Set `KRUN_LOG=debug` to see the hypervisor's own messages after `last logged`. |
-| `no virtx-stdio release … for macos-x86_64` | virtx runs on Apple silicon only, not on an Intel Mac. | Run the virtx server on another machine and connect to it ([Hello world](https://virtx.sh/docs/hello-world/)). |
-| `fetching …/virtx/releases/…`, on the first `Client.spawn()` | The server's download failed. | Check the network or proxy, set `VIRTX_DIST_URL` to a mirror, or download the server yourself and point `VIRTX_STDIO` at it ([Environment variables](https://virtx.sh/docs/reference/api/#environment-variables)). |
-| `… does not match its SHA256SUMS` | The download came back changed, as a proxy may do. | Try again, or set `VIRTX_STDIO` as above. |
-| An error from the model's CLI or API on the first turn | It comes from the model's backend, not the sandbox. | See [Model providers](/docs/guides/model-providers/#troubleshooting). |
-
-## Next
-
-- [How an agent works](/docs/concepts/): where each part runs and what happens in a turn.
-- [Defining an agent](/docs/guides/agents/): everything an `AgentBuilder` can give an agent.
+| `boot_failed` when you create a sandbox | This machine can't start a VM. | **Linux:** run `sudo usermod -aG kvm $USER`, then log out and back in. **Windows:** turn on the [Hypervisor Platform](#turn-on-the-windows-hypervisor-platform). **Any OS:** turn on virtualization (Intel VT-x or AMD-V) in the firmware. To see the hypervisor's own messages, set `KRUN_LOG=debug`. |
+| `no virtx-stdio release … for macos-x86_64` | Sandboxes run on Apple silicon only, not on Intel Macs. | Run the sandbox server on another machine and connect to it. See virtx's [Hello world](https://virtx.sh/docs/hello-world/). |
+| `fetching …/virtx/releases/…` on the first `Client.spawn()` | The server download failed. | Check your network or proxy. You can also set `VIRTX_DIST_URL` to a mirror, or download the server yourself and set `VIRTX_STDIO` to its path ([Environment variables](https://virtx.sh/docs/reference/api/#environment-variables)). |
+| `… does not match its SHA256SUMS` | The download was changed on the way, often by a proxy. | Try again, or set `VIRTX_STDIO` as above. |
+| "Not logged in", or another CLI or API error on the first turn | The model isn't set up. | Log in to the CLI (Option A) or set the API key (Option B). See also [Model providers troubleshooting](/docs/guides/model-providers/#troubleshooting). |

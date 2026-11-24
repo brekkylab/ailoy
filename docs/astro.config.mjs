@@ -9,12 +9,29 @@ import starlight from '@astrojs/starlight';
 const sidebar = JSON.parse(readFileSync(new URL('./sidebar.json', import.meta.url), 'utf8'));
 
 // The guides were under guide/ before they moved to guides/; the old addresses still lead there.
-// Building VM became Giving an agent a sandbox.
+// Building VM became Giving an agent a sandbox, and the API reference the SDK section.
 const guides = readdirSync(new URL('./content/guides/', import.meta.url)).map((f) => f.replace(/\.mdx?$/, ''));
 const redirects = Object.fromEntries([
   ...guides.map((g) => [`/guide/${g}/`, `/docs/guides/${g}/`]),
-  ['/guide/building-vm/', '/docs/guides/sandbox/']
+  ['/guide/building-vm/', '/docs/guides/sandbox/'],
+  ['/reference/', '/docs/sdk/']
 ]);
+
+// Every code block names its language in its header (Python, Node.js, Shell, ...) unless it has a
+// title of its own, so a block outside the language tabs still says what it is.
+const LANGUAGES = {
+  python: 'Python', py: 'Python', js: 'Node.js', javascript: 'Node.js', ts: 'TypeScript',
+  rust: 'Rust', rs: 'Rust', sh: 'Shell', bash: 'Shell', shell: 'Shell', powershell: 'PowerShell',
+  json: 'JSON', toml: 'TOML', yaml: 'YAML', markdown: 'Markdown', md: 'Markdown', dockerfile: 'Dockerfile'
+};
+const languageLabel = {
+  name: 'language-label',
+  hooks: {
+    preprocessMetadata: ({ codeBlock }) => {
+      if (!codeBlock.props.title && LANGUAGES[codeBlock.language]) codeBlock.props.title = LANGUAGES[codeBlock.language];
+    }
+  }
+};
 
 const FONTS =
   'https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap';
@@ -80,11 +97,26 @@ export default defineConfig({
       expressiveCode: {
         themes: [mono('dark', '#0e0f11', '#d9d8d3', '#6c7079'), mono('light', '#f3f3f1', '#24262b', '#80838b')],
         defaultProps: { frame: 'code' },
+        plugins: [languageLabel],
         styleOverrides: {
           borderRadius: '0',
           borderColor: 'var(--sl-color-hairline)',
           codeBackground: 'var(--sl-color-gray-6)',
-          frames: { frameBoxShadowCssValue: 'none', editorBackground: 'var(--sl-color-gray-6)' },
+          uiFontFamily: 'var(--sl-font)',
+          uiFontSize: '0.8125rem',
+          // A standalone block's language label: a quiet line above the code, not a filled tab.
+          frames: {
+            frameBoxShadowCssValue: 'none',
+            editorBackground: 'var(--sl-color-gray-6)',
+            editorTabBarBackground: 'var(--sl-color-black)',
+            editorTabBarBorderBottomColor: 'var(--sl-color-hairline)',
+            editorActiveTabBackground: 'transparent',
+            editorActiveTabForeground: 'var(--sl-color-gray-3)',
+            editorActiveTabBorderColor: 'transparent',
+            editorActiveTabIndicatorTopColor: 'transparent',
+            editorActiveTabIndicatorBottomColor: 'var(--sl-color-accent)',
+            editorActiveTabIndicatorHeight: '1px'
+          },
           textMarkers: {
             markBackground: 'rgba(255, 197, 61, 0.10)',
             markBorderColor: '#ffc53d',

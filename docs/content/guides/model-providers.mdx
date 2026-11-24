@@ -5,16 +5,18 @@ description: "Name a model and choose how it runs: a CLI login, the maker's API,
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-## Naming a model
+This page covers how to name a model, how to choose where it runs (a CLI login, the provider's API, Amazon Bedrock, OpenRouter or your own server), and how to plug in a model of your own.
 
-Name the model as `<org>/<name>` when you build the agent. The name is the one its maker gives it: the official API id for Claude, GPT and Gemini, the Hugging Face repo id for open-weight models, and the API id for a model with no repo, such as EXAONE's `k-exaone_v2.5`. The same name works whichever way the model runs.
+## Name a model
+
+Pass the model to `AgentBuilder` as `<org>/<name>`. Use the name the model's maker gives it: the official API id for Claude, GPT and Gemini, the Hugging Face repo id for open-weight models, or the API id for a model without a repo, such as EXAONE's `k-exaone_v2.5`. The name stays the same whichever backend runs the model, with one exception: DeepSeek's own API, the default for `deepseek-ai`, names its models without a version, so it takes DeepSeek's own names, such as `deepseek-ai/deepseek-chat`. Bedrock, OpenRouter and your own server take the Hugging Face repo id.
 
 | Models | Org | Example |
 | --- | --- | --- |
 | Claude | `anthropic` | `anthropic/claude-haiku-5-5` |
 | GPT | `openai` | `openai/gpt-6-luna` |
 | Gemini | `google` | `google/gemini-3.1-pro` |
-| DeepSeek | `deepseek-ai` | `deepseek-ai/DeepSeek-V3.2` |
+| DeepSeek | `deepseek-ai` | `deepseek-ai/deepseek-chat` on DeepSeek's API, `deepseek-ai/DeepSeek-V3.2` elsewhere |
 | Kimi | `moonshotai` | `moonshotai/Kimi-K2-Thinking` |
 | GLM | `zai-org` | `zai-org/GLM-4.6` |
 | Qwen | `Qwen` | `Qwen/Qwen3-235B-A22B-Instruct-2507` |
@@ -48,11 +50,11 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5").build().await?;
 </TabItem>
 </Tabs>
 
-For a CLI, the org alone (`anthropic`) runs the CLI's default model.
+With the `cli` backend, the org alone (`anthropic`) runs the CLI's default model.
 
 ## Backends
 
-Each org's models run on one **backend**:
+A backend is how Ailoy reaches the model. Each org uses one backend at a time:
 
 | Backend | Runs the model through | Needs |
 | --- | --- | --- |
@@ -60,11 +62,11 @@ Each org's models run on one **backend**:
 | `api` | The org's own API | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY` (or `MOONSHOT_API_KEY`), `ZAI_API_KEY`, `DASHSCOPE_API_KEY` (Qwen) or `EXAONE_API_KEY` |
 | `bedrock` | Amazon Bedrock | `AWS_BEARER_TOKEN_BEDROCK`; the region from `AWS_REGION`, then `AWS_DEFAULT_REGION`, else `us-east-1` |
 | `openrouter` | OpenRouter | `OPENROUTER_API_KEY` |
-| `self-hosted` | A server you run yourself, through the OpenAI-compatible Chat Completions API it serves: vLLM, llama-server, Ollama, LM Studio or SGLang | `SELF_HOSTED_BASE_URL`, and `SELF_HOSTED_API_KEY` if the server wants one |
+| `self-hosted` | A server you run that serves the OpenAI-compatible Chat Completions API: vLLM, llama-server, Ollama, LM Studio or SGLang | `SELF_HOSTED_BASE_URL`, plus `SELF_HOSTED_API_KEY` if the server requires one |
 
-By default, Claude, GPT and Gemini run through their CLIs, and the other orgs through their own APIs. Keys are read from the environment when a model is built, so set them before that.
+By default, Claude, GPT and Gemini use `cli`, and the other orgs in [Name a model](#name-a-model) use `api`. Ailoy reads keys from the environment when it builds the model, so set them before you call `build()`.
 
-`cli` and `api` know the orgs in [Naming a model](#naming-a-model). The other backends build a model for any org, `meta-llama` or `mistralai` as well. Such an org has no backend until you set one with `set_lang_model_provider`; building its model before that fails. Which backends serve which org:
+`cli` and `api` support only the orgs in [Name a model](#name-a-model). `bedrock`, `openrouter` and `self-hosted` work for any org, such as `meta-llama` or `mistralai`. An org outside that table has no default backend: set one with `set_lang_model_provider` before you build its model, or the build fails. Which backends support which orgs:
 
 | Org | `cli` | `api` | `bedrock` | `openrouter` | `self-hosted` |
 | --- | :-: | :-: | :-: | :-: | :-: |
@@ -74,11 +76,11 @@ By default, Claude, GPT and Gemini run through their CLIs, and the other orgs th
 | `deepseek-ai`, `moonshotai`, `zai-org`, `Qwen`, `LGAI-EXAONE` | | ✓ | ✓ | ✓ | ✓ |
 | any other org | | | ✓ | ✓ | ✓ |
 
-Bedrock and OpenRouter name models their own way. Ailoy looks your model up in their catalogs, so you still write `anthropic/claude-haiku-5-5`, and the catalog decides which Bedrock or OpenRouter id it runs as. A server you run yourself is asked what it serves too; [A server of your own](#a-server-of-your-own) says how the id is found, and how to name it yourself when the server calls the model something else.
+Bedrock and OpenRouter use their own model ids. You still write `anthropic/claude-haiku-5-5`: Ailoy looks the model up in their catalogs and sends the matching id. For your own server, see [Use your own model server](#use-your-own-model-server).
 
-## Choosing a backend
+## Choose a backend
 
-Set an org's backend with `set_lang_model_provider` (`setLangModelProvider` in Node.js) before building an agent. It applies to every model of that org built afterwards.
+Call `set_lang_model_provider` (`setLangModelProvider` in Node.js) before you build the agent. The setting applies to every model of that org built afterwards, in the whole process.
 
 <Tabs syncKey="lang">
 
@@ -117,11 +119,11 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5").build().await?;
 </TabItem>
 </Tabs>
 
-`remove_lang_model_provider` (`removeLangModelProvider`) takes the org's provider away, after which its models can't be built.
+`remove_lang_model_provider` (`removeLangModelProvider`) removes the org's backend. After that, its models can't be built until you set one again.
 
-## A server of your own
+## Use your own model server
 
-`self-hosted` reads its server from the environment, one for the whole process. To name the server per org, give `set_lang_model_provider` the backend together with the server's URL, and an API key if the server wants one. Two servers, say vLLM for code and Ollama for chat, are two orgs:
+With the `self-hosted` backend set by name, Ailoy reads one server URL for the whole process from `SELF_HOSTED_BASE_URL`. To use a different server per org, pass `set_lang_model_provider` an object with the server's URL instead of the backend name. This example sends Qwen models to a vLLM server and Llama models to Ollama:
 
 <Tabs syncKey="lang">
 
@@ -165,17 +167,23 @@ let chat = AgentBuilder::new("meta-llama/Llama-3.3-70B-Instruct").build().await?
 </TabItem>
 </Tabs>
 
-The model keeps its name whatever the server calls it. When a model is built, Ailoy finds the id to send in three steps and takes the first that gives one: `models` (`with_model` in Rust), which maps a name to the id the server serves it as; the server's own list at `<base_url>/models`, where an id equal to `<org>/<name>` or to `<name>` alone counts, ignoring case; and the desc as you wrote it. So vLLM, which serves Hugging Face repo ids, needs nothing; LM Studio lists `qwen/qwen3-0.6b` and is sent that for `Qwen/Qwen3-0.6B`; and Ollama's `llama3.3:70b` is nothing like `Llama-3.3-70B-Instruct`, so it is mapped, as above. `get_lang_model_provider` answers `self-hosted`.
+You keep the model's usual name, even if the server calls it something else. When the model is built, Ailoy picks the id to send to the server from the first of these that matches:
 
-Another endpoint that serves the OpenAI-compatible Chat Completions API, such as a LiteLLM gateway or Together's API, runs on `self-hosted` the same way: its URL as `base_url` and its key as `api_key`.
+1. The `models` map (`with_model` in Rust), which maps a model name to the server's id.
+2. The server's model list at `<base_url>/models`: an id equal to `<org>/<name>`, or to `<name>` alone, ignoring case.
+3. The name exactly as you wrote it.
+
+So vLLM, which serves Hugging Face repo ids, needs no mapping. LM Studio lists `qwen/qwen3-0.6b`, which matches `Qwen/Qwen3-0.6B` in step 2. Ollama's `llama3.3:70b` doesn't match `Llama-3.3-70B-Instruct`, so it needs the `models` map, as in the example. For these orgs, `get_lang_model_provider` returns `self-hosted`.
+
+Any other endpoint that serves the OpenAI-compatible Chat Completions API, such as a LiteLLM gateway or Together's API, works the same way: pass its URL as `base_url` and its key as `api_key`.
 
 ## Model options
 
-Two options go to every backend:
+These two options work on every backend:
 
 | Option | Builder method | Description |
 | --- | --- | --- |
-| `thinking_effort` | `thinking_effort` (`thinkingEffort`) | How much the model thinks before it answers: `low`, `medium` or `high`. Unset, the model's default. |
+| `thinking_effort` | `thinking_effort` (`thinkingEffort`) | How much the model reasons before answering: `low`, `medium` or `high`. If unset, the model's default. |
 | `output_schema` | `output_schema` (`outputSchema`) | A JSON schema the model's answers must match. |
 
 <Tabs syncKey="lang">
@@ -220,7 +228,11 @@ let agent = AgentBuilder::new("openai/gpt-6-luna")
 </TabItem>
 </Tabs>
 
-On `self-hosted`, and for EXAONE on `api`, `thinking_effort` is sent two ways, since servers read different ones: as `reasoning_effort` (`low`, `medium` or `high`), the field OpenAI's Chat Completions grades thinking by, and as the chat template's `enable_thinking` (and `thinking`) in `chat_template_kwargs`, which turns thinking on rather than grading it. `output_schema` is sent as a `json_schema` `response_format`. vLLM reads `chat_template_kwargs` and `response_format`, and its documentation says it hands `reasoning_effort` to the chat template, turning `enable_thinking` on with it. What the other servers do with them, measured on 2026-11-09 with Qwen3-0.6B on each local server and `k-exaone_v2.5` on EXAONE's API, a schema with `additionalProperties: false` telling enforcement from obedience:
+### How self-hosted servers handle these options
+
+On `self-hosted`, and for EXAONE on `api`, Ailoy sends `thinking_effort` in two forms, because servers read different fields: as `reasoning_effort` (`low`, `medium` or `high`), and as `enable_thinking` (and `thinking`) in `chat_template_kwargs`. `output_schema` is sent as a `json_schema` `response_format`. vLLM reads `chat_template_kwargs` and `response_format`, and its documentation says it passes `reasoning_effort` to the chat template.
+
+Results for other servers, measured on 2026-11-09 with Qwen3-0.6B on each local server and `k-exaone_v2.5` on EXAONE's API:
 
 | Server | `reasoning_effort` | `chat_template_kwargs` | `response_format` | Thinking comes back as |
 | --- | --- | --- | --- | --- |
@@ -229,11 +241,11 @@ On `self-hosted`, and for EXAONE on `api`, `thinking_effort` is sent two ways, s
 | LM Studio 0.4.26 | Read, as `"bogus"` is refused, but `low`, `medium` and `high` left Qwen3's thinking as it was | Ignored | Enforced, with no thinking while the reply is structured | `reasoning_content` |
 | EXAONE API (`k-exaone_v2.5`) | Read, as `"bogus"` is refused, `medium` included; on one counting problem the thinking did not follow it, `low` taking 991 to 1728 reasoning tokens over six runs and `high` 1054 to 2131 over four | `enable_thinking: false` left the model thinking, with the thinking and its `</think>` in the reply | Enforced | `reasoning_content` |
 
-So with Qwen3, `thinking_effort` changes nothing on llama-server, Ollama or LM Studio: the model thinks as its template defaults. EXAONE always thinks, and with `thinking_effort` unset it runs at its own default effort, which its documentation gives as `max`. SGLang has not been measured.
+In short: with Qwen3, `thinking_effort` has no effect on llama-server, Ollama or LM Studio; the model reasons as its chat template defaults. EXAONE always reasons, and with `thinking_effort` unset it uses its own default effort, which its documentation gives as `max`. SGLang hasn't been tested.
 
-## Running a model without an agent
+## Call a model without an agent
 
-`LangModel` builds a model the way an agent does, and runs it on a conversation you give it: no tools are called and no history is kept. `infer` returns the whole reply as a `MessageOutput`, and `infer_stream` (`inferStream`) yields `MessageDeltaOutput`s as the model writes.
+`LangModel` builds a model the same way an agent does and runs it on messages you pass. It doesn't call tools or keep a history. `infer` returns the whole reply as a `MessageOutput`, and `infer_stream` (`inferStream`) returns `MessageDeltaOutput`s as the model writes.
 
 <Tabs syncKey="lang">
 
@@ -287,16 +299,16 @@ let mut deltas = model.infer_stream(&messages, &[], &LangModelOptions::default()
 </TabItem>
 </Tabs>
 
-Tools, if you pass them, are only described to the model: its tool calls come back in the reply for you to run.
+If you pass tools, they are only described to the model. Any tool calls come back in the reply for you to run.
 
-## Bringing your own model
+## Use a custom model
 
-An org can also be served by your own code. Instead of a backend name, give `set_lang_model_provider` a **factory**: it's called with the org and the name after the slash (`None`/`null` when the model is named by the org alone) and returns the model. The model has
+You can serve an org with your own code. Pass `set_lang_model_provider` a **factory** instead of a backend name. Ailoy calls the factory with the org and the name after the slash (`None` in Python, `null` in Node.js, when the model is named by its org alone). The factory returns a model with:
 
-- `infer(messages, tools, options)`, returning a `MessageOutput` (or, in Python and Node.js, an awaitable or promise of one), and optionally
-- `infer_stream(messages, tools, options)` (`inferStream`), yielding `MessageDeltaOutput`s. Without it, streaming gives `infer`'s reply as one delta.
+- `infer(messages, tools, options)`, which returns a `MessageOutput`. In Python and Node.js it can also return an awaitable or a promise of one.
+- Optionally, `infer_stream(messages, tools, options)` (`inferStream`), which yields `MessageDeltaOutput`s. Without it, streaming returns `infer`'s reply as a single delta.
 
-The factory may also return a `LangModel`, to serve the org with a model from another org.
+The factory can also return a `LangModel`, to serve the org with another org's model.
 
 <Tabs syncKey="lang">
 
@@ -392,19 +404,19 @@ let agent = AgentBuilder::new("mine/echo").build().await?;
 </TabItem>
 </Tabs>
 
-In Python and Node.js the factory itself must return the model directly, not an awaitable or promise of it. The model's methods are called with the messages, tools and options as dicts or objects, the same shapes the [message format](/docs/guides/message-format/) describes.
+In Python and Node.js, the factory itself must return the model directly, not an awaitable or a promise. The model's methods receive the messages, tools and options as dicts (Python) or objects (Node.js), in the shapes [Messages](/docs/guides/message-format/) describes.
 
 ## Troubleshooting
 
-| What you see | Why, and what to do |
+| Error | Cause and fix |
 | --- | --- |
-| `failed to start the claude CLI` (or `codex`, `gemini`), on the first turn | The CLI isn't installed, or isn't on the `PATH` of your program. Install it ([With a CLI login](/docs/guides/installation/#with-a-cli-login-default)), or switch the org to `api`. |
+| `failed to start the claude CLI` (or `codex`, `gemini`), on the first turn | The CLI isn't installed, or isn't on the `PATH` of your program. Install it ([Option A: log in to a CLI](/docs/guides/installation/#option-a-log-in-to-a-cli-no-api-key)), or switch the org to `api`. |
 | The CLI's own error on the first turn, such as Claude Code's "Not logged in" | Log in: `claude auth login`, `codex login`, or run `gemini` and sign in. Codex is read from its `auth.json`, so a login kept in the system keyring (`cli_auth_credentials_store`) isn't found. |
 | `ANTHROPIC_API_KEY is not set` (or another `…_API_KEY`), at `build()` | Set the variable before building the agent; a blank one counts as unset. [Backends](#backends) lists each org's variable. |
-| `'<org>' has no CLI`, or `'<org>' has no API of its own` | Only `anthropic`, `openai` and `google` have a CLI, and `api` knows only the orgs in [Naming a model](#naming-a-model). Use `bedrock`, `openrouter` or `self-hosted` for any other. |
+| `'<org>' has no CLI`, or `'<org>' has no API of its own` | Only `anthropic`, `openai` and `google` have a CLI, and `api` knows only the orgs in [Name a model](#name-a-model). Use `bedrock`, `openrouter` or `self-hosted` for any other. |
 | `no provider set for lang model org '<org>'` | The org has no default backend. Set one with `set_lang_model_provider` first. |
 | `AWS_BEARER_TOKEN_BEDROCK is not set` | Bedrock is reached with a bearer token, not AWS access keys or a profile. Set the token. |
 | `Bedrock request failed with status …` on the first turn | The region is wrong, as `us-east-1` is used when neither `AWS_REGION` nor `AWS_DEFAULT_REGION` is set, or Bedrock doesn't serve the model there. Ailoy builds an id for any model, so a model Bedrock lacks, such as Gemini, fails only when it is called. |
-| `SELF_HOSTED_BASE_URL is not set` | Set it, or give the server per org with `set_lang_model_provider` ([A server of your own](#a-server-of-your-own)). |
+| `SELF_HOSTED_BASE_URL is not set` | Set it, or give the server per org with `set_lang_model_provider` ([A server of your own](#use-your-own-model-server)). |
 | `chat completions request failed with status 404: …` | The `base_url` is missing its `/v1`. Ailoy adds `/chat/completions` to the URL as given. |
 | A connection error naming `<base_url>/chat/completions` on the first turn | The server isn't running, or the host or port is wrong. `build()` still succeeds and only logs `listing the models at <base_url>/models failed`. |

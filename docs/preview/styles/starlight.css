@@ -281,7 +281,8 @@ mobile-starlight-toc .toggle {
   background: var(--sl-color-gray-6);
 }
 /* A name in a table's first column stays on one line (self-hosted, not self- / hosted). */
-.sl-markdown-content td:first-child code {
+.sl-markdown-content td:first-child code,
+.sl-markdown-content td a code {
   white-space: nowrap;
 }
 .sl-markdown-content th {
@@ -303,6 +304,57 @@ starlight-tabs [role='tab'][aria-selected='true'] {
   color: var(--sl-color-white);
   border-bottom-color: var(--sl-color-accent);
   font-weight: 500;
+}
+
+/* Code groups: language tabs that hold code become the header of one code card, so the language
+   shows once (in the tab) and the frame's own language header is dropped. Prose inside a tab
+   panel sits in the card under the code. */
+starlight-tabs:has(.expressive-code) {
+  margin-top: 1.25rem;
+  border: 1px solid var(--sl-color-hairline);
+  background: var(--sl-color-gray-6);
+}
+starlight-tabs:has(.expressive-code) [role='tablist'] {
+  margin: 0;
+  padding: 0 0.5rem;
+  background: var(--sl-color-black);
+  overflow-x: auto;
+}
+starlight-tabs:has(.expressive-code) [role='tab'] {
+  margin-bottom: -1px;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.8125rem;
+}
+starlight-tabs:has(.expressive-code) [role='tab'][aria-selected='true'] {
+  box-shadow: inset 0 -2px 0 var(--sl-color-accent);
+}
+starlight-tabs:has(.expressive-code) [role='tabpanel'] {
+  margin: 0;
+  padding: 0;
+}
+starlight-tabs:has(.expressive-code) [role='tabpanel'] > .expressive-code {
+  margin: 0;
+}
+starlight-tabs:has(.expressive-code) .expressive-code .frame .header {
+  display: none;
+}
+starlight-tabs:has(.expressive-code) .expressive-code .frame pre {
+  border: 0;
+}
+starlight-tabs:has(.expressive-code) [role='tabpanel'] > :not(.expressive-code) {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  color: var(--sl-color-gray-2);
+  border-top: 1px solid var(--sl-color-hairline);
+}
+
+/* Code scrolls sideways with a scrollbar that shows only while the pointer is over the code. */
+.expressive-code pre {
+  scrollbar-color: transparent transparent;
+}
+.expressive-code pre:hover {
+  scrollbar-color: var(--sl-color-gray-4) transparent;
 }
 
 /* Code shows exactly what to type: no ligatures turning -> or != into one glyph. */
