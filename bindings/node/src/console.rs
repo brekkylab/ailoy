@@ -65,10 +65,12 @@ pub fn sandbox(env: &Env, sandbox: &Object<'_>) -> Result<virtx::Sandbox> {
     );
     let info = virtx::SandboxInfo {
         id,
+        name: sandbox.get("name").map_err(get)?,
         image: sandbox.get("image").map_err(get)?.ok_or_else(not_one)?,
         running: sandbox.get("running").map_err(get)?.ok_or_else(not_one)?,
         ports: Vec::new(),
         abins: sandbox.get("abins").map_err(get)?.unwrap_or_default(),
+        error: sandbox.get("error").map_err(get)?,
     };
     Ok((*borrowed).sandbox(info))
 }
