@@ -1,11 +1,10 @@
 use std::fmt;
 
-use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     datatype::Value,
-    message::{Delta, Part, PartFunction, PartImage},
+    message::{Delta, DeltaError, Part, PartFunction, PartImage},
 };
 
 /// A streamed function-call fragment: raw text (typically partial JSON), or a
@@ -197,9 +196,9 @@ impl From<Part> for PartDelta {
 
 impl Delta for PartDelta {
     type Item = Part;
-    type Err = anyhow::Error; // TODO: Define custom error for this.
+    type Err = DeltaError;
 
-    fn accumulate(self, other: Self) -> anyhow::Result<Self> {
+    fn accumulate(self, other: Self) -> Result<Self, Self::Err> {
         match (self, other) {
             (PartDelta::Null {}, other) => Ok(other),
             (PartDelta::Text { text: mut t1 }, PartDelta::Text { text: t2 }) => {
@@ -219,11 +218,10 @@ impl Delta for PartDelta {
                 let id = match (id1, id2) {
                     (Some(id1), Some(id2)) => {
                         if id1 != id2 {
-                            bail!(
-                                "Cannot accumulate two functions with different ids. ({} != {}).",
-                                id1,
-                                id2
-                            )
+                            return Err(DeltaError::FunctionIdMismatch {
+                                left: id1,
+                                right: id2,
+                            });
                         }
                         Some(id1)
                     }
@@ -273,25 +271,25 @@ impl Delta for PartDelta {
                             arguments: a2,
                         }
                     }
-                    (f1, f2) => bail!(
-                        "Accumulation between those two function delta {:?}, {:?} is not defined.",
-                        f1,
-                        f2
-                    ),
+                    (f1, f2) => {
+                        return Err(DeltaError::IncompatibleParts {
+                            details: format!(
+                                "Accumulation between those two function delta {f1:?}, {f2:?} is not defined."
+                            ),
+                        });
+                    }
                 };
                 Ok(PartDelta::Function { id, function: f })
             }
-            (pd1, pd2) => {
-                bail!(
-                    "Accumulation between those two part delta {:?}, {:?} is not defined.",
-                    pd1,
-                    pd2
-                )
-            }
+            (pd1, pd2) => Err(DeltaError::IncompatibleParts {
+                details: format!(
+                    "Accumulation between those two part delta {pd1:?}, {pd2:?} is not defined."
+                ),
+            }),
         }
     }
 
-    fn finish(self) -> anyhow::Result<Self::Item> {
+    fn finish(self) -> Result<Self::Item, Self::Err> {
         match &self {
             PartDelta::Null {} => Ok(Part::Text {
                 text: String::new(),
@@ -302,9 +300,9 @@ impl Delta for PartDelta {
             PartDelta::Function { .. } => {
                 // Error rather than panic on malformed arguments (e.g. truncated by a
                 // token limit), so the agent loop can roll the turn back.
-                let Some((id, name, arguments)) = self.to_parsed_function() else {
-                    bail!("tool-call arguments are not valid JSON");
-                };
+                let (id, name, arguments) = self
+                    .to_parsed_function()
+                    .ok_or(DeltaError::InvalidToolCallJson)?;
                 let id = id.unwrap_or("fn".into());
                 Ok(Part::Function {
                     id,
@@ -332,39 +330,98 @@ impl fmt::Display for PartDelta {
 mod tests {
     use super::*;
 
+    fn string_args(id: Option<&str>, name: &str, arguments: &str) -> PartDelta {
+        PartDelta::Function {
+            id: id.map(str::to_owned),
+            function: PartDeltaFunction::WithStringArgs {
+                name: name.into(),
+                arguments: arguments.into(),
+            },
+        }
+    }
+
+    fn verbatim(text: &str) -> PartDelta {
+        PartDelta::Function {
+            id: None,
+            function: PartDeltaFunction::Verbatim { text: text.into() },
+        }
+    }
+
+    #[test]
+    fn test_function_fragments_parse_at_finish() {
+        let string = string_args(Some("call_1"), "weather", r#"{"city":"#)
+            .accumulate(string_args(None, "", r#""Seoul""#))
+            .unwrap()
+            .accumulate(string_args(None, "", "}"))
+            .unwrap();
+        let verbatim = verbatim(r#"{"name":"weather","arguments":{"city":"#)
+            .accumulate(verbatim(r#""Seoul"}"#))
+            .unwrap()
+            .accumulate(verbatim("}"))
+            .unwrap();
+
+        for delta in [string, verbatim] {
+            let part = delta.finish().unwrap();
+            let (_, name, args) = part.as_function().unwrap();
+            assert_eq!(name, "weather");
+            assert_eq!(args.pointer_as::<str>("/city"), Some("Seoul"));
+        }
+    }
+
+    #[test]
+    fn test_accumulate_reports_mismatched_function_ids() {
+        let error = string_args(Some("call_1"), "get_time", "{}")
+            .accumulate(string_args(Some("call_2"), "get_time", "{}"))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DeltaError::FunctionIdMismatch { left, right }
+                if left == "call_1" && right == "call_2"
+        ));
+    }
+
+    #[test]
+    fn test_accumulate_reports_incompatible_parts() {
+        let text = PartDelta::Text { text: "one".into() };
+        let value = PartDelta::Value { value: Value::Null };
+        assert!(matches!(
+            text.accumulate(value),
+            Err(DeltaError::IncompatibleParts { .. })
+        ));
+        assert!(matches!(
+            string_args(None, "get_time", "{}").accumulate(verbatim("{}")),
+            Err(DeltaError::IncompatibleParts { .. })
+        ));
+    }
+
     /// A no-arg tool call streams empty accumulated arguments (Anthropic sends a
     /// single `partial_json: ""`). finish() must yield an empty-object call, not
     /// panic on `serde_json::from_str("")`.
     #[test]
     fn test_finish_function_empty_args_is_empty_object() {
-        let delta = PartDelta::Function {
-            id: Some("get_time/call_1".into()),
-            function: PartDeltaFunction::WithStringArgs {
-                name: "get_time".into(),
-                arguments: String::new(),
-            },
-        };
-        let part = delta.finish().expect("empty args must finish as {}");
-        let (_, name, args) = part.as_function().expect("expected a function part");
-        assert_eq!(name, "get_time");
-        assert!(args.is_object());
-        assert_eq!(args.as_object().map(|o| o.len()), Some(0));
+        for arguments in ["", " \t\n"] {
+            let delta = string_args(Some("call_1"), "get_time", arguments);
+            let part = delta.finish().expect("empty args must finish as {}");
+            let (_, name, args) = part.as_function().expect("expected a function part");
+            assert_eq!(name, "get_time");
+            assert_eq!(args.as_object().map(|o| o.len()), Some(0));
+        }
     }
 
     /// Non-empty but malformed arguments (e.g. a call truncated mid-stream by a
     /// token limit) must return an error, not panic, so the caller can roll back.
     #[test]
     fn test_finish_function_malformed_args_errors() {
-        let delta = PartDelta::Function {
-            id: None,
-            function: PartDeltaFunction::WithStringArgs {
-                name: "get_weather".into(),
-                arguments: "{\"location\":".into(), // truncated JSON
-            },
-        };
-        assert!(
-            delta.finish().is_err(),
-            "malformed args must error, not panic"
-        );
+        let delta = string_args(None, "get_weather", r#"{"location":"#)
+            .accumulate(string_args(None, "", " "))
+            .unwrap();
+        assert!(matches!(
+            delta.finish(),
+            Err(DeltaError::InvalidToolCallJson)
+        ));
+        assert!(matches!(
+            verbatim(r#"{"name":"get_weather"}"#).finish(),
+            Err(DeltaError::InvalidToolCallJson)
+        ));
     }
 }

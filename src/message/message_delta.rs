@@ -1,9 +1,10 @@
 use std::fmt;
 
-use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
-use crate::message::{Delta, FinishReason, Message, MessageOutput, PartDelta, Role, TokenUsage};
+use crate::message::{
+    Delta, DeltaError, FinishReason, Message, MessageOutput, PartDelta, Role, TokenUsage,
+};
 
 /// A streaming, incremental update to a [`Message`].
 ///
@@ -91,15 +92,15 @@ impl MessageDelta {
     }
 
     pub fn to_message(self) -> anyhow::Result<Message> {
-        self.finish()
+        Ok(self.finish()?)
     }
 }
 
 impl Delta for MessageDelta {
     type Item = Message;
-    type Err = anyhow::Error; // TODO: Define custom error for this.
+    type Err = DeltaError;
 
-    fn accumulate(self, other: Self) -> anyhow::Result<Self> {
+    fn accumulate(self, other: Self) -> Result<Self, Self::Err> {
         let Self {
             mut role,
             mut contents,
@@ -113,11 +114,10 @@ impl Delta for MessageDelta {
             && let Some(rhs) = &other.role
         {
             if lhs != rhs {
-                bail!(
-                    "Cannot accumulate two message deltas with differenct roles. ({} != {})",
-                    lhs,
-                    rhs
-                );
+                return Err(DeltaError::RoleMismatch {
+                    left: lhs.clone(),
+                    right: rhs.clone(),
+                });
             };
         } else if let Some(rhs) = other.role {
             role = Some(rhs);
@@ -213,7 +213,7 @@ impl Delta for MessageDelta {
         })
     }
 
-    fn finish(self) -> anyhow::Result<Self::Item> {
+    fn finish(self) -> Result<Self::Item, Self::Err> {
         let Self {
             role,
             mut contents,
@@ -223,9 +223,7 @@ impl Delta for MessageDelta {
             signature,
         } = self;
 
-        let Some(role) = role else {
-            bail!("Role not specified")
-        };
+        let role = role.ok_or(DeltaError::MissingRole)?;
         let contents = {
             let mut contents_new = Vec::with_capacity(contents.len());
             for v in contents.drain(..) {
@@ -418,7 +416,7 @@ mod tests {
     use futures::StreamExt as _;
 
     use super::*;
-    use crate::message::Part;
+    use crate::message::{Part, PartDeltaFunction};
 
     fn text_delta(text: &str) -> MessageDeltaOutput {
         MessageDeltaOutput {
@@ -479,10 +477,52 @@ mod tests {
         let deltas = futures::stream::iter([text_delta("Hi"), tool_delta].map(anyhow::Ok));
         let results: Vec<_> = into_messages(deltas).collect().await;
 
-        assert!(
-            results.iter().any(|r| r.is_err()),
-            "role change without a finish_reason must error, not silently split"
-        );
+        assert_eq!(results.len(), 1);
+        let err = results[0].as_ref().unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<DeltaError>(),
+            Some(DeltaError::RoleMismatch {
+                left: Role::Assistant,
+                right: Role::Tool,
+            })
+        ));
+    }
+
+    #[test]
+    fn test_finish_requires_role_before_parsing_tool_calls() {
+        let delta = MessageDelta::new().with_tool_calls([PartDelta::Function {
+            id: None,
+            function: PartDeltaFunction::Verbatim { text: "{".into() },
+        }]);
+        assert!(matches!(
+            delta.clone().finish(),
+            Err(DeltaError::MissingRole)
+        ));
+        let err = delta.to_message().unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<DeltaError>(),
+            Some(DeltaError::MissingRole)
+        ));
+    }
+
+    #[test]
+    fn test_distinct_tool_call_ids_start_separate_calls() {
+        let call = |id: &str| PartDelta::Function {
+            id: Some(id.into()),
+            function: PartDeltaFunction::WithStringArgs {
+                name: "get_time".into(),
+                arguments: "{}".into(),
+            },
+        };
+        let first = MessageDelta::new()
+            .with_role(Role::Assistant)
+            .with_tool_calls([call("call_1")]);
+        let second = MessageDelta::new().with_tool_calls([call("call_2")]);
+        let message = first.accumulate(second).unwrap().finish().unwrap();
+        let calls = message.tool_calls.unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].as_function().unwrap().0, "call_1");
+        assert_eq!(calls[1].as_function().unwrap().0, "call_2");
     }
 
     /// A stream that ends mid-message (no terminal finish_reason) still yields
