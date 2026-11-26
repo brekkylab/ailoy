@@ -1,19 +1,21 @@
 ---
 title: "Skills"
-description: "Give an agent folders of instructions for one kind of task, in the Agent Skills format."
+description: "Give an agent step-by-step instructions for a kind of task, as a folder in its sandbox."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 :::note[Needs a sandbox]
-The agent reads its skills through its sandbox, so an agent with skills needs one ([Giving an agent a sandbox](/docs/guides/sandbox/)).
+The agent reads its skills from its sandbox, so an agent with skills needs one ([Give an agent a sandbox](/docs/guides/sandbox/)).
 :::
 
-A skill is a folder of instructions for one kind of task, with the files those instructions use, in the [Agent Skills](https://agentskills.io/specification) format. The agent is told which skills it has and what each is for, and to read a skill's instructions when a task matches it.
+A skill is a folder with instructions for one kind of task, plus any files those instructions use. Skills follow the [Agent Skills](https://agentskills.io/specification) format. The agent is told which skills it has and what each is for, and reads a skill's full instructions when a task matches it.
 
-## What a skill folder holds
+## Write a skill
 
-A `SKILL.md`, and anything it refers to: scripts, references, data. `SKILL.md` opens with YAML frontmatter giving the skill's `name` and a `description` of what it does and when to use it, and the instructions follow. This is the start of the one in [`laya/shared`](https://github.com/brekkylab/ailoy-examples/tree/main/laya/shared) in ailoy-examples, whose instructions tell the agent to run `run_laya.py` from the same folder:
+A skill folder contains a `SKILL.md` file and anything it refers to, such as scripts, reference documents or data. `SKILL.md` starts with YAML frontmatter that gives the skill's `name` and a `description` of what it does and when to use it. The instructions follow.
+
+This is the start of the skill in [`laya/shared`](https://github.com/brekkylab/ailoy-examples/tree/main/laya/shared) in ailoy-examples. Its instructions tell the agent to run `run_laya.py` from the same folder:
 
 ````markdown
 ---
@@ -38,11 +40,15 @@ python3 run_laya.py bf16 '{"state": "...", "questions": {...}}'
 ```
 ````
 
-Ailoy reads `name` and `description` and nothing else from the frontmatter, each as one line: keep each on a single line, without YAML's `>` or `|`.
+:::caution[Keep `name` and `description` on one line each]
+Ailoy reads only `name` and `description` from the frontmatter, and each must fit on a single line. Don't use YAML's multi-line `>` or `|` syntax: Ailoy won't raise an error, but the description will be just `>` or `|`.
+:::
 
-## Giving the agent a skill
+## Give the agent a skill
 
-`skill(dir)` takes the folder's path in the agent's sandbox, not on your machine. Put the folder in the sandbox, with whatever its instructions expect to find there: Laya's instructions read its model from `/models`, which the [laya example](https://github.com/brekkylab/ailoy-examples/tree/main/laya) puts on a volume of its own. A volume, as below, keeps the skill on the virtx server between runs; baking it into the image works too ([Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/), [Images](https://virtx.sh/docs/guides/images/)). Call `skill` once for each skill.
+1. **Put the skill folder in the sandbox.** `skill(dir)` takes a path inside the sandbox, not on your machine. A volume keeps the skill on the virtx server between runs, as in the example below. You can also build it into the image ([Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/), [Images](https://virtx.sh/docs/guides/images/)).
+2. **Add anything the instructions expect.** For example, Laya's instructions read a model from `/models`, which the [laya example](https://github.com/brekkylab/ailoy-examples/tree/main/laya) puts on its own volume.
+3. **Call `.skill(dir)` once for each skill.**
 
 <Tabs syncKey="lang">
 
@@ -113,9 +119,13 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
 </TabItem>
 </Tabs>
 
-When the agent writes the system message itself, `build()` reads the frontmatter of each `SKILL.md` through the sandbox, and fails if the `SKILL.md` of a `skill(dir)` is missing or has no `name` or `description`. The system message gets a list of the skills after the instruction: each one's name, description and location, and a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` stays out of the system message; the agent reads it with its own tools. So an agent with skills needs a sandbox, which brings a tool that reads files, such as `read`.
+## What the model sees
 
-For `anthropic` models the list is an XML block:
+When you call `build()`, Ailoy reads the frontmatter of each `SKILL.md` from the sandbox. The build fails if a `SKILL.md` is missing or has no `name` or `description`.
+
+The system message lists the skills after your instruction: each skill's name, description and location, plus a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` isn't in the system message. The agent reads it with its file tools when it needs it.
+
+For `anthropic` models, the list is an XML block:
 
 ```text
 # Skills
@@ -131,17 +141,25 @@ The following skills provide specialized instructions for specific tasks. When a
 </available_skills>
 ```
 
-For any other org, the same preamble is followed by a Markdown list, one line per skill:
+For other orgs, the same text is followed by a Markdown list, one line per skill:
 
 ```text
 - `laya` at /skills/laya/SKILL.md. Answer typed questions about a text with Laya, a machine learning model for decisions. Use it to classify, score or answer yes or no about a message, an email or a ticket, with calibrated probabilities.
 ```
 
-Skills are added only to the system message the agent writes itself. A `history(...)` that brings a system message keeps it: the skills are not read or added.
+Skills are only added when the agent writes the system message itself. If you pass a `history(...)` that already has a system message, the agent keeps it and doesn't read or add skills.
 
-## Skills from the sandbox's abins
+## Skills from built-in programs
 
-A sandbox can be made with some of virtx's own programs, its abins, at `/abin`: `index` indexes document files and searches them, `docread` reads a Word, PDF or text file a window at a time, and `display` runs GUI programs on a screen watched over VNC. Each comes with a `SKILL.md` at `/abin/skills/{name}/`, and the agent lists it among its skills without a `skill(...)` call:
+virtx can add built-in programs, called abins, to a sandbox at `/abin`:
+
+| Program | What it does |
+| --- | --- |
+| `index` | Indexes document files and searches them. |
+| `docread` | Reads a Word, PDF or text file one section at a time. |
+| `display` | Runs GUI programs on a screen you can watch over VNC. |
+
+Each comes with a `SKILL.md` at `/abin/skills/<name>/`. The agent lists these skills automatically, without a `.skill(...)` call. Choose the programs when you create the sandbox:
 
 <Tabs syncKey="lang">
 
@@ -170,14 +188,19 @@ let sandbox = client
 </TabItem>
 </Tabs>
 
-An abin with no `SKILL.md` is left out of the list rather than failing `build()`. [Setting up sandboxes](https://virtx.sh/docs/guides/setting-sandboxes/) covers the `abins` option.
+A program without a `SKILL.md` is left out of the list instead of failing `build()`. See virtx's [Setting up sandboxes](https://virtx.sh/docs/guides/setting-sandboxes/) for the `abins` option.
 
 ## Troubleshooting
 
-| What you see | Why, and what to do |
+| Error | Cause and fix |
 | --- | --- |
-| `reading the skill <dir>/SKILL.md` at `build()` (a `VirtxError` with status `404` in Python and Node.js) | The `SKILL.md` of a `skill(dir)` isn't in the sandbox. `dir` is a path in the sandbox, not on your machine: check that the volume holding it is mounted there. |
+| `reading the skill <dir>/SKILL.md` at `build()` (a `VirtxError` with status `404` in Python and Node.js) | The `SKILL.md` isn't in the sandbox. `dir` is a path inside the sandbox, not on your machine: check that the volume holding the skill is mounted there. |
 | ``the frontmatter has no `name` ``, or ``no `description` `` | Add the field to the frontmatter, on one line. |
 | ``a SKILL.md opens with a `---` line`` | The file must start with the frontmatter, between two `---` lines. |
 | `an agent with skills needs a sandbox to read them from` | Give the agent a sandbox with `sandbox(...)`. |
-| A skill's description in the system message is just `>` or `\|` | YAML's multi-line values aren't read, and no error is raised: put the description on one line. |
+| A skill's description in the system message is just `>` or `\|` | Multi-line YAML values aren't supported. Put the description on one line. |
+
+## Next steps
+
+- [SDK reference](/docs/sdk/): every class, method and type.
+- [ailoy-examples](https://github.com/brekkylab/ailoy-examples): complete agents that use skills.

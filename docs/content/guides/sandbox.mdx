@@ -1,21 +1,25 @@
 ---
-title: "Giving an agent a sandbox"
-description: "Hand an agent a virtx sandbox: what it brings, what lives where, and where virtx's docs take over."
+title: "Give an agent a sandbox"
+description: "Create a virtx sandbox, pass it to an agent, and move files in and out."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-The computer an agent works on is a sandbox: a Linux microVM on a [virtx](https://virtx.sh/docs/) server. Your code makes the sandbox with virtx's own package and hands it to the agent:
+A sandbox is a Linux microVM where an agent runs commands and works with files, isolated from your machine. Sandboxes run on a [virtx](https://virtx.sh/docs/) server. You create one with the virtx package, which the Ailoy install already includes:
 
-- **Python:** the `virtx` package (`import virtx`), which `pip install ailoy-py` installs too
-- **Node.js:** `@brekkylab/virtx`, which `npm install @brekkylab/ailoy` installs too
-- **Rust:** the `virtx` crate, added beside `ailoy` (`ailoy::console::Sandbox` is `virtx::Sandbox`)
+| Language | virtx package |
+| --- | --- |
+| Python | `virtx` (`from virtx import Client`) |
+| Node.js | `@brekkylab/virtx` |
+| Rust | The `virtx` crate. `ailoy::console::Sandbox` is the same type as `virtx::Sandbox`. |
 
-This page covers what an agent needs from a sandbox. [virtx's docs](https://virtx.sh/docs/) cover the sandbox itself: servers, images, volumes and GPUs.
+This page covers what an agent needs from a sandbox. For everything else about sandboxes (servers, images, volumes, GPUs), see [virtx's docs](https://virtx.sh/docs/).
 
-## Handing over a sandbox
+## Create a sandbox and pass it to an agent
 
-`sandbox(...)` on the `AgentBuilder` gives the agent a sandbox, and with it a shell and file tools that run there; [Tools](/docs/guides/tools/#a-shell-and-files) lists them. Here an image with matplotlib is built on the server, and an agent gets a sandbox booted from it:
+Pass a sandbox to `.sandbox(...)` on the `AgentBuilder`. The agent gets a shell and file tools that run inside it ([the full list](/docs/guides/tools/#shell-and-file-tools)).
+
+This example builds an image with matplotlib installed, creates a sandbox from it, and has the agent draw a plot:
 
 <Tabs syncKey="lang">
 
@@ -55,7 +59,6 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-
 </TabItem>
 <TabItem label="Node.js" icon="seti:javascript">
 
@@ -87,7 +90,6 @@ async function main() {
 
 main()
 ```
-
 
 </TabItem>
 <TabItem label="Rust" icon="seti:rust">
@@ -131,95 +133,96 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-
 </TabItem>
 </Tabs>
 
-The sandbox stays yours:
+Things to know:
 
-- The agent does not start, stop or remove it, and closing the agent leaves it as it is. Remove it yourself, as above. With a server that `Client.spawn()` started, the sandboxes also go when your program does.
-- Your own calls on the sandbox and the agent's tool calls run side by side, and the agent's tool calls in one step run at the same time.
-- A failed call to the sandbox reaches you as virtx's `VirtxError`.
+- **Your code owns the sandbox.** The agent never starts, stops or removes it, and closing the agent leaves it running. Remove it yourself, as the example does. If `Client.spawn()` started the server, its sandboxes are also removed when your program exits.
+- **Calls run in parallel.** Your code can use the sandbox while the agent works, and the tool calls the agent makes in one step run at the same time.
+- **Errors come from virtx.** A failed sandbox call raises virtx's `VirtxError`.
 
-An agent without a sandbox still runs, with the tools that need none: your own functions, `web_search`, `web_fetch`, MCP servers and a browser. It has no shell or file tools, and it cannot have [skills](/docs/guides/skills/), which it reads from the sandbox.
+An agent without a sandbox still works with tools that don't need one: your own functions, `web_search`, `web_fetch`, MCP servers and a browser. It has no shell or file tools, and it can't use [skills](/docs/guides/skills/), because it reads them from the sandbox.
 
-## What lives where
+## Decide where files go
 
-A sandbox's files come from three places, and they last differently:
+Files in a sandbox come from three places, and each lasts a different amount of time:
 
-| Where | What it holds for the agent | How long it lasts | virtx docs |
+| Location | What to put there | How long it lasts | virtx docs |
 | --- | --- | --- | --- |
-| The image | The programs and packages its commands find | Until you remove the image; every sandbox booted from it starts with it | [Images](https://virtx.sh/docs/guides/images/) |
-| A volume | Inputs, skills, results you want back | Until you remove the volume; several sandboxes can mount it, and your code reads and writes it while they do | [Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/) |
-| The sandbox's own files | What the agent writes anywhere else, such as packages it installs | Until the sandbox is removed | [Removing a sandbox](https://virtx.sh/docs/guides/setting-sandboxes/#remove-a-sandbox) |
+| The image | Programs and packages | Until you remove the image. Every sandbox created from it starts with these files. | [Images](https://virtx.sh/docs/guides/images/) |
+| A volume | Inputs, skills, and results you want back | Until you remove the volume. Several sandboxes can mount it, and your code can read and write it while they run. | [Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/) |
+| The sandbox's own disk | Everything else the agent writes, such as packages it installs | Until you remove the sandbox | [Removing a sandbox](https://virtx.sh/docs/guides/setting-sandboxes/#remove-a-sandbox) |
 
-So:
+As a rule:
 
-- A package every run needs goes in the image, not in a step the agent repeats.
-- The files you hand the agent or want back go on a volume.
+- Install packages that every run needs in the **image**, so the agent doesn't install them each time.
+- Put files you give the agent, and files you want back, on a **volume**.
 
-The examples in [ailoy-examples](https://github.com/brekkylab/ailoy-examples) all work this way: they build their image once, put their skill and inputs on named volumes, and copy the results back at the end.
+The examples in [ailoy-examples](https://github.com/brekkylab/ailoy-examples) all follow this pattern: they build the image once, put the skill and inputs on named volumes, and copy results out at the end.
 
-### Building an image from a shell
+### Build an image from the command line
 
-The `virtx` command builds the same images from a Dockerfile, with `docker`'s spelling. The virtx packages install it: `pip install ailoy-py` puts it in the environment's `bin/`, and `@brekkylab/virtx` in `node_modules/.bin`. Without either, run it with `uvx virtx` or `npx @brekkylab/virtx`.
+The `virtx` command builds images from a Dockerfile, with the same syntax as `docker`. It comes with the virtx package: `pip install ailoy-py` puts it in your environment's `bin/` folder, and `@brekkylab/virtx` puts it in `node_modules/.bin`. You can also run it with `uvx virtx` or `npx @brekkylab/virtx`.
 
 ```sh
 virtx build -t plot:latest .    # from ./Dockerfile
 virtx images                    # the images on the server
 ```
 
-A sandbox then boots from `plot:latest`. virtx's [Images](https://virtx.sh/docs/guides/images/) covers the rest of the command.
+Then create sandboxes from `plot:latest`. See virtx's [Images](https://virtx.sh/docs/guides/images/) for the full command.
 
-## Inputs and results
+## Pass files in and get results out
 
-- Before a turn, write what the agent should read onto a volume mounted in its sandbox, read-only if it should not change it.
-- After the turn, read what it wrote, from the volume or from the sandbox.
-- Say where in the instruction, so the agent knows where to look and where to write.
+1. Before the turn, write the agent's input files to a volume mounted in its sandbox. Mount it read-only if the agent shouldn't change them.
+2. In the instruction, tell the agent where to read inputs and where to save results.
+3. After the turn, read the results from the volume or from the sandbox, as the example above does with `read_file`.
 
-virtx's [Reading and writing files](https://virtx.sh/docs/guides/reading-writing-files/) covers doing this from your code.
+See virtx's [Reading and writing files](https://virtx.sh/docs/guides/reading-writing-files/) for the calls.
 
-## Picking up later
+## Continue the work later
 
-An agent's work is in two places: its history, and its sandbox's files. To carry on where a run stopped:
+An agent's progress lives in two places: its history and its sandbox's files. To continue where a run stopped:
 
-- Build an agent with the same history (`history(...)` on the `AgentBuilder`).
-- Hand it the same sandbox, found again with `get_sandbox`.
-- A sandbox's own files go when it is removed, so put what a later run starts from on a volume.
+1. Save the agent's history (`agent.history`).
+2. Find the same sandbox again with virtx's `get_sandbox`.
+3. Build a new agent with `.history(saved_messages)` and `.sandbox(sandbox)`.
+
+A sandbox's own files are deleted when the sandbox is removed. Keep anything a later run needs on a volume.
 
 ## Sandbox options
 
-`create_sandbox` takes these options, among others. What each means for an agent:
+`create_sandbox` accepts these options, among others:
 
-| Option | For the agent | virtx docs |
+| Option | Use it for | virtx docs |
 | --- | --- | --- |
-| `volumes` | Where it reads your files and leaves its results. | [Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/) |
-| `network` | Whether its commands reach the internet. On unless turned off. `web_search` and `web_fetch` run in your program, not the sandbox, so they work either way. | [Networks and ports](https://virtx.sh/docs/guides/networks-ports/) |
-| `ports` | A server it starts in the sandbox, reached from outside. | [Networks and ports](https://virtx.sh/docs/guides/networks-ports/) |
-| `vcpus`, `memory_mib`, `disk_gib` | Room for heavy commands, and for what it installs or writes outside its volumes. | [Setting up sandboxes](https://virtx.sh/docs/guides/setting-sandboxes/) |
+| `volumes` | Folders where the agent reads your files and saves its results. | [Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/) |
+| `network` | Whether commands in the sandbox can reach the internet. On by default. `web_search` and `web_fetch` run in your program, so they work either way. | [Networks and ports](https://virtx.sh/docs/guides/networks-ports/) |
+| `ports` | Reaching a server the agent starts in the sandbox. | [Networks and ports](https://virtx.sh/docs/guides/networks-ports/) |
+| `vcpus`, `memory_mib`, `disk_gib` | CPU, memory and disk for heavy commands and for files outside volumes. | [Setting up sandboxes](https://virtx.sh/docs/guides/setting-sandboxes/) |
 | `gpu`, `gpu_memory_mib` | A GPU through Vulkan, for work such as deep learning. | [Using GPUs](https://virtx.sh/docs/guides/using-gpus/) |
-| `abins` (`.abin(name)` in Rust) | virtx's own programs at `/abin`, such as `index`, `docread` and `display`. Each one with a `SKILL.md` becomes one of the agent's [skills](/docs/guides/skills/). | [Setting up sandboxes](https://virtx.sh/docs/guides/setting-sandboxes/) |
+| `abins` (`.abin(name)` in Rust) | virtx's built-in programs at `/abin`, such as `index`, `docread` and `display`. Each one that has a `SKILL.md` becomes one of the agent's [skills](/docs/guides/skills/#skills-from-built-in-programs). | [Setting up sandboxes](https://virtx.sh/docs/guides/setting-sandboxes/) |
 
-Node.js spells them in camelCase (`memoryMib`, `diskGib`, `gpuMemoryMib`), and Rust sets them on `SandboxCreateArgs`. virtx's [Hello world](https://virtx.sh/docs/hello-world/) covers which server to run, on your machine or elsewhere.
+Node.js uses camelCase (`memoryMib`, `diskGib`, `gpuMemoryMib`). Rust sets them on `SandboxCreateArgs`. To run the server on another machine, see virtx's [Hello world](https://virtx.sh/docs/hello-world/).
 
 ## Troubleshooting
 
-virtx's errors carry a `source` (`server`, `job`, `transport` or `client`) and, from the server, an HTTP `status`. Tell them apart by those, not by the message ([Errors](https://virtx.sh/docs/reference/api/#errors)).
+virtx errors have a `source` (`server`, `job`, `transport` or `client`) and, when they come from the server, an HTTP `status`. Use those to tell errors apart, not the message text ([Errors](https://virtx.sh/docs/reference/api/#errors)).
 
-| What you see | Why, and what to do |
+| Error | Cause and fix |
 | --- | --- |
-| `` `<command>` exited with <code> `` from `build_image(...).complete()` | A step of the recipe failed. The job's log, printed above it by step (`STEP 1/2: …`), shows the command's output. |
+| `` `<command>` exited with <code> `` from `build_image(...).complete()` | A step in the recipe failed. The build log above the error shows each step's output (`STEP 1/2: …`). |
 | `<image>: not found, or private and pulled without credentials` | The image name is wrong, or the image is private. |
-| `no image here is tagged <tag>: pull it first` (status `404`) | Pull or build the image before making a sandbox from it. |
-| `status` `400`, such as `abins: this server has no program called …` | An option is out of range or unknown. The message names it. |
-| `status` `409` | The name is taken, the volume is in use, or the sandbox's VM has exited. |
-| `this server was built without a GPU` (status `422`) | This server can't give a GPU. Use a release build of virtx's server. |
-| Vulkan in a GPU sandbox finds no device | The host has no Vulkan driver. Install the GPU maker's driver on Linux or Windows; on macOS, virtx brings its own. |
-| A command in the sandbox can't resolve or reach a host | The sandbox was made with `network` off, which leaves it no network device. Turn it on, or fetch the data in your program and write it in. `web_search` and `web_fetch` work either way. |
-| The agent's file isn't in `/artifacts` | The agent wrote it somewhere else. Name the folder in the instruction, as the examples do, and check the agent's last message for the path it used. |
-| The first sandbox fails to boot, with `boot_failed` | See [Installation](/docs/guides/installation/#troubleshooting). |
+| `no image here is tagged <tag>: pull it first` (status `404`) | Pull or build the image before you create a sandbox from it. |
+| Status `400`, such as `abins: this server has no program called …` | An option is unknown or out of range. The message names it. |
+| Status `409` | The name is taken, the volume is in use, or the sandbox's VM has exited. |
+| `this server was built without a GPU` (status `422`) | This server can't provide a GPU. Use a release build of the virtx server. |
+| Vulkan finds no device in a GPU sandbox | The host has no Vulkan driver. On Linux or Windows, install your GPU maker's driver. On macOS, virtx includes its own. |
+| A command in the sandbox can't reach a host | The sandbox was created with `network` off. Turn it on, or fetch the data in your program and write it into the sandbox. |
+| The agent's file isn't in `/artifacts` | The agent saved it somewhere else. Name the folder in the instruction, as the examples do, and check the agent's last message for the path. |
+| `boot_failed` when the first sandbox starts | See [Installation troubleshooting](/docs/guides/installation/#troubleshooting). |
 
-## Next
+## Next steps
 
-- [Running an agent](/docs/guides/running/): run a turn whole or streamed, and many turns.
+- [Run an agent](/docs/guides/running/): read results, stream replies and continue conversations.
 - [Tools](/docs/guides/tools/): what the agent can do in its sandbox.

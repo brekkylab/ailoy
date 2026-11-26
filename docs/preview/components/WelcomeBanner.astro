@@ -1,6 +1,6 @@
 ---
 // The banner at the top of the Welcome page: the mark and "Ailoy Documentation" beside a drawing of
-// Ailoy's idea, three languages flowing into one agent that works in a microVM of its own. It is
+// Ailoy's idea, an agent that works in a microVM of its own. It is
 // dark in both themes, like an image. PageTitle shows it above the Welcome page's title, so it
 // stays out of the page's Markdown. On wide screens "On this page" starts below it, level with the
 // breadcrumb, and sticks once the page scrolls past the banner.
@@ -13,26 +13,7 @@ import AiloyMark from './AiloyMark.astro';
     <p class="wb-title">Ailoy<br />Documentation</p>
     <p class="wb-sub">AI agents with a computer of their own</p>
   </div>
-  <svg class="wb-art" viewBox="0 0 440 220" aria-hidden="true">
-    <defs>
-      <linearGradient id="wb-flow" gradientUnits="userSpaceOnUse" x1="92" y1="0" x2="262" y2="0">
-        <stop offset="0" stop-color="#fff" stop-opacity="0.22" />
-        <stop offset="1" stop-color="#ffc53d" />
-      </linearGradient>
-      <marker id="wb-tip" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto">
-        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="#ffc53d" />
-      </marker>
-    </defs>
-    <g class="wb-lang">
-      <rect x="4" y="24" width="88" height="32" /><text x="48" y="45">Python</text>
-      <rect x="4" y="94" width="88" height="32" /><text x="48" y="115">Node.js</text>
-      <rect x="4" y="164" width="88" height="32" /><text x="48" y="185">Rust</text>
-    </g>
-    <g class="wb-lines" marker-end="url(#wb-tip)">
-      <path d="M92 40 C 178 40, 184 96, 263 96" />
-      <path d="M92 110 L 263 110" />
-      <path d="M92 180 C 178 180, 184 124, 263 124" />
-    </g>
+  <svg class="wb-art" viewBox="250 40 200 140" aria-hidden="true">
     <rect x="264" y="56" width="168" height="108" class="wb-box" />
     <text x="282" y="84" class="wb-t">Agent</text>
     <circle cx="414" cy="79" r="3.5" class="wb-live" />
@@ -121,21 +102,9 @@ import AiloyMark from './AiloyMark.astro';
   }
   .wb-art {
     width: 100%;
+    max-width: 340px;
+    justify-self: end;
     height: auto;
-  }
-  .wb-lang rect {
-    fill: #0e0f11;
-    stroke: rgba(255, 255, 255, 0.18);
-  }
-  .wb-lang text {
-    fill: rgba(255, 255, 255, 0.85);
-    font: 500 13px var(--sl-font, sans-serif);
-    text-anchor: middle;
-  }
-  .wb-lines path {
-    fill: none;
-    stroke: url(#wb-flow);
-    stroke-width: 1.5;
   }
   .wb-box {
     fill: #0b0b0b;

@@ -1,0 +1,467 @@
+---
+title: Tools
+description: "Reference for registering your own functions and MCP servers as tools."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Tools are registered by name for the whole process. An agent gets a tool when you pass its [`ToolDesc`](/docs/sdk/types/#tooldesc) to [`AgentBuilder.tool`](/docs/sdk/agent-builder/#tool) or [`tools`](/docs/sdk/agent-builder/#tools), and Ailoy runs the function registered under that name. Built-in tools are registered from the start; [Built-in tools](/docs/sdk/built-in-tools/) lists them. For explanations and a full example, see [Tools](/docs/guides/tools/#add-your-own-function).
+
+When a call fails, Python raises `ailoy.AiloyError`, Node.js throws an `Error` with `code` set to `"AILOY_ERROR"`, and Rust returns an `Err`. Each entry's **Raises** line says when. See [Errors](/docs/sdk/errors/).
+
+| Function | Does |
+| --- | --- |
+| [`register_tool`](#register_tool) | Registers a function and returns its description. |
+| [`set_tool_provider`](#set_tool_provider) | Sets or replaces the function behind a tool name. |
+| [`remove_tool_provider`](#remove_tool_provider) | Removes a tool's function. |
+| [`register_mcp_stdio`](#register_mcp_stdio) | Starts a local MCP server and registers its tools. |
+| [`register_mcp_streamable_http`](#register_mcp_streamable_http) | Connects to a remote MCP server and registers its tools. |
+| [`unregister_mcp`](#unregister_mcp) | Removes an MCP server's tools and closes it. |
+
+## register_tool
+
+Registers a function as a tool and returns its description, ready to pass to `AgentBuilder.tool`. Node.js: `registerTool`. In Rust, build the description with `ToolDescBuilder` and register the function with [`set_tool_provider`](#set_tool_provider).
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+ailoy.register_tool(desc: ToolDesc, func: Callable[..., Any | Awaitable[Any]]) -> ToolDesc
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+registerTool(desc: ToolDesc, func: (args: any) => unknown): ToolDesc
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::tool::ToolDescBuilder;
+
+let desc = ToolDescBuilder::new("order_status")
+    .description("Look up an order by its id.")
+    .parameters(to_value!({"type": "object", "properties": {"order_id": {"type": "string"}}}))
+    .build();
+```
+
+`ToolDescBuilder` also takes `returns(schema)`. Without `parameters`, the schema is `Value::Null`. `sanitize_tool_name(name)` replaces every character outside `[A-Za-z0-9_-]`, the set every model API accepts, with `_`. Names can be up to 64 characters (`MAX_TOOL_NAME_LEN`), OpenAI's limit.
+
+</TabItem>
+</Tabs>
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `desc` | [`ToolDesc`](/docs/sdk/types/#tooldesc) | The tool's `name`, `description` and `parameters` (a JSON schema). |
+| `func` | function | Python: called with keyword arguments named as in the schema; may be `async`. Node.js: called with one object; may return a promise. Must return JSON-compatible data. |
+
+**Returns** the `ToolDesc`. Registering a name that already exists replaces its function for every agent built afterwards. If `func` raises, the model receives the error as the tool result.
+
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+from ailoy import register_tool
+
+def order_status(order_id: str) -> dict:
+    return {"status": "shipped"}
+
+desc = register_tool(
+    {
+        "name": "order_status",
+        "description": "Look up an order's status by its id.",
+        "parameters": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string"}},
+            "required": ["order_id"],
+        },
+    },
+    order_status,
+)
+agent = await AgentBuilder("anthropic/claude-haiku-5-5").tool(desc).build()
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const { registerTool } = require('@brekkylab/ailoy')
+
+const desc = registerTool(
+  {
+    name: 'order_status',
+    description: "Look up an order's status by its id.",
+    parameters: {
+      type: 'object',
+      properties: { order_id: { type: 'string' } },
+      required: ['order_id'],
+    },
+  },
+  ({ order_id }) => ({ status: 'shipped' }),
+)
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').tool(desc).build()
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::{datatype::Value, to_value, tool_func, tool::{ToolDescBuilder, set_tool_provider}};
+
+let desc = ToolDescBuilder::new("order_status")
+    .description("Look up an order's status by its id.")
+    .parameters(to_value!({
+        "type": "object",
+        "properties": {"order_id": {"type": "string"}},
+        "required": ["order_id"]
+    }))
+    .build();
+set_tool_provider("order_status", tool_func!(|args: Value| -> Value { to_value!({"status": "shipped"}) }));
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5").tool(desc).build().await?;
+```
+
+</TabItem>
+</Tabs>
+
+## set_tool_provider
+
+Sets the function for a tool name without returning a description. Use it when a saved spec already has the description, or in Rust. Node.js: `setToolProvider`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+ailoy.set_tool_provider(name: str, func: Callable[..., Any | Awaitable[Any]]) -> None
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+setToolProvider(name: string, func: (args: any) => unknown): void
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::{tool::set_tool_provider, tool_func};
+
+fn set_tool_provider(name: impl Into<String>, provider: impl Into<ToolProvider>)
+
+set_tool_provider("order_status", tool_func!(|args: Value| -> Value { /* ... */ }));
+```
+
+</TabItem>
+</Tabs>
+
+### Write the function
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+A function, or an `async` function, called with the arguments as keyword arguments. Return JSON-compatible data.
+
+```python
+async def order_status(order_id: str):
+    return {"status": "shipped"}
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+A function called with the arguments as one object. It may return a promise. Return JSON-compatible data.
+
+```js
+async function orderStatus({ order_id }) {
+  return { status: 'shipped' }
+}
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+`tool_func!` builds the function, a `ToolFunc`, from a closure. The closure takes `args: Value`, then optionally `id: String`, then optionally `sandbox: &Sandbox`. It returns a `Value`, which becomes the tool result, or, when it takes `id`, a whole `Message`.
+
+| Form | Body |
+| --- | --- |
+| `tool_func!(\|args: Value\| -> Value { … })` | Returns the result. |
+| `tool_func!(async \|args: Value\| -> Value { … })` | Can use `.await`. |
+| `tool_func!(stream \|args: Value\| -> Value { … })` | Returns a stream of values. Each becomes a tool message. |
+
+The `async` and `stream` forms take `with [name = expr, ...]` before the body, to clone a captured variable for each call:
+
+```rust
+tool_func!(async |args: Value| -> Value with [client = client.clone()] {
+    // `client` here is this call's clone
+    to_value!({"status": "shipped"})
+})
+```
+
+`ToolFunc::new` and `ToolFunc::new_with_sandbox` build one from a closure that returns a `BoxStream<MessageOutput>`, for cases the macro doesn't cover. `set_tool_provider` also takes a `ToolProvider`:
+
+```rust
+pub enum ToolProvider {
+    Function(ToolFactory), // Arc<dyn Fn(&ToolDesc) -> anyhow::Result<ToolFunc>>
+    MCP(MCPToolEntry),
+}
+```
+
+`ToolProvider::function(f)` builds the function from the description the spec asks for, and an error fails the agent's build. `create_tool(&desc)` builds a tool through its provider.
+
+</TabItem>
+</Tabs>
+
+### Use the agent's sandbox
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+A Python tool isn't passed the sandbox. To work in it, call the virtx `Sandbox` you gave the agent from your function, with [virtx's own methods](https://virtx.sh/docs/).
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+A Node.js tool isn't passed the sandbox. To work in it, call the virtx `Sandbox` you gave the agent from your function, with [virtx's own methods](https://virtx.sh/docs/).
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+A closure that takes `sandbox: &Sandbox` receives the agent's sandbox. `ailoy::tool` has the functions the built-in tools use in it, which return `virtx::Error` on failure:
+
+| Function | Does |
+| --- | --- |
+| `exec(&sandbox, argv, timeout_ms)` | Runs `argv` without a shell and waits for it to end. Returns an `ExecOutput`. |
+| `read(&sandbox, path)` | The whole file, as `Vec<u8>`. |
+| `write(&sandbox, path, content)` | Writes the whole file, creating its folder if needed. |
+| `resolve(&sandbox, path)` | `path` from the root without its leading `/`, as the virtx files API names it. |
+
+`ExecOutput` has `code`, `stdout`, `stderr`, `truncated` (the output was cut), `timed_out`, and `reason` (why the sandbox killed the command; `None` when it ended by itself).
+
+```rust
+use ailoy::tool::exec;
+
+set_tool_provider("python_version", tool_func!(async |args: Value, sandbox: &Sandbox| -> Value {
+    match exec(sandbox, ["python3", "--version"], Some(10_000)).await {
+        Ok(out) => Value::string(out.stdout),
+        Err(e) => Value::string(format!("error: {e}")),
+    }
+}));
+```
+
+</TabItem>
+</Tabs>
+
+## remove_tool_provider
+
+Removes a tool's function. Node.js: `removeToolProvider`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+ailoy.remove_tool_provider(name: str) -> bool
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+removeToolProvider(name: string): boolean
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+fn remove_tool_provider(name: &str) -> Option<ToolProvider>
+```
+
+</TabItem>
+</Tabs>
+
+**Returns** whether the name was registered (Rust: the removed provider).
+
+## register_mcp_stdio
+
+Starts an MCP server as a process on this machine and registers each of its tools as `<prefix>__<name>`. Node.js: `registerMcpStdio`. See [Use MCP servers](/docs/guides/using-mcp/).
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+async def register_mcp_stdio(prefix: str, command: str, args: list[str] = []) -> list[ToolDesc]
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+registerMcpStdio(prefix: string, command: string, args?: Array<string>): Promise<Array<ToolDesc>>
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+async fn register_mcp_stdio(
+    prefix: impl AsRef<str>,
+    command: impl AsRef<str>,
+    args: impl IntoIterator<Item = impl AsRef<str>>,
+) -> anyhow::Result<Vec<ToolDesc>>
+```
+
+</TabItem>
+</Tabs>
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `prefix` | string | Added to each tool's name, so tools from different servers don't clash. |
+| `command` | string | The program that starts the server, such as `"uvx"` or `"npx"`. |
+| `args` | list of strings | Arguments to the command, such as `["mcp-server-fetch"]`. |
+
+
+**Returns** the descriptions of the server's tools, to pass to `AgentBuilder.tools`. The server runs with your program's access, so only register servers you trust.
+
+**Raises** if the command isn't installed or the server exits at startup. See [MCP troubleshooting](/docs/guides/using-mcp/#troubleshooting).
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+from ailoy import register_mcp_stdio
+
+tools = await register_mcp_stdio("fetch", "uvx", ["mcp-server-fetch"])
+agent = await AgentBuilder("anthropic/claude-haiku-5-5").tools(tools).build()
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const { registerMcpStdio } = require('@brekkylab/ailoy')
+
+const tools = await registerMcpStdio('fetch', 'uvx', ['mcp-server-fetch'])
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').tools(tools).build()
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::tool::register_mcp_stdio;
+
+let tools = register_mcp_stdio("fetch", "uvx", ["mcp-server-fetch"]).await?;
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5").tools(tools).build().await?;
+```
+
+</TabItem>
+</Tabs>
+
+## register_mcp_streamable_http
+
+Connects to a remote MCP server over Streamable HTTP and registers each of its tools as `<prefix>__<name>`. Node.js: `registerMcpStreamableHttp`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+async def register_mcp_streamable_http(prefix: str, url: str) -> list[ToolDesc]
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+registerMcpStreamableHttp(prefix: string, url: string): Promise<Array<ToolDesc>>
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+async fn register_mcp_streamable_http(prefix: impl AsRef<str>, url: impl AsRef<str>) -> anyhow::Result<Vec<ToolDesc>>
+```
+
+</TabItem>
+</Tabs>
+
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `prefix` | string | Added to each tool's name, so tools from different servers don't clash. |
+| `url` | string | The server's Streamable HTTP endpoint. |
+
+**Returns** the descriptions of the server's tools, to pass to `AgentBuilder.tools`.
+
+**Raises** if the server can't be reached.
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+from ailoy import register_mcp_streamable_http
+
+tools = await register_mcp_streamable_http("deepwiki", "https://mcp.deepwiki.com/mcp")
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const { registerMcpStreamableHttp } = require('@brekkylab/ailoy')
+
+const tools = await registerMcpStreamableHttp('deepwiki', 'https://mcp.deepwiki.com/mcp')
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::tool::register_mcp_streamable_http;
+
+let tools = register_mcp_streamable_http("deepwiki", "https://mcp.deepwiki.com/mcp").await?;
+```
+
+</TabItem>
+</Tabs>
+
+## unregister_mcp
+
+Removes all the tools registered with a prefix and closes the connection to the server. Registered servers otherwise stay connected until your program exits. Node.js: `unregisterMcp`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+ailoy.unregister_mcp(prefix: str) -> int
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+unregisterMcp(prefix: string): number
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+fn unregister_mcp(prefix: impl AsRef<str>) -> usize
+```
+
+</TabItem>
+</Tabs>
+
+**Returns** how many tools were removed. An unknown prefix removes nothing.

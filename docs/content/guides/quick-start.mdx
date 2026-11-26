@@ -1,43 +1,23 @@
 ---
 title: "Quick start"
-description: "Run an agent for one turn, then give it a sandbox and let it make a chart."
+description: "Build an agent that answers a question, then give it a sandbox and have it draw a chart."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
+Build your first agent in two steps: one that answers a question, then the same agent with a sandbox where it writes and runs code.
+
+:::note[Before you start]
+Finish [Installation](/docs/guides/installation/) first: install the package and set up a model. The code below uses `anthropic/claude-haiku-5-5` through Claude Code. To use GPT instead, change the model to `openai/gpt-6-luna`.
+:::
+
 <div class="steps-flow">
-
-## Install
-
-<Tabs syncKey="lang">
-<TabItem label="Python" icon="seti:python">
-
-```sh
-pip install ailoy-py
-```
-
-</TabItem>
-<TabItem label="Node.js" icon="seti:javascript">
-
-```sh
-npm install @brekkylab/ailoy
-```
-
-</TabItem>
-<TabItem label="Rust" icon="seti:rust">
-
-```sh
-cargo add ailoy virtx futures anyhow tokio --features tokio/macros,tokio/rt-multi-thread
-```
-
-</TabItem>
-</Tabs>
-
-The model runs on a CLI you are logged in to (Claude Code, for the Claude model on this page) or on an API key. [Installation](/docs/guides/installation/) covers the machine the sandbox needs, API keys, and fixes for common errors.
 
 ## Run an agent
 
-An agent needs only a model. This one has no tools and no sandbox, so it answers from what the model knows:
+The smallest agent is a model and nothing else. It has no tools, so it answers from what the model knows.
+
+Save this code as `main.py` (Python), `main.js` (Node.js) or `src/main.rs` (Rust):
 
 <Tabs syncKey="lang">
 
@@ -123,11 +103,44 @@ async fn main() -> anyhow::Result<()> {
 </TabItem>
 </Tabs>
 
-`agent.run` yields each message of the turn as it completes; [Running an agent](/docs/guides/running/) covers what it yields and how to stream it instead.
+Run it:
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```sh
+python main.py
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```sh
+node main.js
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```sh
+cargo run
+```
+
+</TabItem>
+</Tabs>
+
+The model's answer prints to your terminal. `agent.run` returns each message of the turn as it completes. To print the reply word by word instead, see [Stream the reply](/docs/guides/running/#stream-the-reply).
 
 ## Give it a sandbox
 
-The same agent with a sandbox can install software, write and run code, and keep files, in a Linux microVM of its own rather than on your machine. The added lines start virtx's server, make a sandbox from a Python image, hand it to the agent, and copy the chart the agent draws out to `population.png`:
+Now give the same agent a sandbox: a Linux microVM where it can install software, write and run code, and save files, without touching your machine. Your machine must meet the [sandbox requirements](/docs/guides/installation/#check-the-requirements).
+
+Replace your file with the code below. The highlighted lines are new. They:
+
+1. Start the sandbox server (downloaded the first time, so the first run takes longer).
+2. Create a sandbox from the `python:3.12-slim-trixie` image.
+3. Pass the sandbox to the agent with `.sandbox(sandbox)`.
+4. Copy the chart the agent makes out of the sandbox to `population.png` on your machine.
 
 <Tabs syncKey="lang">
 
@@ -246,13 +259,17 @@ async fn main() -> anyhow::Result<()> {
 </TabItem>
 </Tabs>
 
-The image has no matplotlib, so the agent installs it with the shell that `sandbox(...)` gives it, along with file tools ([Tools](/docs/guides/tools/)).
+Run it the same way as before. When it finishes, open `population.png` in your project folder.
 
 </div>
 
 ## What happened
 
-- [How an agent works](/docs/concepts/#a-turn) walks through the turn: the model asks for tools, they run, and their results go back to it until it answers.
-- [Giving an agent a sandbox](/docs/guides/sandbox/) covers images, volumes for inputs and results, and picking up later.
-- [Defining an agent](/docs/guides/agents/) lists everything else an agent can be given.
-- If a step fails, [Troubleshooting](/docs/guides/installation/#troubleshooting) lists the usual errors and their fixes.
+The Python image doesn't include matplotlib, so the agent installs it with the shell tool that `.sandbox(sandbox)` gives it, then writes and runs code that saves the chart to `/artifacts`. Each of those actions is a tool call: the model asks for it, and Ailoy runs it inside the sandbox and sends the result back to the model. When the agent finishes, your code copies the chart out of the sandbox.
+
+## Next steps
+
+- [How an agent works](/docs/concepts/): what happens in a turn, step by step.
+- [Give an agent a sandbox](/docs/guides/sandbox/): custom images, passing files in, and getting results out.
+- [Define an agent](/docs/guides/agents/): everything else you can give an agent.
+- Something failed? See [Installation troubleshooting](/docs/guides/installation/#troubleshooting).

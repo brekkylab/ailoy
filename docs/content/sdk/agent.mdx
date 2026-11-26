@@ -1,0 +1,402 @@
+---
+title: Agent
+description: "Reference for Agent and AgentRun: run turns, stream replies, read the history and close the agent."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+An `Agent` runs turns: it sends your query to the model, runs the tools the model asks for, and returns every message. Create one with [`AgentBuilder`](/docs/sdk/agent-builder/), or from a saved spec with [`from_spec`](#from_spec).
+
+When a call fails, Python raises `ailoy.AiloyError`, Node.js throws an `Error` with `code` set to `"AILOY_ERROR"`, and Rust returns an `Err`. Each entry's **Raises** line says when. See [Errors](/docs/sdk/errors/).
+
+| Member | Does |
+| --- | --- |
+| [`run`](#run) | Runs one turn and returns each complete message. |
+| [`run_stream`](#run_stream) | Runs one turn and returns the reply in pieces. |
+| [`history`](#history) | The conversation so far. |
+| [`start_browser`](#start_browser) | Connects the browser now. |
+| [`close`](#close) | Releases the model, browser and sandbox connection. |
+| [`from_spec`](#from_spec) | Creates an agent from a saved spec. |
+| [`AgentRun`](#agentrun) | The turn that `run` and `run_stream` return. |
+
+## run
+
+Runs one turn and returns each message as it completes: the model's tool calls, each tool result and the final answer. Nothing runs until you iterate the result.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+agent.run(query: str | Message) -> AgentRun[MessageOutput]
+
+async for output in agent.run("What is 2 + 2?"):
+    print(output["message"])
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+agent.run(query: string | Message): AsyncIterableIterator<MessageOutput>
+
+for await (const output of agent.run('What is 2 + 2?')) {
+  console.log(output.message)
+}
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+fn run(&mut self, query: Message) -> BoxStream<'_, anyhow::Result<MessageOutput>>
+
+let mut stream = agent.run(Message::new(Role::User).with_contents([Part::text("What is 2 + 2?")]));
+while let Some(output) = stream.next().await {
+    println!("{:?}", output?.message);
+}
+```
+
+</TabItem>
+</Tabs>
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `query` | string or [`Message`](/docs/sdk/types/#message) | A string becomes a user message with one text part. Rust takes a `Message` only. |
+
+**Returns** an async iterator of [`MessageOutput`](/docs/sdk/types/#messageoutput).
+
+**Raises** while iterating, if the model fails before its first message (your query is removed from the history so you can retry), or if the model's reply is cut off at its output limit (the cut reply is returned first). A failing tool doesn't end the turn. See [Handle errors](/docs/guides/running/#handle-errors).
+
+One agent runs one turn at a time. A second `run` or `run_stream` on the same agent waits until the first turn ends. To run turns in parallel, build one agent for each. In Rust, the compiler enforces this, since `run` and `run_stream` borrow the agent mutably.
+
+## run_stream
+
+Runs one turn like `run`, but returns the model's output in pieces as it's written. Each tool result arrives as one piece. Node.js: `runStream`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+agent.run_stream(query: str | Message) -> AgentRun[MessageDeltaOutput]
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+agent.runStream(query: string | Message): AsyncIterableIterator<MessageDeltaOutput>
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+fn run_stream(&mut self, query: Message) -> BoxStream<'_, anyhow::Result<MessageDeltaOutput>>
+```
+
+</TabItem>
+</Tabs>
+
+**Returns** an async iterator of [`MessageDeltaOutput`](/docs/sdk/types/#messagedeltaoutput). A non-null `finish_reason` marks the end of a message. See [Stream the reply](/docs/guides/running/#stream-the-reply).
+
+**Raises** while iterating, under the same conditions as `run`.
+
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+async for output in agent.run_stream("Write a haiku about rain."):
+    for part in output["delta"]["contents"]:
+        if part["type"] == "text":
+            print(part["text"], end="", flush=True)
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+for await (const { delta } of agent.runStream('Write a haiku about rain.')) {
+  for (const part of delta.contents) {
+    if (part.type === 'text') process.stdout.write(part.text)
+  }
+}
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+let mut stream = agent.run_stream(Message::new(Role::User).with_contents([Part::text("Write a haiku about rain.")]));
+while let Some(output) = stream.next().await {
+    let output = output?;
+    // output.delta.contents holds the new pieces
+}
+```
+
+</TabItem>
+</Tabs>
+
+## history
+
+Every message of the conversation so far: the system message, your queries, the model's messages and tool results.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+agent.history -> list[Message]   # property
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+agent.history: Array<Message>   // getter
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+fn history(&self) -> &[Message]
+```
+
+The agent's whole state is the public field `agent.state`, an `AgentState` with `history`, `sandbox` and `last_input_tokens`. `context_manager()` and `set_context_manager(Option<ContextManager>)` read and change the context manager between turns.
+
+</TabItem>
+</Tabs>
+
+**Returns** the messages, oldest first.
+
+**Raises** in Python and Node.js if a turn is running: `this agent is in the middle of a turn`. Read it between turns.
+
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+for message in agent.history:
+    print(message["role"], message["contents"])
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+for (const message of agent.history) {
+  console.log(message.role, message.contents)
+}
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+for message in agent.history() {
+    println!("{:?}: {:?}", message.role, message.contents);
+}
+```
+
+</TabItem>
+</Tabs>
+
+## start_browser
+
+Connects to the browser now, instead of on the agent's first browser tool call. With your own browser, this is when the browser asks for permission, so call it while the user is at their screen. Does nothing if already connected. Node.js: `startBrowser`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+async def start_browser() -> None
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+startBrowser(): Promise<void>
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+async fn start_browser(&mut self) -> anyhow::Result<()>
+```
+
+</TabItem>
+</Tabs>
+
+**Raises** an error if the user declines, if remote debugging is off, or if called during a turn.
+
+## close
+
+Releases the model, any browser the agent started, and its connection to the sandbox. Waits for a running turn to finish. Leaves the sandbox itself running. Calling it twice is the same as calling it once. Python and Node.js only; a Rust agent releases everything when it's dropped.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+async def close() -> None
+
+# Or close automatically at the end of a block:
+async with agent:
+    ...
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+close(): Promise<void>
+```
+
+</TabItem>
+</Tabs>
+
+
+After `close`, any other call on the agent raises `this agent has been closed`.
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+agent = await AgentBuilder("anthropic/claude-haiku-5-5").build()
+try:
+    async for output in agent.run("Hello"):
+        ...
+finally:
+    await agent.close()
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').build()
+try {
+  for await (const output of agent.run('Hello')) {
+    // ...
+  }
+} finally {
+  await agent.close()
+}
+```
+
+</TabItem>
+</Tabs>
+
+## from_spec
+
+Builds an agent from a saved [`AgentSpec`](/docs/sdk/types/#agentspec), with an optional history and sandbox. Node.js: `Agent.fromSpec`. Rust: `Agent::try_new` or `Agent::try_with_state`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+@staticmethod
+async def from_spec(
+    spec: AgentSpec,
+    *,
+    history: list[Message] | None = None,
+    sandbox: virtx.Sandbox | None = None,
+) -> Agent
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+Agent.fromSpec(spec: AgentSpec, options?: { history?: Array<Message>; sandbox?: Sandbox }): Promise<Agent>
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::agent::{Agent, AgentSpec, AgentState};
+
+async fn try_new(spec: AgentSpec) -> anyhow::Result<Agent>
+async fn try_with_state(spec: AgentSpec, state: AgentState) -> anyhow::Result<Agent>
+
+// AgentState::new().with_history(messages).with_sandbox(sandbox)
+```
+
+</TabItem>
+</Tabs>
+
+A sandbox passed here doesn't add the shell and file tools: the spec must list them. In Rust, call `.sandbox_tools()` on the `AgentSpec`. See [Build an agent from a spec](/docs/guides/agents/#build-an-agent-from-a-spec).
+
+
+**Returns** the agent.
+
+**Raises** under the same conditions as [`AgentBuilder.build`](/docs/sdk/agent-builder/#build).
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+import json
+from ailoy import Agent
+
+with open("spec.json") as f:
+    spec = json.load(f)
+
+agent = await Agent.from_spec(spec, history=saved_history)
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const { Agent } = require('@brekkylab/ailoy')
+const fs = require('node:fs')
+
+const spec = JSON.parse(fs.readFileSync('spec.json', 'utf8'))
+const agent = await Agent.fromSpec(spec, { history: savedHistory })
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::agent::{Agent, AgentSpec, AgentState};
+
+// AgentSpec implements serde's Deserialize; this reads it with the serde_json crate.
+let spec: AgentSpec = serde_json::from_str(&std::fs::read_to_string("spec.json")?)?;
+let agent = Agent::try_with_state(spec, AgentState::new().with_history(saved_history)).await?;
+```
+
+</TabItem>
+</Tabs>
+
+## AgentRun
+
+What `run` and `run_stream` return in Python and Node.js: one turn, iterated with `async for` or `for await`.
+
+| Method | Description |
+| --- | --- |
+| `__anext__()` / `next()` | Moves the turn forward and returns the next output. |
+| `aclose()` (Python) / `return()` (Node.js) | Stops the turn early. Breaking out of the loop does the same. |
+
+In Rust, `run` and `run_stream` return a `Stream`. Drop it to stop the turn.
+
+### What stopping a turn keeps
+
+When a turn stops early, by `aclose()`, `return()`, breaking out of the loop or dropping the Rust stream:
+
+- Messages that completed stay in the history.
+- A message the model was still writing isn't kept.
+- A tool call left without a result gets the error `the call was interrupted before it returned` as its result when the next turn starts, so the conversation stays valid for the model.
+
+If the model fails before its first message of a turn, the query is taken back out of the history, so you can run it again as it is.

@@ -3,14 +3,20 @@
     "label": "Get started",
     "items": [
       { "label": "Welcome to Ailoy", "link": "/" },
-      { "slug": "guides/quick-start" },
-      { "slug": "guides/installation" }
+      { "slug": "guides/installation" },
+      { "slug": "guides/quick-start" }
+    ]
+  },
+  {
+    "label": "Core concepts",
+    "items": [
+      { "slug": "concepts" },
+      { "slug": "guides/message-format" }
     ]
   },
   {
     "label": "Build an agent",
     "items": [
-      { "slug": "concepts" },
       { "slug": "guides/agents" },
       { "slug": "guides/sandbox" },
       { "slug": "guides/running" },
@@ -19,22 +25,36 @@
   },
   {
     "label": "Models",
-    "items": [
-      { "slug": "guides/model-providers" },
-      { "slug": "guides/message-format" }
-    ]
+    "items": [{ "slug": "guides/model-providers" }]
   },
   {
     "label": "Tools",
     "items": [
       { "slug": "guides/tools" },
+      { "slug": "guides/memory" },
       { "slug": "guides/using-mcp" },
       { "slug": "guides/using-browser" },
       { "slug": "guides/skills" }
     ]
   },
   {
-    "label": "Reference",
-    "items": [{ "slug": "reference", "badge": "Soon" }]
+    "label": "Overview",
+    "items": [
+      { "slug": "sdk" },
+      { "slug": "sdk/setup" },
+      { "slug": "sdk/configuration" }
+    ]
+  },
+  {
+    "label": "API reference",
+    "items": [
+      { "slug": "sdk/agent-builder" },
+      { "slug": "sdk/agent" },
+      { "slug": "sdk/models" },
+      { "slug": "sdk/tools" },
+      { "slug": "sdk/built-in-tools" },
+      { "slug": "sdk/types" },
+      { "slug": "sdk/errors" }
+    ]
   }
 ]

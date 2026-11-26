@@ -1,0 +1,87 @@
+---
+title: Configuration
+description: "Every environment variable the Ailoy SDK reads: API keys, model servers, AWS and the sandbox server."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Ailoy reads credentials and server addresses from environment variables. Set them before you call `build()`, because that's when Ailoy reads them. A variable that is set but blank counts as unset.
+
+Keep keys out of your source code. Set them in your shell, your deployment's secret store, or a `.env` file that isn't committed.
+
+## Model API keys
+
+Used by the `api` backend. Set only the ones for the providers you use. See [Model providers](/docs/guides/model-providers/#backends).
+
+| Variable | Org | Provider |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | `anthropic` | Anthropic (Claude) |
+| `OPENAI_API_KEY` | `openai` | OpenAI (GPT) |
+| `GEMINI_API_KEY` | `google` | Google (Gemini) |
+| `DEEPSEEK_API_KEY` | `deepseek-ai` | DeepSeek |
+| `KIMI_API_KEY` or `MOONSHOT_API_KEY` | `moonshotai` | Moonshot AI (Kimi) |
+| `ZAI_API_KEY` | `zai-org` | Z.ai (GLM) |
+| `DASHSCOPE_API_KEY` | `Qwen` | Alibaba (Qwen) |
+| `EXAONE_API_KEY` | `LGAI-EXAONE` | LG AI Research (EXAONE) |
+
+Claude, GPT and Gemini don't need a key by default: they use the `cli` backend and your CLI login. Switch them to the API with [`set_lang_model_provider`](/docs/sdk/models/#set_lang_model_provider).
+
+## Other backends
+
+| Variable | Backend | Description |
+| --- | --- | --- |
+| `AWS_BEARER_TOKEN_BEDROCK` | `bedrock` | Bedrock bearer token. AWS access keys and profiles aren't used. |
+| `AWS_REGION`, then `AWS_DEFAULT_REGION` | `bedrock` | The Bedrock region. If neither is set, `us-east-1`. |
+| `OPENROUTER_API_KEY` | `openrouter` | OpenRouter API key. |
+| `SELF_HOSTED_BASE_URL` | `self-hosted` | Your server's URL, including `/v1`, such as `http://localhost:8000/v1`. No default. |
+| `SELF_HOSTED_API_KEY` | `self-hosted` | Your server's key, if it requires one. |
+
+To use a different self-hosted server per org, pass a [`LangModelServer`](/docs/sdk/types/#langmodelserver) to `set_lang_model_provider` instead of setting these variables.
+
+## Sandbox server
+
+These are read by virtx when it starts the sandbox server. See virtx's [environment variables](https://virtx.sh/docs/reference/api/#environment-variables).
+
+| Variable | Description |
+| --- | --- |
+| `VIRTX_DIST_URL` | A mirror to download the sandbox server from. |
+| `VIRTX_STDIO` | The path to a sandbox server you downloaded yourself. |
+| `KRUN_LOG` | Set to `debug` to see the hypervisor's messages when a sandbox fails to start. |
+
+## Check that a variable is set
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+import os
+
+print(bool(os.environ.get("ANTHROPIC_API_KEY")))
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+console.log(Boolean(process.env.ANTHROPIC_API_KEY))
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+println!("{}", std::env::var("ANTHROPIC_API_KEY").map_or(false, |v| !v.is_empty()));
+```
+
+</TabItem>
+</Tabs>
+
+## Settings in code
+
+Everything else is set in code, per agent or per process:
+
+| Setting | Scope | Set with |
+| --- | --- | --- |
+| Which backend an org uses | Process | [`set_lang_model_provider`](/docs/sdk/models/#set_lang_model_provider) |
+| Tools available by name | Process | [`register_tool`](/docs/sdk/tools/#register_tool), [`register_mcp_stdio`](/docs/sdk/tools/#register_mcp_stdio) |
+| Model, instruction, tools, sandbox, options | Agent | [`AgentBuilder`](/docs/sdk/agent-builder/) |

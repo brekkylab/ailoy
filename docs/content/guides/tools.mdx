@@ -1,45 +1,52 @@
 ---
 title: "Tools"
-description: "The built-in tools, functions of your own, and the tools of MCP servers and the browser."
+description: "The built-in shell, file and web tools, and how to turn your own functions into tools."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-An agent calls the tools you give it on the `AgentBuilder`: the built-in ones on this page, functions of your own, the tools of an [MCP server](/docs/guides/using-mcp/) or of the [browser](/docs/guides/using-browser/), and [the one `memory(...)` adds](#memory).
+Tools are functions the model can call. An agent has only the tools you give it on the `AgentBuilder`:
 
-## Built-in tools
+| Tools | How to add them | Where they run |
+| --- | --- | --- |
+| [Shell and file tools](#shell-and-file-tools) | `.sandbox(sandbox)` | In the sandbox |
+| [Web search and fetch](#web-search-and-fetch) | `.web_search_tool()`, `.web_fetch_tool()` | In your program |
+| [Your own functions](#add-your-own-function) | `register_tool(...)`, then `.tool(desc)` | In your program |
+| [MCP server tools](/docs/guides/using-mcp/) | `register_mcp_stdio(...)`, then `.tools(descs)` | Where the MCP server runs |
+| [Browser tools](/docs/guides/using-browser/) | `.browser()` | In your program, controlling a browser |
+| [The memory tool](/docs/guides/memory/) | `.memory(dir)` | In your program |
 
-### A shell and files
+## Shell and file tools
 
-An agent given a sandbox with `sandbox(...)` gets a shell and tools to read and change files in it, with nothing else to call. Which tools come with the shell depends on the model's org:
+An agent with a sandbox gets a shell and tools to read and edit files in it. You don't add them yourself. The exact set depends on the model's org, so each model gets tools in the shape it was trained on:
 
 | Org | Tools |
 | --- | --- |
 | `openai` | `shell`, `apply_patch`, `imgread` |
 | `google` | `shell`, `read_file`, `write`, `edit`, `imgread` |
 | `deepseek-ai`, `moonshotai`, `zai-org`, `Qwen`, `LGAI-EXAONE` | `shell`, `read`, `write`, `edit` |
-| Any other, `anthropic` included | `shell`, `read`, `write`, `edit`, `imgread` |
+| Any other, including `anthropic` | `shell`, `read`, `write`, `edit`, `imgread` |
 
 | Tool | What it does |
 | --- | --- |
 | `shell` | Runs a command, with an optional timeout in seconds. |
-| `read` | Reads up to 2,000 numbered lines of a text file, or `limit` lines from line `offset`. |
+| `read` | Reads up to 2,000 numbered lines of a text file, or `limit` lines starting at line `offset`. |
 | `read_file` | Reads up to 2,000 lines of a text file, or the lines from `start_line` to `end_line`. |
-| `write` | Writes a text file, replacing one already at that path. |
-| `edit` | Replaces an exact string that occurs once in a text file, or, with `replace_all`, every occurrence of it. |
-| `apply_patch` | Adds, deletes, updates and moves files, from a patch in the format Codex uses. |
-| `imgread` | Reads a PNG, JPEG, GIF or WebP image of up to 5 MB and gives it to the model as an image. |
+| `write` | Writes a text file, replacing any file already at that path. |
+| `edit` | Replaces an exact string that occurs once in a text file, or every occurrence with `replace_all`. |
+| `apply_patch` | Adds, deletes, updates and moves files using a patch in Codex's format. |
+| `imgread` | Reads a PNG, JPEG, GIF or WebP image up to 5 MB and shows it to the model. |
 
-`imgread` is left out for `deepseek-ai`, `moonshotai`, `zai-org`, `Qwen` and `LGAI-EXAONE` because their backends pass a tool result to the model as text, so the model would get a label in place of the image.
+`imgread` isn't given to `deepseek-ai`, `moonshotai`, `zai-org`, `Qwen` and `LGAI-EXAONE` models, because their backends pass tool results as text, so the model would see a label instead of the image.
 
-The seven tools in the table come with `sandbox(...)` and run in that sandbox, as in [Giving an agent a sandbox](/docs/guides/sandbox/); an agent without one does not get them. The agent does not start, stop or remove its sandbox. virtx stops an idle sandbox's VM and boots it again over what it wrote when it is next needed, so a later call finds the files as the last one left them.
+When the sandbox has been idle, virtx stops its VM and starts it again on the next tool call. Files stay as the last call left them.
 
-### The web
+## Web search and fetch
 
-`web_search_tool` and `web_fetch_tool` (`webSearchTool`, `webFetchTool`) do not come with the sandbox. The two tools run in your program's process, not in the sandbox, so they work without one.
+`web_search_tool` and `web_fetch_tool` (`webSearchTool`, `webFetchTool`) add two tools that run in your program, not in the sandbox, so they work with or without one.
 
-- `web_search` sends the query to several search engines at once and merges what they find, one result per URL, best first. It answers with up to 10 results, or up to 30 when the model asks for more. `web_search_tool` takes the engines to use: `Bing`, `Brave`, `DuckDuckGo`, `Google`, `Mojeek`, `Naver`, `Startpage`, `Yahoo` and `Yandex`. None, or an empty list, uses them all.
-- `web_fetch` fetches one URL. An HTML page comes back as its visible text (the default), as Markdown, or as the HTML itself; any other body, such as JSON, comes back as it is. A long body comes in pieces, and the model asks for the next one with `offset`; only the body's first 2 MiB are read. It makes at most one request a second to a host, and only to addresses on the public internet: loopback, the local network and cloud metadata addresses are refused.
+- **`web_search`** sends the query to several search engines at once, merges the results (one per URL, best first) and returns up to 10, or up to 30 when the model asks for more. Pass a list of engines to use: `Bing`, `Brave`, `DuckDuckGo`, `Google`, `Mojeek`, `Naver`, `Startpage`, `Yahoo` and `Yandex`. No list, or an empty one, uses all of them.
+- **`web_fetch`** fetches one URL. An HTML page comes back as its visible text by default, or as Markdown or raw HTML. Other content, such as JSON, comes back as it is. A long page comes back in pieces, and the model asks for the next one with `offset`. Only the first 2 MiB are read. It makes at most one request per second to each host, and only to public internet addresses: loopback, local network and cloud metadata addresses are refused.
 
 <Tabs syncKey="lang">
 
@@ -54,7 +61,6 @@ agent = await (
 )
 ```
 
-
 </TabItem>
 <TabItem label="Node.js" icon="seti:javascript">
 
@@ -64,7 +70,6 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
   .webFetchTool()
   .build()
 ```
-
 
 </TabItem>
 <TabItem label="Rust" icon="seti:rust">
@@ -79,15 +84,18 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
     .await?;
 ```
 
-
 </TabItem>
 </Tabs>
 
-## Your own functions
+## Add your own function
 
-A function of your program becomes a tool once it is registered with a **tool description**: the name the model calls it by, what it does, and a JSON schema for its arguments. The agent gets the description from `tool(...)`, or a list of them from `tools(...)`. In Python and Node.js, registering returns it; in Rust you build it with `ToolDescBuilder` and register the function under its name.
+To turn a function into a tool:
 
-This gives the agent `order_status`, which looks an order up by its id:
+1. **Describe it.** Write a tool description with the name the model calls it by, what it does, and a JSON schema for its arguments.
+2. **Register it.** Register the description together with the function. In Python and Node.js, `register_tool` returns the description. In Rust, build the description with `ToolDescBuilder` and register the function under the same name with `set_tool_provider`.
+3. **Give it to the agent** with `.tool(desc)`, or a list with `.tools(descs)`.
+
+This example gives the agent an `order_status` tool that looks up an order by its id:
 
 <Tabs syncKey="lang">
 
@@ -132,7 +140,6 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-
 </TabItem>
 <TabItem label="Node.js" icon="seti:javascript">
 
@@ -173,7 +180,6 @@ async function main() {
 
 main()
 ```
-
 
 </TabItem>
 <TabItem label="Rust" icon="seti:rust">
@@ -228,86 +234,44 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-
 </TabItem>
 </Tabs>
 
-How the function is called:
+### How your function is called
 
-- **Python**: the arguments come as keyword arguments, named as in the schema, and the function may be `async`.
-- **Node.js**: they come as one object, and the function may return a promise.
-- **Rust** registers a `ToolFunc` with `set_tool_provider`, under the name in the description. `tool_func!` builds one from a closure that takes the arguments as a `Value`; with `async` before the closure, its body can `.await`.
+| Language | Arguments | Async |
+| --- | --- | --- |
+| Python | Keyword arguments, named as in the schema | The function can be `async` |
+| Node.js | One object | The function can return a promise |
+| Rust | A `Value`, in a closure passed to `tool_func!` | Put `async` before the closure to use `.await` in its body |
 
-The function returns what a message can hold: null, a boolean, a number, a string, or a list or object of those. In Python and Node.js an exception, or a rejected promise, does not end the run: the model gets it as the result, such as `error: KeyError: 'no order B-9'` from the Python function above, and can try something else.
+Your function must return JSON-compatible data: null, a boolean, a number, a string, or a list or object of those.
 
-Tool calls the model makes in one step run at the same time, the seven built-in tools above among them: a sandbox runs many processes at once. A function of yours may be called again before its last call has returned.
+If a Python or Node.js function raises an exception (or its promise rejects), the run continues. The model receives the error as the result, for example `error: KeyError: 'no order B-9'`, and can try something else.
 
-A Python or Node.js function runs in your program, not in the sandbox. To run a command or read a file there, it calls the virtx `Sandbox` you made, such as `sandbox.exec(...)` or `sandbox.read_file(...)`. In Rust, a closure that also takes `sandbox: &Sandbox` gets the agent's sandbox, as the built-in tools do, and `ailoy::tool::{exec, read, write}` run a command and read and write a file in it.
+Tool calls the model makes in one step run at the same time, so your function may be called again before an earlier call has returned.
 
-Tools are registered by name for the whole process, the built-in ones included. Registering a name again, `shell` among them, replaces its function for every agent built after that. `set_tool_provider(name, func)` (`setToolProvider` in Node.js) replaces only the function, for a tool whose description a spec already has. The exception is `web_search` in an agent given a non-empty list of engines, which builds its own. `remove_tool_provider` (`removeToolProvider`) takes a name out.
+### Run commands in the sandbox from your function
 
-## Memory
+A Python or Node.js tool function runs in your program, not in the sandbox. To run a command or read a file in the sandbox, call the virtx `Sandbox` object you created, for example `sandbox.exec(...)` or `sandbox.read_file(...)`. In Rust, a closure that also takes `sandbox: &Sandbox` receives the agent's sandbox, and `ailoy::tool::{exec, read, write}` run commands and read and write files in it.
 
-`memory(dir)` gives the agent notes on the user that outlast a session. They are kept on this host, in `MEMORY.md` in the folder `dir`, so they need no sandbox. The folder, and those on the way to it, are made when the agent is built; the file is made by the first note.
+### Replace or remove a tool
 
-The notes go at the end of the system message as they were when the agent was built, and the agent changes them with the `memory` tool: it adds a fact as an entry of its own, replaces an entry when its fact changes, or removes one. The changes in one call are made in order, all or none. Each entry is led by this host's date when it was last written, as `[2026-11-17] Drinks barley tea`. A change shows in the next agent built on the folder, not in the one that made it.
+Tools are registered by name for the whole process, including the built-in ones. Registering a name again replaces its function for every agent built afterwards, even a built-in like `shell`. The one exception is `web_search` on an agent given a non-empty list of engines, which builds its own.
 
-The entries hold at most 3,000 characters unless `limit` says otherwise. A change that would make them larger is refused, and the agent shortens or removes entries to make room. A person can edit the file too: its entries are paragraphs, a blank line apart.
+- `set_tool_provider(name, func)` (`setToolProvider`) replaces only the function. Use it when a saved spec already has the tool's description.
+- `remove_tool_provider(name)` (`removeToolProvider`) removes the tool.
 
-<Tabs syncKey="lang">
+## How long tool results are handled
 
-<TabItem label="Python">
+The agent keeps at most 30,000 characters of each part of a tool result, for built-in tools and your own:
 
-```python
-from ailoy import Agent, AgentBuilder
+- A longer part keeps its first and last 15,000 characters, with a note in between saying how many were cut. A large file read in one call can reach the model with its middle missing.
+- A Python or Node.js function's result, including a string, becomes a `value` part. Its size is measured in characters of JSON. Past 30,000, the model receives the JSON as text with the middle cut.
+- `web_fetch` and `shell` size their own results: a long page comes in pieces that each fit, and `shell` cuts long output itself, keeping the start and end.
 
-agent = await AgentBuilder("anthropic/claude-haiku-5-5").memory("./memory/user1", limit=2000).build()
+## Next steps
 
-# The same folder for an agent from a spec.
-agent = await Agent.from_spec(
-    {"model": "anthropic/claude-haiku-5-5", "memory": {"dir": "./memory/user1", "limit": 2000}}
-)
-```
-
-
-</TabItem>
-<TabItem label="Node.js">
-
-```js
-const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
-  .memory('./memory/user1', { limit: 2000 })
-  .build()
-
-// The same folder for an agent from a spec.
-const again = await Agent.fromSpec({
-  model: 'anthropic/claude-haiku-5-5',
-  memory: { dir: './memory/user1', limit: 2000 },
-})
-```
-
-
-</TabItem>
-<TabItem label="Rust">
-
-```rust
-use ailoy::agent::Memory;
-
-let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
-    .memory(Memory::new("./memory/user1").with_limit(2000))
-    .build()
-    .await?;
-```
-
-
-</TabItem>
-</Tabs>
-
-An agent built with a history that already holds a system message keeps that message as it is: it gets the `memory` tool, but its notes are not added. A spec that lists a `memory` tool of its own beside a memory fails to build.
-
-## How much of a result the model reads
-
-The agent keeps at most 30,000 characters of each part of a tool result, for built-in tools and your own alike:
-
-- A longer part keeps its first and last 15,000 characters around a note of how many were cut, so a file read whole may reach the model with its middle missing.
-- A Python or Node.js function's result, a string included, becomes a value part. A value part is measured in characters of its JSON, and once that passes 30,000, the model gets the JSON text as a string with its middle cut.
-- `web_fetch` and `shell` size their results to fit: a long page comes in pieces that each reach the model whole, and `shell` cuts a long stdout or stderr itself, keeping its start and end around a note of how many characters it lost.
+- [Memory](/docs/guides/memory/): let the agent remember the user between sessions.
+- [Use MCP servers](/docs/guides/using-mcp/): add the tools of any MCP server.
+- [Tools reference](/docs/sdk/tools/): every registration function and its parameters.

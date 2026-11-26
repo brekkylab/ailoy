@@ -1,0 +1,138 @@
+---
+title: Built-in tools
+description: "Every tool Ailoy gives an agent on its own: names, parameters, and which agents get them."
+---
+
+Ailoy includes tools for the shell, files, the web, memory and the browser. They're registered from the start, so an agent gets them when you call the builder method that adds them. This page lists each tool's name and the parameters the model sends. Use the names to [replace or remove a tool](#replace-or-remove-a-built-in-tool), or to list tools in an [`AgentSpec`](/docs/sdk/types/#agentspec).
+
+| Tools | Added by | Runs in |
+| --- | --- | --- |
+| [Shell and file tools](#shell-and-file-tools) | [`sandbox`](/docs/sdk/agent-builder/#sandbox) | The sandbox |
+| [`web_search`](#web_search) | [`web_search_tool`](/docs/sdk/agent-builder/#web_search_tool) | Your program |
+| [`web_fetch`](#web_fetch) | [`web_fetch_tool`](/docs/sdk/agent-builder/#web_fetch_tool) | Your program |
+| [`memory`](#memory) | [`memory`](/docs/sdk/agent-builder/#memory) | Your program |
+| [Browser tools](#browser-tools) | [`browser`](/docs/sdk/agent-builder/#browser) | The browser |
+
+A tool's result is cut to 30,000 characters before the model sees it. See [How long tool results are handled](/docs/guides/tools/#how-long-tool-results-are-handled).
+
+## Shell and file tools
+
+Which file tools an agent gets depends on its model's org, so each model gets tools in the shape it was trained on:
+
+| Org | Tools |
+| --- | --- |
+| `openai` | `shell`, `apply_patch`, `imgread` |
+| `google` | `shell`, `read_file`, `write`, `edit`, `imgread` |
+| `deepseek-ai`, `moonshotai`, `zai-org`, `Qwen`, `LGAI-EXAONE` | `shell`, `read`, `write`, `edit` |
+| Any other, including `anthropic` | `shell`, `read`, `write`, `edit`, `imgread` |
+
+### shell
+
+Runs a command in the sandbox and returns its output.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `cmd` | string | Yes | The command to run. |
+| `timeout_secs` | integer | No | Timeout in seconds. `0` or missing means no timeout. |
+
+### read
+
+Reads a text file as numbered lines, up to 2,000 lines.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `path` | string | Yes | The file to read. |
+| `offset` | integer | No | The line to start from. |
+| `limit` | integer | No | How many lines to read. |
+
+### read_file
+
+Reads a text file, up to 2,000 lines. The shape Gemini models use.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `file_path` | string | Yes | The file to read. |
+| `start_line` | integer | No | The first line to read, counting from 1. |
+| `end_line` | integer | No | The last line to read, included. |
+
+### write
+
+Writes a text file, replacing any file at that path.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `path` | string | Yes | The file to write. |
+| `content` | string | Yes | The whole content of the file. |
+
+### edit
+
+Replaces text in a file. `old_string` must occur exactly once, unless `replace_all` is `true`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `path` | string | Yes | The file to change. |
+| `old_string` | string | Yes | The text to replace. |
+| `new_string` | string | Yes | The new text. Must differ from `old_string`. |
+| `replace_all` | boolean | No | Replace every occurrence. Default `false`. |
+
+### apply_patch
+
+Adds, deletes, updates and moves files using a patch in Codex's format. The shape GPT models use.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `input` | string | Yes | The whole patch. |
+
+### imgread
+
+Reads a PNG, JPEG, GIF or WebP image up to 5 MB and shows it to the model.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `path` | string | Yes | The image file. |
+
+## web_search
+
+Searches several search engines at once and returns the merged results, one per URL, best first.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `query` | string | Yes | The search query. |
+| `max_results` | integer | No | How many results to return. Default `10`, at most `30`. |
+
+The engines are chosen in code, with [`web_search_tool`](/docs/sdk/agent-builder/#web_search_tool), not by the model.
+
+## web_fetch
+
+Fetches one URL. A long page comes back in pieces, and the result says the `offset` of the next one. Only the first 2 MiB of a response are read. Requests go only to public internet addresses, at most one per second to each host.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `url` | string | Yes | The URL to fetch. |
+| `format` | string | No | How to return an HTML page: `"text"` (visible text, the default), `"markdown"` (keeps headings, lists, tables and links) or `"html"` (the body unchanged). |
+| `offset` | integer | No | The character to start from. Default `0`. |
+| `length` | integer | No | The most characters to return, from 256 to 30,000. Default 30,000. |
+
+## memory
+
+Changes the agent's notes in `MEMORY.md`. The changes in one call are made in order, all or none. See [Memory](/docs/guides/memory/).
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `operations` | array | Yes | The changes to make, in order. |
+| `operations[].action` | string | Yes | `"add"` a new entry, `"replace"` the entry containing `old_text` with `content`, or `"remove"` the entry containing `old_text`. |
+| `operations[].content` | string | For `add` and `replace` | One fact, without a date. Ailoy adds the date. |
+| `operations[].old_text` | string | For `replace` and `remove` | A piece of the entry, long enough that only that entry contains it. |
+
+## Browser tools
+
+The browser tools all start with `browser_`: `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_input` and others. An agent with a sandbox also gets four tools that move files between the browser and the sandbox. The [browser tools reference](/docs/guides/using-browser/#browser-tools-reference) describes each one.
+
+## Replace or remove a built-in tool
+
+Built-in tools are registered by name for the whole process, like your own tools. Change one before you build the agent:
+
+- [`register_tool`](/docs/sdk/tools/#register_tool) or [`set_tool_provider`](/docs/sdk/tools/#set_tool_provider) with a built-in's name replaces its function, for every agent built afterwards.
+- [`remove_tool_provider`](/docs/sdk/tools/#remove_tool_provider) removes it.
+
+`web_search` on an agent given a non-empty list of engines is the exception: that agent builds its own `web_search`, so a replacement doesn't reach it.

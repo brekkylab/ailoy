@@ -1,0 +1,560 @@
+---
+title: Models
+description: "Reference for LangModel and the functions that set how each org's models run."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Models are named `<org>/<name>`, and each org runs on one backend. The functions on this page choose that backend, and `LangModel` runs a model without an agent. For explanations and examples, see [Model providers](/docs/guides/model-providers/).
+
+When a call fails, Python raises `ailoy.AiloyError`, Node.js throws an `Error` with `code` set to `"AILOY_ERROR"`, and Rust returns an `Err`. Each entry's **Raises** line says when. See [Errors](/docs/sdk/errors/).
+
+| Member | Does |
+| --- | --- |
+| [`set_lang_model_provider`](#set_lang_model_provider) | Sets the backend, server or factory for an org. |
+| [`get_lang_model_provider`](#get_lang_model_provider) | Returns the provider an org uses. |
+| [`remove_lang_model_provider`](#remove_lang_model_provider) | Removes the provider for an org. |
+| [`LangModel`](#langmodel) | Runs a model without an agent: [`create`](#create), [`infer`](#infer), [`infer_stream`](#infer_stream). |
+| [Custom model](#custom-model) | Runs an org with your own code. |
+
+## set_lang_model_provider
+
+Sets how every model of an org runs, for the whole process. Call it before you build an agent. Node.js: `setLangModelProvider`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+ailoy.set_lang_model_provider(
+    org: str,
+    provider: Backend | LangModelServer | Callable[[str, str | None], LangModel | CustomLangModel],
+) -> None
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+setLangModelProvider(
+  org: string,
+  provider: Backend | LangModelServer | ((org: string, name: string | null) => LangModel | CustomLangModel),
+): void
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::model::set_lang_model_provider;
+
+fn set_lang_model_provider(org: impl Into<String>, provider: impl Into<LangModelProvider>)
+// provider: Backend::Api, LangModelServer::new(url)?, or LangModelProvider::custom(|org, name| ...)
+```
+
+</TabItem>
+</Tabs>
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `org` | string | The part of the model name before the slash, such as `"anthropic"` or `"Qwen"`. |
+| `provider` | [`Backend`](/docs/sdk/types/#backend) | A backend by name: `"cli"`, `"api"`, `"bedrock"`, `"openrouter"` or `"self-hosted"`. |
+| | [`LangModelServer`](/docs/sdk/types/#langmodelserver) | Your own server for this org: `{"backend": "self-hosted", "base_url": ..., "api_key": ..., "models": {...}}`. |
+| | factory function | Called with the org and the model name after the slash (`None`/`null` if there's none). Must return a [custom model](#custom-model) or a `LangModel` directly, not an awaitable. |
+
+**Returns** nothing. Models already built keep the backend they were built with.
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+import ailoy
+
+ailoy.set_lang_model_provider("anthropic", "api")
+ailoy.set_lang_model_provider("Qwen", {"backend": "self-hosted", "base_url": "http://localhost:8000/v1"})
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const { setLangModelProvider } = require('@brekkylab/ailoy')
+
+setLangModelProvider('anthropic', 'api')
+setLangModelProvider('Qwen', { backend: 'self-hosted', base_url: 'http://localhost:8000/v1' })
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::model::{Backend, LangModelServer, set_lang_model_provider};
+
+set_lang_model_provider("anthropic", Backend::Api);
+set_lang_model_provider("Qwen", LangModelServer::new("http://localhost:8000/v1")?);
+```
+
+</TabItem>
+</Tabs>
+
+## get_lang_model_provider
+
+Returns the backend that a model name would use. Node.js: `getLangModelProvider`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+ailoy.get_lang_model_provider(desc: str) -> Backend | Literal["custom"] | None
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+getLangModelProvider(desc: string): Backend | 'custom' | null
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+fn get_lang_model_provider(desc: &str) -> Option<LangModelProvider>
+
+pub enum LangModelProvider {
+    Backend(Backend),
+    Server(LangModelServer),
+    Custom(CustomLangModelProvider),
+}
+```
+
+</TabItem>
+</Tabs>
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `desc` | string | A model name, such as `"anthropic/claude-haiku-5-5"`. |
+
+**Returns** the backend's name, `"custom"` for a factory, or `None`/`null` if the org has no provider. A [`LangModelServer`](/docs/sdk/types/#langmodelserver) returns `"self-hosted"`. Rust returns the provider itself, so you can match on it.
+
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+ailoy.get_lang_model_provider("anthropic/claude-haiku-5-5")  # "cli"
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+getLangModelProvider('anthropic/claude-haiku-5-5') // 'cli'
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+let provider = ailoy::model::get_lang_model_provider("anthropic/claude-haiku-5-5");
+```
+
+</TabItem>
+</Tabs>
+
+## remove_lang_model_provider
+
+Removes an org's provider. Its models can't be built until you set one again. Node.js: `removeLangModelProvider`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+ailoy.remove_lang_model_provider(org: str) -> bool
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+removeLangModelProvider(org: string): boolean
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+fn remove_lang_model_provider(org: &str) -> Option<LangModelProvider>
+```
+
+</TabItem>
+</Tabs>
+
+**Returns** whether the org had a provider (Rust: the removed provider).
+
+## LangModel
+
+Runs a model directly, without an agent: no tools are run and no history is kept. Built the same way an agent builds its model.
+
+### create
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+from ailoy import LangModel
+
+model = await LangModel.create(desc: str)
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const { LangModel } = require('@brekkylab/ailoy')
+
+const model = await LangModel.create(desc: string)
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::model::create_lang_model;
+
+async fn create_lang_model(desc: &str) -> anyhow::Result<Arc<dyn InferLangModel>>
+```
+
+</TabItem>
+</Tabs>
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `desc` | string | The model name, `<org>/<name>`. |
+
+**Returns** a model, ready for `infer` and `infer_stream`.
+
+**Raises** if the org has no backend, or the backend needs an API key that isn't set.
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+from ailoy import LangModel
+
+model = await LangModel.create("anthropic/claude-haiku-5-5")
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const { LangModel } = require('@brekkylab/ailoy')
+
+const model = await LangModel.create('anthropic/claude-haiku-5-5')
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::model::create_lang_model;
+
+let model = create_lang_model("anthropic/claude-haiku-5-5").await?;
+```
+
+</TabItem>
+</Tabs>
+
+### infer
+
+Returns the model's whole reply.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+async def infer(
+    messages: list[Message],
+    *,
+    tools: list[ToolDesc] | None = None,
+    options: LangModelOptions | None = None,
+) -> MessageOutput
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+infer(messages: Array<Message>, tools?: Array<ToolDesc>, options?: LangModelOptions): Promise<MessageOutput>
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+fn infer(&self, messages: &[Message], tools: &[ToolDesc], options: &LangModelOptions)
+    -> BoxFuture<'static, anyhow::Result<MessageOutput>>
+```
+
+</TabItem>
+</Tabs>
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `messages` | list of [`Message`](/docs/sdk/types/#message) | The conversation to send. |
+| `tools` | list of [`ToolDesc`](/docs/sdk/types/#tooldesc) | Tools to describe to the model. Ailoy doesn't run them: tool calls come back in the reply. |
+| `options` | [`LangModelOptions`](/docs/sdk/types/#langmodeloptions) | `thinking_effort` and `output_schema`. |
+
+Note that in Python `tools` and `options` are keyword-only, while in Node.js they are positional.
+
+**Returns** a [`MessageOutput`](/docs/sdk/types/#messageoutput): the reply, why it ended and the token usage.
+
+**Raises** if the model can't be reached or rejects the request, after [automatic retries](/docs/sdk/errors/#automatic-retries).
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+messages = [{"role": "user", "contents": [{"type": "text", "text": "Hi"}]}]
+output = await model.infer(messages, options={"thinking_effort": "low"})
+print(output["message"]["contents"])
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const messages = [{ role: 'user', contents: [{ type: 'text', text: 'Hi' }] }]
+const output = await model.infer(messages, [], { thinking_effort: 'low' })
+console.log(output.message.contents)
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::{message::{Message, Part, Role}, model::LangModelOptions};
+
+let messages = [Message::new(Role::User).with_contents([Part::text("Hi")])];
+let output = model.infer(&messages, &[], &LangModelOptions::default()).await?;
+```
+
+</TabItem>
+</Tabs>
+
+### infer_stream
+
+Returns the reply in pieces as the model writes it. Node.js: `inferStream`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+def infer_stream(
+    messages: list[Message],
+    *,
+    tools: list[ToolDesc] | None = None,
+    options: LangModelOptions | None = None,
+) -> AgentRun[MessageDeltaOutput]
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+inferStream(messages: Array<Message>, tools?: Array<ToolDesc>, options?: LangModelOptions): AsyncIterableIterator<MessageDeltaOutput>
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+fn infer_stream(&self, messages: &[Message], tools: &[ToolDesc], options: &LangModelOptions)
+    -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>>
+```
+
+</TabItem>
+</Tabs>
+
+**Returns** an async iterator of [`MessageDeltaOutput`](/docs/sdk/types/#messagedeltaoutput). The last piece has a `finish_reason`.
+
+**Raises** while iterating, under the same conditions as `infer`.
+
+**Example**
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+async for delta in model.infer_stream(messages):
+    for part in delta["delta"]["contents"]:
+        if part["type"] == "text":
+            print(part["text"], end="", flush=True)
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+for await (const { delta } of model.inferStream(messages)) {
+  for (const part of delta.contents) {
+    if (part.type === 'text') process.stdout.write(part.text)
+  }
+}
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use futures::StreamExt as _;
+
+let mut deltas = model.infer_stream(&messages, &[], &LangModelOptions::default());
+while let Some(delta) = deltas.next().await {
+    let delta = delta?;
+    // delta.delta.contents holds the new pieces
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Custom model
+
+The object a factory passed to [`set_lang_model_provider`](#set_lang_model_provider) returns, to serve an org with your own code. For a full example in all three languages, see [Use a custom model](/docs/guides/model-providers/#use-a-custom-model).
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+class CustomLangModel(Protocol):
+    def infer(
+        self, messages: list[Message], tools: list[ToolDesc], options: LangModelOptions
+    ) -> MessageOutput | Awaitable[MessageOutput]: ...
+
+class StreamingCustomLangModel(CustomLangModel, Protocol):
+    def infer_stream(
+        self, messages: list[Message], tools: list[ToolDesc], options: LangModelOptions
+    ) -> AsyncIterable[MessageDeltaOutput]: ...
+
+LangModelFactory = Callable[[str, str | None], LangModel | CustomLangModel]
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```ts
+interface CustomLangModel {
+  infer(messages: Message[], tools: ToolDesc[], options: LangModelOptions): MessageOutput | Promise<MessageOutput>
+  inferStream?(messages: Message[], tools: ToolDesc[], options: LangModelOptions): AsyncIterable<MessageDeltaOutput>
+}
+
+// The factory:
+(org: string, name: string | null) => CustomLangModel | LangModel
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+pub trait InferLangModel: Send + Sync {
+    fn infer(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDesc],
+        options: &LangModelOptions,
+    ) -> BoxFuture<'static, anyhow::Result<MessageOutput>>;
+
+    fn infer_stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDesc],
+        options: &LangModelOptions,
+    ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>>;
+}
+
+// Register it:
+LangModelProvider::custom(|org: &str, name: Option<&str>| -> anyhow::Result<Arc<dyn InferLangModel>> { ... })
+```
+
+</TabItem>
+</Tabs>
+
+| Method | Required | Description |
+| --- | --- | --- |
+| `infer(messages, tools, options)` | Yes | Returns the model's whole reply as a [`MessageOutput`](/docs/sdk/types/#messageoutput). In Python and Node.js it may return an awaitable or a promise of one. |
+| `infer_stream(messages, tools, options)` (`inferStream`) | Python and Node.js: no. Rust: yes | Yields the reply in pieces as [`MessageDeltaOutput`](/docs/sdk/types/#messagedeltaoutput)s. Without it, streaming returns `infer`'s reply as one piece. A Python model that has it matches `StreamingCustomLangModel`. |
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `messages` | list of [`Message`](/docs/sdk/types/#message) | The conversation so far, system message first. |
+| `tools` | list of [`ToolDesc`](/docs/sdk/types/#tooldesc) | The tools the model may call. Return calls in the message's `tool_calls`. |
+| `options` | [`LangModelOptions`](/docs/sdk/types/#langmodeloptions) | Thinking effort and output schema. |
+
+The arguments are passed positionally, as dicts (Python) or objects (Node.js). In Node.js, the methods are called with `this` set to the model.
+
+The factory is called once for each model built, with the org and the name after the slash (`None` or `null` when there's none). It must return the model directly, not an awaitable. It can also return a `LangModel`, to serve the org with another org's model.
+
+### Return a built-in model
+
+A factory can return one of Ailoy's own models instead of your code, for example to run an org under a name of your choosing.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+Create the `LangModel` first, since the factory can't await:
+
+```python
+claude = await LangModel.create("anthropic/claude-haiku-5-5")
+ailoy.set_lang_model_provider("mine", lambda org, name: claude)
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+Create the `LangModel` first, since the factory can't await:
+
+```js
+const claude = await LangModel.create('anthropic/claude-haiku-5-5')
+setLangModelProvider('mine', (org, name) => claude)
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+Each backend is a type you can construct, and each implements `InferLangModel`:
+
+```rust
+use ailoy::model::{ClaudeApiModel, LangModelProvider, set_lang_model_provider};
+
+set_lang_model_provider("mine", LangModelProvider::custom(|_org, _name| {
+    Ok(Arc::new(ClaudeApiModel::from_env("claude-haiku-5-5")?))
+}));
+```
+
+| Type | Constructor | `from_env(model)` reads |
+| --- | --- | --- |
+| `ClaudeApiModel` | `new(model, api_key)` | `ANTHROPIC_API_KEY` |
+| `GptApiModel` | `new(model, api_key)` | `OPENAI_API_KEY` |
+| `GeminiApiModel` | `new(model, api_key)` | `GEMINI_API_KEY` |
+| `DeepSeekApiModel` | `new(model, api_key)` | `DEEPSEEK_API_KEY` |
+| `GlmApiModel` | `new(model, api_key)` | `ZAI_API_KEY` |
+| `KimiApiModel` | `new(model, api_key)` | `KIMI_API_KEY` or `MOONSHOT_API_KEY` |
+| `QwenApiModel` | `new(model, api_key)` | `DASHSCOPE_API_KEY` |
+| `OpenRouterApiModel` | `new(model, api_key)` | `OPENROUTER_API_KEY` |
+| `BedrockApiModel` | `new(model, api_key, region)` | `AWS_BEARER_TOKEN_BEDROCK`; region from `AWS_REGION`, then `AWS_DEFAULT_REGION`, else `us-east-1` |
+| `OpenAiCompatibleModel` | `new(model, base_url)`, then `with_api_key(key)` | No `from_env` |
+| `ClaudeCliModel`, `CodexCliModel`, `GeminiCliModel` | `new()`, then `with_model(id)` and `with_program(path)` | No `from_env` |
+
+`model` is the id the API uses, such as `"claude-opus-5-5"`, without the org. `from_env` returns an error when the variable isn't set. A CLI model without `with_model` uses the CLI's default model.
+
+</TabItem>
+</Tabs>

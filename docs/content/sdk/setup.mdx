@@ -1,0 +1,307 @@
+---
+title: Language setup
+description: "What differs between Python, Node.js and Rust when you use Ailoy in a project: setup, async code, imports, types, closing an agent and errors."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+To install Ailoy and run a first agent, follow [Installation](/docs/guides/installation/) and the [Quick start](/docs/guides/quick-start/). This page covers what differs by language once you use Ailoy in a project of your own. Pick your language in any tab; every tab on these pages switches with it.
+
+## Packages
+
+All three packages are built from one Rust crate and share its version number.
+
+| Language | Package | Install | Requires | Source |
+| --- | --- | --- | --- | --- |
+| Python | [`ailoy-py`](https://pypi.org/project/ailoy-py/) on PyPI | `pip install ailoy-py` | Python 3.11 or later | [`bindings/python`](https://github.com/brekkylab/ailoy/tree/main/bindings/python) |
+| Node.js | [`@brekkylab/ailoy`](https://www.npmjs.com/package/@brekkylab/ailoy) on npm | `npm install @brekkylab/ailoy` | Node.js 22 or later | [`bindings/node`](https://github.com/brekkylab/ailoy/tree/main/bindings/node) |
+| Rust | [`ailoy`](https://crates.io/crates/ailoy) on crates.io | `cargo add ailoy` | Rust 1.95 or later | [`src`](https://github.com/brekkylab/ailoy/tree/main/src) |
+
+To run a sandbox, the machine also needs a hypervisor. See [Check the requirements](/docs/guides/installation/#check-the-requirements).
+
+## Create a project
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+Make a virtual environment, so Ailoy's packages stay out of your system Python:
+
+```sh
+mkdir my-agent && cd my-agent
+python -m venv .venv
+source .venv/bin/activate   # on Windows: .venv\Scripts\activate
+pip install ailoy-py
+```
+
+The package is installed as `ailoy-py` and imported as `ailoy`. It also installs `virtx`, the package you create sandboxes with.
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```sh
+mkdir my-agent && cd my-agent
+npm init -y
+npm install @brekkylab/ailoy
+```
+
+This also installs `@brekkylab/virtx`, the package you create sandboxes with. With pnpm, add `@brekkylab/virtx` yourself.
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```sh
+cargo new my-agent && cd my-agent
+cargo add ailoy virtx futures anyhow tokio --features tokio/macros,tokio/rt-multi-thread
+```
+
+| Crate | Why |
+| --- | --- |
+| `ailoy` | The SDK. |
+| `virtx` | Creates sandboxes. Cargo only lets your code use crates you list, so add it next to `ailoy`. |
+| `tokio` | The async runtime Ailoy runs on. |
+| `futures` | `StreamExt`, to read a turn's stream. |
+| `anyhow` | Ailoy returns `anyhow::Error`. |
+
+</TabItem>
+</Tabs>
+
+Then copy the first agent from the [Quick start](/docs/guides/quick-start/#run-an-agent) to check that everything works.
+
+## Credentials
+
+Ailoy reads model credentials from environment variables, in every language. It reads them when `build()` builds the model, so set them before that.
+
+- **Claude, GPT and Gemini** run through their CLIs by default (Claude Code, Codex and Gemini CLI), on the CLI's own login. They need no key.
+- **An API key** goes in the provider's variable, such as `ANTHROPIC_API_KEY`. For Claude, GPT and Gemini, also switch the org to `api` with [`set_lang_model_provider`](/docs/sdk/models/#set_lang_model_provider).
+
+```sh
+export ANTHROPIC_API_KEY=...
+```
+
+Keep keys out of your code. [Configuration](/docs/sdk/configuration/) lists every variable, and [Model providers](/docs/guides/model-providers/) covers Bedrock, OpenRouter and your own server.
+
+## Async code
+
+Every call that waits on a model or a sandbox is async.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+Call Ailoy from an `async` function and start it with `asyncio.run`. `agent.run` returns an async iterator, so read it with `async for`.
+
+```python
+import asyncio
+
+from ailoy import AgentBuilder
+
+
+async def main() -> None:
+    async with await AgentBuilder("anthropic/claude-haiku-5-5").build() as agent:
+        async for output in agent.run("Hello"):
+            print(output["message"]["contents"])
+
+
+asyncio.run(main())
+```
+
+Jupyter already runs an event loop, so `asyncio.run` raises `RuntimeError: asyncio.run() cannot be called from a running event loop`. In a notebook, `await` directly in a cell instead:
+
+```python
+from ailoy import AgentBuilder
+
+agent = await AgentBuilder("anthropic/claude-haiku-5-5").build()
+async for output in agent.run("Hello"):
+    print(output["message"]["contents"])
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+Methods that wait return a promise. `agent.run` returns an async iterator, so read it with `for await`.
+
+```js
+const { AgentBuilder } = require('@brekkylab/ailoy')
+
+async function main() {
+  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').build()
+  try {
+    for await (const { message } of agent.run('Hello')) {
+      console.log(message.contents)
+    }
+  } finally {
+    await agent.close()
+  }
+}
+
+main()
+```
+
+A CommonJS file can't use `await` at the top level, so put it in an `async` function, as above. An ES module can.
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+Ailoy's async functions run on tokio, which `#[tokio::main]` starts. `agent.run` returns a `Stream`; read it with `StreamExt::next`.
+
+```rust
+use ailoy::{
+    agent::AgentBuilder,
+    message::{Message, Part, Role},
+};
+use futures::StreamExt as _;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5").build().await?;
+    let mut stream = agent.run(Message::new(Role::User).with_contents([Part::text("Hello")]));
+    while let Some(output) = stream.next().await {
+        println!("{:?}", output?.message.contents);
+    }
+    Ok(())
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Imports
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+from ailoy import AgentBuilder, register_tool, set_lang_model_provider
+from ailoy.types import Message, MessageOutput, ToolDesc
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+`@brekkylab/ailoy` is a CommonJS package. With `require`, take the names directly:
+
+```js
+const { AgentBuilder } = require('@brekkylab/ailoy')
+```
+
+In an ES module (a `.mjs` file, or `"type": "module"` in `package.json`), import the package as a whole and take the names from it. A named import such as `import { AgentBuilder } from '@brekkylab/ailoy'` fails there with `SyntaxError: Named export 'AgentBuilder' not found`.
+
+```js
+import ailoy from '@brekkylab/ailoy'
+
+const { AgentBuilder } = ailoy
+```
+
+In TypeScript, the package includes its type definitions, so there's no `@types` package to install. Import types with `import type`. When TypeScript compiles to CommonJS, named imports of classes work too.
+
+```ts
+import ailoy from '@brekkylab/ailoy'
+import type { Message } from '@brekkylab/ailoy'
+
+const { AgentBuilder } = ailoy
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+Each part of the API is a module of the crate:
+
+```rust
+use ailoy::{
+    agent::AgentBuilder,
+    message::{Message, Part, Role},
+    model::{Backend, set_lang_model_provider},
+    tool::{ToolDescBuilder, set_tool_provider},
+    datatype::Value,
+    to_value, tool_func,
+};
+```
+
+</TabItem>
+</Tabs>
+
+## Messages and types
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+Messages, outputs and tool descriptions are plain `dict`s, typed as `TypedDict`s in `ailoy.types`. The package ships type hints, so mypy, Pyright and your editor check your calls.
+
+```python
+from ailoy.types import Message
+
+query: Message = {"role": "user", "contents": [{"type": "text", "text": "Hello"}]}
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+Messages, outputs and tool descriptions are plain objects. Their keys are `snake_case`, as in the JSON they stand for (`finish_reason`, `mime_type`), while methods are `camelCase` (`runStream`).
+
+```ts
+const query: Message = { role: 'user', contents: [{ type: 'text', text: 'Hello' }] }
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+Messages are typed structs, built with methods:
+
+```rust
+let query = Message::new(Role::User).with_contents([Part::text("Hello")]);
+```
+
+JSON values, such as tool arguments and schemas, are `ailoy::datatype::Value`, written with the `to_value!` macro.
+
+</TabItem>
+</Tabs>
+
+[Types](/docs/sdk/types/) lists every field, with code for each language.
+
+## Close an agent
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+Call `await agent.close()` when you're done, or use `async with` as above. It releases the model, any browser the agent started and its connection to the sandbox.
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+Call `await agent.close()` when you're done, in a `finally` block as above. It releases the model, any browser the agent started and its connection to the sandbox.
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+An agent releases its model, browser and sandbox connection when it's dropped. There's no `close` method.
+
+</TabItem>
+</Tabs>
+
+See [close](/docs/sdk/agent/#close).
+
+## Errors
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+Ailoy raises `ailoy.AiloyError`. Errors from the sandbox are `virtx.VirtxError`.
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+Ailoy throws an `Error` with `code` set to `"AILOY_ERROR"`. Errors from the sandbox have `code` set to `"VIRTX_ERROR"`.
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+Ailoy's functions return `anyhow::Result`. Print an error with its causes using `{e:#}`.
+
+</TabItem>
+</Tabs>
+
+When a model's API answers with a rate-limit or server error, Ailoy retries the request up to 3 times before the error reaches your code. The `cli` backend doesn't retry. See [Automatic retries](/docs/sdk/errors/#automatic-retries). Ailoy's log messages, such as a warning for each retry, are printed only in Rust, once your program installs a logger; see [Logging](/docs/sdk/errors/#logging). [Errors](/docs/sdk/errors/) has the rest.
+
+## Next steps
+
+- [AgentBuilder](/docs/sdk/agent-builder/): every way to configure an agent.
+- [Configuration](/docs/sdk/configuration/): the environment variables Ailoy reads.

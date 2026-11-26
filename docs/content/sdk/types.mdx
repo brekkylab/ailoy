@@ -1,0 +1,398 @@
+---
+title: Types
+description: "Reference for every data type: Message, Part, MessageOutput, ToolDesc, AgentSpec and more."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+These are the shapes of the data Ailoy takes and returns. In Python they are `TypedDict`s in `ailoy.types`, in Node.js plain objects typed in `types.d.ts`, and in Rust structs and enums in the crate. Keys are `snake_case` in every language. Fields marked optional may be missing.
+
+## Import the types
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+from ailoy.types import Message, MessageOutput, ToolDesc
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```ts
+import type { Message, MessageOutput, ToolDesc } from '@brekkylab/ailoy'
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::message::{Message, Part, Role};
+use ailoy::tool::ToolDesc;
+```
+
+</TabItem>
+</Tabs>
+
+## Message
+
+One message in a conversation. See [Messages](/docs/guides/message-format/).
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `role` | [`Role`](#role) | Who wrote the message. |
+| `contents` | list of [`Part`](#part) | The content. |
+| `thinking` | string, optional | The model's reasoning. Assistant messages only. |
+| `tool_calls` | list of [`FunctionPart`](#part), optional | Tools the model wants to call. Assistant messages only. |
+| `id` | string, optional | On a `tool` message, the id of the call it answers. |
+| `signature` | string, optional | The provider's signature for `thinking`, sent back unchanged. |
+
+### Build a message in code
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+In Python a message is a `dict`:
+
+```python
+query = {"role": "user", "contents": [{"type": "text", "text": "What's in this image?"}, image_part]}
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+In Node.js a message is a plain object:
+
+```js
+const query = { role: 'user', contents: [{ type: 'text', text: "What's in this image?" }, imagePart] }
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+In Rust a message is the struct `ailoy::message::Message`, built with methods that each take and return it:
+
+```rust
+let query = Message::new(Role::User)
+    .with_contents([Part::text("What's in this image?"), image_part]);
+
+let call = Message::new(Role::Assistant)
+    .with_tool_calls([Part::function("call_1", "get_weather", to_value!({"city": "Seoul"}))]);
+
+let result = Message::new(Role::Tool)
+    .with_id("call_1") // the id of the call it answers
+    .with_contents([Part::value(12.3)]);
+```
+
+`with_thinking(text)` sets the reasoning, and `with_signatured_thinking(text, signature)` sets it with its signature.
+
+</TabItem>
+</Tabs>
+
+### Examples
+
+A user message:
+
+```json
+{ "role": "user", "contents": [{ "type": "text", "text": "What's the weather in Seoul?" }] }
+```
+
+An assistant message that calls a tool:
+
+```json
+{
+  "role": "assistant",
+  "contents": [{ "type": "text", "text": "Let me check the weather." }],
+  "tool_calls": [
+    { "type": "function", "id": "call_01HZX2", "function": { "name": "get_weather", "arguments": { "city": "Seoul" } } }
+  ]
+}
+```
+
+The tool's result, answering the call by its `id`:
+
+```json
+{ "role": "tool", "id": "call_01HZX2", "contents": [{ "type": "value", "value": 12.3 }] }
+```
+
+### Reasoning: thinking and signature
+
+Models that reason before answering return that reasoning in `thinking`, on assistant messages. Some providers also return a `signature` for it. If you keep a conversation yourself and pass it back, through [`history`](/docs/sdk/agent-builder/#history) or [`LangModel.infer`](/docs/sdk/models/#infer), keep both fields unchanged: providers that sign reasoning reject a message whose `thinking` was changed. An agent's own [`history`](/docs/sdk/agent/#history) already keeps them.
+
+## Role
+
+`"system"`, `"user"`, `"assistant"` or `"tool"`. Rust: `ailoy::message::Role`.
+
+## Part
+
+One piece of content. The `type` field says which kind.
+
+| `type` | Other fields | Description |
+| --- | --- | --- |
+| `"text"` | `text: string` | Plain text. |
+| `"image"` | `image: { type: "url", url: string }` or `{ type: "embedded", mime_type: string, data: bytes }` | An image by URL, or as bytes (`bytes` in Python, `Buffer` in Node.js). |
+| `"function"` | `id: string`, `function: { name: string, arguments: any }` | A tool call. |
+| `"value"` | `value: any` | Any JSON value, such as a tool result. |
+
+### Read the parts
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+texts = [p["text"] for p in output["message"]["contents"] if p["type"] == "text"]
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const texts = output.message.contents.filter((p) => p.type === 'text').map((p) => p.text)
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+In Rust a part is the enum `ailoy::message::Part`, with helpers to make and read one:
+
+```rust
+let texts: Vec<&str> = output.message.contents.iter().filter_map(Part::as_text).collect();
+```
+
+| Method | Returns |
+| --- | --- |
+| `Part::text(t)`, `Part::value(v)`, `Part::function(id, name, args)` | A part of that kind. |
+| `Part::image_url(url)`, `Part::image_embedded(mime_type, bytes)` | An image part, as `anyhow::Result`. |
+| `is_text()`, `is_function()`, `is_value()`, `is_image()` | Which kind it is. |
+| `as_text()` | `Option<&str>` |
+| `as_function()` | `Option<(&str, &str, &Value)>`: the id, name and arguments. |
+| `as_value()` | `Option<&Value>` |
+
+`as_text_mut`, `as_function_mut` and `as_value_mut` return mutable references. Embedded image data is `ailoy::datatype::Bytes`, which converts from `Vec<u8>` and gives `base64()`.
+
+</TabItem>
+</Tabs>
+
+### Image
+
+The `image` field of an image part is one of:
+
+| `type` | Fields | Description |
+| --- | --- | --- |
+| `"url"` | `url: string` | An image on the web, by its address. |
+| `"embedded"` | `mime_type: string`, `data: bytes` | The image's bytes: `bytes` in Python, `Buffer` in Node.js. `mime_type` is such as `"image/png"`. |
+
+These are `UrlImage` and `EmbeddedImage` in Python and Node.js. See [Send an image or other content](/docs/guides/message-format/#send-an-image-or-other-content).
+
+## MessageOutput
+
+What [`Agent.run`](/docs/sdk/agent/#run) and [`LangModel.infer`](/docs/sdk/models/#infer) return: one complete message.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `message` | [`Message`](#message) | The message. |
+| `finish_reason` | [`FinishReason`](#finishreason) | Why the model stopped. |
+| `usage` | [`TokenUsage`](#tokenusage), optional | Token counts, when the provider reports them. |
+
+## MessageDeltaOutput
+
+What [`Agent.run_stream`](/docs/sdk/agent/#run_stream) and [`LangModel.infer_stream`](/docs/sdk/models/#infer_stream) return: a piece of a message.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `delta` | `MessageDelta` | The piece: `role` (optional), `contents` (list of part pieces), `tool_calls` (list of part pieces), and optional `id`, `thinking` and `signature`. Each part piece has a `type` (`"text"`, `"function"`, `"value"`, `"image"` or `"null"`) and the fields received so far. |
+| `finish_reason` | [`FinishReason`](#finishreason) or null | Set on the last piece of a message. |
+| `usage` | [`TokenUsage`](#tokenusage) or null | Token counts, on the last piece when the provider reports them. |
+
+### MessageDelta and PartDelta
+
+`delta` is a `MessageDelta`. Its fields are those of a [`Message`](#message), each holding only what arrived in this piece:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `role` | [`Role`](#role), optional | Set on the first piece of a message. |
+| `contents` | list of `PartDelta` | Pieces of the content parts. |
+| `tool_calls` | list of `PartDelta` | Pieces of tool calls. |
+| `thinking` | string, optional | A piece of the reasoning. |
+| `id`, `signature` | string, optional | As on `Message`. |
+
+A `PartDelta` has a `type` (`"text"`, `"function"`, `"value"`, `"image"` or `"null"`) and the fields of that part received so far. To rebuild the message, join the pieces in order: append `thinking` and text, and continue the last part or tool call while the next piece has the same type. When you only need the finished messages, use [`run`](/docs/sdk/agent/#run), which does this for you.
+
+To show the reply as it's written, print each text piece:
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+```python
+async for piece in agent.run_stream(query):
+    for part in piece["delta"]["contents"]:
+        if part["type"] == "text":
+            print(part["text"], end="", flush=True)
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+for await (const piece of agent.runStream(query)) {
+  for (const part of piece.delta.contents) {
+    if (part.type === 'text') process.stdout.write(part.text)
+  }
+}
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+let mut stream = agent.run_stream(query);
+while let Some(piece) = stream.next().await {
+    for part in piece?.delta.contents {
+        if let Some(text) = part.to_text() {
+            print!("{text}");
+        }
+    }
+}
+```
+
+`ailoy::message::into_messages(stream)` joins a stream of pieces into the complete messages `run` would give. To join pieces yourself, `MessageDeltaOutput` implements the `Delta` trait: `accumulate(next)` adds a piece and `finish()` returns the `MessageOutput`. A `PartDelta` reads with `to_text()`, `to_function()` (the id, name and arguments as text), `to_parsed_function()` (arguments as a `Value`) and `to_value()`.
+
+</TabItem>
+</Tabs>
+
+## FinishReason
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `type` | string | `"stop"` (the model finished), `"length"` (it hit its output limit), `"tool_call"` (it asked for tools) or `"refusal"` (it refused). |
+| `reason` | string, optional | With `"refusal"`, why. |
+
+## TokenUsage
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `input_tokens` | int | All input tokens the call processed, cached or not. |
+| `output_tokens` | int | Tokens the model wrote. |
+| `cache_creation_input_tokens` | int, optional | The part of `input_tokens` written to a prompt cache. |
+| `cache_read_input_tokens` | int, optional | The part of `input_tokens` read from a prompt cache. |
+
+## ToolDesc
+
+A tool's description, as the model sees it.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | string | The name the model calls the tool by. |
+| `description` | string, optional | What the tool does. The model reads this to decide when to call it. |
+| `parameters` | JSON schema | The tool's arguments. |
+| `returns` | JSON schema, optional | What the tool returns. |
+
+Rust: `ailoy::tool::ToolDesc`, built with `ToolDescBuilder`.
+
+## AgentSpec
+
+An agent's definition as JSON, for [`Agent.from_spec`](/docs/sdk/agent/#from_spec).
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `model` | string | The model, `<org>/<name>`. |
+| `instruction` | string, optional | The system prompt. |
+| `tools` | list of [`ToolDesc`](#tooldesc), optional | The agent's tools, including any sandbox tools. |
+| `model_options` | [`LangModelOptions`](#langmodeloptions), optional | Thinking effort and output schema. |
+| `web_search_engines` | list of [`WebSearchEngine`](#websearchengine), optional | The engines for `web_search`. |
+| `skills` | list of strings, optional | Skill folders, as paths in the sandbox. |
+| `memory` | [`Memory`](#memory), optional | The memory folder on this machine, and its size limit. |
+
+Rust: `ailoy::agent::AgentSpec`, which also has builder methods (`AgentSpec::new(model).instruction(...)`) and `.sandbox_tools()`.
+
+## LangModelOptions
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `thinking_effort` | `"low"`, `"medium"` or `"high"`, optional | How much the model reasons. If unset, the model's default. |
+| `output_schema` | JSON schema, optional | A schema the model's answers must match. |
+
+## Backend
+
+`"cli"`, `"api"`, `"bedrock"`, `"openrouter"` or `"self-hosted"`. Rust: `ailoy::model::Backend`. See [Backends](/docs/guides/model-providers/#backends).
+
+## LangModelServer
+
+Your own model server for one org, passed to [`set_lang_model_provider`](/docs/sdk/models/#set_lang_model_provider).
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `backend` | `"self-hosted"` | Always `"self-hosted"`. |
+| `base_url` | string | The server's URL, including `/v1`, such as `"http://localhost:11434/v1"`. |
+| `api_key` | string, optional | The key, if the server requires one. |
+| `models` | map of string to string, optional | Maps model names to the ids the server uses, such as `{"Llama-3.3-70B-Instruct": "llama3.3:70b"}`. |
+
+Rust: `LangModelServer::new(base_url)?.with_api_key(...).with_model(name, id)`.
+
+## WebSearchEngine
+
+`"Bing"`, `"Brave"`, `"DuckDuckGo"`, `"Google"`, `"Mojeek"`, `"Naver"`, `"Startpage"`, `"Yahoo"` or `"Yandex"`. Rust: `ailoy::tool::WebSearchEngineKind`.
+
+## Memory
+
+The memory folder in an [`AgentSpec`](#agentspec), and the settings of [`AgentBuilder.memory`](/docs/sdk/agent-builder/#memory).
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `dir` | string | A folder on this machine. Ailoy keeps the notes in `MEMORY.md` in it. |
+| `limit` | int, optional | The most characters the notes can hold. Default 3,000. |
+
+Rust: `ailoy::agent::Memory`, created with `Memory::new(dir).with_limit(n)`.
+
+## ThinkingEffort
+
+`"low"`, `"medium"` or `"high"`: how much a model reasons before it answers. Used in [`LangModelOptions`](#langmodeloptions) and [`AgentBuilder.thinking_effort`](/docs/sdk/agent-builder/#thinking_effort).
+
+## Value
+
+Any value JSON can hold: a string, number, boolean, null, list or object. Tool arguments, tool results and JSON schemas are `Value`s. `Any` in Python, `any` in Node.js, and `ailoy::datatype::Value` in Rust.
+
+<Tabs syncKey="lang">
+<TabItem label="Python" icon="seti:python">
+
+Use plain Python values: `dict`, `list`, `str`, `int`, `float`, `bool` and `None`.
+
+```python
+schema = {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+Use plain JavaScript values.
+
+```js
+const schema = { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] }
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+`Value` is an enum: `Null`, `Bool`, `Unsigned(u64)`, `Integer(i64)`, `Float`, `String`, `Object` (keys in insertion order) and `Array`. It converts to and from `serde_json::Value`. Build one with the `to_value!` macro, where values can be any Rust expression and a key in parentheses is an expression:
+
+```rust
+use ailoy::to_value;
+
+let schema = to_value!({"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]});
+let key = "eta";
+let result = to_value!({"status": "shipped", (key): "2026-10-24"});
+```
+
+| Method | Returns |
+| --- | --- |
+| `pointer("/a/b")` | The value at a JSON Pointer, `Option<&Value>`. |
+| `as_str()`, `as_bool()` | The string or boolean. |
+| `as_integer()` | An integer, signed or unsigned, as `i64`. |
+| `as_float()` | A float. An integer returns `None`. |
+| `as_array()`, `as_object()` | The array, or the object as an `IndexMap`. |
+| `Value::string(s)`, `Value::integer(n)`, `Value::object(pairs)`, `Value::array(items)` | A new value. |
+
+A whole number in tool arguments, such as `3`, arrives as an integer even when the schema says `number`, so read numbers with `as_integer`, then `as_float`.
+
+</TabItem>
+</Tabs>

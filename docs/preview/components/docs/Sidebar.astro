@@ -1,13 +1,17 @@
 ---
 // Starlight override: a search button and a hide button on top, then the groups, each page with an
-// icon. Groups are plain headings, always open: with this few pages nobody folds them. Search
-// opens the header's search dialog, so there is one dialog on the page.
+// icon. Each group folds (a <details>, open unless the reader closes it). The sidebar follows the
+// header's tabs: on an SDK page it lists the SDK reference, on any other page the guides.
+// Search opens the header's search dialog, so there is one dialog on the page.
 import MobileMenuFooter from 'virtual:starlight/components/MobileMenuFooter';
 import { Icon } from '@astrojs/starlight/components';
 import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro';
 import PageIcon from './PageIcon.astro';
 
 const { sidebar } = Astro.locals.starlightRoute;
+const inSdk = Astro.url.pathname.startsWith('/docs/sdk/');
+const isSdk = (e: any) => e.type === 'group' && e.entries.every((c: any) => c.href.startsWith('/docs/sdk/'));
+const shown = sidebar.filter((e: any) => isSdk(e) === inSdk);
 ---
 
 <div class="tools">
@@ -24,7 +28,7 @@ const { sidebar } = Astro.locals.starlightRoute;
 <SidebarPersister>
   <ul class="top">
     {
-      sidebar.map((e: any) =>
+      shown.map((e: any) =>
         e.type === 'link' ? (
           <li>
             <a href={e.href} aria-current={e.isCurrent ? 'page' : undefined} class="item solo">
@@ -34,18 +38,23 @@ const { sidebar } = Astro.locals.starlightRoute;
           </li>
         ) : (
           <li>
-            <p class="group">{e.label}</p>
-            <ul>
-              {e.entries.map((c: any) => (
-                <li>
-                  <a href={c.href} aria-current={c.isCurrent ? 'page' : undefined} class="item">
-                    <PageIcon href={c.href} />
-                    <span>{c.label}</span>
-                    {c.badge && <span class="badge">{c.badge.text}</span>}
-                  </a>
-                </li>
-              ))}
-            </ul>
+            <details open>
+              <summary class="group">
+                <span>{e.label}</span>
+                <Icon name="right-caret" size="0.9rem" class="caret" />
+              </summary>
+              <ul>
+                {e.entries.map((c: any) => (
+                  <li>
+                    <a href={c.href} aria-current={c.isCurrent ? 'page' : undefined} class="item">
+                      <PageIcon href={c.href} />
+                      <span>{c.label}</span>
+                      {c.badge && <span class="badge">{c.badge.text}</span>}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </details>
           </li>
         )
       )
@@ -128,12 +137,35 @@ const { sidebar } = Astro.locals.starlightRoute;
     margin-top: 0.75rem;
   }
   .group {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     margin: 0;
     padding: 6px 8px;
     font-size: 0.8125rem;
     line-height: 20px;
     font-weight: 600;
     color: var(--sl-color-white);
+    cursor: pointer;
+    list-style: none;
+  }
+  .group::-webkit-details-marker {
+    display: none;
+  }
+  .group:hover {
+    background: var(--sl-color-gray-6);
+  }
+  .group :global(.caret) {
+    color: var(--sl-color-gray-3);
+    transition: transform 0.15s;
+  }
+  details[open] > .group :global(.caret) {
+    transform: rotate(90deg);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .group :global(.caret) {
+      transition: none;
+    }
   }
   .group + ul {
     margin-top: 0.15rem;

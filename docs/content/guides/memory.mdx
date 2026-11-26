@@ -1,0 +1,81 @@
+---
+title: "Memory"
+description: "Let an agent keep short notes about the user that last between sessions."
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Memory lets an agent remember facts about the user from one session to the next, such as their preferences or the language they code in. The notes are stored on your machine in a Markdown file, so memory doesn't need a sandbox.
+
+## Turn on memory
+
+Call `memory(dir)` on the builder with a folder path. The agent stores its notes in `MEMORY.md` inside that folder. Ailoy creates the folder when the agent is built, and the file when the agent writes its first note.
+
+<Tabs syncKey="lang">
+
+<TabItem label="Python" icon="seti:python">
+
+```python
+from ailoy import Agent, AgentBuilder
+
+agent = await AgentBuilder("anthropic/claude-haiku-5-5").memory("./memory/user1", limit=2000).build()
+
+# The same folder for an agent built from a spec.
+agent = await Agent.from_spec(
+    {"model": "anthropic/claude-haiku-5-5", "memory": {"dir": "./memory/user1", "limit": 2000}}
+)
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
+  .memory('./memory/user1', { limit: 2000 })
+  .build()
+
+// The same folder for an agent built from a spec.
+const again = await Agent.fromSpec({
+  model: 'anthropic/claude-haiku-5-5',
+  memory: { dir: './memory/user1', limit: 2000 },
+})
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+use ailoy::agent::Memory;
+
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
+    .memory(Memory::new("./memory/user1").with_limit(2000))
+    .build()
+    .await?;
+```
+
+</TabItem>
+</Tabs>
+
+Use one folder per user, so each user's notes stay separate.
+
+## How memory works
+
+1. **When the agent is built**, Ailoy adds the current notes to the end of the system message. The model sees them from the first turn, without calling a tool.
+2. **During a session**, the agent updates the notes with the `memory` tool. It can add a fact as a new entry, replace an entry when a fact changes, or remove one. All the changes in one call are applied in order, and either all succeed or none do.
+3. **In the next session**, a new agent built on the same folder sees the updated notes. The agent that made the changes doesn't see them in its own system message.
+
+Each entry starts with the date it was last written, for example `[2026-11-17] Drinks barley tea`. Entries are paragraphs separated by a blank line, so you can also edit `MEMORY.md` by hand.
+
+## Limit the size
+
+The notes can hold up to 3,000 characters by default. Set a different limit with `limit` (`with_limit` in Rust). If a change would go over the limit, it's refused, and the agent shortens or removes entries to make room.
+
+## Things to know
+
+- If you build the agent with a history that already has a system message, the agent keeps that message as it is. It still gets the `memory` tool, but the notes aren't added.
+- A spec that has both `memory` and its own tool named `memory` fails to build.
+
+## Next steps
+
+- [Use MCP servers](/docs/guides/using-mcp/): add the tools of any MCP server.
+- [AgentBuilder reference](/docs/sdk/agent-builder/#memory): the `memory` method's parameters.

@@ -1,36 +1,79 @@
 ---
-title: "Defining an agent"
-description: "Everything an AgentBuilder can give an agent, building one from a saved spec, and closing it."
+title: "Define an agent"
+description: "Build an agent with AgentBuilder, rebuild one from a saved spec, and close it when you're done."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-An agent is a model plus what you give it. `AgentBuilder` takes the model's name, then one call for each thing the agent should have, and `build()` makes the agent.
+You create an agent with `AgentBuilder`. Pass the model's name, chain one method for each thing the agent should have, then call `build()`:
 
-## AgentBuilder at a glance
+<Tabs syncKey="lang">
 
-Every call returns the builder, so they chain. Node.js spells them in camelCase (`webSearchTool`, `contextManager`).
+<TabItem label="Python" icon="seti:python">
 
-| Call | What the agent gets | Where it is covered |
+```python
+agent = await (
+    AgentBuilder("anthropic/claude-haiku-5-5")
+    .instruction("You are a data analyst. Write results into /artifacts.")
+    .sandbox(sandbox)
+    .web_fetch_tool()
+    .build()
+)
+```
+
+</TabItem>
+<TabItem label="Node.js" icon="seti:javascript">
+
+```js
+const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
+  .instruction('You are a data analyst. Write results into /artifacts.')
+  .sandbox(sandbox)
+  .webFetchTool()
+  .build()
+```
+
+</TabItem>
+<TabItem label="Rust" icon="seti:rust">
+
+```rust
+let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
+    .instruction("You are a data analyst. Write results into /artifacts.")
+    .sandbox(sandbox)
+    .web_fetch_tool()
+    .build()
+    .await?;
+```
+
+</TabItem>
+</Tabs>
+
+## Builder methods
+
+Every method returns the builder, so you can chain them. Node.js uses camelCase names (`webSearchTool`, `contextManager`). The [AgentBuilder reference](/docs/sdk/agent-builder/) lists every parameter.
+
+| Method | What the agent gets | Guide |
 | --- | --- | --- |
-| `instruction(text)` | The system message's text. | [Below](#instruction) |
-| `sandbox(sandbox)` | A virtx sandbox to work in, and a shell and file tools there. | [Giving an agent a sandbox](/docs/guides/sandbox/) |
-| `tool(desc)`, `tools(descs)` | Tools by name: your own functions, or a registered MCP server's. | [Tools](/docs/guides/tools/#your-own-functions), [Using MCP](/docs/guides/using-mcp/) |
-| `web_search_tool(engines)`, `web_fetch_tool()` | Searching the web and reading a page, from your program. | [Tools](/docs/guides/tools/#the-web) |
-| `browser(...)` | A browser it drives with `browser_*` tools. | [Using a browser](/docs/guides/using-browser/) |
-| `skill(dir)` | A folder of instructions in its sandbox, for one kind of task. | [Skills](/docs/guides/skills/) |
-| `memory(dir)` | Notes on the user that outlast a session, in a folder on this host. | [Tools](/docs/guides/tools/#memory) |
-| `context_manager(...)` | Old tool results and images cut once a run's input grows past a limit. | [Context manager](/docs/guides/context-manager/) |
-| `thinking_effort(effort)`, `output_schema(schema)` | How much the model thinks, and a JSON schema its answers must match. | [Model providers](/docs/guides/model-providers/#model-options) |
-| `history(messages)` | An earlier conversation to continue. | [Running an agent](/docs/guides/running/#many-turns) |
+| `instruction(text)` | Your system prompt. | [Below](#write-the-instruction) |
+| `sandbox(sandbox)` | A virtx sandbox, plus shell and file tools that run in it. | [Give an agent a sandbox](/docs/guides/sandbox/) |
+| `tool(desc)`, `tools(descs)` | Your own functions, or an MCP server's tools. | [Tools](/docs/guides/tools/#add-your-own-function), [Use MCP servers](/docs/guides/using-mcp/) |
+| `web_search_tool(engines)`, `web_fetch_tool()` | Web search and page fetching, run from your program. | [Tools](/docs/guides/tools/#web-search-and-fetch) |
+| `browser(...)` | A web browser it controls with `browser_*` tools. | [Use a browser](/docs/guides/using-browser/) |
+| `skill(dir)` | A folder of task instructions in its sandbox. | [Skills](/docs/guides/skills/) |
+| `memory(dir)` | Notes about the user that last between sessions. | [Memory](/docs/guides/memory/) |
+| `context_manager(...)` | Limits on how much old tool output and how many old images are kept. | [Manage context](/docs/guides/context-manager/) |
+| `thinking_effort(effort)` | How much the model reasons before answering: `low`, `medium` or `high`. | [Model options](/docs/guides/model-providers/#model-options) |
+| `output_schema(schema)` | A JSON schema the model's answers must match. | [Model options](/docs/guides/model-providers/#model-options) |
+| `history(messages)` | An earlier conversation to continue. | [Continue a conversation](/docs/guides/running/#continue-a-conversation) |
 
-## Instruction
+## Write the instruction
 
-`instruction(...)` is the system message's text: who the agent is, what it is for, and where in its sandbox to find inputs and leave results. The agent writes the system message from this text, the list of its [skills](/docs/guides/skills/) (those of `skill(...)` and those of its sandbox's abins) and the notes in its [memory](/docs/guides/tools/#memory), and puts that message at the front of its history, unless the history you give it already has one.
+`instruction(...)` sets the system prompt. Use it to say who the agent is, what it's for, and where in its sandbox to find inputs and save results. For example: `"Write what you are asked for into /artifacts."`
 
-## From a spec
+The agent builds the full system message from your instruction, the list of its [skills](/docs/guides/skills/) and the notes in its [memory](/docs/guides/memory/). If you pass a history that already has a system message, the agent uses that message instead and adds nothing to it.
 
-The model, the instruction, the tools, the skills, the memory and the model options make up an agent's spec: plain JSON, which you can store and build an agent from again. The rest (its history and its sandbox) is its state, given beside the spec. `Agent.from_spec` builds an agent from both:
+## Build an agent from a spec
+
+An agent's spec (model, instruction, tools, skills, memory and model options) is plain JSON. You can save it and build the same agent later with `Agent.from_spec` (`Agent.fromSpec` in Node.js). The agent's state, its history and sandbox, is passed alongside:
 
 <Tabs syncKey="lang">
 
@@ -46,7 +89,6 @@ spec = {
 agent = await Agent.from_spec(spec, history=saved_messages, sandbox=sandbox)
 ```
 
-
 </TabItem>
 <TabItem label="Node.js" icon="seti:javascript">
 
@@ -59,7 +101,6 @@ const spec = {
 }
 const agent = await Agent.fromSpec(spec, { history: savedMessages, sandbox })
 ```
-
 
 </TabItem>
 <TabItem label="Rust" icon="seti:rust">
@@ -78,19 +119,20 @@ let state = AgentState::new()
 let agent = Agent::try_with_state(spec, state).await?;
 ```
 
-
 </TabItem>
 </Tabs>
 
-A spec lists its tools itself. `sandbox(...)` on the builder adds the shell and file tools to the spec; a sandbox given beside a spec does not, so the spec must list them for the agent to have them. In Rust, calling `.sandbox_tools()` on the `AgentSpec` adds them. Python and Node.js have no such call: to give an agent with a sandbox a saved history there, build it with `AgentBuilder`, `history(...)` and `sandbox(...)`.
+:::caution[A spec must list the sandbox tools itself]
+`.sandbox(...)` on the builder adds the shell and file tools to the agent. A sandbox passed to `from_spec` does not: the spec must already list those tools. In Rust, call `.sandbox_tools()` on the `AgentSpec` to add them. Python and Node.js have no equivalent, so to restore an agent that has a sandbox, use `AgentBuilder` with `.history(...)` and `.sandbox(...)` instead.
+:::
 
-## Closing
+## Close the agent
 
-In Python and Node.js, `close()` releases what the agent holds: its model, any browser it started itself, and its hold on the sandbox's client. It waits for a turn being iterated to finish. In Python, `async with agent:` closes it at the end of the block. A Rust agent releases them when it is dropped.
+In Python and Node.js, call `close()` when you're done. It releases the model, any browser the agent started, and the agent's connection to the sandbox. If a turn is still running, `close()` waits for it to finish. In Python, `async with agent:` closes the agent at the end of the block. In Rust, the agent releases everything when it is dropped.
 
-Closing an agent leaves its sandbox as it is, for you to use again or remove.
+Closing the agent doesn't touch its sandbox. You can reuse the sandbox or remove it yourself.
 
-## Next
+## Next steps
 
-- [Giving an agent a sandbox](/docs/guides/sandbox/): the computer the agent works in.
-- [Model providers](/docs/guides/model-providers/): naming a model and choosing how it runs.
+- [Give an agent a sandbox](/docs/guides/sandbox/): the computer the agent works in.
+- [Model providers](/docs/guides/model-providers/): choose a model and how it runs.
