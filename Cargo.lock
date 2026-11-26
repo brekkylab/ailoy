@@ -32,7 +32,7 @@ dependencies = [
 
 [[package]]
 name = "ailoy"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "ailoy-node"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "ailoy",
  "anyhow",
@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "ailoy-python"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "ailoy",
  "anyhow",
