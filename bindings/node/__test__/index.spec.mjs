@@ -469,7 +469,7 @@ test('a custom provider may hand back a built-in model', async (t) => {
   assert.equal((await model.infer(messages, [ADD])).finish_reason.type, 'tool_call')
 })
 
-test('a removed tool provider no longer builds', async (t) => {
+test('agent.history throws mid-turn and then works after turn ends', async (t) => {n  setLangModelProvider('history-echo', (_, name) => new Echo(name))n  t.after(() => removeLangModelProvider('history-echo'))n  const agent = await new AgentBuilder('history-echo/echo').build()n  // Start a turn and take its first outputn  const run = agent.run('hi')n  await run.next()n  // Accessing history mid-turn should throw AILOY_ERRORn  await assert.rejects(() => agent.history, { code: 'AILOY_ERROR' })n  // End the turnn  await run.return()n  // Now history should be readablen  const outputs = []n  for await (const output of agent.run('next')) outputs.push(output)n  // Verify history can be read after the turnn  assert.ok(Array.isArray(agent.history) && agent.history.length > 0)n})nntest('a removed tool provider no longer builds', async (t) => {
   setLangModelProvider('tooled', (org, name) => new Echo(name))
   t.after(() => removeLangModelProvider('tooled'))
   const desc = { name: 'fleeting', parameters: { type: 'object' } }
