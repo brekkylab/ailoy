@@ -1,5 +1,6 @@
 # A registry on localhost that holds what this workflow packed, so `npm install
-# @brekkylab/ailoy` resolves its optional platform packages the way npmjs would.
+# @brekkylab/ailoy` resolves its optional platform packages the way npmjs would. Ailoy's
+# own packages are only what was packed; virtx and every other package come from npmjs.
 storage: ./verdaccio-storage
 # A platform package is one addon, some 12 MB packed -- over verdaccio's default of 10mb.
 max_body_size: 200mb
@@ -18,6 +19,8 @@ packages:
   '@brekkylab/*':
     access: $all
     publish: $authenticated
+  # Every other package, such as virtx's own dependencies, from npmjs as a user's install gets it.
   '**':
     access: $all
+    proxy: npmjs
 log: { type: stdout, format: pretty, level: warn }
