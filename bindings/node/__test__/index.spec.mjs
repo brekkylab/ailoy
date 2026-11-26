@@ -60,6 +60,20 @@ test('an object that does not fit says what was expected', () => {
   })
 })
 
+test('registerTool requires a function', () => {
+  assert.throws(() => registerTool({ name: 'x', parameters: {} }, 'not callable'), {
+    code: 'INVALID_ARG',
+    message: /a tool's func has to be a function/,
+  })
+})
+
+test('setToolProvider requires a function', () => {
+  assert.throws(() => setToolProvider('x', 'not callable'), {
+    code: 'INVALID_ARG',
+    message: /a tool's func has to be a function/,
+  })
+})
+
 /**
  * Run the models of `org` on the self-hosted backend, against a port nothing listens
  * on, for an agent that is built but never asked.
