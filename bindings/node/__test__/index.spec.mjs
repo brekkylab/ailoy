@@ -45,12 +45,26 @@ test('an unserved model is refused', async () => {
   await assert.rejects(new AgentBuilder('nobody/serves-this').build(), { code: 'AILOY_ERROR' })
 })
 
+test('an unknown thinking effort is refused', () => {
+  assert.throws(() => new AgentBuilder('m').thinkingEffort('extreme'), {
+    code: 'INVALID_ARG',
+    message: /thinking effort/,
+  })
+})
+
 test('an unregistered tool is refused', async (t) => {
   setLangModelProvider('tooled-missing', (org, name) => new Echo(name))
   t.after(() => removeLangModelProvider('tooled-missing'))
   const missing = { name: 'missing', parameters: { type: 'object' } }
 
   await assert.rejects(new AgentBuilder('tooled-missing/model').tool(missing).build(), { code: 'AILOY_ERROR' })
+})
+
+test('registerTool refuses a tool description without a name', () => {
+  assert.throws(() => registerTool({ description: 'no name' }, () => null), {
+    code: 'INVALID_ARG',
+    message: /missing field `name`/,
+  })
 })
 
 test('an object that does not fit says what was expected', () => {
