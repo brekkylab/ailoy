@@ -7,13 +7,14 @@ tableOfContents:
 
 What changed in each release of Ailoy, newest first. Each release's full notes and the PRs behind them are on [GitHub releases](https://github.com/brekkylab/ailoy/releases).
 
-## Unreleased
+## v0.3.3
 
-On `main`, not yet published to PyPI, npm or crates.io.
+*November 26, 2026*
 
 :::caution[Breaking changes]
-- **The agent runs in a sandbox you hand it.** `ConsoleClient` and its mounts are gone. Make a virtx sandbox, mount what it needs where you make it, and pass it with `AgentBuilder.sandbox(...)`. The agent never starts, stops or removes it. (#572)
-- **`vllm` is now `self-hosted`**, read from `SELF_HOSTED_BASE_URL` (and `SELF_HOSTED_API_KEY` if the server wants one). (#556)
+- **The agent runs in a sandbox you hand it.** `ConsoleClient`, its mounts and `.console(...)` are gone. Make a virtx sandbox, mount what it needs where you make it, and pass it with `AgentBuilder.sandbox(...)`. The agent never starts, stops or removes it. (#572)
+- **`.system_tools()` is gone**: `.sandbox(sandbox)` gives the agent the shell and file tools for its model family. (#572)
+- **`vllm` is now `self-hosted`**, read from `SELF_HOSTED_BASE_URL` (and `SELF_HOSTED_API_KEY` if the server wants one) in place of `VLLM_BASE_URL`. (#556)
 - **The old memory tools are removed**: `AgentBuilder.memory` as it was, `mem_search` and `mem_insert`. The new memory below replaces them. (#581)
 - **Python 3.11 or later and Node.js 22 or later**, as virtx 0.2 needs. (#600)
 - **Sandboxes have no snapshots.** A sandbox's files last until it is removed; keep what a later run needs on a volume. (#600)
@@ -27,12 +28,20 @@ On `main`, not yet published to PyPI, npm or crates.io.
 - **EXAONE.** `LGAI-EXAONE/k-exaone_v2.5` runs on its own API with `EXAONE_API_KEY` alone. (#556)
 - **A sandbox's programs as skills.** Each program virtx puts in a sandbox at `/abin` comes with a skill, and the agent lists those skills beside the ones you give it. (#581)
 
+### Behaviour changes
+
+- **The shell tool says why the server killed a command.** A killed command's result has `reason` (`"timeout"`, `"oom"`, ...) as the server names it, and `timed_out` is true only for a timeout, no longer for any exit code 137. (#616)
+
 ### Improvements
 
 - Ailoy takes virtx 0.2.1 from PyPI, npm and crates.io. (#600, #616)
 - The larger examples moved to [brekkylab/ailoy-examples](https://github.com/brekkylab/ailoy-examples). (#609)
-- The docs have a Welcome page, section tabs, a grouped sidebar, a copy-as-Markdown action on each page, and shorter, rechecked guides. (#589, #599)
 - Ailoy no longer depends on `jsonschema`. (#591)
+
+### Docs
+
+- An [SDK reference](/docs/sdk/) with Python, Node.js and Rust tabs on every entry. (#614)
+- The docs have a Welcome page, section tabs, a grouped sidebar, a copy-as-Markdown action on each page, and shorter, rechecked guides. (#589, #599)
 
 ## v0.3.2
 
