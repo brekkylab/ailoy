@@ -101,7 +101,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       # A full version: setup-uv publishes no major tag to follow since v8.
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
 
       # Plain `uv run` would build the project in its sync and maturin would build it again.
       - run: uv sync --locked --no-install-project
