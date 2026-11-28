@@ -23,8 +23,8 @@ Title: one sentence saying what Ailoy does once this is merged, with no issue nu
 <!-- Fill in the lines below rather than summarizing them. Tests that need a provider key skip without it, so name the keys that were set: a green run with none set covers less than the suite. AGENTS.md lists the commands. -->
 
 - **Rust** — `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test`, with keys:
-- **Python** — `uv run pytest` in `bindings/python`:
-- **Node** — `npm test` in `bindings/node`:
+- **Python** — `uv run pytest` in `ailoy-py`:
+- **Node** — `npm test` in `ailoy-node`:
 
 - [ ] A test fails without this change
 - [ ] A behaviour the crate gained is reachable from both bindings, or this PR says which binding it is for

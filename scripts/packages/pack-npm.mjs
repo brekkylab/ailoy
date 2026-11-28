@@ -1,10 +1,10 @@
 // Pack the Node packages as `napi pre-publish` would publish them: every platform
 // package, and the root with each of them as an optional dependency at its version.
 //
-//   node ../../scripts/packages/pack-npm.mjs <out-dir> [--allow-missing]   (from bindings/node, after `napi artifacts`)
+//   node ../../scripts/packages/pack-npm.mjs <out-dir> [--allow-missing]   (from ailoy-node, after `napi artifacts`)
 //
 // The root's `binding.js`/`binding.d.ts`, which `napi build` generates, have to be in
-// bindings/node already: the workflow puts one build's there.
+// ailoy-node already: the workflow puts one build's there.
 //
 // `--allow-missing` packs only the platform packages that have their binary, and still
 // names every one in the root -- for a local run on one machine. A release packs all.

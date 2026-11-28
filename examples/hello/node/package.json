@@ -8,7 +8,7 @@
     "start": "node main.mjs"
   },
   "dependencies": {
-    "@brekkylab/ailoy": "file:../../../bindings/node"
+    "@brekkylab/ailoy": "file:../../../ailoy-node"
   },
   "engines": {
     "node": ">= 22"

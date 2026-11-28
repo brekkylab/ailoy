@@ -275,8 +275,8 @@ cargo build
 For the bindings:
 
 ```sh
-cd bindings/python && uv run maturin develop  # Python
-cd bindings/node && npm install && npm run build  # Node.js
+cd ailoy-py && uv run maturin develop            # Python
+cd ailoy-node && npm install && npm run build    # Node.js
 ```
 
 ## Contributing

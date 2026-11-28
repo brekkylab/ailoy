@@ -1,0 +1,585 @@
+//! `AgentBuilder`, `Agent`, and the turn an `Agent` runs.
+//!
+//! A promise's future must be `'static`, but [`Agent::run`] borrows the agent for as long as
+//! the turn's stream lives. So the agent sits behind an `Arc<Mutex<..>>` and a turn holds the
+//! lock's owned guard in its stream, which also makes a second `run` wait for the first to
+//! finish, as `&mut self` would in Rust.
+//!
+//! `AgentBuilder.sandbox` gives the agent a `@brekkylab/virtx` `Sandbox` (see
+//! [`crate::console`]), which stays the caller's: the agent runs in it over the same client, and
+//! never removes it.
+//!
+//! `AgentRun`'s `next()` and `return()` are an async iterator's, and the package's `index.js`
+//! gives the class `Symbol.asyncIterator` so `for await` takes it. napi's own async-iterator
+//! support is not used because it rejects with napi's status as the `code`, and the codes a
+//! caller acts on are ailoy's and virtx's.
+
+use std::sync::Arc;
+
+use ailoy_runner::{
+    agent::{Agent, AgentBuilder, AgentSpec, AgentState, TruncationPolicy},
+    browser::{Browser, UserBrowser},
+    datatype::Value,
+    message::{Message, MessageDeltaOutput, MessageOutput},
+    model::ThinkingEffort,
+    tool::ToolDesc,
+};
+use futures::{StreamExt as _, stream::BoxStream};
+use napi::{
+    Env,
+    bindgen_prelude::{Either, Object, PromiseRaw, This, Unknown},
+};
+use napi_derive::napi;
+use serde::Serialize;
+use tokio::{runtime::Handle, sync::Mutex};
+
+use crate::{
+    console,
+    convert::{Json, from_js, query},
+    error::{self, Result, invalid, promise, thrown, unsigned},
+};
+
+/// A value let go of on the runtime it was made on: what an agent or a turn's stream holds may
+/// let go of itself on a task, and a garbage-collection finalizer is not on a runtime.
+pub struct OnRuntime<T> {
+    pub value: Option<T>,
+    pub runtime: Handle,
+}
+
+impl<T> OnRuntime<T> {
+    pub fn new(value: T, runtime: Handle) -> Self {
+        OnRuntime {
+            value: Some(value),
+            runtime,
+        }
+    }
+}
+
+impl<T> Drop for OnRuntime<T> {
+    fn drop(&mut self) {
+        let _entered = self.runtime.enter();
+        self.value.take();
+    }
+}
+
+/// An [`AgentBuilder`], filled in place and emptied by `build()`.
+///
+/// In place rather than by value: the Rust builder is consumed by each call and is not
+/// `Clone`, so there is exactly one of it to hand along.
+/// Each method returns the same object so calls chain as they do in Rust.
+#[napi(js_name = "AgentBuilder")]
+pub struct JsAgentBuilder(Option<AgentBuilder>);
+
+impl JsAgentBuilder {
+    fn update<'env>(
+        &mut self,
+        this: This<'env>,
+        f: impl FnOnce(AgentBuilder) -> Result<AgentBuilder>,
+    ) -> Result<This<'env>> {
+        let builder = self.0.take().ok_or_else(built)?;
+        self.0 = Some(f(builder)?);
+        Ok(this)
+    }
+}
+
+fn built() -> napi::Error<String> {
+    invalid("this AgentBuilder has already been built")
+}
+
+/// Any other Chromium-based browser, by the user data directory it writes `DevToolsActivePort`
+/// in.
+#[napi(object, object_to_js = false)]
+pub struct UserDataDir {
+    pub user_data_dir: String,
+}
+
+#[napi(object, object_to_js = false)]
+pub struct BrowserOptions {
+    /// A browser of the agent's own, apart from the user's: started on first use and closed with
+    /// the agent. `false` by default: the user's own browser.
+    pub isolated: Option<bool>,
+    /// For `isolated`: no window, as on a server. `false` by default.
+    pub headless: Option<bool>,
+    /// For `isolated`: the Chromium-based browser to start, by its executable; else one
+    /// installed here (Chrome, Chromium, Edge or Brave).
+    pub executable: Option<String>,
+    /// For `isolated`: the user data directory it keeps, so sign-ins last; a fresh one by
+    /// default.
+    pub profile: Option<String>,
+    /// For the user's browser, which one: `'chrome'`, `'chrome-beta'`, `'chrome-dev'`, `'chrome-canary'`,
+    /// `'chromium'`, `'edge'`, `'brave'`, or any other by `{ userDataDir }`; with none, whichever
+    /// turned remote debugging on last.
+    #[napi(
+        ts_type = "'chrome' | 'chrome-beta' | 'chrome-dev' | 'chrome-canary' | 'chromium' | 'edge' | 'brave' | { userDataDir: string }"
+    )]
+    pub user_browser: Option<Either<String, UserDataDir>>,
+    /// Whether the agent is told to use sites as a person would, so sites checking for bots are
+    /// less likely to turn it away. `true` by default.
+    pub careful: Option<bool>,
+    /// The page the agent's tab opens on.
+    pub start_url: Option<String>,
+}
+
+fn browser_of(options: Option<BrowserOptions>) -> Result<Browser> {
+    let options = options.unwrap_or(BrowserOptions {
+        isolated: None,
+        headless: None,
+        executable: None,
+        profile: None,
+        user_browser: None,
+        careful: None,
+        start_url: None,
+    });
+    let mut browser = if options.isolated.unwrap_or(false) {
+        Browser::isolated()
+    } else {
+        Browser::user()
+    };
+    if let Some(host) = options.user_browser {
+        browser = browser.user_browser(match host {
+            Either::A(name) => UserBrowser::named(&name).ok_or_else(|| {
+                let names: Vec<&str> = UserBrowser::NAMED.iter().map(UserBrowser::name).collect();
+                invalid(format!(
+                    "userBrowser is one of {} or {{ userDataDir }}, not {name:?}",
+                    names.join(", ")
+                ))
+            })?,
+            Either::B(dir) => UserBrowser::Custom(dir.user_data_dir.into()),
+        });
+    }
+    if let Some(headless) = options.headless {
+        browser = browser.headless(headless);
+    }
+    if let Some(path) = options.executable {
+        browser = browser.executable(path);
+    }
+    if let Some(dir) = options.profile {
+        browser = browser.profile(dir);
+    }
+    browser = browser.careful(options.careful.unwrap_or(true));
+    if let Some(url) = options.start_url {
+        browser = browser.start_url(url);
+    }
+    Ok(browser)
+}
+
+#[napi(object)]
+pub struct TruncationOptions {
+    pub max_input_tokens: Option<i64>,
+    pub preserve_recent_turns: Option<i64>,
+    pub max_images: Option<i64>,
+    pub preserve_recent_images: Option<i64>,
+}
+
+#[napi]
+impl JsAgentBuilder {
+    /// A builder for `model`, such as `'anthropic/claude-sonnet-5-5'`: `<org>/<name>`, built
+    /// through the provider set for `<org>`.
+    #[napi(constructor)]
+    pub fn new(model: String) -> Self {
+        JsAgentBuilder(Some(AgentBuilder::new(model)))
+    }
+
+    #[napi]
+    pub fn instruction<'env>(
+        &mut self,
+        this: This<'env>,
+        instruction: String,
+    ) -> Result<This<'env>> {
+        self.update(this, |b| Ok(b.instruction(instruction)))
+    }
+
+    #[napi]
+    pub fn tool<'env>(
+        &mut self,
+        env: &Env,
+        this: This<'env>,
+        #[napi(ts_arg_type = "ToolDesc")] desc: Unknown<'_>,
+    ) -> Result<This<'env>> {
+        let desc: ToolDesc = from_js(env, desc, "a tool description")?;
+        self.update(this, |b| Ok(b.tool(desc)))
+    }
+
+    #[napi]
+    pub fn tools<'env>(
+        &mut self,
+        env: &Env,
+        this: This<'env>,
+        #[napi(ts_arg_type = "Array<ToolDesc>")] descs: Unknown<'_>,
+    ) -> Result<This<'env>> {
+        let descs: Vec<ToolDesc> = from_js(env, descs, "a list of tool descriptions")?;
+        self.update(this, |b| Ok(b.tools(descs)))
+    }
+
+    /// Add `web_search`, searching with the provider `setWebSearchProvider` set.
+    #[napi]
+    pub fn web_search_tool<'env>(&mut self, this: This<'env>) -> Result<This<'env>> {
+        self.update(this, |b| Ok(b.web_search_tool()))
+    }
+
+    #[napi]
+    pub fn web_fetch_tool<'env>(&mut self, this: This<'env>) -> Result<This<'env>> {
+        self.update(this, |b| Ok(b.web_fetch_tool()))
+    }
+
+    #[napi]
+    pub fn history<'env>(
+        &mut self,
+        env: &Env,
+        this: This<'env>,
+        #[napi(ts_arg_type = "Array<Message>")] history: Unknown<'_>,
+    ) -> Result<This<'env>> {
+        let history: Vec<Message> = from_js(env, history, "a list of messages")?;
+        self.update(this, |b| Ok(b.history(history)))
+    }
+
+    /// Run the agent's console tools in `sandbox`, a `@brekkylab/virtx` `Sandbox`, which stays
+    /// the caller's.
+    #[napi]
+    pub fn sandbox<'env>(
+        &mut self,
+        env: &Env,
+        this: This<'env>,
+        #[napi(ts_arg_type = "Sandbox")] sandbox: Object<'_>,
+    ) -> Result<This<'env>> {
+        let sandbox = console::sandbox(env, &sandbox)?;
+        self.update(this, |b| Ok(b.sandbox(sandbox)))
+    }
+
+    /// The person's own Chromium-based browser with remote debugging on (Chrome by default: 144 or
+    /// later, at `chrome://inspect/#remote-debugging`), which the agent drives with its
+    /// `browser_*` tools over CDP from this process rather than the console, once the person
+    /// allows it: see `BrowserOptions`.
+    #[napi]
+    pub fn browser<'env>(
+        &mut self,
+        this: This<'env>,
+        options: Option<BrowserOptions>,
+    ) -> Result<This<'env>> {
+        let browser = browser_of(options)?;
+        self.update(this, |b| Ok(b.browser(browser)))
+    }
+
+    #[napi]
+    pub fn skill<'env>(&mut self, this: This<'env>, dir: String) -> Result<This<'env>> {
+        self.update(this, |b| Ok(b.skill(dir)))
+    }
+
+    #[napi]
+    pub fn truncation<'env>(
+        &mut self,
+        this: This<'env>,
+        options: Option<TruncationOptions>,
+    ) -> Result<This<'env>> {
+        let default = TruncationPolicy::default();
+        let options = options.unwrap_or(TruncationOptions {
+            max_input_tokens: None,
+            preserve_recent_turns: None,
+            max_images: None,
+            preserve_recent_images: None,
+        });
+        let policy = TruncationPolicy {
+            max_input_tokens: unsigned(options.max_input_tokens, "maxInputTokens")?
+                .unwrap_or(default.max_input_tokens),
+            preserve_recent_turns: unsigned(options.preserve_recent_turns, "preserveRecentTurns")?
+                .map_or(default.preserve_recent_turns, |n| n as usize),
+            max_images: unsigned(options.max_images, "maxImages")?
+                .map_or(default.max_images, |n| n as usize),
+            preserve_recent_images: unsigned(
+                options.preserve_recent_images,
+                "preserveRecentImages",
+            )?
+            .map_or(default.preserve_recent_images, |n| n as usize),
+        };
+        self.update(this, |b| Ok(b.truncation(policy)))
+    }
+
+    /// How much the model thinks before it answers.
+    #[napi]
+    pub fn thinking_effort<'env>(
+        &mut self,
+        env: &Env,
+        this: This<'env>,
+        #[napi(ts_arg_type = "'low' | 'medium' | 'high'")] effort: Unknown<'_>,
+    ) -> Result<This<'env>> {
+        let effort: ThinkingEffort = from_js(env, effort, "a thinking effort")?;
+        self.update(this, |b| Ok(b.thinking_effort(effort)))
+    }
+
+    /// Constrain replies to the JSON schema `schema`.
+    #[napi]
+    pub fn output_schema<'env>(
+        &mut self,
+        env: &Env,
+        this: This<'env>,
+        #[napi(ts_arg_type = "Record<string, unknown>")] schema: Unknown<'_>,
+    ) -> Result<This<'env>> {
+        let schema: Value = from_js(env, schema, "a JSON schema")?;
+        self.update(this, |b| Ok(b.output_schema(schema)))
+    }
+
+    /// Make the agent, settling with it — a promise, as `AgentBuilder::build` is a future: it
+    /// builds the model and reads the skills through the console.
+    #[napi(ts_return_type = "Promise<Agent>")]
+    pub fn build<'env>(&mut self, env: &'env Env) -> napi::Result<PromiseRaw<'env, JsAgent>> {
+        let builder = self
+            .0
+            .take()
+            .ok_or_else(built)
+            .map_err(|e| thrown(env, e))?;
+        promise(env, async move {
+            let agent = builder.build().await.map_err(error::anyhow)?;
+            Ok(JsAgent::new(agent))
+        })
+    }
+}
+
+type Held = Arc<Mutex<OnRuntime<Agent>>>;
+
+#[napi(js_name = "Agent")]
+pub struct JsAgent {
+    agent: Held,
+
+    /// The runtime the agent was built on, which a turn's stream is let go of on too.
+    runtime: Handle,
+}
+
+impl JsAgent {
+    /// Built inside a promise's future, so the current runtime is the one to keep.
+    fn new(agent: Agent) -> Self {
+        let runtime = Handle::current();
+        JsAgent {
+            agent: Arc::new(Mutex::new(OnRuntime::new(agent, runtime.clone()))),
+            runtime,
+        }
+    }
+
+    fn start(&self, query: Message, mode: Mode) -> JsAgentRun {
+        JsAgentRun::new(turn(self.agent.clone(), query, mode), self.runtime.clone())
+    }
+}
+
+fn closed() -> napi::Error<String> {
+    error::ailoy("this agent has been closed")
+}
+
+/// Which of the agent's two streams a turn is iterated from.
+#[derive(Clone, Copy)]
+enum Mode {
+    Messages,
+    Deltas,
+}
+
+/// What a turn yields: a message whole, or a delta of one.
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum Item {
+    Message(MessageOutput),
+    Delta(MessageDeltaOutput),
+}
+
+/// One turn's stream, from the agent's owned guard: `'static`, so a promise can hold it.
+fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<Item>> {
+    async_stream::stream! {
+        let mut guard = agent.lock_owned().await;
+        let Some(agent) = guard.value.as_mut() else {
+            yield Err(closed());
+            return;
+        };
+        match mode {
+            Mode::Messages => {
+                let mut stream = agent.run(query);
+                while let Some(output) = stream.next().await {
+                    yield output.map(Item::Message).map_err(error::anyhow);
+                }
+            }
+            Mode::Deltas => {
+                let mut stream = agent.run_stream(query);
+                while let Some(delta) = stream.next().await {
+                    yield delta.map(Item::Delta).map_err(error::anyhow);
+                }
+            }
+        }
+    }
+    .boxed()
+}
+
+#[napi]
+impl JsAgent {
+    /// An agent from a spec (the object an `AgentSpec` serializes to).
+    #[napi(
+        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; sandbox?: Sandbox; browser?: BrowserOptions }",
+        ts_return_type = "Promise<Agent>"
+    )]
+    pub fn from_spec<'env>(
+        env: &'env Env,
+        spec: Unknown<'_>,
+        options: Option<Object<'_>>,
+    ) -> napi::Result<PromiseRaw<'env, JsAgent>> {
+        let prepared = (|| -> Result<_> {
+            let spec: AgentSpec = from_js(env, spec, "an agent spec")?;
+            let mut state = AgentState::new();
+            if let Some(options) = options {
+                let get = |e: napi::Error| invalid(e.reason);
+                if let Some(history) = options.get::<Unknown>("history").map_err(get)? {
+                    state = state.with_history(from_js::<Vec<Message>>(
+                        env,
+                        history,
+                        "a list of messages",
+                    )?);
+                }
+                if let Some(sandbox) = options.get::<Object>("sandbox").map_err(get)? {
+                    state = state.with_sandbox(console::sandbox(env, &sandbox)?);
+                }
+                if let Some(browser) = options.get::<BrowserOptions>("browser").map_err(get)? {
+                    state = state.with_browser(browser_of(Some(browser))?);
+                }
+            }
+            Ok((spec, state))
+        })();
+        let (spec, state) = prepared.map_err(|e| thrown(env, e))?;
+        promise(env, async move {
+            let agent = Agent::try_with_state(spec, state)
+                .await
+                .map_err(error::anyhow)?;
+            Ok(JsAgent::new(agent))
+        })
+    }
+
+    /// The conversation so far, as a list of messages.
+    ///
+    /// Read without waiting, so it throws while a turn holds the agent rather than making
+    /// this getter a promise.
+    #[napi(getter, ts_return_type = "Array<Message>")]
+    pub fn history(&self) -> Result<Json<Vec<Message>>> {
+        let guard = self
+            .agent
+            .try_lock()
+            .map_err(|_| error::ailoy("this agent is in the middle of a turn"))?;
+        let agent = guard.value.as_ref().ok_or_else(closed)?;
+        Ok(Json(agent.history().to_vec()))
+    }
+
+    /// Connect the agent's browser now rather than on its first use. This is when the browser asks,
+    /// so call it while the person is at their screen; a refusal rejects. A no-op once
+    /// connected. Throws during a turn.
+    #[napi(ts_return_type = "Promise<void>")]
+    pub fn start_browser<'env>(&self, env: &'env Env) -> napi::Result<PromiseRaw<'env, ()>> {
+        let mut guard = self
+            .agent
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| thrown(env, error::ailoy("this agent is in the middle of a turn")))?;
+        promise(env, async move {
+            let agent = guard.value.as_mut().ok_or_else(closed)?;
+            agent.start_browser().await.map_err(error::anyhow)
+        })
+    }
+
+    /// Run one turn on `query` — a message, or a string as the user's text — and iterate what
+    /// it produces: each complete message, the model's and each tool's.
+    #[napi(ts_return_type = "AsyncIterableIterator<MessageOutput>")]
+    pub fn run(
+        &self,
+        env: &Env,
+        #[napi(ts_arg_type = "string | Message")] query: Unknown<'_>,
+    ) -> Result<JsAgentRun> {
+        Ok(self.start(self::query(env, query)?, Mode::Messages))
+    }
+
+    /// Run one turn as `run` does, but iterate the model's output as it is generated: deltas
+    /// for each message the model writes, and each tool's result whole.
+    #[napi(ts_return_type = "AsyncIterableIterator<MessageDeltaOutput>")]
+    pub fn run_stream(
+        &self,
+        env: &Env,
+        #[napi(ts_arg_type = "string | Message")] query: Unknown<'_>,
+    ) -> Result<JsAgentRun> {
+        Ok(self.start(self::query(env, query)?, Mode::Deltas))
+    }
+
+    /// Let go of the agent now, and of its hold of its sandbox's client. Waits for a turn
+    /// being iterated to finish. Closing twice is the same as closing once.
+    #[napi(ts_return_type = "Promise<void>")]
+    pub fn close<'env>(&self, env: &'env Env) -> napi::Result<PromiseRaw<'env, ()>> {
+        let agent = self.agent.clone();
+        promise(env, async move {
+            // Dropped here, on the runtime.
+            agent.lock().await.value.take();
+            Ok(())
+        })
+    }
+}
+
+type Stream = Arc<Mutex<OnRuntime<BoxStream<'static, Result<Item>>>>>;
+
+/// A turn, iterated with `for await`.
+///
+/// Nothing runs until the first `next()`, and the turn only goes as far as it has been
+/// iterated: breaking out of the loop, or `return()`, ends it where it stands.
+#[napi(js_name = "AgentRun")]
+pub struct JsAgentRun {
+    stream: Stream,
+}
+
+impl JsAgentRun {
+    /// Iterate `stream`, let go of on `runtime`.
+    pub fn new(stream: BoxStream<'static, Result<Item>>, runtime: Handle) -> Self {
+        JsAgentRun {
+            stream: Arc::new(Mutex::new(OnRuntime::new(stream, runtime))),
+        }
+    }
+}
+
+/// An iterator's result, `{ value, done }`.
+#[derive(Serialize)]
+pub struct Step {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<Item>,
+    done: bool,
+}
+
+const DONE: Step = Step {
+    value: None,
+    done: true,
+};
+
+#[napi]
+impl JsAgentRun {
+    #[napi(
+        ts_return_type = "Promise<IteratorResult<MessageOutput | MessageDeltaOutput, undefined>>"
+    )]
+    pub fn next<'env>(&self, env: &'env Env) -> napi::Result<PromiseRaw<'env, Json<Step>>> {
+        let stream = self.stream.clone();
+        promise(env, async move {
+            let mut guard = stream.lock().await;
+            let Some(stream) = guard.value.as_mut() else {
+                return Ok(Json(DONE));
+            };
+            match stream.next().await {
+                Some(item) => Ok(Json(Step {
+                    value: Some(item?),
+                    done: false,
+                })),
+                None => {
+                    // Let go of the agent now rather than when this object is collected.
+                    guard.value.take();
+                    Ok(Json(DONE))
+                }
+            }
+        })
+    }
+
+    /// End the turn where it stands, as breaking out of `for await` does.
+    #[napi(
+        js_name = "return",
+        ts_return_type = "Promise<IteratorResult<MessageOutput | MessageDeltaOutput, undefined>>"
+    )]
+    pub fn finish<'env>(&self, env: &'env Env) -> napi::Result<PromiseRaw<'env, Json<Step>>> {
+        let stream = self.stream.clone();
+        promise(env, async move {
+            stream.lock().await.value.take();
+            Ok(Json(DONE))
+        })
+    }
+}

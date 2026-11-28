@@ -1,0 +1,69 @@
+[package]
+name = "ailoy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Agents that drive a language model through tool-augmented turns, in a virtx console."
+readme = "../README.md"
+keywords = ["agent", "llm", "ai", "tool-use", "sandbox"]
+categories = ["development-tools"]
+# Only `.rs` under `src/`: `include` overrides `.gitignore`, so `/src/**` would pack a stray
+# `.DS_Store` too.
+include = ["/src/**/*.rs"]
+
+[features]
+# See `ailoy-runner`'s `embedded`.
+default = ["embedded"]
+embedded = ["ailoy-runner/embedded"]
+
+[dependencies]
+ailoy-core = { path = "../ailoy-core", version = "0.3.2" }
+ailoy-runner = { path = "../ailoy-runner", version = "0.3.2", default-features = false }
+
+# The examples run against this crate as a reader would depend on it.
+[dev-dependencies]
+anyhow = "1"
+dotenvy = "0.15"
+futures = "0.3"
+reqwest = { version = "0.13", features = ["json"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "time", "fs", "process", "io-util"] }
+virtx = { workspace = true }
+
+[[example]]
+name = "hello"
+path = "../examples/hello/rust/main.rs"
+
+[[example]]
+name = "cad"
+path = "../examples/cad/rust/main.rs"
+
+[[example]]
+name = "laya"
+path = "../examples/laya/rust/main.rs"
+
+[[example]]
+name = "offshore_leaks"
+path = "../examples/offshore_leaks/rust/main.rs"
+
+[[example]]
+name = "retail_bench"
+path = "../examples/retail_bench/rust/main.rs"
+
+[[example]]
+name = "gameplay"
+path = "../examples/gameplay/rust/main.rs"
+
+[[example]]
+name = "sam3"
+path = "../examples/sam3/rust/main.rs"
+
+[[example]]
+name = "tts"
+path = "../examples/tts/rust/main.rs"
+
+[[example]]
+name = "browser-use"
+path = "../examples/browser-use/rust/main.rs"

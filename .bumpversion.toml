@@ -46,26 +46,26 @@ search = 'version = "{current_version}"'
 replace = 'version = "{new_version}"'
 
 [[tool.bumpversion.files]]
-filename = "bindings/node/package.json"
+filename = "ailoy-node/package.json"
 search = '"version": "{current_version}"'
 replace = '"version": "{new_version}"'
 
 [[tool.bumpversion.files]]
-filename = "bindings/node/npm/darwin-arm64/package.json"
+filename = "ailoy-node/npm/darwin-arm64/package.json"
 search = '"version": "{current_version}"'
 replace = '"version": "{new_version}"'
 
 [[tool.bumpversion.files]]
-filename = "bindings/node/npm/linux-arm64-gnu/package.json"
+filename = "ailoy-node/npm/linux-arm64-gnu/package.json"
 search = '"version": "{current_version}"'
 replace = '"version": "{new_version}"'
 
 [[tool.bumpversion.files]]
-filename = "bindings/node/npm/linux-x64-gnu/package.json"
+filename = "ailoy-node/npm/linux-x64-gnu/package.json"
 search = '"version": "{current_version}"'
 replace = '"version": "{new_version}"'
 
 [[tool.bumpversion.files]]
-filename = "bindings/node/npm/win32-x64-msvc/package.json"
+filename = "ailoy-node/npm/win32-x64-msvc/package.json"
 search = '"version": "{current_version}"'
 replace = '"version": "{new_version}"'

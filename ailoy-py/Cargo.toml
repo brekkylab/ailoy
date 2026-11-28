@@ -1,0 +1,34 @@
+[package]
+name = "ailoy-python"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# Native half of the `ailoy` package, imported as `ailoy._ailoy`. Must match the
+# `#[pymodule]` name, or the import finds a library with no init function.
+name = "_ailoy"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Without `embedded`: the library is the one the virtx package of this language opened.
+ailoy-runner = { path = "../ailoy-runner", default-features = false }
+virtx = { workspace = true }
+# `abi3-py311`: one wheel per platform, not per interpreter. `extension-module` is set in
+# `pyproject.toml` instead: it leaves libpython unlinked, which suits the interpreter-loaded
+# module but breaks `cargo test`.
+pyo3 = { version = "0.29", features = ["abi3-py311"] }
+# An agent's turn runs as tokio futures, which asyncio cannot drive, so Python awaitables are
+# bridged onto this crate's tokio runtime.
+pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
+# Messages, specs and tool arguments cross as their serde dicts, not per-type mirrors —
+# ailoy's JSON shape *is* its interface.
+pythonize = "0.29"
+anyhow = "1"
+async-stream = "0.3"
+futures = "0.3"
+serde = "1"
+tokio = { version = "1", features = ["sync", "rt"] }
+

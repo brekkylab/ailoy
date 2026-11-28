@@ -17,7 +17,7 @@
 // to be set up as `docs/content/guides/model-providers.mdx` says, any key in the
 // environment or in `.env`.
 //
-// `npm install` here first, after building the addon (`npm run build` in `bindings/node`).
+// `npm install` here first, after building the addon (`npm run build` in `ailoy-node`).
 
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'

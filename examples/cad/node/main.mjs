@@ -25,7 +25,7 @@
 //   set up as `docs/content/guides/model-providers.mdx` says. It has to take images,
 //   or it cannot see what it built.
 //
-// `npm install` here first, after building the addon (`npm run build` in `bindings/node`).
+// `npm install` here first, after building the addon (`npm run build` in `ailoy-node`).
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'

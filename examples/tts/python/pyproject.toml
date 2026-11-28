@@ -25,4 +25,4 @@ override-dependencies = ["pillow>=13.0.0"]
 
 [tool.uv.sources]
 # The bindings in this checkout, built by maturin on the first `uv run`.
-ailoy-py = { path = "../../../bindings/python", editable = true }
+ailoy-py = { path = "../../../ailoy-py", editable = true }

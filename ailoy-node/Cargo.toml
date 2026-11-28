@@ -1,0 +1,28 @@
+[package]
+name = "ailoy-node"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[build-dependencies]
+napi-build = "2"
+
+[dependencies]
+# Without `embedded`: the library is the one the virtx package of this language opened.
+ailoy-runner = { path = "../ailoy-runner", default-features = false }
+virtx = { workspace = true }
+# `serde-json` for `Env::to_js_value`/`from_js_value`: messages, specs and tool arguments cross
+# as their serde objects, not per-type mirrors — ailoy's JSON shape *is* its interface.
+napi = { version = "3", default-features = false, features = ["napi8", "async", "tokio_rt", "serde-json"] }
+napi-derive = "3"
+anyhow = "1"
+async-stream = "0.3"
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["sync", "rt"] }
+
