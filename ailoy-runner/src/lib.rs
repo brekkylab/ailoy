@@ -1,14 +1,12 @@
 //! Where an agent runs: the run loop ([`agent`]), the models it calls ([`model`]), the tools it
-//! makes ([`tool`]), the browser it drives ([`browser`]) and the sandbox it works in
-//! ([`console`]). An [`AgentProvider`] holds what an `ailoy_core::agent::AgentSpec` only
-//! names, and the agents kept by name, each with its sessions. It is served over HTTP by two
-//! routers: [`router`], to `ailoy_core::Client`, and [`admin_router`], to
-//! `ailoy_core::AdminClient`.
+//! makes ([`tool`]) and the sandbox it works in ([`console`]). An [`AgentProvider`] holds what
+//! an `ailoy_core::agent::AgentSpec` only names, and the agents kept by name, each with its
+//! sessions. It is served over HTTP by two routers: [`router`], to `ailoy_core::Client`, and
+//! [`admin_router`], to `ailoy_core::AdminClient`.
 //!
 //! The data an agent is made of and says, [`datatype`] and [`message`], is `ailoy-core`'s.
 
 pub mod agent;
-pub mod browser;
 pub mod console;
 mod macros;
 pub mod model;

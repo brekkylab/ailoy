@@ -1,7 +1,7 @@
 use std::{collections::HashMap, panic::AssertUnwindSafe, sync::Arc};
 
 use crate::console::Sandbox;
-use anyhow::{Context as _, bail};
+use anyhow::bail;
 use futures::{
     FutureExt as _, StreamExt as _,
     stream::{BoxStream, FuturesUnordered},
@@ -11,14 +11,13 @@ use super::{
     AgentSpec, AgentState,
     image::fit_images_off_runtime,
     skill::render_skills,
-    spec::{sandbox_tool_descs, split_desc},
+    spec::{browser_tool_descs, sandbox_tool_descs, split_desc},
 };
 use crate::{
-    browser,
     datatype::Value,
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
     model::{InferLangModel, LangModelOptions, RequestRefused, create_lang_model},
-    tool::{ToolDesc, ToolFunc, create_tool},
+    tool::{BROWSER_ABIN, ToolDesc, ToolFunc, create_tool},
 };
 
 /// Per-part size limit for tool results, past which the middle is cut out.
@@ -32,7 +31,7 @@ const CUT_OFF: &str = "the model's reply was cut off at its output limit";
 /// conversations.
 ///
 /// Pairs an [`AgentSpec`] (model + instruction + tools) with an [`AgentState`]
-/// (history + sandbox + browser), holding the model and tools built from the spec.
+/// (history + sandbox), holding the model and tools built from the spec.
 /// [`run`](Self::run) streams one turn, calling tools until the model answers, and appends
 /// every message to the history.
 pub struct Agent {
@@ -59,8 +58,8 @@ impl Agent {
     ///
     /// The model is built from `spec.model` through [`create_lang_model`], and each of
     /// `spec.tools` through [`create_tool`]; [`AgentSpec::use_sandbox`] and
-    /// [`AgentSpec::use_browser`] bring their tools too, and `state` has to hold a sandbox and a
-    /// browser exactly when the spec uses them. Unless `state.history` already has a
+    /// [`AgentSpec::use_browser`] bring their tools too. `state` has to hold a sandbox exactly
+    /// when the spec uses one, and for a browser, a sandbox with the `browser` abin. Unless `state.history` already has a
     /// [`Role::System`] message, one built from `spec.instruction`, [`AgentSpec::skills`]
     /// and the skills of the sandbox's abins is put first.
     ///
@@ -73,13 +72,15 @@ impl Agent {
             (false, true) => bail!("the state has a sandbox, and the spec does not use one"),
             _ => {}
         }
-        match (spec.use_browser, state.browser.is_some()) {
-            (true, false) => bail!("the spec uses a browser, and the state has none"),
-            (false, true) => bail!("the state has a browser, and the spec does not use one"),
-            _ => {}
-        }
-        if let Some(session) = &state.browser {
-            session.config().check()?;
+        if spec.use_browser {
+            let has_abin = state.sandbox.as_ref().is_some_and(|sandbox| {
+                sandbox.info().abins.iter().any(|abin| abin == BROWSER_ABIN)
+            });
+            if !has_abin {
+                bail!(
+                    "the spec uses a browser, which is the sandbox's `{BROWSER_ABIN}` abin, and the state has no sandbox with it"
+                );
+            }
         }
 
         // Errors if any spec tool is missing.
@@ -89,19 +90,16 @@ impl Agent {
         }
         let mut tool_descs = spec.tools.clone();
 
+        let mut brought = Vec::new();
         if spec.use_sandbox {
-            for desc in sandbox_tool_descs(split_desc(&spec.model).0) {
-                if !tools.contains_key(&desc.name) {
-                    tools.insert(desc.name.clone(), create_tool(&desc)?);
-                    tool_descs.push(desc);
-                }
-            }
+            brought.extend(sandbox_tool_descs(split_desc(&spec.model).0));
         }
-
-        // Bound to this agent's own browser rather than resolved by name.
-        if let Some(session) = &state.browser {
-            for (desc, func) in browser::tools(session, spec.use_sandbox) {
-                tools.insert(desc.name.clone(), func);
+        if spec.use_browser {
+            brought.extend(browser_tool_descs());
+        }
+        for desc in brought {
+            if !tools.contains_key(&desc.name) {
+                tools.insert(desc.name.clone(), create_tool(&desc)?);
                 tool_descs.push(desc);
             }
         }
@@ -277,31 +275,16 @@ impl Agent {
         })
     }
 
-    /// Add `query` to the history, led by a browser reconnection the agent has not heard of,
-    /// and truncate the history by the spec's [`TruncationPolicy`](super::TruncationPolicy).
+    /// Add `query` to the history, and truncate the history by the spec's [`TruncationPolicy`](super::TruncationPolicy).
     ///
     /// Truncation runs only here: a turn's requests send back the thinking the model has
     /// produced in it, which the Claude API can refuse once anything before it has changed, so a
     /// turn's input may grow past the limit until the next turn begins.
-    async fn begin_turn(&mut self, mut query: Message) {
+    async fn begin_turn(&mut self, query: Message) {
         close_dangling_calls(&mut self.state.history);
-        if let Some(note) = self.state.browser.as_ref().and_then(|b| b.catch_up()) {
-            query.contents.insert(0, Part::text(note));
-        }
         let query = fit_images_off_runtime(query).await;
         self.state.history.push(query);
         self.state.truncate_history(&self.spec.truncation);
-    }
-
-    /// Connects this agent's browser now rather than on its first use. This is when the browser
-    /// asks the person, so call it while they are at their screen. A no-op once connected.
-    pub async fn start_browser(&mut self) -> anyhow::Result<()> {
-        self.state
-            .browser
-            .clone()
-            .context("this agent has no browser")?
-            .start()
-            .await
     }
 
     /// Run `calls` concurrently, yielding each result as a [`Role::Tool`] message as it
@@ -1021,7 +1004,8 @@ mod tests {
         assert_eq!(text_of(&agent.history()[0]), "Mine.");
     }
 
-    /// A spec using a sandbox or a browser needs its state to hold one.
+    /// A spec using a sandbox needs its state to hold one, and one using a browser, a sandbox
+    /// with the `browser` abin.
     #[tokio::test]
     async fn test_a_spec_using_a_sandbox_or_browser_needs_one() {
         let name = "test-agent-uses";
@@ -1033,8 +1017,15 @@ mod tests {
 
         let mut uses_browser = spec;
         uses_browser.use_browser = true;
+        let uses_browser_spec = uses_browser.clone();
         let err = Agent::try_new(uses_browser).await.err().unwrap();
         assert!(err.to_string().contains("uses a browser"), "{err}");
+
+        let mut uses_both = uses_browser_spec;
+        uses_both.use_sandbox = true;
+        let state = AgentState::new().with_sandbox(crate::test_sandbox().await);
+        let err = Agent::try_with_state(uses_both, state).await.err().unwrap();
+        assert!(err.to_string().contains("`browser` abin"), "{err}");
     }
 
     #[tokio::test]

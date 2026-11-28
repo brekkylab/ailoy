@@ -1,15 +1,12 @@
 # Browser use
 
-An agent with your own browser and no task of its own: it waits for what you ask of it. It drives the browser (Chrome by default, or another Chromium-based one) with its `browser_*` tools, in a window of its own. It also has a sandbox with python and curl, and the shell and file tools that come with it, for what is easier done there, such as fetching a page's data or computing over it; the browser tools do not go through it. With `--noshell` the agent has the browser alone, and no virtx server is needed. With `--isolated` the agent gets a browser of its own instead of yours (`isolated`): a Chromium-based one installed here, started with a fresh profile and closed at the end. The app connects before the first request (`start_browser()`), when the browser asks you to allow it, and the agent's window opens on the ailoy docs (`start_url`), so there is a page to ask about. The app then suggests a few requests to try: solving today's Wordle, comparing flights, and comparing wireless mice. Each line you type is the next turn, and `/exit` ends.
-
-When a site needs something only you can do, such as signing in, the agent says so and ends its turn. Do it in its window, then tell the agent to go on.
+An agent with a browser and no task of its own: it waits for what you ask of it. The browser is virtx's `browser` abin, a headless Chromium in the agent's sandbox, which the agent drives with its `browser` and `browser_screenshot` tools. The sandbox also has python and curl, and the shell and file tools that come with it, for what is easier done without the browser, such as fetching a page's data or computing over it. The app suggests a few requests to try: solving today's Wordle, comparing flights, and comparing wireless mice. Each line you type is the next turn, and `/exit` ends.
 
 See [Using a browser](https://ailoy.co/docs/guides/using-browser/) for what this lends the agent.
 
 ## Requirements
 
-- A Chromium-based browser with remote debugging on: Chrome 144 or later, at `chrome://inspect/#remote-debugging`. With `--isolated`, one installed (Chrome, Chromium, Edge or Brave), nothing to turn on.
-- A virtx server for the sandbox, which starting the client fetches into virtx's cache the first time. Not with `--noshell`.
+- A virtx server with the `browser` abin, which starting the client fetches into virtx's cache the first time.
 - `AILOY_MODEL` picks the model (`anthropic/claude-sonnet-5` by default); its provider has to be set up.
 
 ## Running
@@ -17,14 +14,14 @@ See [Using a browser](https://ailoy.co/docs/guides/using-browser/) for what this
 Rust (from the repository root):
 
 ```sh
-cargo run --example browser-use         # or with: -- --noshell, -- --isolated
+cargo run --example browser-use
 ```
 
 Python:
 
 ```sh
 cd examples/browser-use/python
-uv run main.py                          # or with: --noshell, --isolated
+uv run main.py
 ```
 
 Node:
@@ -32,5 +29,5 @@ Node:
 ```sh
 cd examples/browser-use/node
 npm install
-npm start                               # or with: -- --noshell, -- --isolated
+npm start
 ```

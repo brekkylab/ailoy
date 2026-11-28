@@ -17,7 +17,7 @@ Every call returns the builder, so they chain. Node.js spells them in camelCase 
 | `sandbox(sandbox)` | A virtx sandbox to work in, and a shell and file tools there. | [Giving an agent a sandbox](/docs/guides/sandbox/) |
 | `tool(desc)`, `tools(descs)` | Tools by name: your own functions, or a registered MCP server's. | [Tools](/docs/guides/tools/#your-own-functions), [Using MCP](/docs/guides/using-mcp/) |
 | `web_search_tool()`, `web_fetch_tool()` | Searching the web and reading a page, from your program. | [Tools](/docs/guides/tools/#the-web) |
-| `browser(...)` | A browser it drives with `browser_*` tools. | [Using a browser](/docs/guides/using-browser/) |
+| `browser()` | The browser in its sandbox, which it drives with the `browser` tools. | [Using a browser](/docs/guides/using-browser/) |
 | `skill(dir)` | A folder of instructions in its sandbox, for one kind of task. | [Skills](/docs/guides/skills/) |
 | `truncation(...)` | Old tool results and images cut once a run's input grows past a limit. | [Truncation](/docs/guides/truncation/) |
 | `thinking_effort(effort)`, `output_schema(schema)` | How much the model thinks, and a JSON schema its answers must match. | [Model providers](/docs/guides/model-providers/#model-options) |
@@ -29,7 +29,7 @@ Every call returns the builder, so they chain. Node.js spells them in camelCase 
 
 ## From a spec
 
-The model, the instruction, the tools, the skills, the model options and whether it uses a sandbox or a browser make up an agent's spec: plain JSON, which you can store and build an agent from again. The rest (its history, its sandbox and its browser) is its state, given beside the spec; a spec with `use_browser` takes `browser`, with the options of `browser(...)`. `Agent.from_spec` builds an agent from both:
+The model, the instruction, the tools, the skills, the model options and whether it uses a sandbox or a browser make up an agent's spec: plain JSON, which you can store and build an agent from again. The rest (its history and its sandbox) is its state, given beside the spec. `Agent.from_spec` builds an agent from both:
 
 <Tabs syncKey="lang">
 
@@ -84,11 +84,11 @@ let agent = Agent::try_with_state(spec, state).await?;
 </TabItem>
 </Tabs>
 
-A spec says whether the agent works in a sandbox (`use_sandbox`) and drives a browser (`use_browser`); `sandbox(...)` and `browser(...)` on the builder set them. The state has to hold a sandbox exactly when `use_sandbox` is set, and a browser exactly when `use_browser` is, or building the agent fails. A sandbox brings the shell and file tools without the spec listing them, and a browser the `browser_*` tools. A tool the spec names itself, such as its own `shell`, is used in place of the sandbox's.
+A spec says whether the agent works in a sandbox (`use_sandbox`) and drives the browser in it (`use_browser`); `sandbox(...)` and `browser()` on the builder set them. The state has to hold a sandbox exactly when `use_sandbox` is set, and with `use_browser` a sandbox with the `browser` abin, or building the agent fails. A sandbox brings the shell and file tools without the spec listing them, and a browser the `browser` and `browser_screenshot` tools. A tool the spec names itself, such as its own `shell`, is used in place of the sandbox's.
 
 ## Closing
 
-In Python and Node.js, `close()` releases what the agent holds: its model, any browser it started itself, and its hold on the sandbox's client. It waits for a turn being iterated to finish. In Python, `async with agent:` closes it at the end of the block. A Rust agent releases them when it is dropped.
+In Python and Node.js, `close()` releases what the agent holds: its model and its hold on the sandbox's client. It waits for a turn being iterated to finish. In Python, `async with agent:` closes it at the end of the block. A Rust agent releases them when it is dropped.
 
 Closing an agent leaves its sandbox as it is, for you to use again or remove.
 

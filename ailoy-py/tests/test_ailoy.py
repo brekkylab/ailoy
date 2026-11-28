@@ -193,41 +193,9 @@ async def test_a_removed_tool_provider_no_longer_builds():
         await AgentBuilder(MODEL).tool(desc).build()
 
 
-async def test_a_browser_connects_only_when_used_and_needs_no_console():
-    agent = await AgentBuilder(MODEL).browser(start_url="https://example.com").build()
-    await agent.close()
-
-
-def test_a_user_browser_is_a_name_or_a_directory(tmp_path):
-    AgentBuilder(MODEL).browser(user_browser="edge")
-    AgentBuilder(MODEL).browser(user_browser=tmp_path)
-    with pytest.raises(ValueError, match="chrome-beta"):
-        AgentBuilder(MODEL).browser(user_browser="edgee")
-
-
-def test_a_browser_can_be_less_careful():
-    AgentBuilder(MODEL).browser(careful=False)
-    AgentBuilder(MODEL).browser(careful=True, user_browser="/nonexistent")
-
-
-async def test_an_isolated_browser_has_options_of_its_own(tmp_path):
-    agent = await (
-        AgentBuilder(MODEL)
-        .browser(isolated=True, headless=True, executable="/nonexistent/chrome", profile=tmp_path)
-        .build()
-    )
-    await agent.close()
-    with pytest.raises(AiloyError, match="Browser::isolated"):
-        await AgentBuilder(MODEL).browser(headless=True).build()
-
-
-async def test_an_agent_without_a_browser_cannot_start_one():
-    agent = await AgentBuilder(MODEL).build()
-    with pytest.raises(AiloyError, match="no browser"):
-        await agent.start_browser()
-    await agent.close()
-    with pytest.raises(AiloyError, match="closed"):
-        await agent.start_browser()
+async def test_a_browser_needs_a_sandbox_with_its_abin():
+    with pytest.raises(AiloyError, match="`browser` abin"):
+        await AgentBuilder(MODEL).browser().build()
 
 
 # ---- a turn, against the fake model ---------------------------------------------------

@@ -1,7 +1,4 @@
-use std::sync::Arc;
-
 use crate::{
-    browser::{Browser, BrowserSession},
     console::Sandbox,
     message::{Message, Part, Role},
 };
@@ -15,10 +12,10 @@ pub(super) const IMAGE_PLACEHOLDER: &str = "[image from an earlier turn removed]
 pub(super) const TOOL_RESULT_PLACEHOLDER: &str = "[context truncated]";
 
 /// What an [`Agent`](super::Agent) carries from one turn to the next: its history, and the
-/// sandbox and browser it works with.
+/// sandbox it works in.
 ///
-/// A clone shares the sandbox and the browser: they are handles, so two agents built from
-/// clones work in the same sandbox and drive the same browser.
+/// A clone shares the sandbox: it is a handle, so two agents built from clones work in the
+/// same sandbox.
 #[derive(Clone)]
 pub struct AgentState {
     /// What this state is known by, a UUID unless given another.
@@ -35,9 +32,6 @@ pub struct AgentState {
     ///
     /// Nothing fills this in, since making a sandbox means choosing a virtx server.
     pub sandbox: Option<Sandbox>,
-
-    /// The browser this agent's `browser_*` tools drive.
-    pub(crate) browser: Option<Arc<BrowserSession>>,
 }
 
 impl Default for AgentState {
@@ -47,13 +41,12 @@ impl Default for AgentState {
             history: Vec::new(),
             context_tokens: None,
             sandbox: None,
-            browser: None,
         }
     }
 }
 
 impl AgentState {
-    /// A new state, with an empty history, a new id, and no sandbox or browser.
+    /// A new state, with an empty history, a new id, and no sandbox.
     pub fn new() -> Self {
         Self::default()
     }
@@ -66,12 +59,6 @@ impl AgentState {
     /// Run sandbox tools in `sandbox`.
     pub fn with_sandbox(mut self, sandbox: Sandbox) -> Self {
         self.sandbox = Some(sandbox);
-        self
-    }
-
-    /// Drive `browser`, which is not started until the agent first uses it.
-    pub fn with_browser(mut self, browser: Browser) -> Self {
-        self.browser = Some(BrowserSession::new(browser));
         self
     }
 

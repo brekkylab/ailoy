@@ -129,30 +129,43 @@ pub fn get_shell_tool_func() -> ToolFunc {
 
         // virtx consults no shell, so asking for shell semantics means asking for a
         // shell.
-        let out = match crate::console::exec(sandbox, ["sh", "-c", cmd.as_str()], timeout_ms).await
-        {
-            // A killed command has no exit code of its own.
-            Ok(out) if out.timed_out => {
-                return crate::to_value!({
-                    "stdout": "",
-                    "stderr": "",
-                    "exit_code": -1,
-                    "timed_out": true
-                });
-            }
-            Ok(out) => out,
-            Err(e) => {
-                return crate::to_value!({
-                    "stdout": "",
-                    "stderr": e.to_string(),
-                    "exit_code": -1,
-                    "timed_out": false
-                });
-            }
-        };
-
-        Output::new(&out.stdout, &out.stderr, out.code as i64, out.truncated).fitted()
+        exec_result(
+            sandbox,
+            vec!["sh".to_owned(), "-c".to_owned(), cmd],
+            timeout_ms,
+        )
+        .await
     })
+}
+
+/// Run `argv` in `sandbox` and answer as `shell` does: each stream fitted to one tool result,
+/// the exit code, and whether it timed out or was cut.
+pub(super) async fn exec_result(
+    sandbox: &crate::console::Sandbox,
+    argv: Vec<String>,
+    timeout_ms: Option<u64>,
+) -> Value {
+    let out = match crate::console::exec(sandbox, argv, timeout_ms).await {
+        // A killed command has no exit code of its own.
+        Ok(out) if out.timed_out => {
+            return crate::to_value!({
+                "stdout": "",
+                "stderr": "",
+                "exit_code": -1,
+                "timed_out": true
+            });
+        }
+        Ok(out) => out,
+        Err(e) => {
+            return crate::to_value!({
+                "stdout": "",
+                "stderr": e.to_string(),
+                "exit_code": -1,
+                "timed_out": false
+            });
+        }
+    };
+    Output::new(&out.stdout, &out.stderr, out.code as i64, out.truncated).fitted()
 }
 
 #[cfg(test)]

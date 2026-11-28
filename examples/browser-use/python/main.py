@@ -1,16 +1,11 @@
 """An agent with a browser, waiting for what you ask of it.
 
-    uv run main.py [--noshell] [--isolated]
+    uv run main.py
 
-The agent uses your own browser (Chrome by default), in a window of its own opened on the ailoy
-docs, and drives it with its `browser_*` tools. It also has a sandbox with python and curl, for
-what is easier done there, such as fetching a page's data or computing over it; `--noshell` leaves
-it out, so the agent has the browser alone and needs no sandbox server. Turn on remote debugging at
-chrome://inspect/#remote-debugging (Chrome 144 or later) and allow the browser's prompt, which
-appears as it starts. `--isolated` gives the agent a browser of its own instead: a Chromium-based
-one installed here, started with a fresh profile and closed at the end, with no remote debugging
-to turn on. Each line you type is the next turn; `/exit` ends. When a site needs you, to
-sign in say, the agent says so and ends its turn: do it in its window, then tell it to go on.
+The agent works in a sandbox with python and curl and virtx's `browser` abin, a headless
+Chromium, which it drives with its `browser` and `browser_screenshot` tools; the shell and file
+tools are there too, for what is easier done without the browser, such as fetching a page's data
+or computing over it. Each line you type is the next turn; `/exit` ends.
 
 Environment:
 
@@ -50,12 +45,8 @@ from virtx import Client, Recipe  # noqa: E402
 # The image the sandbox boots, built once on the virtx server and kept under this tag.
 IMAGE = "ailoy-browser-use:1"
 
-# Where the browser starts.
-START = "https://ailoy.co/docs/"
-
-# What the agent has, with a sandbox and without.
-WITH_SANDBOX = "a web browser and a sandbox: the browser is {whose}, which you drive with the browser tools"
-BROWSER_ONLY = "a web browser: {whose}, which you drive with the browser tools"
+# What the agent has.
+HAS = "a sandbox and a web browser in it, which you drive with the browser tools"
 
 # What the agent is for.
 INSTRUCTION = (
@@ -94,20 +85,11 @@ async def read(prompt: str) -> str | None:
         return None
 
 
-async def main(model: str, shell: bool, isolated: bool) -> None:
-    # The browser tools reach the browser from this process; the sandbox is for the other tools.
-    whose = "your own, apart from the user's" if isolated else "the user's own"
-    has = (WITH_SANDBOX if shell else BROWSER_ONLY).format(whose=whose)
-    builder = ailoy.AgentBuilder(model).instruction(
-        f"You are a helpful assistant with {has}. {INSTRUCTION}"
-    )
-    builder = builder.browser(start_url=START, isolated=isolated)
-    client = None
-    if shell:
-        # The virtx server, fetched into virtx's cache the first time: a host that installed
-        # only ailoy has none. The sandboxes it holds go when this program does.
-        client = Client.spawn()
-
+async def main(model: str) -> None:
+    # The virtx server, fetched into virtx's cache the first time: a host that installed only
+    # ailoy has none. The sandboxes it holds go when this program does.
+    client = Client.spawn()
+    try:
         # The image, built once: python, and curl on it.
         # The server answers a tag in its full form, as `docker.io/library/ailoy-browser-use:1`.
         images = await client.list_image()
@@ -118,44 +100,35 @@ async def main(model: str, shell: bool, isolated: bool) -> None:
             )
             await client.build_image(recipe, IMAGE).complete()
 
-        sandbox = await client.create_sandbox(IMAGE, network=True)
-        builder = builder.sandbox(sandbox)
-    agent = await builder.build()
-    print(f"model     {model}")
-    print(f"has       {'browser, sandbox' if shell else 'browser'}\n")
-    try:
-        if isolated:
-            print(
-                "Starting the agent's own browser. It opens the ailoy docs as an example.",
-                flush=True,
-            )
-        else:
-            print(
-                "Allow the browser's prompt to let the agent in. It opens the ailoy docs as an example.",
-                flush=True,
-            )
-        await agent.start_browser()
-        print(
-            "The agent's browser is open.\n"
-            if isolated
-            else "The agent has a window of its own in your browser.\n"
+        # The browser is the sandbox's: its abin, a network for the pages it opens, and the
+        # memory Chromium takes.
+        sandbox = await client.create_sandbox(
+            IMAGE, network=True, abins=["browser"], memory_mib=2048
         )
+        agent = await (
+            ailoy.AgentBuilder(model)
+            .instruction(f"You are a helpful assistant with {HAS}. {INSTRUCTION}")
+            .sandbox(sandbox)
+            .browser()
+            .build()
+        )
+        print(f"model     {model}\n")
+        try:
+            print("Ask anything, or try:")
+            for suggestion in SUGGESTIONS:
+                print(f"  - {suggestion}")
+            print("`/exit` ends.\n", flush=True)
 
-        print("Ask anything, or try:")
-        for suggestion in SUGGESTIONS:
-            print(f"  - {suggestion}")
-        print("`/exit` ends.\n", flush=True)
-
-        # A closed stdin ends the session, as `/exit` does.
-        while (query := await read("> ")) not in (None, "/exit"):
-            if query:
-                async for output in agent.run(query):
-                    show(output)
-                print()
+            # A closed stdin ends the session, as `/exit` does.
+            while (query := await read("> ")) not in (None, "/exit"):
+                if query:
+                    async for output in agent.run(query):
+                        show(output)
+                    print()
+        finally:
+            await agent.close()
     finally:
-        await agent.close()
-        if client:
-            client.close()
+        client.close()
 
 
 if __name__ == "__main__":
@@ -163,11 +136,4 @@ if __name__ == "__main__":
     load_dotenv()
     # Bytes that are not UTF-8, as a broken IME composition can leave, become U+FFFD.
     sys.stdin.reconfigure(errors="replace")
-    args = sys.argv[1:]
-    asyncio.run(
-        main(
-            os.environ.get("AILOY_MODEL", "anthropic/claude-sonnet-5"),
-            "--noshell" not in args,
-            "--isolated" in args,
-        )
-    )
+    asyncio.run(main(os.environ.get("AILOY_MODEL", "anthropic/claude-sonnet-5")))

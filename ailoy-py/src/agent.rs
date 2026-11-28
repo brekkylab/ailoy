@@ -8,11 +8,10 @@
 //! `AgentBuilder.sandbox` gives the agent a `virtx.Sandbox` (see [`crate::console`]), which
 //! stays the caller's: the agent runs in it over the same client, and never removes it.
 
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use ailoy_runner::{
     agent::{Agent, AgentBuilder, AgentSpec, AgentState, TruncationPolicy},
-    browser::{Browser, UserBrowser},
     datatype::Value,
     message::Message,
     model::ThinkingEffort,
@@ -22,7 +21,6 @@ use futures::{StreamExt as _, stream::BoxStream};
 use pyo3::{
     exceptions::{PyStopAsyncIteration, PyValueError},
     prelude::*,
-    types::PyDict,
 };
 use pyo3_async_runtimes::tokio::{future_into_py, get_runtime};
 use tokio::sync::Mutex;
@@ -65,80 +63,6 @@ impl PyAgentBuilder {
 
 fn built() -> PyErr {
     PyValueError::new_err("this AgentBuilder has already been built")
-}
-
-/// A user browser as Python names it: a name, or a path to any other's user data directory. A
-/// string is a name unless it looks like a path, so a misspelt name is refused, not looked for.
-fn user_browser_of(value: &Bound<'_, PyAny>) -> PyResult<UserBrowser> {
-    if let Ok(name) = value.extract::<String>() {
-        if let Some(named) = UserBrowser::named(&name) {
-            return Ok(named);
-        }
-        if !name.contains(['/', '\\']) {
-            let names: Vec<&str> = UserBrowser::NAMED.iter().map(UserBrowser::name).collect();
-            return Err(PyValueError::new_err(format!(
-                "user_browser is one of {} or a user data directory, not {name:?}",
-                names.join(", ")
-            )));
-        }
-        return Ok(UserBrowser::Custom(name.into()));
-    }
-    let dir: PathBuf = value.extract().map_err(|_| {
-        PyValueError::new_err("user_browser is a browser's name or its user data directory")
-    })?;
-    Ok(UserBrowser::Custom(dir))
-}
-
-/// A browser's options: `AgentBuilder.browser`'s keywords, or the dict `Agent.from_spec` takes.
-struct BrowserOptions<'py> {
-    user_browser: Option<Bound<'py, PyAny>>,
-    careful: Option<bool>,
-    start_url: Option<String>,
-    isolated: Option<bool>,
-    headless: Option<bool>,
-    executable: Option<PathBuf>,
-    profile: Option<PathBuf>,
-}
-
-impl<'py> BrowserOptions<'py> {
-    /// From a dict, where a key left out or `None` is the default.
-    fn from_dict(options: &Bound<'py, PyDict>) -> PyResult<Self> {
-        let item = |key: &str| Ok::<_, PyErr>(options.get_item(key)?.filter(|v| !v.is_none()));
-        Ok(BrowserOptions {
-            user_browser: item("user_browser")?,
-            careful: item("careful")?.map(|v| v.extract()).transpose()?,
-            start_url: item("start_url")?.map(|v| v.extract()).transpose()?,
-            isolated: item("isolated")?.map(|v| v.extract()).transpose()?,
-            headless: item("headless")?.map(|v| v.extract()).transpose()?,
-            executable: item("executable")?.map(|v| v.extract()).transpose()?,
-            profile: item("profile")?.map(|v| v.extract()).transpose()?,
-        })
-    }
-}
-
-fn browser_of(options: BrowserOptions<'_>) -> PyResult<Browser> {
-    let mut browser = if options.isolated.unwrap_or(false) {
-        Browser::isolated()
-    } else {
-        Browser::user()
-    };
-    if let Some(host) = options.user_browser {
-        browser = browser.user_browser(user_browser_of(&host)?);
-    }
-    if options.headless.unwrap_or(false) {
-        browser = browser.headless(true);
-    }
-    if let Some(path) = options.executable {
-        browser = browser.executable(path);
-    }
-    if let Some(dir) = options.profile {
-        browser = browser.profile(dir);
-    }
-    browser = browser.careful(options.careful.unwrap_or(true));
-    if let Some(url) = options.start_url {
-        browser = browser.start_url(url);
-    }
-    Ok(browser)
 }
 
 #[pymethods]
@@ -191,40 +115,11 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.sandbox(sandbox)))
     }
 
-    /// A browser the agent drives with its `browser_*` tools over CDP from this process rather
-    /// than the console. By default the person's own Chromium-based browser with remote
-    /// debugging on (Chrome 144 or later by default), once the person allows it; with
-    /// `isolated`, one of the agent's own, started on first use and closed with the agent: in a
-    /// window unless `headless`, `executable` if given or else a Chromium-based browser installed
-    /// here, on the user data directory `profile` if given or else a fresh one.
-    /// `user_browser` names which of the person's:
-    /// `"chrome"`, `"chrome-beta"`, `"chrome-dev"`, `"chrome-canary"`, `"chromium"`, `"edge"`,
-    /// `"brave"`, or any other by its user data directory (a path); with none, whichever turned
-    /// remote debugging on last. `careful` tells the agent to use sites as a person
-    /// would, so sites checking for bots are less likely to turn it away. `start_url` is the page
-    /// the agent's tab opens on.
-    #[pyo3(signature = (*, user_browser = None, careful = true, start_url = None, isolated = false, headless = false, executable = None, profile = None))]
-    #[allow(clippy::too_many_arguments)]
-    fn browser<'py>(
-        slf: PyRef<'py, Self>,
-        user_browser: Option<Bound<'py, PyAny>>,
-        careful: bool,
-        start_url: Option<String>,
-        isolated: bool,
-        headless: bool,
-        executable: Option<PathBuf>,
-        profile: Option<PathBuf>,
-    ) -> PyResult<PyRef<'py, Self>> {
-        let browser = browser_of(BrowserOptions {
-            user_browser,
-            careful: Some(careful),
-            start_url,
-            isolated: Some(isolated),
-            headless: Some(headless),
-            executable,
-            profile,
-        })?;
-        Self::update(slf, |b| Ok(b.browser(browser)))
+    /// Drive the browser of the sandbox, its `browser` abin, with the `browser` and
+    /// `browser_screenshot` tools. The sandbox has to be made with that abin, a network for pages
+    /// outside it, and 2 GiB or more of memory.
+    fn browser(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
+        Self::update(slf, |b| Ok(b.browser()))
     }
 
     fn skill(slf: PyRef<'_, Self>, dir: String) -> PyResult<PyRef<'_, Self>> {
@@ -340,16 +235,14 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, PyResult<
 #[pymethods]
 impl PyAgent {
     /// An agent from a spec — the dict an `AgentSpec` serializes to — for a caller who holds
-    /// one rather than building it up. `browser` is a dict of `AgentBuilder.browser`'s keywords.
-    /// Awaitable.
+    /// one rather than building it up. Awaitable.
     #[staticmethod]
-    #[pyo3(signature = (spec, *, history = None, sandbox = None, browser = None))]
+    #[pyo3(signature = (spec, *, history = None, sandbox = None))]
     fn from_spec<'py>(
         py: Python<'py>,
         spec: Bound<'py, PyAny>,
         history: Option<Bound<'py, PyAny>>,
         sandbox: Option<Bound<'py, PyAny>>,
-        browser: Option<Bound<'py, PyDict>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let spec: AgentSpec = from_py(&spec, "an agent spec")?;
         let mut state = AgentState::new();
@@ -358,9 +251,6 @@ impl PyAgent {
         }
         if let Some(sandbox) = sandbox {
             state = state.with_sandbox(console::sandbox(&sandbox)?);
-        }
-        if let Some(browser) = browser {
-            state = state.with_browser(browser_of(BrowserOptions::from_dict(&browser)?)?);
         }
         future_into_py(py, async move {
             let agent = Agent::try_with_state(spec, state)
@@ -382,21 +272,6 @@ impl PyAgent {
             .map_err(|_| AiloyError::new_err("this agent is in the middle of a turn"))?;
         let agent = guard.0.as_ref().ok_or_else(closed)?;
         to_py(py, &agent.history())
-    }
-
-    /// Connect the agent's browser now rather than on its first use. This is when the browser asks,
-    /// so call it while the person is at their screen; a refusal raises. A no-op once
-    /// connected. Awaitable; raises during a turn.
-    fn start_browser<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let mut guard = self
-            .agent
-            .clone()
-            .try_lock_owned()
-            .map_err(|_| AiloyError::new_err("this agent is in the middle of a turn"))?;
-        future_into_py(py, async move {
-            let agent = guard.0.as_mut().ok_or_else(closed)?;
-            agent.start_browser().await.map_err(error::anyhow)
-        })
     }
 
     /// Run one turn on `query` — a message dict, or a string as the user's text — and

@@ -1,6 +1,5 @@
 use crate::{
     agent::{Agent, AgentSpec, AgentState, TruncationPolicy},
-    browser::Browser,
     datatype::Value,
     message::Message,
     model::ThinkingEffort,
@@ -93,12 +92,11 @@ impl AgentBuilder {
         self
     }
 
-    /// Give the agent a browser and the `browser_*` tools. The tools reach the
-    /// browser from this process, not from the [`sandbox`](Self::sandbox). Nothing starts until
-    /// the agent first uses it, or [`Agent::start_browser`].
-    pub fn browser(mut self, browser: Browser) -> Self {
+    /// Drive the browser of the [`sandbox`](Self::sandbox), its `browser` abin, with the
+    /// `browser` and `browser_screenshot` tools. The sandbox has to be made with that abin, a
+    /// network for pages outside it, and 2 GiB or more of memory.
+    pub fn browser(mut self) -> Self {
         self.spec.use_browser = true;
-        self.state = self.state.with_browser(browser);
         self
     }
 

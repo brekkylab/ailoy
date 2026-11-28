@@ -7,9 +7,10 @@ use crate::{
     tool::{
         ToolDesc,
         r#impl::{
-            get_apply_patch_tool_desc, get_edit_tool_desc, get_imgread_tool_desc,
-            get_read_file_tool_desc, get_read_tool_desc, get_shell_tool_desc,
-            get_web_fetch_tool_desc, get_web_search_tool_desc, get_write_tool_desc,
+            get_apply_patch_tool_desc, get_browser_screenshot_tool_desc, get_browser_tool_desc,
+            get_edit_tool_desc, get_imgread_tool_desc, get_read_file_tool_desc, get_read_tool_desc,
+            get_shell_tool_desc, get_web_fetch_tool_desc, get_web_search_tool_desc,
+            get_write_tool_desc,
         },
     },
 };
@@ -17,8 +18,9 @@ use crate::{
 /// What makes an agent distinct: its model, instruction and tools.
 ///
 /// Tools are built through the providers set with
-/// [`set_tool_provider`](crate::tool::set_tool_provider). The sandbox and the browser live on
-/// [`AgentState`](super::AgentState); the spec says whether the agent uses them.
+/// [`set_tool_provider`](crate::tool::set_tool_provider). The sandbox lives on
+/// [`AgentState`](super::AgentState); the spec says whether the agent uses it, and a browser in
+/// it.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSpec {
     /// The model's desc, as [`create_lang_model`](crate::model::create_lang_model)
@@ -48,8 +50,8 @@ pub struct AgentSpec {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub use_sandbox: bool,
 
-    /// Whether the agent drives a browser, which its state then has to hold. It brings the
-    /// `browser_*` tools.
+    /// Whether the agent drives the browser of its sandbox, the `browser` abin, which the
+    /// state's sandbox then has to have. It brings the `browser` and `browser_screenshot` tools.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub use_browser: bool,
 
@@ -62,6 +64,11 @@ pub struct AgentSpec {
 /// after it.
 pub(super) fn split_desc(desc: &str) -> (&str, &str) {
     desc.split_once('/').unwrap_or((desc, ""))
+}
+
+/// The tools that drive the sandbox's browser.
+pub(super) fn browser_tool_descs() -> Vec<ToolDesc> {
+    vec![get_browser_tool_desc(), get_browser_screenshot_tool_desc()]
 }
 
 /// The shell and file tools for a sandbox, in the style of the model's org.

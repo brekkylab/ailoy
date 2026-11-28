@@ -1,4 +1,5 @@
 mod apply_patch;
+mod browser;
 mod edit;
 mod imgread;
 mod read;
@@ -11,6 +12,7 @@ mod write;
 use std::sync::Arc;
 
 pub use apply_patch::*;
+pub use browser::*;
 pub use edit::*;
 pub use imgread::*;
 pub use read::*;
@@ -55,6 +57,8 @@ pub fn get_builtin_tool_factories() -> Vec<(&'static str, ToolFactory)> {
     let write = get_write_tool_func();
     let edit = get_edit_tool_func();
     let apply_patch = get_apply_patch_tool_func();
+    let browser = get_browser_tool_func();
+    let browser_screenshot = get_browser_screenshot_tool_func();
 
     vec![
         ("shell", Arc::new(move |_| Ok(shell.clone()))),
@@ -64,6 +68,11 @@ pub fn get_builtin_tool_factories() -> Vec<(&'static str, ToolFactory)> {
         ("write", Arc::new(move |_| Ok(write.clone()))),
         ("edit", Arc::new(move |_| Ok(edit.clone()))),
         ("apply_patch", Arc::new(move |_| Ok(apply_patch.clone()))),
+        ("browser", Arc::new(move |_| Ok(browser.clone()))),
+        (
+            "browser_screenshot",
+            Arc::new(move |_| Ok(browser_screenshot.clone())),
+        ),
         ("web_search", Arc::new(get_web_search_tool_factory())),
         ("web_fetch", Arc::new(get_web_fetch_tool_factory())),
     ]

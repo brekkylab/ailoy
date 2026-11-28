@@ -1,13 +1,11 @@
 ---
 title: "Using a browser"
-description: "Let an agent drive a browser over CDP."
+description: "Let an agent drive the Chromium in its sandbox."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-An agent can drive a browser with its `browser_*` tools: your own, or one of its own. Give it one with `browser(...)` on the `AgentBuilder`. The tools reach the browser from your program over the Chrome DevTools Protocol (CDP), not from the agent's sandbox, so an agent needs no sandbox to browse.
-
-By default the browser is your own (`Browser::user()` in Rust): the Chromium-based browser that turned remote debugging on last, unless you name one. It needs remote debugging on; in Chrome 144 or later, open `chrome://inspect/#remote-debugging` and turn it on. (For a browser of the agent's own, see [A browser of the agent's own](#a-browser-of-the-agents-own).) Then:
+An agent's browser is in its [sandbox](/docs/guides/sandbox/): virtx's `browser` abin, a headless Chromium driven by [agent-browser](https://github.com/vercel-labs/agent-browser). Make the sandbox with that abin and call `browser()` on the `AgentBuilder`; the agent gets the `browser` and `browser_screenshot` tools. The sandbox needs a network for pages outside it, and 2 GiB or more of memory, since Chromium takes a few hundred megabytes.
 
 <Tabs syncKey="lang">
 
@@ -17,17 +15,26 @@ By default the browser is your own (`Browser::user()` in Rust): the Chromium-bas
 import asyncio
 
 from ailoy import AgentBuilder
+from virtx import Client
 
 
 async def main() -> None:
-    agent = await AgentBuilder("anthropic/claude-sonnet-5-5").browser().build()
+    client = Client.spawn()
+    await client.pull_image("python:3.12-slim").complete()
+    sandbox = await client.create_sandbox(
+        "python:3.12-slim", network=True, abins=["browser"], memory_mib=2048
+    )
 
+    agent = await (
+        AgentBuilder("anthropic/claude-sonnet-5-5").sandbox(sandbox).browser().build()
+    )
     async for output in agent.run("Open https://example.com and tell me its title."):
         for part in output["message"]["contents"]:
             if part["type"] == "text":
                 print(part["text"])
 
     await agent.close()
+    await sandbox.remove()
 
 
 asyncio.run(main())
@@ -39,10 +46,18 @@ asyncio.run(main())
 
 ```js
 const { AgentBuilder } = require('@brekkylab/ailoy')
+const { Client } = require('@brekkylab/virtx')
 
 async function main() {
-  const agent = await new AgentBuilder('anthropic/claude-sonnet-5-5').browser().build()
+  const client = Client.spawn()
+  await client.pullImage('python:3.12-slim').complete()
+  const sandbox = await client.createSandbox('python:3.12-slim', {
+    network: true,
+    abins: ['browser'],
+    memoryMib: 2048,
+  })
 
+  const agent = await new AgentBuilder('anthropic/claude-sonnet-5-5').sandbox(sandbox).browser().build()
   try {
     for await (const { message } of agent.run('Open https://example.com and tell me its title.')) {
       for (const part of message.contents) {
@@ -51,6 +66,7 @@ async function main() {
     }
   } finally {
     await agent.close()
+    await sandbox.remove()
   }
 }
 
@@ -62,10 +78,19 @@ main()
 <TabItem label="Rust" icon="seti:rust">
 
 ```rust
-use ailoy::{agent::AgentBuilder, browser::Browser};
+use ailoy::agent::AgentBuilder;
+use virtx::{Client, SandboxCreateArgs};
+
+let client = Client::spawn_virtx([] as [&str; 0]).await?;
+client.pull_image("python:3.12-slim", None).complete(false).await?;
+let mut args = SandboxCreateArgs::new("python:3.12-slim").abin("browser");
+args.network = true;
+args.memory_mib = Some(2048);
+let sandbox = client.create_sandbox(&args).await?;
 
 let mut agent = AgentBuilder::new("anthropic/claude-sonnet-5-5")
-    .browser(Browser::user())
+    .sandbox(sandbox)
+    .browser()
     .build()
     .await?;
 ```
@@ -74,72 +99,17 @@ let mut agent = AgentBuilder::new("anthropic/claude-sonnet-5-5")
 </TabItem>
 </Tabs>
 
-Nothing connects until the agent first uses a browser tool. Then the browser asks you whether to allow it. While it is allowed, Chrome shows that it is being controlled by automated software. The agent opens a window of its own and works there. The browser asks only once for the agent's whole life, because Ailoy keeps one connection to it open.
-
-To connect sooner, say while you are at your screen, call `start_browser()` (`startBrowser()` in Node) between turns. It does nothing once connected. A decline, or remote debugging being off, comes back as an error. `start_url` (`startUrl` in Node, `Browser::start_url` in Rust) is the page the agent's window opens on.
-
-- If you decline, the agent hears so and does not try again in that turn. When your next message asks it to, its next browser tool asks you again.
-- If the browser closes, or you turn remote debugging off, the agent connects again on its next browser tool. The browser asks again, and if the agent's window is gone it gets a new one. The agent is told when this happens.
-- If remote debugging is off, the agent is told how to turn it on, and you can pass that on.
-
-Ailoy finds the browser by the `DevToolsActivePort` file a Chromium-based browser writes in its user data directory while remote debugging is on. By default it looks at Chrome, Chrome Beta, Dev and Canary, Chromium, Edge and Brave, and takes whichever turned remote debugging on last. To name one, pass `user_browser` (`userBrowser` in Node, `Browser::user_browser` in Rust): `"chrome"`, `"chrome-beta"`, `"chrome-dev"`, `"chrome-canary"`, `"chromium"`, `"edge"` or `"brave"`, or any other by its user data directory (a path in Python, `{ userDataDir }` in Node, `UserBrowser::Custom` in Rust).
-
-:::caution
-The agent uses your real browser, signed in wherever you are. Its tools cannot reach your other tabs, but in its own window it can do anything you could. The browser tools' descriptions tell it to ask you before anything that cannot be undone, such as paying, sending or deleting. That is an instruction, though, not a limit, so use your own browser only with an agent and a task you trust.
-:::
-
-## A browser of the agent's own
-
-With `isolated` (`isolated: true` in Node, `Browser::isolated()` in Rust), the agent gets a browser apart from yours: Ailoy starts it on first use and closes it when the agent closes. It needs no remote debugging turned on and asks you nothing.
-
-```python
-agent = await AgentBuilder("anthropic/claude-sonnet-5-5").browser(isolated=True).build()
-```
-
-- It is `executable` if you name one, else a Chromium-based browser installed here: Chrome, Chromium, Edge or Brave, the first found. With none, starting it fails.
-- It runs on a fresh profile that is deleted at the end, so it is signed in nowhere. `profile` keeps a user data directory instead, so sign-ins last from one run to the next.
-- It opens a window, where you can sign in when the agent tells you to. `headless` runs it without one, as on a server; then the agent can only tell you what a site needs.
-- If it closes, the next browser tool starts it again on the same profile, and the agent is told its tabs are gone.
-
-`user_browser` is for your own browser only, and `headless`, `executable` and `profile` for the agent's own; mixing them fails when the agent is built.
+Building the agent fails when it has no sandbox, or a sandbox without the `browser` abin. In a spec, `browser()` is `use_browser`.
 
 ## The tools
 
-Rather than being handed the page at every step, the agent reads it with `browser_snapshot` when it needs to.
-
 | Tool | What it does |
 |---|---|
-| `browser_navigate` | Opens a URL in the current tab, or in a new one with `new_tab`. |
-| `browser_back` | Goes back one page. |
-| `browser_snapshot` | The page as text: first a line on the page as a whole (links, refs, iframes, how much lies above and below, whether it still loads), then its accessibility tree in document order, frames included (those of other sites too). What can be acted on has a ref such as `[ref=e3]`; what is hidden or covered is left out, a box that scrolls says how far, and a select lists its options. `interactive` keeps only what can be acted on, `depth` limits the tree, `selector` keeps one element and what is inside it, `urls` shows where links go. |
-| `browser_click` | Clicks an element by ref, at its middle, by script when something covers it; or at `x` and `y` in the last screenshot. A `<select>` gives its options instead, and a download the click starts is waited for and reported. |
-| `browser_input` | Types into a field by ref a key at a time, clearing it first unless `clear` is false; a date, time or color field is set outright. Says when the field ends up holding something else. |
-| `browser_send_keys` | Presses a key or a shortcut, such as `Enter` or `Control+a`, or types text into what has focus. |
-| `browser_scroll` | Scrolls by pages, the page or inside an element by ref (an iframe's document, or the box under it). |
-| `browser_find_text` | Scrolls to the first element whose text or an attribute holds some text. |
-| `browser_dropdown_options` | Lists a dropdown's options: a `<select>`, an ARIA combobox, menu or listbox, or a Semantic UI dropdown. |
-| `browser_select_dropdown` | Picks a dropdown's option by its text or value, case ignored. |
-| `browser_search_page` | Searches the page's text, like grep, with the text around each match and the element it is in. |
-| `browser_find_elements` | Queries elements by CSS selector, with their text, the attributes asked for and how many children they have. |
-| `browser_evaluate` | Runs JavaScript in the page and returns its value; an image it returns as a data URL is shown as one. |
-| `browser_screenshot` | A picture of the current tab, at most 1280 pixels wide; `browser_click`'s coordinates are its pixels. Old screenshots are capped as in [Images past the cap](/docs/guides/truncation/#images-past-the-cap). |
-| `browser_wait` | Waits for text to appear, or for some seconds. |
-| `browser_dialog` | Accepts or dismisses a confirm, or answers a prompt. An alert is accepted on its own, and the agent is told. |
-| `browser_tabs` | Lists the agent's tabs, by id. |
-| `browser_switch_tab`, `browser_close_tab` | Switches to or closes one of them. |
+| `browser` | Runs one of the abin's commands, given as a list of arguments: `["open", "https://example.com"]`, `["snapshot", "-i"]`, `["click", "@e3"]`, `["fill", "@e2", "text"]`. It answers as `shell` does, with the command's output and exit code. |
+| `browser_screenshot` | The current page as an image, with `full` for its whole height and `annotate` to label each element with its ref. |
 
-With a sandbox, four more tools keep or take a file there. `browser_save_screenshot` and `browser_save_as_pdf` save the current tab in the sandbox as a PNG or a PDF; the PDF is named after the page unless the agent gives a name, with paper, orientation, scale and margins as asked. `browser_upload_file` puts a sandbox file into a file input, the one by ref or the nearest one. `browser_save_download` copies a file the agent's tabs downloaded (up to 512 MiB) into the sandbox. Downloads themselves go where your browser puts them.
+What the commands are is in the abin's `SKILL.md`, which Ailoy lists in the system message as it does every abin's (see [Skills](/docs/guides/skills/)). In short, the agent opens a page, takes a snapshot, the page's accessibility tree with a ref such as `@e3` on what it can act on, acts on a ref, and takes a snapshot again after the page changes.
 
-A ref names the same element while the page shows the same document, and one that appeared since the last snapshot is marked `[new]`; after a navigation the agent takes a new snapshot. Each action reports the page's title and address afterwards, and a tab the page opens becomes the agent's current one.
+Every command uses the same browser, with its tabs, cookies and refs, for as long as the sandbox's machine is up. A machine nothing runs in is parked after a few minutes, and the browser goes with it: the next command answers as a new browser would. The abin's own `state save` and `--state` keep a sign-in past that.
 
-The tools reach only the agent's own tabs: the ones it opened, and those its pages opened.
-
-## Sites that check for bots
-
-Some sites turn away traffic that looks automated, with a robot check or a block. By default the description of `browser_navigate` tells the agent to use sites as a person would: start from a site's home page or search and go through its links and forms rather than typed-in query URLs, act at a person's pace, and never retry in a loop. When a robot check appears anyway, it stops and tells you rather than trying to get around it. To leave this out, pass `careful=False` (`careful: false` in Node, `Browser::careful(false)` in Rust).
-
-Ailoy adds nothing to the agent's system prompt for the browser: what the agent knows of it is in the tools' descriptions.
-
-## When a site needs you
-
-When a site needs something only you can do, such as signing in, a CAPTCHA or a second factor, the agent never asks for your password: it tells you in its reply what to do and ends its turn. Do it in its window, then tell it to go on. It does the same before anything that cannot be undone (see the caution above).
+Screenshots count toward the images the history keeps, as in [Images past the cap](/docs/guides/truncation/#images-past-the-cap).
