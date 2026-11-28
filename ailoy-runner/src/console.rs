@@ -1,6 +1,6 @@
 //! The sandbox a tool runs commands in, and what its tools do with it.
 //!
-//! A tool takes the agent's [`Sandbox`] as virtx makes it. What the built-in tools need beyond
+//! A tool takes the agent's [`Sandbox`] as virtx makes it. What the console tools need beyond
 //! it is here: a command's whole output, and a path as the files API names it.
 
 use futures::StreamExt;

@@ -1,4 +1,4 @@
-use super::largest_fitting;
+use crate::tool::r#impl::largest_fitting;
 use crate::{
     agent::{MAX_TOOL_RESULT_CHARS, fits_tool_result},
     datatype::Value,
@@ -140,7 +140,7 @@ pub fn get_shell_tool_func() -> ToolFunc {
 
 /// Run `argv` in `sandbox` and answer as `shell` does: each stream fitted to one tool result,
 /// the exit code, and whether it timed out or was cut.
-pub(super) async fn exec_result(
+pub(crate) async fn exec_result(
     sandbox: &crate::console::Sandbox,
     argv: Vec<String>,
     timeout_ms: Option<u64>,

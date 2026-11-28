@@ -5,7 +5,7 @@ use scraper::{Html, Selector};
 use wreq::header as rh;
 use wreq_util::Emulation;
 
-use crate::tool::r#impl::builtins::web_search::engine::{
+use crate::tool::r#impl::web::search::engine::{
     SearchEngine, SearchError, SearchResult, SearchResultParser,
 };
 

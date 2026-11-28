@@ -7,18 +7,19 @@ use futures::{
     stream::{BoxStream, FuturesUnordered},
 };
 
-use super::{
-    AgentSpec, AgentState,
-    image::fit_images_off_runtime,
-    skill::render_skills,
-    spec::{browser_tool_names, sandbox_tool_names, split_desc},
-};
+use super::{AgentSpec, AgentState, image::fit_images_off_runtime, skill::render_skills};
 use crate::{
     datatype::Value,
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
     model::{InferLangModel, LangModelOptions, RequestRefused, create_lang_model},
-    tool::{BROWSER_ABIN, ToolDesc, ToolFunc, create_tool},
+    tool::{BROWSER_ABIN, ToolDesc, ToolFunc, browser_tool_names, create_tool, sandbox_tool_names},
 };
+
+/// The org a desc names (`"anthropic"` of `"anthropic/claude-sonnet-5-5"`) and the name
+/// after it.
+fn split_desc(desc: &str) -> (&str, &str) {
+    desc.split_once('/').unwrap_or((desc, ""))
+}
 
 /// Per-part size limit for tool results, past which the middle is cut out.
 pub(crate) const MAX_TOOL_RESULT_CHARS: usize = 30_000;

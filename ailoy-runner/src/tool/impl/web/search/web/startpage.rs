@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use reqwest::Client;
 use scraper::{Html, Selector};
 
-use crate::tool::r#impl::builtins::web_search::engine::{
+use crate::tool::r#impl::web::search::engine::{
     SearchEngine, SearchError, SearchResult, gen_useragent,
 };
 

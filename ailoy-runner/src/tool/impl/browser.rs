@@ -7,7 +7,7 @@ use super::{exec_result, image_mime};
 use crate::{
     datatype::Bytes,
     message::{Message, Part, Role},
-    tool::{ToolDesc, ToolDescBuilder, ToolFunc},
+    tool::{ToolDesc, ToolDescBuilder, ToolFunc, ToolProvider},
     tool_func,
 };
 
@@ -16,6 +16,28 @@ pub const BROWSER_ABIN: &str = "browser";
 
 /// How long one command may take: a page that never settles should not hold the turn.
 const TIMEOUT_MS: u64 = 120_000;
+
+/// `browser` and `browser_screenshot`, over the sandbox's `browser` abin.
+pub struct Browser;
+
+impl ToolProvider for Browser {
+    fn descs(&self) -> Vec<ToolDesc> {
+        vec![get_browser_tool_desc(), get_browser_screenshot_tool_desc()]
+    }
+
+    fn make(&self, name: &str) -> anyhow::Result<ToolFunc> {
+        Ok(match name {
+            "browser" => get_browser_tool_func(),
+            "browser_screenshot" => get_browser_screenshot_tool_func(),
+            _ => anyhow::bail!("'{name}' is no browser tool"),
+        })
+    }
+}
+
+/// The tools a spec using a browser brings.
+pub(crate) fn browser_tool_names() -> Vec<&'static str> {
+    vec!["browser", "browser_screenshot"]
+}
 
 fn error_message(id: String, msg: impl Into<String>) -> Message {
     Message::new(Role::Tool)

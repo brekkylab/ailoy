@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use scraper::{ElementRef, Html, Selector};
 
-use crate::tool::r#impl::builtins::web_search::engine::{SearchEngine, SearchError, SearchResult};
+use crate::tool::r#impl::web::search::engine::{SearchEngine, SearchError, SearchResult};
 
 /// Android Chrome UAs that trigger Google's SSR path. The trailing `NSTNWV`
 /// suffix (added by `random_ua`) identifies the "Google Go" native app.

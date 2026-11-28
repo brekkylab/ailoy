@@ -16,7 +16,6 @@ mod builder;
 mod image;
 mod rt;
 mod skill;
-mod spec;
 mod state;
 
 use std::sync::{LazyLock, RwLock};
@@ -29,14 +28,16 @@ pub use builder::AgentBuilder;
 pub use rt::*;
 pub use state::*;
 
-use crate::tool::Builtins;
+use crate::tool::{Browser, Console, Web};
 
 /// The provider of this process, which an [`Agent`] makes the tools its spec names through. It
-/// starts with every built-in tool.
+/// starts with the console, web and browser tools.
 pub fn default_provider() -> &'static RwLock<AgentProvider> {
     static PROVIDER: LazyLock<RwLock<AgentProvider>> = LazyLock::new(|| {
         let mut provider = AgentProvider::new();
-        provider.set_tool_provider(Builtins::new());
+        provider.set_tool_provider(Console);
+        provider.set_tool_provider(Web::default());
+        provider.set_tool_provider(Browser);
         RwLock::new(provider)
     });
     &PROVIDER

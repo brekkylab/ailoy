@@ -9,7 +9,7 @@ const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 
 /// Sniffs `bytes` for an image type the model can take. `None` when it is not
 /// one of PNG/JPEG/GIF/WEBP.
-pub(super) fn image_mime(bytes: &[u8]) -> Option<&'static str> {
+pub(crate) fn image_mime(bytes: &[u8]) -> Option<&'static str> {
     match infer::get(bytes)?.mime_type() {
         "image/png" => Some("image/png"),
         "image/jpeg" => Some("image/jpeg"),

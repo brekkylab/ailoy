@@ -10,7 +10,7 @@ use url::Url;
 use wreq::{Client, ClientBuilder};
 use wreq_util::Emulation;
 
-use super::largest_fitting;
+use crate::tool::r#impl::largest_fitting;
 use crate::{
     agent::{MAX_TOOL_RESULT_CHARS, fits_tool_result},
     datatype::Value,

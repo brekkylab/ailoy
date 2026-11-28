@@ -1,19 +1,56 @@
-//! The tools a spec brings without naming them: a sandbox's, in the style of the model's org,
-//! and a browser's.
+//! The shell and file tools, which run in the agent's sandbox.
 
-/// The org a desc names (`"anthropic"` of `"anthropic/claude-sonnet-5-5"`) and the name
-/// after it.
-pub(super) fn split_desc(desc: &str) -> (&str, &str) {
-    desc.split_once('/').unwrap_or((desc, ""))
+mod apply_patch;
+mod edit;
+mod imgread;
+mod read;
+mod read_file;
+mod shell;
+mod write;
+
+pub use apply_patch::*;
+pub use edit::*;
+pub use imgread::*;
+pub use read::*;
+pub use read_file::*;
+pub use shell::*;
+pub use write::*;
+
+use crate::tool::{ToolDesc, ToolFunc, ToolProvider};
+
+/// `shell`, `read`, `read_file`, `imgread`, `write`, `edit` and `apply_patch`, in the agent's
+/// sandbox.
+pub struct Console;
+
+impl ToolProvider for Console {
+    fn descs(&self) -> Vec<ToolDesc> {
+        vec![
+            get_shell_tool_desc(),
+            get_read_tool_desc(),
+            get_read_file_tool_desc(),
+            get_imgread_tool_desc(),
+            get_write_tool_desc(),
+            get_edit_tool_desc(),
+            get_apply_patch_tool_desc(),
+        ]
+    }
+
+    fn make(&self, name: &str) -> anyhow::Result<ToolFunc> {
+        Ok(match name {
+            "shell" => get_shell_tool_func(),
+            "read" => get_read_tool_func(),
+            "read_file" => get_read_file_tool_func(),
+            "imgread" => get_imgread_tool_func(),
+            "write" => get_write_tool_func(),
+            "edit" => get_edit_tool_func(),
+            "apply_patch" => get_apply_patch_tool_func(),
+            _ => anyhow::bail!("'{name}' is no console tool"),
+        })
+    }
 }
 
-/// The tools that drive the sandbox's browser.
-pub(super) fn browser_tool_names() -> Vec<&'static str> {
-    vec!["browser", "browser_screenshot"]
-}
-
-/// The shell and file tools for a sandbox, in the style of the model's org.
-pub(super) fn sandbox_tool_names(org: &str) -> Vec<&'static str> {
+/// The console tools a sandbox brings, in the style of the model's org.
+pub(crate) fn sandbox_tool_names(org: &str) -> Vec<&'static str> {
     let mut names = vec!["shell"];
     // GPT reads files through `shell`, as in Codex.
     if org == "openai" {
