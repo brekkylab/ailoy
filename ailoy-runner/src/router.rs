@@ -1,11 +1,13 @@
 use std::{
-    collections::HashSet,
     convert::Infallible,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
 };
 
 use ailoy_core::{
-    agent::{AgentListOutputItem, AgentProvider, AgentPutArgs, Refusal, SessionCreateArgs},
+    agent::{
+        AgentListOutputItem, AgentProvider, AgentPutArgs, AgentState, AppSessionCreateArgs,
+        AppSessionCreateOutput, Refusal, SessionCreateArgs, SessionSandbox,
+    },
     message::Message,
     tool::ToolDesc,
 };
@@ -13,7 +15,7 @@ use axum::{
     Json, Router,
     body::{Body, Bytes},
     extract::{Path, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -23,39 +25,25 @@ use serde_json::json;
 
 use crate::agent::AgentRuntime;
 
-/// What [`router`] serves: the provider, the virtx client its sessions' sandboxes are reached
-/// through, and the sessions with a turn running, as their agent and id.
-struct Served {
-    provider: Arc<RwLock<AgentProvider>>,
-    virtx: Option<virtx::Client>,
-    running: Mutex<HashSet<(String, String)>>,
-}
-
-/// What `provider` serves to the code that runs its agents, `ailoy_core::Client`: the
-/// sessions of each agent kept, and the turns run in them. A session's sandbox is reached
-/// through `virtx`, on the virtx server the caller made it on; without one, only agents that
-/// use no sandbox run.
-pub fn router(provider: Arc<RwLock<AgentProvider>>, virtx: Option<virtx::Client>) -> Router {
-    let served = Arc::new(Served {
-        provider,
-        virtx,
-        running: Mutex::new(HashSet::new()),
-    });
+/// What `provider` serves to an app, `ailoy_core::AppClient`: a session started of an agent
+/// kept, its sandbox made of a virtx package as the app's own credentials let in, and that
+/// session alone reached with the grant it is given. Its paths are none of [`admin_router`]'s,
+/// so one server may serve both merged, or each to its own listener.
+pub fn router(provider: Arc<RwLock<AgentProvider>>) -> Router {
     Router::new()
+        .route("/sessions/", post(create_app_session))
         .route(
-            "/agents/{name}/sessions/",
-            post(create_session).get(list_sessions),
+            "/sessions/{id}",
+            get(get_app_session)
+                .post(run_app)
+                .delete(remove_app_session),
         )
-        .route(
-            "/agents/{name}/sessions/{id}",
-            get(get_session).post(run).delete(remove_session),
-        )
-        .with_state(served)
+        .with_state(provider)
 }
 
-/// What `provider` serves to the code that manages it, `ailoy_core::AdminClient`: the tools
-/// provided and the agents kept. Its paths are none of [`router`]'s, so one server may serve
-/// both merged, or each to its own listener.
+/// What `provider` serves to the code that manages it, `ailoy_core::Client`: the tools
+/// provided, the agents kept, and their sessions, each with the sandbox made for it on the
+/// provider's virtx, as one of its members.
 pub fn admin_router(provider: Arc<RwLock<AgentProvider>>) -> Router {
     Router::new()
         .route("/tools", get(list_tools))
@@ -63,6 +51,14 @@ pub fn admin_router(provider: Arc<RwLock<AgentProvider>>) -> Router {
         .route(
             "/agents/{name}",
             get(get_agent).put(put_agent).delete(remove_agent),
+        )
+        .route(
+            "/agents/{name}/sessions/",
+            post(create_session).get(list_sessions),
+        )
+        .route(
+            "/agents/{name}/sessions/{id}",
+            get(get_session).post(run).delete(remove_session),
         )
         .with_state(provider)
 }
@@ -78,8 +74,25 @@ fn refuse_as(refusal: Refusal) -> Response {
         Refusal::NoAgent(_) | Refusal::NoSession(_) => (StatusCode::NOT_FOUND, "not_found"),
         Refusal::NoTool(_) => (StatusCode::UNPROCESSABLE_ENTITY, "unknown_tool"),
         Refusal::NoModel(_) => (StatusCode::UNPROCESSABLE_ENTITY, "unknown_model"),
+        Refusal::Busy(_) => (StatusCode::CONFLICT, "busy"),
+        Refusal::Sandbox(_) => (StatusCode::UNPROCESSABLE_ENTITY, "unusable"),
     };
     refuse(status, code, refusal.to_string())
+}
+
+/// What virtx did not do in making a session's sandbox, as this server answers it: virtx's own
+/// status and code where it refused, `502` where it failed otherwise.
+fn refuse_virtx(error: virtx::Error) -> Response {
+    let status = (error.status()).and_then(|status| StatusCode::from_u16(status).ok());
+    let code = error.code().unwrap_or("virtx").to_owned();
+    let message = format!("virtx: {error}");
+    refuse(status.unwrap_or(StatusCode::BAD_GATEWAY), &code, message)
+}
+
+/// The bearer token `headers` carry, if they do.
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    let authorization = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    authorization.strip_prefix("Bearer ")
 }
 
 async fn list_tools(State(provider): State<Arc<RwLock<AgentProvider>>>) -> Json<Vec<ToolDesc>> {
@@ -101,7 +114,8 @@ async fn put_agent(
         Ok(args) => args,
         Err(why) => return refuse(StatusCode::BAD_REQUEST, "invalid_args", why),
     };
-    match provider.write().unwrap().put_agent(&name, args) {
+    let put = provider.write().unwrap().put_agent(&name, args);
+    match put {
         Ok(agent) => Json(agent).into_response(),
         Err(refusal) => refuse_as(refusal),
     }
@@ -111,7 +125,8 @@ async fn get_agent(
     State(provider): State<Arc<RwLock<AgentProvider>>>,
     Path(name): Path<String>,
 ) -> Response {
-    match provider.read().unwrap().get_agent(&name) {
+    let agent = provider.read().unwrap().get_agent(&name);
+    match agent {
         Ok(agent) => Json(agent).into_response(),
         Err(refusal) => refuse_as(refusal),
     }
@@ -121,12 +136,44 @@ async fn remove_agent(
     State(provider): State<Arc<RwLock<AgentProvider>>>,
     Path(name): Path<String>,
 ) -> StatusCode {
-    provider.write().unwrap().remove_agent(&name);
+    let sandboxes = provider.write().unwrap().remove_agent(&name);
+    for sandbox in sandboxes {
+        // One already gone is as good as removed.
+        let _ = sandbox.remove().await;
+    }
     StatusCode::NO_CONTENT
 }
 
+/// Refused unless the agent `agent` uses a sandbox exactly when `given` one.
+fn check_sandbox(
+    provider: &RwLock<AgentProvider>,
+    agent: &str,
+    given: bool,
+) -> Result<(), Refusal> {
+    let spec = provider.read().unwrap().get_agent(agent)?.spec;
+    match spec.use_sandbox == given {
+        true => Ok(()),
+        false => Err(Refusal::Sandbox(spec.use_sandbox)),
+    }
+}
+
+/// Keep a session of the agent `agent` that starts with `history` and works in `sandbox`, or
+/// remove the sandbox, where it is refused.
+async fn keep_session(
+    provider: &RwLock<AgentProvider>,
+    agent: &str,
+    history: Vec<Message>,
+    sandbox: Option<virtx::Sandbox>,
+) -> Result<AgentState, Refusal> {
+    let kept = (provider.write().unwrap()).create_session(agent, history, sandbox.clone());
+    if let (Err(_), Some(sandbox)) = (&kept, sandbox) {
+        let _ = sandbox.remove().await;
+    }
+    kept
+}
+
 async fn create_session(
-    State(served): State<Arc<Served>>,
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
     Path(agent): Path<String>,
     body: Bytes,
 ) -> Response {
@@ -134,82 +181,241 @@ async fn create_session(
         Ok(args) => args,
         Err(why) => return refuse(StatusCode::BAD_REQUEST, "invalid_args", why),
     };
-    match served
-        .provider
-        .write()
-        .unwrap()
-        .create_session(&agent, args)
-    {
-        Ok(session) => (StatusCode::CREATED, Json(session)).into_response(),
+    if let Err(refusal) = check_sandbox(&provider, &agent, args.sandbox.is_some()) {
+        return refuse_as(refusal);
+    }
+    let sandbox = match args.sandbox {
+        None => None,
+        Some(how) => {
+            let virtx = provider.read().unwrap().virtx.clone();
+            let Some(virtx) = virtx else {
+                let why = "this server has no virtx to make a sandbox on".to_owned();
+                return refuse(StatusCode::UNPROCESSABLE_ENTITY, "unusable", why);
+            };
+            let made = match how {
+                SessionSandbox::Package(id) => {
+                    let args = virtx::PackageSandboxCreateArgs::default();
+                    let made = virtx.create_package_sandbox(id, &args).await;
+                    made.map(|made| made.sandbox)
+                }
+                SessionSandbox::Create(args) => virtx.create_sandbox(&args).await,
+            };
+            match made {
+                Ok(sandbox) => Some(sandbox),
+                Err(e) => return refuse_virtx(e),
+            }
+        }
+    };
+    match keep_session(&provider, &agent, args.history, sandbox).await {
+        Ok(state) => (StatusCode::CREATED, Json(state)).into_response(),
         Err(refusal) => refuse_as(refusal),
     }
 }
 
-async fn list_sessions(State(served): State<Arc<Served>>, Path(agent): Path<String>) -> Response {
-    match served.provider.read().unwrap().list_sessions(&agent) {
+/// A sandbox made of the package `package` on the virtx server at `url`, as `auth`, an app's own
+/// credentials, lets in; reached with its grant from then on, which reaches nothing else.
+async fn app_sandbox(
+    url: &str,
+    package: &str,
+    auth: virtx::Auth,
+) -> Result<virtx::Sandbox, virtx::Error> {
+    let client = virtx::Client::connect(url, auth, None)?;
+    let args = virtx::PackageSandboxCreateArgs::default();
+    let made = client.create_package_sandbox(package, &args).await?;
+    let Some(token) = made.grant else {
+        let why = "the server gave the sandbox no grant to reach it with";
+        return Err(virtx::Error::Call(virtx::Source::Server, why.into()));
+    };
+    client.set_auth(virtx::Auth::Bearer { token })?;
+    Ok(made.sandbox)
+}
+
+async fn create_app_session(
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let args: AppSessionCreateArgs = match http_over_x::from_body(&body) {
+        Ok(args) => args,
+        Err(why) => return refuse(StatusCode::BAD_REQUEST, "invalid_args", why),
+    };
+    if let Err(refusal) = check_sandbox(&provider, &args.agent, args.package.is_some()) {
+        return refuse_as(refusal);
+    }
+    let sandbox = match &args.package {
+        None => None,
+        Some(package) => {
+            let url = provider.read().unwrap().virtx_url.clone();
+            let Some(url) = url else {
+                let why = "this server makes no sandbox for an app".to_owned();
+                return refuse(StatusCode::UNPROCESSABLE_ENTITY, "unusable", why);
+            };
+            // The app's own credentials, which virtx lets in, or not, to the package.
+            let auth = match bearer(&headers) {
+                Some(token) => virtx::Auth::Bearer {
+                    token: token.to_owned(),
+                },
+                None => virtx::Auth::None,
+            };
+            match app_sandbox(&url, package, auth).await {
+                Ok(sandbox) => Some(sandbox),
+                Err(e) => return refuse_virtx(e),
+            }
+        }
+    };
+    let session = match keep_session(&provider, &args.agent, args.history, sandbox).await {
+        Ok(session) => session,
+        Err(refusal) => return refuse_as(refusal),
+    };
+    let grant = provider
+        .write()
+        .unwrap()
+        .grant_session(&args.agent, &session.id);
+    match grant {
+        Ok(grant) => {
+            let made = AppSessionCreateOutput { session, grant };
+            (StatusCode::CREATED, Json(made)).into_response()
+        }
+        Err(refusal) => refuse_as(refusal),
+    }
+}
+
+/// The agent of the session `id`, where `headers` carry its grant: `401` without a grant this
+/// server gave, `403` with another session's.
+fn granted(
+    provider: &RwLock<AgentProvider>,
+    headers: &HeaderMap,
+    id: &str,
+) -> Result<String, Box<Response>> {
+    let found = bearer(headers).and_then(|grant| provider.read().unwrap().find_grant(grant));
+    match found {
+        Some((agent, session)) if session == id => Ok(agent),
+        Some(_) => {
+            let why = format!("the grant does not reach the session '{id}'");
+            Err(Box::new(refuse(StatusCode::FORBIDDEN, "forbidden", why)))
+        }
+        None => {
+            let why = "no grant this server gave is sent".to_owned();
+            Err(Box::new(refuse(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                why,
+            )))
+        }
+    }
+}
+
+async fn list_sessions(
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
+    Path(agent): Path<String>,
+) -> Response {
+    let sessions = provider.read().unwrap().list_sessions(&agent);
+    match sessions {
         Ok(sessions) => Json(sessions).into_response(),
         Err(refusal) => refuse_as(refusal),
     }
 }
 
-async fn get_session(
-    State(served): State<Arc<Served>>,
-    Path((agent, id)): Path<(String, String)>,
-) -> Response {
-    match served.provider.read().unwrap().get_session(&agent, &id) {
+/// The state of the session `id` of the agent `agent`.
+fn session_state(provider: &RwLock<AgentProvider>, agent: &str, id: &str) -> Response {
+    let session = provider.read().unwrap().get_session(agent, id);
+    match session {
         Ok(session) => Json(session).into_response(),
         Err(refusal) => refuse_as(refusal),
     }
 }
 
-async fn remove_session(
-    State(served): State<Arc<Served>>,
+async fn get_session(
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
     Path((agent, id)): Path<(String, String)>,
-) -> StatusCode {
-    served.provider.write().unwrap().remove_session(&agent, &id);
+) -> Response {
+    session_state(&provider, &agent, &id)
+}
+
+async fn get_app_session(
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    match granted(&provider, &headers, &id) {
+        Ok(agent) => session_state(&provider, &agent, &id),
+        Err(refused) => *refused,
+    }
+}
+
+/// Keep the session `id` of the agent `agent` no longer, and remove its sandbox.
+async fn remove(provider: &RwLock<AgentProvider>, agent: &str, id: &str) -> StatusCode {
+    let sandbox = provider.write().unwrap().remove_session(agent, id);
+    if let Some(sandbox) = sandbox {
+        // One already gone is as good as removed.
+        let _ = sandbox.remove().await;
+    }
     StatusCode::NO_CONTENT
 }
 
-/// Run one turn of the session `id` of the agent `agent` on the query the body holds, and answer
+async fn remove_session(
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
+    Path((agent, id)): Path<(String, String)>,
+) -> StatusCode {
+    remove(&provider, &agent, &id).await
+}
+
+async fn remove_app_session(
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    match granted(&provider, &headers, &id) {
+        Ok(agent) => remove(&provider, &agent, &id).await.into_response(),
+        Err(refused) => *refused,
+    }
+}
+
+async fn run(
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
+    Path((agent, id)): Path<(String, String)>,
+    body: Bytes,
+) -> Response {
+    turn(provider, agent, id, body).await
+}
+
+async fn run_app(
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Response {
+    match granted(&provider, &headers, &id) {
+        Ok(agent) => turn(provider, agent, id, body).await,
+        Err(refused) => *refused,
+    }
+}
+
+/// Run one turn of the session `id` of the agent `agent` on the query `body` holds, and answer
 /// with what it produces as an event stream, one `MessageDeltaOutput` per event. The turn runs on
 /// a task of its own, so it ends, and the session keeps its history, whether or not the stream
 /// is read to its end. A failure partway is an `error` event, `{"error": {"code", "message"}}`.
-async fn run(
-    State(served): State<Arc<Served>>,
-    Path((agent, session)): Path<(String, String)>,
+async fn turn(
+    provider: Arc<RwLock<AgentProvider>>,
+    agent: String,
+    id: String,
     body: Bytes,
 ) -> Response {
     let query: Message = match http_over_x::from_body(&body) {
         Ok(query) => query,
         Err(why) => return refuse(StatusCode::BAD_REQUEST, "invalid_args", why),
     };
-    let (spec, kept) = {
-        let provider = served.provider.read().unwrap();
-        let spec = match provider.get_agent(&agent) {
-            Ok(agent) => agent.spec,
-            Err(refusal) => return refuse_as(refusal),
-        };
-        match provider.get_session(&agent, &session) {
-            Ok(kept) => (spec, kept),
-            Err(refusal) => return refuse_as(refusal),
-        }
+    let begun = provider.write().unwrap().begin_turn(&agent, &id);
+    let (spec, kept, sandbox) = match begun {
+        Ok(begun) => begun,
+        Err(refusal) => return refuse_as(refusal),
     };
-    let key = (agent.clone(), session.clone());
-    if !served.running.lock().unwrap().insert(key.clone()) {
-        let why = format!("the session '{session}' has a turn running");
-        return refuse(StatusCode::CONFLICT, "busy", why);
-    }
-
-    let virtx = served.virtx.as_ref();
-    let mut runtime = match AgentRuntime::try_in(&served.provider, virtx, spec, kept).await {
+    let mut runtime = match AgentRuntime::try_in(&provider, spec, kept.clone(), sandbox).await {
         Ok(runtime) => runtime,
         Err(e) => {
-            served.running.lock().unwrap().remove(&key);
-            return refuse(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "unusable",
-                format!("{e:#}"),
-            );
+            provider.write().unwrap().end_turn(&agent, kept);
+            let why = format!("{e:#}");
+            return refuse(StatusCode::UNPROCESSABLE_ENTITY, "unusable", why);
         }
     };
 
@@ -232,10 +438,8 @@ async fn run(
                 let _ = events.unbounded_send(Ok(event));
             }
         }
-        // A session removed while its turn ran stays removed.
         let kept = runtime.state.clone();
-        let _ = served.provider.write().unwrap().set_session(&key.0, kept);
-        served.running.lock().unwrap().remove(&key);
+        provider.write().unwrap().end_turn(&agent, kept);
         if let Some(failed) = failed {
             let _ = events.unbounded_send(Ok(failed));
         }
@@ -256,7 +460,7 @@ fn event(kind: Option<&str>, data: &impl Serialize) -> Bytes {
 #[cfg(test)]
 mod tests {
     use ailoy_core::{
-        AdminClient, Client,
+        AppClient, Client,
         agent::AgentSpec,
         message::{FinishReason, MessageDeltaOutput, MessageOutput, Part, Role, into_messages},
         model::{InferLangModel, LangModelOptions, ModelKeyProvider},
@@ -284,8 +488,8 @@ mod tests {
         }
     }
 
-    /// The two clients of a provider with `echo`, served in this process.
-    fn clients() -> (AdminClient, Client) {
+    /// A client of a provider with `echo`, served in this process.
+    fn client() -> Client {
         let mut provider = AgentProvider::new();
         provider.tools.set(Echo);
         // Models are never made here: an agent is only kept.
@@ -297,23 +501,20 @@ mod tests {
                 },
             );
         }
-        let provider = Arc::new(RwLock::new(provider));
-        let admin = AdminClient::embed(admin_router(provider.clone()));
-        (admin, Client::embed(router(provider, None)))
+        Client::embed(admin_router(Arc::new(RwLock::new(provider))))
     }
 
-    /// The two clients of a provider that keeps the agent `a`.
-    async fn clients_with_agent() -> (AdminClient, Client) {
-        let (admin, client) = clients();
+    /// A client of a provider that keeps the agent `a`.
+    async fn client_with_agent() -> Client {
+        let client = client();
         let args = AgentPutArgs::new(AgentSpec::new("anthropic"));
-        admin.put_agent("a", &args).await.unwrap();
-        (admin, client)
+        client.put_agent("a", &args).await.unwrap();
+        client
     }
 
     #[tokio::test]
     async fn test_the_tools_provided_are_listed() {
-        let (admin, _) = clients();
-        let tools = admin.list_tool().await.unwrap();
+        let tools = client().list_tool().await.unwrap();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "echo");
         assert_eq!(tools[0].description.as_deref(), Some("Say it back"));
@@ -321,54 +522,53 @@ mod tests {
 
     #[tokio::test]
     async fn test_an_agent_is_put_listed_and_removed() {
-        let (admin, _) = clients();
+        let client = client();
         let spec = AgentSpec::new("anthropic/claude-sonnet-5-5").tool("echo");
         let args = AgentPutArgs::new(spec).model_key_provider(ModelKeyProvider::Client);
 
-        let put = admin.put_agent("image editor", &args).await.unwrap();
+        let put = client.put_agent("image editor", &args).await.unwrap();
         assert_eq!(put.name, "image editor");
         assert_eq!(put.model_key_provider, ModelKeyProvider::Client);
 
-        let got = admin.get_agent("image editor").await.unwrap();
+        let got = client.get_agent("image editor").await.unwrap();
         assert_eq!(got.spec.model, "anthropic/claude-sonnet-5-5");
         assert_eq!(got.spec.tools, ["echo"]);
-        let agents = admin.list_agent().await.unwrap();
+        let agents = client.list_agent().await.unwrap();
         let names: Vec<&str> = agents.iter().map(|agent| agent.name.as_str()).collect();
         assert_eq!(names, ["image editor"]);
 
-        admin.remove_agent("image editor").await.unwrap();
-        assert!(admin.list_agent().await.unwrap().is_empty());
+        client.remove_agent("image editor").await.unwrap();
+        assert!(client.list_agent().await.unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn test_an_agent_put_again_replaces_the_one_there() {
-        let (admin, _) = clients();
+        let client = client();
         let first = AgentPutArgs::new(AgentSpec::new("anthropic"));
         let second = AgentPutArgs::new(AgentSpec::new("openai"));
-        admin.put_agent("a", &first).await.unwrap();
-        admin.put_agent("a", &second).await.unwrap();
+        client.put_agent("a", &first).await.unwrap();
+        client.put_agent("a", &second).await.unwrap();
 
-        let agents = admin.list_agent().await.unwrap();
+        let agents = client.list_agent().await.unwrap();
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].spec.model, "openai");
     }
 
     #[tokio::test]
     async fn test_an_agent_naming_a_tool_nothing_provides_is_refused() {
-        let (admin, _) = clients();
+        let client = client();
         let args = AgentPutArgs::new(AgentSpec::new("anthropic").tools(["echo", "nowhere"]));
-        let error = admin.put_agent("a", &args).await.err().unwrap();
+        let error = client.put_agent("a", &args).await.err().unwrap();
         assert_eq!(error.status(), Some(422));
         assert_eq!(error.code(), Some("unknown_tool"));
         assert!(error.to_string().contains("nowhere"), "{error}");
-        assert!(admin.list_agent().await.unwrap().is_empty());
+        assert!(client.list_agent().await.unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn test_an_agent_of_a_model_nothing_makes_is_refused() {
-        let (admin, _) = clients();
         let args = AgentPutArgs::new(AgentSpec::new("nobody/x"));
-        let error = admin.put_agent("a", &args).await.err().unwrap();
+        let error = client().put_agent("a", &args).await.err().unwrap();
         assert_eq!(error.status(), Some(422));
         assert_eq!(error.code(), Some("unknown_model"));
         assert!(error.to_string().contains("nobody"), "{error}");
@@ -376,21 +576,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_an_agent_not_kept_is_refused() {
-        let (admin, _) = clients();
-        let error = admin.get_agent("none").await.err().unwrap();
+        let error = client().get_agent("none").await.err().unwrap();
         assert_eq!(error.status(), Some(404));
         assert_eq!(error.code(), Some("not_found"));
     }
 
     #[tokio::test]
     async fn test_removing_an_agent_not_kept_does_nothing() {
-        let (admin, _) = clients();
-        admin.remove_agent("none").await.unwrap();
+        client().remove_agent("none").await.unwrap();
     }
 
     #[tokio::test]
     async fn test_a_session_is_started_listed_and_removed() {
-        let (_admin, client) = clients_with_agent().await;
+        let client = client_with_agent().await;
         let hello = Message::new(Role::User).with_contents([Part::text("hello")]);
 
         let empty = client
@@ -422,7 +620,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_a_session_of_an_agent_not_kept_is_refused() {
-        let (_admin, client) = clients();
+        let client = client();
         let args = SessionCreateArgs::new();
         let error = client.create_session("none", &args).await.err().unwrap();
         assert_eq!(error.status(), Some(404));
@@ -433,32 +631,59 @@ mod tests {
 
     #[tokio::test]
     async fn test_sessions_stay_when_their_agent_is_put_again() {
-        let (admin, client) = clients_with_agent().await;
+        let client = client_with_agent().await;
         let session = client
             .create_session("a", &SessionCreateArgs::new())
             .await
             .unwrap();
 
         let args = AgentPutArgs::new(AgentSpec::new("openai"));
-        admin.put_agent("a", &args).await.unwrap();
+        client.put_agent("a", &args).await.unwrap();
         let state = client.get_session("a", &session.id).await.unwrap();
         assert_eq!(state.id, session.id);
     }
 
     #[tokio::test]
     async fn test_sessions_go_with_their_agent() {
-        let (admin, client) = clients_with_agent().await;
+        let client = client_with_agent().await;
         let session = client
             .create_session("a", &SessionCreateArgs::new())
             .await
             .unwrap();
 
-        admin.remove_agent("a").await.unwrap();
+        client.remove_agent("a").await.unwrap();
         let args = AgentPutArgs::new(AgentSpec::new("anthropic"));
-        admin.put_agent("a", &args).await.unwrap();
+        client.put_agent("a", &args).await.unwrap();
         assert!(client.list_session("a").await.unwrap().is_empty());
         let error = client.get_session("a", &session.id).await.err().unwrap();
         assert_eq!(error.status(), Some(404));
+    }
+
+    /// A session has a sandbox exactly when its agent's spec uses one, and one is made on the
+    /// provider's virtx alone.
+    #[tokio::test]
+    async fn test_a_session_has_a_sandbox_as_its_spec_uses_one() {
+        let client = client();
+        let spec = AgentSpec::new("anthropic").sandbox();
+        client
+            .put_agent("s", &AgentPutArgs::new(spec))
+            .await
+            .unwrap();
+        let error = (client.create_session("s", &SessionCreateArgs::new()).await)
+            .err()
+            .unwrap();
+        assert_eq!(error.status(), Some(422));
+        assert_eq!(error.code(), Some("unusable"));
+
+        let args = SessionCreateArgs::new().sandbox(SessionSandbox::Package("p".into()));
+        let error = client.create_session("s", &args).await.err().unwrap();
+        assert_eq!(error.status(), Some(422));
+        assert!(error.to_string().contains("no virtx"), "{error}");
+
+        let client = client_with_agent().await;
+        let error = client.create_session("a", &args).await.err().unwrap();
+        assert_eq!(error.status(), Some(422));
+        assert!(error.to_string().contains("uses none"), "{error}");
     }
 
     /// Answers `pong`, after a pause if `slow`, or fails, whatever it is asked.
@@ -501,18 +726,10 @@ mod tests {
         }
     }
 
-    /// A client of a provider whose `parrot` org's models are [`Parrot`]s, failing ones under
-    /// `parrot/fails` and slow ones under `parrot/slow`, and whose agent `p` runs `model`, with a
-    /// session started.
-    async fn parrot_session(model: &str) -> (Client, String) {
-        parrot_session_of(AgentSpec::new(model), None).await
-    }
-
-    /// As [`parrot_session`], of the agent `spec`, the session working in `sandbox`.
-    async fn parrot_session_of(
-        spec: AgentSpec,
-        sandbox: Option<&virtx::Sandbox>,
-    ) -> (Client, String) {
+    /// A provider whose `parrot` org's models are [`Parrot`]s, failing ones under
+    /// `parrot/fails` and slow ones under `parrot/slow`, whose agent `p` is of `spec`, and whose
+    /// sandboxes are made through `virtx`.
+    fn parrots(spec: AgentSpec, virtx: Option<virtx::Client>) -> Arc<RwLock<AgentProvider>> {
         let mut provider = AgentProvider::new();
         provider.models.set(
             "parrot",
@@ -525,13 +742,15 @@ mod tests {
         );
         // The tools a sandbox brings.
         provider.tools.set(crate::tool::Console);
+        provider.virtx = virtx;
         provider.put_agent("p", AgentPutArgs::new(spec)).unwrap();
-        let virtx = sandbox.map(|sandbox| sandbox.client().clone());
-        let client = Client::embed(router(Arc::new(RwLock::new(provider)), virtx));
-        let mut args = SessionCreateArgs::new();
-        if let Some(sandbox) = sandbox {
-            args = args.sandbox_id(sandbox.id());
-        }
+        Arc::new(RwLock::new(provider))
+    }
+
+    /// A client of [`parrots`] whose agent `p` runs `model`, with a session started.
+    async fn parrot_session(model: &str) -> (Client, String) {
+        let client = Client::embed(admin_router(parrots(AgentSpec::new(model), None)));
+        let args = SessionCreateArgs::new();
         let session = client.create_session("p", &args).await.unwrap();
         (client, session.id)
     }
@@ -555,17 +774,29 @@ mod tests {
         assert_eq!(roles, [Role::User, Role::Assistant]);
     }
 
-    /// An agent that works in a sandbox runs in the one its session names, the caller's.
+    /// A session's sandbox is made for it on the provider's virtx, its turns work in it, and it
+    /// goes with the session.
     #[tokio::test]
-    async fn test_a_turn_works_in_the_sandbox_its_session_names() {
-        let sandbox = crate::test_sandbox().await;
-        let spec = AgentSpec::new("parrot/x").sandbox();
-        let (client, id) = parrot_session_of(spec, Some(&sandbox)).await;
-        let outcomes: Vec<_> = client.run_stream("p", &id, &ping()).collect().await;
+    async fn test_a_session_works_in_the_sandbox_made_for_it_until_it_goes() {
+        let virtx = crate::test_sandbox().await.client().clone();
+        let provider = parrots(AgentSpec::new("parrot/x").sandbox(), Some(virtx.clone()));
+        let client = Client::embed(admin_router(provider));
+        let mut made = virtx::SandboxCreateArgs::new("python:3.12-slim");
+        made.memory_mib = Some(1024);
+        let args = SessionCreateArgs::new().sandbox(SessionSandbox::Create(made));
+        let session = client.create_session("p", &args).await.unwrap();
+        let sandbox = session.sandbox_id.clone().unwrap();
+        assert!(virtx.get_sandbox(&sandbox).await.is_ok());
+
+        let outcomes: Vec<_> = client.run_stream("p", &session.id, &ping()).collect().await;
         assert!(outcomes.iter().all(Result::is_ok), "{outcomes:?}");
-        let state = client.get_session("p", &id).await.unwrap();
-        assert_eq!(state.sandbox_id.as_deref(), Some(sandbox.id()));
+        let state = client.get_session("p", &session.id).await.unwrap();
+        assert_eq!(state.sandbox_id.as_deref(), Some(sandbox.as_str()));
         assert_eq!(state.history.len(), 2);
+
+        client.remove_session("p", &session.id).await.unwrap();
+        let gone = virtx.get_sandbox(&sandbox).await.err().unwrap();
+        assert_eq!(gone.status(), Some(404));
     }
 
     #[tokio::test]
@@ -600,8 +831,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_a_turn_of_an_agent_that_cannot_be_made_is_refused() {
-        // It works in a sandbox, and its session names none.
-        let (client, id) = parrot_session_of(AgentSpec::new("parrot/x").sandbox(), None).await;
+        // It drives a browser, and its session has no sandbox to have one in.
+        let mut spec = AgentSpec::new("parrot/x");
+        spec.use_browser = true;
+        let client = Client::embed(admin_router(parrots(spec, None)));
+        let args = SessionCreateArgs::new();
+        let id = client.create_session("p", &args).await.unwrap().id;
         let outcomes: Vec<_> = client.run_stream("p", &id, &ping()).collect().await;
         let error = outcomes[0].as_ref().err().unwrap();
         assert_eq!(error.status(), Some(422));
@@ -611,14 +846,86 @@ mod tests {
         assert_eq!(outcomes[0].as_ref().err().unwrap().code(), Some("unusable"));
     }
 
+    /// An app's session runs its turns and goes with its grant alone.
+    #[tokio::test]
+    async fn test_an_app_reaches_its_session_and_removes_it() {
+        let provider = parrots(AgentSpec::new("parrot/x"), None);
+        let client = Client::embed(admin_router(provider.clone()));
+        let args = AppSessionCreateArgs::new("p");
+        let app = AppClient::embed(router(provider), &args).await.unwrap();
+
+        let outcomes: Vec<_> = app.run_stream(&ping()).collect().await;
+        assert!(outcomes.iter().all(Result::is_ok), "{outcomes:?}");
+        let state = app.get_session().await.unwrap();
+        assert_eq!(state.history.len(), 2);
+        assert_eq!(
+            client
+                .get_session("p", app.id())
+                .await
+                .unwrap()
+                .history
+                .len(),
+            2
+        );
+
+        let id = app.id().to_owned();
+        app.close().await.unwrap();
+        let error = client.get_session("p", &id).await.err().unwrap();
+        assert_eq!(error.status(), Some(404));
+    }
+
+    /// A session is reached with its own grant, and with none or another's is refused.
+    #[tokio::test]
+    async fn test_an_app_session_is_reached_with_its_own_grant_alone() {
+        let served = router(parrots(AgentSpec::new("parrot/x"), None));
+        let raw = http_over_x::Client::embed(served);
+        let args = AppSessionCreateArgs::new("p");
+        let mine: AppSessionCreateOutput = raw.post("/sessions/", &args).await.unwrap();
+        let theirs: AppSessionCreateOutput = raw.post("/sessions/", &args).await.unwrap();
+
+        let path = format!("/sessions/{}", theirs.session.id);
+        let error = raw.get::<AgentState>(&path).await.err().unwrap();
+        assert_eq!(error.status(), Some(401));
+        let grant = format!("Bearer {}", mine.grant).parse().unwrap();
+        raw.set_header(header::AUTHORIZATION, Some(grant));
+        let error = raw.get::<AgentState>(&path).await.err().unwrap();
+        assert_eq!(error.status(), Some(403));
+        let path = format!("/sessions/{}", mine.session.id);
+        let state: AgentState = raw.get(&path).await.unwrap();
+        assert_eq!(state.id, mine.session.id);
+    }
+
+    /// An app's session of an agent that uses a sandbox names a package, which a server
+    /// without a virtx URL, as over stdio, makes none of.
+    #[tokio::test]
+    async fn test_an_app_session_needs_a_package_where_its_agent_uses_a_sandbox() {
+        let provider = parrots(AgentSpec::new("parrot/x").sandbox(), None);
+        let args = AppSessionCreateArgs::new("p");
+        let error = AppClient::embed(router(provider.clone()), &args).await;
+        let error = error.err().unwrap();
+        assert_eq!(error.status(), Some(422));
+        assert!(error.to_string().contains("uses a sandbox"), "{error}");
+
+        let args = args.package("somewhere");
+        let error = AppClient::embed(router(provider), &args)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error.status(), Some(422));
+        assert!(
+            error.to_string().contains("no sandbox for an app"),
+            "{error}"
+        );
+    }
+
     /// Each router serves its own client's paths and none of the other's.
     #[tokio::test]
     async fn test_the_routers_share_no_path() {
-        let provider = Arc::new(RwLock::new(AgentProvider::new()));
-        let admin = AdminClient::embed(router(provider.clone(), None));
-        assert_eq!(admin.list_agent().await.err().unwrap().status(), Some(404));
-        let client = Client::embed(admin_router(provider));
-        let error = client.list_session("a").await.err().unwrap();
-        assert_eq!(error.status(), Some(404));
+        let provider = parrots(AgentSpec::new("parrot/x"), None);
+        let client = Client::embed(router(provider.clone()));
+        assert_eq!(client.list_agent().await.err().unwrap().status(), Some(404));
+        let args = AppSessionCreateArgs::new("p");
+        let error = AppClient::embed(admin_router(provider), &args).await;
+        assert_eq!(error.err().unwrap().status(), Some(404));
     }
 }

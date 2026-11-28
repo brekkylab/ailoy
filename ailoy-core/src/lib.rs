@@ -5,8 +5,8 @@
 //! runs a tool: its provider's trait and `ToolFunc`. An [`AgentProvider`](agent::AgentProvider)
 //! holds the tools a spec names, and the agents kept by name, each with its sessions.
 //!
-//! The data is always built. `Client` and `AdminClient`, which ask a server for what it keeps
-//! and runs, are the `client` feature; reaching a server in this process is `embed`.
+//! The data is always built. `Client` and `AppClient`, which ask a server for what it keeps and
+//! runs, are the `client` feature; reaching a server in this process is `embed`.
 
 pub mod agent;
 #[cfg(feature = "client")]
@@ -17,7 +17,7 @@ pub mod model;
 pub mod tool;
 
 #[cfg(feature = "client")]
-pub use client::{AdminClient, Client};
+pub use client::{AppClient, Client};
 #[cfg(feature = "client")]
 pub use http_over_x::{Auth, Error};
 

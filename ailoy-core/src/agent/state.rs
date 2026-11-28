@@ -17,8 +17,8 @@ pub struct AgentState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_tokens: Option<u64>,
 
-    /// The id of the sandbox the agent works in, one the caller made, on the virtx server
-    /// where the agent runs reaches; none, for an agent without one.
+    /// The id of the sandbox the agent works in, on the virtx server where it runs; none, for an
+    /// agent without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox_id: Option<String>,
 }
@@ -44,12 +44,6 @@ impl AgentState {
         self.history = history.into_iter().collect();
         self
     }
-
-    /// Work in the sandbox `id`.
-    pub fn with_sandbox_id(mut self, id: impl Into<String>) -> Self {
-        self.sandbox_id = Some(id.into());
-        self
-    }
 }
 
 /// What starting a session takes: `POST /agents/{name}/sessions/`'s body.
@@ -59,10 +53,10 @@ pub struct SessionCreateArgs {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<Message>,
 
-    /// The sandbox the session works in, by its id: one the caller made, which stays the
-    /// caller's. A session of an agent whose spec uses a sandbox needs one.
+    /// What the server makes the session's sandbox of, which goes with the session. A session of
+    /// an agent whose spec uses a sandbox needs one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sandbox_id: Option<String>,
+    pub sandbox: Option<SessionSandbox>,
 }
 
 impl SessionCreateArgs {
@@ -76,10 +70,69 @@ impl SessionCreateArgs {
         self
     }
 
-    pub fn sandbox_id(mut self, id: impl Into<String>) -> Self {
-        self.sandbox_id = Some(id.into());
+    pub fn sandbox(mut self, sandbox: SessionSandbox) -> Self {
+        self.sandbox = Some(sandbox);
         self
     }
+}
+
+/// What a session's sandbox is made of, on the server's virtx: `{"package": "<id>"}` or
+/// `{"create": <args>}`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionSandbox {
+    /// The virtx package of this id, which virtx counts the sandbox under.
+    Package(String),
+    /// These args, as virtx's `POST /sandboxes/` takes them.
+    Create(#[schemars(with = "serde_json::Value")] virtx::SandboxCreateArgs),
+}
+
+/// What an app starting a session takes: `POST /sessions/`'s body.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct AppSessionCreateArgs {
+    /// The agent the session is of, by the name it is kept under.
+    pub agent: String,
+
+    /// The history the session's state starts with; empty, unless given.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<Message>,
+
+    /// The id of the virtx package the session's sandbox is made of, as the app's own
+    /// credentials let it: virtx refuses an app its package does not let in, or one past its
+    /// limits. A session of an agent whose spec uses a sandbox needs one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+}
+
+impl AppSessionCreateArgs {
+    /// A session of the agent `agent` that starts with an empty history.
+    pub fn new(agent: impl Into<String>) -> Self {
+        Self {
+            agent: agent.into(),
+            history: Vec::new(),
+            package: None,
+        }
+    }
+
+    pub fn history(mut self, history: impl IntoIterator<Item = Message>) -> Self {
+        self.history.extend(history);
+        self
+    }
+
+    pub fn package(mut self, id: impl Into<String>) -> Self {
+        self.package = Some(id.into());
+        self
+    }
+}
+
+/// A session an app started: `POST /sessions/`'s answer.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct AppSessionCreateOutput {
+    /// Its state, whose id, made by the server, the session is known by.
+    pub session: AgentState,
+
+    /// The token that reaches this session alone, sent as `Authorization: Bearer <grant>`.
+    pub grant: String,
 }
 
 /// A session of an agent, as the server lists it.

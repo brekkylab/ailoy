@@ -1,64 +1,69 @@
 //! Agents that drive a language model through tool-augmented turns, in a virtx console.
 //!
 //! An [`Agent`] is reached over HTTP, from a server in this process that serves the
-//! [`default_provider`](agent::default_provider): its model and tools are made there, and its
-//! turns run there. What is set on that provider, a tool of this process or a model of its own,
-//! is what the agent gets. The data an agent is made of and says is `ailoy-core`'s, shown here
-//! at the same paths as `ailoy-runner`'s modules.
+//! [`default_provider`](agent::default_provider): its model and tools are made there, its
+//! sandbox is made there on the provider's `virtx`, and its turns run there. What is set on that
+//! provider, a tool of this process, a model of its own or the virtx client, is what the agent
+//! gets. The data an agent is made of and says is `ailoy-core`'s, shown here at the same paths
+//! as `ailoy-runner`'s modules.
 
 pub use ailoy_core::Error;
 use ailoy_core::{
-    AdminClient, Client,
-    agent::{AgentPutArgs, AgentSpec, SessionCreateArgs},
+    Client,
+    agent::{AgentPutArgs, AgentSpec, SessionCreateArgs, SessionSandbox},
     message::{Message, MessageDeltaOutput, MessageOutput, into_messages},
 };
 pub use ailoy_runner::{agent, console, datatype, message, model, to_value, tool, tool_func};
 use futures::{Stream, StreamExt as _};
 
-/// An agent of a spec, with one session: what it says and does in each turn, and the history it
-/// keeps between turns, are the server's.
+/// An agent of a spec, with one session: what it says and does in each turn, the history it
+/// keeps between turns, and the sandbox it works in, are the server's.
 pub struct Agent {
-    admin: AdminClient,
     client: Client,
     /// The name the agent is kept under, made for it.
     name: String,
     /// Its session's id.
     session: String,
+    /// The id of the sandbox made for its session, if its spec uses one.
+    sandbox_id: Option<String>,
 }
 
 impl Agent {
-    /// An agent of `spec`, whose session starts with `history` and works in `sandbox`, which
-    /// stays the caller's. Refused when the spec names a model or a tool nothing provides. Must
-    /// be called inside a tokio runtime.
+    /// An agent of `spec`, whose session starts with `history` and works in a sandbox made as
+    /// `sandbox` says, on the provider's virtx: given exactly when the spec uses one. Refused
+    /// when the spec names a model or a tool nothing provides, and as virtx refuses making the
+    /// sandbox. Must be called inside a tokio runtime.
     pub async fn from_spec(
         spec: AgentSpec,
         history: Vec<Message>,
-        sandbox: Option<&virtx::Sandbox>,
+        sandbox: Option<SessionSandbox>,
     ) -> Result<Self, Error> {
         let provider = agent::default_provider().clone();
-        let virtx = sandbox.map(|sandbox| sandbox.client().clone());
-        let admin = AdminClient::embed(ailoy_runner::admin_router(provider.clone()));
-        let client = Client::embed(ailoy_runner::router(provider, virtx));
+        let client = Client::embed(ailoy_runner::admin_router(provider));
 
         let name = uuid::Uuid::new_v4().to_string();
-        admin.put_agent(&name, &AgentPutArgs::new(spec)).await?;
+        client.put_agent(&name, &AgentPutArgs::new(spec)).await?;
         let mut args = SessionCreateArgs::new().history(history);
-        if let Some(sandbox) = sandbox {
-            args = args.sandbox_id(sandbox.id());
-        }
+        args.sandbox = sandbox;
         let session = match client.create_session(&name, &args).await {
-            Ok(session) => session.id,
+            Ok(session) => session,
             Err(e) => {
-                admin.remove_agent(&name).await.ok();
+                client.remove_agent(&name).await.ok();
                 return Err(e);
             }
         };
         Ok(Self {
-            admin,
             client,
             name,
-            session,
+            session: session.id,
+            sandbox_id: session.sandbox_id,
         })
+    }
+
+    /// The id of the sandbox made for the agent, on the provider's virtx, where a client of it
+    /// reaches the sandbox's files.
+    pub fn sandbox_id(&self) -> Option<&str> {
+        self.sandbox_id.as_deref()
     }
 
     /// Run one turn on `query`, and stream what it produces: the model's output as it is
@@ -86,12 +91,9 @@ impl Agent {
         Ok(session.history)
     }
 
-    /// Let go of the agent and its session, on the server. Its sandbox stays the caller's.
+    /// Let go of the agent and its session, on the server, and remove its sandbox.
     pub async fn close(&self) -> Result<(), Error> {
-        self.client
-            .remove_session(&self.name, &self.session)
-            .await?;
-        self.admin.remove_agent(&self.name).await
+        self.client.remove_agent(&self.name).await
     }
 }
 
@@ -173,5 +175,45 @@ mod tests {
             .err()
             .unwrap();
         assert_eq!(error.code(), Some("unknown_model"));
+    }
+
+    #[tokio::test]
+    async fn test_an_agent_using_a_sandbox_is_refused_one_not_given() {
+        let spec = AgentSpec::new("anthropic").sandbox();
+        let error = Agent::from_spec(spec, Vec::new(), None)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error.code(), Some("unusable"));
+    }
+
+    /// The sandbox is made for the agent on the provider's virtx, and goes with it.
+    #[tokio::test]
+    async fn test_an_agent_s_sandbox_is_made_for_it_and_goes_with_it() {
+        const IMAGE: &str = "python:3.12-slim";
+        let virtx = virtx::Client::spawn_virtx([] as [&str; 0]).await.unwrap();
+        virtx.pull_image(IMAGE, None).complete(false).await.unwrap();
+        {
+            let mut provider = agent::default_provider().write().unwrap();
+            provider.virtx = Some(virtx.clone());
+            provider.models.set(
+                "sandboxed-parrot",
+                |_: &str, _: Option<&str>| -> anyhow::Result<Arc<dyn InferLangModel>> {
+                    Ok(Arc::new(Parrot))
+                },
+            );
+        }
+
+        let spec = AgentSpec::new("sandboxed-parrot/x").sandbox();
+        let mut made = virtx::SandboxCreateArgs::new(IMAGE);
+        made.memory_mib = Some(1024);
+        let sandbox = Some(SessionSandbox::Create(made));
+        let agent = Agent::from_spec(spec, Vec::new(), sandbox).await.unwrap();
+        let id = agent.sandbox_id().unwrap().to_owned();
+        assert!(virtx.get_sandbox(&id).await.is_ok());
+
+        agent.close().await.unwrap();
+        let gone = virtx.get_sandbox(&id).await.err().unwrap();
+        assert_eq!(gone.status(), Some(404));
     }
 }

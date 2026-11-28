@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::console::Sandbox;
-use anyhow::{Context as _, bail};
+use anyhow::bail;
 use futures::{
     FutureExt as _, StreamExt as _,
     stream::{BoxStream, FuturesUnordered},
@@ -40,7 +40,7 @@ const CUT_OFF: &str = "the model's reply was cut off at its output limit";
 ///
 /// Pairs an [`AgentSpec`] (model + instruction + tools) with an [`AgentState`] (history and the
 /// id of the sandbox it works in), holding the model and tools built from the spec and the
-/// sandbox reached by that id.
+/// sandbox it is given.
 /// [`run`](Self::run) streams one turn, calling tools until the model answers, and appends
 /// every message to the history.
 pub struct AgentRuntime {
@@ -56,7 +56,7 @@ pub struct AgentRuntime {
 
     pub state: AgentState,
 
-    /// The sandbox `state.sandbox_id` names, which the sandbox tools run in.
+    /// The sandbox it works in, `state.sandbox_id`, which the sandbox tools run in.
     sandbox: Option<Sandbox>,
 }
 
@@ -66,24 +66,23 @@ impl AgentRuntime {
         Self::try_with_state(spec, AgentState::new(), None).await
     }
 
-    /// Create an agent with `state`, made through the
+    /// Create an agent with `state`, working in `sandbox`, made through the
     /// [`default_provider`](super::default_provider). See [`try_in`](Self::try_in).
     pub async fn try_with_state(
         spec: AgentSpec,
         state: AgentState,
-        virtx: Option<&virtx::Client>,
+        sandbox: Option<Sandbox>,
     ) -> anyhow::Result<Self> {
-        Self::try_in(super::default_provider(), virtx, spec, state).await
+        Self::try_in(super::default_provider(), spec, state, sandbox).await
     }
 
-    /// Create an agent with `state`, its model and tools made through `provider`, and its
-    /// sandbox, `state.sandbox_id`, reached through `virtx`. The sandbox stays the caller's: the
-    /// agent neither makes nor removes one.
+    /// Create an agent with `state`, its model and tools made through `provider`, working in
+    /// `sandbox`, whose id `state` then holds. The agent neither makes nor removes a sandbox.
     ///
     /// The model is built from `spec.model` through the `models` of `provider`, and each of
     /// `spec.tools` through its `tools`; [`AgentSpec::use_sandbox`] and
-    /// [`AgentSpec::use_browser`] bring their tools too. `state` has to hold a sandbox exactly
-    /// when the spec uses one, and for a browser, a sandbox with the `browser` abin. Unless
+    /// [`AgentSpec::use_browser`] bring their tools too. A sandbox has to be given exactly when
+    /// the spec uses one, and for a browser, a sandbox with the `browser` abin. Unless
     /// `state.history` already has a [`Role::System`] message, one built from
     /// `spec.instruction`, [`AgentSpec::skills`] and the skills of the sandbox's abins is put
     /// first.
@@ -91,31 +90,26 @@ impl AgentRuntime {
     /// Async because the model may be looked up and skills are read through the sandbox.
     pub async fn try_in(
         provider: &RwLock<AgentProvider>,
-        virtx: Option<&virtx::Client>,
         spec: AgentSpec,
         mut state: AgentState,
+        sandbox: Option<Sandbox>,
     ) -> anyhow::Result<Self> {
         // Taken out of the lock before it is awaited.
         let model = provider.read().unwrap().models.create(&spec.model)?;
         let model = model.await?;
 
-        let sandbox = match (spec.use_sandbox, &state.sandbox_id) {
-            (true, Some(id)) => {
-                let virtx = virtx
-                    .context("the spec uses a sandbox, and no virtx client is given to reach it")?;
-                Some(virtx.get_sandbox(id).await?)
-            }
-            (true, None) => bail!("the spec uses a sandbox, and the state has none"),
-            (false, Some(_)) => bail!("the state has a sandbox, and the spec does not use one"),
-            (false, None) => None,
-        };
+        match (spec.use_sandbox, &sandbox) {
+            (true, None) => bail!("the spec uses a sandbox, and none is given"),
+            (false, Some(_)) => bail!("a sandbox is given, and the spec uses none"),
+            _ => state.sandbox_id = sandbox.as_ref().map(|sandbox| sandbox.id().to_owned()),
+        }
         if spec.use_browser {
             let has_abin = sandbox.as_ref().is_some_and(|sandbox| {
                 sandbox.info().abins.iter().any(|abin| abin == BROWSER_ABIN)
             });
             if !has_abin {
                 bail!(
-                    "the spec uses a browser, which is the sandbox's `{BROWSER_ABIN}` abin, and the state has no sandbox with it"
+                    "the spec uses a browser, which is the sandbox's `{BROWSER_ABIN}` abin, and no sandbox with it is given"
                 );
             }
         }
@@ -1138,10 +1132,10 @@ mod tests {
         let (_, spec) = scripted("test-agent-sandbox", []);
         let spec = spec.sandbox();
         let sandbox = crate::test_sandbox().await;
-        let state = AgentState::new().with_sandbox_id(sandbox.id());
-        let agent = AgentRuntime::try_with_state(spec, state, Some(sandbox.client()))
+        let agent = AgentRuntime::try_with_state(spec, AgentState::new(), Some(sandbox.clone()))
             .await
             .unwrap();
+        assert_eq!(agent.state.sandbox_id.as_deref(), Some(sandbox.id()));
         assert!(agent.tool_descs.iter().any(|t| t.name == "shell"));
         assert!(!agent.spec().tools.contains(&"shell".to_owned()));
 
@@ -1162,8 +1156,8 @@ mod tests {
             .await
             .expect("making a sandbox with the index abin");
         let (_, spec) = scripted("test-agent-abins", []);
-        let state = AgentState::new().with_sandbox_id(with_abin.id());
-        let agent = AgentRuntime::try_with_state(spec.sandbox(), state, Some(with_abin.client()))
+        let state = AgentState::new();
+        let agent = AgentRuntime::try_with_state(spec.sandbox(), state, Some(with_abin.clone()))
             .await
             .unwrap();
         with_abin.remove().await.ok();
@@ -1177,25 +1171,23 @@ mod tests {
         );
     }
 
-    /// A spec using a sandbox needs its state to hold one, and one using a browser, a sandbox
-    /// with the `browser` abin.
+    /// A spec using a sandbox needs one given, and one using a browser, a sandbox with the
+    /// `browser` abin; one using none takes none.
     #[tokio::test]
     async fn test_a_spec_using_a_sandbox_or_browser_needs_one() {
         let name = "test-agent-uses";
         let (_, spec) = scripted(name, []);
         let mut uses_sandbox = spec.clone();
         uses_sandbox.use_sandbox = true;
-        let err = AgentRuntime::try_new(uses_sandbox.clone())
-            .await
-            .err()
-            .unwrap();
+        let err = AgentRuntime::try_new(uses_sandbox).await.err().unwrap();
         assert!(err.to_string().contains("uses a sandbox"), "{err}");
-        let state = AgentState::new().with_sandbox_id("somewhere");
-        let err = AgentRuntime::try_with_state(uses_sandbox, state, None)
+        let sandbox = crate::test_sandbox().await;
+        let state = AgentState::new();
+        let err = AgentRuntime::try_with_state(spec.clone(), state, Some(sandbox.clone()))
             .await
             .err()
             .unwrap();
-        assert!(err.to_string().contains("no virtx client"), "{err}");
+        assert!(err.to_string().contains("uses none"), "{err}");
 
         let mut uses_browser = spec;
         uses_browser.use_browser = true;
@@ -1205,9 +1197,8 @@ mod tests {
 
         let mut uses_both = uses_browser_spec;
         uses_both.use_sandbox = true;
-        let sandbox = crate::test_sandbox().await;
-        let state = AgentState::new().with_sandbox_id(sandbox.id());
-        let err = AgentRuntime::try_with_state(uses_both, state, Some(sandbox.client()))
+        let state = AgentState::new();
+        let err = AgentRuntime::try_with_state(uses_both, state, Some(sandbox))
             .await
             .err()
             .unwrap();

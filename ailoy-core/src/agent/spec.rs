@@ -9,8 +9,8 @@ use crate::{
 /// What makes an agent distinct: its model, instruction and tools.
 ///
 /// It names what the agent uses and holds none of it: where the agent runs, the model is built
-/// from its desc and each tool from its name. The sandbox is the state's; the spec says whether
-/// the agent uses it, and the browser in it.
+/// from its desc and each tool from its name. The sandbox is the session's, made for it where it
+/// runs; the spec says whether the agent uses one, and the browser in it.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSpec {
     /// The model's desc, `<org>` or `<org>/<name>` (e.g. `"anthropic/claude-sonnet-5-5"`).
@@ -33,9 +33,9 @@ pub struct AgentSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
 
-    /// Whether the agent works in a sandbox, which its state then has to hold. It brings a
-    /// shell and file tools there, in the style of the model's org, but for any `tools` names
-    /// itself.
+    /// Whether the agent works in a sandbox, which each of its sessions is then made with. It
+    /// brings a shell and file tools there, in the style of the model's org, but for any `tools`
+    /// names itself.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub use_sandbox: bool,
 

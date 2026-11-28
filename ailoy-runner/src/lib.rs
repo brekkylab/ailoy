@@ -1,7 +1,7 @@
 //! Where an agent runs: the run loop ([`agent`]), the models it calls ([`model`]), the tools it
 //! makes ([`tool`]) and the sandbox it works in ([`console`]). An
-//! [`AgentProvider`](agent::AgentProvider) is served over HTTP by two routers: [`router`], to
-//! `ailoy_core::Client`, and [`admin_router`], to `ailoy_core::AdminClient`.
+//! [`AgentProvider`](agent::AgentProvider) is served over HTTP by two routers: [`admin_router`],
+//! to `ailoy_core::Client`, and [`router`], to `ailoy_core::AppClient`.
 //!
 //! The data an agent is made of and says, [`datatype`] and [`message`], is `ailoy-core`'s.
 

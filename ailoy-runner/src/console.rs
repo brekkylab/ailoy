@@ -45,6 +45,8 @@ where
                 out.timed_out = timeout_ms.is_some() && end.code == 128 + 9;
                 return Ok(out);
             }
+            // An entry of a kind newer than this client says nothing a command's output holds.
+            _ => {}
         }
     }
     Err(Error::Call(
