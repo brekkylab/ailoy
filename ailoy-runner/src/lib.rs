@@ -1,7 +1,8 @@
 //! Where an agent runs: the run loop ([`agent`]), the models it calls ([`model`]), the tools it
 //! makes ([`tool`]) and the sandbox it works in ([`console`]). An
 //! [`AgentProvider`](agent::AgentProvider) is served over HTTP by two routers: [`admin_router`],
-//! to `ailoy_core::Client`, and [`router`], to `ailoy_core::AppClient`.
+//! to `ailoy_core::Client`, and [`router`], to `ailoy_core::AppClient`; and over TCP to a program
+//! elsewhere by a [`Server`] of both.
 //!
 //! The data an agent is made of and says, [`datatype`] and [`message`], is `ailoy-core`'s.
 
@@ -10,10 +11,12 @@ pub mod console;
 mod macros;
 pub mod model;
 mod router;
+mod serve;
 pub mod tool;
 
 pub use ailoy_core::{datatype, message, to_value, tool_func};
 pub use router::{admin_router, router};
+pub use serve::{Server, Tls};
 
 /// A sandbox of its own, for tests, on one virtx server per test process.
 ///

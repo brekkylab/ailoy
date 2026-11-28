@@ -24,7 +24,7 @@ embedded = ["virtx/embedded"]
 # The spec, messages and tool descriptions, which this crate shows as its own.
 ailoy-core = { path = "../ailoy-core", version = "0.3.2" }
 axum = { version = "0.8", default-features = false, features = ["json"] }
-http-over-x = { git = "https://github.com/ailoy-co/http-over-x", rev = "f21730b", default-features = false, features = ["server"] }
+http-over-x = { git = "https://github.com/ailoy-co/http-over-x", rev = "f21730b", default-features = false, features = ["server", "tls"] }
 anyhow = "1"
 async-stream = "0.3"
 async-trait = "0.1"
@@ -58,7 +58,7 @@ flate2 = "1"
 tar = "0.4"
 strum_macros = "0.28"
 thiserror = "2.0.15"
-tokio = { version = "1.0", default-features = false, features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.0", default-features = false, features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 unicode-segmentation = "1.12.0"
 url = { version = "2.5", features = ["serde"] }
 urlencoding = "2.1"

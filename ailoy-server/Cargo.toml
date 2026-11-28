@@ -5,24 +5,20 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "An Ailoy server over TCP: the agents it keeps, to the code that manages it, and their sessions, to an app's users."
+description = "An Ailoy server over TCP, keeping its agents and their sessions in files."
 publish = false
 
 [dependencies]
 ailoy-core = { path = "../ailoy-core", version = "0.3.2" }
 ailoy-runner = { path = "../ailoy-runner", version = "0.3.2" }
 anyhow = "1"
-axum = { version = "0.8", default-features = false, features = ["json"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "7"
 futures = "0.3"
-http-over-x = { git = "https://github.com/ailoy-co/http-over-x", rev = "f21730b", default-features = false, features = ["server", "tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1.0", features = ["macros", "net", "rt-multi-thread", "signal", "sync"] }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 virtx = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
-ailoy-core = { path = "../ailoy-core", version = "0.3.2", features = ["client"] }
-http-over-x = { git = "https://github.com/ailoy-co/http-over-x", rev = "f21730b", default-features = false, features = ["client"] }
