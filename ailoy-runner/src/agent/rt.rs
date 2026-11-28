@@ -58,6 +58,9 @@ pub struct AgentRuntime {
 
     /// The sandbox it works in, `state.sandbox_id`, which the sandbox tools run in.
     sandbox: Option<Sandbox>,
+
+    /// Told the state each time a turn adds a message to the history.
+    on_message: Box<dyn FnMut(&AgentState) + Send + Sync>,
 }
 
 impl AgentRuntime {
@@ -73,11 +76,12 @@ impl AgentRuntime {
         state: AgentState,
         sandbox: Option<Sandbox>,
     ) -> anyhow::Result<Self> {
-        Self::try_in(super::default_provider(), spec, state, sandbox).await
+        Self::try_in(super::default_provider(), spec, state, sandbox, None).await
     }
 
     /// Create an agent with `state`, its model and tools made through `provider`, working in
-    /// `sandbox`, whose id `state` then holds. The agent neither makes nor removes a sandbox.
+    /// `sandbox`, whose id `state` then holds, and its model called with `model_key`, a
+    /// caller's, where it is given. The agent neither makes nor removes a sandbox.
     ///
     /// The model is built from `spec.model` through the `models` of `provider`, and each of
     /// `spec.tools` through its `tools`; [`AgentSpec::use_sandbox`] and
@@ -93,9 +97,12 @@ impl AgentRuntime {
         spec: AgentSpec,
         mut state: AgentState,
         sandbox: Option<Sandbox>,
+        model_key: Option<&str>,
     ) -> anyhow::Result<Self> {
         // Taken out of the lock before it is awaited.
-        let model = provider.read().unwrap().models.create(&spec.model)?;
+        let model = (provider.read().unwrap())
+            .models
+            .create(&spec.model, model_key)?;
         let model = model.await?;
 
         match (spec.use_sandbox, &sandbox) {
@@ -157,7 +164,21 @@ impl AgentRuntime {
             state,
             sandbox,
             spec,
+            on_message: Box::new(|_| {}),
         })
+    }
+
+    /// Tell `noted` the state each time a turn adds a message to the history, the model's or a
+    /// tool's, for it to be kept as the turn goes. What a turn that fails takes back out is in
+    /// [`state`](Self::state) once it ends.
+    pub fn on_message(&mut self, noted: impl FnMut(&AgentState) + Send + Sync + 'static) {
+        self.on_message = Box::new(noted);
+    }
+
+    /// Add `message`, the model's or a tool's, to the history.
+    fn push(&mut self, message: Message) {
+        self.state.history.push(message);
+        (self.on_message)(&self.state);
     }
 
     /// The whole conversation so far.
@@ -176,7 +197,7 @@ impl AgentRuntime {
         if let Some(usage) = &output.usage {
             self.state.context_tokens = Some(usage.input_tokens);
         }
-        self.state.history.push(output.message.clone());
+        self.push(output.message.clone());
     }
 
     /// Run one turn, yielding each model message and tool result as it completes.
@@ -229,7 +250,7 @@ impl AgentRuntime {
                 let mut results = self.call_tools(calls);
                 while let Some(message) = results.next().await {
                     let message = message?;
-                    self.state.history.push(message.clone());
+                    self.push(message.clone());
                     yield tool_output(message);
                 }
             }
@@ -310,7 +331,7 @@ impl AgentRuntime {
                 let mut results = self.call_tools(calls);
                 while let Some(message) = results.next().await {
                     let message = message?;
-                    self.state.history.push(message.clone());
+                    self.push(message.clone());
                     yield tool_output(message).into();
                 }
             }
@@ -794,6 +815,35 @@ mod tests {
         assert_eq!(text_of(&agent.history()[0]), "Be brief.");
         // The second call sees the tool result.
         assert_eq!(model.seen.lock().unwrap()[1].len(), 4);
+    }
+
+    /// Each message a turn adds is noted as it is added, the history up to it with it.
+    #[tokio::test]
+    async fn test_each_message_a_turn_adds_is_noted() {
+        let name = "test-agent-on-message";
+        let (_, spec) = scripted(name, [calls(&[("c1", "echo")]), answer("done")]);
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
+        let noted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let noting = noted.clone();
+        agent.on_message(move |state| noting.lock().unwrap().push(roles(&state.history)));
+
+        let deltas: Vec<_> = agent.run_stream(user("hi")).collect().await;
+        assert!(deltas.iter().all(Result::is_ok));
+        let (system, user, assistant, tool) =
+            (Role::System, Role::User, Role::Assistant, Role::Tool);
+        assert_eq!(
+            *noted.lock().unwrap(),
+            [
+                vec![system.clone(), user.clone(), assistant.clone()],
+                vec![
+                    system.clone(),
+                    user.clone(),
+                    assistant.clone(),
+                    tool.clone()
+                ],
+                vec![system, user, assistant.clone(), tool, assistant],
+            ]
+        );
     }
 
     #[tokio::test]

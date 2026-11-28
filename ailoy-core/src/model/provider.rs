@@ -17,6 +17,25 @@ pub trait LangModelSet: Send + Sync {
         org: &str,
         name: Option<&str>,
     ) -> BoxFuture<'static, anyhow::Result<Arc<dyn InferLangModel>>>;
+
+    /// Whether it makes the models of `org` with a key a caller gives, in place of its own
+    /// ([`make_with_key`](Self::make_with_key)).
+    fn takes_key(&self, _org: &str) -> bool {
+        false
+    }
+
+    /// Make `name` of `org`, as [`make`](Self::make) does, called with `key`, a caller's, in
+    /// place of the one it is set up with. Refused by a set that [`takes_key`](Self::takes_key)
+    /// not.
+    fn make_with_key(
+        &self,
+        org: &str,
+        _name: Option<&str>,
+        _key: &str,
+    ) -> BoxFuture<'static, anyhow::Result<Arc<dyn InferLangModel>>> {
+        let why = anyhow::anyhow!("the models of '{org}' are made with no caller's key");
+        Box::pin(std::future::ready(Err(why)))
+    }
 }
 
 /// A model of your own, made by a function of this process from the desc's org and the name
@@ -62,6 +81,12 @@ impl LangModelProvider {
         self.models.get(org).cloned()
     }
 
+    /// Each org whose models are made here, with the set they are made through, in the order
+    /// each was first set.
+    pub fn list(&self) -> impl Iterator<Item = (&str, &Arc<dyn LangModelSet>)> {
+        self.models.iter().map(|(org, set)| (org.as_str(), set))
+    }
+
     /// Stop making the models of `org`. Answers whether there was a set for it.
     pub fn remove(&mut self, org: &str) -> bool {
         self.models.shift_remove(org).is_some()
@@ -70,9 +95,13 @@ impl LangModelProvider {
     /// Make the model a desc of the form `<org>` or `<org>/<name>` names, through the set for
     /// its org. The answer is a future of its own, so a lock held on this provider need not be
     /// held while it is made.
+    ///
+    /// With `key`, a caller's, the model is called with it in place of the key the set is set up
+    /// with: refused by a set that [takes](LangModelSet::takes_key) none.
     pub fn create(
         &self,
         desc: &str,
+        key: Option<&str>,
     ) -> anyhow::Result<BoxFuture<'static, anyhow::Result<Arc<dyn InferLangModel>>>> {
         let (org, name) = match desc.split_once('/') {
             Some((org, name)) => (org, Some(name)),
@@ -82,6 +111,9 @@ impl LangModelProvider {
             .models
             .get(org)
             .ok_or_else(|| anyhow::anyhow!("no provider set for lang model org '{org}'"))?;
-        Ok(set.make(org, name))
+        Ok(match key {
+            Some(key) => set.make_with_key(org, name, key),
+            None => set.make(org, name),
+        })
     }
 }

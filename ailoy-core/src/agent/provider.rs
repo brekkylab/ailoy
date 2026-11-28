@@ -1,11 +1,12 @@
-use std::fmt;
-
-use indexmap::IndexMap;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    sync::Arc,
+};
 
 use crate::{
-    agent::{AgentListOutputItem, AgentPutArgs, AgentSpec, AgentState, SessionListOutputItem},
-    message::Message,
-    model::LangModelProvider,
+    agent::{AgentPutArgs, AgentStore, MemoryStore},
+    model::{LangModelProvider, ModelKeyProvider},
     tool::ToolProvider,
 };
 
@@ -22,6 +23,9 @@ pub enum Refusal {
     NoModel(String),
     /// The session has a turn running.
     Busy(String),
+    /// A spec's model, of this org, is to be called with the client's key, and its models are
+    /// made with none.
+    NoClientKey(String),
     /// A sandbox is given to a session of an agent whose spec uses none, or none to one whose
     /// spec does.
     Sandbox(bool),
@@ -34,6 +38,9 @@ impl fmt::Display for Refusal {
             Refusal::NoSession(id) => write!(f, "the agent has no session '{id}'"),
             Refusal::NoTool(name) => write!(f, "nothing provides the tool '{name}'"),
             Refusal::NoModel(org) => write!(f, "nothing makes the models of '{org}'"),
+            Refusal::NoClientKey(org) => {
+                write!(f, "the models of '{org}' are not made with a client's key")
+            }
             Refusal::Busy(id) => write!(f, "the session '{id}' has a turn running"),
             Refusal::Sandbox(true) => write!(f, "the spec uses a sandbox, and none is given"),
             Refusal::Sandbox(false) => write!(f, "a sandbox is given, and the spec uses none"),
@@ -43,25 +50,10 @@ impl fmt::Display for Refusal {
 
 impl std::error::Error for Refusal {}
 
-/// An agent kept, and each of its sessions by id.
-struct Kept {
-    args: AgentPutArgs,
-    sessions: IndexMap<String, Session>,
-}
-
-/// A session kept: its state, the sandbox made for it, the grant an app reaches it with, and
-/// whether a turn runs in it.
-struct Session {
-    state: AgentState,
-    sandbox: Option<virtx::Sandbox>,
-    grant: Option<String>,
-    running: bool,
-}
-
 /// What an agent runs with where it runs: the providers of the models and tools a spec names,
-/// the virtx server its sessions' sandboxes are made on, and the agents kept by name, each with
-/// its sessions. The agents and sessions are kept in memory.
-#[derive(Default)]
+/// the virtx server its sessions' sandboxes are made on, and the store the agents put to it and
+/// their sessions are kept in. What is not kept, as which session has a turn running, is this
+/// process's alone.
 pub struct AgentProvider {
     pub tools: ToolProvider,
     pub models: LangModelProvider,
@@ -71,7 +63,26 @@ pub struct AgentProvider {
     /// The base URL of the virtx server, where an app's session's sandbox is made with the
     /// app's own credentials: none over stdio, which has no apps.
     pub virtx_url: Option<String>,
-    agents: IndexMap<String, Kept>,
+    /// Where the agents and their sessions are kept: in memory, unless set.
+    pub store: Arc<dyn AgentStore>,
+    /// The sessions with a turn running, by id.
+    running: HashSet<String>,
+    /// The sandboxes of the sessions reached since this process began, by session id.
+    sandboxes: HashMap<String, virtx::Sandbox>,
+}
+
+impl Default for AgentProvider {
+    fn default() -> Self {
+        AgentProvider {
+            tools: ToolProvider::default(),
+            models: LangModelProvider::default(),
+            virtx: None,
+            virtx_url: None,
+            store: Arc::new(MemoryStore::default()),
+            running: HashSet::new(),
+            sandboxes: HashMap::new(),
+        }
+    }
 }
 
 impl AgentProvider {
@@ -79,195 +90,49 @@ impl AgentProvider {
         Self::default()
     }
 
-    /// Keep the agent `args` describes under `name`, in place of one already there, whose
-    /// sessions stay. Refused when its spec names a model or a tool nothing provides.
-    pub fn put_agent(
-        &mut self,
-        name: &str,
-        args: AgentPutArgs,
-    ) -> Result<AgentListOutputItem, Refusal> {
-        if self.models.get(&args.spec.model).is_none() {
-            let org = args
-                .spec
-                .model
-                .split_once('/')
-                .map_or(&*args.spec.model, |(org, _)| org);
+    /// Refused when the agent `args` describes names a model or a tool nothing here provides,
+    /// or its model is to be called with the client's key and is made with none.
+    pub fn check_agent(&self, args: &AgentPutArgs) -> Result<(), Refusal> {
+        let spec = &args.spec;
+        let org = (spec.model.split_once('/')).map_or(&*spec.model, |(org, _)| org);
+        let Some(set) = self.models.get(&spec.model) else {
             return Err(Refusal::NoModel(org.to_owned()));
+        };
+        if args.model_key_provider == ModelKeyProvider::Client && !set.takes_key(org) {
+            return Err(Refusal::NoClientKey(org.to_owned()));
         }
-        if let Some(tool) = args.spec.tools.iter().find(|t| !self.tools.contains(t)) {
+        if let Some(tool) = spec.tools.iter().find(|t| !self.tools.contains(t)) {
             return Err(Refusal::NoTool(tool.clone()));
         }
-        let item = AgentListOutputItem {
-            name: name.to_owned(),
-            spec: args.spec.clone(),
-            model_key_provider: args.model_key_provider,
-        };
-        match self.agents.get_mut(name) {
-            Some(kept) => kept.args = args,
-            None => {
-                let sessions = IndexMap::new();
-                self.agents.insert(name.to_owned(), Kept { args, sessions });
-            }
-        }
-        Ok(item)
+        Ok(())
     }
 
-    /// The agent kept under `name`.
-    pub fn get_agent(&self, name: &str) -> Result<AgentListOutputItem, Refusal> {
-        let kept = self
-            .agents
-            .get(name)
-            .ok_or_else(|| Refusal::NoAgent(name.to_owned()))?;
-        Ok(AgentListOutputItem {
-            name: name.to_owned(),
-            spec: kept.args.spec.clone(),
-            model_key_provider: kept.args.model_key_provider,
-        })
-    }
-
-    /// Every agent kept, in the order each name was first put.
-    pub fn list_agents(&self) -> Vec<AgentListOutputItem> {
-        self.agents
-            .iter()
-            .map(|(name, kept)| AgentListOutputItem {
-                name: name.clone(),
-                spec: kept.args.spec.clone(),
-                model_key_provider: kept.args.model_key_provider,
-            })
-            .collect()
-    }
-
-    /// Keep the agent `name` no longer, nor its sessions; the sandboxes made for those are
-    /// answered, for the caller to remove. Nothing happens when there is none.
-    pub fn remove_agent(&mut self, name: &str) -> Vec<virtx::Sandbox> {
-        let Some(kept) = self.agents.shift_remove(name) else {
-            return Vec::new();
-        };
-        let sessions = kept.sessions.into_values();
-        sessions.filter_map(|session| session.sandbox).collect()
-    }
-
-    /// Start a session of the agent `agent`, starting with `history` and working in `sandbox`,
-    /// which goes with it: a state with a new id. Refused when the agent's spec uses a sandbox
-    /// and none is given, or the other way round.
-    pub fn create_session(
-        &mut self,
-        agent: &str,
-        history: Vec<Message>,
-        sandbox: Option<virtx::Sandbox>,
-    ) -> Result<AgentState, Refusal> {
-        let kept = self
-            .agents
-            .get_mut(agent)
-            .ok_or_else(|| Refusal::NoAgent(agent.to_owned()))?;
-        let uses = kept.args.spec.use_sandbox;
-        if uses != sandbox.is_some() {
-            return Err(Refusal::Sandbox(uses));
-        }
-        let mut state = AgentState::new().with_history(history);
-        state.sandbox_id = sandbox.as_ref().map(|sandbox| sandbox.id().to_owned());
-        let session = Session {
-            state: state.clone(),
-            sandbox,
-            grant: None,
-            running: false,
-        };
-        kept.sessions.insert(state.id.clone(), session);
-        Ok(state)
-    }
-
-    /// Give out the grant that reaches the session `id` of the agent `agent` alone, in place of
-    /// one given before.
-    pub fn grant_session(&mut self, agent: &str, id: &str) -> Result<String, Refusal> {
-        let session = self.session_mut(agent, id)?;
-        let grant = uuid::Uuid::new_v4().simple().to_string();
-        session.grant = Some(grant.clone());
-        Ok(grant)
-    }
-
-    /// The session `grant` reaches, as its agent and id.
-    pub fn find_grant(&self, grant: &str) -> Option<(String, String)> {
-        self.agents.iter().find_map(|(name, kept)| {
-            let (id, _) = (kept.sessions.iter())
-                .find(|(_, session)| session.grant.as_deref() == Some(grant))?;
-            Some((name.clone(), id.clone()))
-        })
-    }
-
-    /// The state of the session `id` of the agent `agent`.
-    pub fn get_session(&self, agent: &str, id: &str) -> Result<AgentState, Refusal> {
-        let kept = self
-            .agents
-            .get(agent)
-            .ok_or_else(|| Refusal::NoAgent(agent.to_owned()))?;
-        let session = kept.sessions.get(id);
-        session
-            .map(|session| session.state.clone())
-            .ok_or_else(|| Refusal::NoSession(id.to_owned()))
-    }
-
-    /// Begin a turn of the session `id` of the agent `agent`: what it runs with, the agent's
-    /// spec, the session's state and its sandbox. Refused while a turn runs in it, until
+    /// Begin a turn of the session `id`: refused while one runs in it, until
     /// [`end_turn`](Self::end_turn).
-    pub fn begin_turn(
-        &mut self,
-        agent: &str,
-        id: &str,
-    ) -> Result<(AgentSpec, AgentState, Option<virtx::Sandbox>), Refusal> {
-        let kept = self
-            .agents
-            .get_mut(agent)
-            .ok_or_else(|| Refusal::NoAgent(agent.to_owned()))?;
-        let spec = kept.args.spec.clone();
-        let session = kept
-            .sessions
-            .get_mut(id)
-            .ok_or_else(|| Refusal::NoSession(id.to_owned()))?;
-        if session.running {
-            return Err(Refusal::Busy(id.to_owned()));
-        }
-        session.running = true;
-        Ok((spec, session.state.clone(), session.sandbox.clone()))
-    }
-
-    /// End the turn running in the session of `state`'s id of the agent `agent`, keeping
-    /// `state` in place of the one there. A session removed while its turn ran stays removed.
-    pub fn end_turn(&mut self, agent: &str, state: AgentState) {
-        if let Ok(session) = self.session_mut(agent, &state.id) {
-            session.state = state;
-            session.running = false;
+    pub fn begin_turn(&mut self, id: &str) -> Result<(), Refusal> {
+        match self.running.insert(id.to_owned()) {
+            true => Ok(()),
+            false => Err(Refusal::Busy(id.to_owned())),
         }
     }
 
-    /// Every session of the agent `agent`, in the order each was started.
-    pub fn list_sessions(&self, agent: &str) -> Result<Vec<SessionListOutputItem>, Refusal> {
-        let kept = self
-            .agents
-            .get(agent)
-            .ok_or_else(|| Refusal::NoAgent(agent.to_owned()))?;
-        let sessions = kept.sessions.values();
-        Ok(sessions
-            .map(|session| SessionListOutputItem {
-                id: session.state.id.clone(),
-                message_count: session.state.history.len(),
-            })
-            .collect())
+    /// End the turn running in the session `id`.
+    pub fn end_turn(&mut self, id: &str) {
+        self.running.remove(id);
     }
 
-    /// Keep the session `id` of the agent `agent` no longer; the sandbox made for it is answered,
-    /// for the caller to remove. Nothing happens when there is none.
-    pub fn remove_session(&mut self, agent: &str, id: &str) -> Option<virtx::Sandbox> {
-        let kept = self.agents.get_mut(agent)?;
-        kept.sessions.shift_remove(id)?.sandbox
+    /// The sandbox of the session `id`, if it was reached since this process began.
+    pub fn sandbox(&self, id: &str) -> Option<virtx::Sandbox> {
+        self.sandboxes.get(id).cloned()
     }
 
-    fn session_mut(&mut self, agent: &str, id: &str) -> Result<&mut Session, Refusal> {
-        let kept = self
-            .agents
-            .get_mut(agent)
-            .ok_or_else(|| Refusal::NoAgent(agent.to_owned()))?;
-        kept.sessions
-            .get_mut(id)
-            .ok_or_else(|| Refusal::NoSession(id.to_owned()))
+    /// Hold `sandbox` as the session `id`'s, for its turns to work in.
+    pub fn hold_sandbox(&mut self, id: &str, sandbox: virtx::Sandbox) {
+        self.sandboxes.insert(id.to_owned(), sandbox);
+    }
+
+    /// Let go of the sandbox of the session `id`, answering it, if it was held.
+    pub fn release_sandbox(&mut self, id: &str) -> Option<virtx::Sandbox> {
+        self.sandboxes.remove(id)
     }
 }

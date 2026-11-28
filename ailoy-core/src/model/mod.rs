@@ -40,9 +40,29 @@ pub enum ModelKeyProvider {
     /// The server, with the key it was set up with.
     #[default]
     Server,
-    /// The client, which sends its key with each run.
+    /// The client, which sends its key with each run, in [`MODEL_KEY_HEADER`].
     Client,
 }
+
+/// An org whose models a server makes, as `GET /models` answers it: a spec names one of its
+/// models as `<org>/<name>`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelListOutputItem {
+    pub org: String,
+
+    /// How its models are run: `"cli"`, `"api"`, `"bedrock"`, `"openrouter"`,
+    /// `"self-hosted"` or `"custom"`.
+    pub backend: String,
+
+    /// Whether its models are called with a key the client sends, for an agent put with
+    /// [`ModelKeyProvider::Client`].
+    pub takes_key: bool,
+}
+
+/// The header a client sends its key for an agent's model in, with each run of an agent put
+/// with [`ModelKeyProvider::Client`]: given to the model alone, and kept nowhere. A client
+/// sends it with every request by the headers it is connected with.
+pub const MODEL_KEY_HEADER: &str = "ailoy-model-key";
 
 /// A language model that can be run on a conversation.
 pub trait InferLangModel: Send + Sync {

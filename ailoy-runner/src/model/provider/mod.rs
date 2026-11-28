@@ -83,7 +83,8 @@ use anyhow::{Context as _, bail};
 use super::{
     BedrockApiModel, ClaudeApiModel, ClaudeCliModel, CodexCliModel, DeepSeekApiModel,
     GeminiApiModel, GeminiCliModel, GlmApiModel, GptApiModel, InferLangModel, KimiApiModel,
-    OpenAiCompatibleModel, OpenRouterApiModel, QwenApiModel, r#impl::env_key_and_region,
+    OpenAiCompatibleModel, OpenRouterApiModel, QwenApiModel,
+    r#impl::{bedrock_region, env_key_and_region},
 };
 use crate::agent::default_provider;
 
@@ -263,7 +264,23 @@ impl LangModelSet for Backend {
         name: Option<&str>,
     ) -> BoxFuture<'static, anyhow::Result<Arc<dyn InferLangModel>>> {
         let (backend, org, name) = (*self, org.to_owned(), name.map(str::to_owned));
-        Box::pin(async move { build(backend, &org, name.as_deref()).await })
+        Box::pin(async move { build(backend, &org, name.as_deref(), None).await })
+    }
+
+    /// Each backend but a CLI, which signs in on its own.
+    fn takes_key(&self, _org: &str) -> bool {
+        *self != Backend::Cli
+    }
+
+    fn make_with_key(
+        &self,
+        org: &str,
+        name: Option<&str>,
+        key: &str,
+    ) -> BoxFuture<'static, anyhow::Result<Arc<dyn InferLangModel>>> {
+        let (backend, org, name) = (*self, org.to_owned(), name.map(str::to_owned));
+        let key = Some(key.to_owned());
+        Box::pin(async move { build(backend, &org, name.as_deref(), key).await })
     }
 }
 
@@ -278,6 +295,21 @@ impl LangModelSet for LangModelServer {
         name: Option<&str>,
     ) -> BoxFuture<'static, anyhow::Result<Arc<dyn InferLangModel>>> {
         let (server, org, name) = (self.clone(), org.to_owned(), name.map(str::to_owned));
+        Box::pin(async move { server.build(&org, name.as_deref()).await })
+    }
+
+    fn takes_key(&self, _org: &str) -> bool {
+        true
+    }
+
+    fn make_with_key(
+        &self,
+        org: &str,
+        name: Option<&str>,
+        key: &str,
+    ) -> BoxFuture<'static, anyhow::Result<Arc<dyn InferLangModel>>> {
+        let server = self.clone().with_api_key(key);
+        let (org, name) = (org.to_owned(), name.map(str::to_owned));
         Box::pin(async move { server.build(&org, name.as_deref()).await })
     }
 }
@@ -350,13 +382,20 @@ fn required(name: Option<&str>) -> anyhow::Result<&str> {
 /// - Self-hosted: as [`LangModelServer`] says, on the server [`LangModelServer::from_env`]
 ///   reads.
 ///
+/// Each but a CLI is called with `key` where it is given, in place of the environment's;
+/// Bedrock's region is the environment's either way.
+///
 /// The catalogs are fetched once per process; to run an id as is, build the model directly
 /// (`BedrockApiModel::from_env("arn:…")`).
 async fn build(
     backend: Backend,
     org: &str,
     name: Option<&str>,
+    key: Option<String>,
 ) -> anyhow::Result<Arc<dyn InferLangModel>> {
+    if backend == Backend::Cli && key.is_some() {
+        bail!("'{org}' runs on its CLI, which takes no key");
+    }
     Ok(match (backend, org) {
         (Backend::Cli, "anthropic") => {
             let model = ClaudeCliModel::new();
@@ -381,29 +420,71 @@ async fn build(
         }
         (Backend::Cli, _) => bail!("'{org}' has no CLI"),
 
-        (Backend::Api, "anthropic") => Arc::new(ClaudeApiModel::from_env(required(name)?)?),
-        (Backend::Api, "openai") => Arc::new(GptApiModel::from_env(required(name)?)?),
-        (Backend::Api, "google") => Arc::new(GeminiApiModel::from_env(required(name)?)?),
+        (Backend::Api, "anthropic") => {
+            let name = required(name)?;
+            Arc::new(match key {
+                Some(key) => ClaudeApiModel::new(name, key),
+                None => ClaudeApiModel::from_env(name)?,
+            })
+        }
+        (Backend::Api, "openai") => {
+            let name = required(name)?;
+            Arc::new(match key {
+                Some(key) => GptApiModel::new(name, key),
+                None => GptApiModel::from_env(name)?,
+            })
+        }
+        (Backend::Api, "google") => {
+            let name = required(name)?;
+            Arc::new(match key {
+                Some(key) => GeminiApiModel::new(name, key),
+                None => GeminiApiModel::from_env(name)?,
+            })
+        }
         (Backend::Api, "deepseek-ai") => {
-            Arc::new(DeepSeekApiModel::from_env(required(name)?.to_lowercase())?)
+            let name = required(name)?.to_lowercase();
+            Arc::new(match key {
+                Some(key) => DeepSeekApiModel::new(name, key),
+                None => DeepSeekApiModel::from_env(name)?,
+            })
         }
         (Backend::Api, "moonshotai") => {
-            Arc::new(KimiApiModel::from_env(required(name)?.to_lowercase())?)
+            let name = required(name)?.to_lowercase();
+            Arc::new(match key {
+                Some(key) => KimiApiModel::new(name, key),
+                None => KimiApiModel::from_env(name)?,
+            })
         }
         (Backend::Api, "zai-org") => {
-            Arc::new(GlmApiModel::from_env(required(name)?.to_lowercase())?)
+            let name = required(name)?.to_lowercase();
+            Arc::new(match key {
+                Some(key) => GlmApiModel::new(name, key),
+                None => GlmApiModel::from_env(name)?,
+            })
         }
-        (Backend::Api, "Qwen") => Arc::new(QwenApiModel::from_env(required(name)?.to_lowercase())?),
+        (Backend::Api, "Qwen") => {
+            let name = required(name)?.to_lowercase();
+            Arc::new(match key {
+                Some(key) => QwenApiModel::new(name, key),
+                None => QwenApiModel::from_env(name)?,
+            })
+        }
         (Backend::Api, "LGAI-EXAONE") => {
             let name = required(name)?;
-            let api_key = env_var("EXAONE_API_KEY").context("EXAONE_API_KEY is not set")?;
+            let api_key = match key {
+                Some(key) => key,
+                None => env_var("EXAONE_API_KEY").context("EXAONE_API_KEY is not set")?,
+            };
             Arc::new(OpenAiCompatibleModel::new(name, EXAONE_API_URL).with_api_key(api_key))
         }
         (Backend::Api, _) => bail!("'{org}' has no API of its own"),
 
         (Backend::Bedrock, _) => {
             let name = required(name)?;
-            let (api_key, region) = env_key_and_region()?;
+            let (api_key, region) = match key {
+                Some(key) => (key, bedrock_region()),
+                None => env_key_and_region()?,
+            };
             let id = catalog::bedrock_catalog(&region, &api_key)
                 .await
                 .and_then(|c| c.find(bedrock_vendor(org), name))
@@ -416,9 +497,19 @@ async fn build(
                 .await
                 .and_then(|c| c.find(org, openrouter_vendor(org), name))
                 .unwrap_or_else(|| openrouter_rule(org, name));
-            Arc::new(OpenRouterApiModel::from_env(id)?)
+            Arc::new(match key {
+                Some(key) => OpenRouterApiModel::new(id, key),
+                None => OpenRouterApiModel::from_env(id)?,
+            })
         }
-        (Backend::SelfHosted, _) => LangModelServer::from_env()?.build(org, name).await?,
+        (Backend::SelfHosted, _) => {
+            let server = LangModelServer::from_env()?;
+            let server = match key {
+                Some(key) => server.with_api_key(key),
+                None => server,
+            };
+            server.build(org, name).await?
+        }
     })
 }
 
@@ -449,7 +540,11 @@ pub fn remove_lang_model_provider(org: &str) -> bool {
 /// repo, such as EXAONE's `k-exaone_v2.5`, by its API id.
 pub async fn create_lang_model(desc: &str) -> anyhow::Result<Arc<dyn InferLangModel>> {
     // Taken out of the lock before it is awaited.
-    let made = default_provider().read().unwrap().models.create(desc)?;
+    let made = default_provider()
+        .read()
+        .unwrap()
+        .models
+        .create(desc, None)?;
     made.await
 }
 
@@ -613,13 +708,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_exaone_runs_on_its_own_api() {
-        let err = build(Backend::Api, "LGAI-EXAONE", None)
+        let err = build(Backend::Api, "LGAI-EXAONE", None, None)
             .await
             .err()
             .unwrap();
         assert!(err.to_string().contains("needs a model name"), "{err}");
         // Built when the key is set; otherwise the key is what is missing.
-        if let Err(err) = build(Backend::Api, "LGAI-EXAONE", Some("k-exaone_v2.5")).await {
+        if let Err(err) = build(Backend::Api, "LGAI-EXAONE", Some("k-exaone_v2.5"), None).await {
             assert!(env_var("EXAONE_API_KEY").is_none());
             assert!(err.to_string().contains("EXAONE_API_KEY"), "{err}");
         }
@@ -630,10 +725,27 @@ mod tests {
         let err = create_lang_model("nobody/model").await.err().unwrap();
         assert!(err.to_string().contains("nobody"), "{err}");
 
-        let err = build(Backend::Cli, "zai-org", Some("GLM-4.6"))
+        let err = build(Backend::Cli, "zai-org", Some("GLM-4.6"), None)
             .await
             .err()
             .unwrap();
         assert!(err.to_string().contains("no CLI"), "{err}");
+    }
+
+    /// A caller's key makes a model where the environment has none, but not on a CLI.
+    #[tokio::test]
+    async fn test_a_caller_s_key_makes_a_model_but_on_a_cli() {
+        for (backend, org) in [(Backend::Api, "openai"), (Backend::Api, "moonshotai")] {
+            let key = Some("sk-caller".to_owned());
+            assert!(build(backend, org, Some("x"), key).await.is_ok());
+        }
+        let key = Some("sk-caller".to_owned());
+        let err = build(Backend::Cli, "anthropic", None, key)
+            .await
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("takes no key"), "{err}");
+        assert!(!Backend::Cli.takes_key("anthropic"));
+        assert!(Backend::Api.takes_key("anthropic"));
     }
 }

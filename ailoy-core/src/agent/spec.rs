@@ -97,7 +97,7 @@ impl AgentSpec {
         self
     }
 
-    /// Work in a sandbox, which the agent's state then has to hold. See
+    /// Work in a sandbox, which each of the agent's sessions is then made with. See
     /// [`use_sandbox`](Self::use_sandbox).
     pub fn sandbox(mut self) -> Self {
         self.use_sandbox = true;
@@ -181,6 +181,17 @@ pub struct AgentListOutputItem {
 
     /// Which end provides the key the agent's model is called with.
     pub model_key_provider: ModelKeyProvider,
+}
+
+impl AgentListOutputItem {
+    /// The agent `args` describes, kept under `name`.
+    pub fn new(name: String, args: AgentPutArgs) -> Self {
+        AgentListOutputItem {
+            name,
+            spec: args.spec,
+            model_key_provider: args.model_key_provider,
+        }
+    }
 }
 
 /// How old tool results in an agent's history are replaced by placeholders as each turn

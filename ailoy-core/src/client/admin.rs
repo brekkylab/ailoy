@@ -8,6 +8,7 @@ use crate::{
         AgentListOutputItem, AgentPutArgs, AgentState, SessionCreateArgs, SessionListOutputItem,
     },
     message::{Message, MessageDeltaOutput},
+    model::ModelListOutputItem,
     tool::ToolDesc,
 };
 
@@ -59,6 +60,11 @@ impl Client {
     /// its agent uses.
     pub async fn list_tool(&self) -> Result<Vec<ToolDesc>, Error> {
         self.inner.get("/tools").await
+    }
+
+    /// Every org whose models the server makes. A spec names one of their models.
+    pub async fn list_model(&self) -> Result<Vec<ModelListOutputItem>, Error> {
+        self.inner.get("/models").await
     }
 
     /// Every agent the server keeps.

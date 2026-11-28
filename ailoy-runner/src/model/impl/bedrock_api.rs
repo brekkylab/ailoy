@@ -271,10 +271,16 @@ fn effort_name(effort: ThinkingEffort) -> &'static str {
 pub(crate) fn env_key_and_region() -> anyhow::Result<(String, String)> {
     let env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
     let api_key = env("AWS_BEARER_TOKEN_BEDROCK").context("AWS_BEARER_TOKEN_BEDROCK is not set")?;
-    let region = env("AWS_REGION")
+    Ok((api_key, bedrock_region()))
+}
+
+/// The region the environment names: `AWS_REGION`, else `AWS_DEFAULT_REGION`, else
+/// [`DEFAULT_REGION`].
+pub(crate) fn bedrock_region() -> String {
+    let env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+    env("AWS_REGION")
         .or_else(|| env("AWS_DEFAULT_REGION"))
-        .unwrap_or_else(|| DEFAULT_REGION.to_owned());
-    Ok((api_key, region))
+        .unwrap_or_else(|| DEFAULT_REGION.to_owned())
 }
 
 /// Whether a Claude model predates adaptive thinking (Claude 4.6) and thinks only on a
