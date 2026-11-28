@@ -25,6 +25,7 @@ pub trait Delta: Default {
 /// ));
 /// ```
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum DeltaError {
     #[error("Cannot accumulate two message deltas with different roles. ({left} != {right})")]
     RoleMismatch { left: Role, right: Role },
@@ -37,7 +38,8 @@ pub enum DeltaError {
     #[error("{details}")]
     IncompatibleParts { details: String },
 
-    /// A `Verbatim` call also requires a string `name` and an `arguments` field.
-    #[error("tool-call arguments are not valid JSON")]
+    /// A `WithStringArgs` call has invalid JSON arguments, or a `Verbatim` call has
+    /// invalid JSON or lacks a string `name` or an `arguments` field.
+    #[error("invalid tool-call JSON or missing a string name or an arguments field")]
     InvalidToolCallJson,
 }
