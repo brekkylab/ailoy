@@ -11,8 +11,8 @@ use ailoy::tool::{
     unregister_mcp as unregister_mcp_rs,
 };
 use napi::{
-    Env,
-    bindgen_prelude::{PromiseRaw, Unknown, within_runtime_if_available},
+    Env, JsValue, ValueType,
+    bindgen_prelude::{FromNapiValue, PromiseRaw, Unknown, within_runtime_if_available},
 };
 use napi_derive::napi;
 
@@ -22,14 +22,25 @@ use crate::{
     tool::{Callback, tool_func},
 };
 
+fn tool_callback(env: &Env, func: Unknown<'_>) -> Result<Callback> {
+    match func.get_type().map_err(|e| error::invalid(e.reason))? {
+        ValueType::Function => unsafe { Callback::from_napi_value(env.raw(), func.raw()) }
+            .map_err(|e| error::invalid(e.reason)),
+        _ => Err(error::invalid("a tool's func has to be a function")),
+    }
+}
+
 /// Build the tool `name` by calling `func`, replacing the provider it had. See [`crate::tool`]
 /// for how `func` is called.
 #[napi]
 pub fn set_tool_provider(
+    env: &Env,
     name: String,
-    #[napi(ts_arg_type = "(args: any) => unknown")] func: Callback,
-) {
+    #[napi(ts_arg_type = "(args: any) => unknown")] func: Unknown<'_>,
+) -> Result<()> {
+    let func = tool_callback(env, func)?;
     set_tool_provider_rs(name, tool_func(func));
+    Ok(())
 }
 
 /// Stop building the tool `name`. Answers whether it had a provider.
@@ -45,8 +56,9 @@ pub fn remove_tool_provider(name: String) -> bool {
 pub fn register_tool(
     env: &Env,
     #[napi(ts_arg_type = "ToolDesc")] desc: Unknown<'_>,
-    #[napi(ts_arg_type = "(args: any) => unknown")] func: Callback,
+    #[napi(ts_arg_type = "(args: any) => unknown")] func: Unknown<'_>,
 ) -> Result<Json<ToolDesc>> {
+    let func = tool_callback(env, func)?;
     let parsed: ToolDesc = from_js(env, desc, "a tool description")?;
     set_tool_provider_rs(parsed.name.clone(), tool_func(func));
     Ok(Json(parsed))

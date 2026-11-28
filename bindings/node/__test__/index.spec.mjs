@@ -60,6 +60,12 @@ test('an object that does not fit says what was expected', () => {
   })
 })
 
+test('a tool func that is not a function is refused', () => {
+  const refused = { code: 'INVALID_ARG', message: /a tool's func has to be a function/ }
+  assert.throws(() => registerTool({ name: 'x', parameters: {} }, 'not callable'), refused)
+  assert.throws(() => setToolProvider('x', 'not callable'), refused)
+})
+
 /**
  * Run the models of `org` on the self-hosted backend, against a port nothing listens
  * on, for an agent that is built but never asked.
