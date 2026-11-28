@@ -21,20 +21,24 @@ use futures::StreamExt as _;
 use serde::Serialize;
 use serde_json::json;
 
-use crate::agent::{AgentRuntime, AgentState};
+use crate::agent::AgentRuntime;
 
-/// What [`router`] serves: the provider, and the sessions with a turn running, as their agent
-/// and id.
+/// What [`router`] serves: the provider, the virtx client its sessions' sandboxes are reached
+/// through, and the sessions with a turn running, as their agent and id.
 struct Served {
     provider: Arc<RwLock<AgentProvider>>,
+    virtx: Option<virtx::Client>,
     running: Mutex<HashSet<(String, String)>>,
 }
 
 /// What `provider` serves to the code that runs its agents, `ailoy_core::Client`: the
-/// sessions of each agent kept, and the turns run in them.
-pub fn router(provider: Arc<RwLock<AgentProvider>>) -> Router {
+/// sessions of each agent kept, and the turns run in them. A session's sandbox is reached
+/// through `virtx`, on the virtx server the caller made it on; without one, only agents that
+/// use no sandbox run.
+pub fn router(provider: Arc<RwLock<AgentProvider>>, virtx: Option<virtx::Client>) -> Router {
     let served = Arc::new(Served {
         provider,
+        virtx,
         running: Mutex::new(HashSet::new()),
     });
     Router::new()
@@ -189,20 +193,14 @@ async fn run(
             Err(refusal) => return refuse_as(refusal),
         }
     };
-    if spec.use_sandbox {
-        let why = "an agent that works in a sandbox does not run over a server yet".to_owned();
-        return refuse(StatusCode::UNPROCESSABLE_ENTITY, "unsupported", why);
-    }
     let key = (agent.clone(), session.clone());
     if !served.running.lock().unwrap().insert(key.clone()) {
         let why = format!("the session '{session}' has a turn running");
         return refuse(StatusCode::CONFLICT, "busy", why);
     }
 
-    let mut state = AgentState::new().with_history(kept.history);
-    state.id = kept.id;
-    state.context_tokens = kept.context_tokens;
-    let mut runtime = match AgentRuntime::try_in(&served.provider, spec, state).await {
+    let virtx = served.virtx.as_ref();
+    let mut runtime = match AgentRuntime::try_in(&served.provider, virtx, spec, kept).await {
         Ok(runtime) => runtime,
         Err(e) => {
             served.running.lock().unwrap().remove(&key);
@@ -233,13 +231,8 @@ async fn run(
                 let _ = events.unbounded_send(Ok(event));
             }
         }
-        let kept = ailoy_core::agent::AgentState {
-            id: runtime.state.id.clone(),
-            history: runtime.history().to_vec(),
-            context_tokens: runtime.state.context_tokens,
-            sandbox_id: None,
-        };
         // A session removed while its turn ran stays removed.
+        let kept = runtime.state.clone();
         let _ = served.provider.write().unwrap().set_session(&key.0, kept);
         served.running.lock().unwrap().remove(&key);
         if let Some(failed) = failed {
@@ -296,7 +289,7 @@ mod tests {
         provider.tools.set(Echo);
         let provider = Arc::new(RwLock::new(provider));
         let admin = AdminClient::embed(admin_router(provider.clone()));
-        (admin, Client::embed(router(provider)))
+        (admin, Client::embed(router(provider, None)))
     }
 
     /// The two clients of a provider that keeps the agent `a`.
@@ -492,6 +485,14 @@ mod tests {
     /// `parrot/fails` and slow ones under `parrot/slow`, and whose agent `p` runs `model`, with a
     /// session started.
     async fn parrot_session(model: &str) -> (Client, String) {
+        parrot_session_of(AgentSpec::new(model), None).await
+    }
+
+    /// As [`parrot_session`], of the agent `spec`, the session working in `sandbox`.
+    async fn parrot_session_of(
+        spec: AgentSpec,
+        sandbox: Option<&virtx::Sandbox>,
+    ) -> (Client, String) {
         let mut provider = AgentProvider::new();
         provider.models.set(
             "parrot",
@@ -502,14 +503,16 @@ mod tests {
                 }))
             },
         );
-        provider
-            .put_agent("p", AgentPutArgs::new(AgentSpec::new(model)))
-            .unwrap();
-        let client = Client::embed(router(Arc::new(RwLock::new(provider))));
-        let session = client
-            .create_session("p", &SessionCreateArgs::new())
-            .await
-            .unwrap();
+        // The tools a sandbox brings.
+        provider.tools.set(crate::tool::Console);
+        provider.put_agent("p", AgentPutArgs::new(spec)).unwrap();
+        let virtx = sandbox.map(|sandbox| sandbox.client().clone());
+        let client = Client::embed(router(Arc::new(RwLock::new(provider)), virtx));
+        let mut args = SessionCreateArgs::new();
+        if let Some(sandbox) = sandbox {
+            args = args.sandbox_id(sandbox.id());
+        }
+        let session = client.create_session("p", &args).await.unwrap();
         (client, session.id)
     }
 
@@ -530,6 +533,19 @@ mod tests {
         let state = client.get_session("p", &id).await.unwrap();
         let roles: Vec<Role> = state.history.iter().map(|m| m.role.clone()).collect();
         assert_eq!(roles, [Role::User, Role::Assistant]);
+    }
+
+    /// An agent that works in a sandbox runs in the one its session names, the caller's.
+    #[tokio::test]
+    async fn test_a_turn_works_in_the_sandbox_its_session_names() {
+        let sandbox = crate::test_sandbox().await;
+        let spec = AgentSpec::new("parrot/x").sandbox();
+        let (client, id) = parrot_session_of(spec, Some(&sandbox)).await;
+        let outcomes: Vec<_> = client.run_stream("p", &id, &ping()).collect().await;
+        assert!(outcomes.iter().all(Result::is_ok), "{outcomes:?}");
+        let state = client.get_session("p", &id).await.unwrap();
+        assert_eq!(state.sandbox_id.as_deref(), Some(sandbox.id()));
+        assert_eq!(state.history.len(), 2);
     }
 
     #[tokio::test]
@@ -578,7 +594,7 @@ mod tests {
     #[tokio::test]
     async fn test_the_routers_share_no_path() {
         let provider = Arc::new(RwLock::new(AgentProvider::new()));
-        let admin = AdminClient::embed(router(provider.clone()));
+        let admin = AdminClient::embed(router(provider.clone(), None));
         assert_eq!(admin.list_agent().await.err().unwrap().status(), Some(404));
         let client = Client::embed(admin_router(provider));
         let error = client.list_session("a").await.err().unwrap();

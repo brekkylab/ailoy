@@ -5,9 +5,9 @@
 //! ```ignore
 //! use ailoy_runner::agent::*;
 //!
-//! let mut spec = AgentSpec::new("anthropic/claude-sonnet-5-5").instruction("Be brief.");
-//! spec.use_sandbox = true;
-//! let mut agent = AgentRuntime::try_with_state(spec, AgentState::new().with_sandbox(sandbox)).await?;
+//! let spec = AgentSpec::new("anthropic/claude-sonnet-5-5").instruction("Be brief.").sandbox();
+//! let state = AgentState::new().with_sandbox_id(sandbox.id());
+//! let mut agent = AgentRuntime::try_with_state(spec, state, Some(sandbox.client())).await?;
 //! let mut turn = agent.run(Message::new(Role::User).with_contents([Part::text("Hi")]));
 //! while let Some(output) = turn.next().await { /* … */ }
 //! ```
@@ -20,11 +20,10 @@ mod state;
 use std::sync::{Arc, LazyLock, RwLock};
 
 pub use ailoy_core::agent::{
-    AgentListOutputItem, AgentProvider, AgentPutArgs, AgentSpec, Refusal, SessionCreateArgs,
-    SessionListOutputItem, TruncationPolicy,
+    AgentListOutputItem, AgentProvider, AgentPutArgs, AgentSpec, AgentState, Refusal,
+    SessionCreateArgs, SessionListOutputItem, TruncationPolicy,
 };
 pub use rt::*;
-pub use state::*;
 
 use crate::{
     model::Backend,

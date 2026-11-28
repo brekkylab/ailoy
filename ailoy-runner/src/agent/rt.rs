@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::console::Sandbox;
-use anyhow::bail;
+use anyhow::{Context as _, bail};
 use futures::{
     FutureExt as _, StreamExt as _,
     stream::{BoxStream, FuturesUnordered},
@@ -13,6 +13,7 @@ use futures::{
 
 use super::{
     AgentProvider, AgentSpec, AgentState, image::fit_images_off_runtime, skill::render_skills,
+    state::truncate_history,
 };
 use crate::{
     datatype::Value,
@@ -37,8 +38,9 @@ const CUT_OFF: &str = "the model's reply was cut off at its output limit";
 /// An agent that drives an [`InferLangModel`] through multi-turn, tool-augmented
 /// conversations.
 ///
-/// Pairs an [`AgentSpec`] (model + instruction + tools) with an [`AgentState`]
-/// (history + sandbox), holding the model and tools built from the spec.
+/// Pairs an [`AgentSpec`] (model + instruction + tools) with an [`AgentState`] (history and the
+/// id of the sandbox it works in), holding the model and tools built from the spec and the
+/// sandbox reached by that id.
 /// [`run`](Self::run) streams one turn, calling tools until the model answers, and appends
 /// every message to the history.
 pub struct AgentRuntime {
@@ -53,21 +55,30 @@ pub struct AgentRuntime {
     tools: HashMap<String, ToolFunc>,
 
     pub state: AgentState,
+
+    /// The sandbox `state.sandbox_id` names, which the sandbox tools run in.
+    sandbox: Option<Sandbox>,
 }
 
 impl AgentRuntime {
-    /// Create an agent with a fresh [`AgentState`].
+    /// Create an agent with a fresh [`AgentState`], and no sandbox.
     pub async fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
-        Self::try_with_state(spec, AgentState::new()).await
+        Self::try_with_state(spec, AgentState::new(), None).await
     }
 
     /// Create an agent with `state`, made through the
     /// [`default_provider`](super::default_provider). See [`try_in`](Self::try_in).
-    pub async fn try_with_state(spec: AgentSpec, state: AgentState) -> anyhow::Result<Self> {
-        Self::try_in(super::default_provider(), spec, state).await
+    pub async fn try_with_state(
+        spec: AgentSpec,
+        state: AgentState,
+        virtx: Option<&virtx::Client>,
+    ) -> anyhow::Result<Self> {
+        Self::try_in(super::default_provider(), virtx, spec, state).await
     }
 
-    /// Create an agent with `state`, its model and tools made through `provider`.
+    /// Create an agent with `state`, its model and tools made through `provider`, and its
+    /// sandbox, `state.sandbox_id`, reached through `virtx`. The sandbox stays the caller's: the
+    /// agent neither makes nor removes one.
     ///
     /// The model is built from `spec.model` through the `models` of `provider`, and each of
     /// `spec.tools` through its `tools`; [`AgentSpec::use_sandbox`] and
@@ -80,6 +91,7 @@ impl AgentRuntime {
     /// Async because the model may be looked up and skills are read through the sandbox.
     pub async fn try_in(
         provider: &RwLock<AgentProvider>,
+        virtx: Option<&virtx::Client>,
         spec: AgentSpec,
         mut state: AgentState,
     ) -> anyhow::Result<Self> {
@@ -87,13 +99,18 @@ impl AgentRuntime {
         let model = provider.read().unwrap().models.create(&spec.model)?;
         let model = model.await?;
 
-        match (spec.use_sandbox, state.sandbox.is_some()) {
-            (true, false) => bail!("the spec uses a sandbox, and the state has none"),
-            (false, true) => bail!("the state has a sandbox, and the spec does not use one"),
-            _ => {}
-        }
+        let sandbox = match (spec.use_sandbox, &state.sandbox_id) {
+            (true, Some(id)) => {
+                let virtx = virtx
+                    .context("the spec uses a sandbox, and no virtx client is given to reach it")?;
+                Some(virtx.get_sandbox(id).await?)
+            }
+            (true, None) => bail!("the spec uses a sandbox, and the state has none"),
+            (false, Some(_)) => bail!("the state has a sandbox, and the spec does not use one"),
+            (false, None) => None,
+        };
         if spec.use_browser {
-            let has_abin = state.sandbox.as_ref().is_some_and(|sandbox| {
+            let has_abin = sandbox.as_ref().is_some_and(|sandbox| {
                 sandbox.info().abins.iter().any(|abin| abin == BROWSER_ABIN)
             });
             if !has_abin {
@@ -124,7 +141,7 @@ impl AgentRuntime {
 
         if !state.history.iter().any(|m| m.role == Role::System) {
             let org = split_desc(&spec.model).0;
-            let skills = render_skills(&spec.skills, state.sandbox.as_ref(), org).await?;
+            let skills = render_skills(&spec.skills, sandbox.as_ref(), org).await?;
             let text = [spec.instruction.clone(), skills]
                 .into_iter()
                 .flatten()
@@ -144,6 +161,7 @@ impl AgentRuntime {
             tool_descs,
             tools,
             state,
+            sandbox,
             spec,
         })
     }
@@ -302,13 +320,13 @@ impl AgentRuntime {
         close_dangling_calls(&mut self.state.history);
         let query = fit_images_off_runtime(query).await;
         self.state.history.push(query);
-        self.state.truncate_history(&self.spec.truncation);
+        truncate_history(&mut self.state, &self.spec.truncation);
     }
 
     /// Run `calls` concurrently, yielding each result as a [`Role::Tool`] message as it
     /// finishes, one per call.
     fn call_tools(&self, calls: Vec<Part>) -> BoxStream<'static, anyhow::Result<Message>> {
-        let sandbox = self.state.sandbox.clone();
+        let sandbox = self.sandbox.clone();
         calls
             .iter()
             .filter_map(Part::as_function)
@@ -1014,7 +1032,9 @@ mod tests {
         let (_, spec) = scripted(name, []);
         let state = AgentState::new()
             .with_history([Message::new(Role::System).with_contents([Part::text("Mine.")])]);
-        let agent = AgentRuntime::try_with_state(spec, state).await.unwrap();
+        let agent = AgentRuntime::try_with_state(spec, state, None)
+            .await
+            .unwrap();
         assert_eq!(agent.history().len(), 1);
         assert_eq!(text_of(&agent.history()[0]), "Mine.");
     }
@@ -1033,7 +1053,9 @@ mod tests {
     async fn test_the_instruction_goes_before_a_given_history() {
         let (_, spec) = scripted("test-agent-seeded", []);
         let state = AgentState::new().with_history([user("hello"), user("again")]);
-        let agent = AgentRuntime::try_with_state(spec, state).await.unwrap();
+        let agent = AgentRuntime::try_with_state(spec, state, None)
+            .await
+            .unwrap();
         assert_eq!(
             roles(agent.history()),
             [Role::System, Role::User, Role::User]
@@ -1046,12 +1068,15 @@ mod tests {
     async fn test_a_sandbox_is_worked_in() {
         let (_, spec) = scripted("test-agent-sandbox", []);
         let spec = spec.sandbox();
-        let state = AgentState::new().with_sandbox(crate::test_sandbox().await);
-        let agent = AgentRuntime::try_with_state(spec, state).await.unwrap();
+        let sandbox = crate::test_sandbox().await;
+        let state = AgentState::new().with_sandbox_id(sandbox.id());
+        let agent = AgentRuntime::try_with_state(spec, state, Some(sandbox.client()))
+            .await
+            .unwrap();
         assert!(agent.tool_descs.iter().any(|t| t.name == "shell"));
         assert!(!agent.spec().tools.contains(&"shell".to_owned()));
 
-        let sandbox = agent.state.sandbox.as_ref().unwrap();
+        let sandbox = agent.sandbox.as_ref().unwrap();
         let result = crate::console::exec(sandbox, ["sh", "-c", "echo ok"], None)
             .await
             .unwrap();
@@ -1068,8 +1093,8 @@ mod tests {
             .await
             .expect("making a sandbox with the index abin");
         let (_, spec) = scripted("test-agent-abins", []);
-        let state = AgentState::new().with_sandbox(with_abin.clone());
-        let agent = AgentRuntime::try_with_state(spec.sandbox(), state)
+        let state = AgentState::new().with_sandbox_id(with_abin.id());
+        let agent = AgentRuntime::try_with_state(spec.sandbox(), state, Some(with_abin.client()))
             .await
             .unwrap();
         with_abin.remove().await.ok();
@@ -1091,8 +1116,17 @@ mod tests {
         let (_, spec) = scripted(name, []);
         let mut uses_sandbox = spec.clone();
         uses_sandbox.use_sandbox = true;
-        let err = AgentRuntime::try_new(uses_sandbox).await.err().unwrap();
+        let err = AgentRuntime::try_new(uses_sandbox.clone())
+            .await
+            .err()
+            .unwrap();
         assert!(err.to_string().contains("uses a sandbox"), "{err}");
+        let state = AgentState::new().with_sandbox_id("somewhere");
+        let err = AgentRuntime::try_with_state(uses_sandbox, state, None)
+            .await
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("no virtx client"), "{err}");
 
         let mut uses_browser = spec;
         uses_browser.use_browser = true;
@@ -1102,8 +1136,9 @@ mod tests {
 
         let mut uses_both = uses_browser_spec;
         uses_both.use_sandbox = true;
-        let state = AgentState::new().with_sandbox(crate::test_sandbox().await);
-        let err = AgentRuntime::try_with_state(uses_both, state)
+        let sandbox = crate::test_sandbox().await;
+        let state = AgentState::new().with_sandbox_id(sandbox.id());
+        let err = AgentRuntime::try_with_state(uses_both, state, Some(sandbox.client()))
             .await
             .err()
             .unwrap();

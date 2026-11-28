@@ -17,8 +17,8 @@ pub struct AgentState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_tokens: Option<u64>,
 
-    /// The id of the sandbox the agent works in, on the virtx server of where the agent runs;
-    /// none, for an agent without one.
+    /// The id of the sandbox the agent works in, one the caller made, on the virtx server
+    /// where the agent runs reaches; none, for an agent without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox_id: Option<String>,
 }
@@ -44,6 +44,12 @@ impl AgentState {
         self.history = history.into_iter().collect();
         self
     }
+
+    /// Work in the sandbox `id`.
+    pub fn with_sandbox_id(mut self, id: impl Into<String>) -> Self {
+        self.sandbox_id = Some(id.into());
+        self
+    }
 }
 
 /// What starting a session takes: `POST /agents/{name}/sessions/`'s body.
@@ -52,6 +58,11 @@ pub struct SessionCreateArgs {
     /// The history the session's state starts with; empty, unless given.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<Message>,
+
+    /// The sandbox the session works in, by its id: one the caller made, which stays the
+    /// caller's. A session of an agent whose spec uses a sandbox needs one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_id: Option<String>,
 }
 
 impl SessionCreateArgs {
@@ -62,6 +73,11 @@ impl SessionCreateArgs {
 
     pub fn history(mut self, history: impl IntoIterator<Item = Message>) -> Self {
         self.history.extend(history);
+        self
+    }
+
+    pub fn sandbox_id(mut self, id: impl Into<String>) -> Self {
+        self.sandbox_id = Some(id.into());
         self
     }
 }

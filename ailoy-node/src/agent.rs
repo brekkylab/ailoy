@@ -144,6 +144,7 @@ impl JsAgent {
         let prepared = (|| -> Result<_> {
             let spec: AgentSpec = from_js(env, spec, "an agent spec")?;
             let mut state = AgentState::new();
+            let mut virtx = None;
             if let Some(options) = options {
                 let get = |e: napi::Error| invalid(e.reason);
                 if let Some(history) = options.get::<Unknown>("history").map_err(get)? {
@@ -154,14 +155,16 @@ impl JsAgent {
                     )?);
                 }
                 if let Some(sandbox) = options.get::<Object>("sandbox").map_err(get)? {
-                    state = state.with_sandbox(console::sandbox(env, &sandbox)?);
+                    let sandbox = console::sandbox(env, &sandbox)?;
+                    state = state.with_sandbox_id(sandbox.id());
+                    virtx = Some(sandbox.client().clone());
                 }
             }
-            Ok((spec, state))
+            Ok((spec, state, virtx))
         })();
-        let (spec, state) = prepared.map_err(|e| thrown(env, e))?;
+        let (spec, state, virtx) = prepared.map_err(|e| thrown(env, e))?;
         promise(env, async move {
-            let agent = AgentRuntime::try_with_state(spec, state)
+            let agent = AgentRuntime::try_with_state(spec, state, virtx.as_ref())
                 .await
                 .map_err(error::anyhow)?;
             Ok(JsAgent::new(agent))

@@ -119,7 +119,8 @@ impl AgentProvider {
             .agents
             .get_mut(agent)
             .ok_or_else(|| Refusal::NoAgent(agent.to_owned()))?;
-        let state = AgentState::new().with_history(args.history);
+        let mut state = AgentState::new().with_history(args.history);
+        state.sandbox_id = args.sandbox_id;
         kept.sessions.insert(state.id.clone(), state.clone());
         Ok(state)
     }

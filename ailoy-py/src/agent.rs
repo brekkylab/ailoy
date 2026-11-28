@@ -111,11 +111,14 @@ impl PyAgent {
         if let Some(history) = history {
             state = state.with_history(from_py::<Vec<Message>>(&history, "a list of messages")?);
         }
+        let mut virtx = None;
         if let Some(sandbox) = sandbox {
-            state = state.with_sandbox(console::sandbox(&sandbox)?);
+            let sandbox = console::sandbox(&sandbox)?;
+            state = state.with_sandbox_id(sandbox.id());
+            virtx = Some(sandbox.client().clone());
         }
         future_into_py(py, async move {
-            let agent = AgentRuntime::try_with_state(spec, state)
+            let agent = AgentRuntime::try_with_state(spec, state, virtx.as_ref())
                 .await
                 .map_err(error::anyhow)?;
             Ok(PyAgent::new(agent))

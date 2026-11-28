@@ -14,7 +14,7 @@
 
 | 개념 | 지금 | 바뀌는 점 |
 | --- | --- | --- |
-| `AgentSpec` | 이름만 담은 serde 타입 | `use_sandbox: bool` → `sandbox: Option<SandboxCreateArgs>` |
+| `AgentSpec` | 이름만 담은 serde 타입 | `use_sandbox: bool` 그대로. sandbox는 호출자가 virtx로 만들고, session이 그 id를 가짐 |
 | `AgentProvider` | 없음 (프로세스 전역 registry) | 모델·도구 registry, virtx 클라이언트, 저장 위치를 담는 값. 전역 `set_*_provider`는 기본 인스턴스에 등록 |
 | `AgentState` | history + sandbox 핸들 + browser | 저장 형태는 `id`, history, `context_tokens`, sandbox id. 핸들은 실행 중에만 provider가 붙임 |
 | Run | 없음 (스트림만) | 한 번의 턴 실행. id, 상태, 이벤트 로그, 요약 |

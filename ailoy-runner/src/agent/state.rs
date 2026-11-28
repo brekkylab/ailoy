@@ -1,120 +1,66 @@
 use crate::{
-    console::Sandbox,
-    message::{Message, Part, Role},
+    agent::AgentState,
+    message::{Part, Role},
 };
 
 use super::TruncationPolicy;
 
-/// What stands in for an image [`AgentState::truncate_history`] replaced.
+/// What stands in for an image [`truncate_history`] replaced.
 pub(super) const IMAGE_PLACEHOLDER: &str = "[image from an earlier turn removed]";
 
-/// What stands in for a tool result's contents [`AgentState::truncate_history`] replaced.
+/// What stands in for a tool result's contents [`truncate_history`] replaced.
 pub(super) const TOOL_RESULT_PLACEHOLDER: &str = "[context truncated]";
 
-/// What an [`AgentRuntime`](super::AgentRuntime) carries from one turn to the next: its history, and the
-/// sandbox it works in.
+/// Replace old images and tool results in the history of `state` by placeholders, as `policy`
+/// says. No message is removed, and a tool result keeps its id, since APIs such as Claude's
+/// refuse a call without its result. Images a person attached are left alone.
 ///
-/// A clone shares the sandbox: it is a handle, so two agents built from clones work in the
-/// same sandbox.
-#[derive(Clone)]
-pub struct AgentState {
-    /// What this state is known by, a UUID unless given another.
-    pub id: String,
-
-    pub history: Vec<Message>,
-
-    /// The context's size in tokens as of the last model call, its input as the model
-    /// reported it, which a [`TruncationPolicy`](super::TruncationPolicy) checks against its
-    /// limit as a turn begins.
-    pub context_tokens: Option<u64>,
-
-    /// The sandbox this agent's sandbox tools run in.
-    ///
-    /// Nothing fills this in, since making a sandbox means choosing a virtx server.
-    pub sandbox: Option<Sandbox>,
-}
-
-impl Default for AgentState {
-    fn default() -> Self {
-        Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            history: Vec::new(),
-            context_tokens: None,
-            sandbox: None,
-        }
-    }
-}
-
-impl AgentState {
-    /// A new state, with an empty history, a new id, and no sandbox.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_history(mut self, history: impl IntoIterator<Item = Message>) -> Self {
-        self.history = history.into_iter().collect();
-        self
-    }
-
-    /// Run sandbox tools in `sandbox`.
-    pub fn with_sandbox(mut self, sandbox: Sandbox) -> Self {
-        self.sandbox = Some(sandbox);
-        self
-    }
-
-    /// Replace old images and tool results in the history by placeholders, as `policy` says. No message is
-    /// removed, and a tool result keeps its id, since APIs such as Claude's refuse a call
-    /// without its result. Images a person attached are left alone.
-    ///
-    /// Only for the start of a turn, with the query already in the history: Claude refuses a
-    /// thinking block handed back once anything before it has changed, and at turn start
-    /// none follows, since the backends replay thinking only after the last user message.
-    pub(super) fn truncate_history(&mut self, policy: &TruncationPolicy) {
-        let history = &mut self.history;
-        // Past `max_images` images in tool results, the oldest go until
-        // `preserve_recent_images` remain: many at once, so the prompt cache breaks once in
-        // several turns rather than every turn.
-        if policy.max_images > 0 {
-            let images: Vec<(usize, usize)> = history
-                .iter()
-                .enumerate()
-                .filter(|(_, m)| m.role == Role::Tool)
-                .flat_map(|(i, m)| {
-                    let parts = m.contents.iter().enumerate();
-                    parts
-                        .filter(|(_, p)| p.is_image())
-                        .map(move |(j, _)| (i, j))
-                })
-                .collect();
-            if images.len() > policy.max_images {
-                let replaced = images.len().saturating_sub(policy.preserve_recent_images);
-                for (i, j) in images.into_iter().take(replaced) {
-                    history[i].contents[j] = Part::text(IMAGE_PLACEHOLDER);
-                }
-            }
-        }
-
-        // Once the last call read past `max_input_tokens`, the tool results before the
-        // latest `preserve_recent_turns` user turns lose their contents. A turn counts from
-        // its user message, since one turn may hold many assistant messages; with fewer turns
-        // than that, nothing changes.
-        if policy.max_input_tokens == 0
-            || self.context_tokens.unwrap_or(0) <= policy.max_input_tokens
-        {
-            return;
-        }
-        let users = history
+/// Only for the start of a turn, with the query already in the history: Claude refuses a
+/// thinking block handed back once anything before it has changed, and at turn start none
+/// follows, since the backends replay thinking only after the last user message.
+pub(super) fn truncate_history(state: &mut AgentState, policy: &TruncationPolicy) {
+    let history = &mut state.history;
+    // Past `max_images` images in tool results, the oldest go until
+    // `preserve_recent_images` remain: many at once, so the prompt cache breaks once in
+    // several turns rather than every turn.
+    if policy.max_images > 0 {
+        let images: Vec<(usize, usize)> = history
             .iter()
             .enumerate()
-            .filter(|(_, m)| m.role == Role::User);
-        let Some((preserve_from, _)) = users.rev().nth(policy.preserve_recent_turns.max(1) - 1)
-        else {
-            return;
-        };
-        for message in &mut history[..preserve_from] {
-            if message.role == Role::Tool {
-                message.contents = vec![Part::text(TOOL_RESULT_PLACEHOLDER)];
+            .filter(|(_, m)| m.role == Role::Tool)
+            .flat_map(|(i, m)| {
+                let parts = m.contents.iter().enumerate();
+                parts
+                    .filter(|(_, p)| p.is_image())
+                    .map(move |(j, _)| (i, j))
+            })
+            .collect();
+        if images.len() > policy.max_images {
+            let replaced = images.len().saturating_sub(policy.preserve_recent_images);
+            for (i, j) in images.into_iter().take(replaced) {
+                history[i].contents[j] = Part::text(IMAGE_PLACEHOLDER);
             }
+        }
+    }
+
+    // Once the last call read past `max_input_tokens`, the tool results before the
+    // latest `preserve_recent_turns` user turns lose their contents. A turn counts from
+    // its user message, since one turn may hold many assistant messages; with fewer turns
+    // than that, nothing changes.
+    if policy.max_input_tokens == 0 || state.context_tokens.unwrap_or(0) <= policy.max_input_tokens
+    {
+        return;
+    }
+    let users = history
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == Role::User);
+    let Some((preserve_from, _)) = users.rev().nth(policy.preserve_recent_turns.max(1) - 1) else {
+        return;
+    };
+    for message in &mut history[..preserve_from] {
+        if message.role == Role::Tool {
+            message.contents = vec![Part::text(TOOL_RESULT_PLACEHOLDER)];
         }
     }
 }
@@ -123,6 +69,7 @@ impl AgentState {
 mod tests {
     use super::*;
     use crate::datatype::Value;
+    use crate::message::Message;
 
     fn sys() -> Message {
         Message::new(Role::System).with_contents([Part::text("system")])
@@ -202,7 +149,7 @@ mod tests {
         };
 
         let mut state = read(Some(200));
-        state.truncate_history(&policy(2));
+        truncate_history(&mut state, &policy(2));
         let cut = &state.history;
         assert_eq!(truncated(cut), [true, false]);
         assert_eq!(cut.len(), history.len());
@@ -212,7 +159,7 @@ mod tests {
         // The turn just begun is always kept, so `0` acts as `1`.
         for preserve in [0, 1] {
             let mut state = read(Some(200));
-            state.truncate_history(&policy(preserve));
+            truncate_history(&mut state, &policy(preserve));
             assert_eq!(
                 truncated(&state.history),
                 [true, true],
@@ -223,11 +170,14 @@ mod tests {
         // Fewer turns than preserved, at the limit, or without a limit: nothing changes.
         for (preserve, max_input_tokens, tokens) in [(3, 100, 200), (1, 100, 100), (1, 0, 200)] {
             let mut state = read(Some(tokens));
-            state.truncate_history(&TruncationPolicy {
-                max_input_tokens,
-                preserve_recent_turns: preserve,
-                ..Default::default()
-            });
+            truncate_history(
+                &mut state,
+                &TruncationPolicy {
+                    max_input_tokens,
+                    preserve_recent_turns: preserve,
+                    ..Default::default()
+                },
+            );
             assert_eq!(
                 truncated(&state.history),
                 [false, false],
@@ -253,11 +203,11 @@ mod tests {
             .history
             .extend((1..=4).map(|n| shot(&format!("c{n}"))));
 
-        state.truncate_history(&images(4, 2));
+        truncate_history(&mut state, &images(4, 2));
         assert_eq!(images_in(&state.history), 5);
 
         state.history.push(shot("c5"));
-        state.truncate_history(&images(4, 2));
+        truncate_history(&mut state, &images(4, 2));
         assert_eq!(images_in(&state.history), 3);
         assert!(state.history[1].contents[1].is_image());
         assert!(
@@ -274,14 +224,9 @@ mod tests {
         assert_eq!(state.history[2].id.as_deref(), Some("c1"));
 
         // A cap of `0` is off; preserving none clears them all.
-        state.truncate_history(&images(0, 0));
+        truncate_history(&mut state, &images(0, 0));
         assert_eq!(images_in(&state.history), 3);
-        state.truncate_history(&images(1, 0));
+        truncate_history(&mut state, &images(1, 0));
         assert_eq!(images_in(&state.history), 1);
-    }
-
-    #[test]
-    fn test_new_states_differ() {
-        assert_ne!(AgentState::new().id, AgentState::new().id);
     }
 }
