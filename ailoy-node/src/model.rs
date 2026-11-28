@@ -5,7 +5,7 @@
 //! base_url: 'http://localhost:11434/v1' }`, with an `api_key` if the server wants one and
 //! `models` mapping a name to the id the server serves it as, as [`LangModelServer`] is in
 //! Rust), or a factory of JavaScript's own, as
-//! [`LangModelProvider::custom`] is in Rust: called with the org and the name after it (`null`
+//! a function is in Rust: called with the org and the name after it (`null`
 //! for a desc naming only the org), it returns a model. That is a `LangModel`, used as is, or
 //! any object with
 //!
@@ -23,8 +23,8 @@ use std::{ptr, sync::Arc};
 use ailoy_runner::{
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::{
-        Backend, InferLangModel, LangModelOptions, LangModelProvider, LangModelServer,
-        create_lang_model, get_lang_model_provider as get_lang_model_provider_rs,
+        Backend, InferLangModel, LangModelOptions, LangModelServer, create_lang_model,
+        get_lang_model_provider as get_lang_model_provider_rs,
         remove_lang_model_provider as remove_lang_model_provider_rs,
         set_lang_model_provider as set_lang_model_provider_rs,
     },
@@ -322,8 +322,11 @@ impl FromNapiValue for Made {
 type Factory = Tsfn<FnArgs<(String, Option<String>)>, Made>;
 
 /// The models of an org from what `factory` returns for it.
-fn custom(factory: Factory) -> LangModelProvider {
-    LangModelProvider::custom(move |org, name| {
+fn custom(
+    factory: Factory,
+) -> impl Fn(&str, Option<&str>) -> anyhow::Result<Arc<dyn InferLangModel>> + Send + Sync + 'static
+{
+    move |org: &str, name: Option<&str>| {
         let args = FnArgs {
             data: (org.to_owned(), name.map(str::to_owned)),
         };
@@ -331,7 +334,7 @@ fn custom(factory: Factory) -> LangModelProvider {
         futures::executor::block_on(factory.call_async_catch(args))
             .map(|made| made.0)
             .map_err(|e| anyhow::anyhow!(reason(e)))
-    })
+    }
 }
 
 /// Build the models of `org` (`'anthropic'`, `'openai'`, `'google'`, `'deepseek-ai'`, …)
@@ -346,27 +349,25 @@ pub fn set_lang_model_provider(
     )]
     provider: Unknown<'_>,
 ) -> Result<()> {
-    let provider = match provider.get_type().map_err(|e| invalid(e.reason))? {
+    match provider.get_type().map_err(|e| invalid(e.reason))? {
         ValueType::String => {
-            LangModelProvider::from(from_js::<Backend>(env, provider, "a backend")?)
+            set_lang_model_provider_rs(org, from_js::<Backend>(env, provider, "a backend")?)
         }
-        ValueType::Object => LangModelProvider::from(from_js::<LangModelServer>(
-            env,
-            provider,
-            "a lang model server",
-        )?),
+        ValueType::Object => {
+            let server = from_js::<LangModelServer>(env, provider, "a lang model server")?;
+            set_lang_model_provider_rs(org, server)
+        }
         ValueType::Function => {
             let factory = unsafe { Factory::from_napi_value(env.raw(), provider.raw()) }
                 .map_err(|e| invalid(e.reason))?;
-            custom(factory)
+            set_lang_model_provider_rs(org, custom(factory))
         }
         _ => {
             return Err(invalid(
                 "a lang model provider is a backend's name, a server object or a factory of models",
             ));
         }
-    };
-    set_lang_model_provider_rs(org, provider);
+    }
     Ok(())
 }
 
@@ -375,15 +376,11 @@ pub fn set_lang_model_provider(
 /// `null` when its org has no provider.
 #[napi(ts_return_type = "Backend | 'custom' | null")]
 pub fn get_lang_model_provider(desc: String) -> Option<String> {
-    get_lang_model_provider_rs(&desc).map(|provider| match provider {
-        LangModelProvider::Backend(backend) => backend.to_string(),
-        LangModelProvider::Server(_) => Backend::SelfHosted.to_string(),
-        LangModelProvider::Custom(_) => "custom".to_string(),
-    })
+    get_lang_model_provider_rs(&desc).map(|set| set.name())
 }
 
 /// Stop building the models of `org`. Answers whether it had a provider.
 #[napi]
 pub fn remove_lang_model_provider(org: String) -> bool {
-    remove_lang_model_provider_rs(&org).is_some()
+    remove_lang_model_provider_rs(&org)
 }

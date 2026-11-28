@@ -1,4 +1,4 @@
-//! The tools this crate provides, each group a [`ToolProvider`](crate::tool::ToolProvider):
+//! The tools this crate provides, each group a [`ToolSet`](crate::tool::ToolSet):
 //! [`Console`] in the agent's sandbox, [`Web`] from this process, [`Browser`] over the sandbox's
 //! `browser` abin, and an MCP server's ([`MCPServer`]).
 

@@ -1,7 +1,7 @@
 //! MCP (Model Context Protocol) client support.
 //!
 //! Discovery (`tools/list`) happens once, at registration; the server becomes one
-//! [`ToolProvider`](crate::tool::ToolProvider), an [`MCPServer`], of each of its tools under a
+//! [`ToolSet`](crate::tool::ToolSet), an [`MCPServer`], of each of its tools under a
 //! prefix, sharing the live connection:
 //!
 //! ```text
@@ -43,7 +43,7 @@ use crate::{
     datatype::{Bytes, Value},
     message::{Message, Part, Role},
     tool::{
-        MCPTransport, ToolDesc, ToolDescBuilder, ToolFunc, ToolProvider, sanitize_tool_name,
+        MCPTransport, ToolDesc, ToolDescBuilder, ToolFunc, ToolSet, sanitize_tool_name,
         warn_if_tool_name_too_long,
     },
     tool_func,
@@ -220,7 +220,7 @@ impl MCPToolEntry {
 }
 
 /// Every tool one server reported, each under `{prefix}__{name}`, as a
-/// [`ToolProvider`].
+/// [`ToolSet`].
 pub struct MCPServer {
     conn: Arc<MCPConnection>,
     descs: Vec<ToolDesc>,
@@ -253,7 +253,7 @@ impl Drop for MCPServer {
     }
 }
 
-impl ToolProvider for MCPServer {
+impl ToolSet for MCPServer {
     fn descs(&self) -> Vec<ToolDesc> {
         self.descs.clone()
     }
@@ -614,7 +614,7 @@ mod tests {
     fn provide(provider: &AgentProvider, names: &[String]) -> HashMap<String, ToolFunc> {
         names
             .iter()
-            .map(|name| (name.clone(), provider.create_tool(name).unwrap().1))
+            .map(|name| (name.clone(), provider.tools.create(name).unwrap().1))
             .collect()
     }
 
@@ -631,17 +631,17 @@ mod tests {
     async fn test_registration_fans_one_server_out_into_entries() {
         let conn = connected().await;
         let mut provider = AgentProvider::new();
-        let names = provider.set_tool_provider(MCPServer::new("test", conn));
+        let names = provider.tools.set(MCPServer::new("test", conn));
 
         assert_eq!(names, vec!["test__echo", "test__odd_name_tool"]);
-        assert!(provider.create_tool("test__echo").is_ok());
+        assert!(provider.tools.create("test__echo").is_ok());
     }
 
     #[tokio::test]
     async fn test_provided_func_calls_through_to_the_server() {
         let conn = connected().await;
         let mut provider = AgentProvider::new();
-        let names = provider.set_tool_provider(MCPServer::new("test", conn));
+        let names = provider.tools.set(MCPServer::new("test", conn));
 
         let funcs = provide(&provider, &names);
         let func = funcs.get("test__echo").expect("echo was registered");
@@ -662,7 +662,7 @@ mod tests {
     async fn test_sanitized_name_still_calls_the_servers_own_name() {
         let conn = connected().await;
         let mut provider = AgentProvider::new();
-        let names = provider.set_tool_provider(MCPServer::new("test", conn));
+        let names = provider.tools.set(MCPServer::new("test", conn));
 
         let funcs = provide(&provider, &names);
         let out = funcs
@@ -688,7 +688,7 @@ mod tests {
     async fn test_server_side_error_reaches_the_model_as_text() {
         let conn = connected().await;
         let mut provider = AgentProvider::new();
-        let names = provider.set_tool_provider(MCPServer::new("test", conn));
+        let names = provider.tools.set(MCPServer::new("test", conn));
 
         let funcs = provide(&provider, &names);
         let out = funcs
@@ -710,7 +710,7 @@ mod tests {
     async fn test_non_object_arguments_are_reported_not_sent() {
         let conn = connected().await;
         let mut provider = AgentProvider::new();
-        let names = provider.set_tool_provider(MCPServer::new("test", conn));
+        let names = provider.tools.set(MCPServer::new("test", conn));
 
         let funcs = provide(&provider, &names);
         let out = funcs
@@ -731,23 +731,27 @@ mod tests {
     async fn test_removing_the_prefix_takes_the_whole_server() {
         let conn = connected().await;
         let mut provider = AgentProvider::new();
-        provider.set_tool_provider(MCPServer::new("test", conn));
+        provider.tools.set(MCPServer::new("test", conn));
 
         let prefix = prefixed_tool_name("test", "");
-        assert_eq!(provider.remove_tool_providers_by_prefix(&prefix), 2);
-        assert!(provider.create_tool("test__echo").is_err());
-        assert_eq!(provider.remove_tool_providers_by_prefix(&prefix), 0);
+        assert_eq!(provider.tools.remove_by_prefix(&prefix), 2);
+        assert!(provider.tools.create("test__echo").is_err());
+        assert_eq!(provider.tools.remove_by_prefix(&prefix), 0);
     }
 
     #[tokio::test]
     async fn test_removing_a_prefix_leaves_a_neighbouring_one() {
         let mut provider = AgentProvider::new();
-        provider.set_tool_provider(MCPServer::new("test", connected().await));
-        provider.set_tool_provider(MCPServer::new("test2", connected().await));
+        provider
+            .tools
+            .set(MCPServer::new("test", connected().await));
+        provider
+            .tools
+            .set(MCPServer::new("test2", connected().await));
 
         // "test" must not take "test2": the prefix includes the separator.
         let prefix = prefixed_tool_name("test", "");
-        assert_eq!(provider.remove_tool_providers_by_prefix(&prefix), 2);
-        assert!(provider.create_tool("test2__echo").is_ok());
+        assert_eq!(provider.tools.remove_by_prefix(&prefix), 2);
+        assert!(provider.tools.create("test2__echo").is_ok());
     }
 }

@@ -25,7 +25,7 @@
 //! let model = create_lang_model("meta-llama/Llama-3.3-70B-Instruct").await?;
 //!
 //! // A model of your own.
-//! set_lang_model_provider("mine", LangModelProvider::custom(|_, name| Ok(Arc::new(MyModel::new(name)))));
+//! set_lang_model_provider("mine", |_: &str, name: Option<&str>| -> anyhow::Result<Arc<dyn InferLangModel>> { Ok(Arc::new(MyModel::new(name))) });
 //! ```
 //!
 //! # Naming
@@ -73,10 +73,10 @@
 
 mod catalog;
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, LazyLock, RwLock},
-};
+use std::{collections::HashMap, sync::Arc};
+
+pub use ailoy_core::model::{LangModelProvider, LangModelSet};
+use futures::future::BoxFuture;
 
 use anyhow::{Context as _, bail};
 
@@ -85,6 +85,7 @@ use super::{
     GeminiApiModel, GeminiCliModel, GlmApiModel, GptApiModel, InferLangModel, KimiApiModel,
     OpenAiCompatibleModel, OpenRouterApiModel, QwenApiModel, r#impl::env_key_and_region,
 };
+use crate::agent::default_provider;
 
 /// How a model is run, spelled `"cli"`, `"api"`, `"bedrock"`, `"openrouter"` or
 /// `"self-hosted"` in its serde form.
@@ -107,21 +108,6 @@ pub enum Backend {
     #[serde(rename = "self-hosted")]
     #[strum(serialize = "self-hosted")]
     SelfHosted,
-}
-
-/// Builds a model of your own from the desc's org and the name after it, `None` when the
-/// desc names only the org.
-pub type CustomLangModelProvider =
-    Arc<dyn Fn(&str, Option<&str>) -> anyhow::Result<Arc<dyn InferLangModel>> + Send + Sync>;
-
-/// How the models of an org are built.
-#[derive(Clone)]
-pub enum LangModelProvider {
-    /// A backend, on the server or key the environment names.
-    Backend(Backend),
-    /// A backend on a server of your own.
-    Server(LangModelServer),
-    Custom(CustomLangModelProvider),
 }
 
 /// [`Backend::SelfHosted`] on a server you name, instead of the one in the environment, so
@@ -266,26 +252,33 @@ fn env_var(name: &str) -> Option<String> {
 /// EXAONE's API, which serves the OpenAI-compatible Chat Completions API.
 const EXAONE_API_URL: &str = "https://api.exaone.ai/v1";
 
-impl From<LangModelServer> for LangModelProvider {
-    fn from(server: LangModelServer) -> Self {
-        Self::Server(server)
+impl LangModelSet for Backend {
+    fn name(&self) -> String {
+        self.to_string()
+    }
+
+    fn make(
+        &self,
+        org: &str,
+        name: Option<&str>,
+    ) -> BoxFuture<'static, anyhow::Result<Arc<dyn InferLangModel>>> {
+        let (backend, org, name) = (*self, org.to_owned(), name.map(str::to_owned));
+        Box::pin(async move { build(backend, &org, name.as_deref()).await })
     }
 }
 
-impl LangModelProvider {
-    pub fn custom(
-        f: impl Fn(&str, Option<&str>) -> anyhow::Result<Arc<dyn InferLangModel>>
-        + Send
-        + Sync
-        + 'static,
-    ) -> Self {
-        Self::Custom(Arc::new(f))
+impl LangModelSet for LangModelServer {
+    fn name(&self) -> String {
+        Backend::SelfHosted.to_string()
     }
-}
 
-impl From<Backend> for LangModelProvider {
-    fn from(backend: Backend) -> Self {
-        Self::Backend(backend)
+    fn make(
+        &self,
+        org: &str,
+        name: Option<&str>,
+    ) -> BoxFuture<'static, anyhow::Result<Arc<dyn InferLangModel>>> {
+        let (server, org, name) = (self.clone(), org.to_owned(), name.map(str::to_owned));
+        Box::pin(async move { server.build(&org, name.as_deref()).await })
     }
 }
 
@@ -429,68 +422,35 @@ async fn build(
     })
 }
 
-/// Providers keyed by org, seeded to run each one through its CLI, or its API when it has
-/// no CLI.
-static LANG_MODEL_PROVIDERS: LazyLock<RwLock<HashMap<String, LangModelProvider>>> =
-    LazyLock::new(|| {
-        RwLock::new(
-            [
-                ("anthropic", Backend::Cli),
-                ("openai", Backend::Cli),
-                ("google", Backend::Cli),
-                ("deepseek-ai", Backend::Api),
-                ("moonshotai", Backend::Api),
-                ("zai-org", Backend::Api),
-                ("Qwen", Backend::Api),
-                ("LGAI-EXAONE", Backend::Api),
-            ]
-            .into_iter()
-            .map(|(org, backend)| (org.to_owned(), backend.into()))
-            .collect(),
-        )
-    });
-
-/// Runs the models of `org` through `provider`, replacing the provider it had.
-pub fn set_lang_model_provider(org: impl Into<String>, provider: impl Into<LangModelProvider>) {
-    LANG_MODEL_PROVIDERS
-        .write()
-        .unwrap()
-        .insert(org.into(), provider.into());
+/// Makes the models of `org` through `set` in the
+/// [`default_provider`](crate::agent::default_provider), in place of the set it had: a
+/// [`Backend`], a [`LangModelServer`], or a function of your own.
+pub fn set_lang_model_provider(org: impl Into<String>, set: impl LangModelSet + 'static) {
+    default_provider().write().unwrap().models.set(org, set);
 }
 
-/// The provider a desc's model is built through, the one set for its org, if there is one.
+/// The set a desc's model is made through in the
+/// [`default_provider`](crate::agent::default_provider), the one for its org, if there is one.
 /// The desc is as [`create_lang_model`] takes it: `<org>` or `<org>/<name>`.
-pub fn get_lang_model_provider(desc: &str) -> Option<LangModelProvider> {
-    let org = desc.split_once('/').map_or(desc, |(org, _)| org);
-    LANG_MODEL_PROVIDERS.read().unwrap().get(org).cloned()
+pub fn get_lang_model_provider(desc: &str) -> Option<Arc<dyn LangModelSet>> {
+    default_provider().read().unwrap().models.get(desc)
 }
 
-/// Removes the provider for `org`, returning it if there was one.
-pub fn remove_lang_model_provider(org: &str) -> Option<LangModelProvider> {
-    LANG_MODEL_PROVIDERS.write().unwrap().remove(org)
+/// Stop making the models of `org` in the [`default_provider`](crate::agent::default_provider).
+/// Answers whether there was a set for it.
+pub fn remove_lang_model_provider(org: &str) -> bool {
+    default_provider().write().unwrap().models.remove(org)
 }
 
 /// Builds a model from a desc of the form `<org>` or `<org>/<name>`, e.g. `"anthropic"` or
-/// `"openai/gpt-6.1-sol"`, through the provider set for `<org>`. Claude, GPT and Gemini
-/// are named by their official API id, open-weight models by their Hugging Face repo id, and
-/// a model with no repo, such as EXAONE's `k-exaone_v2.5`, by its API id.
+/// `"openai/gpt-6.1-sol"`, through the set for `<org>` in the
+/// [`default_provider`](crate::agent::default_provider). Claude, GPT and Gemini are named by
+/// their official API id, open-weight models by their Hugging Face repo id, and a model with no
+/// repo, such as EXAONE's `k-exaone_v2.5`, by its API id.
 pub async fn create_lang_model(desc: &str) -> anyhow::Result<Arc<dyn InferLangModel>> {
-    let (org, name) = match desc.split_once('/') {
-        Some((org, name)) => (org, Some(name)),
-        None => (desc, None),
-    };
-    // Clone out so the lock is not held while building.
-    let provider = LANG_MODEL_PROVIDERS
-        .read()
-        .unwrap()
-        .get(org)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("no provider set for lang model org '{org}'"))?;
-    match provider {
-        LangModelProvider::Backend(backend) => build(backend, org, name).await,
-        LangModelProvider::Server(server) => server.build(org, name).await,
-        LangModelProvider::Custom(f) => f(org, name),
-    }
+    // Taken out of the lock before it is awaited.
+    let made = default_provider().read().unwrap().models.create(desc)?;
+    made.await
 }
 
 #[cfg(test)]
@@ -524,13 +484,10 @@ mod tests {
 
     #[test]
     fn test_a_provider_reads_back_as_it_was_set() {
-        let is = |org| match get_lang_model_provider(org) {
-            Some(LangModelProvider::Backend(backend)) => Some(backend),
-            _ => None,
-        };
-        assert_eq!(is("anthropic"), Some(Backend::Cli));
-        assert_eq!(is("anthropic/claude-sonnet-5-5"), Some(Backend::Cli));
-        assert_eq!(is("LGAI-EXAONE/k-exaone_v2.5"), Some(Backend::Api));
+        let is = |org| get_lang_model_provider(org).map(|set| set.name());
+        assert_eq!(is("anthropic").as_deref(), Some("cli"));
+        assert_eq!(is("anthropic/claude-sonnet-5-5").as_deref(), Some("cli"));
+        assert_eq!(is("LGAI-EXAONE/k-exaone_v2.5").as_deref(), Some("api"));
         for backend in [
             Backend::Cli,
             Backend::Api,
@@ -542,7 +499,10 @@ mod tests {
         }
         assert_eq!(Backend::SelfHosted.to_string(), "self-hosted");
         set_lang_model_provider("provider-read-back", Backend::Bedrock);
-        assert_eq!(is("provider-read-back/some-model"), Some(Backend::Bedrock));
+        assert_eq!(
+            is("provider-read-back/some-model").as_deref(),
+            Some("bedrock")
+        );
         remove_lang_model_provider("provider-read-back");
         assert!(get_lang_model_provider("provider-read-back").is_none());
     }
@@ -646,10 +606,8 @@ mod tests {
             "server-read-back",
             LangModelServer::new("http://localhost:1/v1").unwrap(),
         );
-        assert!(matches!(
-            get_lang_model_provider("server-read-back/x"),
-            Some(LangModelProvider::Server(server)) if server.base_url() == "http://localhost:1/v1"
-        ));
+        let set = get_lang_model_provider("server-read-back/x").unwrap();
+        assert_eq!(set.name(), "self-hosted");
         remove_lang_model_provider("server-read-back");
     }
 

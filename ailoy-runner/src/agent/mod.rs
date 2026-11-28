@@ -28,16 +28,32 @@ pub use builder::AgentBuilder;
 pub use rt::*;
 pub use state::*;
 
-use crate::tool::{Browser, Console, Web};
+use crate::{
+    model::Backend,
+    tool::{Browser, Console, Web},
+};
 
-/// The provider of this process, which an [`Agent`] makes the tools its spec names through. It
-/// starts with the console, web and browser tools.
+/// The provider of this process, which an [`Agent`] makes the model and tools its spec names
+/// through. It starts with the console, web and browser tools, and runs each org's models
+/// through its CLI, or its API when it has no CLI.
 pub fn default_provider() -> &'static RwLock<AgentProvider> {
     static PROVIDER: LazyLock<RwLock<AgentProvider>> = LazyLock::new(|| {
         let mut provider = AgentProvider::new();
-        provider.set_tool_provider(Console);
-        provider.set_tool_provider(Web::default());
-        provider.set_tool_provider(Browser);
+        provider.tools.set(Console);
+        provider.tools.set(Web::default());
+        provider.tools.set(Browser);
+        for (org, backend) in [
+            ("anthropic", Backend::Cli),
+            ("openai", Backend::Cli),
+            ("google", Backend::Cli),
+            ("deepseek-ai", Backend::Api),
+            ("moonshotai", Backend::Api),
+            ("zai-org", Backend::Api),
+            ("Qwen", Backend::Api),
+            ("LGAI-EXAONE", Backend::Api),
+        ] {
+            provider.models.set(org, backend);
+        }
         RwLock::new(provider)
     });
     &PROVIDER

@@ -7,7 +7,7 @@ use super::{exec_result, image_mime};
 use crate::{
     datatype::Bytes,
     message::{Message, Part, Role},
-    tool::{ToolDesc, ToolDescBuilder, ToolFunc, ToolProvider},
+    tool::{ToolDesc, ToolDescBuilder, ToolFunc, ToolSet},
     tool_func,
 };
 
@@ -20,7 +20,7 @@ const TIMEOUT_MS: u64 = 120_000;
 /// `browser` and `browser_screenshot`, over the sandbox's `browser` abin.
 pub struct Browser;
 
-impl ToolProvider for Browser {
+impl ToolSet for Browser {
     fn descs(&self) -> Vec<ToolDesc> {
         vec![get_browser_tool_desc(), get_browser_screenshot_tool_desc()]
     }

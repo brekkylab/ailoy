@@ -6,7 +6,7 @@ mod search;
 pub use fetch::*;
 pub use search::*;
 
-use crate::tool::{ToolDesc, ToolFunc, ToolProvider};
+use crate::tool::{ToolDesc, ToolFunc, ToolSet};
 
 /// `web_search` and `web_fetch`.
 pub struct Web {
@@ -22,7 +22,7 @@ impl Default for Web {
     }
 }
 
-impl ToolProvider for Web {
+impl ToolSet for Web {
     fn descs(&self) -> Vec<ToolDesc> {
         vec![get_web_search_tool_desc(), get_web_fetch_tool_desc()]
     }

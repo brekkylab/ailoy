@@ -2,7 +2,7 @@ use url::Url;
 
 use crate::{
     agent::default_provider,
-    tool::{MCPConnection, MCPServer, ToolDesc, ToolFunc, ToolProvider, prefixed_tool_name},
+    tool::{MCPConnection, MCPServer, ToolDesc, ToolFunc, ToolSet, prefixed_tool_name},
 };
 
 /// Transport configuration for an MCP (Model Context Protocol) tool server.
@@ -22,26 +22,20 @@ pub enum MCPTransport {
 /// its name. Answers their names, which a spec lists to give an agent the tools.
 ///
 /// A function of this process is `(desc, func)`.
-pub fn set_tool_provider(provider: impl ToolProvider + 'static) -> Vec<String> {
-    default_provider()
-        .write()
-        .unwrap()
-        .set_tool_provider(provider)
+pub fn set_tool_provider(provider: impl ToolSet + 'static) -> Vec<String> {
+    default_provider().write().unwrap().tools.set(provider)
 }
 
 /// Stop providing the tool `name` through the [`default_provider`]. Answers whether it was
 /// provided.
 pub fn remove_tool_provider(name: &str) -> bool {
-    default_provider()
-        .write()
-        .unwrap()
-        .remove_tool_provider(name)
+    default_provider().write().unwrap().tools.remove(name)
 }
 
 /// Make the tool `name` through the [`default_provider`], with the description it is shown to
 /// the model by.
 pub fn create_tool(name: &str) -> anyhow::Result<(ToolDesc, ToolFunc)> {
-    default_provider().read().unwrap().create_tool(name)
+    default_provider().read().unwrap().tools.create(name)
 }
 
 /// Connect to a stdio MCP server and provide each of its tools under `prefix` through the
@@ -74,8 +68,10 @@ pub async fn register_mcp_streamable_http(
 /// The server `conn` in place of the one under `prefix`, whose session ends once its tools go.
 fn set_mcp_server(prefix: &str, conn: MCPConnection) -> Vec<String> {
     let mut provider = default_provider().write().unwrap();
-    provider.remove_tool_providers_by_prefix(&prefixed_tool_name(prefix, ""));
-    provider.set_tool_provider(MCPServer::new(prefix, conn))
+    provider
+        .tools
+        .remove_by_prefix(&prefixed_tool_name(prefix, ""));
+    provider.tools.set(MCPServer::new(prefix, conn))
 }
 
 /// Remove an MCP server's tools from the [`default_provider`], which ends its session. Returns
@@ -88,5 +84,6 @@ pub fn unregister_mcp(prefix: impl AsRef<str>) -> usize {
     default_provider()
         .write()
         .unwrap()
-        .remove_tool_providers_by_prefix(&prefix)
+        .tools
+        .remove_by_prefix(&prefix)
 }

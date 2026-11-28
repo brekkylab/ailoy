@@ -1,4 +1,4 @@
-use std::{fmt, sync::Arc};
+use std::fmt;
 
 use indexmap::IndexMap;
 
@@ -6,7 +6,8 @@ use crate::{
     agent::{
         AgentListOutputItem, AgentPutArgs, AgentState, SessionCreateArgs, SessionListOutputItem,
     },
-    tool::{ToolDesc, ToolFunc, ToolProvider},
+    model::LangModelProvider,
+    tool::ToolProvider,
 };
 
 /// Why an [`AgentProvider`] did not do what was asked.
@@ -38,59 +39,19 @@ struct Kept {
     sessions: IndexMap<String, AgentState>,
 }
 
-/// What an agent runs with where it runs: the providers of the tools a spec names, and the
-/// agents kept by name, each with its sessions. The agents and sessions are kept in memory.
+/// What an agent runs with where it runs: the providers of the models and tools a spec names,
+/// and the agents kept by name, each with its sessions. The agents and sessions are kept in
+/// memory.
 #[derive(Default)]
 pub struct AgentProvider {
-    /// Each tool's description and the provider that makes it, by the tool's name.
-    tools: IndexMap<String, (ToolDesc, Arc<dyn ToolProvider>)>,
+    pub tools: ToolProvider,
+    pub models: LangModelProvider,
     agents: IndexMap<String, Kept>,
 }
 
 impl AgentProvider {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Provide each tool `provider` describes, in place of one of its name already provided.
-    /// Answers their names, which a spec lists to give an agent the tools.
-    pub fn set_tool_provider(&mut self, provider: impl ToolProvider + 'static) -> Vec<String> {
-        let provider: Arc<dyn ToolProvider> = Arc::new(provider);
-        let descs = provider.descs();
-        let mut names = Vec::with_capacity(descs.len());
-        for desc in descs {
-            names.push(desc.name.clone());
-            self.tools
-                .insert(desc.name.clone(), (desc, provider.clone()));
-        }
-        names
-    }
-
-    /// Stop providing the tool `name`. Answers whether it was provided.
-    pub fn remove_tool_provider(&mut self, name: &str) -> bool {
-        self.tools.shift_remove(name).is_some()
-    }
-
-    /// Stop providing every tool whose name starts with `prefix`. Answers how many there were.
-    pub fn remove_tool_providers_by_prefix(&mut self, prefix: &str) -> usize {
-        let before = self.tools.len();
-        self.tools.retain(|name, _| !name.starts_with(prefix));
-        before - self.tools.len()
-    }
-
-    /// The description of every tool provided, in the order each name was first provided.
-    pub fn tool_descs(&self) -> Vec<ToolDesc> {
-        self.tools.values().map(|(desc, _)| desc.clone()).collect()
-    }
-
-    /// Make the tool `name` through its provider, with the description it is shown to a model
-    /// by.
-    pub fn create_tool(&self, name: &str) -> anyhow::Result<(ToolDesc, ToolFunc)> {
-        let (desc, provider) = self
-            .tools
-            .get(name)
-            .ok_or_else(|| Refusal::NoTool(name.to_owned()))?;
-        Ok((desc.clone(), provider.make(name)?))
     }
 
     /// Keep the agent `args` describes under `name`, in place of one already there, whose
@@ -100,12 +61,7 @@ impl AgentProvider {
         name: &str,
         args: AgentPutArgs,
     ) -> Result<AgentListOutputItem, Refusal> {
-        if let Some(tool) = args
-            .spec
-            .tools
-            .iter()
-            .find(|t| !self.tools.contains_key(*t))
-        {
+        if let Some(tool) = args.spec.tools.iter().find(|t| !self.tools.contains(t)) {
             return Err(Refusal::NoTool(tool.clone()));
         }
         let item = AgentListOutputItem {

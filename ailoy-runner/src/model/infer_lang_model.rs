@@ -1,11 +1,4 @@
-use futures::{future::BoxFuture, stream::BoxStream};
-
-pub use ailoy_core::model::{LangModelOptions, ThinkingEffort};
-
-use crate::{
-    message::{Message, MessageDeltaOutput, MessageOutput},
-    tool::ToolDesc,
-};
+pub use ailoy_core::model::{InferLangModel, LangModelOptions, ThinkingEffort};
 
 /// A request the model's API refused as sent: a 4xx saying the request itself is wrong,
 /// not that the server is busy or the caller unknown. Sending it again as is gains nothing;
@@ -32,23 +25,4 @@ pub(crate) fn api_error(status: u16, message: String) -> anyhow::Error {
     } else {
         anyhow::anyhow!(message)
     }
-}
-
-/// A language model that can be run on a conversation.
-pub trait InferLangModel: Send + Sync {
-    /// Run the model to completion and return the whole output.
-    fn infer(
-        &self,
-        messages: &[Message],
-        tools: &[ToolDesc],
-        options: &LangModelOptions,
-    ) -> BoxFuture<'static, anyhow::Result<MessageOutput>>;
-
-    /// Run the model and yield its output as deltas while it is generated.
-    fn infer_stream(
-        &self,
-        messages: &[Message],
-        tools: &[ToolDesc],
-        options: &LangModelOptions,
-    ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>>;
 }

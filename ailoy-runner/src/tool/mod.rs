@@ -1,13 +1,13 @@
 //! The tools an agent calls.
 //!
-//! A [`ToolProvider`] describes and makes tools: a group of this crate's ([`Console`], [`Web`],
+//! A [`ToolSet`] describes and makes tools: a group of this crate's ([`Console`], [`Web`],
 //! [`Browser`]), a function of this process (`(ToolDesc, ToolFunc)`), or an MCP server's
-//! ([`MCPServer`]). An [`AgentProvider`](crate::agent::AgentProvider) keeps each tool's
-//! description and provider by its name; an [`AgentSpec`](crate::agent::AgentSpec) lists the
-//! names, and each is made into a [`ToolFunc`] when an `Agent` is built.
+//! ([`MCPServer`]). A [`ToolProvider`] keeps each tool's description and set by its name; an
+//! [`AgentSpec`](crate::agent::AgentSpec) lists the names, and each is made into a [`ToolFunc`]
+//! when an `Agent` is built.
 //!
 //! ```text
-//! AgentProvider (tool name → ToolDesc, ToolProvider)
+//! ToolProvider (tool name → ToolDesc, ToolSet)
 //!     │
 //!     │  create_tool(name)
 //!     ▼
@@ -26,7 +26,8 @@ pub(crate) mod r#impl;
 mod provider;
 
 pub use ailoy_core::tool::{
-    MAX_TOOL_NAME_LEN, ToolDesc, ToolDescBuilder, ToolFunc, ToolProvider, sanitize_tool_name,
+    MAX_TOOL_NAME_LEN, ToolDesc, ToolDescBuilder, ToolFunc, ToolProvider, ToolSet,
+    sanitize_tool_name,
 };
 pub(crate) use desc::warn_if_tool_name_too_long;
 pub use r#impl::*;

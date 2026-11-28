@@ -16,13 +16,13 @@ pub use read_file::*;
 pub use shell::*;
 pub use write::*;
 
-use crate::tool::{ToolDesc, ToolFunc, ToolProvider};
+use crate::tool::{ToolDesc, ToolFunc, ToolSet};
 
 /// `shell`, `read`, `read_file`, `imgread`, `write`, `edit` and `apply_patch`, in the agent's
 /// sandbox.
 pub struct Console;
 
-impl ToolProvider for Console {
+impl ToolSet for Console {
     fn descs(&self) -> Vec<ToolDesc> {
         vec![
             get_shell_tool_desc(),

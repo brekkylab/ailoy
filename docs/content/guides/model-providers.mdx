@@ -349,7 +349,7 @@ use std::sync::Arc;
 
 use ailoy::{
     message::{FinishReason, Message, MessageDeltaOutput, MessageOutput, Role},
-    model::{InferLangModel, LangModelOptions, LangModelProvider, set_lang_model_provider},
+    model::{InferLangModel, LangModelOptions, set_lang_model_provider},
     tool::ToolDesc,
 };
 use futures::{future::BoxFuture, stream::{self, BoxStream}, StreamExt as _};
@@ -384,7 +384,10 @@ impl InferLangModel for Echo {
     }
 }
 
-set_lang_model_provider("mine", LangModelProvider::custom(|_org, _name| Ok(Arc::new(Echo))));
+set_lang_model_provider(
+    "mine",
+    |_org: &str, _name: Option<&str>| -> anyhow::Result<Arc<dyn InferLangModel>> { Ok(Arc::new(Echo)) },
+);
 let agent = AgentBuilder::new("mine/echo").build().await?;
 ```
 

@@ -1,7 +1,15 @@
+mod provider;
+
+use futures::{future::BoxFuture, stream::BoxStream};
+pub use provider::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::datatype::Value;
+use crate::{
+    datatype::Value,
+    message::{Message, MessageDeltaOutput, MessageOutput},
+    tool::ToolDesc,
+};
 
 /// How much a model thinks before it answers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -34,4 +42,23 @@ pub enum ModelKeyProvider {
     Server,
     /// The client, which sends its key with each run.
     Client,
+}
+
+/// A language model that can be run on a conversation.
+pub trait InferLangModel: Send + Sync {
+    /// Run the model to completion and return the whole output.
+    fn infer(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDesc],
+        options: &LangModelOptions,
+    ) -> BoxFuture<'static, anyhow::Result<MessageOutput>>;
+
+    /// Run the model and yield its output as deltas while it is generated.
+    fn infer_stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDesc],
+        options: &LangModelOptions,
+    ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>>;
 }

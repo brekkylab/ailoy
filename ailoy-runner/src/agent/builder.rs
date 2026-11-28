@@ -140,7 +140,7 @@ mod tests {
     use super::*;
     use crate::{
         message::{MessageDeltaOutput, MessageOutput, Part, Role},
-        model::{InferLangModel, LangModelOptions, LangModelProvider, set_lang_model_provider},
+        model::{InferLangModel, LangModelOptions, set_lang_model_provider},
         test_sandbox,
     };
 
@@ -173,7 +173,9 @@ mod tests {
     fn builder() -> AgentBuilder {
         set_lang_model_provider(
             TEST_ORG,
-            LangModelProvider::custom(|_, _| Ok(Arc::new(Unused))),
+            |_: &str, _: Option<&str>| -> anyhow::Result<Arc<dyn InferLangModel>> {
+                Ok(Arc::new(Unused))
+            },
         );
         AgentBuilder::new(format!("{TEST_ORG}/any"))
     }

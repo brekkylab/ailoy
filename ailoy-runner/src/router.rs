@@ -58,7 +58,7 @@ fn refuse_as(refusal: Refusal) -> Response {
 }
 
 async fn list_tools(State(provider): State<Arc<RwLock<AgentProvider>>>) -> Json<Vec<ToolDesc>> {
-    Json(provider.read().unwrap().tool_descs())
+    Json(provider.read().unwrap().tools.descs())
 }
 
 async fn list_agents(
@@ -150,7 +150,7 @@ mod tests {
         agent::AgentSpec,
         message::{Message, Part, Role},
         model::ModelKeyProvider,
-        tool::{ToolDescBuilder, ToolFunc, ToolProvider},
+        tool::{ToolDescBuilder, ToolFunc, ToolSet},
         tool_func,
     };
 
@@ -159,7 +159,7 @@ mod tests {
     /// Provides one tool, `echo`.
     struct Echo;
 
-    impl ToolProvider for Echo {
+    impl ToolSet for Echo {
         fn descs(&self) -> Vec<ToolDesc> {
             vec![
                 ToolDescBuilder::new("echo")
@@ -176,7 +176,7 @@ mod tests {
     /// The two clients of a provider with `echo`, served in this process.
     fn clients() -> (AdminClient, Client) {
         let mut provider = AgentProvider::new();
-        provider.set_tool_provider(Echo);
+        provider.tools.set(Echo);
         let provider = Arc::new(RwLock::new(provider));
         let admin = AdminClient::embed(admin_router(provider.clone()));
         (admin, Client::embed(router(provider)))

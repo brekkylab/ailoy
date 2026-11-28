@@ -559,9 +559,9 @@ mod tests {
     use crate::{
         datatype::Bytes,
         message::{Role, TokenUsage},
-        model::{LangModelProvider, set_lang_model_provider},
+        model::set_lang_model_provider,
         suppress_panics, to_value,
-        tool::{ToolDescBuilder, ToolProvider, set_tool_provider},
+        tool::{ToolDescBuilder, ToolSet, set_tool_provider},
         tool_func,
     };
 
@@ -654,7 +654,9 @@ mod tests {
         let shared = model.clone();
         set_lang_model_provider(
             name,
-            LangModelProvider::custom(move |_, _| Ok(shared.clone())),
+            move |_: &str, _: Option<&str>| -> anyhow::Result<Arc<dyn InferLangModel>> {
+                Ok(shared.clone())
+            },
         );
 
         let tool = |name: &str| {
@@ -1036,7 +1038,7 @@ mod tests {
         let (_, spec) = scripted(name, []);
         /// Describes `refusing`, and fails to make it.
         struct Refusing;
-        impl ToolProvider for Refusing {
+        impl ToolSet for Refusing {
             fn descs(&self) -> Vec<ToolDesc> {
                 vec![ToolDescBuilder::new("refusing").build()]
             }

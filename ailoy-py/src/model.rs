@@ -23,8 +23,8 @@ use std::sync::Arc;
 use ailoy_runner::{
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::{
-        Backend, InferLangModel, LangModelOptions, LangModelProvider, LangModelServer,
-        create_lang_model, get_lang_model_provider as get_lang_model_provider_rs,
+        Backend, InferLangModel, LangModelOptions, LangModelServer, create_lang_model,
+        get_lang_model_provider as get_lang_model_provider_rs,
         remove_lang_model_provider as remove_lang_model_provider_rs,
         set_lang_model_provider as set_lang_model_provider_rs,
     },
@@ -212,8 +212,11 @@ impl InferLangModel for PyModel {
 }
 
 /// The models of `org` from what `factory` returns for it.
-fn custom(factory: Py<PyAny>) -> LangModelProvider {
-    LangModelProvider::custom(move |org, name| {
+fn custom(
+    factory: Py<PyAny>,
+) -> impl Fn(&str, Option<&str>) -> anyhow::Result<Arc<dyn InferLangModel>> + Send + Sync + 'static
+{
+    move |org: &str, name: Option<&str>| {
         Python::attach(|py| -> PyResult<Arc<dyn InferLangModel>> {
             let model = factory.call1(py, (org, name))?;
             if let Ok(model) = model.bind(py).cast::<PyLangModel>() {
@@ -222,7 +225,7 @@ fn custom(factory: Py<PyAny>) -> LangModelProvider {
             Ok(Arc::new(PyModel(Arc::new(model))))
         })
         .map_err(Into::into)
-    })
+    }
 }
 
 /// Build the models of `org` (`"anthropic"`, `"openai"`, `"google"`, `"deepseek-ai"`, …)
@@ -231,21 +234,18 @@ fn custom(factory: Py<PyAny>) -> LangModelProvider {
 /// provider the org had.
 #[pyfunction]
 fn set_lang_model_provider(org: String, provider: Bound<'_, PyAny>) -> PyResult<()> {
-    let provider = if provider.is_instance_of::<pyo3::types::PyString>() {
-        LangModelProvider::from(from_py::<Backend>(&provider, "a backend")?)
+    if provider.is_instance_of::<pyo3::types::PyString>() {
+        set_lang_model_provider_rs(org, from_py::<Backend>(&provider, "a backend")?);
     } else if provider.is_instance_of::<pyo3::types::PyDict>() {
-        LangModelProvider::from(from_py::<LangModelServer>(
-            &provider,
-            "a lang model server",
-        )?)
+        let server = from_py::<LangModelServer>(&provider, "a lang model server")?;
+        set_lang_model_provider_rs(org, server);
     } else if provider.is_callable() {
-        custom(provider.unbind())
+        set_lang_model_provider_rs(org, custom(provider.unbind()));
     } else {
         return Err(PyValueError::new_err(
             "a lang model provider is a backend's name, a server dict or a factory of models",
         ));
-    };
-    set_lang_model_provider_rs(org, provider);
+    }
     Ok(())
 }
 
@@ -254,22 +254,13 @@ fn set_lang_model_provider(org: String, provider: Bound<'_, PyAny>) -> PyResult<
 /// `None` when its org has no provider.
 #[pyfunction]
 fn get_lang_model_provider(desc: String) -> Option<String> {
-    get_lang_model_provider_rs(&desc).map(|provider| provider_name(&provider))
-}
-
-/// A provider as it is set: its backend's serde name, or `custom`.
-fn provider_name(provider: &LangModelProvider) -> String {
-    match provider {
-        LangModelProvider::Backend(backend) => backend.to_string(),
-        LangModelProvider::Server(_) => Backend::SelfHosted.to_string(),
-        LangModelProvider::Custom(_) => "custom".to_string(),
-    }
+    get_lang_model_provider_rs(&desc).map(|set| set.name())
 }
 
 /// Stop building the models of `org`. Answers whether it had a provider.
 #[pyfunction]
 fn remove_lang_model_provider(org: String) -> bool {
-    remove_lang_model_provider_rs(&org).is_some()
+    remove_lang_model_provider_rs(&org)
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
