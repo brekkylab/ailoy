@@ -63,7 +63,7 @@ test('an unregistered tool is refused', async (t) => {
 test('registerTool refuses a tool description without a name', () => {
   assert.throws(() => registerTool({ description: 'no name' }, () => null), {
     code: 'INVALID_ARG',
-    message: /missing field `name`/,
+    message: /not a tool description: missing field `name`/,
   })
 })
 
