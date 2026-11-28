@@ -389,6 +389,29 @@ class StreamingEcho extends Echo {
 
 const textOf = (outputs) => outputs.map((o) => o.message.contents[0].text)
 
+test('history throws during a turn and is readable after it ends', async (t) => {
+  setLangModelProvider('history-echo', (_, name) => new Echo(name))
+  t.after(() => removeLangModelProvider('history-echo'))
+
+  const agent = await new AgentBuilder('history-echo/echo').build()
+  const run = agent.run('hi')
+  try {
+    const first = await run.next()
+    assert.equal(first.done, false)
+    assert.throws(() => agent.history, {
+      code: 'AILOY_ERROR',
+      message: /in the middle of a turn/,
+    })
+  } finally {
+    await run.return()
+  }
+
+  assert.deepEqual(
+    agent.history.map((m) => m.role),
+    ['user', 'assistant'],
+  )
+})
+
 test('a memory shapes the system message', async (t) => {
   setLangModelProvider('memory-echo', (_, name) => new Echo(name))
   t.after(() => removeLangModelProvider('memory-echo'))
