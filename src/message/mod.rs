@@ -7,7 +7,7 @@ mod part;
 mod part_delta;
 mod tool_result;
 
-pub use delta::Delta;
+pub use delta::{Delta, DeltaError};
 pub use marshal::{Marshal, Marshaled, Unmarshal, Unmarshaled};
 pub use message::{FinishReason, Message, MessageOutput, Role, TokenUsage};
 pub use message_delta::{MessageDelta, MessageDeltaOutput, into_messages};
