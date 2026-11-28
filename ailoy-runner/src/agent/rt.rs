@@ -12,7 +12,7 @@ use crate::{
     datatype::Value,
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
     model::{InferLangModel, LangModelOptions, RequestRefused, create_lang_model},
-    tool::{BROWSER_ABIN, ToolDesc, ToolFunc, browser_tool_names, create_tool, sandbox_tool_names},
+    tool::{BROWSER_ABIN, ToolDesc, ToolFunc, browser_tool_names, sandbox_tool_names},
 };
 
 /// The org a desc names (`"anthropic"` of `"anthropic/claude-sonnet-5-5"`) and the name
@@ -35,7 +35,7 @@ const CUT_OFF: &str = "the model's reply was cut off at its output limit";
 /// (history + sandbox), holding the model and tools built from the spec.
 /// [`run`](Self::run) streams one turn, calling tools until the model answers, and appends
 /// every message to the history.
-pub struct Agent {
+pub struct AgentRuntime {
     spec: AgentSpec,
 
     model: Arc<dyn InferLangModel>,
@@ -49,7 +49,7 @@ pub struct Agent {
     pub state: AgentState,
 }
 
-impl Agent {
+impl AgentRuntime {
     /// Create an agent with a fresh [`AgentState`].
     pub async fn try_new(spec: AgentSpec) -> anyhow::Result<Self> {
         Self::try_with_state(spec, AgentState::new()).await
@@ -58,7 +58,7 @@ impl Agent {
     /// Create an agent with `state`.
     ///
     /// The model is built from `spec.model` through [`create_lang_model`], and each of
-    /// `spec.tools` through [`create_tool`]; [`AgentSpec::use_sandbox`] and
+    /// `spec.tools` through the `tools` of [`default_provider`](super::default_provider); [`AgentSpec::use_sandbox`] and
     /// [`AgentSpec::use_browser`] bring their tools too. `state` has to hold a sandbox exactly
     /// when the spec uses one, and for a browser, a sandbox with the `browser` abin. Unless `state.history` already has a
     /// [`Role::System`] message, one built from `spec.instruction`, [`AgentSpec::skills`]
@@ -97,7 +97,11 @@ impl Agent {
         let mut tool_descs = Vec::with_capacity(names.len());
         for name in names {
             if !tools.contains_key(name) {
-                let (desc, func) = create_tool(name)?;
+                let (desc, func) = super::default_provider()
+                    .read()
+                    .unwrap()
+                    .tools
+                    .create(name)?;
                 tools.insert(name.to_owned(), func);
                 tool_descs.push(desc);
             }
@@ -371,7 +375,7 @@ enum Refused {
     /// The whole history, over the model's context limit. Mend: truncate it as
     /// [`TruncationPolicy`](super::TruncationPolicy) does, without waiting for the usage that triggers it. Past a turn's
     /// first request this changes what comes before the turn's thinking, so the requests after
-    /// must leave that thinking out (see [`Agent::manage_context`]).
+    /// must leave that thinking out (see [`AgentRuntime::manage_context`]).
     #[allow(dead_code)]
     TooLong,
 }
@@ -479,8 +483,7 @@ async fn call_tool(
             Some(stream) => Ok(stream.fold(None, last).await),
             None => {
                 let Some(sandbox) = sandbox.as_ref() else {
-                    return Err("it needs a sandbox, and the agent has none; \
-                                give it one with `AgentBuilder::sandbox`");
+                    return Err("it needs a sandbox, and the agent has none");
                 };
                 Ok(tool.call(args, call_id, sandbox).fold(None, last).await)
             }
@@ -557,11 +560,12 @@ mod tests {
     use super::*;
     use crate::agent::{TruncationPolicy, state::IMAGE_PLACEHOLDER};
     use crate::{
+        agent::default_provider,
         datatype::Bytes,
         message::{Role, TokenUsage},
         model::set_lang_model_provider,
         suppress_panics, to_value,
-        tool::{ToolDescBuilder, ToolSet, set_tool_provider},
+        tool::{ToolDescBuilder, ToolSet},
         tool_func,
     };
 
@@ -664,11 +668,11 @@ mod tests {
                 .parameters(to_value!({"type": "object", "properties": {}}))
                 .build()
         };
-        set_tool_provider((
+        default_provider().write().unwrap().tools.set((
             tool("echo"),
             tool_func!(|_args: Value| -> Value { Value::string("echoed") }),
         ));
-        set_tool_provider((
+        default_provider().write().unwrap().tools.set((
             tool("shot"),
             tool_func!(|_args: Value, id: String| -> Message {
                 let image = Part::image_embedded("image/png", Bytes::from(vec![0u8; 4])).unwrap();
@@ -677,7 +681,7 @@ mod tests {
                     .with_id(id)
             }),
         ));
-        set_tool_provider((
+        default_provider().write().unwrap().tools.set((
             tool("boom"),
             tool_func!(|_args: Value| -> Value {
                 if true {
@@ -686,7 +690,7 @@ mod tests {
                 Value::Null
             }),
         ));
-        set_tool_provider((
+        default_provider().write().unwrap().tools.set((
             tool("sandbox_only"),
             tool_func!(async |_args: Value, _sandbox: &Sandbox| -> Value { Value::Null }),
         ));
@@ -725,7 +729,7 @@ mod tests {
     async fn test_run_calls_tools_until_the_model_answers() {
         let name = "test-agent-run";
         let (model, spec) = scripted(name, [calls(&[("c1", "echo")]), answer("done")]);
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
 
         let outputs: Vec<_> = agent.run(user("hi")).map(Result::unwrap).collect().await;
         assert_eq!(
@@ -757,7 +761,7 @@ mod tests {
     async fn test_run_stream_matches_run() {
         let name = "test-agent-run-stream";
         let (_, spec) = scripted(name, [calls(&[("c1", "echo")]), answer("done")]);
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
 
         let deltas: Vec<_> = agent
             .run_stream(user("hi"))
@@ -794,7 +798,7 @@ mod tests {
                 answer("done"),
             ],
         );
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
         agent.run(user("hi")).for_each(|_| async {}).await;
 
         let results: HashMap<_, _> = agent
@@ -844,7 +848,7 @@ mod tests {
                 answer("done"),
             ],
         );
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
 
         let outputs: Vec<_> = agent.run(user("hi")).collect().await;
         assert!(outputs.iter().all(Result::is_ok));
@@ -873,7 +877,7 @@ mod tests {
     async fn test_a_second_refusal_ends_the_turn_with_the_results_as_they_were() {
         let name = "test-agent-refused-twice";
         let (_, spec) = scripted(name, [calls(&[("c1", "shot")]), refused(), refused()]);
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
 
         let outputs: Vec<_> = agent.run(user("hi")).collect().await;
         assert!(outputs.last().unwrap().is_err());
@@ -891,7 +895,7 @@ mod tests {
     async fn test_a_refused_image_outside_the_last_batch_keeps_the_results() {
         let name = "test-agent-refused-elsewhere";
         let (model, spec) = scripted(name, [calls(&[("c1", "echo")]), refused()]);
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
 
         let outputs: Vec<_> = agent.run(user("hi")).collect().await;
         assert!(outputs.last().unwrap().is_err());
@@ -909,7 +913,7 @@ mod tests {
             name,
             [calls(&[("c1", "echo")]), Err(anyhow::anyhow!("down"))],
         );
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
 
         let outputs: Vec<_> = agent.run(user("hi")).collect().await;
         assert!(outputs.last().unwrap().is_err());
@@ -923,7 +927,7 @@ mod tests {
     async fn test_run_stream_hands_a_refused_image_back_too() {
         let name = "test-agent-refused-image-stream";
         let (_, spec) = scripted(name, [calls(&[("c1", "shot")]), refused(), answer("done")]);
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
 
         let deltas: Vec<_> = agent.run_stream(user("hi")).collect().await;
         assert!(deltas.iter().all(Result::is_ok));
@@ -935,7 +939,7 @@ mod tests {
     async fn test_a_cut_off_reply_ends_the_turn_with_an_error() {
         let name = "test-agent-cut-off";
         let (_, spec) = scripted(name, [cut("half"), answer("rest")]);
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
 
         let outputs: Vec<_> = agent.run(user("hi")).collect().await;
         assert_eq!(outputs.len(), 2);
@@ -962,7 +966,7 @@ mod tests {
     async fn test_run_stream_ends_a_cut_off_reply_with_an_error() {
         let name = "test-agent-cut-off-stream";
         let (_, spec) = scripted(name, [cut("half")]);
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
 
         let deltas: Vec<_> = agent.run_stream(user("hi")).collect().await;
         assert!(deltas.last().unwrap().is_err());
@@ -976,7 +980,7 @@ mod tests {
     async fn test_a_failed_turn_takes_its_query_back() {
         let name = "test-agent-rollback";
         let (_, spec) = scripted(name, [Err(anyhow::anyhow!("down")), answer("up")]);
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
 
         assert!(agent.run(user("first")).next().await.unwrap().is_err());
         assert_eq!(roles(agent.history()), [Role::System]);
@@ -995,9 +999,73 @@ mod tests {
         let (_, spec) = scripted(name, []);
         let state = AgentState::new()
             .with_history([Message::new(Role::System).with_contents([Part::text("Mine.")])]);
-        let agent = Agent::try_with_state(spec, state).await.unwrap();
+        let agent = AgentRuntime::try_with_state(spec, state).await.unwrap();
         assert_eq!(agent.history().len(), 1);
         assert_eq!(text_of(&agent.history()[0]), "Mine.");
+    }
+
+    #[tokio::test]
+    async fn test_no_instruction_and_no_sandbox_leave_nothing_to_seed() {
+        let (_, mut spec) = scripted("test-agent-bare", []);
+        spec.instruction = None;
+        spec.tools.clear();
+        let agent = AgentRuntime::try_new(spec).await.unwrap();
+        assert!(agent.history().is_empty());
+        assert!(agent.tool_descs.is_empty(), "no sandbox, no sandbox tools");
+    }
+
+    #[tokio::test]
+    async fn test_the_instruction_goes_before_a_given_history() {
+        let (_, spec) = scripted("test-agent-seeded", []);
+        let state = AgentState::new().with_history([user("hello"), user("again")]);
+        let agent = AgentRuntime::try_with_state(spec, state).await.unwrap();
+        assert_eq!(
+            roles(agent.history()),
+            [Role::System, Role::User, Role::User]
+        );
+        assert_eq!(text_of(&agent.history()[0]), "Be brief.");
+    }
+
+    /// A sandbox brings its tools without the spec naming them, and the agent runs in it.
+    #[tokio::test]
+    async fn test_a_sandbox_is_worked_in() {
+        let (_, spec) = scripted("test-agent-sandbox", []);
+        let spec = spec.sandbox();
+        let state = AgentState::new().with_sandbox(crate::test_sandbox().await);
+        let agent = AgentRuntime::try_with_state(spec, state).await.unwrap();
+        assert!(agent.tool_descs.iter().any(|t| t.name == "shell"));
+        assert!(!agent.spec().tools.contains(&"shell".to_owned()));
+
+        let sandbox = agent.state.sandbox.as_ref().unwrap();
+        let result = crate::console::exec(sandbox, ["sh", "-c", "echo ok"], None)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "ok\n");
+    }
+
+    /// A sandbox's abins are listed as skills, at the `SKILL.md` virtx puts beside them.
+    #[tokio::test]
+    async fn test_the_sandbox_abins_are_listed_as_skills() {
+        let sandbox = crate::test_sandbox().await;
+        let with_abin = sandbox
+            .client()
+            .create_sandbox(&virtx::SandboxCreateArgs::new("python:3.12-slim").abin("index"))
+            .await
+            .expect("making a sandbox with the index abin");
+        let (_, spec) = scripted("test-agent-abins", []);
+        let state = AgentState::new().with_sandbox(with_abin.clone());
+        let agent = AgentRuntime::try_with_state(spec.sandbox(), state)
+            .await
+            .unwrap();
+        with_abin.remove().await.ok();
+        sandbox.remove().await.ok();
+
+        let text = text_of(&agent.history()[0]);
+        assert!(text.starts_with("Be brief."), "{text}");
+        assert!(
+            text.contains("- `index` at /abin/skills/index/SKILL.md."),
+            "{text}"
+        );
     }
 
     /// A spec using a sandbox needs its state to hold one, and one using a browser, a sandbox
@@ -1008,19 +1076,22 @@ mod tests {
         let (_, spec) = scripted(name, []);
         let mut uses_sandbox = spec.clone();
         uses_sandbox.use_sandbox = true;
-        let err = Agent::try_new(uses_sandbox).await.err().unwrap();
+        let err = AgentRuntime::try_new(uses_sandbox).await.err().unwrap();
         assert!(err.to_string().contains("uses a sandbox"), "{err}");
 
         let mut uses_browser = spec;
         uses_browser.use_browser = true;
         let uses_browser_spec = uses_browser.clone();
-        let err = Agent::try_new(uses_browser).await.err().unwrap();
+        let err = AgentRuntime::try_new(uses_browser).await.err().unwrap();
         assert!(err.to_string().contains("uses a browser"), "{err}");
 
         let mut uses_both = uses_browser_spec;
         uses_both.use_sandbox = true;
         let state = AgentState::new().with_sandbox(crate::test_sandbox().await);
-        let err = Agent::try_with_state(uses_both, state).await.err().unwrap();
+        let err = AgentRuntime::try_with_state(uses_both, state)
+            .await
+            .err()
+            .unwrap();
         assert!(err.to_string().contains("`browser` abin"), "{err}");
     }
 
@@ -1029,7 +1100,7 @@ mod tests {
         let name = "test-agent-missing-tool";
         let (_, spec) = scripted(name, []);
         let spec = spec.tool("nowhere");
-        assert!(Agent::try_new(spec).await.is_err());
+        assert!(AgentRuntime::try_new(spec).await.is_err());
     }
 
     #[tokio::test]
@@ -1046,9 +1117,9 @@ mod tests {
                 Err(anyhow::anyhow!("not today"))
             }
         }
-        set_tool_provider(Refusing);
+        default_provider().write().unwrap().tools.set(Refusing);
         let spec = spec.tool("refusing");
-        let err = Agent::try_new(spec).await.err().unwrap();
+        let err = AgentRuntime::try_new(spec).await.err().unwrap();
         assert!(err.to_string().contains("not today"), "{err}");
     }
 
@@ -1082,7 +1153,7 @@ mod tests {
             preserve_recent_turns: 1,
             ..Default::default()
         });
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
 
         agent.run(user("first")).for_each(|_| async {}).await;
         // The last call read 200 tokens, so the next turn's first call cuts the old result.
@@ -1113,7 +1184,7 @@ mod tests {
             preserve_recent_turns: 1,
             ..Default::default()
         });
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
 
         agent.run(user("first")).for_each(|_| async {}).await;
         agent.run(user("second")).for_each(|_| async {}).await;
@@ -1146,7 +1217,7 @@ mod tests {
                 preserve_recent_turns: preserve,
                 ..Default::default()
             });
-            let mut agent = Agent::try_new(spec).await.unwrap();
+            let mut agent = AgentRuntime::try_new(spec).await.unwrap();
             for query in ["first", "second", "third"] {
                 if stream {
                     agent.run_stream(user(query)).for_each(|_| async {}).await;
@@ -1189,7 +1260,7 @@ mod tests {
             preserve_recent_images: 1,
             ..Default::default()
         });
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
 
         agent.run(user("first")).for_each(|_| async {}).await;
         // Within a turn every screenshot stays, over the cap or not.
@@ -1217,7 +1288,7 @@ mod tests {
             name,
             shots.into_iter().chain([answer("one"), answer("two")]),
         );
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
         assert_eq!(&agent.spec().truncation, &default);
 
         agent.run(user("first")).for_each(|_| async {}).await;
@@ -1249,7 +1320,7 @@ mod tests {
             preserve_recent_images: 0,
             ..Default::default()
         });
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
         let query = |text: &str| {
             let image = Part::image_embedded("image/png", Bytes::from(vec![0u8; 4])).unwrap();
             Message::new(Role::User).with_contents([Part::text(text), image.clone(), image])
@@ -1292,7 +1363,7 @@ mod tests {
 
         let name = "test-agent-fit";
         let (model, spec) = scripted(name, [calls(&[("c1", "big_shot")]), answer("one")]);
-        set_tool_provider((
+        default_provider().write().unwrap().tools.set((
             ToolDescBuilder::new("big_shot")
                 .parameters(to_value!({"type": "object", "properties": {}}))
                 .build(),
@@ -1303,7 +1374,7 @@ mod tests {
             }),
         ));
         let spec = spec.tool("big_shot");
-        let mut agent = Agent::try_new(spec).await.unwrap();
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
         let query = Message::new(Role::User).with_contents([Part::text("look"), big_png()]);
         agent.run(query).for_each(|_| async {}).await;
 
@@ -1341,7 +1412,7 @@ mod tests {
                 max_images: 1,
                 preserve_recent_images: 0,
             });
-            let mut agent = Agent::try_new(spec).await.unwrap();
+            let mut agent = AgentRuntime::try_new(spec).await.unwrap();
 
             agent.run(user("first")).for_each(|_| async {}).await;
             let turns = agent.history().len();

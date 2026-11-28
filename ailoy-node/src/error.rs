@@ -32,16 +32,6 @@ pub fn invalid(reason: impl ToString) -> napi::Error<String> {
     napi::Error::new("INVALID_ARG".to_string(), reason)
 }
 
-/// A JavaScript number where ailoy takes a `u64` (a token count, `topK`).
-///
-/// napi converts numbers to `i64`; a negative one is rejected here rather than wrapped into a
-/// huge count.
-pub fn unsigned(value: Option<i64>, what: &str) -> Result<Option<u64>> {
-    value
-        .map(|v| u64::try_from(v).map_err(|_| invalid(format!("{what} must not be negative"))))
-        .transpose()
-}
-
 /// Run `fut` on napi's runtime, rejecting with its error's own `code`.
 ///
 /// Not napi's `async fn` or `spawn_future`, which reject with a [`Status`](napi::Status) as the

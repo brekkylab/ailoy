@@ -19,8 +19,8 @@ use crate::{
 };
 
 /// How the `web_search` tool searches, spelled `"web"`, `"brave"`, `"tavily"`, `"exa"` or
-/// `"naver"` in its serde form. For a search of your own, set a provider for the tool named
-/// `web_search` with [`set_tool_provider`](crate::tool::set_tool_provider).
+/// `"naver"` in its serde form. For a search of your own, provide a tool named `web_search` in
+/// place of this one.
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, strum::Display,
 )]

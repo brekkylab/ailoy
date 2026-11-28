@@ -7,12 +7,11 @@
 //!
 //! let mut spec = AgentSpec::new("anthropic/claude-sonnet-5-5").instruction("Be brief.");
 //! spec.use_sandbox = true;
-//! let mut agent = Agent::try_with_state(spec, AgentState::new().with_sandbox(sandbox)).await?;
+//! let mut agent = AgentRuntime::try_with_state(spec, AgentState::new().with_sandbox(sandbox)).await?;
 //! let mut turn = agent.run(Message::new(Role::User).with_contents([Part::text("Hi")]));
 //! while let Some(output) = turn.next().await { /* … */ }
 //! ```
 
-mod builder;
 mod image;
 mod rt;
 mod skill;
@@ -24,7 +23,6 @@ pub use ailoy_core::agent::{
     AgentListOutputItem, AgentProvider, AgentPutArgs, AgentSpec, Refusal, SessionCreateArgs,
     SessionListOutputItem, TruncationPolicy,
 };
-pub use builder::AgentBuilder;
 pub use rt::*;
 pub use state::*;
 
@@ -33,7 +31,7 @@ use crate::{
     tool::{Browser, Console, Web},
 };
 
-/// The provider of this process, which an [`Agent`] makes the model and tools its spec names
+/// The provider of this process, which an [`AgentRuntime`] makes the model and tools its spec names
 /// through. It starts with the console, web and browser tools, and runs each org's models
 /// through its CLI, or its API when it has no CLI.
 pub fn default_provider() -> &'static RwLock<AgentProvider> {

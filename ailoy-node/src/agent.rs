@@ -1,11 +1,11 @@
-//! `AgentBuilder`, `Agent`, and the turn an `Agent` runs.
+//! `Agent`, and the turn an `Agent` runs.
 //!
-//! A promise's future must be `'static`, but [`Agent::run`] borrows the agent for as long as
+//! A promise's future must be `'static`, but [`AgentRuntime::run`] borrows the agent for as long as
 //! the turn's stream lives. So the agent sits behind an `Arc<Mutex<..>>` and a turn holds the
 //! lock's owned guard in its stream, which also makes a second `run` wait for the first to
 //! finish, as `&mut self` would in Rust.
 //!
-//! `AgentBuilder.sandbox` gives the agent a `@brekkylab/virtx` `Sandbox` (see
+//! `Agent.fromSpec`'s `sandbox` gives the agent a `@brekkylab/virtx` `Sandbox` (see
 //! [`crate::console`]), which stays the caller's: the agent runs in it over the same client, and
 //! never removes it.
 //!
@@ -17,15 +17,13 @@
 use std::sync::Arc;
 
 use ailoy_runner::{
-    agent::{Agent, AgentBuilder, AgentSpec, AgentState, TruncationPolicy},
-    datatype::Value,
+    agent::{AgentRuntime, AgentSpec, AgentState},
     message::{Message, MessageDeltaOutput, MessageOutput},
-    model::ThinkingEffort,
 };
 use futures::{StreamExt as _, stream::BoxStream};
 use napi::{
     Env,
-    bindgen_prelude::{Object, PromiseRaw, This, Unknown},
+    bindgen_prelude::{Object, PromiseRaw, Unknown},
 };
 use napi_derive::napi;
 use serde::Serialize;
@@ -34,7 +32,7 @@ use tokio::{runtime::Handle, sync::Mutex};
 use crate::{
     console,
     convert::{Json, from_js, query},
-    error::{self, Result, invalid, promise, thrown, unsigned},
+    error::{self, Result, invalid, promise, thrown},
 };
 
 /// A value let go of on the runtime it was made on: what an agent or a turn's stream holds may
@@ -60,184 +58,7 @@ impl<T> Drop for OnRuntime<T> {
     }
 }
 
-/// An [`AgentBuilder`], filled in place and emptied by `build()`.
-///
-/// In place rather than by value: the Rust builder is consumed by each call and is not
-/// `Clone`, so there is exactly one of it to hand along.
-/// Each method returns the same object so calls chain as they do in Rust.
-#[napi(js_name = "AgentBuilder")]
-pub struct JsAgentBuilder(Option<AgentBuilder>);
-
-impl JsAgentBuilder {
-    fn update<'env>(
-        &mut self,
-        this: This<'env>,
-        f: impl FnOnce(AgentBuilder) -> Result<AgentBuilder>,
-    ) -> Result<This<'env>> {
-        let builder = self.0.take().ok_or_else(built)?;
-        self.0 = Some(f(builder)?);
-        Ok(this)
-    }
-}
-
-fn built() -> napi::Error<String> {
-    invalid("this AgentBuilder has already been built")
-}
-
-#[napi(object)]
-pub struct TruncationOptions {
-    pub max_input_tokens: Option<i64>,
-    pub preserve_recent_turns: Option<i64>,
-    pub max_images: Option<i64>,
-    pub preserve_recent_images: Option<i64>,
-}
-
-#[napi]
-impl JsAgentBuilder {
-    /// A builder for `model`, such as `'anthropic/claude-sonnet-5-5'`: `<org>/<name>`, built
-    /// through the provider set for `<org>`.
-    #[napi(constructor)]
-    pub fn new(model: String) -> Self {
-        JsAgentBuilder(Some(AgentBuilder::new(model)))
-    }
-
-    #[napi]
-    pub fn instruction<'env>(
-        &mut self,
-        this: This<'env>,
-        instruction: String,
-    ) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.instruction(instruction)))
-    }
-
-    #[napi]
-    pub fn tool<'env>(&mut self, this: This<'env>, name: String) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.tool(name)))
-    }
-
-    #[napi]
-    pub fn tools<'env>(&mut self, this: This<'env>, names: Vec<String>) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.tools(names)))
-    }
-
-    /// Add `web_search`, searching with the provider `setWebSearchProvider` set.
-    #[napi]
-    pub fn web_search_tool<'env>(&mut self, this: This<'env>) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.web_search_tool()))
-    }
-
-    #[napi]
-    pub fn web_fetch_tool<'env>(&mut self, this: This<'env>) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.web_fetch_tool()))
-    }
-
-    #[napi]
-    pub fn history<'env>(
-        &mut self,
-        env: &Env,
-        this: This<'env>,
-        #[napi(ts_arg_type = "Array<Message>")] history: Unknown<'_>,
-    ) -> Result<This<'env>> {
-        let history: Vec<Message> = from_js(env, history, "a list of messages")?;
-        self.update(this, |b| Ok(b.history(history)))
-    }
-
-    /// Run the agent's console tools in `sandbox`, a `@brekkylab/virtx` `Sandbox`, which stays
-    /// the caller's.
-    #[napi]
-    pub fn sandbox<'env>(
-        &mut self,
-        env: &Env,
-        this: This<'env>,
-        #[napi(ts_arg_type = "Sandbox")] sandbox: Object<'_>,
-    ) -> Result<This<'env>> {
-        let sandbox = console::sandbox(env, &sandbox)?;
-        self.update(this, |b| Ok(b.sandbox(sandbox)))
-    }
-
-    /// Drive the browser of the sandbox, its `browser` abin, with the `browser` and
-    /// `browser_screenshot` tools. The sandbox has to be made with that abin, a network for pages
-    /// outside it, and 2 GiB or more of memory.
-    #[napi]
-    pub fn browser<'env>(&mut self, this: This<'env>) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.browser()))
-    }
-
-    #[napi]
-    pub fn skill<'env>(&mut self, this: This<'env>, dir: String) -> Result<This<'env>> {
-        self.update(this, |b| Ok(b.skill(dir)))
-    }
-
-    #[napi]
-    pub fn truncation<'env>(
-        &mut self,
-        this: This<'env>,
-        options: Option<TruncationOptions>,
-    ) -> Result<This<'env>> {
-        let default = TruncationPolicy::default();
-        let options = options.unwrap_or(TruncationOptions {
-            max_input_tokens: None,
-            preserve_recent_turns: None,
-            max_images: None,
-            preserve_recent_images: None,
-        });
-        let policy = TruncationPolicy {
-            max_input_tokens: unsigned(options.max_input_tokens, "maxInputTokens")?
-                .unwrap_or(default.max_input_tokens),
-            preserve_recent_turns: unsigned(options.preserve_recent_turns, "preserveRecentTurns")?
-                .map_or(default.preserve_recent_turns, |n| n as usize),
-            max_images: unsigned(options.max_images, "maxImages")?
-                .map_or(default.max_images, |n| n as usize),
-            preserve_recent_images: unsigned(
-                options.preserve_recent_images,
-                "preserveRecentImages",
-            )?
-            .map_or(default.preserve_recent_images, |n| n as usize),
-        };
-        self.update(this, |b| Ok(b.truncation(policy)))
-    }
-
-    /// How much the model thinks before it answers.
-    #[napi]
-    pub fn thinking_effort<'env>(
-        &mut self,
-        env: &Env,
-        this: This<'env>,
-        #[napi(ts_arg_type = "'low' | 'medium' | 'high'")] effort: Unknown<'_>,
-    ) -> Result<This<'env>> {
-        let effort: ThinkingEffort = from_js(env, effort, "a thinking effort")?;
-        self.update(this, |b| Ok(b.thinking_effort(effort)))
-    }
-
-    /// Constrain replies to the JSON schema `schema`.
-    #[napi]
-    pub fn output_schema<'env>(
-        &mut self,
-        env: &Env,
-        this: This<'env>,
-        #[napi(ts_arg_type = "Record<string, unknown>")] schema: Unknown<'_>,
-    ) -> Result<This<'env>> {
-        let schema: Value = from_js(env, schema, "a JSON schema")?;
-        self.update(this, |b| Ok(b.output_schema(schema)))
-    }
-
-    /// Make the agent, settling with it — a promise, as `AgentBuilder::build` is a future: it
-    /// builds the model and reads the skills through the console.
-    #[napi(ts_return_type = "Promise<Agent>")]
-    pub fn build<'env>(&mut self, env: &'env Env) -> napi::Result<PromiseRaw<'env, JsAgent>> {
-        let builder = self
-            .0
-            .take()
-            .ok_or_else(built)
-            .map_err(|e| thrown(env, e))?;
-        promise(env, async move {
-            let agent = builder.build().await.map_err(error::anyhow)?;
-            Ok(JsAgent::new(agent))
-        })
-    }
-}
-
-type Held = Arc<Mutex<OnRuntime<Agent>>>;
+type Held = Arc<Mutex<OnRuntime<AgentRuntime>>>;
 
 #[napi(js_name = "Agent")]
 pub struct JsAgent {
@@ -249,7 +70,7 @@ pub struct JsAgent {
 
 impl JsAgent {
     /// Built inside a promise's future, so the current runtime is the one to keep.
-    fn new(agent: Agent) -> Self {
+    fn new(agent: AgentRuntime) -> Self {
         let runtime = Handle::current();
         JsAgent {
             agent: Arc::new(Mutex::new(OnRuntime::new(agent, runtime.clone()))),
@@ -309,7 +130,8 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<It
 
 #[napi]
 impl JsAgent {
-    /// An agent from a spec (the object an `AgentSpec` serializes to).
+    /// An agent from a spec, the object an `AgentSpec` serializes to, with the history it
+    /// starts with and the `Sandbox` it works in.
     #[napi(
         ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; sandbox?: Sandbox }",
         ts_return_type = "Promise<Agent>"
@@ -339,7 +161,7 @@ impl JsAgent {
         })();
         let (spec, state) = prepared.map_err(|e| thrown(env, e))?;
         promise(env, async move {
-            let agent = Agent::try_with_state(spec, state)
+            let agent = AgentRuntime::try_with_state(spec, state)
                 .await
                 .map_err(error::anyhow)?;
             Ok(JsAgent::new(agent))

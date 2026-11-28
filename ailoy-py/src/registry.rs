@@ -1,15 +1,16 @@
 //! The tools of this process's provider, which an agent makes the tools it names through: every
 //! built-in tool from the start, as models have a provider per org (see [`crate::model`]).
 //!
-//! The registering functions return the names of the tools they provide, to pass to
-//! `AgentBuilder.tool`/`tools`.
+//! The registering functions return the names of the tools they provide, to list in a spec's
+//! `tools`.
 
-use ailoy_runner::tool::{
-    ToolDesc, WebSearchProvider, get_web_search_provider as get_web_search_provider_rs,
-    register_mcp_stdio as register_mcp_stdio_rs,
-    register_mcp_streamable_http as register_mcp_streamable_http_rs,
-    remove_tool_provider as remove_tool_provider_rs, set_tool_provider as set_tool_provider_rs,
-    set_web_search_provider as set_web_search_provider_rs, unregister_mcp as unregister_mcp_rs,
+use ailoy_runner::{
+    agent::default_provider,
+    tool::{
+        MCPServer, MCPTransport, ToolDesc, WebSearchProvider,
+        get_web_search_provider as get_web_search_provider_rs,
+        set_web_search_provider as set_web_search_provider_rs,
+    },
 };
 use pyo3::{exceptions::PyValueError, prelude::*};
 use pyo3_async_runtimes::tokio::future_into_py;
@@ -27,7 +28,7 @@ fn ensure_callable(py: Python<'_>, func: &Py<PyAny>) -> PyResult<()> {
 /// Stop providing the tool `name`. Answers whether it was provided.
 #[pyfunction]
 fn remove_tool_provider(name: String) -> bool {
-    remove_tool_provider_rs(&name)
+    default_provider().write().unwrap().tools.remove(&name)
 }
 
 /// Provide the tool `desc` describes by calling `func`, in place of one of its name, and answer
@@ -40,12 +41,17 @@ fn register_tool(desc: Bound<'_, PyAny>, func: Py<PyAny>) -> PyResult<String> {
     ensure_callable(desc.py(), &func)?;
     let parsed: ToolDesc = from_py(&desc, "a tool description")?;
     let name = parsed.name.clone();
-    set_tool_provider_rs((parsed, tool_func(func)));
+    default_provider()
+        .write()
+        .unwrap()
+        .tools
+        .set((parsed, tool_func(func)));
     Ok(name)
 }
 
 /// Start the MCP server `command args…` on this host and provide each of its tools as
-/// `{prefix}__{name}`. Awaitable; answers with their names.
+/// `{prefix}__{name}`, in place of a server there under it. Awaitable; answers with their
+/// names.
 ///
 /// The server runs outside any console, with this process's access — register only servers
 /// you trust.
@@ -58,14 +64,20 @@ fn register_mcp_stdio(
     args: Vec<String>,
 ) -> PyResult<Bound<'_, PyAny>> {
     future_into_py(py, async move {
-        register_mcp_stdio_rs(&prefix, &command, &args)
+        let transport = MCPTransport::Stdio { command, args };
+        let server = MCPServer::connect(&prefix, transport)
             .await
-            .map_err(error::anyhow)
+            .map_err(error::anyhow)?;
+        let mut provider = default_provider().write().unwrap();
+        provider
+            .tools
+            .remove_by_prefix(&MCPServer::name_prefix(&prefix));
+        Ok(provider.tools.set(server))
     })
 }
 
 /// Connect to the streamable-HTTP MCP server at `url` and provide each of its tools as
-/// `{prefix}__{name}`. Awaitable; answers with their names.
+/// `{prefix}__{name}`, in place of a server there under it. Awaitable; answers with their names.
 #[pyfunction]
 fn register_mcp_streamable_http(
     py: Python<'_>,
@@ -73,9 +85,15 @@ fn register_mcp_streamable_http(
     url: String,
 ) -> PyResult<Bound<'_, PyAny>> {
     future_into_py(py, async move {
-        register_mcp_streamable_http_rs(&prefix, &url)
+        let transport = MCPTransport::StreamableHTTP { url };
+        let server = MCPServer::connect(&prefix, transport)
             .await
-            .map_err(error::anyhow)
+            .map_err(error::anyhow)?;
+        let mut provider = default_provider().write().unwrap();
+        provider
+            .tools
+            .remove_by_prefix(&MCPServer::name_prefix(&prefix));
+        Ok(provider.tools.set(server))
     })
 }
 
@@ -83,9 +101,14 @@ fn register_mcp_streamable_http(
 /// many were removed.
 #[pyfunction]
 fn unregister_mcp(prefix: String) -> usize {
-    // Off the runtime is fine for the registry, but ending the session cancels a task on it.
+    // Off the runtime is fine for the provider, but ending the session cancels a task on it.
     let _entered = pyo3_async_runtimes::tokio::get_runtime().enter();
-    unregister_mcp_rs(&prefix)
+    let name_prefix = MCPServer::name_prefix(&prefix);
+    default_provider()
+        .write()
+        .unwrap()
+        .tools
+        .remove_by_prefix(&name_prefix)
 }
 
 /// Search with `provider` — `"web"`, `"brave"`, `"tavily"`, `"exa"` or `"naver"` — in every

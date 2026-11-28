@@ -9,8 +9,7 @@ mod web;
 
 pub use browser::*;
 pub use console::*;
-pub(crate) use mcp::prefixed_tool_name;
-pub use mcp::{MCP_NAME_SEPARATOR, MCPConnection, MCPServer, MCPToolEntry};
+pub use mcp::{MCP_NAME_SEPARATOR, MCPConnection, MCPServer, MCPToolEntry, MCPTransport};
 pub use web::*;
 
 /// Binary-searches `0..=max` for the largest `n` with `fits(n)`, assuming `fits` stays

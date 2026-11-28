@@ -8,7 +8,7 @@ import pytest
 from virtx import Client
 
 import ailoy
-from ailoy import AgentBuilder, AiloyError, LangModel
+from ailoy import Agent, AiloyError, LangModel
 
 
 def content_text(content):
@@ -111,7 +111,7 @@ async def run(agent, query):
 
 def test_sandbox_takes_only_a_virtx_sandbox():
     with pytest.raises(TypeError, match="virtx.Sandbox"):
-        AgentBuilder(MODEL).sandbox(object())
+        Agent.from_spec({"model": MODEL, "use_sandbox": True}, sandbox=object())
 
 
 def test_register_tool_hands_back_its_name():
@@ -158,45 +158,38 @@ def test_a_server_of_your_own_runs_the_self_hosted_backend():
 
 def test_thinking_effort_is_checked():
     with pytest.raises(ValueError):
-        AgentBuilder(MODEL).thinking_effort("extreme")
-
-
-async def test_building_spends_the_builder():
-    builder = AgentBuilder(MODEL)
-    await builder.build()
-    with pytest.raises(ValueError):
-        builder.instruction("again")
+        Agent.from_spec({"model": MODEL, "model_options": {"thinking_effort": "extreme"}})
 
 
 async def test_an_unserved_model_is_an_error():
     with pytest.raises(AiloyError):
-        await AgentBuilder("nobody/serves-this").build()
+        await Agent.from_spec({"model": "nobody/serves-this"})
 
 
 async def test_an_unregistered_tool_is_an_error():
     with pytest.raises(AiloyError, match="missing"):
-        await AgentBuilder(MODEL).tool("missing").build()
+        await Agent.from_spec({"model": MODEL, "tools": ["missing"]})
 
 
 async def test_a_removed_tool_provider_no_longer_builds():
     name = tool("fleeting", lambda: None)
-    await AgentBuilder(MODEL).tool(name).build()
+    await Agent.from_spec({"model": MODEL, "tools": [name]})
     assert ailoy.remove_tool_provider(name)
     assert not ailoy.remove_tool_provider(name)
     with pytest.raises(AiloyError):
-        await AgentBuilder(MODEL).tool(name).build()
+        await Agent.from_spec({"model": MODEL, "tools": [name]})
 
 
 async def test_a_browser_needs_a_sandbox_with_its_abin():
     with pytest.raises(AiloyError, match="`browser` abin"):
-        await AgentBuilder(MODEL).browser().build()
+        await Agent.from_spec({"model": MODEL, "use_browser": True})
 
 
 # ---- a turn, against the fake model ---------------------------------------------------
 
 
 async def test_a_turn_without_tools():
-    agent = await AgentBuilder(MODEL).instruction("Be brief.").build()
+    agent = await Agent.from_spec({"model": MODEL, "instruction": "Be brief."})
     outputs = await run(agent, "hi")
     assert texts(outputs) == ["hello"]
     assert outputs[-1]["finish_reason"] == {"type": "stop"}
@@ -252,7 +245,7 @@ async def test_the_self_hosted_backend_reads_its_server_from_the_environment():
 
 
 async def test_a_query_may_be_a_message():
-    agent = await AgentBuilder(MODEL).build()
+    agent = await Agent.from_spec({"model": MODEL})
     query = {"role": "user", "contents": [{"type": "text", "text": "hi"}]}
     assert texts(await run(agent, query)) == ["hello"]
 
@@ -265,7 +258,7 @@ async def test_a_sync_tool_gets_keyword_arguments():
         return {"city": city, "celsius": 21.5}
 
     name = tool("weather", weather)
-    agent = await AgentBuilder(MODEL).tool(name).build()
+    agent = await Agent.from_spec({"model": MODEL, "tools": [name]})
     outputs = await run(agent, 'weather {"city": "Seoul"}')
 
     assert seen == {"city": "Seoul"}
@@ -284,7 +277,7 @@ async def test_an_async_tool_is_awaited_on_the_running_loop():
         return f"sunny in {city}"
 
     name = tool("forecast", forecast)
-    agent = await AgentBuilder(MODEL).tool(name).build()
+    agent = await Agent.from_spec({"model": MODEL, "tools": [name]})
     outputs = await run(agent, 'forecast {"city": "Busan"}')
     assert outputs[1]["message"]["contents"][0]["value"] == "sunny in Busan"
 
@@ -294,14 +287,14 @@ async def test_a_tool_that_raises_answers_with_the_error():
         raise RuntimeError(f"no data for {city}")
 
     name = tool("broken", broken)
-    agent = await AgentBuilder(MODEL).tool(name).build()
+    agent = await Agent.from_spec({"model": MODEL, "tools": [name]})
     outputs = await run(agent, 'broken {"city": "Jeju"}')
     value = outputs[1]["message"]["contents"][0]["value"]
     assert value.startswith("error: RuntimeError: no data for Jeju")
 
 
 async def test_run_stream_yields_deltas():
-    agent = await AgentBuilder(MODEL).build()
+    agent = await Agent.from_spec({"model": MODEL})
     deltas = [d async for d in agent.run_stream("hi")]
     text = "".join(
         part["text"] for d in deltas for part in d["delta"]["contents"] if part["type"] == "text"
@@ -312,7 +305,7 @@ async def test_run_stream_yields_deltas():
 
 
 async def test_history_is_refused_mid_turn_and_turns_take_turns():
-    agent = await AgentBuilder(MODEL).build()
+    agent = await Agent.from_spec({"model": MODEL})
     first = agent.run("hi")
     await first.__anext__()
     with pytest.raises(AiloyError):
@@ -377,7 +370,7 @@ async def test_a_custom_provider_serves_an_agent():
 
     ailoy.set_lang_model_provider("mine", factory)
     try:
-        agent = await AgentBuilder("mine/echo").build()
+        agent = await Agent.from_spec({"model": "mine/echo"})
         assert texts(await run(agent, "hi")) == ["echo: hi"]
         deltas = [d async for d in agent.run_stream("again")]
         assert deltas[-1]["finish_reason"] == {"type": "stop"}
@@ -418,7 +411,7 @@ async def test_a_custom_provider_may_stream_and_be_async():
 async def test_a_custom_provider_may_hand_back_a_built_in_model():
     built = await ailoy.LangModel.create(MODEL)
     ailoy.set_lang_model_provider("alias", lambda org, name: built)
-    agent = await AgentBuilder("alias/any").build()
+    agent = await Agent.from_spec({"model": "alias/any"})
     assert texts(await run(agent, "hi")) == ["hello"]
     ailoy.remove_lang_model_provider("alias")
 
@@ -429,7 +422,7 @@ async def test_a_factory_that_raises_fails_the_build():
 
     ailoy.set_lang_model_provider("broken", factory)
     with pytest.raises(AiloyError, match="no models today"):
-        await AgentBuilder("broken/x").build()
+        await Agent.from_spec({"model": "broken/x"})
     ailoy.remove_lang_model_provider("broken")
 
 
@@ -450,13 +443,13 @@ async def test_the_agent_runs_in_the_callers_sandbox():
     with Client.spawn() as client:
         await client.pull_image("python:3.12-slim").complete()
         sandbox = await client.create_sandbox("python:3.12-slim", network=False, memory_mib=1024)
-        agent = await AgentBuilder(MODEL).sandbox(sandbox).build()
+        agent = await Agent.from_spec({"model": MODEL, "use_sandbox": True}, sandbox=sandbox)
         outputs = await run(agent, 'shell {"cmd": "echo shared > /root/out.txt"}')
         assert outputs[1]["message"]["role"] == "tool"
 
         # The sandbox is still the caller's to use, and removing it removes it for an agent too.
         assert await sandbox.read_text("root/out.txt") == "shared\n"
-        later = await AgentBuilder(MODEL).sandbox(sandbox).build()
+        later = await Agent.from_spec({"model": MODEL, "use_sandbox": True}, sandbox=sandbox)
         await sandbox.remove()
         outputs = await run(later, 'shell {"cmd": "true"}')
         assert "404" in json.dumps(outputs[1]["message"]["contents"])

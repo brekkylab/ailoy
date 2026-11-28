@@ -311,8 +311,8 @@ impl From<MessageOutput> for MessageDeltaOutput {
     }
 }
 
-/// Adapts a [`MessageDeltaOutput`] stream (e.g. from `Agent::run_stream`) into completed
-/// [`MessageOutput`]s, the view `Agent::run` gives. A delta carrying a `finish_reason`
+/// Adapts a [`MessageDeltaOutput`] stream (e.g. from `AgentRuntime::run_stream`) into completed
+/// [`MessageOutput`]s, the view `AgentRuntime::run` gives. A delta carrying a `finish_reason`
 /// ends each message; ailoy's producers guarantee every message has one.
 pub fn into_messages<S>(
     deltas: S,

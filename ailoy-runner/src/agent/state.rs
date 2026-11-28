@@ -11,7 +11,7 @@ pub(super) const IMAGE_PLACEHOLDER: &str = "[image from an earlier turn removed]
 /// What stands in for a tool result's contents [`AgentState::truncate_history`] replaced.
 pub(super) const TOOL_RESULT_PLACEHOLDER: &str = "[context truncated]";
 
-/// What an [`Agent`](super::Agent) carries from one turn to the next: its history, and the
+/// What an [`AgentRuntime`](super::AgentRuntime) carries from one turn to the next: its history, and the
 /// sandbox it works in.
 ///
 /// A clone shares the sandbox: it is a handle, so two agents built from clones work in the

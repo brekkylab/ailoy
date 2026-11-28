@@ -9,7 +9,6 @@ const ailoy = require('../index.js')
 const virtx = require('@brekkylab/virtx')
 const {
   Agent,
-  AgentBuilder,
   LangModel,
   registerTool,
   getLangModelProvider,
@@ -27,15 +26,15 @@ test('virtx is a dependency, not re-exported', () => {
 })
 
 test('an agent takes only a virtx sandbox', () => {
-  assert.throws(() => new AgentBuilder('any/model').sandbox({}), { code: 'INVALID_ARG' })
+  assert.throws(() => Agent.fromSpec({ model: 'any/model', use_sandbox: true }, { sandbox: {} }), {
+    code: 'INVALID_ARG',
+  })
 })
 
-// ---- the builder and the registries --------------------------------------------------------
+// ---- the registries --------------------------------------------------------------------------
 
-test('a builder is spent by build()', async () => {
-  const builder = new AgentBuilder('no-such-org/model')
-  await assert.rejects(builder.build(), { code: 'AILOY_ERROR' })
-  assert.throws(() => builder.instruction('again'), { code: 'INVALID_ARG' })
+test('a model nothing provides is an error', async () => {
+  await assert.rejects(Agent.fromSpec({ model: 'no-such-org/model' }), { code: 'AILOY_ERROR' })
 })
 
 test('the web search provider is set by name', () => {
@@ -67,7 +66,7 @@ const serveNowhere = (org) => {
 
 test('a browser needs a sandbox with its abin', async () => {
   serveNowhere('fake-browser')
-  await assert.rejects(new AgentBuilder('fake-browser/model').browser().build(), {
+  await assert.rejects(Agent.fromSpec({ model: 'fake-browser/model', use_browser: true }), {
     code: 'AILOY_ERROR',
     message: /`browser` abin/,
   })
@@ -168,7 +167,7 @@ test('a turn calls a JavaScript tool and answers with what it said', async (t) =
     return a + b
   })
 
-  const agent = await new AgentBuilder('fake/model').tool(name).build()
+  const agent = await Agent.fromSpec({ model: 'fake/model', tools: [name] })
   try {
     const outputs = []
     for await (const output of agent.run('what is 2 + 3?')) outputs.push(output)
@@ -220,7 +219,7 @@ test('breaking out of a turn ends it where it stands', async (t) => {
     return a + b
   })
 
-  const agent = await new AgentBuilder('fake-break/model').tool(name).build()
+  const agent = await Agent.fromSpec({ model: 'fake-break/model', tools: [name] })
   for await (const output of agent.run('2 + 3?')) {
     assert.equal(output.message.role, 'assistant')
     break
@@ -372,7 +371,7 @@ test('a custom provider serves an agent', async (t) => {
   })
   t.after(() => removeLangModelProvider('mine'))
 
-  const agent = await new AgentBuilder('mine/echo').build()
+  const agent = await Agent.fromSpec({ model: 'mine/echo' })
   const outputs = []
   for await (const output of agent.run('hi')) outputs.push(output)
   assert.deepEqual(textOf(outputs), ['echo: hi'])
@@ -414,10 +413,10 @@ test('a removed tool provider no longer builds', async (t) => {
   t.after(() => removeLangModelProvider('tooled'))
   const name = registerTool({ name: 'fleeting', parameters: { type: 'object' } }, () => null)
 
-  await new AgentBuilder('tooled/x').tool(name).build()
+  await Agent.fromSpec({ model: 'tooled/x', tools: [name] })
   assert.equal(removeToolProvider(name), true)
   assert.equal(removeToolProvider(name), false)
-  await assert.rejects(new AgentBuilder('tooled/x').tool(name).build(), { message: /fleeting/ })
+  await assert.rejects(Agent.fromSpec({ model: 'tooled/x', tools: [name] }), { message: /fleeting/ })
 })
 
 test('a factory that throws fails the build', async (t) => {
@@ -425,7 +424,7 @@ test('a factory that throws fails the build', async (t) => {
     throw new Error('no models today')
   })
   t.after(() => removeLangModelProvider('broken'))
-  await assert.rejects(new AgentBuilder('broken/x').build(), { message: /no models today/ })
+  await assert.rejects(Agent.fromSpec({ model: 'broken/x' }), { message: /no models today/ })
 })
 
 // ---- the caller's sandbox, against the server virtx starts by default ---------------------
@@ -439,7 +438,7 @@ test('an agent runs its console tools in the caller’s sandbox, until it is rem
   const sandbox = await client.createSandbox('python:3.12-slim', { network: false, memoryMib: 1024 })
 
   serve('fake-shell', server)
-  const agent = await new AgentBuilder('fake-shell/model').sandbox(sandbox).build()
+  const agent = await Agent.fromSpec({ model: 'fake-shell/model', use_sandbox: true }, { sandbox })
   const outputs = []
   for await (const output of agent.run('write it')) outputs.push(output)
   assert.equal(outputs[1].message.role, 'tool')
@@ -447,7 +446,7 @@ test('an agent runs its console tools in the caller’s sandbox, until it is rem
   assert.equal(await sandbox.readText('tmp/out.txt'), 'shared\n')
 
   // Removed, it is gone for an agent too.
-  const later = await new AgentBuilder('fake-shell/model').sandbox(sandbox).build()
+  const later = await Agent.fromSpec({ model: 'fake-shell/model', use_sandbox: true }, { sandbox })
   const fromSpec = await Agent.fromSpec({ model: 'fake-shell/model', use_sandbox: true }, { sandbox })
   await sandbox.remove()
   const after = []

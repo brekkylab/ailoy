@@ -1,7 +1,7 @@
 """Agents that drive a language model through tool-augmented turns.
 
-An ``Agent`` is built with an ``AgentBuilder`` and awaited; a turn is ``agent.run(query)``,
-iterated with ``async for``. A model is named ``<org>/<name>``
+An ``Agent`` is made from a spec with ``Agent.from_spec`` and awaited; a turn is
+``agent.run(query)``, iterated with ``async for``. A model is named ``<org>/<name>``
 (``"anthropic/claude-sonnet-5-5"``) and runs on the backend set for its org with
 ``set_lang_model_provider``: by default its CLI, or its own API when it has none.
 ``LangModel.create(desc)`` builds one to run without an agent. A tool is given by name and made
@@ -12,7 +12,7 @@ Messages, specs and tool descriptions are dicts in their JSON form; ``ailoy.type
 out their shapes.
 
 Tools run commands in a sandbox from the ``virtx`` package, which ailoy depends on: a
-``virtx.Sandbox`` handed to ``AgentBuilder.sandbox`` stays the caller's, and the agent runs in it.
+``virtx.Sandbox`` handed to ``Agent.from_spec`` stays the caller's, and the agent runs in it.
 
 See the Rust crate's documentation for details.
 """
@@ -20,7 +20,6 @@ See the Rust crate's documentation for details.
 from . import types
 from ._ailoy import (
     Agent,
-    AgentBuilder,
     AgentRun,
     AiloyError,
     LangModel,
@@ -38,7 +37,6 @@ from ._ailoy import (
 
 __all__ = [
     "Agent",
-    "AgentBuilder",
     "AgentRun",
     "AiloyError",
     "LangModel",

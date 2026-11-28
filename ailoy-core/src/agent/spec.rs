@@ -97,6 +97,19 @@ impl AgentSpec {
         self
     }
 
+    /// Work in a sandbox, which the agent's state then has to hold. See
+    /// [`use_sandbox`](Self::use_sandbox).
+    pub fn sandbox(mut self) -> Self {
+        self.use_sandbox = true;
+        self
+    }
+
+    /// Drive the browser of the sandbox. See [`use_browser`](Self::use_browser).
+    pub fn browser(mut self) -> Self {
+        self.use_browser = true;
+        self
+    }
+
     /// Add `web_search`, unless the spec has it. How it searches is set where the agent runs.
     pub fn web_search_tool(self) -> Self {
         self.tool_once("web_search")

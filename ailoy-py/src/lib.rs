@@ -1,8 +1,7 @@
 //! Python bindings for ailoy, imported as `ailoy._ailoy`.
 //!
-//! The shape is ailoy's own, spelled in Python: an [`Agent`](ailoy_runner::agent::Agent) is built by
-//! an [`AgentBuilder`](ailoy_runner::agent::AgentBuilder) and awaited, a turn is iterated with
-//! `async for`, and the registries are the process-wide ones the crate keeps. Nothing adds a
+//! The shape is ailoy's own, spelled in Python: an [`Agent`](ailoy_runner::agent::AgentRuntime) is made
+//! from a spec and awaited, a turn is iterated with `async for`, and the registries are the process-wide ones the crate keeps. Nothing adds a
 //! layer over that, so ailoy's Rust documentation applies as is.
 //!
 //! Data (messages, specs, tool descriptions, a turn's outputs) crosses as dicts in its serde

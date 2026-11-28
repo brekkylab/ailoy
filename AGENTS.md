@@ -13,7 +13,7 @@ Ailoy is a library for building AI agents that each own a virtual machine (a [vi
 ## Where a change goes
 
 - `ailoy-core/src/` — what names an agent and what it says, as data that goes wherever an agent runs: the spec, the state an agent carries between turns, and the `AgentProvider` that holds the tools a spec names and the agents kept by name (`agent/`), the message, part and delta types every surface marshals (`message/`), a tool's description, its provider's trait and `ToolFunc` (`tool/`), a model's options (`model.rs`) and `Value` (`datatype/`). It names models and tools and builds none; `ailoy` and `ailoy-runner` show these types at their own paths (`ailoy::message::Message`). The clients of a server are here too (`client/`).
-- `ailoy-runner/src/agent/` — the builder, the run loop (`rt.rs`), the state an agent carries between turns, and skills.
+- `ailoy-runner/src/agent/` — the run loop (`rt.rs`), the state an agent carries between turns, and skills.
 - `ailoy-runner/src/model/` — the model traits, one module per backend under `impl/` (a vendor API, a CLI, Bedrock, OpenRouter, an OpenAI-compatible server such as vLLM) and the provider registry with its catalogs under `provider/`.
 - `ailoy-runner/src/tool/impl/` — the tools this crate provides, one `ToolSet` per group: the shell and file tools in the sandbox (`console/`), `web_search` and `web_fetch` (`web/`), the tools over the sandbox's `browser` abin (`browser.rs`), and an MCP server's (`mcp.rs`).
 - `ailoy-runner/src/console.rs` — the virtx sandbox an agent is given, and what the console tools do with it.

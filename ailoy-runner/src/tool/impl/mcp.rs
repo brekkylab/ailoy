@@ -5,26 +5,33 @@
 //! prefix, sharing the live connection:
 //!
 //! ```text
-//! MCPTransport::connect()              ← async: initialize + tools/list
+//! MCPServer::connect("github", transport)   ← async: initialize + tools/list
 //!         │
-//!         │  register_mcp_*("github", …)   ← sync: N names
+//!         │  ToolProvider::set(server)          ← N names
 //!         ▼
 //! "github__create_issue" ┐
 //! "github__list_issues"  ┴→ MCPServer
 //! ```
 //!
+//! The server's session ends once none of its tools is provided any more.
+//!
 //! ```no_run
-//! # use ailoy_runner::{agent::AgentSpec, tool::{register_mcp_stdio, unregister_mcp}};
+//! # use ailoy_runner::{agent::{AgentSpec, default_provider}, tool::{MCPServer, MCPTransport}};
 //! # async fn example() -> anyhow::Result<()> {
-//! let names = register_mcp_stdio("github", "npx", ["-y", "@modelcontextprotocol/server-github"])
-//!     .await?;
+//! let transport = MCPTransport::Stdio {
+//!     command: "npx".into(),
+//!     args: vec!["-y".into(), "@modelcontextprotocol/server-github".into()],
+//! };
+//! let server = MCPServer::connect("github", transport).await?;
+//! let names = default_provider().write().unwrap().tools.set(server);
 //!
 //! let spec = AgentSpec::new("anthropic/claude-sonnet-4-6").tools(names);
 //!
 //! // ... build and run agents against `spec` ...
 //!
 //! // Ends the child process; without this it outlives every agent that used it.
-//! unregister_mcp("github");
+//! let prefix = MCPServer::name_prefix("github");
+//! default_provider().write().unwrap().tools.remove_by_prefix(&prefix);
 //! # Ok(())
 //! # }
 //! ```
@@ -42,10 +49,7 @@ use rmcp::{
 use crate::{
     datatype::{Bytes, Value},
     message::{Message, Part, Role},
-    tool::{
-        MCPTransport, ToolDesc, ToolDescBuilder, ToolFunc, ToolSet, sanitize_tool_name,
-        warn_if_tool_name_too_long,
-    },
+    tool::{MAX_TOOL_NAME_LEN, ToolDesc, ToolDescBuilder, ToolFunc, ToolSet, sanitize_tool_name},
     tool_func,
 };
 
@@ -135,16 +139,20 @@ impl MCPConnection {
     }
 }
 
-impl MCPTransport {
-    /// Open a session against the server this transport describes.
-    pub async fn connect(&self) -> anyhow::Result<MCPConnection> {
-        match self {
-            MCPTransport::Stdio { command, args } => MCPConnection::stdio(command, args).await,
-            MCPTransport::StreamableHTTP { url } => {
-                MCPConnection::streamable_http(url.as_str()).await
-            }
-        }
-    }
+/// How an MCP (Model Context Protocol) server is reached.
+#[derive(Clone, Debug)]
+pub enum MCPTransport {
+    /// Spawns a child process and communicates over its stdio.
+    ///
+    /// `command` is the executable, not a shell line: `args` are passed through
+    /// as written, so nothing here is word-split or glob-expanded.
+    ///
+    /// The server runs on the host, outside the agent's sandbox, with whatever access this
+    /// process has: connect only to servers the caller trusts.
+    Stdio { command: String, args: Vec<String> },
+
+    /// Connects to a remote MCP server over HTTP streaming, at `url`.
+    StreamableHTTP { url: String },
 }
 
 // ── Registry entry ────────────────────────────────────────────────────────────
@@ -229,6 +237,21 @@ pub struct MCPServer {
 }
 
 impl MCPServer {
+    /// Connect to the server `transport` reaches, and offer each of its tools as
+    /// `{prefix}__{name}`.
+    pub async fn connect(prefix: &str, transport: MCPTransport) -> anyhow::Result<Self> {
+        let conn = match transport {
+            MCPTransport::Stdio { command, args } => MCPConnection::stdio(command, args).await?,
+            MCPTransport::StreamableHTTP { url } => MCPConnection::streamable_http(url).await?,
+        };
+        Ok(Self::new(prefix, conn))
+    }
+
+    /// What the name of every tool offered under `prefix` starts with, to remove them by.
+    pub fn name_prefix(prefix: &str) -> String {
+        prefixed_tool_name(prefix, "")
+    }
+
     pub(crate) fn new(prefix: &str, conn: MCPConnection) -> Self {
         let mut descs = Vec::with_capacity(conn.tools().len());
         let mut remote_names = HashMap::with_capacity(conn.tools().len());
@@ -305,6 +328,18 @@ pub(crate) fn mcp_tool_desc(prefix: &str, tool: &rmcp::model::Tool) -> ToolDesc 
         )));
     }
     builder.build()
+}
+
+/// Warn when `name` is longer than every model API will accept.
+///
+/// A warning, not an error: the target provider is unknown here.
+fn warn_if_tool_name_too_long(name: &str) {
+    if name.len() > MAX_TOOL_NAME_LEN {
+        log::warn!(
+            "tool name '{name}' is {} characters; some model APIs reject names over {MAX_TOOL_NAME_LEN}",
+            name.len()
+        );
+    }
 }
 
 /// `{prefix}__{name}`, with anything a model API would refuse mapped to `_`.
@@ -733,7 +768,7 @@ mod tests {
         let mut provider = AgentProvider::new();
         provider.tools.set(MCPServer::new("test", conn));
 
-        let prefix = prefixed_tool_name("test", "");
+        let prefix = MCPServer::name_prefix("test");
         assert_eq!(provider.tools.remove_by_prefix(&prefix), 2);
         assert!(provider.tools.create("test__echo").is_err());
         assert_eq!(provider.tools.remove_by_prefix(&prefix), 0);
@@ -750,7 +785,7 @@ mod tests {
             .set(MCPServer::new("test2", connected().await));
 
         // "test" must not take "test2": the prefix includes the separator.
-        let prefix = prefixed_tool_name("test", "");
+        let prefix = MCPServer::name_prefix("test");
         assert_eq!(provider.tools.remove_by_prefix(&prefix), 2);
         assert!(provider.tools.create("test2__echo").is_ok());
     }
