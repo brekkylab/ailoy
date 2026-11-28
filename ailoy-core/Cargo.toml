@@ -25,6 +25,7 @@ schemars = { version = "1", features = ["preserve_order", "url2"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"
 serde_json = { version = "1.0", features = ["preserve_order"] }
+sse-stream = { version = "0.2", optional = true }
 strum = { version = "0.28", features = ["derive"] }
 tokio = { version = "1.0", default-features = false, optional = true }
 tower-service = { version = "0.3", optional = true }
@@ -37,7 +38,7 @@ ailoy-core = { path = ".", features = ["client"] }
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt"] }
 
 [features]
-client = ["dep:http-over-x", "dep:tokio"]
+client = ["dep:http-over-x", "dep:sse-stream", "dep:tokio"]
 # `Client::embed` and `AdminClient::embed`: a server in this process.
 embed = [
     "client",

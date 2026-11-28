@@ -136,6 +136,21 @@ impl AgentProvider {
             .ok_or_else(|| Refusal::NoSession(id.to_owned()))
     }
 
+    /// Keep `state` as the session of its id of the agent `agent`, in place of the one there.
+    /// Refused when there is none: a session removed while a turn ran stays removed.
+    pub fn set_session(&mut self, agent: &str, state: AgentState) -> Result<(), Refusal> {
+        let kept = self
+            .agents
+            .get_mut(agent)
+            .ok_or_else(|| Refusal::NoAgent(agent.to_owned()))?;
+        let session = kept
+            .sessions
+            .get_mut(&state.id)
+            .ok_or_else(|| Refusal::NoSession(state.id.clone()))?;
+        *session = state;
+        Ok(())
+    }
+
     /// Every session of the agent `agent`, in the order each was started.
     pub fn list_sessions(&self, agent: &str) -> Result<Vec<SessionListOutputItem>, Refusal> {
         let kept = self

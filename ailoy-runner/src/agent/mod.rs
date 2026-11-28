@@ -17,7 +17,7 @@ mod rt;
 mod skill;
 mod state;
 
-use std::sync::{LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 
 pub use ailoy_core::agent::{
     AgentListOutputItem, AgentProvider, AgentPutArgs, AgentSpec, Refusal, SessionCreateArgs,
@@ -31,11 +31,12 @@ use crate::{
     tool::{Browser, Console, Web},
 };
 
-/// The provider of this process, which an [`AgentRuntime`] makes the model and tools its spec names
-/// through. It starts with the console, web and browser tools, and runs each org's models
-/// through its CLI, or its API when it has no CLI.
-pub fn default_provider() -> &'static RwLock<AgentProvider> {
-    static PROVIDER: LazyLock<RwLock<AgentProvider>> = LazyLock::new(|| {
+/// The provider of this process, which an [`AgentRuntime`] makes the model and tools its spec
+/// names through unless given another, and which a router may serve. It starts with the console,
+/// web and browser tools, and runs each org's models through its CLI, or its API when it has no
+/// CLI.
+pub fn default_provider() -> &'static Arc<RwLock<AgentProvider>> {
+    static PROVIDER: LazyLock<Arc<RwLock<AgentProvider>>> = LazyLock::new(|| {
         let mut provider = AgentProvider::new();
         provider.tools.set(Console);
         provider.tools.set(Web::default());
@@ -52,7 +53,7 @@ pub fn default_provider() -> &'static RwLock<AgentProvider> {
         ] {
             provider.models.set(org, backend);
         }
-        RwLock::new(provider)
+        Arc::new(RwLock::new(provider))
     });
     &PROVIDER
 }

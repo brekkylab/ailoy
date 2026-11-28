@@ -1,22 +1,42 @@
-use std::sync::{Arc, RwLock};
+use std::{
+    collections::HashSet,
+    convert::Infallible,
+    sync::{Arc, Mutex, RwLock},
+};
 
 use ailoy_core::{
     agent::{AgentListOutputItem, AgentProvider, AgentPutArgs, Refusal, SessionCreateArgs},
+    message::Message,
     tool::ToolDesc,
 };
 use axum::{
     Json, Router,
-    body::Bytes,
+    body::{Body, Bytes},
     extract::{Path, State},
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use futures::StreamExt as _;
+use serde::Serialize;
 use serde_json::json;
 
+use crate::agent::{AgentRuntime, AgentState};
+
+/// What [`router`] serves: the provider, and the sessions with a turn running, as their agent
+/// and id.
+struct Served {
+    provider: Arc<RwLock<AgentProvider>>,
+    running: Mutex<HashSet<(String, String)>>,
+}
+
 /// What `provider` serves to the code that runs its agents, `ailoy_core::Client`: the
-/// sessions of each agent kept.
+/// sessions of each agent kept, and the turns run in them.
 pub fn router(provider: Arc<RwLock<AgentProvider>>) -> Router {
+    let served = Arc::new(Served {
+        provider,
+        running: Mutex::new(HashSet::new()),
+    });
     Router::new()
         .route(
             "/agents/{name}/sessions/",
@@ -24,9 +44,9 @@ pub fn router(provider: Arc<RwLock<AgentProvider>>) -> Router {
         )
         .route(
             "/agents/{name}/sessions/{id}",
-            get(get_session).delete(remove_session),
+            get(get_session).post(run).delete(remove_session),
         )
-        .with_state(provider)
+        .with_state(served)
 }
 
 /// What `provider` serves to the code that manages it, `ailoy_core::AdminClient`: the tools
@@ -101,7 +121,7 @@ async fn remove_agent(
 }
 
 async fn create_session(
-    State(provider): State<Arc<RwLock<AgentProvider>>>,
+    State(served): State<Arc<Served>>,
     Path(agent): Path<String>,
     body: Bytes,
 ) -> Response {
@@ -109,38 +129,134 @@ async fn create_session(
         Ok(args) => args,
         Err(why) => return refuse(StatusCode::BAD_REQUEST, "invalid_args", why),
     };
-    match provider.write().unwrap().create_session(&agent, args) {
+    match served
+        .provider
+        .write()
+        .unwrap()
+        .create_session(&agent, args)
+    {
         Ok(session) => (StatusCode::CREATED, Json(session)).into_response(),
         Err(refusal) => refuse_as(refusal),
     }
 }
 
-async fn list_sessions(
-    State(provider): State<Arc<RwLock<AgentProvider>>>,
-    Path(agent): Path<String>,
-) -> Response {
-    match provider.read().unwrap().list_sessions(&agent) {
+async fn list_sessions(State(served): State<Arc<Served>>, Path(agent): Path<String>) -> Response {
+    match served.provider.read().unwrap().list_sessions(&agent) {
         Ok(sessions) => Json(sessions).into_response(),
         Err(refusal) => refuse_as(refusal),
     }
 }
 
 async fn get_session(
-    State(provider): State<Arc<RwLock<AgentProvider>>>,
+    State(served): State<Arc<Served>>,
     Path((agent, id)): Path<(String, String)>,
 ) -> Response {
-    match provider.read().unwrap().get_session(&agent, &id) {
+    match served.provider.read().unwrap().get_session(&agent, &id) {
         Ok(session) => Json(session).into_response(),
         Err(refusal) => refuse_as(refusal),
     }
 }
 
 async fn remove_session(
-    State(provider): State<Arc<RwLock<AgentProvider>>>,
+    State(served): State<Arc<Served>>,
     Path((agent, id)): Path<(String, String)>,
 ) -> StatusCode {
-    provider.write().unwrap().remove_session(&agent, &id);
+    served.provider.write().unwrap().remove_session(&agent, &id);
     StatusCode::NO_CONTENT
+}
+
+/// Run one turn of the session `id` of the agent `agent` on the query the body holds, and answer
+/// with what it produces as an event stream, one `MessageDeltaOutput` per event. The turn runs on
+/// a task of its own, so it ends, and the session keeps its history, whether or not the stream
+/// is read to its end. A failure partway is an `error` event, `{"error": {"code", "message"}}`.
+async fn run(
+    State(served): State<Arc<Served>>,
+    Path((agent, session)): Path<(String, String)>,
+    body: Bytes,
+) -> Response {
+    let query: Message = match http_over_x::from_body(&body) {
+        Ok(query) => query,
+        Err(why) => return refuse(StatusCode::BAD_REQUEST, "invalid_args", why),
+    };
+    let (spec, kept) = {
+        let provider = served.provider.read().unwrap();
+        let spec = match provider.get_agent(&agent) {
+            Ok(agent) => agent.spec,
+            Err(refusal) => return refuse_as(refusal),
+        };
+        match provider.get_session(&agent, &session) {
+            Ok(kept) => (spec, kept),
+            Err(refusal) => return refuse_as(refusal),
+        }
+    };
+    if spec.use_sandbox {
+        let why = "an agent that works in a sandbox does not run over a server yet".to_owned();
+        return refuse(StatusCode::UNPROCESSABLE_ENTITY, "unsupported", why);
+    }
+    let key = (agent.clone(), session.clone());
+    if !served.running.lock().unwrap().insert(key.clone()) {
+        let why = format!("the session '{session}' has a turn running");
+        return refuse(StatusCode::CONFLICT, "busy", why);
+    }
+
+    let mut state = AgentState::new().with_history(kept.history);
+    state.id = kept.id;
+    state.context_tokens = kept.context_tokens;
+    let mut runtime = match AgentRuntime::try_in(&served.provider, spec, state).await {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            served.running.lock().unwrap().remove(&key);
+            return refuse(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "unusable",
+                format!("{e:#}"),
+            );
+        }
+    };
+
+    let (events, body) = futures::channel::mpsc::unbounded::<Result<Bytes, Infallible>>();
+    tokio::spawn(async move {
+        let mut failed = None;
+        {
+            let mut turn = runtime.run_stream(query);
+            while let Some(delta) = turn.next().await {
+                let event = match delta {
+                    Ok(delta) => event(None, &delta),
+                    Err(e) => {
+                        let error =
+                            json!({"error": {"code": "turn_failed", "message": format!("{e:#}")}});
+                        failed = Some(event(Some("error"), &error));
+                        continue;
+                    }
+                };
+                // A reader gone leaves the turn to finish.
+                let _ = events.unbounded_send(Ok(event));
+            }
+        }
+        let kept = ailoy_core::agent::AgentState {
+            id: runtime.state.id.clone(),
+            history: runtime.history().to_vec(),
+            context_tokens: runtime.state.context_tokens,
+            sandbox_id: None,
+        };
+        // A session removed while its turn ran stays removed.
+        let _ = served.provider.write().unwrap().set_session(&key.0, kept);
+        served.running.lock().unwrap().remove(&key);
+        if let Some(failed) = failed {
+            let _ = events.unbounded_send(Ok(failed));
+        }
+    });
+    let body = Body::from_stream(body);
+    ([(header::CONTENT_TYPE, "text/event-stream")], body).into_response()
+}
+
+/// `data` as one server-sent event, of the type `kind` if given.
+fn event(kind: Option<&str>, data: &impl Serialize) -> Bytes {
+    let data = serde_json::to_string(data).expect("an event serializes");
+    match kind {
+        Some(kind) => Bytes::from(format!("event: {kind}\ndata: {data}\n\n")),
+        None => Bytes::from(format!("data: {data}\n\n")),
+    }
 }
 
 #[cfg(test)]
@@ -148,11 +264,12 @@ mod tests {
     use ailoy_core::{
         AdminClient, Client,
         agent::AgentSpec,
-        message::{Message, Part, Role},
-        model::ModelKeyProvider,
+        message::{FinishReason, MessageDeltaOutput, MessageOutput, Part, Role, into_messages},
+        model::{InferLangModel, LangModelOptions, ModelKeyProvider},
         tool::{ToolDescBuilder, ToolFunc, ToolSet},
         tool_func,
     };
+    use futures::{future::BoxFuture, stream::BoxStream};
 
     use super::*;
 
@@ -329,6 +446,132 @@ mod tests {
         assert!(client.list_session("a").await.unwrap().is_empty());
         let error = client.get_session("a", &session.id).await.err().unwrap();
         assert_eq!(error.status(), Some(404));
+    }
+
+    /// Answers `pong`, after a pause if `slow`, or fails, whatever it is asked.
+    struct Parrot {
+        fails: bool,
+        slow: bool,
+    }
+
+    impl InferLangModel for Parrot {
+        fn infer(
+            &self,
+            _: &[Message],
+            _: &[ToolDesc],
+            _: &LangModelOptions,
+        ) -> BoxFuture<'static, anyhow::Result<MessageOutput>> {
+            unimplemented!("a turn streams")
+        }
+
+        fn infer_stream(
+            &self,
+            _: &[Message],
+            _: &[ToolDesc],
+            _: &LangModelOptions,
+        ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
+            let slow = self.slow;
+            let output = match self.fails {
+                true => Err(anyhow::anyhow!("no words today")),
+                false => Ok(MessageDeltaOutput::from(MessageOutput {
+                    message: Message::new(Role::Assistant).with_contents([Part::text("pong")]),
+                    finish_reason: FinishReason::Stop {},
+                    usage: None,
+                })),
+            };
+            Box::pin(futures::stream::once(async move {
+                if slow {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+                output
+            }))
+        }
+    }
+
+    /// A client of a provider whose `parrot` org's models are [`Parrot`]s, failing ones under
+    /// `parrot/fails` and slow ones under `parrot/slow`, and whose agent `p` runs `model`, with a
+    /// session started.
+    async fn parrot_session(model: &str) -> (Client, String) {
+        let mut provider = AgentProvider::new();
+        provider.models.set(
+            "parrot",
+            |_: &str, name: Option<&str>| -> anyhow::Result<Arc<dyn InferLangModel>> {
+                Ok(Arc::new(Parrot {
+                    fails: name == Some("fails"),
+                    slow: name == Some("slow"),
+                }))
+            },
+        );
+        provider
+            .put_agent("p", AgentPutArgs::new(AgentSpec::new(model)))
+            .unwrap();
+        let client = Client::embed(router(Arc::new(RwLock::new(provider))));
+        let session = client
+            .create_session("p", &SessionCreateArgs::new())
+            .await
+            .unwrap();
+        (client, session.id)
+    }
+
+    fn ping() -> Message {
+        Message::new(Role::User).with_contents([Part::text("ping")])
+    }
+
+    #[tokio::test]
+    async fn test_a_turn_streams_its_deltas_and_the_session_keeps_it() {
+        let (client, id) = parrot_session("parrot/x").await;
+        let deltas = client.run_stream("p", &id, &ping());
+        let deltas = deltas.map(|delta| delta.map_err(anyhow::Error::from));
+        let messages: Vec<_> = into_messages(deltas).collect().await;
+        let messages: Vec<_> = messages.into_iter().map(Result::unwrap).collect();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].message.contents[0].as_text(), Some("pong"));
+
+        let state = client.get_session("p", &id).await.unwrap();
+        let roles: Vec<Role> = state.history.iter().map(|m| m.role.clone()).collect();
+        assert_eq!(roles, [Role::User, Role::Assistant]);
+    }
+
+    #[tokio::test]
+    async fn test_a_turn_that_fails_partway_ends_on_its_error() {
+        let (client, id) = parrot_session("parrot/fails").await;
+        let outcomes: Vec<_> = client.run_stream("p", &id, &ping()).collect().await;
+        let error = outcomes.last().unwrap().as_ref().err().unwrap();
+        assert_eq!(error.code(), Some("turn_failed"));
+        assert!(error.to_string().contains("no words today"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn test_a_session_runs_one_turn_at_a_time() {
+        let (client, id) = parrot_session("parrot/slow").await;
+        let client = Arc::new(client);
+        let first = tokio::spawn({
+            let (client, id) = (client.clone(), id.clone());
+            async move {
+                client
+                    .run_stream("p", &id, &ping())
+                    .collect::<Vec<_>>()
+                    .await
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let outcomes: Vec<_> = client.run_stream("p", &id, &ping()).collect().await;
+        let error = outcomes[0].as_ref().err().unwrap();
+        assert_eq!(error.status(), Some(409));
+        assert_eq!(error.code(), Some("busy"));
+        assert!(first.await.unwrap().iter().all(Result::is_ok));
+    }
+
+    #[tokio::test]
+    async fn test_a_turn_of_a_model_nothing_makes_is_refused() {
+        let (client, id) = parrot_session("nobody/x").await;
+        let outcomes: Vec<_> = client.run_stream("p", &id, &ping()).collect().await;
+        let error = outcomes[0].as_ref().err().unwrap();
+        assert_eq!(error.status(), Some(422));
+        assert_eq!(error.code(), Some("unusable"));
+        // The session is free again for the next turn.
+        let outcomes: Vec<_> = client.run_stream("p", &id, &ping()).collect().await;
+        assert_eq!(outcomes[0].as_ref().err().unwrap().code(), Some("unusable"));
     }
 
     /// Each router serves its own client's paths and none of the other's.

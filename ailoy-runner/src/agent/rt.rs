@@ -1,4 +1,8 @@
-use std::{collections::HashMap, panic::AssertUnwindSafe, sync::Arc};
+use std::{
+    collections::HashMap,
+    panic::AssertUnwindSafe,
+    sync::{Arc, RwLock},
+};
 
 use crate::console::Sandbox;
 use anyhow::bail;
@@ -7,11 +11,13 @@ use futures::{
     stream::{BoxStream, FuturesUnordered},
 };
 
-use super::{AgentSpec, AgentState, image::fit_images_off_runtime, skill::render_skills};
+use super::{
+    AgentProvider, AgentSpec, AgentState, image::fit_images_off_runtime, skill::render_skills,
+};
 use crate::{
     datatype::Value,
     message::{Delta as _, FinishReason, Message, MessageDeltaOutput, MessageOutput, Part, Role},
-    model::{InferLangModel, LangModelOptions, RequestRefused, create_lang_model},
+    model::{InferLangModel, LangModelOptions, RequestRefused},
     tool::{BROWSER_ABIN, ToolDesc, ToolFunc, browser_tool_names, sandbox_tool_names},
 };
 
@@ -55,18 +61,31 @@ impl AgentRuntime {
         Self::try_with_state(spec, AgentState::new()).await
     }
 
-    /// Create an agent with `state`.
+    /// Create an agent with `state`, made through the
+    /// [`default_provider`](super::default_provider). See [`try_in`](Self::try_in).
+    pub async fn try_with_state(spec: AgentSpec, state: AgentState) -> anyhow::Result<Self> {
+        Self::try_in(super::default_provider(), spec, state).await
+    }
+
+    /// Create an agent with `state`, its model and tools made through `provider`.
     ///
-    /// The model is built from `spec.model` through [`create_lang_model`], and each of
-    /// `spec.tools` through the `tools` of [`default_provider`](super::default_provider); [`AgentSpec::use_sandbox`] and
+    /// The model is built from `spec.model` through the `models` of `provider`, and each of
+    /// `spec.tools` through its `tools`; [`AgentSpec::use_sandbox`] and
     /// [`AgentSpec::use_browser`] bring their tools too. `state` has to hold a sandbox exactly
-    /// when the spec uses one, and for a browser, a sandbox with the `browser` abin. Unless `state.history` already has a
-    /// [`Role::System`] message, one built from `spec.instruction`, [`AgentSpec::skills`]
-    /// and the skills of the sandbox's abins is put first.
+    /// when the spec uses one, and for a browser, a sandbox with the `browser` abin. Unless
+    /// `state.history` already has a [`Role::System`] message, one built from
+    /// `spec.instruction`, [`AgentSpec::skills`] and the skills of the sandbox's abins is put
+    /// first.
     ///
-    /// Async because skills are read through the sandbox.
-    pub async fn try_with_state(spec: AgentSpec, mut state: AgentState) -> anyhow::Result<Self> {
-        let model = create_lang_model(&spec.model).await?;
+    /// Async because the model may be looked up and skills are read through the sandbox.
+    pub async fn try_in(
+        provider: &RwLock<AgentProvider>,
+        spec: AgentSpec,
+        mut state: AgentState,
+    ) -> anyhow::Result<Self> {
+        // Taken out of the lock before it is awaited.
+        let model = provider.read().unwrap().models.create(&spec.model)?;
+        let model = model.await?;
 
         match (spec.use_sandbox, state.sandbox.is_some()) {
             (true, false) => bail!("the spec uses a sandbox, and the state has none"),
@@ -97,11 +116,7 @@ impl AgentRuntime {
         let mut tool_descs = Vec::with_capacity(names.len());
         for name in names {
             if !tools.contains_key(name) {
-                let (desc, func) = super::default_provider()
-                    .read()
-                    .unwrap()
-                    .tools
-                    .create(name)?;
+                let (desc, func) = provider.read().unwrap().tools.create(name)?;
                 tools.insert(name.to_owned(), func);
                 tool_descs.push(desc);
             }
