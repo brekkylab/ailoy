@@ -114,10 +114,8 @@ def test_sandbox_takes_only_a_virtx_sandbox():
         AgentBuilder(MODEL).sandbox(object())
 
 
-def test_register_tool_hands_back_its_desc():
-    desc = tool("noop", lambda: None)
-    assert desc["name"] == "noop"
-    assert desc["parameters"]["type"] == "object"
+def test_register_tool_hands_back_its_name():
+    assert tool("noop", lambda: None) == "noop"
 
 
 def test_register_tool_refuses_what_it_cannot_use():
@@ -125,8 +123,6 @@ def test_register_tool_refuses_what_it_cannot_use():
         ailoy.register_tool({"name": "x", "parameters": {}}, "not callable")
     with pytest.raises(ValueError):
         ailoy.register_tool({"description": "no name"}, lambda: None)
-    with pytest.raises(ValueError):
-        ailoy.set_tool_provider("x", "not callable")
 
 
 def test_web_search_provider_is_set_by_name():
@@ -178,19 +174,17 @@ async def test_an_unserved_model_is_an_error():
 
 
 async def test_an_unregistered_tool_is_an_error():
-    missing = {"name": "missing", "parameters": {"type": "object"}}
-    with pytest.raises(AiloyError):
-        await AgentBuilder(MODEL).tool(missing).build()
+    with pytest.raises(AiloyError, match="missing"):
+        await AgentBuilder(MODEL).tool("missing").build()
 
 
 async def test_a_removed_tool_provider_no_longer_builds():
-    desc = {"name": "fleeting", "parameters": {"type": "object"}}
-    ailoy.set_tool_provider("fleeting", lambda: None)
-    await AgentBuilder(MODEL).tool(desc).build()
-    assert ailoy.remove_tool_provider("fleeting")
-    assert not ailoy.remove_tool_provider("fleeting")
+    name = tool("fleeting", lambda: None)
+    await AgentBuilder(MODEL).tool(name).build()
+    assert ailoy.remove_tool_provider(name)
+    assert not ailoy.remove_tool_provider(name)
     with pytest.raises(AiloyError):
-        await AgentBuilder(MODEL).tool(desc).build()
+        await AgentBuilder(MODEL).tool(name).build()
 
 
 async def test_a_browser_needs_a_sandbox_with_its_abin():
@@ -270,8 +264,8 @@ async def test_a_sync_tool_gets_keyword_arguments():
         seen["city"] = city
         return {"city": city, "celsius": 21.5}
 
-    desc = tool("weather", weather)
-    agent = await AgentBuilder(MODEL).tool(desc).build()
+    name = tool("weather", weather)
+    agent = await AgentBuilder(MODEL).tool(name).build()
     outputs = await run(agent, 'weather {"city": "Seoul"}')
 
     assert seen == {"city": "Seoul"}
@@ -289,8 +283,8 @@ async def test_an_async_tool_is_awaited_on_the_running_loop():
         await asyncio.sleep(0)
         return f"sunny in {city}"
 
-    desc = tool("forecast", forecast)
-    agent = await AgentBuilder(MODEL).tool(desc).build()
+    name = tool("forecast", forecast)
+    agent = await AgentBuilder(MODEL).tool(name).build()
     outputs = await run(agent, 'forecast {"city": "Busan"}')
     assert outputs[1]["message"]["contents"][0]["value"] == "sunny in Busan"
 
@@ -299,8 +293,8 @@ async def test_a_tool_that_raises_answers_with_the_error():
     def broken(city):
         raise RuntimeError(f"no data for {city}")
 
-    desc = tool("broken", broken)
-    agent = await AgentBuilder(MODEL).tool(desc).build()
+    name = tool("broken", broken)
+    agent = await AgentBuilder(MODEL).tool(name).build()
     outputs = await run(agent, 'broken {"city": "Jeju"}')
     value = outputs[1]["message"]["contents"][0]["value"]
     assert value.startswith("error: RuntimeError: no data for Jeju")

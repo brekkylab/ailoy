@@ -15,7 +15,6 @@ use ailoy_runner::{
     datatype::Value,
     message::Message,
     model::ThinkingEffort,
-    tool::ToolDesc,
 };
 use futures::{StreamExt as _, stream::BoxStream};
 use pyo3::{
@@ -78,14 +77,13 @@ impl PyAgentBuilder {
         Self::update(slf, |b| Ok(b.instruction(instruction)))
     }
 
-    fn tool<'py>(slf: PyRef<'py, Self>, desc: Bound<'py, PyAny>) -> PyResult<PyRef<'py, Self>> {
-        let desc: ToolDesc = from_py(&desc, "a tool description")?;
-        Self::update(slf, |b| Ok(b.tool(desc)))
+    /// Give the agent the tool `name`, as provided in this process.
+    fn tool(slf: PyRef<'_, Self>, name: String) -> PyResult<PyRef<'_, Self>> {
+        Self::update(slf, |b| Ok(b.tool(name)))
     }
 
-    fn tools<'py>(slf: PyRef<'py, Self>, descs: Bound<'py, PyAny>) -> PyResult<PyRef<'py, Self>> {
-        let descs: Vec<ToolDesc> = from_py(&descs, "a list of tool descriptions")?;
-        Self::update(slf, |b| Ok(b.tools(descs)))
+    fn tools(slf: PyRef<'_, Self>, names: Vec<String>) -> PyResult<PyRef<'_, Self>> {
+        Self::update(slf, |b| Ok(b.tools(names)))
     }
 
     /// Add `web_search`, searching with the provider `set_web_search_provider` set.

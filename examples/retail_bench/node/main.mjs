@@ -327,12 +327,12 @@ async function runDay(newAgent, store, record, day, context, volume, n, maxDays)
   return typeof metrics.terminated === 'string' ? metrics.terminated : null
 }
 
-// Register the three actions and return their descriptions, whose schemas are the store's own
+// Register the three actions and return their names, whose schemas are the store's own
 // rather than written here. After each action, what it rewrote of `context` goes onto `volume`.
 async function registerActions(store, record, day, context, volume) {
   const { actions: declared = [] } = await store.get('/actions')
 
-  const descs = []
+  const names = []
   for (const name of ACTIONS) {
     // A name the store does not declare means this example and the simulator have drifted
     // apart, which is worth stopping for rather than running without the tool.
@@ -371,9 +371,9 @@ async function registerActions(store, record, day, context, volume) {
         return `The store could not be reached: ${e.message}`
       }
     }
-    descs.push(registerTool(desc, func))
+    names.push(registerTool(desc, func))
   }
-  return descs
+  return names
 }
 
 // What the model is shown for one action: the store's own words, and a line saying so when the

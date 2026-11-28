@@ -144,7 +144,7 @@ class TruncationPolicy(TypedDict):
 class AgentSpec(TypedDict):
     model: str
     instruction: NotRequired[str]
-    tools: NotRequired[list[ToolDesc]]
+    tools: NotRequired[list[str]]
     model_options: NotRequired[LangModelOptions]
     skills: NotRequired[list[str]]
     use_sandbox: NotRequired[bool]

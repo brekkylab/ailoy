@@ -11,7 +11,7 @@ use super::{
     AgentSpec, AgentState,
     image::fit_images_off_runtime,
     skill::render_skills,
-    spec::{browser_tool_descs, sandbox_tool_descs, split_desc},
+    spec::{browser_tool_names, sandbox_tool_names, split_desc},
 };
 use crate::{
     datatype::Value,
@@ -83,23 +83,21 @@ impl Agent {
             }
         }
 
-        // Errors if any spec tool is missing.
-        let mut tools = HashMap::with_capacity(spec.tools.len());
-        for desc in &spec.tools {
-            tools.insert(desc.name.clone(), create_tool(desc)?);
-        }
-        let mut tool_descs = spec.tools.clone();
-
-        let mut brought = Vec::new();
+        // The spec's tools, then those its sandbox and browser bring that it does not name.
+        let mut names: Vec<&str> = spec.tools.iter().map(String::as_str).collect();
         if spec.use_sandbox {
-            brought.extend(sandbox_tool_descs(split_desc(&spec.model).0));
+            names.extend(sandbox_tool_names(split_desc(&spec.model).0));
         }
         if spec.use_browser {
-            brought.extend(browser_tool_descs());
+            names.extend(browser_tool_names());
         }
-        for desc in brought {
-            if !tools.contains_key(&desc.name) {
-                tools.insert(desc.name.clone(), create_tool(&desc)?);
+        // Errors if any tool is missing.
+        let mut tools = HashMap::with_capacity(names.len());
+        let mut tool_descs = Vec::with_capacity(names.len());
+        for name in names {
+            if !tools.contains_key(name) {
+                let (desc, func) = create_tool(name)?;
+                tools.insert(name.to_owned(), func);
                 tool_descs.push(desc);
             }
         }
@@ -658,46 +656,41 @@ mod tests {
             LangModelProvider::custom(move |_, _| Ok(shared.clone())),
         );
 
-        set_tool_provider(
-            "echo",
+        let tool = |name: &str| {
+            ToolDescBuilder::new(name)
+                .parameters(to_value!({"type": "object", "properties": {}}))
+                .build()
+        };
+        set_tool_provider((
+            tool("echo"),
             tool_func!(|_args: Value| -> Value { Value::string("echoed") }),
-        );
-        set_tool_provider(
-            "shot",
+        ));
+        set_tool_provider((
+            tool("shot"),
             tool_func!(|_args: Value, id: String| -> Message {
                 let image = Part::image_embedded("image/png", Bytes::from(vec![0u8; 4])).unwrap();
                 Message::new(Role::Tool)
                     .with_contents([Part::text("the page"), image])
                     .with_id(id)
             }),
-        );
-        set_tool_provider(
-            "boom",
+        ));
+        set_tool_provider((
+            tool("boom"),
             tool_func!(|_args: Value| -> Value {
                 if true {
                     panic!("boom");
                 }
                 Value::Null
             }),
-        );
-        set_tool_provider(
-            "sandbox_only",
+        ));
+        set_tool_provider((
+            tool("sandbox_only"),
             tool_func!(async |_args: Value, _sandbox: &Sandbox| -> Value { Value::Null }),
-        );
+        ));
 
-        let tool = |name: &str| {
-            ToolDescBuilder::new(name)
-                .parameters(to_value!({"type": "object", "properties": {}}))
-                .build()
-        };
         let spec = AgentSpec::new(format!("{name}/any"))
             .instruction("Be brief.")
-            .tools([
-                tool("echo"),
-                tool("shot"),
-                tool("boom"),
-                tool("sandbox_only"),
-            ]);
+            .tools(["echo", "shot", "boom", "sandbox_only"]);
         (model, spec)
     }
 
@@ -1032,7 +1025,7 @@ mod tests {
     async fn test_a_missing_tool_fails_construction() {
         let name = "test-agent-missing-tool";
         let (_, spec) = scripted(name, []);
-        let spec = spec.tool(ToolDescBuilder::new("nowhere").build());
+        let spec = spec.tool("nowhere");
         assert!(Agent::try_new(spec).await.is_err());
     }
 
@@ -1040,11 +1033,18 @@ mod tests {
     async fn test_a_failing_tool_factory_fails_construction() {
         let name = "test-agent-failing-factory";
         let (_, spec) = scripted(name, []);
-        set_tool_provider(
-            "refusing",
-            ToolProvider::function(|_| Err(anyhow::anyhow!("not today"))),
-        );
-        let spec = spec.tool(ToolDescBuilder::new("refusing").build());
+        /// Describes `refusing`, and fails to make it.
+        struct Refusing;
+        impl ToolProvider for Refusing {
+            fn descs(&self) -> Vec<ToolDesc> {
+                vec![ToolDescBuilder::new("refusing").build()]
+            }
+            fn make(&self, _name: &str) -> anyhow::Result<ToolFunc> {
+                Err(anyhow::anyhow!("not today"))
+            }
+        }
+        set_tool_provider(Refusing);
+        let spec = spec.tool("refusing");
         let err = Agent::try_new(spec).await.err().unwrap();
         assert!(err.to_string().contains("not today"), "{err}");
     }
@@ -1289,19 +1289,17 @@ mod tests {
 
         let name = "test-agent-fit";
         let (model, spec) = scripted(name, [calls(&[("c1", "big_shot")]), answer("one")]);
-        set_tool_provider(
-            "big_shot",
+        set_tool_provider((
+            ToolDescBuilder::new("big_shot")
+                .parameters(to_value!({"type": "object", "properties": {}}))
+                .build(),
             tool_func!(|_args: Value, id: String| -> Message {
                 Message::new(Role::Tool)
                     .with_contents([big_png()])
                     .with_id(id)
             }),
-        );
-        let spec = spec.tool(
-            ToolDescBuilder::new("big_shot")
-                .parameters(to_value!({"type": "object", "properties": {}}))
-                .build(),
-        );
+        ));
+        let spec = spec.tool("big_shot");
         let mut agent = Agent::try_new(spec).await.unwrap();
         let query = Message::new(Role::User).with_contents([Part::text("look"), big_png()]);
         agent.run(query).for_each(|_| async {}).await;

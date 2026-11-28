@@ -2,7 +2,8 @@
 //! conversation ([`message`]), a tool's description ([`tool`]) and a model's options
 //! ([`model`]). All of it is serde data that goes anywhere an agent runs; what builds a model
 //! from its name, and runs the agent, is the `ailoy-runner` crate. [`tool`] also holds what makes and
-//! runs a tool: its provider's trait and `ToolFunc`.
+//! runs a tool: its provider's trait and `ToolFunc`. An [`AgentProvider`](agent::AgentProvider)
+//! holds the tools a spec names, and the agents kept by name, each with its sessions.
 //!
 //! The data is always built. `Client` and `AdminClient`, which ask a server for what it keeps
 //! and runs, are the `client` feature; reaching a server in this process is `embed`.

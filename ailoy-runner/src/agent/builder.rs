@@ -3,7 +3,6 @@ use crate::{
     datatype::Value,
     message::Message,
     model::ThinkingEffort,
-    tool::ToolDesc,
 };
 
 /// Fluent builder over [`AgentSpec`] for [`Agent`].
@@ -49,13 +48,14 @@ impl AgentBuilder {
         self
     }
 
-    pub fn tool(mut self, desc: ToolDesc) -> Self {
-        self.spec = self.spec.tool(desc);
+    /// Give the agent the tool `name`, as provided where it runs.
+    pub fn tool(mut self, name: impl Into<String>) -> Self {
+        self.spec = self.spec.tool(name);
         self
     }
 
-    pub fn tools(mut self, descs: impl IntoIterator<Item = ToolDesc>) -> Self {
-        self.spec = self.spec.tools(descs);
+    pub fn tools(mut self, names: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.spec = self.spec.tools(names);
         self
     }
 
@@ -154,7 +154,7 @@ mod tests {
         fn infer(
             &self,
             _: &[Message],
-            _: &[ToolDesc],
+            _: &[crate::tool::ToolDesc],
             _: &LangModelOptions,
         ) -> BoxFuture<'static, anyhow::Result<MessageOutput>> {
             unimplemented!()
@@ -163,7 +163,7 @@ mod tests {
         fn infer_stream(
             &self,
             _: &[Message],
-            _: &[ToolDesc],
+            _: &[crate::tool::ToolDesc],
             _: &LangModelOptions,
         ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
             unimplemented!()

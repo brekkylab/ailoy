@@ -81,8 +81,8 @@ pub fn get_web_search_tool_desc() -> ToolDesc {
 
 /// A factory for the `web_search` tool, searching with the provider set when it is built. A
 /// search API without its key fails the build.
-pub fn get_web_search_tool_factory() -> impl Fn(&ToolDesc) -> anyhow::Result<ToolFunc> {
-    |_| {
+pub fn get_web_search_tool_factory() -> impl Fn() -> anyhow::Result<ToolFunc> + Send + Sync {
+    || {
         let searcher: Arc<dyn SearchEngine> = match get_web_search_provider() {
             WebSearchProvider::Web => Arc::new(web::Web::new()?),
             WebSearchProvider::Brave => Arc::new(brave::Brave::from_env()?),

@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use ailoy_core::{
-    agent::{AgentListOutputItem, AgentPutArgs, SessionCreateArgs},
+    agent::{AgentListOutputItem, AgentProvider, AgentPutArgs, Refusal, SessionCreateArgs},
     tool::ToolDesc,
 };
 use axum::{
@@ -14,11 +14,9 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::{AgentProvider, Refusal};
-
 /// What `provider` serves to the code that runs its agents, `ailoy_core::Client`: the
 /// sessions of each agent kept.
-pub fn router(provider: Arc<AgentProvider>) -> Router {
+pub fn router(provider: Arc<RwLock<AgentProvider>>) -> Router {
     Router::new()
         .route(
             "/agents/{name}/sessions/",
@@ -34,7 +32,7 @@ pub fn router(provider: Arc<AgentProvider>) -> Router {
 /// What `provider` serves to the code that manages it, `ailoy_core::AdminClient`: the tools
 /// provided and the agents kept. Its paths are none of [`router`]'s, so one server may serve
 /// both merged, or each to its own listener.
-pub fn admin_router(provider: Arc<AgentProvider>) -> Router {
+pub fn admin_router(provider: Arc<RwLock<AgentProvider>>) -> Router {
     Router::new()
         .route("/tools", get(list_tools))
         .route("/agents/", get(list_agents))
@@ -59,16 +57,18 @@ fn refuse_as(refusal: Refusal) -> Response {
     refuse(status, code, refusal.to_string())
 }
 
-async fn list_tools(State(provider): State<Arc<AgentProvider>>) -> Json<Vec<ToolDesc>> {
-    Json(provider.tool_descs())
+async fn list_tools(State(provider): State<Arc<RwLock<AgentProvider>>>) -> Json<Vec<ToolDesc>> {
+    Json(provider.read().unwrap().tool_descs())
 }
 
-async fn list_agents(State(provider): State<Arc<AgentProvider>>) -> Json<Vec<AgentListOutputItem>> {
-    Json(provider.list_agents())
+async fn list_agents(
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
+) -> Json<Vec<AgentListOutputItem>> {
+    Json(provider.read().unwrap().list_agents())
 }
 
 async fn put_agent(
-    State(provider): State<Arc<AgentProvider>>,
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
     Path(name): Path<String>,
     body: Bytes,
 ) -> Response {
@@ -76,32 +76,32 @@ async fn put_agent(
         Ok(args) => args,
         Err(why) => return refuse(StatusCode::BAD_REQUEST, "invalid_args", why),
     };
-    match provider.put_agent(&name, args) {
+    match provider.write().unwrap().put_agent(&name, args) {
         Ok(agent) => Json(agent).into_response(),
         Err(refusal) => refuse_as(refusal),
     }
 }
 
 async fn get_agent(
-    State(provider): State<Arc<AgentProvider>>,
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
     Path(name): Path<String>,
 ) -> Response {
-    match provider.get_agent(&name) {
+    match provider.read().unwrap().get_agent(&name) {
         Ok(agent) => Json(agent).into_response(),
         Err(refusal) => refuse_as(refusal),
     }
 }
 
 async fn remove_agent(
-    State(provider): State<Arc<AgentProvider>>,
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
     Path(name): Path<String>,
 ) -> StatusCode {
-    provider.remove_agent(&name);
+    provider.write().unwrap().remove_agent(&name);
     StatusCode::NO_CONTENT
 }
 
 async fn create_session(
-    State(provider): State<Arc<AgentProvider>>,
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
     Path(agent): Path<String>,
     body: Bytes,
 ) -> Response {
@@ -109,37 +109,37 @@ async fn create_session(
         Ok(args) => args,
         Err(why) => return refuse(StatusCode::BAD_REQUEST, "invalid_args", why),
     };
-    match provider.create_session(&agent, args) {
+    match provider.write().unwrap().create_session(&agent, args) {
         Ok(session) => (StatusCode::CREATED, Json(session)).into_response(),
         Err(refusal) => refuse_as(refusal),
     }
 }
 
 async fn list_sessions(
-    State(provider): State<Arc<AgentProvider>>,
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
     Path(agent): Path<String>,
 ) -> Response {
-    match provider.list_sessions(&agent) {
+    match provider.read().unwrap().list_sessions(&agent) {
         Ok(sessions) => Json(sessions).into_response(),
         Err(refusal) => refuse_as(refusal),
     }
 }
 
 async fn get_session(
-    State(provider): State<Arc<AgentProvider>>,
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
     Path((agent, id)): Path<(String, String)>,
 ) -> Response {
-    match provider.get_session(&agent, &id) {
+    match provider.read().unwrap().get_session(&agent, &id) {
         Ok(session) => Json(session).into_response(),
         Err(refusal) => refuse_as(refusal),
     }
 }
 
 async fn remove_session(
-    State(provider): State<Arc<AgentProvider>>,
+    State(provider): State<Arc<RwLock<AgentProvider>>>,
     Path((agent, id)): Path<(String, String)>,
 ) -> StatusCode {
-    provider.remove_session(&agent, &id);
+    provider.write().unwrap().remove_session(&agent, &id);
     StatusCode::NO_CONTENT
 }
 
@@ -175,7 +175,9 @@ mod tests {
 
     /// The two clients of a provider with `echo`, served in this process.
     fn clients() -> (AdminClient, Client) {
-        let provider = Arc::new(AgentProvider::new().tool(Echo));
+        let mut provider = AgentProvider::new();
+        provider.set_tool_provider(Echo);
+        let provider = Arc::new(RwLock::new(provider));
         let admin = AdminClient::embed(admin_router(provider.clone()));
         (admin, Client::embed(router(provider)))
     }
@@ -332,7 +334,7 @@ mod tests {
     /// Each router serves its own client's paths and none of the other's.
     #[tokio::test]
     async fn test_the_routers_share_no_path() {
-        let provider = Arc::new(AgentProvider::new());
+        let provider = Arc::new(RwLock::new(AgentProvider::new()));
         let admin = AdminClient::embed(router(provider.clone()));
         assert_eq!(admin.list_agent().await.err().unwrap().status(), Some(404));
         let client = Client::embed(admin_router(provider));

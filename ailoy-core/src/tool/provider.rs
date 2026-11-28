@@ -9,3 +9,19 @@ pub trait ToolProvider: Send + Sync {
     /// asked for it.
     fn make(&self, name: &str) -> anyhow::Result<ToolFunc>;
 }
+
+/// A function of this process as a tool: `desc` describes it, and every agent gets `func`.
+impl ToolProvider for (ToolDesc, ToolFunc) {
+    fn descs(&self) -> Vec<ToolDesc> {
+        vec![self.0.clone()]
+    }
+
+    fn make(&self, name: &str) -> anyhow::Result<ToolFunc> {
+        anyhow::ensure!(
+            name == self.0.name,
+            "this provides '{}', not '{name}'",
+            self.0.name
+        );
+        Ok(self.1.clone())
+    }
+}

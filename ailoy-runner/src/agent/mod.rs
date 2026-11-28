@@ -1,5 +1,6 @@
 //! An agent on [`model`](crate::model): a spec's model is a desc built through
-//! [`create_lang_model`](crate::model::create_lang_model).
+//! [`create_lang_model`](crate::model::create_lang_model), and each tool it names is made
+//! through [`default_provider`].
 //!
 //! ```ignore
 //! use ailoy_runner::agent::*;
@@ -18,7 +19,25 @@ mod skill;
 mod spec;
 mod state;
 
+use std::sync::{LazyLock, RwLock};
+
+pub use ailoy_core::agent::{
+    AgentListOutputItem, AgentProvider, AgentPutArgs, AgentSpec, Refusal, SessionCreateArgs,
+    SessionListOutputItem, TruncationPolicy,
+};
 pub use builder::AgentBuilder;
 pub use rt::*;
-pub use spec::*;
 pub use state::*;
+
+use crate::tool::Builtins;
+
+/// The provider of this process, which an [`Agent`] makes the tools its spec names through. It
+/// starts with every built-in tool.
+pub fn default_provider() -> &'static RwLock<AgentProvider> {
+    static PROVIDER: LazyLock<RwLock<AgentProvider>> = LazyLock::new(|| {
+        let mut provider = AgentProvider::new();
+        provider.set_tool_provider(Builtins::new());
+        RwLock::new(provider)
+    });
+    &PROVIDER
+}

@@ -16,7 +16,6 @@ const {
   removeLangModelProvider,
   removeToolProvider,
   setLangModelProvider,
-  setToolProvider,
 } = ailoy
 const { Client } = virtx
 
@@ -51,7 +50,7 @@ test('the web search provider is set by name', () => {
 })
 
 test('an object that does not fit says what was expected', () => {
-  assert.throws(() => new AgentBuilder('m').tool({ description: 'no name' }), {
+  assert.throws(() => registerTool({ description: 'no name' }, () => null), {
     code: 'INVALID_ARG',
     message: /not a tool description/,
   })
@@ -164,12 +163,12 @@ test('a turn calls a JavaScript tool and answers with what it said', async (t) =
   serve('fake', server)
 
   const calls = []
-  const desc = registerTool(ADD, async ({ a, b }) => {
+  const name = registerTool(ADD, async ({ a, b }) => {
     calls.push([a, b])
     return a + b
   })
 
-  const agent = await new AgentBuilder('fake/model').tool(desc).build()
+  const agent = await new AgentBuilder('fake/model').tool(name).build()
   try {
     const outputs = []
     for await (const output of agent.run('what is 2 + 3?')) outputs.push(output)
@@ -198,11 +197,11 @@ test('a tool that throws answers with the error, and the turn goes on', async (t
   const server = await fakeModel()
   t.after(() => server.close())
   serve('fake-throws', server)
-  const desc = registerTool(ADD, () => {
+  const name = registerTool(ADD, () => {
     throw new Error('no adding today')
   })
 
-  const agent = await Agent.fromSpec({ model: 'fake-throws/model', tools: [desc] })
+  const agent = await Agent.fromSpec({ model: 'fake-throws/model', tools: [name] })
   const outputs = []
   for await (const output of agent.run({ role: 'user', contents: [{ type: 'text', text: '2 + 3?' }] })) {
     outputs.push(output)
@@ -216,12 +215,12 @@ test('breaking out of a turn ends it where it stands', async (t) => {
   t.after(() => server.close())
   serve('fake-break', server)
   const calls = []
-  const desc = registerTool(ADD, ({ a, b }) => {
+  const name = registerTool(ADD, ({ a, b }) => {
     calls.push([a, b])
     return a + b
   })
 
-  const agent = await new AgentBuilder('fake-break/model').tool(desc).build()
+  const agent = await new AgentBuilder('fake-break/model').tool(name).build()
   for await (const output of agent.run('2 + 3?')) {
     assert.equal(output.message.role, 'assistant')
     break
@@ -413,13 +412,12 @@ test('a custom provider may hand back a built-in model', async (t) => {
 test('a removed tool provider no longer builds', async (t) => {
   setLangModelProvider('tooled', (org, name) => new Echo(name))
   t.after(() => removeLangModelProvider('tooled'))
-  const desc = { name: 'fleeting', parameters: { type: 'object' } }
+  const name = registerTool({ name: 'fleeting', parameters: { type: 'object' } }, () => null)
 
-  setToolProvider('fleeting', () => null)
-  await new AgentBuilder('tooled/x').tool(desc).build()
-  assert.equal(removeToolProvider('fleeting'), true)
-  assert.equal(removeToolProvider('fleeting'), false)
-  await assert.rejects(new AgentBuilder('tooled/x').tool(desc).build(), { message: /fleeting/ })
+  await new AgentBuilder('tooled/x').tool(name).build()
+  assert.equal(removeToolProvider(name), true)
+  assert.equal(removeToolProvider(name), false)
+  await assert.rejects(new AgentBuilder('tooled/x').tool(name).build(), { message: /fleeting/ })
 })
 
 test('a factory that throws fails the build', async (t) => {

@@ -1,7 +1,7 @@
-//! The process-wide registry an agent builds its tools from: a provider per tool name, seeded
-//! with every built-in tool, as models have one per org (see [`crate::model`]).
+//! The tools of this process's provider, which an agent makes the tools it names through: every
+//! built-in tool from the start, as models have a provider per org (see [`crate::model`]).
 //!
-//! The registering functions return the tool descriptions they registered, to pass to
+//! The registering functions return the names of the tools they provide, to pass to
 //! `AgentBuilder.tool`/`tools`.
 
 use ailoy_runner::tool::{
@@ -14,16 +14,7 @@ use ailoy_runner::tool::{
 use pyo3::{exceptions::PyValueError, prelude::*};
 use pyo3_async_runtimes::tokio::future_into_py;
 
-use crate::{
-    convert::{from_py, to_py},
-    error,
-    tool::tool_func,
-};
-
-/// Descs as the list of dicts the builder takes back.
-fn descs_to_py(py: Python<'_>, descs: &[ToolDesc]) -> PyResult<Py<PyAny>> {
-    Ok(to_py(py, &descs)?.unbind())
-}
+use crate::{convert::from_py, error, tool::tool_func};
 
 fn ensure_callable(py: Python<'_>, func: &Py<PyAny>) -> PyResult<()> {
     if func.bind(py).is_callable() {
@@ -33,36 +24,28 @@ fn ensure_callable(py: Python<'_>, func: &Py<PyAny>) -> PyResult<()> {
     }
 }
 
-/// Build the tool `name` by calling `func`, replacing the provider it had. See
-/// [`crate::tool`] for how `func` is called.
-#[pyfunction]
-fn set_tool_provider(py: Python<'_>, name: String, func: Py<PyAny>) -> PyResult<()> {
-    ensure_callable(py, &func)?;
-    set_tool_provider_rs(name, tool_func(func));
-    Ok(())
-}
-
-/// Stop building the tool `name`. Answers whether it had a provider.
+/// Stop providing the tool `name`. Answers whether it was provided.
 #[pyfunction]
 fn remove_tool_provider(name: String) -> bool {
-    remove_tool_provider_rs(&name).is_some()
+    remove_tool_provider_rs(&name)
 }
 
-/// Build the tool `desc` describes by calling `func`, and hand `desc` back.
+/// Provide the tool `desc` describes by calling `func`, in place of one of its name, and answer
+/// its name. See [`crate::tool`] for how `func` is called.
 ///
 /// `desc` is `{"name": ..., "description": ..., "parameters": <JSON schema>}`; the name is
-/// what the model calls and what the provider is set under.
+/// what the model calls and what a spec lists.
 #[pyfunction]
-fn register_tool<'py>(desc: Bound<'py, PyAny>, func: Py<PyAny>) -> PyResult<Bound<'py, PyAny>> {
-    let py = desc.py();
-    ensure_callable(py, &func)?;
+fn register_tool(desc: Bound<'_, PyAny>, func: Py<PyAny>) -> PyResult<String> {
+    ensure_callable(desc.py(), &func)?;
     let parsed: ToolDesc = from_py(&desc, "a tool description")?;
-    set_tool_provider_rs(parsed.name.clone(), tool_func(func));
-    to_py(py, &parsed)
+    let name = parsed.name.clone();
+    set_tool_provider_rs((parsed, tool_func(func)));
+    Ok(name)
 }
 
-/// Start the MCP server `command args…` on this host and register each of its tools as
-/// `{prefix}__{name}`. Awaitable; answers with their descriptions.
+/// Start the MCP server `command args…` on this host and provide each of its tools as
+/// `{prefix}__{name}`. Awaitable; answers with their names.
 ///
 /// The server runs outside any console, with this process's access — register only servers
 /// you trust.
@@ -75,15 +58,14 @@ fn register_mcp_stdio(
     args: Vec<String>,
 ) -> PyResult<Bound<'_, PyAny>> {
     future_into_py(py, async move {
-        let descs = register_mcp_stdio_rs(&prefix, &command, &args)
+        register_mcp_stdio_rs(&prefix, &command, &args)
             .await
-            .map_err(error::anyhow)?;
-        Python::attach(|py| descs_to_py(py, &descs))
+            .map_err(error::anyhow)
     })
 }
 
-/// Connect to the streamable-HTTP MCP server at `url` and register each of its tools as
-/// `{prefix}__{name}`. Awaitable; answers with their descriptions.
+/// Connect to the streamable-HTTP MCP server at `url` and provide each of its tools as
+/// `{prefix}__{name}`. Awaitable; answers with their names.
 #[pyfunction]
 fn register_mcp_streamable_http(
     py: Python<'_>,
@@ -91,10 +73,9 @@ fn register_mcp_streamable_http(
     url: String,
 ) -> PyResult<Bound<'_, PyAny>> {
     future_into_py(py, async move {
-        let descs = register_mcp_streamable_http_rs(&prefix, &url)
+        register_mcp_streamable_http_rs(&prefix, &url)
             .await
-            .map_err(error::anyhow)?;
-        Python::attach(|py| descs_to_py(py, &descs))
+            .map_err(error::anyhow)
     })
 }
 
@@ -127,7 +108,6 @@ fn get_web_search_provider() -> String {
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(set_web_search_provider, m)?)?;
     m.add_function(wrap_pyfunction!(get_web_search_provider, m)?)?;
-    m.add_function(wrap_pyfunction!(set_tool_provider, m)?)?;
     m.add_function(wrap_pyfunction!(remove_tool_provider, m)?)?;
     m.add_function(wrap_pyfunction!(register_tool, m)?)?;
     m.add_function(wrap_pyfunction!(register_mcp_stdio, m)?)?;

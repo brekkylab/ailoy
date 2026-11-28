@@ -1,24 +1,25 @@
 //! MCP (Model Context Protocol) client support.
 //!
-//! Discovery (`tools/list`) happens once, at registration; each remote tool
-//! becomes its own registry entry, sharing the live connection behind an `Arc`:
+//! Discovery (`tools/list`) happens once, at registration; the server becomes one
+//! [`ToolProvider`](crate::tool::ToolProvider), an [`MCPServer`], of each of its tools under a
+//! prefix, sharing the live connection:
 //!
 //! ```text
 //! MCPTransport::connect()              ← async: initialize + tools/list
 //!         │
-//!         │  register_mcp_*("github", …)   ← sync: N entries
+//!         │  register_mcp_*("github", …)   ← sync: N names
 //!         ▼
-//! "github__create_issue" → ToolProvider::MCP(MCPToolEntry)
-//! "github__list_issues"  → ToolProvider::MCP(MCPToolEntry)
+//! "github__create_issue" ┐
+//! "github__list_issues"  ┴→ MCPServer
 //! ```
 //!
 //! ```no_run
 //! # use ailoy_runner::{agent::AgentSpec, tool::{register_mcp_stdio, unregister_mcp}};
 //! # async fn example() -> anyhow::Result<()> {
-//! let descs = register_mcp_stdio("github", "npx", ["-y", "@modelcontextprotocol/server-github"])
+//! let names = register_mcp_stdio("github", "npx", ["-y", "@modelcontextprotocol/server-github"])
 //!     .await?;
 //!
-//! let spec = AgentSpec::new("anthropic/claude-sonnet-4-6").tools(descs);
+//! let spec = AgentSpec::new("anthropic/claude-sonnet-4-6").tools(names);
 //!
 //! // ... build and run agents against `spec` ...
 //!
@@ -28,7 +29,7 @@
 //! # }
 //! ```
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use rmcp::{
@@ -42,7 +43,7 @@ use crate::{
     datatype::{Bytes, Value},
     message::{Message, Part, Role},
     tool::{
-        MCPTransport, ToolDesc, ToolDescBuilder, ToolFunc, sanitize_tool_name,
+        MCPTransport, ToolDesc, ToolDescBuilder, ToolFunc, ToolProvider, sanitize_tool_name,
         warn_if_tool_name_too_long,
     },
     tool_func,
@@ -175,12 +176,6 @@ impl MCPToolEntry {
         }
     }
 
-    /// The connection this entry calls through, for identity comparisons when
-    /// removing a whole server from a registry.
-    pub(crate) fn conn(&self) -> &Arc<MCPConnection> {
-        &self.conn
-    }
-
     /// Build the [`ToolFunc`] that performs `tools/call` for this tool.
     ///
     /// Pure, not console-bound: the call goes to the server over a connection
@@ -221,6 +216,54 @@ impl MCPToolEntry {
                 Err(e) => error_message(id, e.to_string()),
             }
         })
+    }
+}
+
+/// Every tool one server reported, each under `{prefix}__{name}`, as a
+/// [`ToolProvider`].
+pub struct MCPServer {
+    conn: Arc<MCPConnection>,
+    descs: Vec<ToolDesc>,
+    /// The name the server knows each tool by, by the name it is provided under.
+    remote_names: HashMap<String, String>,
+}
+
+impl MCPServer {
+    pub(crate) fn new(prefix: &str, conn: MCPConnection) -> Self {
+        let mut descs = Vec::with_capacity(conn.tools().len());
+        let mut remote_names = HashMap::with_capacity(conn.tools().len());
+        for tool in conn.tools() {
+            let desc = mcp_tool_desc(prefix, tool);
+            remote_names.insert(desc.name.clone(), tool.name.to_string());
+            descs.push(desc);
+        }
+        Self {
+            conn: Arc::new(conn),
+            descs,
+            remote_names,
+        }
+    }
+}
+
+/// Once its tools are no longer provided, the session ends, which, for a stdio server, ends
+/// the child process. An agent's call already under way fails.
+impl Drop for MCPServer {
+    fn drop(&mut self) {
+        self.conn.shutdown();
+    }
+}
+
+impl ToolProvider for MCPServer {
+    fn descs(&self) -> Vec<ToolDesc> {
+        self.descs.clone()
+    }
+
+    fn make(&self, name: &str) -> anyhow::Result<ToolFunc> {
+        let remote = self
+            .remote_names
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("the MCP server has no tool '{name}'"))?;
+        Ok(MCPToolEntry::new(self.conn.clone(), remote.clone()).tool_func())
     }
 }
 
@@ -376,9 +419,7 @@ mod tests {
     };
 
     use super::*;
-    use std::collections::HashMap;
-
-    use crate::tool::{ToolProvider, insert_mcp, remove_mcp};
+    use crate::agent::AgentProvider;
 
     // ── A server to talk to ───────────────────────────────────────────────────
 
@@ -570,13 +611,10 @@ mod tests {
         assert!(parts[0].as_text().unwrap().contains("undecodable"));
     }
 
-    fn provide(
-        providers: &HashMap<String, ToolProvider>,
-        descs: &[ToolDesc],
-    ) -> HashMap<String, ToolFunc> {
-        descs
+    fn provide(provider: &AgentProvider, names: &[String]) -> HashMap<String, ToolFunc> {
+        names
             .iter()
-            .map(|d| (d.name.clone(), providers[&d.name].provide(d).unwrap()))
+            .map(|name| (name.clone(), provider.create_tool(name).unwrap().1))
             .collect()
     }
 
@@ -592,21 +630,20 @@ mod tests {
     #[tokio::test]
     async fn test_registration_fans_one_server_out_into_entries() {
         let conn = connected().await;
-        let mut providers = HashMap::<String, ToolProvider>::new();
-        let descs = insert_mcp(&mut providers, "test", conn);
+        let mut provider = AgentProvider::new();
+        let names = provider.set_tool_provider(MCPServer::new("test", conn));
 
-        let names: Vec<_> = descs.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, vec!["test__echo", "test__odd_name_tool"]);
-        assert!(providers.contains_key("test__echo"));
+        assert!(provider.create_tool("test__echo").is_ok());
     }
 
     #[tokio::test]
     async fn test_provided_func_calls_through_to_the_server() {
         let conn = connected().await;
-        let mut providers = HashMap::<String, ToolProvider>::new();
-        let descs = insert_mcp(&mut providers, "test", conn);
+        let mut provider = AgentProvider::new();
+        let names = provider.set_tool_provider(MCPServer::new("test", conn));
 
-        let funcs = provide(&providers, &descs);
+        let funcs = provide(&provider, &names);
         let func = funcs.get("test__echo").expect("echo was registered");
 
         // Pure: an MCP call needs no console, so the stream is `'static`.
@@ -624,10 +661,10 @@ mod tests {
     #[tokio::test]
     async fn test_sanitized_name_still_calls_the_servers_own_name() {
         let conn = connected().await;
-        let mut providers = HashMap::<String, ToolProvider>::new();
-        let descs = insert_mcp(&mut providers, "test", conn);
+        let mut provider = AgentProvider::new();
+        let names = provider.set_tool_provider(MCPServer::new("test", conn));
 
-        let funcs = provide(&providers, &descs);
+        let funcs = provide(&provider, &names);
         let out = funcs
             .get("test__odd_name_tool")
             .expect("the renamed tool was registered")
@@ -650,10 +687,10 @@ mod tests {
     #[tokio::test]
     async fn test_server_side_error_reaches_the_model_as_text() {
         let conn = connected().await;
-        let mut providers = HashMap::<String, ToolProvider>::new();
-        let descs = insert_mcp(&mut providers, "test", conn);
+        let mut provider = AgentProvider::new();
+        let names = provider.set_tool_provider(MCPServer::new("test", conn));
 
-        let funcs = provide(&providers, &descs);
+        let funcs = provide(&provider, &names);
         let out = funcs
             .get("test__echo")
             .unwrap()
@@ -672,10 +709,10 @@ mod tests {
     #[tokio::test]
     async fn test_non_object_arguments_are_reported_not_sent() {
         let conn = connected().await;
-        let mut providers = HashMap::<String, ToolProvider>::new();
-        let descs = insert_mcp(&mut providers, "test", conn);
+        let mut provider = AgentProvider::new();
+        let names = provider.set_tool_provider(MCPServer::new("test", conn));
 
-        let funcs = provide(&providers, &descs);
+        let funcs = provide(&provider, &names);
         let out = funcs
             .get("test__echo")
             .unwrap()
@@ -691,24 +728,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_mcp_takes_the_whole_server() {
+    async fn test_removing_the_prefix_takes_the_whole_server() {
         let conn = connected().await;
-        let mut providers = HashMap::<String, ToolProvider>::new();
-        insert_mcp(&mut providers, "test", conn);
+        let mut provider = AgentProvider::new();
+        provider.set_tool_provider(MCPServer::new("test", conn));
 
-        assert_eq!(remove_mcp(&mut providers, "test"), 2);
-        assert!(!providers.contains_key("test__echo"));
-        assert_eq!(remove_mcp(&mut providers, "test"), 0);
+        let prefix = prefixed_tool_name("test", "");
+        assert_eq!(provider.remove_tool_providers_by_prefix(&prefix), 2);
+        assert!(provider.create_tool("test__echo").is_err());
+        assert_eq!(provider.remove_tool_providers_by_prefix(&prefix), 0);
     }
 
     #[tokio::test]
-    async fn test_remove_mcp_does_not_take_a_neighbouring_prefix() {
-        let mut providers = HashMap::<String, ToolProvider>::new();
-        insert_mcp(&mut providers, "test", connected().await);
-        insert_mcp(&mut providers, "test2", connected().await);
+    async fn test_removing_a_prefix_leaves_a_neighbouring_one() {
+        let mut provider = AgentProvider::new();
+        provider.set_tool_provider(MCPServer::new("test", connected().await));
+        provider.set_tool_provider(MCPServer::new("test2", connected().await));
 
-        // "test" must not swallow "test2": the match includes the separator.
-        assert_eq!(remove_mcp(&mut providers, "test"), 2);
-        assert!(providers.contains_key("test2__echo"));
+        // "test" must not take "test2": the prefix includes the separator.
+        let prefix = prefixed_tool_name("test", "");
+        assert_eq!(provider.remove_tool_providers_by_prefix(&prefix), 2);
+        assert!(provider.create_tool("test2__echo").is_ok());
     }
 }

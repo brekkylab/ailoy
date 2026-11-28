@@ -88,7 +88,7 @@ What else the builder takes, by what the task needs:
 |---|---|
 | read the web | `.web_fetch_tool()`, `.web_search_tool()` |
 | use an MCP server's tools | `tools = await register_mcp_stdio("fetch", "uvx", ["mcp-server-fetch"])`, then `.tools(tools)`; `register_mcp_streamable_http(prefix, url)` for a remote one |
-| call your own function | `desc = register_tool({"name": ..., "description": ..., "parameters": <JSON schema>}, func)`, then `.tool(desc)` |
+| call your own function | `name = register_tool({"name": ..., "description": ..., "parameters": <JSON schema>}, func)`, then `.tool(name)` |
 | drive a web browser | `.browser()`, with a sandbox made with the `browser` abin (`abins=["browser"]`), a network and 2 GiB of memory; the browser is a headless Chromium in the sandbox |
 | follow a procedure you wrote | `.skill("/skills/<name>")`, a directory holding a `SKILL.md`, on a volume mounted into the sandbox |
 | pick up an earlier conversation | `.history(messages)`, e.g. a previous agent's `agent.history` |

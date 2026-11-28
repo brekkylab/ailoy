@@ -21,7 +21,6 @@ use ailoy_runner::{
     datatype::Value,
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::ThinkingEffort,
-    tool::ToolDesc,
 };
 use futures::{StreamExt as _, stream::BoxStream};
 use napi::{
@@ -112,25 +111,13 @@ impl JsAgentBuilder {
     }
 
     #[napi]
-    pub fn tool<'env>(
-        &mut self,
-        env: &Env,
-        this: This<'env>,
-        #[napi(ts_arg_type = "ToolDesc")] desc: Unknown<'_>,
-    ) -> Result<This<'env>> {
-        let desc: ToolDesc = from_js(env, desc, "a tool description")?;
-        self.update(this, |b| Ok(b.tool(desc)))
+    pub fn tool<'env>(&mut self, this: This<'env>, name: String) -> Result<This<'env>> {
+        self.update(this, |b| Ok(b.tool(name)))
     }
 
     #[napi]
-    pub fn tools<'env>(
-        &mut self,
-        env: &Env,
-        this: This<'env>,
-        #[napi(ts_arg_type = "Array<ToolDesc>")] descs: Unknown<'_>,
-    ) -> Result<This<'env>> {
-        let descs: Vec<ToolDesc> = from_js(env, descs, "a list of tool descriptions")?;
-        self.update(this, |b| Ok(b.tools(descs)))
+    pub fn tools<'env>(&mut self, this: This<'env>, names: Vec<String>) -> Result<This<'env>> {
+        self.update(this, |b| Ok(b.tools(names)))
     }
 
     /// Add `web_search`, searching with the provider `setWebSearchProvider` set.

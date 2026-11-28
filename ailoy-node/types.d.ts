@@ -134,7 +134,7 @@ export interface TruncationPolicy {
 export interface AgentSpec {
   model: string
   instruction?: string
-  tools?: Array<ToolDesc>
+  tools?: Array<string>
   model_options?: LangModelOptions
   skills?: Array<string>
   use_sandbox?: boolean

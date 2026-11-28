@@ -1,8 +1,7 @@
 //! Where an agent runs: the run loop ([`agent`]), the models it calls ([`model`]), the tools it
-//! makes ([`tool`]) and the sandbox it works in ([`console`]). An [`AgentProvider`] holds what
-//! an `ailoy_core::agent::AgentSpec` only names, and the agents kept by name, each with its
-//! sessions. It is served over HTTP by two routers: [`router`], to `ailoy_core::Client`, and
-//! [`admin_router`], to `ailoy_core::AdminClient`.
+//! makes ([`tool`]) and the sandbox it works in ([`console`]). An
+//! [`AgentProvider`](agent::AgentProvider) is served over HTTP by two routers: [`router`], to
+//! `ailoy_core::Client`, and [`admin_router`], to `ailoy_core::AdminClient`.
 //!
 //! The data an agent is made of and says, [`datatype`] and [`message`], is `ailoy-core`'s.
 
@@ -10,12 +9,10 @@ pub mod agent;
 pub mod console;
 mod macros;
 pub mod model;
-mod provider;
 mod router;
 pub mod tool;
 
 pub use ailoy_core::{datatype, message, to_value, tool_func};
-pub use provider::{AgentProvider, Refusal};
 pub use router::{admin_router, router};
 
 /// A sandbox of its own, for tests, on one virtx server per test process.

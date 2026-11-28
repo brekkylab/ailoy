@@ -9,8 +9,6 @@ mod web_fetch;
 mod web_search;
 mod write;
 
-use std::sync::Arc;
-
 pub use apply_patch::*;
 pub use browser::*;
 pub use edit::*;
@@ -22,7 +20,7 @@ pub use web_fetch::*;
 pub use web_search::*;
 pub use write::*;
 
-use crate::tool::ToolFactory;
+use crate::tool::{ToolDesc, ToolFunc, ToolProvider};
 
 /// Binary-searches `0..=max` for the largest `n` with `fits(n)`, assuming `fits` stays
 /// true below any `n < max` it is true for. `None` when nothing fits, not even `n == 0`.
@@ -46,36 +44,66 @@ fn largest_fitting(max: usize, fits: impl Fn(usize) -> bool) -> Option<usize> {
     Some(lo)
 }
 
-/// Build `(name, factory)` pairs for every built-in tool. The factory takes the
-/// [`ToolDesc`](crate::tool::ToolDesc) requested by an agent spec and returns the
-/// [`ToolFunc`](crate::tool::ToolFunc) to bind to it.
-pub fn get_builtin_tool_factories() -> Vec<(&'static str, ToolFactory)> {
-    let shell = get_shell_tool_func();
-    let read = get_read_tool_func();
-    let read_file = get_read_file_tool_func();
-    let imgread = get_imgread_tool_func();
-    let write = get_write_tool_func();
-    let edit = get_edit_tool_func();
-    let apply_patch = get_apply_patch_tool_func();
-    let browser = get_browser_tool_func();
-    let browser_screenshot = get_browser_screenshot_tool_func();
+/// Every built-in tool, as one provider.
+pub struct Builtins {
+    /// Each tool's description, and what makes it each time an agent is built with it.
+    #[allow(clippy::type_complexity)]
+    tools: Vec<(
+        ToolDesc,
+        Box<dyn Fn() -> anyhow::Result<ToolFunc> + Send + Sync>,
+    )>,
+}
 
-    vec![
-        ("shell", Arc::new(move |_| Ok(shell.clone()))),
-        ("read", Arc::new(move |_| Ok(read.clone()))),
-        ("read_file", Arc::new(move |_| Ok(read_file.clone()))),
-        ("imgread", Arc::new(move |_| Ok(imgread.clone()))),
-        ("write", Arc::new(move |_| Ok(write.clone()))),
-        ("edit", Arc::new(move |_| Ok(edit.clone()))),
-        ("apply_patch", Arc::new(move |_| Ok(apply_patch.clone()))),
-        ("browser", Arc::new(move |_| Ok(browser.clone()))),
-        (
-            "browser_screenshot",
-            Arc::new(move |_| Ok(browser_screenshot.clone())),
-        ),
-        ("web_search", Arc::new(get_web_search_tool_factory())),
-        ("web_fetch", Arc::new(get_web_fetch_tool_factory())),
-    ]
+impl Builtins {
+    pub fn new() -> Self {
+        /// A tool every agent shares.
+        fn shared(func: ToolFunc) -> Box<dyn Fn() -> anyhow::Result<ToolFunc> + Send + Sync> {
+            Box::new(move || Ok(func.clone()))
+        }
+        Self {
+            tools: vec![
+                (get_shell_tool_desc(), shared(get_shell_tool_func())),
+                (get_read_tool_desc(), shared(get_read_tool_func())),
+                (get_read_file_tool_desc(), shared(get_read_file_tool_func())),
+                (get_imgread_tool_desc(), shared(get_imgread_tool_func())),
+                (get_write_tool_desc(), shared(get_write_tool_func())),
+                (get_edit_tool_desc(), shared(get_edit_tool_func())),
+                (
+                    get_apply_patch_tool_desc(),
+                    shared(get_apply_patch_tool_func()),
+                ),
+                (get_browser_tool_desc(), shared(get_browser_tool_func())),
+                (
+                    get_browser_screenshot_tool_desc(),
+                    shared(get_browser_screenshot_tool_func()),
+                ),
+                // Made for each agent: it searches with the provider set at the time.
+                (
+                    get_web_search_tool_desc(),
+                    Box::new(get_web_search_tool_factory()),
+                ),
+                (
+                    get_web_fetch_tool_desc(),
+                    Box::new(get_web_fetch_tool_factory()),
+                ),
+            ],
+        }
+    }
+}
+
+impl ToolProvider for Builtins {
+    fn descs(&self) -> Vec<ToolDesc> {
+        self.tools.iter().map(|(desc, _)| desc.clone()).collect()
+    }
+
+    fn make(&self, name: &str) -> anyhow::Result<ToolFunc> {
+        let (_, factory) = self
+            .tools
+            .iter()
+            .find(|(desc, _)| desc.name == name)
+            .ok_or_else(|| anyhow::anyhow!("'{name}' is no built-in tool"))?;
+        factory()
+    }
 }
 
 #[cfg(test)]

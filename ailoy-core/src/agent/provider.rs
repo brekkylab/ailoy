@@ -1,15 +1,13 @@
-use std::{
-    fmt,
-    sync::{Arc, RwLock},
-};
+use std::{fmt, sync::Arc};
 
-use ailoy_core::{
+use indexmap::IndexMap;
+
+use crate::{
     agent::{
         AgentListOutputItem, AgentPutArgs, AgentState, SessionCreateArgs, SessionListOutputItem,
     },
-    tool::{ToolDesc, ToolProvider},
+    tool::{ToolDesc, ToolFunc, ToolProvider},
 };
-use indexmap::IndexMap;
 
 /// Why an [`AgentProvider`] did not do what was asked.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,13 +38,13 @@ struct Kept {
     sessions: IndexMap<String, AgentState>,
 }
 
-/// What an agent runs with here: the providers of the tools a spec names, and the agents kept
-/// by name, each with its sessions. The agents and sessions are kept in memory.
+/// What an agent runs with where it runs: the providers of the tools a spec names, and the
+/// agents kept by name, each with its sessions. The agents and sessions are kept in memory.
 #[derive(Default)]
 pub struct AgentProvider {
     /// Each tool's description and the provider that makes it, by the tool's name.
     tools: IndexMap<String, (ToolDesc, Arc<dyn ToolProvider>)>,
-    agents: RwLock<IndexMap<String, Kept>>,
+    agents: IndexMap<String, Kept>,
 }
 
 impl AgentProvider {
@@ -55,24 +53,50 @@ impl AgentProvider {
     }
 
     /// Provide each tool `provider` describes, in place of one of its name already provided.
-    pub fn tool(mut self, provider: impl ToolProvider + 'static) -> Self {
+    /// Answers their names, which a spec lists to give an agent the tools.
+    pub fn set_tool_provider(&mut self, provider: impl ToolProvider + 'static) -> Vec<String> {
         let provider: Arc<dyn ToolProvider> = Arc::new(provider);
-        for desc in provider.descs() {
+        let descs = provider.descs();
+        let mut names = Vec::with_capacity(descs.len());
+        for desc in descs {
+            names.push(desc.name.clone());
             self.tools
                 .insert(desc.name.clone(), (desc, provider.clone()));
         }
-        self
+        names
     }
 
-    /// The description of every tool provided.
+    /// Stop providing the tool `name`. Answers whether it was provided.
+    pub fn remove_tool_provider(&mut self, name: &str) -> bool {
+        self.tools.shift_remove(name).is_some()
+    }
+
+    /// Stop providing every tool whose name starts with `prefix`. Answers how many there were.
+    pub fn remove_tool_providers_by_prefix(&mut self, prefix: &str) -> usize {
+        let before = self.tools.len();
+        self.tools.retain(|name, _| !name.starts_with(prefix));
+        before - self.tools.len()
+    }
+
+    /// The description of every tool provided, in the order each name was first provided.
     pub fn tool_descs(&self) -> Vec<ToolDesc> {
         self.tools.values().map(|(desc, _)| desc.clone()).collect()
+    }
+
+    /// Make the tool `name` through its provider, with the description it is shown to a model
+    /// by.
+    pub fn create_tool(&self, name: &str) -> anyhow::Result<(ToolDesc, ToolFunc)> {
+        let (desc, provider) = self
+            .tools
+            .get(name)
+            .ok_or_else(|| Refusal::NoTool(name.to_owned()))?;
+        Ok((desc.clone(), provider.make(name)?))
     }
 
     /// Keep the agent `args` describes under `name`, in place of one already there, whose
     /// sessions stay. Refused when its spec names a tool nothing provides.
     pub fn put_agent(
-        &self,
+        &mut self,
         name: &str,
         args: AgentPutArgs,
     ) -> Result<AgentListOutputItem, Refusal> {
@@ -89,12 +113,11 @@ impl AgentProvider {
             spec: args.spec.clone(),
             model_key_provider: args.model_key_provider,
         };
-        let mut agents = self.agents.write().unwrap();
-        match agents.get_mut(name) {
+        match self.agents.get_mut(name) {
             Some(kept) => kept.args = args,
             None => {
                 let sessions = IndexMap::new();
-                agents.insert(name.to_owned(), Kept { args, sessions });
+                self.agents.insert(name.to_owned(), Kept { args, sessions });
             }
         }
         Ok(item)
@@ -102,8 +125,8 @@ impl AgentProvider {
 
     /// The agent kept under `name`.
     pub fn get_agent(&self, name: &str) -> Result<AgentListOutputItem, Refusal> {
-        let agents = self.agents.read().unwrap();
-        let kept = agents
+        let kept = self
+            .agents
             .get(name)
             .ok_or_else(|| Refusal::NoAgent(name.to_owned()))?;
         Ok(AgentListOutputItem {
@@ -115,8 +138,7 @@ impl AgentProvider {
 
     /// Every agent kept, in the order each name was first put.
     pub fn list_agents(&self) -> Vec<AgentListOutputItem> {
-        let agents = self.agents.read().unwrap();
-        agents
+        self.agents
             .iter()
             .map(|(name, kept)| AgentListOutputItem {
                 name: name.clone(),
@@ -127,18 +149,18 @@ impl AgentProvider {
     }
 
     /// Keep the agent `name` no longer, nor its sessions. Nothing happens when there is none.
-    pub fn remove_agent(&self, name: &str) {
-        self.agents.write().unwrap().shift_remove(name);
+    pub fn remove_agent(&mut self, name: &str) {
+        self.agents.shift_remove(name);
     }
 
     /// Start a session of the agent `agent`, as `args` describes it: a state with a new id.
     pub fn create_session(
-        &self,
+        &mut self,
         agent: &str,
         args: SessionCreateArgs,
     ) -> Result<AgentState, Refusal> {
-        let mut agents = self.agents.write().unwrap();
-        let kept = agents
+        let kept = self
+            .agents
             .get_mut(agent)
             .ok_or_else(|| Refusal::NoAgent(agent.to_owned()))?;
         let state = AgentState::new().with_history(args.history);
@@ -148,8 +170,8 @@ impl AgentProvider {
 
     /// The state of the session `id` of the agent `agent`.
     pub fn get_session(&self, agent: &str, id: &str) -> Result<AgentState, Refusal> {
-        let agents = self.agents.read().unwrap();
-        let kept = agents
+        let kept = self
+            .agents
             .get(agent)
             .ok_or_else(|| Refusal::NoAgent(agent.to_owned()))?;
         let session = kept.sessions.get(id);
@@ -160,8 +182,8 @@ impl AgentProvider {
 
     /// Every session of the agent `agent`, in the order each was started.
     pub fn list_sessions(&self, agent: &str) -> Result<Vec<SessionListOutputItem>, Refusal> {
-        let agents = self.agents.read().unwrap();
-        let kept = agents
+        let kept = self
+            .agents
             .get(agent)
             .ok_or_else(|| Refusal::NoAgent(agent.to_owned()))?;
         let sessions = kept.sessions.values();
@@ -175,8 +197,8 @@ impl AgentProvider {
 
     /// Keep the session `id` of the agent `agent` no longer. Nothing happens when there is
     /// none.
-    pub fn remove_session(&self, agent: &str, id: &str) {
-        if let Some(kept) = self.agents.write().unwrap().get_mut(agent) {
+    pub fn remove_session(&mut self, agent: &str, id: &str) {
+        if let Some(kept) = self.agents.get_mut(agent) {
             kept.sessions.shift_remove(id);
         }
     }

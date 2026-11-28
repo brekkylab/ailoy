@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -11,8 +9,8 @@ use crate::{
 /// What makes an agent distinct: its model, instruction and tools.
 ///
 /// It names what the agent uses and holds none of it: where the agent runs, the model is built
-/// from its desc and each tool from its name. The sandbox and the browser are the state's; the
-/// spec says whether the agent uses them.
+/// from its desc and each tool from its name. The sandbox is the state's; the spec says whether
+/// the agent uses it, and the browser in it.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSpec {
     /// The model's desc, `<org>` or `<org>/<name>` (e.g. `"anthropic/claude-sonnet-5-5"`).
@@ -30,16 +28,21 @@ pub struct AgentSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<String>,
 
-    /// Skill directories in the console, each holding a `SKILL.md`. See
+    /// Skill directories in the sandbox, each holding a `SKILL.md`. See
     /// [`skill`](Self::skill).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub skills: Vec<PathBuf>,
+    pub skills: Vec<String>,
 
     /// Whether the agent works in a sandbox, which its state then has to hold. It brings a
     /// shell and file tools there, in the style of the model's org, but for any `tools` names
     /// itself.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub use_sandbox: bool,
+
+    /// Whether the agent drives the browser of its sandbox, virtx's `browser` abin, which the
+    /// sandbox then has to have. It brings the `browser` and `browser_screenshot` tools.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub use_browser: bool,
 
     /// How old tool results are truncated in the history as each turn begins.
     #[serde(default)]
@@ -55,6 +58,7 @@ impl AgentSpec {
             tools: Vec::new(),
             skills: Vec::new(),
             use_sandbox: false,
+            use_browser: false,
             truncation: TruncationPolicy::default(),
         }
     }
@@ -64,7 +68,7 @@ impl AgentSpec {
         self
     }
 
-    /// Give this agent the skill in `dir`, a directory in the console holding a `SKILL.md`.
+    /// Give this agent the skill in `dir`, a directory in the sandbox holding a `SKILL.md`.
     ///
     /// At construction the frontmatter `name` and `description` are read through the
     /// console and listed in the system message with the skill's location; the agent reads
@@ -72,7 +76,7 @@ impl AgentSpec {
     ///
     /// Skills are added only to the instruction-built system message, never to one already
     /// in the history.
-    pub fn skill(mut self, dir: impl Into<PathBuf>) -> Self {
+    pub fn skill(mut self, dir: impl Into<String>) -> Self {
         self.skills.push(dir.into());
         self
     }
@@ -90,6 +94,24 @@ impl AgentSpec {
 
     pub fn tools(mut self, names: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.tools.extend(names.into_iter().map(Into::into));
+        self
+    }
+
+    /// Add `web_search`, unless the spec has it. How it searches is set where the agent runs.
+    pub fn web_search_tool(self) -> Self {
+        self.tool_once("web_search")
+    }
+
+    /// Add `web_fetch`, unless the spec has it: one `url` per call, long bodies paged through
+    /// `offset`, at most one request per second per host.
+    pub fn web_fetch_tool(self) -> Self {
+        self.tool_once("web_fetch")
+    }
+
+    fn tool_once(mut self, name: &str) -> Self {
+        if !self.tools.iter().any(|t| t == name) {
+            self.tools.push(name.to_owned());
+        }
         self
     }
 
@@ -206,6 +228,15 @@ mod tests {
         let args: AgentPutArgs =
             serde_json::from_str(r#"{"spec": {"model": "anthropic"}}"#).unwrap();
         assert_eq!(args.model_key_provider, ModelKeyProvider::Server);
+    }
+
+    #[test]
+    fn test_web_tools_are_added_once() {
+        let spec = AgentSpec::new("anthropic")
+            .web_search_tool()
+            .web_fetch_tool()
+            .web_search_tool();
+        assert_eq!(spec.tools, ["web_search", "web_fetch"]);
     }
 
     /// A spec saved without `truncation` loads with the default policy.

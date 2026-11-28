@@ -406,12 +406,12 @@ async fn fetch_one(
 
 /// Factory closes over one [`WebFetchState`] so the rate limiter is shared by
 /// every tool it builds.
-pub fn get_web_fetch_tool_factory() -> impl Fn(&ToolDesc) -> anyhow::Result<ToolFunc> {
+pub fn get_web_fetch_tool_factory() -> impl Fn() -> anyhow::Result<ToolFunc> + Send + Sync {
     tool_factory(WebFetchState::new())
 }
 
-fn tool_factory(state: WebFetchState) -> impl Fn(&ToolDesc) -> anyhow::Result<ToolFunc> {
-    move |_| {
+fn tool_factory(state: WebFetchState) -> impl Fn() -> anyhow::Result<ToolFunc> + Send + Sync {
+    move || {
         let state = state.clone();
         Ok(
             tool_func!(async |args: Value| -> Value with [state = state.clone()] {
@@ -1236,7 +1236,7 @@ mod tests {
     async fn call(state: WebFetchState, args: Value) -> Value {
         use futures::StreamExt;
 
-        let func = tool_factory(state)(&get_web_fetch_tool_desc()).unwrap();
+        let func = tool_factory(state)().unwrap();
         let output = func.call_pure(args, "f").unwrap().next().await.unwrap();
         output.message.contents[0].as_value().unwrap().clone()
     }

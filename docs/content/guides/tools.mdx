@@ -98,7 +98,7 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
 
 ## Your own functions
 
-A function of your program becomes a tool once it is registered with a **tool description**: the name the model calls it by, what it does, and a JSON schema for its arguments. The agent gets the description from `tool(...)`, or a list of them from `tools(...)`. In Python and Node.js, registering returns it; in Rust you build it with `ToolDescBuilder` and register the function under its name.
+A function of your program becomes a tool once it is registered with a **tool description**: the name the model calls it by, what it does, and a JSON schema for its arguments. Registering answers the tool's name, which `tool(...)` gives the agent, or a list of them `tools(...)`. In Rust you build the description with `ToolDescBuilder` and register it with the function as a pair.
 
 This gives the agent `order_status`, which looks an order up by its id:
 
@@ -121,7 +121,7 @@ def order_status(order_id: str) -> dict:
 
 
 async def main() -> None:
-    desc = register_tool(
+    name = register_tool(
         {
             "name": "order_status",
             "description": "Look up an order's status and expected delivery date by its id.",
@@ -134,7 +134,7 @@ async def main() -> None:
         order_status,
     )
 
-    agent = await AgentBuilder("anthropic/claude-haiku-5-5").tool(desc).build()
+    agent = await AgentBuilder("anthropic/claude-haiku-5-5").tool(name).build()
 
     async for output in agent.run("When does order A-1001 arrive?"):
         for part in output["message"]["contents"]:
@@ -155,7 +155,7 @@ const { AgentBuilder, registerTool } = require('@brekkylab/ailoy')
 async function main() {
   const orders = { 'A-1001': { status: 'shipped', eta: '2026-10-24' } }
 
-  const desc = registerTool(
+  const name = registerTool(
     {
       name: 'order_status',
       description: "Look up an order's status and expected delivery date by its id.",
@@ -171,7 +171,7 @@ async function main() {
     },
   )
 
-  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').tool(desc).build()
+  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').tool(name).build()
 
   try {
     for await (const { message } of agent.run('When does order A-1001 arrive?')) {
@@ -211,19 +211,17 @@ async fn main() -> anyhow::Result<()> {
             "required": ["order_id"]
         }))
         .build();
-    set_tool_provider(
-        "order_status",
-        tool_func!(|args: Value| -> Value {
-            match args.pointer("/order_id").and_then(Value::as_str) {
-                Some("A-1001") => to_value!({"status": "shipped", "eta": "2026-10-24"}),
-                Some(id) => Value::string(format!("error: no order {id}")),
-                None => Value::string("error: no order_id"),
-            }
-        }),
-    );
+    let func = tool_func!(|args: Value| -> Value {
+        match args.pointer("/order_id").and_then(Value::as_str) {
+            Some("A-1001") => to_value!({"status": "shipped", "eta": "2026-10-24"}),
+            Some(id) => Value::string(format!("error: no order {id}")),
+            None => Value::string("error: no order_id"),
+        }
+    });
+    let names = set_tool_provider((desc, func));
 
     let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
-        .tool(desc)
+        .tools(names)
         .build()
         .await?;
 
@@ -249,7 +247,7 @@ How the function is called:
 
 - **Python**: the arguments come as keyword arguments, named as in the schema, and the function may be `async`.
 - **Node.js**: they come as one object, and the function may return a promise.
-- **Rust** registers a `ToolFunc` with `set_tool_provider`, under the name in the description. `tool_func!` builds one from a closure that takes the arguments as a `Value`; with `async` before the closure, its body can `.await`.
+- **Rust** registers a description and a `ToolFunc` as a pair with `set_tool_provider`, which answers the names of what it provides. `tool_func!` builds one from a closure that takes the arguments as a `Value`; with `async` before the closure, its body can `.await`.
 
 The function returns what a message can hold: null, a boolean, a number, a string, or a list or object of those. In Python and Node.js an exception, or a rejected promise, does not end the run: the model gets it as the result, such as `error: KeyError: 'no order B-9'` from the Python function above, and can try something else.
 
@@ -257,7 +255,7 @@ Tool calls the model makes in one step run at the same time, the seven built-in 
 
 A Python or Node.js function runs in your program, not in the sandbox. To run a command or read a file there, it calls the virtx `Sandbox` you made, such as `sandbox.exec(...)` or `sandbox.read_file(...)`. In Rust, a closure that also takes `sandbox: &Sandbox` gets the agent's sandbox, as the built-in tools do, and `ailoy::tool::{exec, read, write}` run a command and read and write a file in it.
 
-Tools are registered by name for the whole process, the built-in ones included. Registering a name again, `shell` among them, replaces its function for every agent built after that. `set_tool_provider(name, func)` (`setToolProvider` in Node.js) replaces only the function, for a tool whose description a spec already has. The exception is `web_search` in an agent given a non-empty list of engines, which builds its own. `remove_tool_provider` (`removeToolProvider`) takes a name out.
+Tools are registered by name for the whole process, the built-in ones included. Registering a name again, `shell` among them, replaces its description and function for every agent built after that. `remove_tool_provider` (`removeToolProvider` in Node.js) takes a name out.
 
 ## How much of a result the model reads
 

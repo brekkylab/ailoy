@@ -1,41 +1,31 @@
-//! Tool abstractions and their relationships.
+//! The tools an agent calls.
 //!
-//! A [`ToolProvider`] says how one tool is built (a function or an MCP server's
-//! tool), and the process-wide registry keys one by tool name. An
-//! [`crate::agent::AgentSpec`] lists the [`ToolDesc`]s it wants exposed to the
-//! model; at agent construction each desc is built into a concrete [`ToolFunc`]
-//! through the provider set for its name.
+//! A [`ToolProvider`] describes and makes tools: the built-in ones, a function of this process
+//! (`(ToolDesc, ToolFunc)`), or an MCP server's ([`MCPServer`]). The process-wide registry keeps
+//! each tool's description and provider by its name; an
+//! [`AgentSpec`](crate::agent::AgentSpec) lists the names, and each is made into a
+//! [`ToolFunc`] when an `Agent` is built.
 //!
 //! ```text
-//! registry (tool name → ToolProvider)
+//! registry (tool name → ToolDesc, ToolProvider)
 //!     │
-//!     │  create_tool(&ToolDesc)
+//!     │  create_tool(name)
 //!     ▼
-//! ToolFunc   ← bound to the agent's spec
+//! ToolDesc, ToolFunc   ← shown to the agent's model, called by the agent
 //! ```
 //!
-//! ## Lifecycle
-//!
-//! 1. **Registration** — [`set_tool_provider`] sets a provider under a name; the
-//!    registry starts with every built-in tool.
-//! 2. **Resolution** — [`create_tool`] builds a [`ToolFunc`] for each
-//!    [`ToolDesc`] in `spec.tools` when an `Agent` is instantiated.
-//! 3. **Execution** — the agent invokes the resolved [`ToolFunc`] for each tool
-//!    call the model issues.
-//!
-//! Remote sources (MCP) are contacted during step 1, since what they offer
-//! is knowable only by asking and step 2 has nothing to await on. Their
-//! registering calls ([`register_mcp_stdio`], [`register_mcp_streamable_http`])
-//! hand back the [`ToolDesc`]s to put in the spec, so by step 2 they are
-//! ordinary name-keyed entries.
+//! [`set_tool_provider`] provides tools in place of those of their names; the registry starts
+//! with every built-in tool. An MCP server is asked what it offers as it is registered
+//! ([`register_mcp_stdio`], [`register_mcp_streamable_http`]), which hand back the names to put
+//! in the spec.
 
 mod desc;
 mod func;
 pub(crate) mod r#impl;
-mod provider;
+pub(crate) mod provider;
 
 pub use ailoy_core::tool::{
-    MAX_TOOL_NAME_LEN, ToolDesc, ToolDescBuilder, ToolFunc, sanitize_tool_name,
+    MAX_TOOL_NAME_LEN, ToolDesc, ToolDescBuilder, ToolFunc, ToolProvider, sanitize_tool_name,
 };
 pub(crate) use desc::warn_if_tool_name_too_long;
 pub use r#impl::*;

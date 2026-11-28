@@ -1,7 +1,7 @@
-//! The process-wide registry an agent builds its tools from: a provider per tool name, seeded
-//! with every built-in tool, as models have one per org (see [`crate::model`]).
+//! The tools of this process's provider, which an agent makes the tools it names through: every
+//! built-in tool from the start, as models have a provider per org (see [`crate::model`]).
 //!
-//! The registering functions return the tool descriptions they registered, to pass to
+//! The registering functions return the names of the tools they provide, to pass to
 //! `AgentBuilder.tool`/`tools`.
 
 use ailoy_runner::tool::{
@@ -18,74 +18,64 @@ use napi::{
 use napi_derive::napi;
 
 use crate::{
-    convert::{Json, from_js},
+    convert::from_js,
     error::{self, Result, promise},
     tool::{Callback, tool_func},
 };
 
-/// Build the tool `name` by calling `func`, replacing the provider it had. See [`crate::tool`]
-/// for how `func` is called.
-#[napi]
-pub fn set_tool_provider(
-    name: String,
-    #[napi(ts_arg_type = "(args: any) => unknown")] func: Callback,
-) {
-    set_tool_provider_rs(name, tool_func(func));
-}
-
-/// Stop building the tool `name`. Answers whether it had a provider.
+/// Stop providing the tool `name`. Answers whether it was provided.
 #[napi]
 pub fn remove_tool_provider(name: String) -> bool {
-    remove_tool_provider_rs(&name).is_some()
+    remove_tool_provider_rs(&name)
 }
 
-/// Build the tool `desc` describes by calling `func`, and hand `desc` back.
+/// Provide the tool `desc` describes by calling `func`, in place of one of its name, and answer
+/// its name. See [`crate::tool`] for how `func` is called.
 ///
-/// `desc.name` is what the model calls and what the provider is set under.
-#[napi(ts_return_type = "ToolDesc")]
+/// `desc.name` is what the model calls and what a spec lists.
+#[napi]
 pub fn register_tool(
     env: &Env,
     #[napi(ts_arg_type = "ToolDesc")] desc: Unknown<'_>,
     #[napi(ts_arg_type = "(args: any) => unknown")] func: Callback,
-) -> Result<Json<ToolDesc>> {
+) -> Result<String> {
     let parsed: ToolDesc = from_js(env, desc, "a tool description")?;
-    set_tool_provider_rs(parsed.name.clone(), tool_func(func));
-    Ok(Json(parsed))
+    let name = parsed.name.clone();
+    set_tool_provider_rs((parsed, tool_func(func)));
+    Ok(name)
 }
 
-/// Start the MCP server `command args…` on this host and register each of its tools as
-/// `{prefix}__{name}`, settling with their descriptions.
+/// Start the MCP server `command args…` on this host and provide each of its tools as
+/// `{prefix}__{name}`, settling with their names.
 ///
 /// The server runs outside any console, with this process's access — register only servers
 /// you trust.
-#[napi(ts_return_type = "Promise<Array<ToolDesc>>")]
+#[napi(ts_return_type = "Promise<Array<string>>")]
 pub fn register_mcp_stdio<'env>(
     env: &'env Env,
     prefix: String,
     command: String,
     args: Option<Vec<String>>,
-) -> napi::Result<PromiseRaw<'env, Json<Vec<ToolDesc>>>> {
+) -> napi::Result<PromiseRaw<'env, Vec<String>>> {
     let args = args.unwrap_or_default();
     promise(env, async move {
         register_mcp_stdio_rs(&prefix, &command, &args)
             .await
-            .map(Json)
             .map_err(error::anyhow)
     })
 }
 
-/// Connect to the streamable-HTTP MCP server at `url` and register each of its tools as
-/// `{prefix}__{name}`, settling with their descriptions.
-#[napi(ts_return_type = "Promise<Array<ToolDesc>>")]
+/// Connect to the streamable-HTTP MCP server at `url` and provide each of its tools as
+/// `{prefix}__{name}`, settling with their names.
+#[napi(ts_return_type = "Promise<Array<string>>")]
 pub fn register_mcp_streamable_http<'env>(
     env: &'env Env,
     prefix: String,
     url: String,
-) -> napi::Result<PromiseRaw<'env, Json<Vec<ToolDesc>>>> {
+) -> napi::Result<PromiseRaw<'env, Vec<String>>> {
     promise(env, async move {
         register_mcp_streamable_http_rs(&prefix, &url)
             .await
-            .map(Json)
             .map_err(error::anyhow)
     })
 }
