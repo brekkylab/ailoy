@@ -35,7 +35,7 @@ Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform
 pip install ailoy-py
 ```
 
-This installs `virtx` too, the package your code makes sandboxes with.
+This installs `virtx` too, whose client your code gives Ailoy to make each agent's sandbox with.
 
 </TabItem>
 <TabItem label="Node.js" icon="seti:javascript">
@@ -44,7 +44,7 @@ This installs `virtx` too, the package your code makes sandboxes with.
 npm install @brekkylab/ailoy
 ```
 
-This installs `@brekkylab/virtx` too, the package your code makes sandboxes with. With pnpm, which keeps a package from importing what it did not list, add `@brekkylab/virtx` yourself.
+This installs `@brekkylab/virtx` too, whose client your code gives Ailoy to make each agent's sandbox with. With pnpm, which keeps a package from importing what it did not list, add `@brekkylab/virtx` yourself.
 
 </TabItem>
 <TabItem label="Rust" icon="seti:rust">
@@ -53,7 +53,7 @@ This installs `@brekkylab/virtx` too, the package your code makes sandboxes with
 cargo add ailoy virtx futures anyhow tokio --features tokio/macros,tokio/rt-multi-thread
 ```
 
-`virtx` is the crate your code makes sandboxes with. Cargo lets your code use only the crates it lists, so add it beside `ailoy`. `tokio`, `futures` and `anyhow` are what the examples on these pages run on.
+`virtx` is the crate whose client your code gives Ailoy to make each agent's sandbox with. Cargo lets your code use only the crates it lists, so add it beside `ailoy`. `tokio`, `futures` and `anyhow` are what the examples on these pages run on.
 
 </TabItem>
 </Tabs>
@@ -76,7 +76,7 @@ Without a login, the first turn fails with the CLI's own message, such as Claude
 
 ### With an API key
 
-Set the key, and switch the org to the `api` backend before building the agent:
+Set the key, and switch the org to the `api` backend before making the agent:
 
 ```sh
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY
@@ -131,4 +131,4 @@ ailoy::model::set_lang_model_provider("anthropic", ailoy::model::Backend::Api);
 ## Next
 
 - [How an agent works](/docs/concepts/): where each part runs and what happens in a turn.
-- [Defining an agent](/docs/guides/agents/): everything an `AgentBuilder` can give an agent.
+- [Defining an agent](/docs/guides/agents/): everything an agent's spec can give it.

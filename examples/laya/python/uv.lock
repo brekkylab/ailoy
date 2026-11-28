@@ -26,7 +26,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ailoy-py", editable = "../../../bindings/python" },
+    { name = "ailoy-py", editable = "../../../ailoy-py" },
     { name = "huggingface-hub" },
     { name = "laya", specifier = "==0.3.20" },
     { name = "ncnn" },
@@ -40,7 +40,7 @@ requires-dist = [
 
 [[package]]
 name = "ailoy-py"
-source = { editable = "../../../bindings/python" }
+source = { editable = "../../../ailoy-py" }
 dependencies = [
     { name = "virtx" },
 ]

@@ -1,11 +1,11 @@
 ---
 title: "Giving an agent a sandbox"
-description: "Hand an agent a virtx sandbox: what it brings, what lives where, and where virtx's docs take over."
+description: "Have Ailoy make an agent its virtx sandbox: what it is made of, what it brings, what lives where, and where virtx's docs take over."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-The computer an agent works on is a sandbox: a Linux microVM on a [virtx](https://virtx.sh/docs/) server. Your code makes the sandbox with virtx's own package and hands it to the agent:
+The computer an agent works on is a sandbox: a Linux microVM on a [virtx](https://virtx.sh/docs/) server. Your code gives Ailoy a client of that server, made with virtx's own package, and Ailoy makes each agent's sandbox there as the agent is made, and removes it as the agent closes:
 
 - **Python:** the `virtx` package (`import virtx`), which `pip install ailoy-py` installs too
 - **Node.js:** `@brekkylab/virtx`, which `npm install @brekkylab/ailoy` installs too
@@ -13,9 +13,9 @@ The computer an agent works on is a sandbox: a Linux microVM on a [virtx](https:
 
 This page covers what an agent needs from a sandbox. [virtx's docs](https://virtx.sh/docs/) cover the sandbox itself: servers, images, volumes and GPUs.
 
-## Handing over a sandbox
+## Making an agent's sandbox
 
-`sandbox(...)` on the `AgentBuilder` gives the agent a sandbox, and with it a shell and file tools that run there; [Tools](/docs/guides/tools/#a-shell-and-files) lists them. Here an image with matplotlib is built on the server, and an agent gets a sandbox booted from it:
+`set_virtx(client)` (`setVirtx` in Node.js; the default provider's `virtx` in Rust) gives Ailoy the virtx client it makes sandboxes with. A spec with `use_sandbox` then works in a sandbox made as `from_spec`'s `sandbox` says, and gets a shell and file tools that run there; [Tools](/docs/guides/tools/#a-shell-and-files) lists them. Here an image with matplotlib is built on the server, an agent's sandbox is made from it, and the agent's chart is read out of the sandbox before the agent closes:
 
 <Tabs syncKey="lang">
 
@@ -25,31 +25,33 @@ This page covers what an agent needs from a sandbox. [virtx's docs](https://virt
 import asyncio
 from pathlib import Path
 
-from ailoy import AgentBuilder
+import ailoy
+from ailoy import Agent
 from virtx import Client, Recipe
 
 
 async def main() -> None:
     client = Client.spawn()
+    ailoy.set_virtx(client)
 
     # Kept on the server under its tag: later sandboxes boot it without building again.
     recipe = Recipe("python:3.12-slim-trixie").run("pip install --no-cache-dir matplotlib")
     await client.build_image(recipe, "plot:latest").complete()
 
-    sandbox = await client.create_sandbox("plot:latest")
-
-    agent = await (
-        AgentBuilder("anthropic/claude-haiku-5-5")
-        .instruction("Write what you are asked for into /artifacts.")
-        .sandbox(sandbox)
-        .build()
+    agent = await Agent.from_spec(
+        {
+            "model": "anthropic/claude-haiku-5-5",
+            "instruction": "Write what you are asked for into /artifacts.",
+            "use_sandbox": True,
+        },
+        sandbox={"create": {"image": {"type": "tag", "tag": "plot:latest"}}},
     )
     async for _ in agent.run("Plot y = x^2 for x from -5 to 5 into /artifacts/square.png."):
         pass
 
+    sandbox = await client.get_sandbox(agent.sandbox_id)
     Path("square.png").write_bytes(await sandbox.read_file("artifacts/square.png"))
     await agent.close()
-    await sandbox.remove()
 
 
 asyncio.run(main())
@@ -61,27 +63,30 @@ asyncio.run(main())
 
 ```js
 const { writeFileSync } = require('node:fs')
-const { AgentBuilder } = require('@brekkylab/ailoy')
+const { Agent, setVirtx } = require('@brekkylab/ailoy')
 const { Client, Recipe } = require('@brekkylab/virtx')
 
 async function main() {
   const client = Client.spawn()
+  setVirtx(client)
 
   // Kept on the server under its tag: later sandboxes boot it without building again.
   const recipe = new Recipe('python:3.12-slim-trixie').run('pip install --no-cache-dir matplotlib')
   await client.buildImage(recipe, 'plot:latest').complete()
 
-  const sandbox = await client.createSandbox('plot:latest')
-
-  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
-    .instruction('Write what you are asked for into /artifacts.')
-    .sandbox(sandbox)
-    .build()
+  const agent = await Agent.fromSpec(
+    {
+      model: 'anthropic/claude-haiku-5-5',
+      instruction: 'Write what you are asked for into /artifacts.',
+      use_sandbox: true,
+    },
+    { sandbox: { create: { image: { type: 'tag', tag: 'plot:latest' } } } },
+  )
   for await (const _ of agent.run('Plot y = x^2 for x from -5 to 5 into /artifacts/square.png.'));
 
+  const sandbox = await client.getSandbox(agent.sandboxId)
   writeFileSync('square.png', await sandbox.readFile('artifacts/square.png'))
   await agent.close()
-  await sandbox.remove()
   await client.close()
 }
 
@@ -94,7 +99,8 @@ main()
 
 ```rust
 use ailoy::{
-    agent::AgentBuilder,
+    Agent,
+    agent::{AgentSpec, SessionSandbox, default_provider},
     message::{Message, Part, Role},
 };
 use futures::StreamExt as _;
@@ -103,30 +109,27 @@ use virtx::{Client, Files as _, Recipe, SandboxCreateArgs};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let client = Client::spawn_virtx([] as [&str; 0]).await?;
+    default_provider().write().unwrap().virtx = Some(client.clone());
 
     // Kept on the server under its tag: later sandboxes boot it without building again.
     let recipe = Recipe::new("python:3.12-slim-trixie").step("pip install --no-cache-dir matplotlib");
     client.build_image(recipe, "plot:latest").complete(false).await?;
 
-    let sandbox = client
-        .create_sandbox(&SandboxCreateArgs::new("plot:latest"))
-        .await?;
-
-    let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
+    let spec = AgentSpec::new("anthropic/claude-haiku-5-5")
         .instruction("Write what you are asked for into /artifacts.")
-        .sandbox(sandbox.clone())
-        .build()
-        .await?;
+        .sandbox();
+    let sandbox = SessionSandbox::Create(SandboxCreateArgs::new("plot:latest"));
+    let agent = Agent::from_spec(spec, Vec::new(), Some(sandbox)).await?;
     let query = Message::new(Role::User)
         .with_contents([Part::text("Plot y = x^2 for x from -5 to 5 into /artifacts/square.png.")]);
-    let mut stream = agent.run(query);
+    let mut stream = std::pin::pin!(agent.run(&query));
     while let Some(output) = stream.next().await {
         output?;
     }
-    drop(stream);
 
+    let sandbox = client.get_sandbox(agent.sandbox_id().unwrap()).await?;
     std::fs::write("square.png", sandbox.read_file("artifacts/square.png", 0, None).await?)?;
-    sandbox.remove().await?;
+    agent.close().await?;
     Ok(())
 }
 ```
@@ -135,13 +138,20 @@ async fn main() -> anyhow::Result<()> {
 </TabItem>
 </Tabs>
 
-The sandbox stays yours:
+The sandbox is the agent's:
 
-- The agent does not start, stop or remove it, and closing the agent leaves it as it is. Remove it yourself, as above. With a server that `Client.spawn()` started, the sandboxes also go when your program does.
-- Your own calls on the sandbox and the agent's tool calls run side by side, and the agent's tool calls in one step run at the same time.
-- A failed call to the sandbox reaches you as virtx's `VirtxError`.
+- Ailoy makes it as the agent is made, and removes it as the agent closes. Read what you want back before closing the agent. With a server that `Client.spawn()` started, the sandboxes also go when your program does.
+- Your client reaches it by the agent's `sandbox_id` (`sandboxId` in Node.js). Your own calls on the sandbox and the agent's tool calls run side by side, and the agent's tool calls in one step run at the same time.
+- A sandbox virtx refuses to make fails `from_spec` with virtx's status and message. A failed call of your own to the sandbox reaches you as virtx's `VirtxError`.
 
-An agent without a sandbox still runs, with the tools that need none: your own functions, `web_search`, `web_fetch`, MCP servers and a browser. It has no shell or file tools, and it cannot have [skills](/docs/guides/skills/), which it reads from the sandbox.
+An agent without a sandbox still runs, with the tools that need none: your own functions, `web_search`, `web_fetch` and MCP servers. It has no shell or file tools, and it cannot have [skills](/docs/guides/skills/), which it reads from the sandbox. Its spec leaves `use_sandbox` out, and `from_spec` is given no sandbox.
+
+### Of a package
+
+`sandbox` takes one of two things:
+
+- `{"create": args}` (`SessionSandbox::Create` in Rust): virtx's sandbox args, the image and the [options below](#sandbox-options).
+- `{"package": id}` (`SessionSandbox::Package` in Rust): a virtx package, which keeps the args under a name on the server, beside who may make a sandbox of it and how many at once. virtx counts each sandbox made of it under the package.
 
 ## What lives where
 
@@ -151,7 +161,7 @@ A sandbox's files come from three places, and they last differently:
 | --- | --- | --- | --- |
 | The image | The programs and packages its commands find | Until you remove the image; every sandbox booted from it starts with it | [Images](https://virtx.sh/docs/guides/images/) |
 | A volume | Inputs, skills, results you want back | Until you remove the volume; several sandboxes can mount it, and your code reads and writes it while they do | [Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/) |
-| The sandbox's own files | What the agent writes anywhere else, such as packages it installs | Until the sandbox is removed | [Removing a sandbox](https://virtx.sh/docs/guides/setting-sandboxes/#remove-a-sandbox) |
+| The sandbox's own files | What the agent writes anywhere else, such as packages it installs | Until the agent closes, which removes the sandbox | [Removing a sandbox](https://virtx.sh/docs/guides/setting-sandboxes/#remove-a-sandbox) |
 
 So:
 
@@ -174,7 +184,7 @@ A sandbox then boots from `plot:latest`. virtx's [Images](https://virtx.sh/docs/
 ## Inputs and results
 
 - Before a turn, write what the agent should read onto a volume mounted in its sandbox, read-only if it should not change it.
-- After the turn, read what it wrote, from the volume or from the sandbox.
+- After the turn, read what it wrote, from the volume or from the sandbox, before the agent closes.
 - Say where in the instruction, so the agent knows where to look and where to write.
 
 virtx's [Reading and writing files](https://virtx.sh/docs/guides/reading-writing-files/) covers doing this from your code.
@@ -183,13 +193,12 @@ virtx's [Reading and writing files](https://virtx.sh/docs/guides/reading-writing
 
 An agent's work is in two places: its history, and its sandbox's files. To carry on where a run stopped:
 
-- Build an agent with the same history (`history(...)` on the `AgentBuilder`).
-- Hand it the same sandbox, found again with `get_sandbox`.
-- A sandbox's own files go when it is removed, so put what a later run starts from on a volume.
+- Make an agent with the same history (`from_spec`'s `history`).
+- Its sandbox is a new one, so put what a later run starts from on a volume, and mount the same volume in the new sandbox.
 
 ## Sandbox options
 
-`create_sandbox` takes these options, among others. What each means for an agent:
+`{"create": args}` takes virtx's sandbox args in their JSON form, the image as `{"type": "tag", "tag": "..."}` and these options, among others, with the same snake_case keys in Python and Node.js. Rust sets them on `SandboxCreateArgs`. What each means for an agent:
 
 | Option | For the agent | virtx docs |
 | --- | --- | --- |
@@ -200,17 +209,19 @@ An agent's work is in two places: its history, and its sandbox's files. To carry
 | `gpu`, `gpu_memory_mib` | A GPU through Vulkan, for work such as deep learning. | [Using GPUs](https://virtx.sh/docs/guides/using-gpus/) |
 | `abins` (`.abin(name)` in Rust) | virtx's own programs at `/abin`, such as `index`, `docread` and `display`. Each one with a `SKILL.md` becomes one of the agent's [skills](/docs/guides/skills/). | [Setting up sandboxes](https://virtx.sh/docs/guides/setting-sandboxes/) |
 
-Node.js spells them in camelCase (`memoryMib`, `diskGib`, `gpuMemoryMib`), and Rust sets them on `SandboxCreateArgs`. virtx's [Hello world](https://virtx.sh/docs/hello-world/) covers which server to run, on your machine or elsewhere.
+virtx's [Hello world](https://virtx.sh/docs/hello-world/) covers which server to run, on your machine or elsewhere.
 
 ## Troubleshooting
 
-virtx's errors carry a `source` (`server`, `job`, `transport` or `client`) and, from the server, an HTTP `status`. Tell them apart by those, not by the message ([Errors](https://virtx.sh/docs/reference/api/#errors)).
+virtx's errors carry a `source` (`server`, `job`, `transport` or `client`) and, from the server, an HTTP `status`. Tell them apart by those, not by the message ([Errors](https://virtx.sh/docs/reference/api/#errors)). A sandbox virtx refuses to make fails `from_spec` with the same status, and a message that starts with `virtx:`.
 
 | What you see | Why, and what to do |
 | --- | --- |
 | `` `<command>` exited with <code> `` from `build_image(...).complete()` | A step of the recipe failed. The job's log, printed above it by step (`STEP 1/2: …`), shows the command's output. |
 | `<image>: not found, or private and pulled without credentials` | The image name is wrong, or the image is private. |
-| `no image here is tagged <tag>: pull it first` (status `404`) | Pull or build the image before making a sandbox from it. |
+| `no image here is tagged <tag>: pull it first` (status `404`) | Pull or build the image before making an agent whose sandbox boots it. |
+| `this server has no virtx to make a sandbox on` (status `422`) | Give Ailoy a virtx client with `set_virtx` before making an agent with a sandbox. |
+| `the spec uses a sandbox, and none is given`, or `a sandbox is given, and the spec uses none` (status `422`) | Give `from_spec` a `sandbox` exactly when the spec sets `use_sandbox`. |
 | `status` `400`, such as `abins: this server has no program called …` | An option is out of range or unknown. The message names it. |
 | `status` `409` | The name is taken, the volume is in use, or the sandbox's VM has exited. |
 | `this server was built without a GPU` (status `422`) | This server can't give a GPU. Use a release build of virtx's server. |

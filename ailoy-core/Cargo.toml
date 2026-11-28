@@ -1,0 +1,51 @@
+[package]
+name = "ailoy-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "What names an Ailoy agent and what it says: the spec, messages and tool descriptions."
+readme = "../README.md"
+keywords = ["agent", "llm", "ai", "tool-use"]
+categories = ["development-tools"]
+
+[dependencies]
+anyhow = "1"
+async-stream = "0.3"
+base64 = "0.23"
+bytes = { version = "1", optional = true }
+futures = "0.3"
+http-body = { version = "1", optional = true }
+http-over-x = { git = "https://github.com/ailoy-co/http-over-x", rev = "f21730b", default-features = false, features = ["client"], optional = true }
+hyper = { version = "1", default-features = false, optional = true }
+indexmap = { version = "2", features = ["serde"] }
+ordered-float = { version = "5.0.0", features = ["serde"] }
+schemars = { version = "1", features = ["preserve_order", "url2"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = { version = "1.0", features = ["preserve_order"] }
+sha2 = "0.10"
+sse-stream = { version = "0.2", optional = true }
+strum = { version = "0.28", features = ["derive"] }
+tokio = { version = "1.0", default-features = false, features = ["rt"], optional = true }
+tower-service = { version = "0.3", optional = true }
+url = { version = "2.5", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+virtx = { workspace = true }
+
+[dev-dependencies]
+ailoy-core = { path = ".", features = ["client"] }
+tokio = { version = "1.0", default-features = false, features = ["macros", "rt"] }
+
+[features]
+client = ["dep:http-over-x", "dep:sse-stream", "dep:tokio"]
+# `Client::embed` and `AdminClient::embed`: a server in this process.
+embed = [
+    "client",
+    "http-over-x/server",
+    "dep:bytes",
+    "dep:http-body",
+    "dep:hyper",
+    "dep:tower-service",
+]

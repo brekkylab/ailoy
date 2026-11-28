@@ -1,0 +1,31 @@
+[package]
+name = "ailoy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Agents that drive a language model through tool-augmented turns, in a virtx console."
+readme = "../README.md"
+keywords = ["agent", "llm", "ai", "tool-use", "sandbox"]
+categories = ["development-tools"]
+# Only `.rs` under `src/`: `include` overrides `.gitignore`, so `/src/**` would pack a stray
+# `.DS_Store` too.
+include = ["/src/**/*.rs"]
+
+[features]
+# See `ailoy-runner`'s `embedded`.
+default = ["embedded"]
+embedded = ["ailoy-runner/embedded"]
+
+[dependencies]
+# `client` and `embed`: the agent is reached over HTTP, served in this process.
+ailoy-core = { path = "../ailoy-core", version = "0.3.2", features = ["client", "embed"] }
+ailoy-runner = { path = "../ailoy-runner", version = "0.3.2", default-features = false }
+anyhow = "1"
+futures = "0.3"
+uuid = { version = "1", features = ["v4"] }
+virtx = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }

@@ -1,0 +1,31 @@
+//! Python bindings for ailoy, imported as `ailoy._ailoy`.
+//!
+//! The shape is ailoy's own, spelled in Python: an [`Agent`](ailoy::agent::AgentRuntime) is made
+//! from a spec and awaited, a turn is iterated with `async for`, and the registries are the process-wide ones the crate keeps. Nothing adds a
+//! layer over that, so ailoy's Rust documentation applies as is.
+//!
+//! Data (messages, specs, tool descriptions, a turn's outputs) crosses as dicts in its serde
+//! form rather than a class per type, since that form is what ailoy stores and sends.
+//!
+//! The sandbox an agent runs in is made for it with the `virtx` package's `Client` given to
+//! `set_virtx`, reached through the one `libvirtx_core` both packages open (see [`console`]).
+
+use pyo3::prelude::*;
+
+mod agent;
+mod console;
+mod convert;
+mod error;
+mod model;
+mod registry;
+mod tool;
+
+#[pymodule]
+fn _ailoy(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    error::register(m)?;
+    registry::register(m)?;
+    console::register(m)?;
+    agent::register(m)?;
+    model::register(m)?;
+    Ok(())
+}

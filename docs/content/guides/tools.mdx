@@ -1,17 +1,17 @@
 ---
 title: "Tools"
-description: "The built-in tools, functions of your own, and the tools of MCP servers and the browser."
+description: "The built-in tools, functions of your own, and the tools of MCP servers and the sandbox's browser."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-An agent calls the tools you give it on the `AgentBuilder`: the built-in ones on this page, functions of your own, and the tools of an [MCP server](/docs/guides/using-mcp/) or of the [browser](/docs/guides/using-browser/).
+An agent calls the tools its spec names in `tools`: the built-in ones on this page, functions of your own, and the tools of an [MCP server](/docs/guides/using-mcp/) or of the [browser](/docs/guides/using-browser/).
 
 ## Built-in tools
 
 ### A shell and files
 
-An agent given a sandbox with `sandbox(...)` gets a shell and tools to read and change files in it, with nothing else to call. Which tools come with the shell depends on the model's org:
+An agent whose spec has `use_sandbox` (`sandbox()` in Rust) works in a sandbox Ailoy makes for it, and gets a shell and tools to read and change files in it, with nothing else to call. Which tools come with the shell depends on the model's org:
 
 | Org | Tools |
 | --- | --- |
@@ -32,13 +32,13 @@ An agent given a sandbox with `sandbox(...)` gets a shell and tools to read and 
 
 `imgread` is left out for `deepseek-ai`, `moonshotai`, `zai-org`, `Qwen` and `LGAI-EXAONE` because their backends pass a tool result to the model as text, so the model would get a label in place of the image.
 
-The seven tools in the table come with `sandbox(...)` and run in that sandbox, as in [Giving an agent a sandbox](/docs/guides/sandbox/); an agent without one does not get them. The agent does not start, stop or remove its sandbox. virtx stops an idle sandbox's VM and boots it again over what it wrote when it is next needed, so a later call finds the files as the last one left them.
+The seven tools in the table come with `use_sandbox`, without being named in `tools`, and run in the agent's sandbox, as in [Giving an agent a sandbox](/docs/guides/sandbox/); an agent without one does not get them. The sandbox is made with the agent and removed when the agent is closed. In between, virtx stops an idle sandbox's VM and boots it again over what it wrote when it is next needed, so a later call finds the files as the last one left them.
 
 ### The web
 
-`web_search_tool` and `web_fetch_tool` (`webSearchTool`, `webFetchTool`) do not come with the sandbox. The two tools run in your program's process, not in the sandbox, so they work without one.
+`web_search` and `web_fetch` are named in the spec's `tools` (in Rust, `web_search_tool()` and `web_fetch_tool()` add them); they do not come with the sandbox. The two tools run in your program's process, not in the sandbox, so they work without one.
 
-- `web_search` answers with each result's title, URL, a short description and the engine or API it came from: up to 10 results, or up to 20 when the model asks for more. How it searches is set for the whole program with `set_web_search_provider` (`setWebSearchProvider`), before the agent is built:
+- `web_search` answers with each result's title, URL, a short description and the engine or API it came from: up to 10 results, or up to 20 when the model asks for more. How it searches is set for the whole program with `set_web_search_provider` (`setWebSearchProvider`), and a turn searches with the provider set when it starts:
 
   | Provider | How it searches | Needs |
   | --- | --- | --- |
@@ -48,7 +48,7 @@ The seven tools in the table come with `sandbox(...)` and run in that sandbox, a
   | `exa` | The Exa API. | `EXA_API_KEY` |
   | `naver` | Naver's web document search API. | `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET` |
 
-  Search engines turn away requests that look automated, from a server's address most of all, so `web` suits a program on your own computer; on a server, use an API. A provider whose key is missing makes `build()` fail. For a search of your own, set a provider for the tool named `web_search` as in [Your own functions](#your-own-functions).
+  Search engines turn away requests that look automated, from a server's address most of all, so `web` suits a program on your own computer; on a server, use an API. A provider whose key is missing makes the agent's turn fail. For a search of your own, register a function under the name `web_search` as in [Your own functions](#your-own-functions).
 - `web_fetch` fetches one URL. An HTML page comes back as its visible text (the default), as Markdown, or as the HTML itself; any other body, such as JSON, comes back as it is. A long body comes in pieces, and the model asks for the next one with `offset`; only the body's first 2 MiB are read. It makes at most one request a second to a host, and only to addresses on the public internet: loopback, the local network and cloud metadata addresses are refused.
 
 <Tabs syncKey="lang">
@@ -57,11 +57,8 @@ The seven tools in the table come with `sandbox(...)` and run in that sandbox, a
 
 ```python
 set_web_search_provider("brave")  # reads BRAVE_API_KEY
-agent = await (
-    AgentBuilder("anthropic/claude-haiku-5-5")
-    .web_search_tool()
-    .web_fetch_tool()
-    .build()
+agent = await Agent.from_spec(
+    {"model": "anthropic/claude-haiku-5-5", "tools": ["web_search", "web_fetch"]}
 )
 ```
 
@@ -71,10 +68,10 @@ agent = await (
 
 ```js
 setWebSearchProvider('brave') // reads BRAVE_API_KEY
-const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
-  .webSearchTool()
-  .webFetchTool()
-  .build()
+const agent = await Agent.fromSpec({
+  model: 'anthropic/claude-haiku-5-5',
+  tools: ['web_search', 'web_fetch'],
+})
 ```
 
 
@@ -82,14 +79,17 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
 <TabItem label="Rust" icon="seti:rust">
 
 ```rust
-use ailoy::tool::{WebSearchProvider, set_web_search_provider};
+use ailoy::{
+    Agent,
+    agent::AgentSpec,
+    tool::{WebSearchProvider, set_web_search_provider},
+};
 
 set_web_search_provider(WebSearchProvider::Brave); // reads BRAVE_API_KEY
-let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
+let spec = AgentSpec::new("anthropic/claude-haiku-5-5")
     .web_search_tool()
-    .web_fetch_tool()
-    .build()
-    .await?;
+    .web_fetch_tool();
+let agent = Agent::from_spec(spec, Vec::new(), None).await?;
 ```
 
 
@@ -98,7 +98,7 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
 
 ## Your own functions
 
-A function of your program becomes a tool once it is registered with a **tool description**: the name the model calls it by, what it does, and a JSON schema for its arguments. The agent gets the description from `tool(...)`, or a list of them from `tools(...)`. In Python and Node.js, registering returns it; in Rust you build it with `ToolDescBuilder` and register the function under its name.
+A function of your program becomes a tool once it is registered with a **tool description**: the name the model calls it by, what it does, and a JSON schema for its arguments. Registering answers the tool's name, which the spec lists in `tools`. In Rust you build the description with `ToolDescBuilder` and register it with the function as a pair on the `tools` of `default_provider()`, which answers the names to give `tools(...)`.
 
 This gives the agent `order_status`, which looks an order up by its id:
 
@@ -109,7 +109,7 @@ This gives the agent `order_status`, which looks an order up by its id:
 ```python
 import asyncio
 
-from ailoy import AgentBuilder, register_tool
+from ailoy import Agent, register_tool
 
 ORDERS = {"A-1001": {"status": "shipped", "eta": "2026-10-24"}}
 
@@ -121,7 +121,7 @@ def order_status(order_id: str) -> dict:
 
 
 async def main() -> None:
-    desc = register_tool(
+    name = register_tool(
         {
             "name": "order_status",
             "description": "Look up an order's status and expected delivery date by its id.",
@@ -134,12 +134,14 @@ async def main() -> None:
         order_status,
     )
 
-    agent = await AgentBuilder("anthropic/claude-haiku-5-5").tool(desc).build()
+    agent = await Agent.from_spec({"model": "anthropic/claude-haiku-5-5", "tools": [name]})
 
     async for output in agent.run("When does order A-1001 arrive?"):
         for part in output["message"]["contents"]:
             if part["type"] == "text":
                 print(part["text"])
+
+    await agent.close()
 
 
 asyncio.run(main())
@@ -150,12 +152,12 @@ asyncio.run(main())
 <TabItem label="Node.js" icon="seti:javascript">
 
 ```js
-const { AgentBuilder, registerTool } = require('@brekkylab/ailoy')
+const { Agent, registerTool } = require('@brekkylab/ailoy')
 
 async function main() {
   const orders = { 'A-1001': { status: 'shipped', eta: '2026-10-24' } }
 
-  const desc = registerTool(
+  const name = registerTool(
     {
       name: 'order_status',
       description: "Look up an order's status and expected delivery date by its id.",
@@ -171,7 +173,7 @@ async function main() {
     },
   )
 
-  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').tool(desc).build()
+  const agent = await Agent.fromSpec({ model: 'anthropic/claude-haiku-5-5', tools: [name] })
 
   try {
     for await (const { message } of agent.run('When does order A-1001 arrive?')) {
@@ -193,11 +195,12 @@ main()
 
 ```rust
 use ailoy::{
-    agent::AgentBuilder,
+    Agent,
+    agent::{AgentSpec, default_provider},
     datatype::Value,
     message::{Message, Part, Role},
     to_value, tool_func,
-    tool::{ToolDescBuilder, set_tool_provider},
+    tool::ToolDescBuilder,
 };
 use futures::StreamExt as _;
 
@@ -211,24 +214,20 @@ async fn main() -> anyhow::Result<()> {
             "required": ["order_id"]
         }))
         .build();
-    set_tool_provider(
-        "order_status",
-        tool_func!(|args: Value| -> Value {
-            match args.pointer("/order_id").and_then(Value::as_str) {
-                Some("A-1001") => to_value!({"status": "shipped", "eta": "2026-10-24"}),
-                Some(id) => Value::string(format!("error: no order {id}")),
-                None => Value::string("error: no order_id"),
-            }
-        }),
-    );
+    let func = tool_func!(|args: Value| -> Value {
+        match args.pointer("/order_id").and_then(Value::as_str) {
+            Some("A-1001") => to_value!({"status": "shipped", "eta": "2026-10-24"}),
+            Some(id) => Value::string(format!("error: no order {id}")),
+            None => Value::string("error: no order_id"),
+        }
+    });
+    let names = default_provider().write().unwrap().tools.set((desc, func));
 
-    let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
-        .tool(desc)
-        .build()
-        .await?;
+    let spec = AgentSpec::new("anthropic/claude-haiku-5-5").tools(names);
+    let agent = Agent::from_spec(spec, Vec::new(), None).await?;
 
     let query = Message::new(Role::User).with_contents([Part::text("When does order A-1001 arrive?")]);
-    let mut stream = agent.run(query);
+    let mut stream = std::pin::pin!(agent.run(&query));
     while let Some(output) = stream.next().await {
         let message = output?.message;
         if message.role == Role::Assistant {
@@ -237,6 +236,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
+    agent.close().await?;
     Ok(())
 }
 ```
@@ -249,15 +249,15 @@ How the function is called:
 
 - **Python**: the arguments come as keyword arguments, named as in the schema, and the function may be `async`.
 - **Node.js**: they come as one object, and the function may return a promise.
-- **Rust** registers a `ToolFunc` with `set_tool_provider`, under the name in the description. `tool_func!` builds one from a closure that takes the arguments as a `Value`; with `async` before the closure, its body can `.await`.
+- **Rust** registers a description and a `ToolFunc` as a pair with `tools.set(...)` on `default_provider()`, which answers the names of what it provides. `tool_func!` builds one from a closure that takes the arguments as a `Value`; with `async` before the closure, its body can `.await`.
 
 The function returns what a message can hold: null, a boolean, a number, a string, or a list or object of those. In Python and Node.js an exception, or a rejected promise, does not end the run: the model gets it as the result, such as `error: KeyError: 'no order B-9'` from the Python function above, and can try something else.
 
 Tool calls the model makes in one step run at the same time, the seven built-in tools above among them: a sandbox runs many processes at once. A function of yours may be called again before its last call has returned.
 
-A Python or Node.js function runs in your program, not in the sandbox. To run a command or read a file there, it calls the virtx `Sandbox` you made, such as `sandbox.exec(...)` or `sandbox.read_file(...)`. In Rust, a closure that also takes `sandbox: &Sandbox` gets the agent's sandbox, as the built-in tools do, and `ailoy::tool::{exec, read, write}` run a command and read and write a file in it.
+A Python or Node.js function runs in your program, not in the sandbox. To run a command or read a file there, it gets the agent's sandbox from your virtx client by its id, `await client.get_sandbox(agent.sandbox_id)` (`client.getSandbox(agent.sandboxId)`), and calls it, such as `sandbox.exec(...)` or `sandbox.read_file(...)`. In Rust, a closure that also takes `sandbox: &Sandbox` gets the agent's sandbox, as the built-in tools do, and `ailoy::tool::{exec, read, write}` run a command and read and write a file in it.
 
-Tools are registered by name for the whole process, the built-in ones included. Registering a name again, `shell` among them, replaces its function for every agent built after that. `set_tool_provider(name, func)` (`setToolProvider` in Node.js) replaces only the function, for a tool whose description a spec already has. The exception is `web_search` in an agent given a non-empty list of engines, which builds its own. `remove_tool_provider` (`removeToolProvider`) takes a name out.
+Tools are registered by name for the whole process, the built-in ones included. An agent makes the tools its spec names as each turn starts, so registering a name again, `shell` among them, replaces its description and function for every turn after that, an existing agent's included. `remove_tool_provider` (`removeToolProvider` in Node.js, `tools.remove(name)` on `default_provider()` in Rust) takes a name out.
 
 ## How much of a result the model reads
 

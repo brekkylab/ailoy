@@ -187,7 +187,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: bindings/node/package-lock.json
+          cache-dependency-path: ailoy-node/package-lock.json
 
       # wreq's BoringSSL (`btls-sys`) generates its bindings with bindgen, which needs libclang:
       # AlmaLinux's, in the container, as root.
@@ -198,7 +198,7 @@ jobs:
       # `binding.js` (the loader) and `binding.d.ts` are generated beside the addon, and the
       # root package takes them from one platform's build -- see `assemble`.
       - name: Node addon
-        working-directory: bindings/node
+        working-directory: ailoy-node
         shell: bash
         run: |
           npm ci
@@ -215,7 +215,7 @@ jobs:
       - name: Python wheel
         uses: PyO3/maturin-action@v1
         with:
-          working-directory: bindings/python
+          working-directory: ailoy-py
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           # Already in the manylinux container on Linux: maturin builds where it is, rather
@@ -294,7 +294,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: bindings/node/package-lock.json
+          cache-dependency-path: ailoy-node/package-lock.json
 
       # Each platform's build in a directory of its own: they all carry a `binding.js`.
       - uses: actions/download-artifact@v8
@@ -315,7 +315,7 @@ jobs:
       # which is the gate a release wants: no root package names a platform with nothing
       # behind it.
       - name: npm packages
-        working-directory: bindings/node
+        working-directory: ailoy-node
         run: |
           mkdir -p artifacts
           cp "$GITHUB_WORKSPACE"/dist/node/node-*/*.node artifacts/

@@ -55,7 +55,7 @@ Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform
 
 By default, Claude, GPT and Gemini run through their CLIs, so install and log in to the one for your model: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`), [Codex](https://github.com/openai/codex) (`codex`) or [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`).
 
-To call the provider's API instead, set its key and switch the org to the `api` backend before building the agent, e.g. `ailoy.set_lang_model_provider("anthropic", "api")` in Python (`setLangModelProvider` in Node.js, `ailoy::model::set_lang_model_provider` in Rust):
+To call the provider's API instead, set its key and switch the org to the `api` backend before making the agent, e.g. `ailoy.set_lang_model_provider("anthropic", "api")` in Python (`setLangModelProvider` in Node.js, `ailoy::model::set_lang_model_provider` in Rust):
 
 ```sh
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY
@@ -76,7 +76,8 @@ pip install ailoy-py
 import asyncio
 from pathlib import Path
 
-from ailoy import AgentBuilder
+import ailoy
+from ailoy import Agent
 from virtx import Client
 
 
@@ -84,14 +85,17 @@ async def main() -> None:
     # Starts virtx's server, fetched into its cache the first time.
     client = Client.spawn()
     await client.pull_image("python:3.12-slim-trixie").complete()
-    sandbox = await client.create_sandbox("python:3.12-slim-trixie")
+    # Each agent's sandbox is made on this server, and removed as the agent closes.
+    ailoy.set_virtx(client)
 
-    agent = await (
-        # For openai, use "openai/gpt-6-luna"
-        AgentBuilder("anthropic/claude-haiku-5-5")
-        .instruction("Write what you are asked for into /artifacts.")
-        .sandbox(sandbox)
-        .build()
+    agent = await Agent.from_spec(
+        {
+            # For openai, use "openai/gpt-6-luna"
+            "model": "anthropic/claude-haiku-5-5",
+            "instruction": "Write what you are asked for into /artifacts.",
+            "use_sandbox": True,
+        },
+        sandbox={"create": {"image": {"type": "tag", "tag": "python:3.12-slim-trixie"}}},
     )
 
     async for output in agent.run("Create a bar chart comparing the populations of European countries and save it to /artifacts/population.png."):
@@ -99,7 +103,9 @@ async def main() -> None:
             if part["type"] == "text":
                 print(part["text"])
 
+    sandbox = await client.get_sandbox(agent.sandbox_id)
     Path("population.png").write_bytes(await sandbox.read_file("artifacts/population.png"))
+    await agent.close()
 
 asyncio.run(main())
 ```
@@ -117,20 +123,25 @@ npm install @brekkylab/ailoy @brekkylab/virtx
 
 ```js
 const { writeFileSync } = require('node:fs')
-const { AgentBuilder } = require('@brekkylab/ailoy')
+const { Agent, setVirtx } = require('@brekkylab/ailoy')
 const { Client } = require('@brekkylab/virtx')
 
 async function main() {
   // Starts virtx's server, fetched into its cache the first time.
   const client = Client.spawn()
   await client.pullImage('python:3.12-slim-trixie').complete()
-  const sandbox = await client.createSandbox('python:3.12-slim-trixie')
+  // Each agent's sandbox is made on this server, and removed as the agent closes.
+  setVirtx(client)
 
-  // For openai, use "openai/gpt-6-luna"
-  const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
-    .instruction('Write what you are asked for into /artifacts.')
-    .sandbox(sandbox)
-    .build()
+  const agent = await Agent.fromSpec(
+    {
+      // For openai, use "openai/gpt-6-luna"
+      model: 'anthropic/claude-haiku-5-5',
+      instruction: 'Write what you are asked for into /artifacts.',
+      use_sandbox: true,
+    },
+    { sandbox: { create: { image: { type: 'tag', tag: 'python:3.12-slim-trixie' } } } },
+  )
 
   for await (const { message } of agent.run('Create a bar chart comparing the populations of European countries and save it to /artifacts/population.png.')) {
     for (const part of message.contents) {
@@ -138,6 +149,7 @@ async function main() {
     }
   }
 
+  const sandbox = await client.getSandbox(agent.sandboxId)
   writeFileSync('population.png', await sandbox.readFile('artifacts/population.png'))
   await agent.close()
   await client.close()
@@ -157,11 +169,15 @@ main()
 [dependencies]
 ailoy = "0.3"
 virtx = "0.2"
+futures = "0.3"
+anyhow = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
 ```rust
 use ailoy::{
-    agent::AgentBuilder,
+    Agent,
+    agent::{AgentSpec, SessionSandbox, default_provider},
     message::{Message, Part, Role},
 };
 use futures::StreamExt as _;
@@ -172,19 +188,18 @@ async fn main() -> anyhow::Result<()> {
     // Starts virtx's server, fetched into its cache the first time.
     let client = Client::spawn_virtx([] as [&str; 0]).await?;
     client.pull_image("python:3.12-slim-trixie", None).complete(false).await?;
-    let sandbox = client
-        .create_sandbox(&SandboxCreateArgs::new("python:3.12-slim-trixie"))
-        .await?;
+    // Each agent's sandbox is made on this server, and removed as the agent closes.
+    default_provider().write().unwrap().virtx = Some(client.clone());
 
     // For openai, use "openai/gpt-6-luna"
-    let mut agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
+    let spec = AgentSpec::new("anthropic/claude-haiku-5-5")
         .instruction("Write what you are asked for into /artifacts.")
-        .sandbox(sandbox.clone())
-        .build()
-        .await?;
+        .sandbox();
+    let sandbox = SessionSandbox::Create(SandboxCreateArgs::new("python:3.12-slim-trixie"));
+    let agent = Agent::from_spec(spec, Vec::new(), Some(sandbox)).await?;
 
     let query = Message::new(Role::User).with_contents([Part::text("Create a bar chart comparing the populations of European countries and save it to /artifacts/population.png.")]);
-    let mut stream = agent.run(query);
+    let mut stream = std::pin::pin!(agent.run(&query));
     while let Some(output) = stream.next().await {
         let message = output?.message;
         if message.role == Role::Assistant {
@@ -194,8 +209,10 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    let sandbox = client.get_sandbox(agent.sandbox_id().unwrap()).await?;
     let png = sandbox.read_file("artifacts/population.png", 0, None).await?;
     std::fs::write("population.png", png)?;
+    agent.close().await?;
     Ok(())
 }
 ```
@@ -226,7 +243,7 @@ codex plugin marketplace add brekkylab/ailoy && codex plugin add ailoy@brekkylab
 | [sam3](./examples/sam3) | Segments images and videos with SAM3 on the guest GPU (ncnn + Vulkan) |
 | [tts](./examples/tts) | Speaks text in a voice described in words, using Qwen3-TTS |
 | [laya](./examples/laya) | Answers typed decision questions with a local model on the GPU |
-| [browser-use](./examples/browser-use) | Waits for what you ask of it, in a window of your own browser |
+| [browser-use](./examples/browser-use) | Waits for what you ask of it, with a browser in its sandbox |
 
 Each example lives in `examples/<name>`, with one folder per language (`rust`, `python`, `node`) and, where the three share files (skills, prompts, model preparation scripts), a `shared` folder.
 
@@ -258,7 +275,7 @@ Ailoy gives the agent **a computer of its own**.
 Agent stacks are often put together from separate pieces: a library that runs the loop around the model, a hosted service that provides the sandbox, and glue code between the two. Ailoy keeps the loop and the sandbox in one SDK:
 
 - The **Ailoy SDK** runs the agent loop on your host. It sends the prompt to the model, runs the tool calls the model asks for, feeds the results back, and decides when the agent is done.
-- **[virtx](https://github.com/brekkylab/virtx)** gives each agent a Linux VM of its own, built on krun, with no separate VM daemon to install. The VM is the agent's sandbox: its commands and file tools run inside it, and files go in and out of it through virtx, never through your machine's own folders.
+- **[virtx](https://github.com/brekkylab/virtx)** gives each agent a Linux VM of its own, built on krun, with no separate VM daemon to install. Ailoy makes the VM as the agent starts, of the image or virtx package you name, and removes it as the agent closes. The VM is the agent's sandbox: its commands and file tools run inside it, and files go in and out of it through virtx, never through your machine's own folders.
 
 That lets you build agents that do more than call predefined tools. Inside its VM an agent can install and use software, write its own scripts and work in a general-purpose computing environment. The VM supports the GPU too, so an agent can run ML models, or even games, in there.
 
@@ -275,8 +292,8 @@ cargo build
 For the bindings:
 
 ```sh
-cd bindings/python && uv run maturin develop  # Python
-cd bindings/node && npm install && npm run build  # Node.js
+cd ailoy-py && uv run maturin develop            # Python
+cd ailoy-node && npm install && npm run build    # Node.js
 ```
 
 ## Contributing

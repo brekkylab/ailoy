@@ -14,14 +14,14 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ailoy-py", editable = "../../../bindings/python" },
+    { name = "ailoy-py", editable = "../../../ailoy-py" },
     { name = "python-dotenv", specifier = ">=1" },
     { name = "virtx", specifier = ">=0.2.0,<0.3" },
 ]
 
 [[package]]
 name = "ailoy-py"
-source = { editable = "../../../bindings/python" }
+source = { editable = "../../../ailoy-py" }
 dependencies = [
     { name = "virtx" },
 ]

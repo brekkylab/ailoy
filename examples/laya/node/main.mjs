@@ -27,7 +27,7 @@
 // * `AILOY_MODEL` — the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend
 //   has to be set up as `docs/content/guides/model-providers.mdx` says.
 //
-// `npm install` here first, after building the addon (`npm run build` in `bindings/node`).
+// `npm install` here first, after building the addon (`npm run build` in `ailoy-node`).
 
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'

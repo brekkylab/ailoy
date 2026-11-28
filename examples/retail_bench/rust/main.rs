@@ -66,7 +66,7 @@ use std::{
 use ailoy::{
     agent::AgentBuilder,
     message::{Message, Part, Role},
-    tool::{ToolDesc, ToolDescBuilder, set_tool_provider},
+    tool::{ToolDescBuilder, set_tool_provider},
     tool_func,
 };
 use anyhow::{Context as _, bail};
@@ -409,7 +409,7 @@ async fn run_day(
         .or_else(|| metrics["terminated"].as_str().map(str::to_string)))
 }
 
-/// Set a tool provider for each of the three actions and return their descriptions, whose
+/// Set a tool provider for each of the three actions and return their names, whose
 /// schemas are the store's own rather than written here. After each action, what it rewrote of
 /// `context` goes onto `volume`.
 async fn register_actions(
@@ -418,11 +418,11 @@ async fn register_actions(
     day_over: &Arc<AtomicBool>,
     context: &Path,
     volume: &Volume,
-) -> anyhow::Result<Vec<ToolDesc>> {
+) -> anyhow::Result<Vec<String>> {
     let declared = store.get("/actions").await?;
     let declared = declared["actions"].as_array().cloned().unwrap_or_default();
 
-    let mut descs = Vec::new();
+    let mut names = Vec::new();
     for name in ACTIONS {
         // A name the store does not declare means this example and the simulator have drifted
         // apart, which is worth stopping for rather than running without the tool.
@@ -437,76 +437,72 @@ async fn register_actions(
                  no further instructions afterwards.",
             );
         }
-        descs.push(
-            ToolDescBuilder::new(name)
-                .description(description)
-                .parameters(spec["input_schema"].clone())
-                .build(),
-        );
+        let desc = ToolDescBuilder::new(name)
+            .description(description)
+            .parameters(spec["input_schema"].clone())
+            .build();
 
         let (store, record, day_over) = (store.clone(), record.clone(), day_over.clone());
         let (context, volume) = (context.to_path_buf(), volume.clone());
-        set_tool_provider(
-            name,
-            tool_func!(async |args: Value| -> Value
-                with [
-                    store = store.clone(),
-                    record = record.clone(),
-                    day_over = day_over.clone(),
-                    context = context.clone(),
-                    volume = volume.clone()
-                ]
-                {
-                    let args: Json = args.into();
-                    let started = Instant::now();
-                    let text = match store.act(name, args.clone()).await {
-                        Ok(call) => {
-                            let elapsed = started.elapsed().as_secs_f64();
-                            record.tool_call(name, &args, &call, &store, elapsed).await;
-                            if call.day_over {
-                                day_over.store(true, Ordering::SeqCst);
-                            }
-                            // What the action rewrote of the tree, onto its volume: an order
-                            // placed has to show up before the agent looks again.
-                            let synced = async {
-                                let mut dirs = vec![(context.clone(), String::new())];
-                                while let Some((dir, at)) = dirs.pop() {
-                                    for entry in std::fs::read_dir(&dir)? {
-                                        let entry = entry?;
-                                        let to =
-                                            format!("{at}{}", entry.file_name().to_string_lossy());
-                                        if entry.file_type()?.is_dir() {
-                                            volume.create_dir_all(to.clone()).await?;
-                                            dirs.push((entry.path(), format!("{to}/")));
-                                        } else {
-                                            volume
-                                                .write_file(to, std::fs::read(entry.path())?, None)
-                                                .await?;
-                                        }
+        let func = tool_func!(async |args: Value| -> Value
+            with [
+                store = store.clone(),
+                record = record.clone(),
+                day_over = day_over.clone(),
+                context = context.clone(),
+                volume = volume.clone()
+            ]
+            {
+                let args: Json = args.into();
+                let started = Instant::now();
+                let text = match store.act(name, args.clone()).await {
+                    Ok(call) => {
+                        let elapsed = started.elapsed().as_secs_f64();
+                        record.tool_call(name, &args, &call, &store, elapsed).await;
+                        if call.day_over {
+                            day_over.store(true, Ordering::SeqCst);
+                        }
+                        // What the action rewrote of the tree, onto its volume: an order
+                        // placed has to show up before the agent looks again.
+                        let synced = async {
+                            let mut dirs = vec![(context.clone(), String::new())];
+                            while let Some((dir, at)) = dirs.pop() {
+                                for entry in std::fs::read_dir(&dir)? {
+                                    let entry = entry?;
+                                    let to =
+                                        format!("{at}{}", entry.file_name().to_string_lossy());
+                                    if entry.file_type()?.is_dir() {
+                                        volume.create_dir_all(to.clone()).await?;
+                                        dirs.push((entry.path(), format!("{to}/")));
+                                    } else {
+                                        volume
+                                            .write_file(to, std::fs::read(entry.path())?, None)
+                                            .await?;
                                     }
                                 }
-                                anyhow::Ok(())
                             }
-                            .await;
-                            match synced {
-                                Ok(()) => said(&call),
-                                Err(e) => format!(
-                                    "{}\n\nThe files under /context could not be brought up \
-                                     to date: {e:#}",
-                                    said(&call)
-                                ),
-                            }
+                            anyhow::Ok(())
                         }
-                        // Nothing the model can fix, but saying so beats a silent failure: the
-                        // day never closes, and the harness closes it.
-                        Err(e) => format!("The store could not be reached: {e:#}"),
-                    };
-                    text.into()
-                }
-            ),
+                        .await;
+                        match synced {
+                            Ok(()) => said(&call),
+                            Err(e) => format!(
+                                "{}\n\nThe files under /context could not be brought up \
+                                 to date: {e:#}",
+                                said(&call)
+                            ),
+                        }
+                    }
+                    // Nothing the model can fix, but saying so beats a silent failure: the
+                    // day never closes, and the harness closes it.
+                    Err(e) => format!("The store could not be reached: {e:#}"),
+                };
+                text.into()
+            }
         );
+        names.extend(set_tool_provider((desc, func)));
     }
-    Ok(descs)
+    Ok(names)
 }
 
 /// What the model is shown for one action: the store's own words, and a line saying so when the

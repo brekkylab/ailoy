@@ -1,23 +1,17 @@
 // An agent with a browser, waiting for what you ask of it.
 //
-//     node main.mjs [--noshell] [--isolated]
+//     node main.mjs
 //
-// The agent uses your own browser (Chrome by default), in a window of its own opened on the ailoy
-// docs, and drives it with its `browser_*` tools. It also has a sandbox with python and curl, for
-// what is easier done there, such as fetching a page's data or computing over it; `--noshell`
-// leaves it out, so the agent has the browser alone and needs no sandbox server. Turn on remote
-// debugging at chrome://inspect/#remote-debugging (Chrome 144 or later) and allow the browser's
-// prompt, which appears as it starts. `--isolated` gives the agent a browser of its own instead: a
-// Chromium-based one installed here, started with a fresh profile and closed at the end, with no
-// remote debugging to turn on. Each line you type is the next turn; `/exit` ends. When a
-// site needs you, to sign in say, the agent says so and ends its turn: do it in its window, then
-// tell it to go on.
+// The agent works in a sandbox with python and curl and virtx's `browser` abin, a headless
+// Chromium, which it drives with its `browser` and `browser_screenshot` tools; the shell and file
+// tools are there too, for what is easier done without the browser, such as fetching a page's
+// data or computing over it. Each line you type is the next turn; `/exit` ends.
 //
 // `AILOY_MODEL` is the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend has
 // to be set up as `docs/content/guides/model-providers.mdx` says, any key in the
 // environment or in `.env`.
 //
-// `npm install` here first, after building the addon (`npm run build` in `bindings/node`).
+// `npm install` here first, after building the addon (`npm run build` in `ailoy-node`).
 
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -35,12 +29,8 @@ const { Client, Recipe } = virtx
 // The image the sandbox boots, built once on the virtx server and kept under this tag.
 const IMAGE = 'ailoy-browser-use:1'
 
-// Where the browser starts.
-const START = 'https://ailoy.co/docs/'
-
-// What the agent has, with a sandbox and without.
-const WITH_SANDBOX = 'a web browser and a sandbox: the browser is {whose}, which you drive with the browser tools'
-const BROWSER_ONLY = 'a web browser: {whose}, which you drive with the browser tools'
+// What the agent has.
+const HAS = 'a sandbox and a web browser in it, which you drive with the browser tools'
 
 // What the agent is for.
 const INSTRUCTION = [
@@ -76,44 +66,31 @@ function show(message) {
   }
 }
 
-async function main(model, shell, isolated) {
-  // The browser tools reach the browser from this process; the sandbox is for the other tools.
-  const whose = isolated ? "your own, apart from the user's" : "the user's own"
-  const has = (shell ? WITH_SANDBOX : BROWSER_ONLY).replace('{whose}', whose)
-  let builder = new AgentBuilder(model)
-    .instruction(`You are a helpful assistant with ${has}. ${INSTRUCTION}`)
-    .browser({ startUrl: START, isolated })
-  let client = null
-  if (shell) {
-    // The virtx server, fetched into virtx's cache the first time: a host that installed only
-    // ailoy has none. The sandboxes it holds go when it is closed.
-    client = Client.spawn()
+async function main(model) {
+  // The virtx server, fetched into virtx's cache the first time: a host that installed only
+  // ailoy has none. The sandboxes it holds go when it is closed.
+  const client = Client.spawn()
 
-    // The image, built once: python, and curl on it.
-    // The server answers a tag in its full form, as `docker.io/library/ailoy-browser-use:1`.
-    if (!(await client.listImage()).some((image) => image.reference.split('/').pop() === IMAGE)) {
-      console.log(`Building ${IMAGE}, once; it takes a few minutes.`)
-      const recipe = new Recipe('python:3.12-slim-trixie').run(
-        'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*',
-      )
-      await client.buildImage(recipe, IMAGE).complete()
-    }
-
-    const sandbox = await client.createSandbox(IMAGE, { network: true })
-    builder = builder.sandbox(sandbox)
-  }
-  const agent = await builder.build()
-  console.log(`model     ${model}`)
-  console.log(`has       ${shell ? 'browser, sandbox' : 'browser'}\n`)
-  try {
-    console.log(
-      isolated
-        ? "Starting the agent's own browser. It opens the ailoy docs as an example."
-        : "Allow the browser's prompt to let the agent in. It opens the ailoy docs as an example.",
+  // The image, built once: python, and curl on it.
+  // The server answers a tag in its full form, as `docker.io/library/ailoy-browser-use:1`.
+  if (!(await client.listImage()).some((image) => image.reference.split('/').pop() === IMAGE)) {
+    console.log(`Building ${IMAGE}, once; it takes a few minutes.`)
+    const recipe = new Recipe('python:3.12-slim-trixie').run(
+      'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*',
     )
-    await agent.startBrowser()
-    console.log(isolated ? "The agent's browser is open.\n" : 'The agent has a window of its own in your browser.\n')
+    await client.buildImage(recipe, IMAGE).complete()
+  }
 
+  // The browser is the sandbox's: its abin, a network for the pages it opens, and the memory
+  // Chromium takes.
+  const sandbox = await client.createSandbox(IMAGE, { network: true, abins: ['browser'], memoryMib: 2048 })
+  const agent = await new AgentBuilder(model)
+    .instruction(`You are a helpful assistant with ${HAS}. ${INSTRUCTION}`)
+    .sandbox(sandbox)
+    .browser()
+    .build()
+  console.log(`model     ${model}\n`)
+  try {
     console.log('Ask anything, or try:')
     for (const suggestion of SUGGESTIONS) console.log(`  - ${suggestion}`)
     console.log('`/exit` ends.\n')
@@ -132,10 +109,9 @@ async function main(model, shell, isolated) {
     }
   } finally {
     await agent.close()
-    await client?.close()
+    await client.close()
   }
 }
 
 loadDotenv()
-const args = process.argv.slice(2)
-await main(process.env.AILOY_MODEL ?? 'anthropic/claude-sonnet-5', !args.includes('--noshell'), args.includes('--isolated'))
+await main(process.env.AILOY_MODEL ?? 'anthropic/claude-sonnet-5')

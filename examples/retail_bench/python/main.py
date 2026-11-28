@@ -376,12 +376,12 @@ def register_actions(
     context: Path,
     volume: Volume,
 ) -> list:
-    """Register the three actions and return their descriptions, whose schemas are the
+    """Register the three actions and return their names, whose schemas are the
     store's own rather than written here. After each action, what it rewrote of `context` goes
     onto `volume`."""
     declared = store.get("/actions").get("actions") or []
 
-    descs = []
+    names = []
     for name in ACTIONS:
         # A name the store does not declare means this example and the simulator have drifted
         # apart, which is worth stopping for rather than running without the tool.
@@ -400,12 +400,12 @@ def register_actions(
             "description": description,
             "parameters": spec["input_schema"],
         }
-        descs.append(
+        names.append(
             ailoy.register_tool(
                 desc, action(name, store, record, day_over, context, volume)
             )
         )
-    return descs
+    return names
 
 
 def action(

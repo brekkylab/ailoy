@@ -1,19 +1,13 @@
 //! An agent with a browser, waiting for what you ask of it.
 //!
 //! ```sh
-//! cargo run --example browser-use [-- --noshell] [--isolated]
+//! cargo run --example browser-use
 //! ```
 //!
-//! The agent uses your own browser (Chrome by default), in a window of its own opened on the ailoy
-//! docs, and drives it with its `browser_*` tools. It also has a sandbox with python and curl, for
-//! what is easier done there, such as fetching a page's data or computing over it; `--noshell`
-//! leaves it out, so the agent has the browser alone and needs no sandbox server. Turn on remote
-//! debugging at chrome://inspect/#remote-debugging (Chrome 144 or later) and allow the browser's
-//! prompt, which appears as it starts. `--isolated` gives the agent a browser of its own instead:
-//! a Chromium-based one installed here, started with a fresh profile and closed at the end, with
-//! no remote debugging to turn on. Each line you type is the next turn; `/exit` ends. When a
-//! site needs you, to sign in say, the agent says so and ends its turn: do it in its window, then
-//! tell it to go on.
+//! The agent works in a sandbox with python and curl and virtx's `browser` abin, a headless
+//! Chromium, which it drives with its `browser` and `browser_screenshot` tools; the shell and
+//! file tools are there too, for what is easier done without the browser, such as fetching a
+//! page's data or computing over it. Each line you type is the next turn; `/exit` ends.
 //!
 //! `AILOY_MODEL` is the agent's model, `anthropic/claude-sonnet-5` by default; its org's backend
 //! has to be set up as `docs/content/guides/model-providers.mdx` says, any key in
@@ -21,7 +15,6 @@
 
 use ailoy::{
     agent::AgentBuilder,
-    browser::Browser,
     message::{Message, Part, Role},
 };
 use futures::StreamExt as _;
@@ -30,13 +23,8 @@ use virtx::{Client, Recipe, SandboxCreateArgs};
 /// The image the sandbox boots, built once on the virtx server and kept under this tag.
 const IMAGE: &str = "ailoy-browser-use:1";
 
-/// Where the browser starts.
-const START: &str = "https://ailoy.co/docs/";
-
-/// What the agent has, with a sandbox and without.
-const WITH_SANDBOX: &str = "a web browser and a sandbox: the browser is {whose}, which you \
-     drive with the browser tools";
-const BROWSER_ONLY: &str = "a web browser: {whose}, which you drive with the browser tools";
+/// What the agent has.
+const HAS: &str = "a sandbox and a web browser in it, which you drive with the browser tools";
 
 /// What the agent is for.
 const INSTRUCTION: &str = "Do what the user asks, and say briefly what you are doing as you go. \
@@ -65,66 +53,41 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let model = std::env::var("AILOY_MODEL").unwrap_or_else(|_| "anthropic/claude-sonnet-5".into());
 
-    let shell = !std::env::args().skip(1).any(|a| a == "--noshell");
-    let isolated = std::env::args().skip(1).any(|a| a == "--isolated");
-    let (browser, whose) = if isolated {
-        (Browser::isolated(), "your own, apart from the user's")
-    } else {
-        (Browser::user(), "the user's own")
-    };
-    let has = if shell { WITH_SANDBOX } else { BROWSER_ONLY }.replace("{whose}", whose);
+    // The virtx server, fetched into virtx's cache the first time: a host that installed only
+    // ailoy has none. The sandboxes it holds go when this program does.
+    let client = Client::spawn_virtx([] as [&str; 0]).await?;
 
-    // The browser tools reach the browser from this process; the sandbox is for the other tools.
-    let mut builder = AgentBuilder::new(&model)
-        .instruction(format!(
-            "You are a helpful assistant with {has}. {INSTRUCTION}"
-        ))
-        .browser(browser.start_url(START));
-    if shell {
-        // The virtx server, fetched into virtx's cache the first time: a host that installed
-        // only ailoy has none. The sandboxes it holds go when this program does.
-        let client = Client::spawn_virtx([] as [&str; 0]).await?;
-
-        // The image, built once: python, and curl on it.
-        // The server answers a tag in its full form, as `docker.io/library/ailoy-browser-use:1`.
-        let images = client.list_image().await?;
-        if !images
-            .iter()
-            .any(|i| i.reference.rsplit('/').next() == Some(IMAGE))
-        {
-            println!("Building {IMAGE}, once; it takes a few minutes.");
-            let recipe = Recipe::new("python:3.12-slim-trixie").step(
-                "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl \
-                 && rm -rf /var/lib/apt/lists/*",
-            );
-            client.build_image(recipe, IMAGE).complete(false).await?;
-        }
-
-        let mut args = SandboxCreateArgs::new(IMAGE);
-        args.network = true;
-        let sandbox = client.create_sandbox(&args).await?;
-        builder = builder.sandbox(sandbox);
-    }
-    let mut agent = builder.build().await?;
-    println!("model     {model}");
-    println!(
-        "has       {}\n",
-        if shell { "browser, sandbox" } else { "browser" }
-    );
-
-    if isolated {
-        println!("Starting the agent's own browser. It opens the ailoy docs as an example.");
-    } else {
-        println!(
-            "Allow the browser's prompt to let the agent in. It opens the ailoy docs as an example."
+    // The image, built once: python, and curl on it.
+    // The server answers a tag in its full form, as `docker.io/library/ailoy-browser-use:1`.
+    let images = client.list_image().await?;
+    if !images
+        .iter()
+        .any(|i| i.reference.rsplit('/').next() == Some(IMAGE))
+    {
+        println!("Building {IMAGE}, once; it takes a few minutes.");
+        let recipe = Recipe::new("python:3.12-slim-trixie").step(
+            "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl \
+             && rm -rf /var/lib/apt/lists/*",
         );
+        client.build_image(recipe, IMAGE).complete(false).await?;
     }
-    agent.start_browser().await?;
-    if isolated {
-        println!("The agent's browser is open.\n");
-    } else {
-        println!("The agent has a window of its own in your browser.\n");
-    }
+
+    // The browser is the sandbox's: its abin, a network for the pages it opens, and the memory
+    // Chromium takes.
+    let mut args = SandboxCreateArgs::new(IMAGE).abin("browser");
+    args.network = true;
+    args.memory_mib = Some(2048);
+    let sandbox = client.create_sandbox(&args).await?;
+
+    let mut agent = AgentBuilder::new(&model)
+        .instruction(format!(
+            "You are a helpful assistant with {HAS}. {INSTRUCTION}"
+        ))
+        .sandbox(sandbox)
+        .browser()
+        .build()
+        .await?;
+    println!("model     {model}\n");
 
     println!("Ask anything, or try:");
     for suggestion in SUGGESTIONS {

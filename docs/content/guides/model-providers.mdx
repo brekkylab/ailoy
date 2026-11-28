@@ -7,7 +7,7 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 ## Naming a model
 
-Name the model as `<org>/<name>` when you build the agent. The name is the one its maker gives it: the official API id for Claude, GPT and Gemini, the Hugging Face repo id for open-weight models, and the API id for a model with no repo, such as EXAONE's `k-exaone_v2.5`. The same name works whichever way the model runs.
+Name the model as `<org>/<name>` in the agent's spec. The name is the one its maker gives it: the official API id for Claude, GPT and Gemini, the Hugging Face repo id for open-weight models, and the API id for a model with no repo, such as EXAONE's `k-exaone_v2.5`. The same name works whichever way the model runs.
 
 | Models | Org | Example |
 | --- | --- | --- |
@@ -25,7 +25,9 @@ Name the model as `<org>/<name>` when you build the agent. The name is the one i
 <TabItem label="Python" icon="seti:python">
 
 ```python
-agent = await AgentBuilder("anthropic/claude-haiku-5-5").build()
+from ailoy import Agent
+
+agent = await Agent.from_spec({"model": "anthropic/claude-haiku-5-5"})
 ```
 
 
@@ -33,7 +35,9 @@ agent = await AgentBuilder("anthropic/claude-haiku-5-5").build()
 <TabItem label="Node.js" icon="seti:javascript">
 
 ```js
-const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').build()
+const { Agent } = require('@brekkylab/ailoy')
+
+const agent = await Agent.fromSpec({ model: 'anthropic/claude-haiku-5-5' })
 ```
 
 
@@ -41,7 +45,7 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').build()
 <TabItem label="Rust" icon="seti:rust">
 
 ```rust
-let agent = AgentBuilder::new("anthropic/claude-haiku-5-5").build().await?;
+let agent = Agent::from_spec(AgentSpec::new("anthropic/claude-haiku-5-5"), Vec::new(), None).await?;
 ```
 
 
@@ -62,9 +66,9 @@ Each org's models run on one **backend**:
 | `openrouter` | OpenRouter | `OPENROUTER_API_KEY` |
 | `self-hosted` | A server you run yourself, through the OpenAI-compatible Chat Completions API it serves: vLLM, llama-server, Ollama, LM Studio or SGLang | `SELF_HOSTED_BASE_URL`, and `SELF_HOSTED_API_KEY` if the server wants one |
 
-By default, Claude, GPT and Gemini run through their CLIs, and the other orgs through their own APIs. Keys are read from the environment when a model is built, so set them before that.
+By default, Claude, GPT and Gemini run through their CLIs, and the other orgs through their own APIs. An agent builds its model as each of its turns begins, and keys are read from the environment then, so set them before the first turn.
 
-`cli` and `api` know the orgs in [Naming a model](#naming-a-model). The other backends build a model for any org, `meta-llama` or `mistralai` as well. Such an org has no backend until you set one with `set_lang_model_provider`; building its model before that fails. Which backends serve which org:
+`cli` and `api` know the orgs in [Naming a model](#naming-a-model). The other backends build a model for any org, `meta-llama` or `mistralai` as well. Such an org has no backend until you set one with `set_lang_model_provider`; an agent of its model is refused before that. Which backends serve which org:
 
 | Org | `cli` | `api` | `bedrock` | `openrouter` | `self-hosted` |
 | --- | :-: | :-: | :-: | :-: | :-: |
@@ -78,7 +82,7 @@ Bedrock and OpenRouter name models their own way. Ailoy looks your model up in t
 
 ## Choosing a backend
 
-Set an org's backend with `set_lang_model_provider` (`setLangModelProvider` in Node.js) before building an agent. It applies to every model of that org built afterwards.
+Set an org's backend with `set_lang_model_provider` (`setLangModelProvider` in Node.js) before making an agent. It applies to every model of that org built afterwards, which includes the next turn of an agent already made.
 
 <Tabs syncKey="lang">
 
@@ -86,9 +90,10 @@ Set an org's backend with `set_lang_model_provider` (`setLangModelProvider` in N
 
 ```python
 import ailoy
+from ailoy import Agent
 
 ailoy.set_lang_model_provider("anthropic", "api")
-agent = await AgentBuilder("anthropic/claude-haiku-5-5").build()
+agent = await Agent.from_spec({"model": "anthropic/claude-haiku-5-5"})
 ```
 
 
@@ -96,10 +101,10 @@ agent = await AgentBuilder("anthropic/claude-haiku-5-5").build()
 <TabItem label="Node.js" icon="seti:javascript">
 
 ```js
-const { setLangModelProvider } = require('@brekkylab/ailoy')
+const { Agent, setLangModelProvider } = require('@brekkylab/ailoy')
 
 setLangModelProvider('anthropic', 'api')
-const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').build()
+const agent = await Agent.fromSpec({ model: 'anthropic/claude-haiku-5-5' })
 ```
 
 
@@ -107,17 +112,21 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-5-5').build()
 <TabItem label="Rust" icon="seti:rust">
 
 ```rust
-use ailoy::model::{Backend, set_lang_model_provider};
+use ailoy::{
+    Agent,
+    agent::AgentSpec,
+    model::{Backend, set_lang_model_provider},
+};
 
 set_lang_model_provider("anthropic", Backend::Api);
-let agent = AgentBuilder::new("anthropic/claude-haiku-5-5").build().await?;
+let agent = Agent::from_spec(AgentSpec::new("anthropic/claude-haiku-5-5"), Vec::new(), None).await?;
 ```
 
 
 </TabItem>
 </Tabs>
 
-`remove_lang_model_provider` (`removeLangModelProvider`) takes the org's provider away, after which its models can't be built.
+`remove_lang_model_provider` (`removeLangModelProvider`) takes the org's provider away, after which its models can't be built: a new agent of the org is refused, and the next turn of one already made fails.
 
 ## A server of your own
 
@@ -131,8 +140,8 @@ let agent = AgentBuilder::new("anthropic/claude-haiku-5-5").build().await?;
 ailoy.set_lang_model_provider("Qwen", {"backend": "self-hosted", "base_url": "http://gpu-box:8000/v1", "api_key": "..."})
 ailoy.set_lang_model_provider("meta-llama", {"backend": "self-hosted", "base_url": "http://localhost:11434/v1", "models": {"Llama-3.3-70B-Instruct": "llama3.3:70b"}})
 
-coder = await AgentBuilder("Qwen/Qwen3-Coder-30B-A3B-Instruct").build()
-chat = await AgentBuilder("meta-llama/Llama-3.3-70B-Instruct").build()
+coder = await Agent.from_spec({"model": "Qwen/Qwen3-Coder-30B-A3B-Instruct"})
+chat = await Agent.from_spec({"model": "meta-llama/Llama-3.3-70B-Instruct"})
 ```
 
 
@@ -143,8 +152,8 @@ chat = await AgentBuilder("meta-llama/Llama-3.3-70B-Instruct").build()
 setLangModelProvider('Qwen', { backend: 'self-hosted', base_url: 'http://gpu-box:8000/v1', api_key: '...' })
 setLangModelProvider('meta-llama', { backend: 'self-hosted', base_url: 'http://localhost:11434/v1', models: { 'Llama-3.3-70B-Instruct': 'llama3.3:70b' } })
 
-const coder = await new AgentBuilder('Qwen/Qwen3-Coder-30B-A3B-Instruct').build()
-const chat = await new AgentBuilder('meta-llama/Llama-3.3-70B-Instruct').build()
+const coder = await Agent.fromSpec({ model: 'Qwen/Qwen3-Coder-30B-A3B-Instruct' })
+const chat = await Agent.fromSpec({ model: 'meta-llama/Llama-3.3-70B-Instruct' })
 ```
 
 
@@ -157,8 +166,8 @@ use ailoy::model::{LangModelServer, set_lang_model_provider};
 set_lang_model_provider("Qwen", LangModelServer::new("http://gpu-box:8000/v1")?.with_api_key("..."));
 set_lang_model_provider("meta-llama", LangModelServer::new("http://localhost:11434/v1")?.with_model("Llama-3.3-70B-Instruct", "llama3.3:70b"));
 
-let coder = AgentBuilder::new("Qwen/Qwen3-Coder-30B-A3B-Instruct").build().await?;
-let chat = AgentBuilder::new("meta-llama/Llama-3.3-70B-Instruct").build().await?;
+let coder = Agent::from_spec(AgentSpec::new("Qwen/Qwen3-Coder-30B-A3B-Instruct"), Vec::new(), None).await?;
+let chat = Agent::from_spec(AgentSpec::new("meta-llama/Llama-3.3-70B-Instruct"), Vec::new(), None).await?;
 ```
 
 
@@ -171,24 +180,25 @@ Another endpoint that serves the OpenAI-compatible Chat Completions API, such as
 
 ## Model options
 
-Two options go to every backend:
+Two options go to every backend. They are part of the spec, under `model_options`; in Rust, `AgentSpec`'s methods of the same names set them.
 
-| Option | Builder method | Description |
-| --- | --- | --- |
-| `thinking_effort` | `thinking_effort` (`thinkingEffort`) | How much the model thinks before it answers: `low`, `medium` or `high`. Unset, the model's default. |
-| `output_schema` | `output_schema` (`outputSchema`) | A JSON schema the model's answers must match. |
+| Option | Description |
+| --- | --- |
+| `thinking_effort` | How much the model thinks before it answers: `low`, `medium` or `high`. Unset, the model's default. |
+| `output_schema` | A JSON schema the model's answers must match. |
 
 <Tabs syncKey="lang">
 
 <TabItem label="Python" icon="seti:python">
 
 ```python
-agent = await (
-    AgentBuilder("openai/gpt-6-luna")
-    .thinking_effort("high")
-    .output_schema({"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]})
-    .build()
-)
+agent = await Agent.from_spec({
+    "model": "openai/gpt-6-luna",
+    "model_options": {
+        "thinking_effort": "high",
+        "output_schema": {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]},
+    },
+})
 ```
 
 
@@ -196,10 +206,13 @@ agent = await (
 <TabItem label="Node.js" icon="seti:javascript">
 
 ```js
-const agent = await new AgentBuilder('openai/gpt-6-luna')
-  .thinkingEffort('high')
-  .outputSchema({ type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] })
-  .build()
+const agent = await Agent.fromSpec({
+  model: 'openai/gpt-6-luna',
+  model_options: {
+    thinking_effort: 'high',
+    output_schema: { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] },
+  },
+})
 ```
 
 
@@ -207,13 +220,12 @@ const agent = await new AgentBuilder('openai/gpt-6-luna')
 <TabItem label="Rust" icon="seti:rust">
 
 ```rust
-use ailoy::{model::ThinkingEffort, to_value};
+use ailoy::{Agent, agent::AgentSpec, model::ThinkingEffort, to_value};
 
-let agent = AgentBuilder::new("openai/gpt-6-luna")
+let spec = AgentSpec::new("openai/gpt-6-luna")
     .thinking_effort(ThinkingEffort::High)
-    .output_schema(to_value!({"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}))
-    .build()
-    .await?;
+    .output_schema(to_value!({"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}));
+let agent = Agent::from_spec(spec, Vec::new(), None).await?;
 ```
 
 
@@ -315,7 +327,7 @@ class Echo:
         }
 
 ailoy.set_lang_model_provider("mine", lambda org, name: Echo(name))
-agent = await AgentBuilder("mine/echo").build()
+agent = await Agent.from_spec({"model": "mine/echo"})
 ```
 
 
@@ -337,7 +349,7 @@ class Echo {
 }
 
 setLangModelProvider('mine', (org, name) => new Echo(name))
-const agent = await new AgentBuilder('mine/echo').build()
+const agent = await Agent.fromSpec({ model: 'mine/echo' })
 ```
 
 
@@ -348,8 +360,10 @@ const agent = await new AgentBuilder('mine/echo').build()
 use std::sync::Arc;
 
 use ailoy::{
+    Agent,
+    agent::AgentSpec,
     message::{FinishReason, Message, MessageDeltaOutput, MessageOutput, Role},
-    model::{InferLangModel, LangModelOptions, LangModelProvider, set_lang_model_provider},
+    model::{InferLangModel, LangModelOptions, set_lang_model_provider},
     tool::ToolDesc,
 };
 use futures::{future::BoxFuture, stream::{self, BoxStream}, StreamExt as _};
@@ -384,8 +398,11 @@ impl InferLangModel for Echo {
     }
 }
 
-set_lang_model_provider("mine", LangModelProvider::custom(|_org, _name| Ok(Arc::new(Echo))));
-let agent = AgentBuilder::new("mine/echo").build().await?;
+set_lang_model_provider(
+    "mine",
+    |_org: &str, _name: Option<&str>| -> anyhow::Result<Arc<dyn InferLangModel>> { Ok(Arc::new(Echo)) },
+);
+let agent = Agent::from_spec(AgentSpec::new("mine/echo"), Vec::new(), None).await?;
 ```
 
 
@@ -400,11 +417,11 @@ In Python and Node.js the factory itself must return the model directly, not an 
 | --- | --- |
 | `failed to start the claude CLI` (or `codex`, `gemini`), on the first turn | The CLI isn't installed, or isn't on the `PATH` of your program. Install it ([With a CLI login](/docs/guides/installation/#with-a-cli-login-default)), or switch the org to `api`. |
 | The CLI's own error on the first turn, such as Claude Code's "Not logged in" | Log in: `claude auth login`, `codex login`, or run `gemini` and sign in. Codex is read from its `auth.json`, so a login kept in the system keyring (`cli_auth_credentials_store`) isn't found. |
-| `ANTHROPIC_API_KEY is not set` (or another `…_API_KEY`), at `build()` | Set the variable before building the agent; a blank one counts as unset. [Backends](#backends) lists each org's variable. |
+| `ANTHROPIC_API_KEY is not set` (or another `…_API_KEY`), on the first turn | Set the variable before running the agent; a blank one counts as unset. [Backends](#backends) lists each org's variable. |
 | `'<org>' has no CLI`, or `'<org>' has no API of its own` | Only `anthropic`, `openai` and `google` have a CLI, and `api` knows only the orgs in [Naming a model](#naming-a-model). Use `bedrock`, `openrouter` or `self-hosted` for any other. |
-| `no provider set for lang model org '<org>'` | The org has no default backend. Set one with `set_lang_model_provider` first. |
+| `nothing makes the models of '<org>'` when making the agent, or `no provider set for lang model org '<org>'` from `LangModel` | The org has no default backend. Set one with `set_lang_model_provider` first. |
 | `AWS_BEARER_TOKEN_BEDROCK is not set` | Bedrock is reached with a bearer token, not AWS access keys or a profile. Set the token. |
 | `Bedrock request failed with status …` on the first turn | The region is wrong, as `us-east-1` is used when neither `AWS_REGION` nor `AWS_DEFAULT_REGION` is set, or Bedrock doesn't serve the model there. Ailoy builds an id for any model, so a model Bedrock lacks, such as Gemini, fails only when it is called. |
 | `SELF_HOSTED_BASE_URL is not set` | Set it, or give the server per org with `set_lang_model_provider` ([A server of your own](#a-server-of-your-own)). |
 | `chat completions request failed with status 404: …` | The `base_url` is missing its `/v1`. Ailoy adds `/chat/completions` to the URL as given. |
-| A connection error naming `<base_url>/chat/completions` on the first turn | The server isn't running, or the host or port is wrong. `build()` still succeeds and only logs `listing the models at <base_url>/models failed`. |
+| A connection error naming `<base_url>/chat/completions` on the first turn | The server isn't running, or the host or port is wrong. Building the model still succeeds and only logs `listing the models at <base_url>/models failed`. |

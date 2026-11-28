@@ -88,8 +88,8 @@ What else the builder takes, by what the task needs:
 |---|---|
 | read the web | `.web_fetch_tool()`, `.web_search_tool()` |
 | use an MCP server's tools | `tools = await register_mcp_stdio("fetch", "uvx", ["mcp-server-fetch"])`, then `.tools(tools)`; `register_mcp_streamable_http(prefix, url)` for a remote one |
-| call your own function | `desc = register_tool({"name": ..., "description": ..., "parameters": <JSON schema>}, func)`, then `.tool(desc)` |
-| drive a web browser | `.browser()` for the user's own Chrome (remote debugging on), `.browser(isolated=True)` for one of its own; it runs on the host, not in the sandbox |
+| call your own function | `name = register_tool({"name": ..., "description": ..., "parameters": <JSON schema>}, func)`, then `.tool(name)` |
+| drive a web browser | `.browser()`, with a sandbox made with the `browser` abin (`abins=["browser"]`), a network and 2 GiB of memory; the browser is a headless Chromium in the sandbox |
 | follow a procedure you wrote | `.skill("/skills/<name>")`, a directory holding a `SKILL.md`, on a volume mounted into the sandbox |
 | pick up an earlier conversation | `.history(messages)`, e.g. a previous agent's `agent.history` |
 | keep long runs within the context window | `.truncation(max_input_tokens=..., preserve_recent_turns=..., max_images=..., preserve_recent_images=...)`, which blanks old tool results past `max_input_tokens` (off unless given) and old screenshots past `max_images` (30, `0` for off) |
@@ -122,7 +122,7 @@ Each lives in `examples/<name>/` with a folder per language and a `shared/` fold
 | Example | Shows |
 |---|---|
 | [`hello`](../../examples/hello) | one turn, no tools, no sandbox |
-| [`browser-use`](../../examples/browser-use) | the user's own browser, or an isolated one, alongside a sandbox |
+| [`browser-use`](../../examples/browser-use) | the browser in the agent's sandbox |
 | [`cad`](../../examples/cad) | a skill on a volume, a volume for artifacts, a model that looks at its own renders |
 | [`offshore_leaks`](../../examples/offshore_leaks) | a large dataset on a read-only volume, analysed with SQL and Python the agent writes |
 | [`retail_bench`](../../examples/retail_bench) | a simulator the agent drives one turn at a time |
