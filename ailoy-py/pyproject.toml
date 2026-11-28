@@ -36,5 +36,4 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.uv.sources]
-# The unreleased virtx checkout beside this one, which has packages and grants.
-virtx = { path = "../../virtx/virtx-py", editable = true }
+virtx = { git = "https://github.com/brekkylab/virtx", rev = "fe3b249fd503d01b1e27065c1663dea710c5e8bc", subdirectory = "virtx-py" }

@@ -4011,6 +4011,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "virtx"
 version = "0.2.1"
+source = "git+https://github.com/brekkylab/virtx?rev=fe3b249fd503d01b1e27065c1663dea710c5e8bc#fe3b249fd503d01b1e27065c1663dea710c5e8bc"
 dependencies = [
  "futures-core",
  "libloading 0.8.9",
@@ -4023,6 +4024,7 @@ dependencies = [
 [[package]]
 name = "virtx-core"
 version = "0.2.1"
+source = "git+https://github.com/brekkylab/virtx?rev=fe3b249fd503d01b1e27065c1663dea710c5e8bc#fe3b249fd503d01b1e27065c1663dea710c5e8bc"
 dependencies = [
  "anyhow",
  "async-stream",

@@ -21,4 +21,4 @@ repository = "https://github.com/brekkylab/ailoy"
 
 [workspace.dependencies]
 # The client. Its library is `ailoy`'s `embedded` feature, or the one a binding opens.
-virtx = { path = "../virtx/virtx-rs", default-features = false }
+virtx = { git = "https://github.com/brekkylab/virtx", rev = "fe3b249fd503d01b1e27065c1663dea710c5e8bc", default-features = false }

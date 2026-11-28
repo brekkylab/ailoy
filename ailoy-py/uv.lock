@@ -17,7 +17,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "virtx", editable = "../../virtx/virtx-py" }]
+requires-dist = [{ name = "virtx", git = "https://github.com/brekkylab/virtx?subdirectory=virtx-py&rev=fe3b249fd503d01b1e27065c1663dea710c5e8bc" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -133,13 +133,4 @@ wheels = [
 [[package]]
 name = "virtx"
 version = "0.2.1"
-source = { editable = "../../virtx/virtx-py" }
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8" },
-    { name = "pytest-asyncio", specifier = ">=1" },
-    { name = "ruff", specifier = "==0.17.5" },
-]
+source = { git = "https://github.com/brekkylab/virtx?subdirectory=virtx-py&rev=fe3b249fd503d01b1e27065c1663dea710c5e8bc#fe3b249fd503d01b1e27065c1663dea710c5e8bc" }
