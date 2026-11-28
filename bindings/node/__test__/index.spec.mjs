@@ -60,18 +60,10 @@ test('an object that does not fit says what was expected', () => {
   })
 })
 
-test('registerTool requires a function', () => {
-  assert.throws(() => registerTool({ name: 'x', parameters: {} }, 'not callable'), {
-    code: 'INVALID_ARG',
-    message: /a tool's func has to be a function/,
-  })
-})
-
-test('setToolProvider requires a function', () => {
-  assert.throws(() => setToolProvider('x', 'not callable'), {
-    code: 'INVALID_ARG',
-    message: /a tool's func has to be a function/,
-  })
+test('a tool func that is not a function is refused', () => {
+  const refused = { code: 'INVALID_ARG', message: /a tool's func has to be a function/ }
+  assert.throws(() => registerTool({ name: 'x', parameters: {} }, 'not callable'), refused)
+  assert.throws(() => setToolProvider('x', 'not callable'), refused)
 })
 
 /**
