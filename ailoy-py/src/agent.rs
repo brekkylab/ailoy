@@ -5,19 +5,22 @@
 //! behind an `Arc`, which each turn holds a clone of. The server runs one turn of an agent at a
 //! time and refuses another while one runs.
 //!
-//! `Agent.from_spec`'s `sandbox` gives the agent a `virtx.Sandbox` (see [`crate::console`]),
-//! which stays the caller's: the agent runs in it over the same client, and never removes it.
+//! `Agent.from_spec`'s `sandbox` says what the agent's sandbox is made of, with the client given
+//! to `set_virtx` (see [`crate::console`]); it goes with the agent.
 
 use std::sync::Arc;
 
-use ailoy::{Agent, agent::AgentSpec, message::Message};
+use ailoy::{
+    Agent,
+    agent::{AgentSpec, SessionSandbox},
+    message::Message,
+};
 use futures::{StreamExt as _, stream::BoxStream};
 use pyo3::{exceptions::PyStopAsyncIteration, prelude::*};
 use pyo3_async_runtimes::tokio::{future_into_py, get_runtime};
 use tokio::sync::Mutex;
 
 use crate::{
-    console,
     convert::{Query, from_py, to_py},
     error::{self, AiloyError},
 };
@@ -104,7 +107,8 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, PyResult<
 #[pymethods]
 impl PyAgent {
     /// An agent from a spec, the dict an `AgentSpec` serializes to, with the history it
-    /// starts with and the `virtx.Sandbox` it works in. Awaitable.
+    /// starts with and what its sandbox is made of, `{"package": id}` or `{"create": args}`.
+    /// Awaitable.
     #[staticmethod]
     #[pyo3(signature = (spec, *, history = None, sandbox = None))]
     fn from_spec<'py>(
@@ -119,14 +123,23 @@ impl PyAgent {
             None => Vec::new(),
         };
         let sandbox = sandbox
-            .map(|sandbox| console::sandbox(&sandbox))
+            .map(|sandbox| from_py::<SessionSandbox>(&sandbox, "a sandbox to make"))
             .transpose()?;
         future_into_py(py, async move {
-            let agent = Agent::from_spec(spec, history, sandbox.as_ref())
+            let agent = Agent::from_spec(spec, history, sandbox)
                 .await
                 .map_err(|e| error::anyhow(e.into()))?;
             Ok(PyAgent::new(agent))
         })
+    }
+
+    /// The id of the sandbox made for the agent, where the client given to `set_virtx` reaches
+    /// its files; `None` for an agent without one.
+    #[getter]
+    fn sandbox_id(&self) -> PyResult<Option<String>> {
+        let agent = self.held()?;
+        let agent = agent.0.as_ref().expect("held until dropped");
+        Ok(agent.sandbox_id().map(str::to_owned))
     }
 
     /// The conversation so far, as a list of messages, as the server keeps it. Awaitable.
@@ -151,8 +164,8 @@ impl PyAgent {
         self.start(query.0, Mode::Deltas)
     }
 
-    /// Let go of the agent and its session on the server, and of its hold of its sandbox's
-    /// client. A turn being iterated still ends. Closing twice is the same as closing once.
+    /// Let go of the agent and its session on the server, and remove its sandbox. A turn being
+    /// iterated still ends. Closing twice is the same as closing once.
     fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let agent = self.agent.lock().unwrap().take();
         future_into_py(py, async move {

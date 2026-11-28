@@ -34,3 +34,7 @@ features = ["pyo3/extension-module"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.uv.sources]
+# The unreleased virtx checkout beside this one, which has packages and grants.
+virtx = { path = "../../virtx/virtx-py", editable = true }

@@ -2,7 +2,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable
 from types import TracebackType
 from typing import Any, Generic, Literal, Protocol, Self, TypeVar
 
-from virtx import Sandbox
+from virtx import Client
 
 from .types import (
     AgentSpec,
@@ -12,6 +12,7 @@ from .types import (
     Message,
     MessageDeltaOutput,
     MessageOutput,
+    SessionSandbox,
     ToolDesc,
     WebSearchProvider,
 )
@@ -33,18 +34,26 @@ class Agent:
         spec: AgentSpec,
         *,
         history: list[Message] | None = None,
-        sandbox: Sandbox | None = None,
+        sandbox: SessionSandbox | None = None,
     ) -> Agent:
         """An agent of ``spec``, starting from ``history``. A spec with ``use_sandbox`` works in
-        ``sandbox``, which stays the caller's; one with ``use_browser`` drives its ``browser``
-        abin, which the sandbox has to be made with."""
+        a sandbox made as ``sandbox`` says with the client given to ``set_virtx``, which goes
+        with the agent; one with ``use_browser`` drives its ``browser`` abin, which the sandbox
+        has to be made with."""
+        ...
+    @property
+    def sandbox_id(self) -> str | None:
+        """The id of the sandbox made for the agent, where the client given to ``set_virtx``
+        reaches its files."""
         ...
     async def history(self) -> list[Message]:
         """The conversation so far, as the server keeps it."""
         ...
     def run(self, query: str | Message) -> AgentRun[MessageOutput]: ...
     def run_stream(self, query: str | Message) -> AgentRun[MessageDeltaOutput]: ...
-    async def close(self) -> None: ...
+    async def close(self) -> None:
+        """Let go of the agent and its session, and remove its sandbox."""
+        ...
     async def __aenter__(self) -> Self: ...
     async def __aexit__(
         self,
@@ -93,6 +102,10 @@ def set_lang_model_provider(
 ) -> None: ...
 def get_lang_model_provider(desc: str) -> Backend | Literal["custom"] | None: ...
 def remove_lang_model_provider(org: str) -> bool: ...
+def set_virtx(client: Client | None) -> None:
+    """Make each agent's sandbox with ``client`` from now on; with ``None``, make none."""
+    ...
+
 def set_web_search_provider(provider: WebSearchProvider) -> None: ...
 def get_web_search_provider() -> WebSearchProvider: ...
 def remove_tool_provider(name: str) -> bool: ...

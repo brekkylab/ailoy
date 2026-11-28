@@ -142,6 +142,13 @@ export interface AgentSpec {
   truncation?: TruncationPolicy
 }
 
+/**
+ * What an agent's sandbox is made of: the virtx package of an id, or args in the JSON form
+ * virtx's `POST /sandboxes/` takes (`{ image: { type: 'tag', tag: 'python:3.12-slim' },
+ * memory_mib: 1024 }`).
+ */
+export type SessionSandbox = { package: string } | { create: Record<string, unknown> }
+
 export type Backend = 'cli' | 'api' | 'bedrock' | 'openrouter' | 'self-hosted'
 
 /**

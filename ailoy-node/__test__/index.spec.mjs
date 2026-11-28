@@ -25,9 +25,13 @@ test('virtx is a dependency, not re-exported', () => {
   assert.equal(typeof Client, 'function')
 })
 
-test('an agent takes only a virtx sandbox', () => {
-  assert.throws(() => Agent.fromSpec({ model: 'any/model', use_sandbox: true }, { sandbox: {} }), {
-    code: 'INVALID_ARG',
+test('the sandboxes are made only with a virtx client', () => {
+  assert.throws(() => ailoy.setVirtx({}), { code: 'INVALID_ARG' })
+})
+
+test('an agent using a sandbox needs one made', async () => {
+  await assert.rejects(Agent.fromSpec({ model: 'anthropic/claude-sonnet-5-5', use_sandbox: true }), {
+    message: /uses a sandbox/,
   })
 })
 
@@ -434,30 +438,28 @@ test('a factory that throws fails the turn', async (t) => {
   await agent.close()
 })
 
-// ---- the caller's sandbox, against the server virtx starts by default ---------------------
+// ---- the agent's sandbox, against the server virtx starts by default ----------------------
 
-test('an agent runs its console tools in the caller’s sandbox, until it is removed', async (t) => {
-  const server = await fakeModel({ name: 'shell', arguments: { cmd: 'echo shared > /tmp/out.txt' } })
+test('an agent runs its console tools in a sandbox made for it, until it closes', async (t) => {
+  const server = await fakeModel({ name: 'shell', arguments: { cmd: 'echo made > /tmp/out.txt' } })
   t.after(() => server.close())
   const client = Client.spawn()
   t.after(() => client.close())
   await client.pullImage('python:3.12-slim').complete()
-  const sandbox = await client.createSandbox('python:3.12-slim', { network: false, memoryMib: 1024 })
+  ailoy.setVirtx(client)
+  t.after(() => ailoy.setVirtx(null))
 
   serve('fake-shell', server)
+  const image = { type: 'tag', tag: 'python:3.12-slim' }
+  const sandbox = { create: { image, network: false, memory_mib: 1024 } }
   const agent = await Agent.fromSpec({ model: 'fake-shell/model', use_sandbox: true }, { sandbox })
   const outputs = []
   for await (const output of agent.run('write it')) outputs.push(output)
   assert.equal(outputs[1].message.role, 'tool')
-  // The sandbox is still the caller's to use.
-  assert.equal(await sandbox.readText('tmp/out.txt'), 'shared\n')
 
-  // Removed, it is gone for an agent too.
-  const later = await Agent.fromSpec({ model: 'fake-shell/model', use_sandbox: true }, { sandbox })
-  const fromSpec = await Agent.fromSpec({ model: 'fake-shell/model', use_sandbox: true }, { sandbox })
-  await sandbox.remove()
-  await assert.rejects(later.run('write it again').next(), { message: /404/ })
+  // The caller reaches its files through its own client, until the agent closes.
+  const made = await client.getSandbox(agent.sandboxId)
+  assert.equal(await made.readText('tmp/out.txt'), 'made\n')
   await agent.close()
-  await later.close()
-  await fromSpec.close()
+  await assert.rejects(client.getSandbox(made.id), { status: 404 })
 })

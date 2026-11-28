@@ -7,8 +7,8 @@
 //! Data (messages, specs, tool descriptions, a turn's outputs) crosses as plain objects in its
 //! serde form rather than a class per type, since that form is what ailoy stores and sends.
 //!
-//! The sandbox an agent runs in is `@brekkylab/virtx`'s `Sandbox`, reached through the one
-//! `libvirtx_core` both packages open (see [`console`]).
+//! The sandbox an agent runs in is made for it with the `@brekkylab/virtx` `Client` given to
+//! `setVirtx`, reached through the one `libvirtx_core` both packages open (see [`console`]).
 
 // napi compiles its export registration out of a test build, which leaves every export unused.
 #![cfg_attr(test, allow(dead_code))]

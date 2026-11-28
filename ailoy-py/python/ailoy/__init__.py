@@ -11,8 +11,9 @@ built-in tool is provided from the start.
 Messages, specs and tool descriptions are dicts in their JSON form; ``ailoy.types`` spells
 out their shapes.
 
-Tools run commands in a sandbox from the ``virtx`` package, which ailoy depends on: a
-``virtx.Sandbox`` handed to ``Agent.from_spec`` stays the caller's, and the agent runs in it.
+Tools run commands in a sandbox from the ``virtx`` package, which ailoy depends on: each
+agent's sandbox is made, as ``Agent.from_spec``'s ``sandbox`` says, with the ``virtx.Client``
+given to ``set_virtx``, and goes with the agent.
 
 See the Rust crate's documentation for details.
 """
@@ -30,6 +31,7 @@ from ._ailoy import (
     remove_lang_model_provider,
     remove_tool_provider,
     set_lang_model_provider,
+    set_virtx,
     set_web_search_provider,
     get_web_search_provider,
     unregister_mcp,
@@ -47,6 +49,7 @@ __all__ = [
     "remove_lang_model_provider",
     "remove_tool_provider",
     "set_lang_model_provider",
+    "set_virtx",
     "set_web_search_provider",
     "get_web_search_provider",
     "types",

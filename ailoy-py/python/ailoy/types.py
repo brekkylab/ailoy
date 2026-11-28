@@ -152,6 +152,22 @@ class AgentSpec(TypedDict):
     truncation: NotRequired[TruncationPolicy]
 
 
+class PackageSandbox(TypedDict):
+    """A sandbox made of the virtx package of this id."""
+
+    package: str
+
+
+class CreateSandbox(TypedDict):
+    """A sandbox made with these args, in the JSON form virtx's ``POST /sandboxes/`` takes:
+    ``{"image": {"type": "tag", "tag": "python:3.12-slim"}, "memory_mib": 1024, ...}``."""
+
+    create: dict[str, Any]
+
+
+SessionSandbox = Union[PackageSandbox, CreateSandbox]
+
+
 Backend = Literal["cli", "api", "bedrock", "openrouter", "self-hosted"]
 
 
@@ -172,6 +188,9 @@ WebSearchProvider = Literal["web", "brave", "tavily", "exa", "naver"]
 __all__ = [
     "AgentSpec",
     "Backend",
+    "CreateSandbox",
+    "PackageSandbox",
+    "SessionSandbox",
     "EmbeddedImage",
     "FinishReason",
     "FunctionPart",

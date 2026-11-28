@@ -7,8 +7,8 @@
 //! Data (messages, specs, tool descriptions, a turn's outputs) crosses as dicts in its serde
 //! form rather than a class per type, since that form is what ailoy stores and sends.
 //!
-//! The sandbox an agent runs in is the `virtx` package's `Sandbox`, reached through the one
-//! `libvirtx_core` both packages open (see [`console`]).
+//! The sandbox an agent runs in is made for it with the `virtx` package's `Client` given to
+//! `set_virtx`, reached through the one `libvirtx_core` both packages open (see [`console`]).
 
 use pyo3::prelude::*;
 
@@ -24,6 +24,7 @@ mod tool;
 fn _ailoy(m: &Bound<'_, PyModule>) -> PyResult<()> {
     error::register(m)?;
     registry::register(m)?;
+    console::register(m)?;
     agent::register(m)?;
     model::register(m)?;
     Ok(())

@@ -1,9 +1,10 @@
-//! A `Sandbox` from `@brekkylab/virtx`, as the sandbox an agent runs in.
+//! A `Client` from `@brekkylab/virtx`, as the client this process's provider makes each agent's
+//! sandbox with.
 //!
 //! Both packages reach the server through one `libvirtx_core` in the process: this addon opens
 //! the one `@brekkylab/virtx` opened, by the path virtx's `libraryPath()` answers, and takes a
-//! hold of the sandbox's client's `VirtxClient*` of its own, so the sandbox the agent holds is the
-//! caller's, over the same session.
+//! hold of the client's `VirtxClient*` of its own, so the sandboxes are made over the caller's
+//! session.
 
 use std::{
     ffi::c_void,
@@ -11,6 +12,7 @@ use std::{
     sync::{Mutex, PoisonError},
 };
 
+use ailoy::agent::default_provider;
 use napi::{
     Env,
     bindgen_prelude::{Function, FunctionRef, Object},
@@ -30,18 +32,10 @@ pub fn use_virtx(library_path: Function<(), Option<String>>) -> napi::Result<()>
     Ok(())
 }
 
-/// The sandbox `sandbox`, a `@brekkylab/virtx` `Sandbox`, names, over its own client.
-pub fn sandbox(env: &Env, sandbox: &Object<'_>) -> Result<virtx::Sandbox> {
-    let not_one = || invalid("expected a Sandbox from @brekkylab/virtx");
+/// The client `client`, a `@brekkylab/virtx` `Client`, holds, with a hold of its own.
+fn client(env: &Env, client: &Object<'_>) -> Result<virtx::Client> {
+    let not_one = || invalid("expected a Client from @brekkylab/virtx");
     let get = |e: napi::Error| invalid(e.reason);
-    let client = sandbox
-        .get::<Object>("client")
-        .map_err(get)?
-        .ok_or_else(not_one)?;
-    let id = sandbox
-        .get::<String>("id")
-        .map_err(get)?
-        .ok_or_else(not_one)?;
     let as_raw = client
         .get::<Function<(), f64>>("asRaw")
         .map_err(get)?
@@ -59,16 +53,23 @@ pub fn sandbox(env: &Env, sandbox: &Object<'_>) -> Result<virtx::Sandbox> {
     virtx::load(&library).map_err(virtx_error)?;
     let raw = as_raw.apply(client, ()).map_err(get)? as usize;
     // Safety: virtx made it with the library just opened, and holds it for as long as this
-    // borrows it; the sandbox takes a hold of its own.
+    // borrows it; the clone is a hold of its own.
     let borrowed = ManuallyDrop::new(
         unsafe { virtx::Client::from_raw(raw as *mut c_void) }.map_err(virtx_error)?,
     );
-    let info = virtx::SandboxInfo {
-        id,
-        image: sandbox.get("image").map_err(get)?.ok_or_else(not_one)?,
-        running: sandbox.get("running").map_err(get)?.ok_or_else(not_one)?,
-        ports: Vec::new(),
-        abins: sandbox.get("abins").map_err(get)?.unwrap_or_default(),
-    };
-    Ok((*borrowed).sandbox(info))
+    Ok((*borrowed).clone())
+}
+
+/// Make each agent's sandbox with `client`, a `@brekkylab/virtx` `Client`, from now on; with
+/// `null`, make none, and an agent whose spec uses a sandbox is refused.
+#[napi]
+pub fn set_virtx(
+    env: &Env,
+    #[napi(ts_arg_type = "Client | null")] client: Option<Object<'_>>,
+) -> Result<()> {
+    let client = client.map(|given| self::client(env, &given)).transpose()?;
+    let before = std::mem::replace(&mut default_provider().write().unwrap().virtx, client);
+    // Let go of the one before off this thread: a last hold waits there for its session to end.
+    std::thread::spawn(move || drop(before));
+    Ok(())
 }

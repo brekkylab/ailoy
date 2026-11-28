@@ -5,7 +5,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
-from virtx import Client
+from virtx import Client, VirtxError
 
 import ailoy
 from ailoy import Agent, AiloyError, LangModel
@@ -109,9 +109,14 @@ async def run(agent, query):
 # ---- offline --------------------------------------------------------------------------
 
 
-def test_sandbox_takes_only_a_virtx_sandbox():
-    with pytest.raises(TypeError, match="virtx.Sandbox"):
-        Agent.from_spec({"model": MODEL, "use_sandbox": True}, sandbox=object())
+def test_set_virtx_takes_only_a_virtx_client():
+    with pytest.raises(TypeError, match="virtx.Client"):
+        ailoy.set_virtx(object())
+
+
+async def test_an_agent_using_a_sandbox_needs_one_made():
+    with pytest.raises(AiloyError, match="uses a sandbox"):
+        await Agent.from_spec({"model": MODEL, "use_sandbox": True})
 
 
 def test_register_tool_hands_back_its_name():
@@ -446,17 +451,23 @@ async def test_an_unknown_org_cannot_make_a_lang_model():
 # ---- against the server virtx starts by default -----------------------------------------
 
 
-async def test_the_agent_runs_in_the_callers_sandbox():
+async def test_the_agent_works_in_a_sandbox_made_for_it_until_it_closes():
     with Client.spawn() as client:
         await client.pull_image("python:3.12-slim").complete()
-        sandbox = await client.create_sandbox("python:3.12-slim", network=False, memory_mib=1024)
-        agent = await Agent.from_spec({"model": MODEL, "use_sandbox": True}, sandbox=sandbox)
-        outputs = await run(agent, 'shell {"cmd": "echo shared > /root/out.txt"}')
-        assert outputs[1]["message"]["role"] == "tool"
+        ailoy.set_virtx(client)
+        try:
+            image = {"type": "tag", "tag": "python:3.12-slim"}
+            made = {"create": {"image": image, "network": False, "memory_mib": 1024}}
+            agent = await Agent.from_spec({"model": MODEL, "use_sandbox": True}, sandbox=made)
+            outputs = await run(agent, 'shell {"cmd": "echo made > /root/out.txt"}')
+            assert outputs[1]["message"]["role"] == "tool"
 
-        # The sandbox is still the caller's to use, and removing it removes it for an agent too.
-        assert await sandbox.read_text("root/out.txt") == "shared\n"
-        later = await Agent.from_spec({"model": MODEL, "use_sandbox": True}, sandbox=sandbox)
-        await sandbox.remove()
-        with pytest.raises(AiloyError, match="404"):
-            await run(later, 'shell {"cmd": "true"}')
+            # The caller reaches its files through its own client, until the agent closes.
+            sandbox = await client.get_sandbox(agent.sandbox_id)
+            assert await sandbox.read_text("root/out.txt") == "made\n"
+            await agent.close()
+            with pytest.raises(VirtxError) as gone:
+                await client.get_sandbox(sandbox.id)
+            assert gone.value.status == 404
+        finally:
+            ailoy.set_virtx(None)

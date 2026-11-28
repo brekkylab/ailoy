@@ -5,9 +5,8 @@
 //! behind an `Arc`, which each turn holds a clone of. The server runs one turn of an agent at a
 //! time and refuses another while one runs.
 //!
-//! `Agent.fromSpec`'s `sandbox` gives the agent a `@brekkylab/virtx` `Sandbox` (see
-//! [`crate::console`]), which stays the caller's: the agent runs in it over the same client, and
-//! never removes it.
+//! `Agent.fromSpec`'s `sandbox` says what the agent's sandbox is made of, with the client given to
+//! `setVirtx` (see [`crate::console`]); it goes with the agent.
 //!
 //! `AgentRun`'s `next()` and `return()` are an async iterator's, and the package's `index.js`
 //! gives the class `Symbol.asyncIterator` so `for await` takes it. napi's own async-iterator
@@ -18,7 +17,7 @@ use std::sync::Arc;
 
 use ailoy::{
     Agent,
-    agent::AgentSpec,
+    agent::{AgentSpec, SessionSandbox},
     message::{Message, MessageDeltaOutput, MessageOutput},
 };
 use futures::{StreamExt as _, stream::BoxStream};
@@ -31,7 +30,6 @@ use serde::Serialize;
 use tokio::{runtime::Handle, sync::Mutex};
 
 use crate::{
-    console,
     convert::{Json, from_js, query},
     error::{self, Result, invalid, promise, thrown},
 };
@@ -144,9 +142,9 @@ fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<It
 #[napi]
 impl JsAgent {
     /// An agent from a spec, the object an `AgentSpec` serializes to, with the history it
-    /// starts with and the `Sandbox` it works in.
+    /// starts with and what its sandbox is made of, `{ package: id }` or `{ create: args }`.
     #[napi(
-        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; sandbox?: Sandbox }",
+        ts_args_type = "spec: AgentSpec, options?: { history?: Array<Message>; sandbox?: SessionSandbox }",
         ts_return_type = "Promise<Agent>"
     )]
     pub fn from_spec<'env>(
@@ -163,19 +161,28 @@ impl JsAgent {
                 if let Some(given) = options.get::<Unknown>("history").map_err(get)? {
                     history = from_js::<Vec<Message>>(env, given, "a list of messages")?;
                 }
-                if let Some(given) = options.get::<Object>("sandbox").map_err(get)? {
-                    sandbox = Some(console::sandbox(env, &given)?);
+                if let Some(given) = options.get::<Unknown>("sandbox").map_err(get)? {
+                    sandbox = Some(from_js::<SessionSandbox>(env, given, "a sandbox to make")?);
                 }
             }
             Ok((spec, history, sandbox))
         })();
         let (spec, history, sandbox) = prepared.map_err(|e| thrown(env, e))?;
         promise(env, async move {
-            let agent = Agent::from_spec(spec, history, sandbox.as_ref())
+            let agent = Agent::from_spec(spec, history, sandbox)
                 .await
                 .map_err(failed)?;
             Ok(JsAgent::new(agent))
         })
+    }
+
+    /// The id of the sandbox made for the agent, where the client given to `setVirtx` reaches
+    /// its files; `null` for an agent without one.
+    #[napi(getter)]
+    pub fn sandbox_id(&self, env: &Env) -> napi::Result<Option<String>> {
+        let agent = self.held().map_err(|e| thrown(env, e))?;
+        let agent = agent.value.as_ref().expect("held until dropped");
+        Ok(agent.sandbox_id().map(str::to_owned))
     }
 
     /// The conversation so far, as a list of messages, as the server keeps it.
@@ -213,8 +220,8 @@ impl JsAgent {
         Ok(self.start(self::query(env, query)?, Mode::Deltas))
     }
 
-    /// Let go of the agent and its session on the server, and of its hold of its sandbox's
-    /// client. A turn being iterated still ends. Closing twice is the same as closing once.
+    /// Let go of the agent and its session on the server, and remove its sandbox. A turn being
+    /// iterated still ends. Closing twice is the same as closing once.
     #[napi(ts_return_type = "Promise<void>")]
     pub fn close<'env>(&self, env: &'env Env) -> napi::Result<PromiseRaw<'env, ()>> {
         let agent = self.agent.lock().unwrap().take();

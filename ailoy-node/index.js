@@ -10,9 +10,9 @@
 // Messages, specs and tool descriptions are plain objects in their JSON form; `types.d.ts`
 // spells out their shapes.
 //
-// Tools run commands in a sandbox from `@brekkylab/virtx` (`Client`, `Sandbox`, ...), which
-// ailoy depends on but does not re-export: make one with virtx and hand it to
-// `Agent.fromSpec`; it stays the caller's, and the agent runs in it.
+// Tools run commands in a sandbox from `@brekkylab/virtx`, which ailoy depends on but does not
+// re-export: each agent's sandbox is made, as `Agent.fromSpec`'s `sandbox` says, with the virtx
+// `Client` given to `setVirtx`, and goes with the agent.
 //
 // `binding.js` is the loader `napi build` generates; this file adds what napi cannot declare
 // from Rust: a turn is an async iterable, and the addon opens the library virtx opened, by the
