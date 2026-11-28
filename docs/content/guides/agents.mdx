@@ -1,49 +1,58 @@
 ---
 title: "Defining an agent"
-description: "Everything an AgentBuilder can give an agent, building one from a saved spec, and closing it."
+description: "Everything a spec can give an agent, making an agent of one with its history and sandbox, and closing it."
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-An agent is a model plus what you give it. `AgentBuilder` takes the model's name, then one call for each thing the agent should have, and `build()` makes the agent.
+An agent is a model plus what you give it, written down as its spec. `Agent.from_spec` makes an agent of a spec, with the history it starts from and what its sandbox is made of.
 
-## AgentBuilder at a glance
+## The spec at a glance
 
-Every call returns the builder, so they chain. Node.js spells them in camelCase (`webSearchTool`, `thinkingEffort`).
+In Python and Node.js a spec is a plain dict or object in its JSON form; in Rust it is an `AgentSpec`, whose calls each return it, so they chain.
 
-| Call | What the agent gets | Where it is covered |
-| --- | --- | --- |
-| `instruction(text)` | The system message's text. | [Below](#instruction) |
-| `sandbox(sandbox)` | A virtx sandbox to work in, and a shell and file tools there. | [Giving an agent a sandbox](/docs/guides/sandbox/) |
-| `tool(name)`, `tools(names)` | Tools by name: your own functions, or a registered MCP server's. | [Tools](/docs/guides/tools/#your-own-functions), [Using MCP](/docs/guides/using-mcp/) |
-| `web_search_tool()`, `web_fetch_tool()` | Searching the web and reading a page, from your program. | [Tools](/docs/guides/tools/#the-web) |
-| `browser()` | The browser in its sandbox, which it drives with the `browser` tools. | [Using a browser](/docs/guides/using-browser/) |
-| `skill(dir)` | A folder of instructions in its sandbox, for one kind of task. | [Skills](/docs/guides/skills/) |
-| `truncation(...)` | Old tool results and images cut once a run's input grows past a limit. | [Truncation](/docs/guides/truncation/) |
-| `thinking_effort(effort)`, `output_schema(schema)` | How much the model thinks, and a JSON schema its answers must match. | [Model providers](/docs/guides/model-providers/#model-options) |
-| `history(messages)` | An earlier conversation to continue. | [Running an agent](/docs/guides/running/#many-turns) |
+| Key | Rust | What the agent gets | Where it is covered |
+| --- | --- | --- | --- |
+| `model` | `AgentSpec::new(model)` | The model, by name. | [Model providers](/docs/guides/model-providers/) |
+| `instruction` | `instruction(text)` | The system message's text. | [Below](#instruction) |
+| `use_sandbox` | `sandbox()` | A sandbox to work in, and a shell and file tools there. | [Giving an agent a sandbox](/docs/guides/sandbox/) |
+| `tools` | `tool(name)`, `tools(names)` | Tools by name: your own functions, or a registered MCP server's. | [Tools](/docs/guides/tools/#your-own-functions), [Using MCP](/docs/guides/using-mcp/) |
+| `tools`: `web_search`, `web_fetch` | `web_search_tool()`, `web_fetch_tool()` | Searching the web and reading a page, from your program. | [Tools](/docs/guides/tools/#the-web) |
+| `use_browser` | `browser()` | The browser in its sandbox, which it drives with the `browser` tools. | [Using a browser](/docs/guides/using-browser/) |
+| `skills` | `skill(dir)` | A folder of instructions in its sandbox, for one kind of task. | [Skills](/docs/guides/skills/) |
+| `truncation` | `truncation(...)` | Old tool results and images cut once a run's input grows past a limit. | [Truncation](/docs/guides/truncation/) |
+| `model_options` | `thinking_effort(effort)`, `output_schema(schema)` | How much the model thinks, and a JSON schema its answers must match. | [Model providers](/docs/guides/model-providers/#model-options) |
+
+Beside the spec, `from_spec` takes the history to continue ([Running an agent](/docs/guides/running/#many-turns)) and what to make the sandbox of.
 
 ## Instruction
 
-`instruction(...)` is the system message's text: who the agent is, what it is for, and where in its sandbox to find inputs and leave results. The agent writes the system message from this text and the list of its [skills](/docs/guides/skills/), those of `skill(...)` and those of its sandbox's abins, and puts that message at the front of its history, unless the history you give it already has one.
+`instruction` is the system message's text: who the agent is, what it is for, and where in its sandbox to find inputs and leave results. The agent writes the system message from this text and the list of its [skills](/docs/guides/skills/), those of `skills` and those of its sandbox's abins, and puts that message at the front of its history, unless the history you give it already has one.
 
-## From a spec
+## Making an agent
 
-The model, the instruction, the tools, the skills, the model options and whether it uses a sandbox or a browser make up an agent's spec: plain JSON, which you can store and build an agent from again. The rest (its history and its sandbox) is its state, given beside the spec. `Agent.from_spec` builds an agent from both:
+A spec is plain JSON, which you can store and make an agent of again. The rest, the history and the sandbox, is given beside it:
 
 <Tabs syncKey="lang">
 
 <TabItem label="Python" icon="seti:python">
 
 ```python
+import ailoy
 from ailoy import Agent
+
+ailoy.set_virtx(client)
 
 spec = {
     "model": "anthropic/claude-haiku-5-5",
     "instruction": "Answer in one sentence.",
     "use_sandbox": True,
 }
-agent = await Agent.from_spec(spec, history=saved_messages, sandbox=sandbox)
+agent = await Agent.from_spec(
+    spec,
+    history=saved_messages,
+    sandbox={"create": {"image": {"type": "tag", "tag": "python:3.12-slim-trixie"}}},
+)
 ```
 
 
@@ -51,14 +60,19 @@ agent = await Agent.from_spec(spec, history=saved_messages, sandbox=sandbox)
 <TabItem label="Node.js" icon="seti:javascript">
 
 ```js
-const { Agent } = require('@brekkylab/ailoy')
+const { Agent, setVirtx } = require('@brekkylab/ailoy')
+
+setVirtx(client)
 
 const spec = {
   model: 'anthropic/claude-haiku-5-5',
   instruction: 'Answer in one sentence.',
   use_sandbox: true,
 }
-const agent = await Agent.fromSpec(spec, { history: savedMessages, sandbox })
+const agent = await Agent.fromSpec(spec, {
+  history: savedMessages,
+  sandbox: { create: { image: { type: 'tag', tag: 'python:3.12-slim-trixie' } } },
+})
 ```
 
 
@@ -66,31 +80,35 @@ const agent = await Agent.fromSpec(spec, { history: savedMessages, sandbox })
 <TabItem label="Rust" icon="seti:rust">
 
 ```rust
-use ailoy::agent::{Agent, AgentSpec, AgentState};
+use ailoy::{
+    Agent,
+    agent::{AgentSpec, SessionSandbox, default_provider},
+};
 use serde_json::json;
+use virtx::SandboxCreateArgs;
+
+default_provider().write().unwrap().virtx = Some(client.clone());
 
 let spec: AgentSpec = serde_json::from_value(json!({
     "model": "anthropic/claude-haiku-5-5",
     "instruction": "Answer in one sentence.",
     "use_sandbox": true,
 }))?;
-let state = AgentState::new()
-    .with_history(saved_messages)
-    .with_sandbox(sandbox);
-let agent = Agent::try_with_state(spec, state).await?;
+let sandbox = SessionSandbox::Create(SandboxCreateArgs::new("python:3.12-slim-trixie"));
+let agent = Agent::from_spec(spec, saved_messages, Some(sandbox)).await?;
 ```
 
 
 </TabItem>
 </Tabs>
 
-A spec says whether the agent works in a sandbox (`use_sandbox`) and drives the browser in it (`use_browser`); `sandbox(...)` and `browser()` on the builder set them. The state has to hold a sandbox exactly when `use_sandbox` is set, and with `use_browser` a sandbox with the `browser` abin, or building the agent fails. A sandbox brings the shell and file tools without the spec listing them, and a browser the `browser` and `browser_screenshot` tools. A tool the spec names itself, such as its own `shell`, is used in place of the sandbox's.
+A spec says whether the agent works in a sandbox (`use_sandbox`) and drives the browser in it (`use_browser`). `from_spec` is given what to make a sandbox of exactly when `use_sandbox` is set, or it fails; with `use_browser`, the sandbox has to be made with the `browser` abin, or the agent's first turn fails. A sandbox brings the shell and file tools without the spec listing them, and a browser the `browser` and `browser_screenshot` tools. A tool the spec names itself, such as its own `shell`, is used in place of the sandbox's.
+
+The sandbox is made on the virtx server of the client given to `set_virtx` (`setVirtx` in Node.js, the default provider's `virtx` in Rust); [Giving an agent a sandbox](/docs/guides/sandbox/) covers what it can be made of.
 
 ## Closing
 
-In Python and Node.js, `close()` releases what the agent holds: its model and its hold on the sandbox's client. It waits for a turn being iterated to finish. In Python, `async with agent:` closes it at the end of the block. A Rust agent releases them when it is dropped.
-
-Closing an agent leaves its sandbox as it is, for you to use again or remove.
+`close()` lets go of the agent and its history, and removes its sandbox. It waits for a turn being iterated to finish. Read what you need from the sandbox before closing the agent. In Python, `async with agent:` closes it at the end of the block. In Rust, call `close().await` too: dropping the agent keeps it, and its sandbox, until the process ends.
 
 ## Next
 

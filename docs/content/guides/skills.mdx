@@ -6,7 +6,7 @@ description: "Give an agent folders of instructions for one kind of task, in the
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 :::note[Needs a sandbox]
-The agent reads its skills through its sandbox, so an agent with skills needs one ([Giving an agent a sandbox](/docs/guides/sandbox/)).
+The agent reads its skills through its sandbox, so an agent with skills needs one: `use_sandbox` in its spec, and a sandbox given to `from_spec` ([Giving an agent a sandbox](/docs/guides/sandbox/)).
 :::
 
 A skill is a folder of instructions for one kind of task, with the files those instructions use, in the [Agent Skills](https://agentskills.io/specification) format. The agent is told which skills it has and what each is for, and to read a skill's instructions when a task matches it.
@@ -42,7 +42,7 @@ Ailoy reads `name` and `description` and nothing else from the frontmatter, each
 
 ## Giving the agent a skill
 
-`skill(dir)` takes the folder's path in the agent's sandbox, not on your machine. Put the folder in the sandbox, with whatever its instructions expect to find there: Laya's instructions read its model from `/models`, which `examples/laya` puts on a volume of its own. A volume, as below, keeps the skill on the virtx server between runs; baking it into the image works too ([Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/), [Images](https://virtx.sh/docs/guides/images/)). Call `skill` once for each skill.
+The spec's `skills` lists each skill's folder (`skill(dir)` in Rust, once for each skill), by its path in the agent's sandbox, not on your machine. Put the folder in the sandbox Ailoy makes for the agent, with whatever its instructions expect to find there: Laya's instructions read its model from `/models`, which `examples/laya` puts on a volume of its own. A volume, as below, keeps the skill on the virtx server between runs, and the `sandbox` given to `from_spec` mounts it. Baking it into the image works too ([Mounting volumes](https://virtx.sh/docs/guides/mounting-volumes/), [Images](https://virtx.sh/docs/guides/images/)).
 
 <Tabs syncKey="lang">
 
@@ -53,16 +53,19 @@ skill = await client.create_volume("skill-laya")
 for path in Path("skills/laya").iterdir():
     await skill.write_file(path.name, path.read_bytes())
 
-sandbox = await client.create_sandbox(
-    "python:3.12-slim-trixie",
-    volumes=[SandboxVolume(volume=skill, path="/skills/laya", readonly=True)],
-)
-
-agent = await (
-    AgentBuilder("anthropic/claude-haiku-5-5")
-    .sandbox(sandbox)
-    .skill("/skills/laya")
-    .build()
+ailoy.set_virtx(client)
+agent = await Agent.from_spec(
+    {
+        "model": "anthropic/claude-haiku-5-5",
+        "skills": ["/skills/laya"],
+        "use_sandbox": True,
+    },
+    sandbox={
+        "create": {
+            "image": {"type": "tag", "tag": "python:3.12-slim-trixie"},
+            "volumes": [{"volume": "skill-laya", "path": "/skills/laya", "readonly": True}],
+        }
+    },
 )
 ```
 
@@ -75,14 +78,18 @@ for (const name of readdirSync('skills/laya')) {
   await skill.writeFile(name, readFileSync(join('skills/laya', name)))
 }
 
-const sandbox = await client.createSandbox('python:3.12-slim-trixie', {
-  volumes: [{ volume: skill, path: '/skills/laya', readonly: true }],
-})
-
-const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
-  .sandbox(sandbox)
-  .skill('/skills/laya')
-  .build()
+setVirtx(client)
+const agent = await Agent.fromSpec(
+  { model: 'anthropic/claude-haiku-5-5', skills: ['/skills/laya'], use_sandbox: true },
+  {
+    sandbox: {
+      create: {
+        image: { type: 'tag', tag: 'python:3.12-slim-trixie' },
+        volumes: [{ volume: 'skill-laya', path: '/skills/laya', readonly: true }],
+      },
+    },
+  },
+)
 ```
 
 </TabItem>
@@ -97,23 +104,20 @@ for entry in std::fs::read_dir("skills/laya")? {
         .await?;
 }
 
-let sandbox = client
-    .create_sandbox(
-        &SandboxCreateArgs::new("python:3.12-slim-trixie").readonly_volume(skill.name(), "/skills/laya"),
-    )
-    .await?;
-
-let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
-    .sandbox(sandbox)
-    .skill("/skills/laya")
-    .build()
-    .await?;
+default_provider().write().unwrap().virtx = Some(client.clone());
+let spec = AgentSpec::new("anthropic/claude-haiku-5-5")
+    .sandbox()
+    .skill("/skills/laya");
+let sandbox = SessionSandbox::Create(
+    SandboxCreateArgs::new("python:3.12-slim-trixie").readonly_volume(skill.name(), "/skills/laya"),
+);
+let agent = Agent::from_spec(spec, Vec::new(), Some(sandbox)).await?;
 ```
 
 </TabItem>
 </Tabs>
 
-When the agent writes the system message itself, `build()` reads the frontmatter of each `SKILL.md` through the sandbox, and fails if the `SKILL.md` of a `skill(dir)` is missing or has no `name` or `description`. The system message gets a list of the skills after the instruction: each one's name, description and location, and a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` stays out of the system message; the agent reads it with its own tools. So an agent with skills needs a sandbox, which brings a tool that reads files, such as `read`.
+When the agent writes the system message itself, its first turn reads the frontmatter of each `SKILL.md` through the sandbox before the model is called, and fails if the `SKILL.md` of a folder in `skills` is missing or has no `name` or `description`. The system message gets a list of the skills after the instruction: each one's name, description and location, and a line telling the model to read a skill's `SKILL.md` in full before using it. The rest of `SKILL.md` stays out of the system message; the agent reads it with its own tools. So an agent with skills needs `use_sandbox`, which brings a tool that reads files, such as `read`.
 
 For `anthropic` models the list is an XML block:
 
@@ -137,47 +141,54 @@ For any other org, the same preamble is followed by a Markdown list, one line pe
 - `laya` at /skills/laya/SKILL.md. Answer typed questions about a text with Laya, a machine learning model for decisions. Use it to classify, score or answer yes or no about a message, an email or a ticket, with calibrated probabilities.
 ```
 
-Skills are added only to the system message the agent writes itself. A `history(...)` that brings a system message keeps it: the skills are not read or added.
+Skills are added only to the system message the agent writes itself. A `history` given to `from_spec` that brings a system message keeps it: the skills are not read or added.
 
 ## Skills from the sandbox's abins
 
-A sandbox can be made with some of virtx's own programs, its abins, at `/abin`: `index` indexes document files and searches them, `docread` reads a Word, PDF or text file a window at a time, and `display` runs GUI programs on a screen watched over VNC. Each comes with a `SKILL.md` at `/abin/skills/{name}/`, and the agent lists it among its skills without a `skill(...)` call:
+A sandbox can be made with some of virtx's own programs, its abins, at `/abin`: `index` indexes document files and searches them, `docread` reads a Word, PDF or text file a window at a time, and `display` runs GUI programs on a screen watched over VNC. Each comes with a `SKILL.md` at `/abin/skills/{name}/`, and the agent lists it among its skills without it being in `skills`. The abins go in the `sandbox` given to `from_spec`:
 
 <Tabs syncKey="lang">
 
 <TabItem label="Python" icon="seti:python">
 
 ```python
-sandbox = await client.create_sandbox("python:3.12-slim-trixie", abins=["index", "docread"])
+sandbox = {
+    "create": {
+        "image": {"type": "tag", "tag": "python:3.12-slim-trixie"},
+        "abins": ["index", "docread"],
+    }
+}
 ```
 
 </TabItem>
 <TabItem label="Node.js" icon="seti:javascript">
 
 ```js
-const sandbox = await client.createSandbox('python:3.12-slim-trixie', { abins: ['index', 'docread'] })
+const sandbox = {
+  create: { image: { type: 'tag', tag: 'python:3.12-slim-trixie' }, abins: ['index', 'docread'] },
+}
 ```
 
 </TabItem>
 <TabItem label="Rust" icon="seti:rust">
 
 ```rust
-let sandbox = client
-    .create_sandbox(&SandboxCreateArgs::new("python:3.12-slim-trixie").abin("index").abin("docread"))
-    .await?;
+let sandbox = SessionSandbox::Create(
+    SandboxCreateArgs::new("python:3.12-slim-trixie").abin("index").abin("docread"),
+);
 ```
 
 </TabItem>
 </Tabs>
 
-An abin with no `SKILL.md` is left out of the list rather than failing `build()`. [Setting up sandboxes](https://virtx.sh/docs/guides/setting-sandboxes/) covers the `abins` option.
+An abin with no `SKILL.md` is left out of the list rather than failing the turn. [Setting up sandboxes](https://virtx.sh/docs/guides/setting-sandboxes/) covers the `abins` option.
 
 ## Troubleshooting
 
 | What you see | Why, and what to do |
 | --- | --- |
-| `reading the skill <dir>/SKILL.md` at `build()` (a `VirtxError` with status `404` in Python and Node.js) | The `SKILL.md` of a `skill(dir)` isn't in the sandbox. `dir` is a path in the sandbox, not on your machine: check that the volume holding it is mounted there. |
+| `reading the skill <dir>/SKILL.md` when the first turn starts | The `SKILL.md` of a folder in `skills` isn't in the sandbox. `dir` is a path in the sandbox, not on your machine: check that the volume holding it is mounted there. |
 | ``the frontmatter has no `name` ``, or ``no `description` `` | Add the field to the frontmatter, on one line. |
 | ``a SKILL.md opens with a `---` line`` | The file must start with the frontmatter, between two `---` lines. |
-| `an agent with skills needs a sandbox to read them from` | Give the agent a sandbox with `sandbox(...)`. |
+| `an agent with skills needs a sandbox to read them from` | Set `use_sandbox` in the spec (`sandbox()` in Rust) and give `from_spec` a `sandbox`. |
 | A skill's description in the system message is just `>` or `\|` | YAML's multi-line values aren't read, and no error is raised: put the description on one line. |

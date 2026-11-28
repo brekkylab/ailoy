@@ -9,26 +9,25 @@ The agent sends its whole history to the model on every call, so a long run send
 
 ## Turning it on
 
-The settings are part of the agent's spec, saved with it as `truncation`. Every setting has a default, so an agent without `truncation(...)` has the image cap on and the token limit off.
+The settings are part of the agent's spec, under `truncation` (`truncation(...)` on `AgentSpec` in Rust). Every setting has a default, so a spec without `truncation` has the image cap on and the token limit off.
 
 | Setting | Default | What it is |
 | --- | --- | --- |
-| `max_input_tokens` (`maxInputTokens`) | 0 | The input the model reports, in tokens, past which old tool results are replaced. `0` turns truncation off. |
-| `preserve_recent_turns` (`preserveRecentTurns`) | 3 | How many of the latest user turns are left as they are. |
-| `max_images` (`maxImages`) | 30 | Images in tool results the history may hold at the start of a turn. `0` turns the cap off. |
-| `preserve_recent_images` (`preserveRecentImages`) | 10 | Images in tool results left once the cap is passed. |
+| `max_input_tokens` | 0 | The input the model reports, in tokens, past which old tool results are replaced. `0` turns truncation off. |
+| `preserve_recent_turns` | 3 | How many of the latest user turns are left as they are. |
+| `max_images` | 30 | Images in tool results the history may hold at the start of a turn. `0` turns the cap off. |
+| `preserve_recent_images` | 10 | Images in tool results left once the cap is passed. |
 
 <Tabs syncKey="lang">
 
 <TabItem label="Python" icon="seti:python">
 
 ```python
-agent = await (
-    AgentBuilder("anthropic/claude-haiku-5-5")
-    .sandbox(sandbox)
-    .truncation(max_input_tokens=50_000, preserve_recent_turns=2)
-    .build()
-)
+agent = await Agent.from_spec({
+    "model": "anthropic/claude-haiku-5-5",
+    "tools": ["web_fetch"],
+    "truncation": {"max_input_tokens": 50_000, "preserve_recent_turns": 2},
+})
 ```
 
 
@@ -36,10 +35,11 @@ agent = await (
 <TabItem label="Node.js" icon="seti:javascript">
 
 ```js
-const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
-  .sandbox(sandbox)
-  .truncation({ maxInputTokens: 50000, preserveRecentTurns: 2 })
-  .build()
+const agent = await Agent.fromSpec({
+  model: 'anthropic/claude-haiku-5-5',
+  tools: ['web_fetch'],
+  truncation: { max_input_tokens: 50000, preserve_recent_turns: 2 },
+})
 ```
 
 
@@ -47,17 +47,19 @@ const agent = await new AgentBuilder('anthropic/claude-haiku-5-5')
 <TabItem label="Rust" icon="seti:rust">
 
 ```rust
-use ailoy::agent::TruncationPolicy;
+use ailoy::{
+    Agent,
+    agent::{AgentSpec, TruncationPolicy},
+};
 
-let agent = AgentBuilder::new("anthropic/claude-haiku-5-5")
-    .sandbox(sandbox)
+let spec = AgentSpec::new("anthropic/claude-haiku-5-5")
+    .web_fetch_tool()
     .truncation(TruncationPolicy {
         max_input_tokens: 50_000,
         preserve_recent_turns: 2,
         ..Default::default()
-    })
-    .build()
-    .await?;
+    });
+let agent = Agent::from_spec(spec, Vec::new(), None).await?;
 ```
 
 
@@ -72,7 +74,7 @@ As each turn begins, once the user's message is in the history, the agent looks 
 - In the turns before those, each tool result's contents become the text `[context truncated]`. The result keeps the id of the call it answers, since APIs such as Anthropic's refuse a tool call that has no result.
 - The system message, the user's messages and the model's own messages, tool calls included, stay whole. No message is removed.
 
-The placeholders replace the results in the agent's history, so `agent.history` shows them too, and they stay in it.
+The placeholders replace the results in the agent's history, so `agent.history()` shows them too, and they stay in it.
 
 The count comes from a call already made, and the history is truncated only as a turn begins. A turn that goes past the limit runs to its end with the history unchanged, and the next turn begins truncated. The requests of a turn send back the thinking the model has produced in it. From Claude 5.1 on, the API can refuse a thinking block once anything before it has changed ([Keeping the prefix unchanged](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking#prefix-check)), so the history stays as it is until the turn ends. A reply without `usage` leaves the last count in place, so a model that never reports usage, such as a model of your own whose replies leave it out, never triggers truncation. And since only tool results are replaced, a history whose messages alone are past the limit keeps growing.
 
@@ -84,7 +86,7 @@ At the start of each turn, when the tool results hold more than `max_images` ima
 - Within a turn nothing is replaced, so a turn of many screenshots sends them all until the next turn starts.
 - The cap counts across every turn, the last `preserve_recent_turns` included.
 
-As with the token limit, the placeholders stay in `agent.history`.
+As with the token limit, the placeholders stay in `agent.history()`.
 
 Apart from the cap, and for every model, an embedded image past 2576 pixels on its longer edge, attached or returned by a tool, is shrunk to that edge before it enters the history. The shrunk image is turned upright by its EXIF orientation and keeps its color profile, and comes back as:
 

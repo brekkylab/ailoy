@@ -5,7 +5,7 @@ description: "Let an agent drive the Chromium in its sandbox."
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-An agent's browser is in its [sandbox](/docs/guides/sandbox/): virtx's `browser` abin, a headless Chromium driven by [agent-browser](https://github.com/vercel-labs/agent-browser). Make the sandbox with that abin and call `browser()` on the `AgentBuilder`; the agent gets the `browser` and `browser_screenshot` tools. The sandbox needs a network for pages outside it, and 2 GiB or more of memory, since Chromium takes a few hundred megabytes.
+An agent's browser is in its [sandbox](/docs/guides/sandbox/): virtx's `browser` abin, a headless Chromium driven by [agent-browser](https://github.com/vercel-labs/agent-browser). Set `use_browser` in the spec beside `use_sandbox`, and have the sandbox made with that abin; the agent gets the `browser` and `browser_screenshot` tools. The sandbox needs a network for pages outside it, and 2 GiB or more of memory, since Chromium takes a few hundred megabytes.
 
 <Tabs syncKey="lang">
 
@@ -14,19 +14,30 @@ An agent's browser is in its [sandbox](/docs/guides/sandbox/): virtx's `browser`
 ```python
 import asyncio
 
-from ailoy import AgentBuilder
+import ailoy
+from ailoy import Agent
 from virtx import Client
 
 
 async def main() -> None:
     client = Client.spawn()
-    await client.pull_image("python:3.12-slim").complete()
-    sandbox = await client.create_sandbox(
-        "python:3.12-slim", network=True, abins=["browser"], memory_mib=2048
-    )
+    await client.pull_image("python:3.12-slim-trixie").complete()
+    ailoy.set_virtx(client)
 
-    agent = await (
-        AgentBuilder("anthropic/claude-sonnet-5-5").sandbox(sandbox).browser().build()
+    agent = await Agent.from_spec(
+        {
+            "model": "anthropic/claude-sonnet-5-5",
+            "use_sandbox": True,
+            "use_browser": True,
+        },
+        sandbox={
+            "create": {
+                "image": {"type": "tag", "tag": "python:3.12-slim-trixie"},
+                "network": True,
+                "memory_mib": 2048,
+                "abins": ["browser"],
+            }
+        },
     )
     async for output in agent.run("Open https://example.com and tell me its title."):
         for part in output["message"]["contents"]:
@@ -34,7 +45,6 @@ async def main() -> None:
                 print(part["text"])
 
     await agent.close()
-    await sandbox.remove()
 
 
 asyncio.run(main())
@@ -45,19 +55,31 @@ asyncio.run(main())
 <TabItem label="Node.js" icon="seti:javascript">
 
 ```js
-const { AgentBuilder } = require('@brekkylab/ailoy')
+const { Agent, setVirtx } = require('@brekkylab/ailoy')
 const { Client } = require('@brekkylab/virtx')
 
 async function main() {
   const client = Client.spawn()
-  await client.pullImage('python:3.12-slim').complete()
-  const sandbox = await client.createSandbox('python:3.12-slim', {
-    network: true,
-    abins: ['browser'],
-    memoryMib: 2048,
-  })
+  await client.pullImage('python:3.12-slim-trixie').complete()
+  setVirtx(client)
 
-  const agent = await new AgentBuilder('anthropic/claude-sonnet-5-5').sandbox(sandbox).browser().build()
+  const agent = await Agent.fromSpec(
+    {
+      model: 'anthropic/claude-sonnet-5-5',
+      use_sandbox: true,
+      use_browser: true,
+    },
+    {
+      sandbox: {
+        create: {
+          image: { type: 'tag', tag: 'python:3.12-slim-trixie' },
+          network: true,
+          memory_mib: 2048,
+          abins: ['browser'],
+        },
+      },
+    },
+  )
   try {
     for await (const { message } of agent.run('Open https://example.com and tell me its title.')) {
       for (const part of message.contents) {
@@ -66,7 +88,6 @@ async function main() {
     }
   } finally {
     await agent.close()
-    await sandbox.remove()
   }
 }
 
@@ -78,28 +99,51 @@ main()
 <TabItem label="Rust" icon="seti:rust">
 
 ```rust
-use ailoy::agent::AgentBuilder;
+use ailoy::{
+    Agent,
+    agent::{AgentSpec, SessionSandbox, default_provider},
+    message::{Message, Part, Role},
+};
+use futures::StreamExt as _;
 use virtx::{Client, SandboxCreateArgs};
 
-let client = Client::spawn_virtx([] as [&str; 0]).await?;
-client.pull_image("python:3.12-slim", None).complete(false).await?;
-let mut args = SandboxCreateArgs::new("python:3.12-slim").abin("browser");
-args.network = true;
-args.memory_mib = Some(2048);
-let sandbox = client.create_sandbox(&args).await?;
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let client = Client::spawn_virtx([] as [&str; 0]).await?;
+    client.pull_image("python:3.12-slim-trixie", None).complete(false).await?;
+    default_provider().write().unwrap().virtx = Some(client.clone());
 
-let mut agent = AgentBuilder::new("anthropic/claude-sonnet-5-5")
-    .sandbox(sandbox)
-    .browser()
-    .build()
-    .await?;
+    let spec = AgentSpec::new("anthropic/claude-sonnet-5-5").sandbox().browser();
+    let sandbox = SessionSandbox::Create(
+        SandboxCreateArgs::new("python:3.12-slim-trixie")
+            .network(true)
+            .memory_mib(2048)
+            .abin("browser"),
+    );
+    let agent = Agent::from_spec(spec, Vec::new(), Some(sandbox)).await?;
+
+    let query = Message::new(Role::User)
+        .with_contents([Part::text("Open https://example.com and tell me its title.")]);
+    let mut stream = std::pin::pin!(agent.run(&query));
+    while let Some(output) = stream.next().await {
+        let message = output?.message;
+        if message.role == Role::Assistant {
+            for text in message.contents.iter().filter_map(Part::as_text) {
+                println!("{text}");
+            }
+        }
+    }
+
+    agent.close().await?;
+    Ok(())
+}
 ```
 
 
 </TabItem>
 </Tabs>
 
-Building the agent fails when it has no sandbox, or a sandbox without the `browser` abin. In a spec, `browser()` is `use_browser`.
+Making the agent fails when its spec has `use_browser` without `use_sandbox`, or its sandbox is made without the `browser` abin. In Rust, `AgentSpec`'s `sandbox()` and `browser()` set the two. Closing the agent removes its sandbox, and the browser with it.
 
 ## The tools
 
