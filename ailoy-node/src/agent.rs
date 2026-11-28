@@ -1,9 +1,9 @@
-//! `Agent`, and the turn an `Agent` runs.
+//! `Agent`, and the turn an `Agent` runs: [`ailoy::Agent`], reached over HTTP from a server in
+//! this process.
 //!
-//! A promise's future must be `'static`, but [`AgentRuntime::run`] borrows the agent for as long as
-//! the turn's stream lives. So the agent sits behind an `Arc<Mutex<..>>` and a turn holds the
-//! lock's owned guard in its stream, which also makes a second `run` wait for the first to
-//! finish, as `&mut self` would in Rust.
+//! A promise's future must be `'static`, but a turn's stream borrows the agent. So the agent sits
+//! behind an `Arc`, which each turn holds a clone of. The server runs one turn of an agent at a
+//! time and refuses another while one runs.
 //!
 //! `Agent.fromSpec`'s `sandbox` gives the agent a `@brekkylab/virtx` `Sandbox` (see
 //! [`crate::console`]), which stays the caller's: the agent runs in it over the same client, and
@@ -16,8 +16,9 @@
 
 use std::sync::Arc;
 
-use ailoy_runner::{
-    agent::{AgentRuntime, AgentSpec, AgentState},
+use ailoy::{
+    Agent,
+    agent::AgentSpec,
     message::{Message, MessageDeltaOutput, MessageOutput},
 };
 use futures::{StreamExt as _, stream::BoxStream};
@@ -58,28 +59,44 @@ impl<T> Drop for OnRuntime<T> {
     }
 }
 
-type Held = Arc<Mutex<OnRuntime<AgentRuntime>>>;
+/// An agent's or a turn's error, as JavaScript is thrown it.
+fn failed(e: ailoy::Error) -> napi::Error<String> {
+    error::anyhow(e.into())
+}
+
+type Held = Arc<OnRuntime<Agent>>;
 
 #[napi(js_name = "Agent")]
 pub struct JsAgent {
-    agent: Held,
+    /// None once closed.
+    agent: std::sync::Mutex<Option<Held>>,
 
-    /// The runtime the agent was built on, which a turn's stream is let go of on too.
+    /// The runtime the agent was made on, which a turn's stream is let go of on too.
     runtime: Handle,
 }
 
 impl JsAgent {
-    /// Built inside a promise's future, so the current runtime is the one to keep.
-    fn new(agent: AgentRuntime) -> Self {
+    /// Made inside a promise's future, so the current runtime is the one to keep.
+    fn new(agent: Agent) -> Self {
         let runtime = Handle::current();
+        let agent = Arc::new(OnRuntime::new(agent, runtime.clone()));
         JsAgent {
-            agent: Arc::new(Mutex::new(OnRuntime::new(agent, runtime.clone()))),
+            agent: std::sync::Mutex::new(Some(agent)),
             runtime,
         }
     }
 
+    fn held(&self) -> Result<Held> {
+        self.agent.lock().unwrap().clone().ok_or_else(closed)
+    }
+
+    /// The turn's stream; one that rejects at once, for an agent closed.
     fn start(&self, query: Message, mode: Mode) -> JsAgentRun {
-        JsAgentRun::new(turn(self.agent.clone(), query, mode), self.runtime.clone())
+        let stream = match self.held() {
+            Ok(agent) => turn(agent, query, mode),
+            Err(e) => futures::stream::once(async move { Err(e) }).boxed(),
+        };
+        JsAgentRun::new(stream, self.runtime.clone())
     }
 }
 
@@ -102,25 +119,21 @@ pub enum Item {
     Delta(MessageDeltaOutput),
 }
 
-/// One turn's stream, from the agent's owned guard: `'static`, so a promise can hold it.
+/// One turn's stream, holding the agent: `'static`, so a promise can hold it.
 fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, Result<Item>> {
     async_stream::stream! {
-        let mut guard = agent.lock_owned().await;
-        let Some(agent) = guard.value.as_mut() else {
-            yield Err(closed());
-            return;
-        };
+        let agent = agent.value.as_ref().expect("held until dropped");
         match mode {
             Mode::Messages => {
-                let mut stream = agent.run(query);
+                let mut stream = std::pin::pin!(agent.run(&query));
                 while let Some(output) = stream.next().await {
                     yield output.map(Item::Message).map_err(error::anyhow);
                 }
             }
             Mode::Deltas => {
-                let mut stream = agent.run_stream(query);
+                let mut stream = std::pin::pin!(agent.run_stream(&query));
                 while let Some(delta) = stream.next().await {
-                    yield delta.map(Item::Delta).map_err(error::anyhow);
+                    yield delta.map(Item::Delta).map_err(failed);
                 }
             }
         }
@@ -143,46 +156,39 @@ impl JsAgent {
     ) -> napi::Result<PromiseRaw<'env, JsAgent>> {
         let prepared = (|| -> Result<_> {
             let spec: AgentSpec = from_js(env, spec, "an agent spec")?;
-            let mut state = AgentState::new();
-            let mut virtx = None;
+            let mut history = Vec::new();
+            let mut sandbox = None;
             if let Some(options) = options {
                 let get = |e: napi::Error| invalid(e.reason);
-                if let Some(history) = options.get::<Unknown>("history").map_err(get)? {
-                    state = state.with_history(from_js::<Vec<Message>>(
-                        env,
-                        history,
-                        "a list of messages",
-                    )?);
+                if let Some(given) = options.get::<Unknown>("history").map_err(get)? {
+                    history = from_js::<Vec<Message>>(env, given, "a list of messages")?;
                 }
-                if let Some(sandbox) = options.get::<Object>("sandbox").map_err(get)? {
-                    let sandbox = console::sandbox(env, &sandbox)?;
-                    state = state.with_sandbox_id(sandbox.id());
-                    virtx = Some(sandbox.client().clone());
+                if let Some(given) = options.get::<Object>("sandbox").map_err(get)? {
+                    sandbox = Some(console::sandbox(env, &given)?);
                 }
             }
-            Ok((spec, state, virtx))
+            Ok((spec, history, sandbox))
         })();
-        let (spec, state, virtx) = prepared.map_err(|e| thrown(env, e))?;
+        let (spec, history, sandbox) = prepared.map_err(|e| thrown(env, e))?;
         promise(env, async move {
-            let agent = AgentRuntime::try_with_state(spec, state, virtx.as_ref())
+            let agent = Agent::from_spec(spec, history, sandbox.as_ref())
                 .await
-                .map_err(error::anyhow)?;
+                .map_err(failed)?;
             Ok(JsAgent::new(agent))
         })
     }
 
-    /// The conversation so far, as a list of messages.
-    ///
-    /// Read without waiting, so it throws while a turn holds the agent rather than making
-    /// this getter a promise.
-    #[napi(getter, ts_return_type = "Array<Message>")]
-    pub fn history(&self) -> Result<Json<Vec<Message>>> {
-        let guard = self
-            .agent
-            .try_lock()
-            .map_err(|_| error::ailoy("this agent is in the middle of a turn"))?;
-        let agent = guard.value.as_ref().ok_or_else(closed)?;
-        Ok(Json(agent.history().to_vec()))
+    /// The conversation so far, as a list of messages, as the server keeps it.
+    #[napi(ts_return_type = "Promise<Array<Message>>")]
+    pub fn history<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<PromiseRaw<'env, Json<Vec<Message>>>> {
+        let agent = self.held().map_err(|e| thrown(env, e))?;
+        promise(env, async move {
+            let agent = agent.value.as_ref().expect("held until dropped");
+            agent.history().await.map(Json).map_err(failed)
+        })
     }
 
     /// Run one turn on `query` — a message, or a string as the user's text — and iterate what
@@ -207,14 +213,16 @@ impl JsAgent {
         Ok(self.start(self::query(env, query)?, Mode::Deltas))
     }
 
-    /// Let go of the agent now, and of its hold of its sandbox's client. Waits for a turn
-    /// being iterated to finish. Closing twice is the same as closing once.
+    /// Let go of the agent and its session on the server, and of its hold of its sandbox's
+    /// client. A turn being iterated still ends. Closing twice is the same as closing once.
     #[napi(ts_return_type = "Promise<void>")]
     pub fn close<'env>(&self, env: &'env Env) -> napi::Result<PromiseRaw<'env, ()>> {
-        let agent = self.agent.clone();
+        let agent = self.agent.lock().unwrap().take();
         promise(env, async move {
-            // Dropped here, on the runtime.
-            agent.lock().await.value.take();
+            if let Some(agent) = agent {
+                let agent = agent.value.as_ref().expect("held until dropped");
+                agent.close().await.map_err(failed)?;
+            }
             Ok(())
         })
     }

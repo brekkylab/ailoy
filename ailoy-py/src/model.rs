@@ -20,7 +20,7 @@
 
 use std::sync::Arc;
 
-use ailoy_runner::{
+use ailoy::{
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::{
         Backend, InferLangModel, LangModelOptions, LangModelServer, create_lang_model,
@@ -40,7 +40,7 @@ use pyo3::{
     prelude::*,
 };
 use pyo3_async_runtimes::{
-    into_future_with_locals,
+    TaskLocals, into_future_with_locals,
     tokio::{future_into_py, get_current_locals},
 };
 
@@ -130,8 +130,12 @@ impl PyLangModel {
     }
 }
 
-/// A model of Python's own, as a factory returned it.
-struct PyModel(Arc<Py<PyAny>>);
+/// A model of Python's own, as a factory returned it, with the event loop running where the
+/// factory was set, which its awaitables are awaited on when no other is at hand.
+struct PyModel {
+    model: Arc<Py<PyAny>>,
+    locals: Option<TaskLocals>,
+}
 
 /// The positional arguments of the model's methods, in their dict forms.
 fn args<'py>(
@@ -154,13 +158,16 @@ impl InferLangModel for PyModel {
         tools: &[ToolDesc],
         options: &LangModelOptions,
     ) -> BoxFuture<'static, anyhow::Result<MessageOutput>> {
-        let model = self.0.clone();
+        let (model, locals) = (self.model.clone(), self.locals.clone());
         let (messages, tools, options) = (messages.to_vec(), tools.to_vec(), options.clone());
         Box::pin(async move {
-            let returned = call_py(move |py| {
-                let args = args(py, &messages, &tools, &options)?;
-                model.call_method1(py, "infer", args)
-            })
+            let returned = call_py(
+                move |py| {
+                    let args = args(py, &messages, &tools, &options)?;
+                    model.call_method1(py, "infer", args)
+                },
+                locals,
+            )
             .await?;
             Ok(Python::attach(|py| {
                 from_py::<MessageOutput>(returned.bind(py), "a message output")
@@ -174,21 +181,25 @@ impl InferLangModel for PyModel {
         tools: &[ToolDesc],
         options: &LangModelOptions,
     ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
-        let streams = Python::attach(|py| self.0.bind(py).hasattr("infer_stream"));
+        let streams = Python::attach(|py| self.model.bind(py).hasattr("infer_stream"));
         if !matches!(streams, Ok(true)) {
             let output = self.infer(messages, tools, options);
             return stream::once(async move { output.await.map(MessageDeltaOutput::from) }).boxed();
         }
 
-        let model = self.0.clone();
+        let (model, registered) = (self.model.clone(), self.locals.clone());
         let (messages, tools, options) = (messages.to_vec(), tools.to_vec(), options.clone());
         async_stream::try_stream! {
-            let locals = Python::attach(|py| get_current_locals(py).ok());
-            let iterator = call_py(move |py| {
-                let args = args(py, &messages, &tools, &options)?;
-                let iterable = model.call_method1(py, "infer_stream", args)?;
-                Ok(iterable.bind(py).call_method0("__aiter__")?.unbind())
-            })
+            let here = Python::attach(|py| get_current_locals(py).ok());
+            let locals = here.or(registered);
+            let iterator = call_py(
+                move |py| {
+                    let args = args(py, &messages, &tools, &options)?;
+                    let iterable = model.call_method1(py, "infer_stream", args)?;
+                    Ok(iterable.bind(py).call_method0("__aiter__")?.unbind())
+                },
+                locals.clone(),
+            )
             .await?;
             loop {
                 let next = Python::attach(|py| {
@@ -214,6 +225,7 @@ impl InferLangModel for PyModel {
 /// The models of `org` from what `factory` returns for it.
 fn custom(
     factory: Py<PyAny>,
+    locals: Option<TaskLocals>,
 ) -> impl Fn(&str, Option<&str>) -> anyhow::Result<Arc<dyn InferLangModel>> + Send + Sync + 'static
 {
     move |org: &str, name: Option<&str>| {
@@ -222,7 +234,10 @@ fn custom(
             if let Ok(model) = model.bind(py).cast::<PyLangModel>() {
                 return Ok(model.get().model());
             }
-            Ok(Arc::new(PyModel(Arc::new(model))))
+            Ok(Arc::new(PyModel {
+                model: Arc::new(model),
+                locals: locals.clone(),
+            }))
         })
         .map_err(Into::into)
     }
@@ -240,7 +255,8 @@ fn set_lang_model_provider(org: String, provider: Bound<'_, PyAny>) -> PyResult<
         let server = from_py::<LangModelServer>(&provider, "a lang model server")?;
         set_lang_model_provider_rs(org, server);
     } else if provider.is_callable() {
-        set_lang_model_provider_rs(org, custom(provider.unbind()));
+        let locals = get_current_locals(provider.py()).ok();
+        set_lang_model_provider_rs(org, custom(provider.unbind(), locals));
     } else {
         return Err(PyValueError::new_err(
             "a lang model provider is a backend's name, a server dict or a factory of models",

@@ -259,6 +259,10 @@ impl AgentRuntime {
                         .infer_stream(&self.state.history, &self.tool_descs, &self.options);
                 let mut acc = MessageDeltaOutput::new();
                 let mut failure = None;
+                // Each delta goes out one behind, without its `finish_reason`: a backend may
+                // send more after the one that has it, such as its usage. The last goes out
+                // with the message's own, once the model's stream ends.
+                let mut held: Option<MessageDeltaOutput> = None;
                 while let Some(delta) = deltas.next().await {
                     let step = delta.and_then(|delta| {
                         let prev = std::mem::replace(&mut acc, MessageDeltaOutput::new());
@@ -266,7 +270,12 @@ impl AgentRuntime {
                         Ok(delta)
                     });
                     match step {
-                        Ok(delta) => yield delta,
+                        Ok(mut delta) => {
+                            delta.finish_reason = None;
+                            if let Some(previous) = held.replace(delta) {
+                                yield previous;
+                            }
+                        }
                         Err(e) => {
                             failure = Some(e);
                             break;
@@ -288,6 +297,9 @@ impl AgentRuntime {
                         Err(e)?
                     }
                 };
+                let mut last = held.unwrap_or_default();
+                last.finish_reason = Some(output.finish_reason.clone());
+                yield last;
                 refused = None;
                 self.commit(&output);
                 committed = true;
@@ -595,7 +607,7 @@ mod tests {
     use crate::{
         agent::default_provider,
         datatype::Bytes,
-        message::{Role, TokenUsage},
+        message::{MessageDelta, Role, TokenUsage, into_messages},
         model::set_lang_model_provider,
         suppress_panics, to_value,
         tool::{ToolDescBuilder, ToolSet},
@@ -813,6 +825,63 @@ mod tests {
             ]
         );
         assert_eq!(text_of(agent.history().last().unwrap()), "done");
+    }
+
+    /// Streams each output of its script, then its usage alone, as the OpenAI-compatible APIs
+    /// do after the delta that finishes a message.
+    struct TrailingUsage(StdMutex<VecDeque<MessageOutput>>);
+
+    impl InferLangModel for TrailingUsage {
+        fn infer(
+            &self,
+            _: &[Message],
+            _: &[ToolDesc],
+            _: &LangModelOptions,
+        ) -> BoxFuture<'static, anyhow::Result<MessageOutput>> {
+            unimplemented!("only streamed")
+        }
+
+        fn infer_stream(
+            &self,
+            _: &[Message],
+            _: &[ToolDesc],
+            _: &LangModelOptions,
+        ) -> BoxStream<'static, anyhow::Result<MessageDeltaOutput>> {
+            let output = self.0.lock().unwrap().pop_front().unwrap();
+            let usage = MessageDeltaOutput {
+                delta: MessageDelta::new().with_role(Role::Assistant),
+                finish_reason: None,
+                usage: Some(TokenUsage::default()),
+            };
+            Box::pin(stream::iter([Ok(output.into()), Ok(usage)]))
+        }
+    }
+
+    /// A message's deltas end with the one that has its `finish_reason`, whatever the backend
+    /// sends after it, so they gather into the messages `run` gives.
+    #[tokio::test]
+    async fn test_run_stream_ends_each_message_with_its_finish_reason() {
+        let name = "test-agent-trailing-usage";
+        let (_, spec) = scripted(name, []);
+        let script = [calls(&[("c1", "echo")]), answer("done")];
+        let script: VecDeque<_> = script.into_iter().map(Result::unwrap).collect();
+        let model: Arc<dyn InferLangModel> = Arc::new(TrailingUsage(StdMutex::new(script)));
+        default_provider().write().unwrap().models.set(
+            name,
+            move |_: &str, _: Option<&str>| -> anyhow::Result<Arc<dyn InferLangModel>> {
+                Ok(model.clone())
+            },
+        );
+        let mut agent = AgentRuntime::try_new(spec).await.unwrap();
+
+        let messages: Vec<_> = into_messages(agent.run_stream(user("hi")))
+            .map(Result::unwrap)
+            .collect()
+            .await;
+        let roles: Vec<Role> = messages.iter().map(|m| m.message.role.clone()).collect();
+        assert_eq!(roles, [Role::Assistant, Role::Tool, Role::Assistant]);
+        assert_eq!(messages[0].finish_reason, FinishReason::ToolCall {});
+        assert_eq!(text_of(&messages[2].message), "done");
     }
 
     #[tokio::test]

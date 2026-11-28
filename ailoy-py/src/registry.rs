@@ -4,7 +4,7 @@
 //! The registering functions return the names of the tools they provide, to list in a spec's
 //! `tools`.
 
-use ailoy_runner::{
+use ailoy::{
     agent::default_provider,
     tool::{
         MCPServer, MCPTransport, ToolDesc, WebSearchProvider,
@@ -13,7 +13,7 @@ use ailoy_runner::{
     },
 };
 use pyo3::{exceptions::PyValueError, prelude::*};
-use pyo3_async_runtimes::tokio::future_into_py;
+use pyo3_async_runtimes::tokio::{future_into_py, get_current_locals};
 
 use crate::{convert::from_py, error, tool::tool_func};
 
@@ -39,13 +39,14 @@ fn remove_tool_provider(name: String) -> bool {
 #[pyfunction]
 fn register_tool(desc: Bound<'_, PyAny>, func: Py<PyAny>) -> PyResult<String> {
     ensure_callable(desc.py(), &func)?;
+    let locals = get_current_locals(desc.py()).ok();
     let parsed: ToolDesc = from_py(&desc, "a tool description")?;
     let name = parsed.name.clone();
     default_provider()
         .write()
         .unwrap()
         .tools
-        .set((parsed, tool_func(func)));
+        .set((parsed, tool_func(func, locals)));
     Ok(name)
 }
 

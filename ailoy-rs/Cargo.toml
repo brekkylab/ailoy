@@ -19,5 +19,13 @@ default = ["embedded"]
 embedded = ["ailoy-runner/embedded"]
 
 [dependencies]
-ailoy-core = { path = "../ailoy-core", version = "0.3.2" }
+# `client` and `embed`: the agent is reached over HTTP, served in this process.
+ailoy-core = { path = "../ailoy-core", version = "0.3.2", features = ["client", "embed"] }
 ailoy-runner = { path = "../ailoy-runner", version = "0.3.2", default-features = false }
+anyhow = "1"
+futures = "0.3"
+uuid = { version = "1", features = ["v4"] }
+virtx = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }

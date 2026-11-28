@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use ailoy_runner::{
+use ailoy::{
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role},
     tool::ToolFunc,

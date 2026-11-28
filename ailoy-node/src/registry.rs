@@ -4,7 +4,7 @@
 //! The registering functions return the names of the tools they provide, to list in a spec's
 //! `tools`.
 
-use ailoy_runner::{
+use ailoy::{
     agent::default_provider,
     tool::{
         MCPServer, MCPTransport, ToolDesc, WebSearchProvider,

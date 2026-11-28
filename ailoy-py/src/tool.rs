@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use ailoy_runner::{
+use ailoy::{
     datatype::Value,
     message::{FinishReason, Message, MessageOutput, Part, Role},
     tool::ToolFunc,
@@ -22,13 +22,14 @@ use pyo3_async_runtimes::{TaskLocals, into_future_with_locals, tokio::get_curren
 use crate::convert::{from_py, to_py};
 
 /// A raise becomes the result `"error: ValueError: ..."` instead of ending the turn, so the
-/// model can try differently.
-pub fn tool_func(func: Py<PyAny>) -> ToolFunc {
+/// model can try differently. An awaitable it returns is awaited on `locals`' event loop, the
+/// one running where it was registered.
+pub fn tool_func(func: Py<PyAny>, locals: Option<TaskLocals>) -> ToolFunc {
     let func = Arc::new(func);
     ToolFunc::new(move |args, id| {
-        let func = func.clone();
+        let (func, locals) = (func.clone(), locals.clone());
         futures::stream::once(async move {
-            let value = call(func, args)
+            let value = call(func, args, locals)
                 .await
                 .unwrap_or_else(|e| Value::string(format!("error: {e}")));
             MessageOutput {
@@ -43,14 +44,17 @@ pub fn tool_func(func: Py<PyAny>) -> ToolFunc {
     })
 }
 
-async fn call(func: Arc<Py<PyAny>>, args: Value) -> PyResult<Value> {
-    let returned = call_py(move |py| {
-        let args = to_py(py, &args)?;
-        match args.cast::<PyDict>() {
-            Ok(kwargs) => func.call(py, (), Some(kwargs)),
-            Err(_) => func.call1(py, (args,)),
-        }
-    })
+async fn call(func: Arc<Py<PyAny>>, args: Value, locals: Option<TaskLocals>) -> PyResult<Value> {
+    let returned = call_py(
+        move |py| {
+            let args = to_py(py, &args)?;
+            match args.cast::<PyDict>() {
+                Ok(kwargs) => func.call(py, (), Some(kwargs)),
+                Err(_) => func.call1(py, (args,)),
+            }
+        },
+        locals,
+    )
     .await?;
     Python::attach(|py| from_py(returned.bind(py), "a tool result a message can hold"))
 }
@@ -58,14 +62,16 @@ async fn call(func: Arc<Py<PyAny>>, args: Value) -> PyResult<Value> {
 /// Call into Python with `f` and await what it returns if that is awaitable.
 ///
 /// On the blocking pool, so a slow synchronous callable does not starve the turn or the
-/// futures beside it. An awaitable is awaited on the turn's event loop, which
-/// `pyo3-async-runtimes` puts in the task locals of the enclosing `__anext__`; they are taken
-/// before the blocking pool, whose threads are outside the task. A turn driven from outside an
-/// event loop has none, which only matters for a callable returning an awaitable.
+/// futures beside it. An awaitable is awaited on the event loop of the task locals here, which
+/// `pyo3-async-runtimes` puts in those of an enclosing `__anext__`, else on `registered`'s, the
+/// loop running where the callable was registered: a turn runs on a task of the server's own.
+/// The locals are taken before the blocking pool, whose threads are outside the task.
 pub async fn call_py(
     f: impl FnOnce(Python<'_>) -> PyResult<Py<PyAny>> + Send + 'static,
+    registered: Option<TaskLocals>,
 ) -> PyResult<Py<PyAny>> {
-    let locals: Option<TaskLocals> = Python::attach(|py| get_current_locals(py).ok());
+    let here: Option<TaskLocals> = Python::attach(|py| get_current_locals(py).ok());
+    let locals = here.or(registered);
 
     let returned = tokio::task::spawn_blocking(move || Python::attach(f))
         .await
@@ -93,7 +99,7 @@ pub async fn call_py(
 pub fn event_loop(locals: Option<&TaskLocals>) -> PyResult<TaskLocals> {
     locals.cloned().ok_or_else(|| {
         crate::error::AiloyError::new_err(
-            "an async callable needs its turn iterated from a running event loop",
+            "an async callable needs an event loop running where it was registered",
         )
     })
 }

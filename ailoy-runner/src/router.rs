@@ -77,6 +77,7 @@ fn refuse_as(refusal: Refusal) -> Response {
     let (status, code) = match refusal {
         Refusal::NoAgent(_) | Refusal::NoSession(_) => (StatusCode::NOT_FOUND, "not_found"),
         Refusal::NoTool(_) => (StatusCode::UNPROCESSABLE_ENTITY, "unknown_tool"),
+        Refusal::NoModel(_) => (StatusCode::UNPROCESSABLE_ENTITY, "unknown_model"),
     };
     refuse(status, code, refusal.to_string())
 }
@@ -287,6 +288,15 @@ mod tests {
     fn clients() -> (AdminClient, Client) {
         let mut provider = AgentProvider::new();
         provider.tools.set(Echo);
+        // Models are never made here: an agent is only kept.
+        for org in ["anthropic", "openai"] {
+            provider.models.set(
+                org,
+                |_: &str, _: Option<&str>| -> anyhow::Result<Arc<dyn InferLangModel>> {
+                    anyhow::bail!("not made in these tests")
+                },
+            );
+        }
         let provider = Arc::new(RwLock::new(provider));
         let admin = AdminClient::embed(admin_router(provider.clone()));
         (admin, Client::embed(router(provider, None)))
@@ -352,6 +362,16 @@ mod tests {
         assert_eq!(error.code(), Some("unknown_tool"));
         assert!(error.to_string().contains("nowhere"), "{error}");
         assert!(admin.list_agent().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_an_agent_of_a_model_nothing_makes_is_refused() {
+        let (admin, _) = clients();
+        let args = AgentPutArgs::new(AgentSpec::new("nobody/x"));
+        let error = admin.put_agent("a", &args).await.err().unwrap();
+        assert_eq!(error.status(), Some(422));
+        assert_eq!(error.code(), Some("unknown_model"));
+        assert!(error.to_string().contains("nobody"), "{error}");
     }
 
     #[tokio::test]
@@ -579,8 +599,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_a_turn_of_a_model_nothing_makes_is_refused() {
-        let (client, id) = parrot_session("nobody/x").await;
+    async fn test_a_turn_of_an_agent_that_cannot_be_made_is_refused() {
+        // It works in a sandbox, and its session names none.
+        let (client, id) = parrot_session_of(AgentSpec::new("parrot/x").sandbox(), None).await;
         let outcomes: Vec<_> = client.run_stream("p", &id, &ping()).collect().await;
         let error = outcomes[0].as_ref().err().unwrap();
         assert_eq!(error.status(), Some(422));

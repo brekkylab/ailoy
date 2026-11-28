@@ -181,8 +181,10 @@ async def test_a_removed_tool_provider_no_longer_builds():
 
 
 async def test_a_browser_needs_a_sandbox_with_its_abin():
+    agent = await Agent.from_spec({"model": MODEL, "use_browser": True})
     with pytest.raises(AiloyError, match="`browser` abin"):
-        await Agent.from_spec({"model": MODEL, "use_browser": True})
+        await run(agent, "hi")
+    await agent.close()
 
 
 # ---- a turn, against the fake model ---------------------------------------------------
@@ -194,7 +196,7 @@ async def test_a_turn_without_tools():
     assert texts(outputs) == ["hello"]
     assert outputs[-1]["finish_reason"] == {"type": "stop"}
 
-    history = agent.history
+    history = await agent.history()
     assert [m["role"] for m in history] == ["system", "user", "assistant"]
 
 
@@ -301,15 +303,13 @@ async def test_run_stream_yields_deltas():
     )
     assert text == "hello"
     assert any(d["finish_reason"] == {"type": "stop"} for d in deltas)
-    assert agent.history[-1]["contents"] == [{"type": "text", "text": "hello"}]
+    assert (await agent.history())[-1]["contents"] == [{"type": "text", "text": "hello"}]
 
 
-async def test_history_is_refused_mid_turn_and_turns_take_turns():
+async def test_a_turn_left_early_leaves_the_agent_free():
     agent = await Agent.from_spec({"model": MODEL})
     first = agent.run("hi")
     await first.__anext__()
-    with pytest.raises(AiloyError):
-        agent.history
     await first.aclose()
     assert texts(await run(agent, "hi")) == ["hello"]
 
@@ -318,9 +318,13 @@ async def test_from_spec_and_closing():
     spec = {"model": MODEL, "instruction": "From a spec."}
     history = [{"role": "user", "contents": [{"type": "text", "text": "earlier"}]}]
     async with await ailoy.Agent.from_spec(spec, history=history) as agent:
-        assert [m["role"] for m in agent.history] == ["system", "user"]
+        # The system message goes first as the first turn begins.
+        assert [m["role"] for m in await agent.history()] == ["user"]
+        await run(agent, "hi")
+        roles = [m["role"] for m in await agent.history()]
+        assert roles == ["system", "user", "user", "assistant"]
     with pytest.raises(AiloyError):
-        agent.history
+        await agent.history()
     with pytest.raises(AiloyError):
         await run(agent, "hi")
 
@@ -374,8 +378,9 @@ async def test_a_custom_provider_serves_an_agent():
         assert texts(await run(agent, "hi")) == ["echo: hi"]
         deltas = [d async for d in agent.run_stream("again")]
         assert deltas[-1]["finish_reason"] == {"type": "stop"}
-        assert agent.history[-1]["contents"] == [{"type": "text", "text": "echo: again"}]
-        assert seen == [("mine", "echo")]
+        assert (await agent.history())[-1]["contents"] == [{"type": "text", "text": "echo: again"}]
+        # Made for each turn.
+        assert seen == [("mine", "echo"), ("mine", "echo")]
     finally:
         assert ailoy.remove_lang_model_provider("mine")
 
@@ -416,13 +421,15 @@ async def test_a_custom_provider_may_hand_back_a_built_in_model():
     ailoy.remove_lang_model_provider("alias")
 
 
-async def test_a_factory_that_raises_fails_the_build():
+async def test_a_factory_that_raises_fails_the_turn():
     def factory(org, name):
         raise RuntimeError("no models today")
 
     ailoy.set_lang_model_provider("broken", factory)
+    agent = await Agent.from_spec({"model": "broken/x"})
     with pytest.raises(AiloyError, match="no models today"):
-        await Agent.from_spec({"model": "broken/x"})
+        await run(agent, "hi")
+    await agent.close()
     ailoy.remove_lang_model_provider("broken")
 
 
@@ -451,5 +458,5 @@ async def test_the_agent_runs_in_the_callers_sandbox():
         assert await sandbox.read_text("root/out.txt") == "shared\n"
         later = await Agent.from_spec({"model": MODEL, "use_sandbox": True}, sandbox=sandbox)
         await sandbox.remove()
-        outputs = await run(later, 'shell {"cmd": "true"}')
-        assert "404" in json.dumps(outputs[1]["message"]["contents"])
+        with pytest.raises(AiloyError, match="404"):
+            await run(later, 'shell {"cmd": "true"}')

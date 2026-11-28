@@ -66,10 +66,9 @@ const serveNowhere = (org) => {
 
 test('a browser needs a sandbox with its abin', async () => {
   serveNowhere('fake-browser')
-  await assert.rejects(Agent.fromSpec({ model: 'fake-browser/model', use_browser: true }), {
-    code: 'AILOY_ERROR',
-    message: /`browser` abin/,
-  })
+  const agent = await Agent.fromSpec({ model: 'fake-browser/model', use_browser: true })
+  await assert.rejects(agent.run('hi').next(), { code: 'AILOY_ERROR', message: /`browser` abin/ })
+  await agent.close()
 })
 
 // ---- a turn, against a model served from this process --------------------------------------
@@ -179,7 +178,7 @@ test('a turn calls a JavaScript tool and answers with what it said', async (t) =
     )
     assert.equal(outputs[1].message.contents[0].value, 5)
     assert.match(outputs[2].message.contents[0].text, /5/)
-    assert.equal(agent.history.length, 4)
+    assert.equal((await agent.history()).length, 4)
 
     // The same turn, streamed.
     const deltas = []
@@ -209,7 +208,7 @@ test('a tool that throws answers with the error, and the turn goes on', async (t
   assert.equal(outputs.length, 3)
 })
 
-test('breaking out of a turn ends it where it stands', async (t) => {
+test('breaking out of a turn leaves it to finish on the server', async (t) => {
   const server = await fakeModel()
   t.after(() => server.close())
   serve('fake-break', server)
@@ -224,9 +223,10 @@ test('breaking out of a turn ends it where it stands', async (t) => {
     assert.equal(output.message.role, 'assistant')
     break
   }
-  assert.deepEqual(calls, [])
-  // The agent is free again for the next turn.
-  assert.ok(Array.isArray(agent.history))
+  // The turn goes on without its reader, and its tool is called.
+  while ((await agent.history()).length < 4) await new Promise((done) => setTimeout(done, 10))
+  assert.deepEqual(calls, [[2, 3]])
+  await agent.close()
 })
 
 test('a server of your own keeps the desc', async (t) => {
@@ -379,8 +379,13 @@ test('a custom provider serves an agent', async (t) => {
   const deltas = []
   for await (const delta of agent.runStream('again')) deltas.push(delta)
   assert.equal(deltas[deltas.length - 1].finish_reason.type, 'stop')
-  assert.equal(agent.history[agent.history.length - 1].contents[0].text, 'echo: again')
-  assert.deepEqual(seen, [['mine', 'echo']])
+  const history = await agent.history()
+  assert.equal(history[history.length - 1].contents[0].text, 'echo: again')
+  // Made for each turn.
+  assert.deepEqual(seen, [
+    ['mine', 'echo'],
+    ['mine', 'echo'],
+  ])
 })
 
 test('a custom provider may stream and be async', async (t) => {
@@ -419,12 +424,14 @@ test('a removed tool provider no longer builds', async (t) => {
   await assert.rejects(Agent.fromSpec({ model: 'tooled/x', tools: [name] }), { message: /fleeting/ })
 })
 
-test('a factory that throws fails the build', async (t) => {
+test('a factory that throws fails the turn', async (t) => {
   setLangModelProvider('broken', () => {
     throw new Error('no models today')
   })
   t.after(() => removeLangModelProvider('broken'))
-  await assert.rejects(Agent.fromSpec({ model: 'broken/x' }), { message: /no models today/ })
+  const agent = await Agent.fromSpec({ model: 'broken/x' })
+  await assert.rejects(agent.run('hi').next(), { message: /no models today/ })
+  await agent.close()
 })
 
 // ---- the caller's sandbox, against the server virtx starts by default ---------------------
@@ -449,9 +456,7 @@ test('an agent runs its console tools in the caller’s sandbox, until it is rem
   const later = await Agent.fromSpec({ model: 'fake-shell/model', use_sandbox: true }, { sandbox })
   const fromSpec = await Agent.fromSpec({ model: 'fake-shell/model', use_sandbox: true }, { sandbox })
   await sandbox.remove()
-  const after = []
-  for await (const output of later.run('write it again')) after.push(output)
-  assert.match(JSON.stringify(after[1].message.contents), /404/)
+  await assert.rejects(later.run('write it again').next(), { message: /404/ })
   await agent.close()
   await later.close()
   await fromSpec.close()

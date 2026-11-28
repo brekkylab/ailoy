@@ -19,6 +19,8 @@ pub enum Refusal {
     NoSession(String),
     /// A spec names this tool, and nothing provides it.
     NoTool(String),
+    /// A spec names a model of this org, and nothing makes its models.
+    NoModel(String),
 }
 
 impl fmt::Display for Refusal {
@@ -27,6 +29,7 @@ impl fmt::Display for Refusal {
             Refusal::NoAgent(name) => write!(f, "there is no agent '{name}'"),
             Refusal::NoSession(id) => write!(f, "the agent has no session '{id}'"),
             Refusal::NoTool(name) => write!(f, "nothing provides the tool '{name}'"),
+            Refusal::NoModel(org) => write!(f, "nothing makes the models of '{org}'"),
         }
     }
 }
@@ -55,12 +58,20 @@ impl AgentProvider {
     }
 
     /// Keep the agent `args` describes under `name`, in place of one already there, whose
-    /// sessions stay. Refused when its spec names a tool nothing provides.
+    /// sessions stay. Refused when its spec names a model or a tool nothing provides.
     pub fn put_agent(
         &mut self,
         name: &str,
         args: AgentPutArgs,
     ) -> Result<AgentListOutputItem, Refusal> {
+        if self.models.get(&args.spec.model).is_none() {
+            let org = args
+                .spec
+                .model
+                .split_once('/')
+                .map_or(&*args.spec.model, |(org, _)| org);
+            return Err(Refusal::NoModel(org.to_owned()));
+        }
         if let Some(tool) = args.spec.tools.iter().find(|t| !self.tools.contains(t)) {
             return Err(Refusal::NoTool(tool.clone()));
         }

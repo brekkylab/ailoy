@@ -3,7 +3,7 @@
 //! A [`Message`] crosses both ways as the JSON ailoy writes, `{"role": "assistant", ...}`,
 //! except that bytes (an embedded image) are `bytes` rather than base64.
 
-use ailoy_runner::message::{Message, Part, Role};
+use ailoy::message::{Message, Part, Role};
 use pyo3::{exceptions::PyValueError, prelude::*};
 use serde::{Serialize, de::DeserializeOwned};
 

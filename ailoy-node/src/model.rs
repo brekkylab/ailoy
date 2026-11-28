@@ -20,7 +20,7 @@
 
 use std::{ptr, sync::Arc};
 
-use ailoy_runner::{
+use ailoy::{
     message::{Message, MessageDeltaOutput, MessageOutput},
     model::{
         Backend, InferLangModel, LangModelOptions, LangModelServer, create_lang_model,

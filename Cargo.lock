@@ -36,6 +36,11 @@ version = "0.3.2"
 dependencies = [
  "ailoy-core",
  "ailoy-runner",
+ "anyhow",
+ "futures",
+ "tokio",
+ "uuid",
+ "virtx",
 ]
 
 [[package]]
@@ -70,7 +75,7 @@ dependencies = [
 name = "ailoy-node"
 version = "0.3.2"
 dependencies = [
- "ailoy-runner",
+ "ailoy",
  "anyhow",
  "async-stream",
  "futures",
@@ -86,7 +91,7 @@ dependencies = [
 name = "ailoy-python"
 version = "0.3.2"
 dependencies = [
- "ailoy-runner",
+ "ailoy",
  "anyhow",
  "async-stream",
  "futures",

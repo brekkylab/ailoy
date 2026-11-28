@@ -1,19 +1,16 @@
-//! `Agent`, and the turn an `Agent` runs.
+//! `Agent`, and the turn an `Agent` runs: [`ailoy::Agent`], reached over HTTP from a server in
+//! this process.
 //!
-//! A Python future must be `'static`, but [`AgentRuntime::run`] borrows the agent for as long as the
-//! turn's stream lives. So the agent sits behind an `Arc<Mutex<..>>` and a turn holds the
-//! lock's owned guard in its stream, which also makes a second `run` wait for the first to
-//! finish, as `&mut self` would in Rust.
+//! A Python future must be `'static`, but a turn's stream borrows the agent. So the agent sits
+//! behind an `Arc`, which each turn holds a clone of. The server runs one turn of an agent at a
+//! time and refuses another while one runs.
 //!
 //! `Agent.from_spec`'s `sandbox` gives the agent a `virtx.Sandbox` (see [`crate::console`]),
 //! which stays the caller's: the agent runs in it over the same client, and never removes it.
 
 use std::sync::Arc;
 
-use ailoy_runner::{
-    agent::{AgentRuntime, AgentSpec, AgentState},
-    message::Message,
-};
+use ailoy::{Agent, agent::AgentSpec, message::Message};
 use futures::{StreamExt as _, stream::BoxStream};
 use pyo3::{exceptions::PyStopAsyncIteration, prelude::*};
 use pyo3_async_runtimes::tokio::{future_into_py, get_runtime};
@@ -36,18 +33,32 @@ impl<T> Drop for OnRuntime<T> {
     }
 }
 
-type Held = Arc<Mutex<OnRuntime<AgentRuntime>>>;
+type Held = Arc<OnRuntime<Agent>>;
 
 #[pyclass(name = "Agent", module = "ailoy", frozen)]
 pub struct PyAgent {
-    agent: Held,
+    /// None once closed.
+    agent: std::sync::Mutex<Option<Held>>,
 }
 
 impl PyAgent {
-    fn new(agent: AgentRuntime) -> Self {
+    fn new(agent: Agent) -> Self {
         PyAgent {
-            agent: Arc::new(Mutex::new(OnRuntime(Some(agent)))),
+            agent: std::sync::Mutex::new(Some(Arc::new(OnRuntime(Some(agent))))),
         }
+    }
+
+    fn held(&self) -> PyResult<Held> {
+        self.agent.lock().unwrap().clone().ok_or_else(closed)
+    }
+
+    /// The turn's stream; one that raises at once, for an agent closed.
+    fn start(&self, query: Message, mode: Mode) -> PyAgentRun {
+        let stream = match self.held() {
+            Ok(agent) => turn(agent, query, mode),
+            Err(e) => futures::stream::once(async move { Err(e) }).boxed(),
+        };
+        PyAgentRun::new(stream)
     }
 }
 
@@ -68,25 +79,21 @@ pub fn item<T: serde::Serialize>(item: anyhow::Result<T>) -> PyResult<Py<PyAny>>
     Python::attach(|py| Ok(to_py(py, &item)?.unbind()))
 }
 
-/// One turn's stream, from the agent's owned guard: `'static`, so a Python future can hold it.
+/// One turn's stream, holding the agent: `'static`, so a Python future can hold it.
 fn turn(agent: Held, query: Message, mode: Mode) -> BoxStream<'static, PyResult<Py<PyAny>>> {
     async_stream::stream! {
-        let mut guard = agent.lock_owned().await;
-        let Some(agent) = guard.0.as_mut() else {
-            yield Err(closed());
-            return;
-        };
+        let agent = agent.0.as_ref().expect("held until dropped");
         match mode {
             Mode::Messages => {
-                let mut stream = agent.run(query);
+                let mut stream = std::pin::pin!(agent.run(&query));
                 while let Some(output) = stream.next().await {
                     yield item(output);
                 }
             }
             Mode::Deltas => {
-                let mut stream = agent.run_stream(query);
+                let mut stream = std::pin::pin!(agent.run_stream(&query));
                 while let Some(delta) = stream.next().await {
-                    yield item(delta);
+                    yield item(delta.map_err(anyhow::Error::from));
                 }
             }
         }
@@ -107,57 +114,52 @@ impl PyAgent {
         sandbox: Option<Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let spec: AgentSpec = from_py(&spec, "an agent spec")?;
-        let mut state = AgentState::new();
-        if let Some(history) = history {
-            state = state.with_history(from_py::<Vec<Message>>(&history, "a list of messages")?);
-        }
-        let mut virtx = None;
-        if let Some(sandbox) = sandbox {
-            let sandbox = console::sandbox(&sandbox)?;
-            state = state.with_sandbox_id(sandbox.id());
-            virtx = Some(sandbox.client().clone());
-        }
+        let history = match history {
+            Some(history) => from_py::<Vec<Message>>(&history, "a list of messages")?,
+            None => Vec::new(),
+        };
+        let sandbox = sandbox
+            .map(|sandbox| console::sandbox(&sandbox))
+            .transpose()?;
         future_into_py(py, async move {
-            let agent = AgentRuntime::try_with_state(spec, state, virtx.as_ref())
+            let agent = Agent::from_spec(spec, history, sandbox.as_ref())
                 .await
-                .map_err(error::anyhow)?;
+                .map_err(|e| error::anyhow(e.into()))?;
             Ok(PyAgent::new(agent))
         })
     }
 
-    /// The conversation so far, as a list of messages.
-    ///
-    /// Read without waiting, so it raises while a turn holds the agent rather than making
-    /// this property a coroutine.
-    #[getter]
+    /// The conversation so far, as a list of messages, as the server keeps it. Awaitable.
     fn history<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let guard = self
-            .agent
-            .try_lock()
-            .map_err(|_| AiloyError::new_err("this agent is in the middle of a turn"))?;
-        let agent = guard.0.as_ref().ok_or_else(closed)?;
-        to_py(py, &agent.history())
+        let agent = self.held()?;
+        future_into_py(py, async move {
+            let agent = agent.0.as_ref().expect("held until dropped");
+            let history = agent.history().await.map_err(|e| error::anyhow(e.into()))?;
+            Python::attach(|py| Ok(to_py(py, &history)?.unbind()))
+        })
     }
 
     /// Run one turn on `query` — a message dict, or a string as the user's text — and
     /// iterate what it produces: each complete message, the model's and each tool's.
     fn run(&self, query: Query) -> PyAgentRun {
-        PyAgentRun::new(turn(self.agent.clone(), query.0, Mode::Messages))
+        self.start(query.0, Mode::Messages)
     }
 
     /// Run one turn as `run` does, but iterate the model's output as it is generated: deltas
     /// for each message the model writes, and each tool's result whole.
     fn run_stream(&self, query: Query) -> PyAgentRun {
-        PyAgentRun::new(turn(self.agent.clone(), query.0, Mode::Deltas))
+        self.start(query.0, Mode::Deltas)
     }
 
-    /// Let go of the agent now, and of its hold of its sandbox's client. Waits for a turn
-    /// being iterated to finish. Closing twice is the same as closing once.
+    /// Let go of the agent and its session on the server, and of its hold of its sandbox's
+    /// client. A turn being iterated still ends. Closing twice is the same as closing once.
     fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let agent = self.agent.clone();
+        let agent = self.agent.lock().unwrap().take();
         future_into_py(py, async move {
-            // Dropped here, on the runtime.
-            agent.lock().await.0.take();
+            if let Some(agent) = agent {
+                let closing = agent.0.as_ref().expect("held until dropped").close().await;
+                closing.map_err(|e| error::anyhow(e.into()))?;
+            }
             Ok(())
         })
     }

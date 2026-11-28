@@ -1,6 +1,6 @@
 //! Node bindings for ailoy, built with napi-rs.
 //!
-//! The shape is ailoy's own, spelled in JavaScript: an [`Agent`](ailoy_runner::agent::AgentRuntime) is made
+//! The shape is ailoy's own, spelled in JavaScript: an [`Agent`](ailoy::agent::AgentRuntime) is made
 //! from a spec and awaited, a turn is iterated with `for await`, and the registries are the process-wide ones the crate keeps. Names are
 //! camelCased and nothing else changes, so ailoy's Rust documentation applies as is.
 //!

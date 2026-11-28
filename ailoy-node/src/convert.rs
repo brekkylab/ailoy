@@ -3,7 +3,7 @@
 //! A [`Message`] crosses both ways as the JSON ailoy writes, `{ role: 'assistant', ... }`,
 //! except that bytes (an embedded image) are a `Buffer` rather than base64.
 
-use ailoy_runner::message::{Message, Part, Role};
+use ailoy::message::{Message, Part, Role};
 use napi::{
     Env, JsValue, ValueType,
     bindgen_prelude::{FromNapiValue, ToNapiValue, Unknown},

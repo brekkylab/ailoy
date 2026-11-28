@@ -14,7 +14,7 @@ napi-build = "2"
 
 [dependencies]
 # Without `embedded`: the library is the one the virtx package of this language opened.
-ailoy-runner = { path = "../ailoy-runner", default-features = false }
+ailoy = { path = "../ailoy-rs", default-features = false }
 virtx = { workspace = true }
 # `serde-json` for `Env::to_js_value`/`from_js_value`: messages, specs and tool arguments cross
 # as their serde objects, not per-type mirrors — ailoy's JSON shape *is* its interface.
